@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Bold, Italic, Underline, List, ListOrdered, Link2, Eraser } from 'lucide-react'
+import { Bold, Italic, Underline, List, ListOrdered, Link2, Eraser } from '@/components/ui/icons'
+import { Button } from '@/components/ui'
 
 /**
  * Small contenteditable editor for the extra description.
@@ -79,9 +80,11 @@ export default function RichText({
     <div className="rounded-md border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-0.5 border-b border-border p-1">
         {COMMANDS.map(({ label, icon: Icon, run }) => (
-          <button
+          <Button
             key={label}
-            type="button"
+            variant="bare"
+            size="sm"
+            iconOnly
             title={label}
             aria-label={label}
             // onMouseDown, not onClick: clicking a button would otherwise blur
@@ -90,35 +93,36 @@ export default function RichText({
               e.preventDefault()
               run(exec)
             }}
-            className="rounded p-1.5 text-muted transition hover:bg-surface-2 hover:text-ink"
           >
             <Icon size={15} />
-          </button>
+          </Button>
         ))}
-        <button
-          type="button"
+        <Button
+          variant="bare"
+          size="sm"
+          iconOnly
           title="Add link"
           aria-label="Add link"
           onMouseDown={(e) => {
             e.preventDefault()
             addLink()
           }}
-          className="rounded p-1.5 text-muted transition hover:bg-surface-2 hover:text-ink"
         >
           <Link2 size={15} />
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="bare"
+          size="sm"
+          iconOnly
           title="Clear formatting"
           aria-label="Clear formatting"
           onMouseDown={(e) => {
             e.preventDefault()
             clearFormatting()
           }}
-          className="rounded p-1.5 text-muted transition hover:bg-surface-2 hover:text-ink"
         >
           <Eraser size={15} />
-        </button>
+        </Button>
       </div>
 
       <div className="relative">

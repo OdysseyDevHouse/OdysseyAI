@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { Select } from '@/components/ui'
 import type { Department } from '@/lib/site/departments'
 
 /**
@@ -80,18 +81,14 @@ export default function DepartmentPicker({
         {levels.map((level, depth) => (
           <label key={depth} className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-muted">{labelFor(depth)}</span>
-            <select
-              value={level.selected}
-              onChange={(e) => choose(depth, e.target.value)}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
-            >
+            <Select value={level.selected} onChange={(e) => choose(depth, e.target.value)}>
               <option value="">&lt;None&gt;</option>
               {level.options.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         ))}
       </div>

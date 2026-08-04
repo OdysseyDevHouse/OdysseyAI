@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Store, ChevronDown, Check } from 'lucide-react'
+import { Store, ChevronDown, Check } from '@/components/ui/icons'
+import { Button } from '@/components/ui'
 import { selectSiteAction } from '@/app/select-site/actions'
 
 export type SwitcherSite = {
@@ -58,19 +59,19 @@ export default function StoreSwitcher({
 
   return (
     <div ref={ref} className="relative">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm transition hover:bg-surface-2"
       >
         <Store size={15} className="shrink-0 text-muted" />
         <span className="max-w-48 truncate font-medium text-ink">
           {current?.displayName ?? 'Choose a store'}
         </span>
         <ChevronDown size={15} className="shrink-0 text-muted" />
-      </button>
+      </Button>
 
       {open && (
         <div
@@ -90,7 +91,12 @@ export default function StoreSwitcher({
                       writes the site into the session. */}
                   <form action={selectSiteAction}>
                     <input type="hidden" name="siteId" value={site.id} />
+                    {/* Not <MenuItem>: a row carries two lines plus an active
+                        tick, and needs the brand tint when it is the current
+                        store — neither of which MenuItem's single-line,
+                        two-tone API expresses. */}
                     <button
+                      data-kit-ok
                       type="submit"
                       role="menuitem"
                       className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-surface-2 ${

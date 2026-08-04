@@ -1,4 +1,4 @@
-import { Store } from 'lucide-react'
+import { Store } from '@/components/ui/icons'
 import type { ReactNode } from 'react'
 
 /**

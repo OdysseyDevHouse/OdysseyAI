@@ -4,6 +4,7 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb
 import { toNum } from '../decimals'
 import { sanitiseHtml } from '../html'
 import { costLine, priceLine, type CostBasis, type CostLine, type PriceLine } from '../pricing'
+import { toProductType, type ProductTypeId } from '../productTypes'
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
 
 export type Product = {
@@ -12,7 +13,7 @@ export type Product = {
   barcode: string | null
   description: string
   extraDescription: string | null
-  productType: string
+  productType: ProductTypeId
 
   departmentId: number | null
   brandId: number | null
@@ -82,7 +83,7 @@ function mapProduct(
     barcode: (r.barcode as string | null) ?? null,
     description: String(r.description),
     extraDescription: (r.extra_description as string | null) ?? null,
-    productType: String(r.product_type),
+    productType: toProductType(r.product_type),
 
     departmentId: r.department_id === null ? null : Number(r.department_id),
     brandId: r.brand_id === null ? null : Number(r.brand_id),
@@ -249,6 +250,7 @@ export type ProductInput = {
   barcode?: string | null
   description: string
   extraDescription?: string | null
+  productType?: ProductTypeId
   departmentId?: number | null
   brandId?: number | null
   imagePath?: string | null
@@ -264,6 +266,13 @@ export type ProductInput = {
   isArchived?: boolean
   /** Selling price INCLUSIVE of VAT, keyed by price_structure id. */
   prices?: Record<number, number>
+  /**
+   * Whether this product's cost / selling price fan out to the other stores in
+   * this site's group. Undefined leaves the existing choice (or the group
+   * default) alone.
+   */
+  sharesCost?: boolean
+  sharesSelling?: boolean
 }
 
 export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
@@ -277,10 +286,8 @@ export function validateProduct(input: ProductInput): string | null {
   if ((input.averageCost ?? 0) < 0) return 'Average cost cannot be negative.'
   if ((input.minStock ?? 0) < 0) return 'Minimum level cannot be negative.'
   if ((input.maxStock ?? 0) < 0) return 'Maximum level cannot be negative.'
-  if (
-    (input.maxStock ?? 0) > 0 &&
-    (input.minStock ?? 0) > (input.maxStock ?? 0)
-  ) {
+  // Zero max means "no ceiling set", so it is not a violation of min <= max.
+  if ((input.maxStock ?? 0) > 0 && (input.minStock ?? 0) > (input.maxStock ?? 0)) {
     return 'Minimum level cannot be above the maximum level.'
   }
   for (const value of Object.values(input.prices ?? {})) {
@@ -344,12 +351,13 @@ export async function createProduct(
           purchase_vat_rate_id, selling_vat_rate_id,
           last_cost, average_cost, stock_on_hand, min_stock, max_stock,
           is_archived, last_edit_date)
-       VALUES (?,?,?,?, 'normal', ?,?,?,?,?, ?,?, ?,?,?,?,?, ?, NOW())`,
+       VALUES (?,?,?,?, ?, ?,?,?,?,?, ?,?, ?,?,?,?,?, ?, NOW())`,
       [
         code,
         input.barcode?.trim() || null,
         input.description.trim(),
         sanitiseHtml(input.extraDescription) || null,
+        toProductType(input.productType),
         input.departmentId ?? null,
         input.brandId ?? null,
         input.imagePath ?? null,
@@ -394,7 +402,7 @@ export async function updateProduct(
     const [res] = await tx.execute(
       `UPDATE products SET
          code = ?, barcode = ?, description = ?, extra_description = ?,
-         department_id = ?, brand_id = ?,
+         product_type = ?, department_id = ?, brand_id = ?,
          image_path = ?, image_icon = ?, image_color = ?,
          purchase_vat_rate_id = ?, selling_vat_rate_id = ?,
          last_cost = ?, min_stock = ?, max_stock = ?,
@@ -405,6 +413,7 @@ export async function updateProduct(
         input.barcode?.trim() || null,
         input.description.trim(),
         sanitiseHtml(input.extraDescription) || null,
+        toProductType(input.productType),
         input.departmentId ?? null,
         input.brandId ?? null,
         input.imagePath ?? null,

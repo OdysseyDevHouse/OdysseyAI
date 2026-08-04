@@ -1,6 +1,13 @@
 'use client'
 
-import { createContext, useContext, useId, type ComponentProps, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useId,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
 import { ChevronDown } from './icons'
 import { CONTROL, CONTROL_H, CONTROL_INVALID as INVALID } from './styles'
 
@@ -110,18 +117,141 @@ export function Input({ icon, invalid, className = '', id, ...rest }: InputProps
   )
 }
 
-/** Whole numbers — quantities, counts. Right-aligned with tabular figures. */
-export function NumberInput({ className = '', ...rest }: InputProps) {
-  return <Input type="number" inputMode="numeric" className={`numeric text-right ${className}`} {...rest} />
+/**
+ * Selects the whole value on focus.
+ *
+ * Numeric fields are almost always replaced rather than edited in place, so
+ * landing in one should let you type the new figure straight away. requestAnimationFrame
+ * because a click sets the caret AFTER focus fires — selecting synchronously
+ * would immediately be undone by the click itself.
+ */
+function selectOnFocus(event: React.FocusEvent<HTMLInputElement>) {
+  const input = event.currentTarget
+  requestAnimationFrame(() => input.select())
 }
 
-/** Money. Right-aligned tabular figures and a 2-decimal step. */
-export function CurrencyInput({ className = '', ...rest }: InputProps) {
+/**
+ * Numbers — quantities, counts, percentages.
+ *
+ * Like CurrencyInput this is a text input rather than type="number", for the
+ * same reason: a number input renders through the browser's locale, so 0.00
+ * appears as "0,00" on an en-ZA machine. Percentages sit beside prices on the
+ * pricing screen, and one showing a comma while its neighbour shows a full stop
+ * reads as a bug.
+ *
+ * `precision` fixes the decimals shown when blurred. Leave it undefined for
+ * whole quantities, which should not gain trailing zeroes.
+ */
+export function NumberInput({
+  className = '',
+  value,
+  defaultValue,
+  onChange,
+  onFocus,
+  onBlur,
+  precision,
+  ...rest
+}: Omit<InputProps, 'type'> & { precision?: number }) {
+  const format = (raw: unknown) => {
+    if (raw === '' || raw === null || raw === undefined) return ''
+    const n = typeof raw === 'number' ? raw : Number(String(raw).replace(',', '.'))
+    if (!Number.isFinite(n)) return ''
+    return precision === undefined ? String(n) : n.toFixed(precision)
+  }
+
+  // Controlled while blurred, free-form while focused — formatting per keystroke
+  // would fight the caret.
+  const [editing, setEditing] = useState<string | null>(null)
+  const shown = editing ?? (value !== undefined ? format(value) : undefined)
+
   return (
     <Input
-      type="number"
+      type="text"
       inputMode="decimal"
-      step="0.01"
+      value={shown}
+      defaultValue={value === undefined ? format(defaultValue) : undefined}
+      onFocus={(e) => {
+        setEditing(e.target.value)
+        selectOnFocus(e)
+        onFocus?.(e)
+      }}
+      onChange={(e) => {
+        // Accept a typed comma, hand callers a plain "1.5".
+        const next = e.target.value.replace(',', '.')
+        setEditing(next)
+        if (onChange) {
+          e.target.value = next
+          onChange(e)
+        }
+      }}
+      onBlur={(e) => {
+        setEditing(null)
+        onBlur?.(e)
+      }}
+      className={`numeric text-right ${className}`}
+      {...rest}
+    />
+  )
+}
+
+/**
+ * Money. Right-aligned tabular figures, always shown to `precision` decimals.
+ *
+ * Deliberately NOT `type="number"`. A number input renders its value through
+ * the browser's locale, so the same 0.00 shows as "0,00" in en-ZA and "0.00" in
+ * en-US — the app would then look different per machine, and a screenshot of it
+ * could never be trusted. A text input with inputMode="decimal" still raises
+ * the numeric keypad on mobile but leaves the rendering to us.
+ *
+ * Editing is kept literal: whatever is typed stays on screen while the field
+ * has focus, and it is only normalised to `precision` decimals on blur. Doing
+ * it per keystroke would fight the caret — typing "1.5" would become "1.50"
+ * mid-entry and push the cursor to the end.
+ */
+export function CurrencyInput({
+  className = '',
+  value,
+  defaultValue,
+  onChange,
+  onBlur,
+  onFocus,
+  precision = 2,
+  ...rest
+}: Omit<InputProps, 'type'> & { precision?: number }) {
+  const format = (raw: unknown) => {
+    const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').replace(',', '.'))
+    return Number.isFinite(n) ? n.toFixed(precision) : ''
+  }
+
+  // Controlled while blurred, free-form while focused.
+  const [editing, setEditing] = useState<string | null>(null)
+  const shown = editing ?? (value !== undefined ? format(value) : undefined)
+
+  return (
+    <Input
+      type="text"
+      inputMode="decimal"
+      value={shown}
+      defaultValue={value === undefined ? format(defaultValue) : undefined}
+      onFocus={(e) => {
+        setEditing(e.target.value)
+        selectOnFocus(e)
+        onFocus?.(e)
+      }}
+      onChange={(e) => {
+        // Accept a comma as the decimal separator — the ZA keyboard offers it —
+        // but hand callers a plain "1.5" they can Number() without surprises.
+        const next = e.target.value.replace(',', '.')
+        setEditing(next)
+        if (onChange) {
+          e.target.value = next
+          onChange(e)
+        }
+      }}
+      onBlur={(e) => {
+        setEditing(null)
+        onBlur?.(e)
+      }}
       className={`numeric text-right ${className}`}
       {...rest}
     />

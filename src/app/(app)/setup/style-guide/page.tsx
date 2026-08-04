@@ -22,11 +22,14 @@ import {
   PageHeader,
   Radio,
   SegmentedControl,
+  SelectableCard,
   Select,
   Switch,
   TableToolbar,
   Tabs,
   Textarea,
+  TILE_SWATCHES,
+  tileClass,
   ToolbarSearch,
   useToast,
 } from '@/components/ui'
@@ -48,7 +51,9 @@ const PRODUCTS: Product[] = [
   { id: '3', name: 'White Bread Loaf', sku: 'WBL01', qty: 38, price: 18.5 },
 ]
 
-const rand = (value: number) => `R ${value.toFixed(2).replace('.', ',')}`
+/* A full stop, not a comma. The app writes money one way everywhere — mixing
+   the two reads as a bug even where each is locally defensible. */
+const rand = (value: number) => `R ${value.toFixed(2)}`
 
 export default function StyleGuidePage() {
   return (
@@ -61,6 +66,8 @@ export default function StyleGuidePage() {
         <ButtonsSection />
         <FormSection />
         <BadgeSection />
+        <SelectableCardSection />
+        <TileSwatchSection />
         <ToastSection />
         <MenuSection />
         <TabsSection />
@@ -99,6 +106,12 @@ function ButtonsSection() {
     { variant: 'danger', note: 'Destructive confirm', label: 'Delete', icon: false },
     { variant: 'danger-ghost', note: 'Inline destructive (tables)', label: 'Delete', icon: false },
     { variant: 'ghost', note: 'Low-emphasis / toolbar', label: 'Cancel', icon: false },
+    {
+      variant: 'bare',
+      note: 'Chromeless icon — inside other chrome (editor toolbar, sidebar)',
+      label: 'Bold',
+      icon: false,
+    },
   ] as const
 
   return (
@@ -142,6 +155,9 @@ function FormSection() {
   const [posOnly, setPosOnly] = useState(true)
   const [selected, setSelected] = useState(true)
   const [pricing, setPricing] = useState('cost')
+  // A real value, not a placeholder: the point of the demo is that zero renders
+  // as 0.00 and stays that way on every machine.
+  const [price, setPrice] = useState(0)
 
   return (
     <Card>
@@ -159,8 +175,8 @@ function FormSection() {
         <Field label="Number input">
           <NumberInput placeholder="0" />
         </Field>
-        <Field label="Currency input">
-          <CurrencyInput placeholder="0.00" />
+        <Field label="Currency input" hint="Always 2 decimals, full stop — never the browser locale">
+          <CurrencyInput value={price} onChange={(e) => setPrice(Number(e.target.value) || 0)} />
         </Field>
         <Field label="Select">
           <Select icon={<Icons.Filter size={16} />} defaultValue="">
@@ -211,6 +227,95 @@ function FormSection() {
           />
         </div>
       </Row>
+    </Card>
+  )
+}
+
+function SelectableCardSection() {
+  const [choice, setChoice] = useState('normal')
+
+  return (
+    <Card>
+      <CardHeader
+        title="Selectable cards"
+        description="<SelectableCard /> — a large choice tile with a title and explanation, for choices worth describing"
+      />
+      <CardBody className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <SelectableCard
+          name="styleGuideChoice"
+          value="normal"
+          title="Normal product"
+          description="A standard stocked item. Each sale reduces the quantity on hand by the amount sold."
+          checked={choice === 'normal'}
+          onChange={setChoice}
+        />
+        <SelectableCard
+          name="styleGuideChoice"
+          value="serial"
+          title="Serial product"
+          description="An item identified by a unique serial number."
+          checked={choice === 'serial'}
+          onChange={setChoice}
+          badge={
+            <Badge tone="brand">
+              <Icons.Globe size={11} />
+              Online only
+            </Badge>
+          }
+          footer={
+            <Button variant="ghost" size="sm" disabled className="w-full">
+              Setup serial numbers
+            </Button>
+          }
+        />
+        <SelectableCard
+          name="styleGuideChoice"
+          value="service"
+          title="Service product"
+          description="A non-stocked item, such as a service or labour charge."
+          checked={choice === 'service'}
+          onChange={setChoice}
+        />
+      </CardBody>
+    </Card>
+  )
+}
+
+function TileSwatchSection() {
+  const [picked, setPicked] = useState(TILE_SWATCHES[0].token)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Tile swatches"
+        description="TILE_SWATCHES / tileClass() — the colour palette for records with no image (products, departments)"
+      />
+      <CardBody className="flex flex-wrap items-center gap-4">
+        <div
+          className={`flex size-16 items-center justify-center rounded-card text-2xl font-semibold text-white ${tileClass(picked)}`}
+        >
+          A
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {TILE_SWATCHES.map((swatch) => (
+            <button
+              key={swatch.token}
+              data-kit-ok
+              type="button"
+              aria-label={swatch.token}
+              aria-pressed={picked === swatch.token}
+              onClick={() => setPicked(swatch.token)}
+              className={`size-6 rounded-pill border-2 transition ${swatch.className} ${
+                picked === swatch.token ? 'border-ink' : 'border-transparent'
+              }`}
+            />
+          ))}
+        </div>
+        <p className="max-w-80 text-xs text-muted">
+          Records store the token name (<code>tile-3</code>), never a hex — so restyling the
+          palette in globals.css repaints every existing record.
+        </p>
+      </CardBody>
     </Card>
   )
 }

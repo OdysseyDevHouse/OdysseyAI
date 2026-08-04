@@ -17,6 +17,7 @@ export type ButtonVariant =
   | 'danger' /* destructive confirm */
   | 'danger-ghost' /* inline destructive, e.g. delete in a table row */
   | 'ghost' /* low emphasis, toolbars */
+  | 'bare' /* chromeless icon affordance — editor toolbars, sidebar/topbar */
 
 export type ButtonSize = 'md' | 'sm'
 
@@ -39,6 +40,12 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   ghost:
     'border-border bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink ' +
     'disabled:bg-surface disabled:text-faint',
+  /* No border and no resting fill — for icons that sit inside other chrome
+     (an editor toolbar, the sidebar rail) where a bordered button would read
+     as a second frame inside the first. */
+  bare:
+    'border-transparent bg-transparent text-muted hover:bg-surface-2 hover:text-ink ' +
+    'disabled:bg-transparent disabled:text-faint',
 }
 
 /* Icon-only buttons go square at the same height, so a toolbar of mixed
@@ -61,6 +68,49 @@ export function buttonClass({
     iconOnly ? BUTTON_SIZE[size].icon : BUTTON_SIZE[size].text
   }`
 }
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+
+/**
+ * The one skin every table wears — DataTable and any hand-built table that
+ * needs a layout DataTable can't express (multi-row headers, inputs in cells).
+ *
+ * Editing these changes every table in OdysseyAI at once, which is the whole
+ * point: a screen that hard-codes its own `px-3 py-2.5 text-xs` looks right
+ * today and drifts the first time this changes.
+ */
+export const TABLE_HEAD_ROW = 'border-y border-border bg-surface-2'
+
+/* Sentence case, regular weight: a heading labels its column, it does not
+   compete with the values under it. align-top so a heading that wraps to two
+   lines sits above its column rather than floating in the middle of it. */
+export const TABLE_TH =
+  'px-4 pt-3 pb-2.5 text-left align-top text-[13px] font-normal leading-tight text-muted'
+
+export const TABLE_TD = 'px-4 py-3 text-ink-2'
+
+/**
+ * A cell holding a form control rather than text.
+ *
+ * Tight horizontal padding on purpose: the control fills the cell, so the
+ * padding IS the gap between neighbouring boxes. Text cells want room to
+ * breathe (TABLE_TD above); a row of inputs reads better when the boxes are
+ * wide and the gaps are narrow.
+ */
+export const TABLE_TD_INPUT = 'px-1.5 py-2 text-ink-2'
+
+/** Numeric columns: tabular figures, right-aligned, never wrapped. */
+export const TABLE_NUMERIC = 'numeric text-right whitespace-nowrap'
+
+/** The <table> element itself. */
+export const TABLE = 'w-full border-collapse text-sm'
+
+/**
+ * A body row. Hand-built tables must use this rather than `divide-y` on the
+ * body: divide-y draws no line under the last row and gives no hover, so a
+ * hand-rolled table sits visibly differently from every DataTable beside it.
+ */
+export const TABLE_ROW = 'border-b border-border transition last:border-b-0 hover:bg-surface-2'
 
 /* ── Form controls ───────────────────────────────────────────────────────── */
 

@@ -83,16 +83,19 @@ export function MenuItem({
   onClick,
   tone = 'default',
   disabled = false,
+  type = 'button',
 }: {
   children: ReactNode
   onClick?: () => void
   /** 'danger' for destructive entries — always put them last. */
   tone?: 'default' | 'danger'
   disabled?: boolean
+  /** 'submit' when the entry posts a surrounding form, e.g. sign out. */
+  type?: 'button' | 'submit'
 }) {
   return (
     <button
-      type="button"
+      type={type}
       role="menuitem"
       disabled={disabled}
       onClick={onClick}

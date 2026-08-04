@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight, CircleHelp, Settings, Bell, LogOut } from 'lucide-react'
+import { ChevronRight, HelpCircle as CircleHelp, Settings, Bell, LogOut } from '@/components/ui/icons'
+import { Button, MenuItem } from '@/components/ui'
 import { breadcrumbFor } from '@/lib/nav'
 import StoreSwitcher, { type SwitcherSite } from './StoreSwitcher'
 import ThemeToggle from './ThemeToggle'
@@ -26,15 +27,9 @@ function IconButton({
   onClick?: () => void
 }) {
   return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={onClick}
-      className="rounded-lg p-2 text-muted transition hover:bg-surface-2 hover:text-ink"
-    >
+    <Button variant="bare" iconOnly title={label} aria-label={label} onClick={onClick}>
       <Icon size={18} />
-    </button>
+    </Button>
   )
 }
 
@@ -113,13 +108,17 @@ export default function TopBar({
         <IconButton label="Notifications" icon={Bell} />
 
         <div ref={menuRef} className="relative">
+          {/* Deliberately not <Button>: an avatar is a circular identity badge
+              showing initials, not a labelled action. Button's padding and
+              min-height would stop it being a circle. */}
           <button
+            data-kit-ok
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title={userEmail}
-            className="flex size-9 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white transition hover:bg-brand-ink"
+            className="flex size-9 items-center justify-center rounded-pill bg-brand text-sm font-semibold text-white transition hover:bg-brand-ink"
           >
             {initials(userName, userEmail)}
           </button>
@@ -138,15 +137,11 @@ export default function TopBar({
                 <ThemeToggle />
               </div>
 
-              <form action="/api/auth/signout" method="post">
-                <button
-                  type="submit"
-                  role="menuitem"
-                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-muted transition hover:bg-surface-2 hover:text-danger"
-                >
+              <form action="/api/auth/signout" method="post" className="p-1">
+                <MenuItem type="submit" tone="danger">
                   <LogOut size={15} />
                   Sign out
-                </button>
+                </MenuItem>
               </form>
             </div>
           )}

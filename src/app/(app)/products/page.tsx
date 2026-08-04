@@ -1,11 +1,11 @@
 import Link from 'next/link'
-import { Plus } from 'lucide-react'
+import { Plus } from '@/components/ui/icons'
 import { requireSiteId } from '@/lib/auth'
 import { listProducts } from '@/lib/site/products'
 import { getCostBasis } from '@/lib/site/lookups'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
 import { formatMoney, formatQty } from '@/lib/decimals'
-import { PageHeader, PrimaryLink, Card, EmptyState, SearchBar, Badge } from '@/components/ui'
+import { PageHeader, PrimaryLink, Card, EmptyState, SearchBar, Badge, TABLE_HEAD_ROW, TABLE_TH } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -102,16 +102,16 @@ export default async function ProductsPage({
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border text-left text-xs text-muted">
-                    <th className="px-4 py-2.5 font-medium">Code</th>
-                    <th className="px-4 py-2.5 font-medium">Description</th>
-                    <th className="px-4 py-2.5 font-medium">Department</th>
-                    <th className="px-4 py-2.5 text-right font-medium">
+                  <tr className={TABLE_HEAD_ROW}>
+                    <th className={TABLE_TH}>Code</th>
+                    <th className={TABLE_TH}>Description</th>
+                    <th className={TABLE_TH}>Department</th>
+                    <th className={`${TABLE_TH} text-right`}>
                       {costBasis === 'last' ? 'Last cost' : 'Avg cost'}
                     </th>
-                    <th className="px-4 py-2.5 text-right font-medium">Price incl.</th>
-                    <th className="px-4 py-2.5 text-right font-medium">GP %</th>
-                    <th className="px-4 py-2.5 text-right font-medium">On hand</th>
+                    <th className={`${TABLE_TH} text-right`}>Price incl.</th>
+                    <th className={`${TABLE_TH} text-right`}>GP %</th>
+                    <th className={`${TABLE_TH} text-right`}>On hand</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">

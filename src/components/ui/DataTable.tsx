@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { EmptyState } from './EmptyState'
 import { SortAsc, SortDesc, SortNeutral } from './icons'
+import { TABLE, TABLE_HEAD_ROW, TABLE_NUMERIC, TABLE_ROW, TABLE_TD, TABLE_TH } from './styles'
 
 export type SortDirection = 'asc' | 'desc'
 export type SortState = { key: string; direction: SortDirection }
@@ -89,9 +90,9 @@ export function DataTable<T>({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
+      <table className={TABLE}>
         <thead>
-          <tr className="border-y border-border bg-surface-2">
+          <tr className={TABLE_HEAD_ROW}>
             {columns.map((column) => {
               const sorted = activeSort?.key === column.key
               return (
@@ -101,15 +102,15 @@ export function DataTable<T>({
                   aria-sort={
                     sorted ? (activeSort.direction === 'asc' ? 'ascending' : 'descending') : undefined
                   }
-                  className={`px-4 py-2.5 text-xs font-semibold tracking-wide text-muted uppercase ${
-                    column.numeric ? 'text-right' : 'text-left'
-                  } ${column.width ?? ''}`}
+                  className={`${TABLE_TH} ${column.numeric ? 'text-right' : ''} ${
+                    column.width ?? ''
+                  }`}
                 >
                   {column.sortable ? (
                     <button
                       type="button"
                       onClick={() => toggleSort(column.key)}
-                      className={`inline-flex items-center gap-1 uppercase transition hover:text-ink ${
+                      className={`inline-flex items-center gap-1 transition hover:text-ink ${
                         column.numeric ? 'flex-row-reverse' : ''
                       } ${sorted ? 'text-ink' : ''}`}
                     >
@@ -130,16 +131,12 @@ export function DataTable<T>({
             <tr
               key={getRowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
-              className={`border-b border-border transition last:border-b-0 hover:bg-surface-2 ${
-                onRowClick ? 'cursor-pointer' : ''
-              }`}
+              className={`${TABLE_ROW} ${onRowClick ? 'cursor-pointer' : ''}`}
             >
               {columns.map((column) => (
                 <td
                   key={column.key}
-                  className={`px-4 py-3 text-ink-2 ${
-                    column.numeric ? 'numeric text-right whitespace-nowrap' : ''
-                  }`}
+                  className={`${TABLE_TD} ${column.numeric ? TABLE_NUMERIC : ''}`}
                 >
                   {column.cell(row)}
                 </td>

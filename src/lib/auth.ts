@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import type { RowDataPacket } from 'mysql2/promise'
 import { queryOne, execute } from './db'
 import { verifyPassword, hashPassword } from './password'
-import { defaultSiteForUser, getSiteForUser } from './sites'
+import { defaultSiteForUser, getSiteForUser, type Site } from './sites'
 import {
   createSessionToken,
   setSessionCookie,
@@ -188,14 +188,18 @@ export async function requireSession(): Promise<SessionPayload> {
  * call rather than trusted from the token. Access revoked in the control panel
  * therefore takes effect immediately instead of at the next sign-in.
  */
-export async function requireSiteId(): Promise<number> {
+export async function requireSite(): Promise<Site> {
   const session = await requireSession()
   if (session.siteId === null) redirect('/select-site')
 
   const site = await getSiteForUser(session.userId, session.siteId)
   if (!site) redirect('/select-site')
 
-  return site.id
+  return site
+}
+
+export async function requireSiteId(): Promise<number> {
+  return (await requireSite()).id
 }
 
 export { getSession }

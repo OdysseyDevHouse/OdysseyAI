@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
-import { PanelLeft, Search, ChevronDown, CircleHelp, ArrowRight } from 'lucide-react'
+import { PanelLeft, Search, ChevronDown, HelpCircle as CircleHelp, ArrowRight } from '@/components/ui/icons'
+import { Button, Input } from '@/components/ui'
 import { NAV, filterNav, type NavSection } from '@/lib/nav'
 
 const STORAGE_KEY = 'odyssey.sidebar.collapsed'
@@ -85,30 +86,28 @@ export default function Sidebar() {
             <span className="truncate text-sm font-bold tracking-wide text-ink">ODYSSEY</span>
           </Link>
         )}
-        <button
-          type="button"
+        <Button
+          variant="bare"
+          size="sm"
+          iconOnly
           onClick={toggleCollapsed}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-ink"
         >
           <PanelLeft size={18} />
-        </button>
+        </Button>
       </div>
 
       {!collapsed && (
         <div className="px-3 pb-3">
-          <div className="relative">
-            <Search size={15} className="absolute left-2.5 top-2.5 text-muted" />
-            <input
-              type="search"
-              value={term}
-              onChange={(e) => setTerm(e.target.value)}
-              placeholder="Search pages, reports, settings"
-              aria-label="Search navigation"
-              className="w-full rounded-lg border border-border bg-canvas py-2 pl-8 pr-3 text-sm text-ink"
-            />
-          </div>
+          <Input
+            type="search"
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            placeholder="Search pages, reports, settings"
+            aria-label="Search navigation"
+            icon={<Search size={15} />}
+          />
         </div>
       )}
 
@@ -137,13 +136,10 @@ export default function Sidebar() {
               <span className="text-sm font-semibold text-ink">Need help?</span>
             </div>
             <p className="mt-1 text-xs text-muted">Visit our help centre or contact support.</p>
-            <button
-              type="button"
-              className="mt-3 flex w-full items-center justify-between gap-2 rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white transition hover:bg-brand-ink"
-            >
+            <Button variant="primary" size="sm" className="mt-3 w-full justify-between">
               Go to Help Centre
               <ArrowRight size={14} />
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -191,7 +187,11 @@ function SectionRow({
 
   return (
     <div>
+      {/* Deliberately not <Button>: this is a nav row that must render
+          identically to the sibling <Link> above, which shares rowClass. A
+          Button variant would give it button chrome the link cannot match. */}
       <button
+        data-kit-ok
         type="button"
         onClick={onToggle}
         title={collapsed ? section.label : undefined}

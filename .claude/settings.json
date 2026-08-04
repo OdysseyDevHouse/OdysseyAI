@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/check-ui-kit.mjs",
+            "statusMessage": "Checking design system…",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

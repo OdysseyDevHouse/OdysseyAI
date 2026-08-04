@@ -23,6 +23,25 @@ The live reference is **`/setup/style-guide`**
 (`src/app/(app)/setup/style-guide/page.tsx`). It imports the real components, so
 it can never drift from reality. **Anything you add to the kit, add there too.**
 
+## This is enforced automatically
+
+`scripts/check-ui-kit.mjs` runs as a PostToolUse hook on every Write/Edit
+(wired in `.claude/settings.json`). Touch a `.tsx` outside `components/ui/` and
+it reports raw colours, direct `lucide-react` imports, hand-rolled
+buttons/inputs, and ad-hoc `<th>` styling — then blocks so they get fixed while
+the context is still live.
+
+Run it by hand any time: `node scripts/check-ui-kit.mjs <file>`.
+
+**The escape hatch.** A few elements are genuinely not kit components — a nav
+row that must match a sibling `<Link>`, a circular avatar, a multi-line
+selection row. Mark those `data-kit-ok` and put a comment above saying why. Use
+it sparingly: reach for it only after deciding the kit should *not* gain a
+variant, and never to silence a check you'd rather not fix.
+
+The hook is a backstop, not the plan. Read this file and open
+`/setup/style-guide` **before** writing UI, so the check has nothing to find.
+
 ## Hard rules
 
 1. Import UI from `@/components/ui`. Never hand-roll a button, input, table,
@@ -84,6 +103,13 @@ in `styles.ts` and every form in the app follows.
 **Layout** — `<PageHeader title subtitle action>` then `<PageBody>`.
 `<Card>` + `<CardHeader title description action>` + `<CardBody>` +
 `<CardFooter>`.
+
+**Tables** — `<DataTable>` for anything that renders values. When a table's
+cells hold live inputs (DataTable can't express that), build the `<table>` by
+hand but wear the shared skin: `TABLE_HEAD_ROW`, `TABLE_TH`, `TABLE_TD`,
+`TABLE_NUMERIC` from `@/components/ui`. DataTable itself uses those exact
+constants, so the two can never drift. Never invent `<th>` padding or type
+scale at the call site — that is what broke the pricing tables.
 
 **Lists** — `<TableToolbar actions={...}>` holds `<SegmentedControl>` and
 `<ToolbarSearch>` above a `<DataTable>`. DataTable takes `columns`, `rows`,

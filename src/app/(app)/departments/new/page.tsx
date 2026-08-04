@@ -30,6 +30,7 @@ export default async function NewDepartmentPage({
   return (
     <>
       <PageHeader
+        backHref="/departments"
         title="New department"
         subtitle={under ? `Under ${under}` : 'Top level'}
       />

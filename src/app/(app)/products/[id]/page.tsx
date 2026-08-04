@@ -1,10 +1,13 @@
 import { notFound } from 'next/navigation'
-import { CheckCircle2, Trash2, Archive, ArchiveRestore } from 'lucide-react'
-import { requireSiteId } from '@/lib/auth'
+import { StatusSuccess as CheckCircle2, Trash as Trash2, Archive, ArchiveRestore } from '@/components/ui/icons'
+import { requireSite } from '@/lib/auth'
 import { getProduct } from '@/lib/site/products'
 import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
-import { PageHeader } from '@/components/ui'
+import { linkedStores } from '@/lib/storeGroups'
+import { shareSettingsFor } from '@/lib/site/shareSettings'
+import { readLinkedProducts } from '@/lib/site/productFanout'
+import { Button, PageHeader } from '@/components/ui'
 import ProductForm from '../ProductForm'
 import { archiveProductAction, deleteProductAction } from '../actions'
 
@@ -22,51 +25,64 @@ export default async function EditProductPage({
   const productId = Number(id)
   if (!Number.isFinite(productId) || productId <= 0) notFound()
 
-  const siteId = await requireSiteId()
+  const site = await requireSite()
+  const siteId = site.id
 
-  const [product, departments, brands, vatRates, structures, costBasis] = await Promise.all([
-    getProduct(siteId, productId),
-    listDepartments(siteId),
-    listBrands(siteId),
-    listVatRates(siteId),
-    listPriceStructures(siteId),
-    getCostBasis(siteId),
-  ])
+  const [product, departments, brands, vatRates, structures, costBasis, stores] = await Promise.all(
+    [
+      getProduct(siteId, productId),
+      listDepartments(siteId),
+      listBrands(siteId),
+      listVatRates(siteId),
+      listPriceStructures(siteId),
+      getCostBasis(siteId),
+      linkedStores(siteId),
+    ],
+  )
 
   if (!product) notFound()
 
+  // Only meaningful once this store is linked to others; a standalone store
+  // skips both lookups entirely and the form renders as it always has.
+  const thisStore = stores.find((s) => s.siteId === siteId)
+  const sharing = stores.length
+    ? await shareSettingsFor(
+        siteId,
+        product.code,
+        thisStore?.sharesCost ?? true,
+        thisStore?.sharesSelling ?? true,
+      )
+    : { sharesCost: true, sharesSelling: true }
+
+  const linked = stores.length ? await readLinkedProducts(siteId, product.code) : []
+
+  // The pricing tables are laid out by THIS store's price structures, but each
+  // linked store returns its own tiers by name. Map them across so a tier that
+  // exists in both lines up, and one that doesn't simply shows empty.
+  const linkedLines = linked
+    .filter((view) => view.store.siteId !== siteId)
+    .map((view) => {
+      const prices: Record<number, number> = {}
+      for (const structure of structures) {
+        const match = view.prices.find((p) => p.structureName === structure.name)
+        prices[structure.id] = match?.sellIncl ?? 0
+      }
+      return {
+        siteId: view.store.siteId,
+        name: view.store.displayName,
+        siteCode: view.store.siteCode,
+        carried: view.found,
+        lastCost: view.lastCost,
+        // Average cost is that store's own purchase history, which this view
+        // does not read; margin there falls back to its last cost.
+        averageCost: view.lastCost,
+        prices,
+      }
+    })
+
   return (
     <>
-      <PageHeader
-        title="Edit product"
-        subtitle={product.description}
-        action={
-          <div className="flex items-center gap-2">
-            <form action={archiveProductAction}>
-              <input type="hidden" name="id" value={product.id} />
-              <input type="hidden" name="archived" value={product.isArchived ? '0' : '1'} />
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 rounded-md border border-border px-3.5 py-2 text-sm text-muted transition hover:bg-surface-2 hover:text-ink"
-              >
-                {product.isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-                {product.isArchived ? 'Restore' : 'Archive'}
-              </button>
-            </form>
-
-            <form action={deleteProductAction}>
-              <input type="hidden" name="id" value={product.id} />
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 rounded-md border border-border px-3.5 py-2 text-sm text-danger transition hover:bg-danger/10"
-              >
-                <Trash2 size={15} />
-                Delete
-              </button>
-            </form>
-          </div>
-        }
-      />
+      <PageHeader title="Edit product" subtitle={product.description} backHref="/products" />
 
       {saved === '1' && (
         <div className="px-6 pt-4">
@@ -85,6 +101,34 @@ export default async function EditProductPage({
           vatRates={vatRates}
           structures={structures}
           costBasis={costBasis}
+          storeName={site.displayName}
+          currentSiteId={siteId}
+          linkedStores={linked}
+          linkedLines={linkedLines}
+          sharesCost={sharing.sharesCost}
+          sharesSelling={sharing.sharesSelling}
+          // Archive and delete are their own server actions, so they cannot be
+          // nested inside the edit form — they are rendered beside Save instead.
+          rowActions={
+            <>
+              <form action={archiveProductAction}>
+                <input type="hidden" name="id" value={product.id} />
+                <input type="hidden" name="archived" value={product.isArchived ? '0' : '1'} />
+                <Button type="submit" variant="ghost">
+                  {product.isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                  {product.isArchived ? 'Restore' : 'Archive'}
+                </Button>
+              </form>
+
+              <form action={deleteProductAction}>
+                <input type="hidden" name="id" value={product.id} />
+                <Button type="submit" variant="danger-ghost">
+                  <Trash2 size={15} />
+                  Delete
+                </Button>
+              </form>
+            </>
+          }
         />
       </div>
     </>

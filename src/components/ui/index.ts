@@ -13,6 +13,15 @@
 
 export { Button, ButtonLink, type ButtonSize, type ButtonVariant } from './Button'
 export { buttonClass, CONTROL, CONTROL_H, CONTROL_INVALID } from './styles'
+export {
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_NUMERIC,
+  TABLE_ROW,
+  TABLE_TD,
+  TABLE_TD_INPUT,
+  TABLE_TH,
+} from './styles'
 
 export {
   Field,
@@ -27,6 +36,9 @@ export {
 } from './Field'
 
 export { Card, CardHeader, CardBody, CardFooter } from './Card'
+export { SelectableCard } from './SelectableCard'
+export { SectionTitle } from './SectionTitle'
+export { TILE_SWATCHES, tileClass, type TileSwatch } from './tiles'
 export { Badge, type BadgeTone } from './Badge'
 export { EmptyState } from './EmptyState'
 export { PageHeader, PageBody, PrimaryLink } from './PageHeader'

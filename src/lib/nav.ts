@@ -14,6 +14,7 @@ import {
   Package,
   PieChart,
   Settings,
+  Store,
   Palette,
   Wrench,
   ShoppingBag,
@@ -71,7 +72,10 @@ export const NAV: NavSection[] = [
   {
     label: 'Setup',
     icon: Settings,
-    items: [{ label: 'Style Guide', href: '/setup/style-guide', icon: Palette, built: true }],
+    items: [
+      { label: 'Linked stores', href: '/setup/linked-stores', icon: Store, built: true },
+      { label: 'Style Guide', href: '/setup/style-guide', icon: Palette, built: true },
+    ],
   },
   { label: 'Job Cards', icon: Wrench, items: [] },
   { label: 'Online Store', icon: ShoppingBag, items: [] },

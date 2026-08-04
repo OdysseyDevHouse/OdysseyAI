@@ -2,21 +2,23 @@
 
 import { useActionState } from 'react'
 import { useFormStatus } from 'react-dom'
-import { LogIn, AlertCircle } from 'lucide-react'
+import { LogIn, StatusError as AlertCircle } from '@/components/ui/icons'
+import { Button } from '@/components/ui'
 import LoginFields from '@/components/LoginFields'
 import { loginAction, type LoginState } from './actions'
 
 function SubmitButton() {
   const { pending } = useFormStatus()
   return (
-    <button
+    <Button
       type="submit"
+      variant="primary"
+      className="mt-2 w-full"
       disabled={pending}
-      className="mt-2 flex w-full items-center justify-center gap-2 rounded-md bg-brand px-4 py-2.5 font-medium text-white transition hover:bg-brand-ink disabled:opacity-60"
     >
       <LogIn size={16} />
       {pending ? 'Signing in…' : 'Sign in'}
-    </button>
+    </Button>
   )
 }
 

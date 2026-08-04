@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { AlertCircle, Trash2, Plus } from 'lucide-react'
+import { StatusError as AlertCircle, Trash as Trash2, Plus } from '@/components/ui/icons'
 import { requireSiteId } from '@/lib/auth'
 import {
   listDepartments,
@@ -9,7 +9,7 @@ import {
   departmentPath,
   descendantIds,
 } from '@/lib/site/departments'
-import { PageHeader, Card } from '@/components/ui'
+import { Button, PageHeader, Card } from '@/components/ui'
 import DepartmentForm from '../DepartmentForm'
 import { deleteDepartmentAction } from '../actions'
 
@@ -52,6 +52,7 @@ export default async function EditDepartmentPage({
       <PageHeader
         title={department.name}
         subtitle={departmentPath(departments, department.id)}
+        backHref="/departments"
         action={
           <div className="flex items-center gap-2">
             <Link
@@ -64,19 +65,19 @@ export default async function EditDepartmentPage({
 
             <form action={deleteDepartmentAction}>
               <input type="hidden" name="id" value={department.id} />
-              <button
+              <Button
                 type="submit"
+                variant="danger-ghost"
                 disabled={blocked}
                 title={
                   blocked
                     ? 'Still has sub-departments or products assigned'
                     : 'Delete this department'
                 }
-                className="flex items-center gap-1.5 rounded-md border border-border px-3.5 py-2 text-sm text-danger transition hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 <Trash2 size={15} />
                 Delete
-              </button>
+              </Button>
             </form>
           </div>
         }

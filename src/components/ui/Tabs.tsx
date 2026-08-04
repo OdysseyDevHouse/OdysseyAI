@@ -88,11 +88,15 @@ function TabBar({
   className: string
   ariaLabel?: string
 }) {
+  /* overflow-y-hidden alongside overflow-x-auto on purpose: the tabs use -mb-px
+     to sit their underline on this border, which makes the content 1px taller
+     than the bar. Without pinning the vertical axis, `overflow-x-auto` implies
+     `overflow-y: auto` and the browser shows a stray vertical scrollbar. */
   return (
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={`flex items-center gap-6 overflow-x-auto border-b border-border ${className}`}
+      className={`flex items-center gap-6 overflow-x-auto overflow-y-hidden border-b border-border ${className}`}
     >
       {children}
     </div>

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { Building2, ChevronRight, AlertCircle } from 'lucide-react'
+import { Building2, ChevronRight, StatusError as AlertCircle } from '@/components/ui/icons'
 import { requireSession } from '@/lib/auth'
 import { listSitesForUser } from '@/lib/sites'
 import LoginScreen from '@/components/LoginScreen'
@@ -45,9 +45,12 @@ export default async function SelectSitePage() {
               <li key={site.id}>
                 <form action={selectSiteAction}>
                   <input type="hidden" name="siteId" value={site.id} />
+                  {/* Not <Button>: a two-line site row with a trailing chevron,
+                      closer to a list item than a labelled action. */}
                   <button
+                    data-kit-ok
                     type="submit"
-                    className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5 text-left transition hover:border-brand hover:bg-surface-2"
+                    className="flex w-full items-center justify-between gap-3 rounded-control border border-border px-3 py-2.5 text-left transition hover:border-brand hover:bg-surface-2"
                   >
                     <span className="min-w-0">
                       <span className="flex items-center gap-1.5">
@@ -69,7 +72,9 @@ export default async function SelectSitePage() {
         )}
 
         <form action="/api/auth/signout" method="post" className="text-center">
-          <button type="submit" className="text-xs text-muted hover:text-ink">
+          {/* A quiet text affordance, not a button — it must not compete with
+              the site rows above, which are the actual choice on this screen. */}
+          <button data-kit-ok type="submit" className="text-xs text-muted hover:text-ink">
             Sign out
           </button>
         </form>

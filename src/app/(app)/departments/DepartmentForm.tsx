@@ -3,26 +3,21 @@
 import { useActionState, useState } from 'react'
 import { useFormStatus } from 'react-dom'
 import Link from 'next/link'
-import { AlertCircle, Save } from 'lucide-react'
+import { StatusError as AlertCircle, Save } from '@/components/ui/icons'
+import { Button, TILE_SWATCHES } from '@/components/ui'
 import { saveDepartmentAction, type DepartmentFormState } from './actions'
 import type { Department } from '@/lib/site/departments'
 
 const field = 'w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink'
 const labelText = 'text-xs font-medium text-muted'
 
-const PALETTE = ['#2f6fed', '#0f7b4f', '#b5730a', '#c02626', '#6b21a8', '#0e7490', '#475569']
-
 function SubmitButton() {
   const { pending } = useFormStatus()
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="flex items-center gap-1.5 rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-ink disabled:opacity-60"
-    >
+    <Button type="submit" variant="primary" disabled={pending}>
       <Save size={15} />
       {pending ? 'Saving…' : 'Save department'}
-    </button>
+    </Button>
   )
 }
 
@@ -113,25 +108,26 @@ export default function DepartmentForm({
       <div className="flex flex-col gap-1.5">
         <span className={labelText}>Colour</span>
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setColor('')}
-            className={`rounded border px-2 py-1 text-xs transition ${
-              color === '' ? 'border-ink text-ink' : 'border-border text-muted hover:text-ink'
-            }`}
+            aria-pressed={color === ''}
+            className={color === '' ? 'border-ink text-ink' : ''}
           >
             None
-          </button>
-          {PALETTE.map((c) => (
+          </Button>
+          {TILE_SWATCHES.map((swatch) => (
             <button
-              key={c}
+              key={swatch.token}
+              data-kit-ok
               type="button"
-              aria-label={`Colour ${c}`}
-              onClick={() => setColor(c)}
-              className={`size-6 rounded-full border-2 transition ${
-                color === c ? 'border-ink' : 'border-transparent'
+              aria-label={`Colour ${swatch.token}`}
+              aria-pressed={color === swatch.token}
+              onClick={() => setColor(swatch.token)}
+              className={`size-6 rounded-pill border-2 transition ${swatch.className} ${
+                color === swatch.token ? 'border-ink' : 'border-transparent'
               }`}
-              style={{ background: c }}
             />
           ))}
         </div>

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { CheckCircle2, XCircle, Database } from 'lucide-react'
+import { StatusSuccess as CheckCircle2, StatusFailure as XCircle, Database } from '@/components/ui/icons'
 import { requireSession } from '@/lib/auth'
 import { getSiteForUser } from '@/lib/sites'
 import { listSiteDatabases, probeSiteDatabase } from '@/lib/siteDb'

@@ -1,8 +1,8 @@
 import Link from 'next/link'
-import { Plus, CheckCircle2, CornerDownRight } from 'lucide-react'
+import { Plus, StatusSuccess as CheckCircle2, CornerDownRight } from '@/components/ui/icons'
 import { requireSiteId } from '@/lib/auth'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
-import { PageHeader, PrimaryLink, Card, EmptyState, Badge } from '@/components/ui'
+import { PageHeader, PrimaryLink, Card, EmptyState, Badge, TABLE_HEAD_ROW, TABLE_TH } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,13 +52,13 @@ export default async function DepartmentsPage({
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border text-left text-xs text-muted">
-                    <th className="px-4 py-2.5 font-medium">Department</th>
-                    <th className="px-4 py-2.5 font-medium">Code</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Products</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Sub-departments</th>
-                    <th className="px-4 py-2.5 font-medium">Status</th>
-                    <th className="px-4 py-2.5 text-right font-medium"></th>
+                  <tr className={TABLE_HEAD_ROW}>
+                    <th className={TABLE_TH}>Department</th>
+                    <th className={TABLE_TH}>Code</th>
+                    <th className={`${TABLE_TH} text-right`}>Products</th>
+                    <th className={`${TABLE_TH} text-right`}>Sub-departments</th>
+                    <th className={TABLE_TH}>Status</th>
+                    <th className={`${TABLE_TH} text-right`}></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
