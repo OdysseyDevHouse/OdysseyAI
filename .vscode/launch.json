@@ -1,0 +1,90 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Breakpoints in server components, server actions, route handlers and
+      // anything under src/lib. This is the one you want most of the time.
+      "name": "Web: server-side",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Breakpoints in 'use client' components. Needs the dev server already
+      // running (start "Web: server-side" first, or use the full-stack compound).
+      "name": "Web: client-side",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:4100",
+      "webRoot": "${workspaceFolder}",
+      "sourceMapPathOverrides": {
+        "webpack://_N_E/*": "${webRoot}/*"
+      }
+    },
+    {
+      // Server + browser in one go: starts Next, then attaches Chrome once the
+      // "Local: http://..." line appears.
+      "name": "Web: full stack",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome",
+        "webRoot": "${workspaceFolder}"
+      }
+    },
+    {
+      // Debugs electron/main.js. The preLaunchTask brings the Next dev server
+      // up first; ELECTRON_DEV_URL then tells the shell to load it instead of
+      // booting its own production server.
+      "name": "Desktop: Electron main",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron.cmd",
+      "runtimeArgs": ["--remote-debugging-port=9223", "."],
+      "env": {
+        "ELECTRON_DEV_URL": "http://localhost:4100",
+        "APP_MODE": "desktop",
+        "NEXT_PUBLIC_APP_MODE": "desktop"
+      },
+      "preLaunchTask": "dev server",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      // Attaches to the Electron window itself. Run "Desktop: Electron main"
+      // first — it opens the port this connects to.
+      "name": "Desktop: Electron renderer",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9223,
+      "webRoot": "${workspaceFolder}",
+      "timeout": 30000
+    },
+    {
+      // Step through scripts/migrate.mjs or scripts/seed.mjs.
+      "name": "Script: current file",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": ["--env-file=.env"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Desktop: main + renderer",
+      "configurations": ["Desktop: Electron main", "Desktop: Electron renderer"],
+      "stopAll": true
+    }
+  ]
+}

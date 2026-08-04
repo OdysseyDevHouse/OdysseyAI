@@ -1,0 +1,38 @@
+appId: za.co.pointofsale.odysseyai
+productName: OdysseyAI Back Office
+copyright: Copyright © Point of Sale (Pty) Ltd
+
+directories:
+  output: release
+  buildResources: build
+
+# The Next server runs in-process, so the build output and runtime deps must be
+# unpacked next to the asar rather than compiled into it.
+files:
+  - electron/**/*
+  - package.json
+
+extraResources:
+  - from: .next
+    to: app/.next
+  - from: public
+    to: app/public
+  - from: node_modules
+    to: app/node_modules
+  - from: package.json
+    to: app/package.json
+  - from: next.config.mjs
+    to: app/next.config.mjs
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

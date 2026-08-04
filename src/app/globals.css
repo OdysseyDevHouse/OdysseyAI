@@ -1,0 +1,212 @@
+@import 'tailwindcss';
+
+/* ============================================================================
+   OdysseyAI design tokens — THE single source of truth for the whole app.
+
+   Every colour, radius, shadow and control height used anywhere in OdysseyAI
+   resolves back to a variable defined here. Change a value in this block and
+   every screen, button, table and form follows on the next paint.
+
+   Tailwind v4 reads @theme directly, so these become utilities for free:
+     --color-brand      -> bg-brand / text-brand / border-brand
+     --radius-card      -> rounded-card
+     --shadow-pop       -> shadow-pop
+     --spacing-control  -> h-control / w-control
+
+   RULE: never write a raw hex value or a stock Tailwind palette colour
+   (bg-blue-600, text-gray-500, ...) in a component. Add or reuse a token here.
+   ========================================================================= */
+@theme {
+  /* --- Surfaces ---------------------------------------------------------- */
+  --color-canvas: #f6f7f9; /* page background behind the cards */
+  --color-surface: #ffffff; /* cards, menus, inputs */
+  --color-surface-2: #f2f4f7; /* table headers, hover rows, subtle fills */
+  --color-border: #e4e7ec; /* default hairline */
+  --color-border-strong: #d0d5dd; /* input borders, dividers that must read */
+
+  /* --- Text -------------------------------------------------------------- */
+  --color-ink: #16191d; /* primary text */
+  --color-ink-2: #344054; /* secondary text, table body */
+  --color-muted: #667085; /* labels, hints, descriptions */
+  --color-faint: #98a2b3; /* placeholders, disabled text */
+
+  /* --- Brand ------------------------------------------------------------- */
+  /* Each accent has three steps: base (fill), -ink (hover/active + text on a
+     tint), -soft (the pale background used by badges and active pills). */
+  --color-brand: #2f6fed;
+  --color-brand-ink: #1b4fc0;
+  --color-brand-soft: #eaf1fe;
+
+  /* --- Status ------------------------------------------------------------ */
+  --color-success: #17a34a;
+  --color-success-ink: #0f7b37;
+  --color-success-soft: #e7f8ee;
+
+  --color-warning: #d97706;
+  --color-warning-ink: #b45309;
+  --color-warning-soft: #fef5e7;
+
+  --color-danger: #dc2626;
+  --color-danger-ink: #b42318;
+  --color-danger-soft: #fdeceb;
+
+  /* Legacy alias — older screens say tone="positive". Points at the same
+     green so there is still only one place to change it. */
+  --color-positive: #17a34a;
+
+  /* --- Radii ------------------------------------------------------------- */
+  --radius-control: 8px; /* buttons, inputs, selects */
+  --radius-card: 12px; /* cards, panels, modals */
+  --radius-pill: 9999px; /* badges, segmented control pills */
+
+  /* --- Elevation --------------------------------------------------------- */
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04);
+  --shadow-pop: 0 12px 24px -8px rgb(16 24 40 / 0.16), 0 2px 6px rgb(16 24 40 / 0.06);
+
+  /* --- Control sizing ---------------------------------------------------- */
+  /* One height for every interactive control so toolbars line up exactly. */
+  --spacing-control: 2.25rem; /* 36px — buttons, inputs, search */
+  --spacing-control-sm: 2rem; /* 32px — inline table actions */
+}
+
+/* ============================================================================
+   Dark mode.
+
+   Two ways in, and they must not fight:
+     1. No choice made  -> follow the operating system (the media query below).
+     2. Choice made     -> `data-theme` on <html>, written by the avatar menu
+                           and replayed before first paint by the inline script
+                           in app/layout.tsx.
+
+   The media query is scoped to :root:not([data-theme]) so that an explicit
+   "light" still wins on a machine set to dark — without that, choosing light
+   would appear to do nothing.
+
+   The two dark blocks are deliberate duplicates. Keep them in sync: a value
+   changed in one and missed in the other drifts the two routes apart, and the
+   symptom (dark looks right until you toggle it) is horrible to track down.
+
+   Tailwind v4 only honours @theme at the top level, so a nested @theme here
+   would be silently dropped — every utility already reads var(--color-*), so
+   writing them on :root is what actually repaints the app.
+   ========================================================================= */
+
+/* Native widgets — scrollbars, form controls, the caret — follow this. */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}
+
+/* --- 1. Follow the operating system ------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --color-canvas: #0f1216;
+    --color-surface: #171b21;
+    --color-surface-2: #1f242c;
+    --color-border: #262c35;
+    --color-border-strong: #39414d;
+
+    --color-ink: #e8ebef;
+    --color-ink-2: #cbd2db;
+    --color-muted: #98a2b3;
+    --color-faint: #6b7686;
+
+    --color-brand: #6a9bff;
+    --color-brand-ink: #8fb4ff;
+    --color-brand-soft: #1c2942;
+
+    --color-success: #4ade80;
+    --color-success-ink: #86efac;
+    --color-success-soft: #14291d;
+
+    --color-warning: #fbbf24;
+    --color-warning-ink: #fcd34d;
+    --color-warning-soft: #2e2410;
+
+    --color-danger: #f87171;
+    --color-danger-ink: #fca5a5;
+    --color-danger-soft: #33191a;
+
+    --color-positive: #4ade80;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-pop: 0 12px 24px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+  }
+}
+
+/* --- 2. Explicit choice from the avatar menu ---------------------------- */
+/* Same values as the block above — see the sync warning there. */
+:root[data-theme='dark'] {
+  --color-canvas: #0f1216;
+  --color-surface: #171b21;
+  --color-surface-2: #1f242c;
+  --color-border: #262c35;
+  --color-border-strong: #39414d;
+
+  --color-ink: #e8ebef;
+  --color-ink-2: #cbd2db;
+  --color-muted: #98a2b3;
+  --color-faint: #6b7686;
+
+  --color-brand: #6a9bff;
+  --color-brand-ink: #8fb4ff;
+  --color-brand-soft: #1c2942;
+
+  --color-success: #4ade80;
+  --color-success-ink: #86efac;
+  --color-success-soft: #14291d;
+
+  --color-warning: #fbbf24;
+  --color-warning-ink: #fcd34d;
+  --color-warning-soft: #2e2410;
+
+  --color-danger: #f87171;
+  --color-danger-ink: #fca5a5;
+  --color-danger-soft: #33191a;
+
+  --color-positive: #4ade80;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-pop: 0 12px 24px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular figures everywhere money or quantity is shown, so columns line up. */
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Consistent focus ring — keyboard users navigate this back office all day. */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Native controls (checkbox, radio, range) pick up the brand colour without
+   every component having to remember to say so. */
+input[type='checkbox'],
+input[type='radio'],
+input[type='range'] {
+  accent-color: var(--color-brand);
+}
