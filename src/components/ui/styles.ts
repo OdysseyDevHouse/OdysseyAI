@@ -87,7 +87,12 @@ export const TABLE_HEAD_ROW = 'border-y border-border bg-surface-2'
 export const TABLE_TH =
   'px-4 pt-3 pb-2.5 text-left align-top text-[13px] font-normal leading-tight text-muted'
 
-export const TABLE_TD = 'px-4 py-3 text-ink-2'
+/* 36px rows. Tight on purpose: the chrome around a table (toolbar, stat strip,
+   page gutter) is what gets the breathing room, because it is touched once per
+   visit — rows are scanned hundreds of times, and every extra pixel of padding
+   is a product the user has to scroll to reach. At py-3 a 1,284-product list
+   showed 10 rows; at py-1.5 it shows 16. See .claude/skills/odyssey-craft. */
+export const TABLE_TD = 'px-4 py-1.5 text-ink-2'
 
 /**
  * A cell holding a form control rather than text.
@@ -112,16 +117,43 @@ export const TABLE = 'w-full border-collapse text-sm'
  */
 export const TABLE_ROW = 'border-b border-border transition last:border-b-0 hover:bg-surface-2'
 
+/* ── Modals ──────────────────────────────────────────────────────────────── */
+
+export type ModalSize = 'sm' | 'md' | 'lg'
+
+/**
+ * The dialog panel itself.
+ *
+ * `m-auto` is what centres a native <dialog> in the top layer — it has no
+ * containing block to flex against, so the usual fixed/inset centring does not
+ * apply. `p-0` overrides the UA stylesheet's padding, which would otherwise sit
+ * outside our own header/body/footer borders and make them stop short.
+ */
+export const MODAL_PANEL =
+  'm-auto w-[calc(100vw-2rem)] rounded-card border border-border bg-surface p-0 text-ink shadow-pop ' +
+  'backdrop:bg-ink/40'
+
+export const MODAL_SIZE: Record<ModalSize, string> = {
+  sm: 'max-w-md',
+  md: 'max-w-xl',
+  lg: 'max-w-3xl',
+}
+
 /* ── Form controls ───────────────────────────────────────────────────────── */
 
 /** The one skin every single-line control wears. Edit here, every form follows. */
 export const CONTROL =
   'w-full rounded-control border border-border-strong bg-surface px-3 text-sm text-ink ' +
   'placeholder:text-faint transition outline-none ' +
-  'hover:border-brand/50 focus:border-brand ' +
+  /* Focus is ONE brand line, not a border plus a ring. The inset shadow sits on
+     top of the border rather than outside it, so it reads as a single 2px edge
+     — see the :focus-visible opt-out in globals.css. */
+  'hover:border-brand/50 focus:border-brand focus:shadow-[inset_0_0_0_1px_var(--color-brand)] ' +
   'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-faint'
 
 export const CONTROL_H = 'h-control'
 
 /** Applied on top of CONTROL when a field is showing an error. */
-export const CONTROL_INVALID = 'border-danger hover:border-danger focus:border-danger'
+export const CONTROL_INVALID =
+  'border-danger hover:border-danger focus:border-danger ' +
+  'focus:shadow-[inset_0_0_0_1px_var(--color-danger)]'

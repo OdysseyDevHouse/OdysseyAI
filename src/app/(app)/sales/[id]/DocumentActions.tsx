@@ -1,0 +1,205 @@
+'use client'
+
+import { useState, useTransition } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { Button, ConfirmModal, Field, Icons, Input, useToast } from '@/components/ui'
+import { voidSaleAction, recordPrintAction, creditWholeSaleAction } from '../actions'
+
+/**
+ * Cancel, credit and print, on a posted document.
+ *
+ * There is no Edit here, deliberately. A finalised invoice is a record of what
+ * was issued — the customer may be holding a copy of it — so a mistake is
+ * corrected by cancelling it (same day) or crediting it (later), never by
+ * changing what it says.
+ */
+export default function DocumentActions({
+  documentId,
+  documentNumber,
+  voidable,
+  isVoid,
+  creditable,
+  voidBlockedReason,
+  creditBlockedReason,
+}: {
+  documentId: number
+  documentNumber: string | null
+  voidable: boolean
+  isVoid: boolean
+  /** Finalised, has something left to credit, and the role is allowed. */
+  creditable: boolean
+  /**
+   * Why the action is unavailable, or null to hide the button entirely.
+   *
+   * The distinction matters: "your role cannot do this" is worth showing as a
+   * disabled button, because it is a permission the user can go and get. "This
+   * is a quote, not an invoice" is not — a Cancel button on a quote would just
+   * be noise.
+   */
+  voidBlockedReason?: string | null
+  creditBlockedReason?: string | null
+}) {
+  const [voiding, setVoiding] = useState(false)
+  const [crediting, setCrediting] = useState(false)
+  const [reason, setReason] = useState('')
+  const [creditReason, setCreditReason] = useState('')
+  const [pending, startTransition] = useTransition()
+  const toast = useToast()
+  const router = useRouter()
+
+  function doCredit() {
+    startTransition(async () => {
+      const result = await creditWholeSaleAction(documentId, creditReason)
+      if (result.ok) {
+        toast.success(`${result.documentNumber} raised. The stock is back on hand.`)
+        setCrediting(false)
+        setCreditReason('')
+        router.push(`/sales/${result.documentId}`)
+      } else {
+        toast.error(result.error)
+      }
+    })
+  }
+
+  function print() {
+    startTransition(async () => {
+      await recordPrintAction(documentId)
+      window.print()
+      router.refresh()
+    })
+  }
+
+  function doVoid() {
+    startTransition(async () => {
+      const result = await voidSaleAction(documentId, reason)
+      if (result.ok) {
+        toast.success(`${documentNumber} cancelled. The stock has been returned.`)
+        setVoiding(false)
+        setReason('')
+        router.refresh()
+      } else {
+        toast.error(result.error)
+      }
+    })
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {documentNumber && (
+        <Button variant="secondary" onClick={print} disabled={pending}>
+          <Icons.Printer size={15} />
+          Print
+        </Button>
+      )}
+
+      {/*
+        Shown disabled with the reason rather than hidden. A button that simply
+        is not there teaches nothing: someone whose role lacks the permission
+        concludes the feature is broken, or blames the date. The tooltip turns
+        "why can't I do this?" into a one-second answer.
+      */}
+      {/*
+        Two credit paths, and the ordering is the point. Everything coming back
+        is by far the common case, so it is one button and one confirm. Picking
+        lines and quantities is the exception, so it is a link off the confirm
+        rather than the default a cashier has to wade through.
+      */}
+      {!isVoid &&
+        (creditable ? (
+          <Button variant="ghost" onClick={() => setCrediting(true)} disabled={pending}>
+            <Icons.Reverse size={15} />
+            Credit sale
+          </Button>
+        ) : (
+          creditBlockedReason && (
+            <Button variant="ghost" disabled title={creditBlockedReason}>
+              <Icons.Reverse size={15} />
+              Credit sale
+            </Button>
+          )
+        ))}
+
+      {!isVoid &&
+        (voidable ? (
+          <Button variant="danger-ghost" onClick={() => setVoiding(true)} disabled={pending}>
+            <Icons.Ban size={15} />
+            Cancel sale
+          </Button>
+        ) : (
+          voidBlockedReason && (
+            <Button variant="danger-ghost" disabled title={voidBlockedReason}>
+              <Icons.Ban size={15} />
+              Cancel sale
+            </Button>
+          )
+        ))}
+
+      <ConfirmModal
+        open={crediting}
+        onClose={() => setCrediting(false)}
+        onConfirm={doCredit}
+        title={`Credit ${documentNumber}?`}
+        confirmLabel="Credit the whole sale"
+        tone="primary"
+        busy={pending}
+        message={
+          <div className="flex flex-col gap-3">
+            <p>
+              Everything still outstanding on this sale is credited back: the stock returns to the
+              shelf and, on an account sale, the customer&apos;s balance drops. The original invoice
+              stays exactly as it is — this raises a separate document against it.
+            </p>
+            <Field label="Reason" hint="Recorded on the credit and in the audit trail.">
+              <Input
+                value={creditReason}
+                onChange={(e) => setCreditReason(e.target.value)}
+                placeholder="e.g. Customer returned everything"
+              />
+            </Field>
+            <p className="text-xs text-muted">
+              Only some of it coming back?{' '}
+              <Link href={`/sales/${documentId}/credit`} className="text-brand hover:underline">
+                Choose lines and quantities instead
+              </Link>
+              .
+            </p>
+          </div>
+        }
+      />
+
+      <ConfirmModal
+        open={voiding}
+        onClose={() => setVoiding(false)}
+        onConfirm={doVoid}
+        title={`Cancel ${documentNumber}?`}
+        /* "Yes, cancel it" rather than "Cancel the sale": the dismiss button
+           beside it also says Cancel, and two buttons reading Cancel on one
+           dialog is exactly the moment someone clicks the wrong one. */
+        confirmLabel="Yes, cancel it"
+        cancelLabel="Keep the sale"
+        busy={pending}
+        message={
+          <div className="flex flex-col gap-3">
+            <p>
+              The stock goes back and the sale stops counting toward today&apos;s takings. The
+              document keeps its number, so the sequence stays complete and the cancellation is on
+              record.
+            </p>
+            <p className="text-xs text-muted">
+              Only possible on the day the sale was rung up. After that, credit it instead —
+              cancelling would change a day that has already been banked.
+            </p>
+            <Field label="Reason" hint="Recorded against the document.">
+              <Input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. Rang up twice"
+              />
+            </Field>
+          </div>
+        }
+      />
+    </div>
+  )
+}

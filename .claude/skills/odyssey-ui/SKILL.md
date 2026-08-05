@@ -8,6 +8,13 @@ description: The OdysseyAI design system — the shared UI kit, colour/radius/si
 Every screen is assembled from one kit so that a single edit restyles the whole
 product. Read this before touching UI.
 
+This file covers **which component and which token** — the rules that keep the
+system intact. For **how to arrange them** — density, hierarchy, when colour
+means something, how a table or form should be composed — see the
+`odyssey-craft` skill. A screen can satisfy every rule here and still look
+flat; that is what the other file exists to prevent. Building a screen usually
+wants both.
+
 ## The three layers
 
 | Layer | File | What changes here |

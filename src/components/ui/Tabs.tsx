@@ -49,17 +49,25 @@ export function Tabs<T extends string>({
   )
 }
 
-/** Same bar, but each tab is a route. Keeps tab state in the URL. */
+/**
+ * Same bar, but each tab is a route. Keeps tab state in the URL.
+ *
+ * Each item carries its own `href` rather than the bar taking an `hrefFor`
+ * function. That is not a style choice: this file is `'use client'`, and a
+ * Server Component cannot pass a FUNCTION across the boundary — React refuses
+ * it at runtime with "Functions cannot be passed directly to Client
+ * Components". Since almost every tabbed screen here is server-rendered, a prop
+ * that only works from a client parent is a trap. Strings cross the boundary
+ * fine.
+ */
 export function LinkTabs<T extends string>({
   items,
   value,
-  hrefFor,
   className = '',
   'aria-label': ariaLabel,
 }: {
-  items: readonly TabItem<T>[]
+  items: readonly (TabItem<T> & { href: string })[]
   value: T
-  hrefFor: (value: T) => string
   className?: string
   'aria-label'?: string
 }) {
@@ -68,7 +76,7 @@ export function LinkTabs<T extends string>({
       {items.map((item) => (
         <Link
           key={item.value}
-          href={hrefFor(item.value)}
+          href={item.href}
           aria-current={item.value === value ? 'page' : undefined}
           className={tabClass(item.value === value)}
         >

@@ -202,5 +202,27 @@ export async function requireSiteId(): Promise<number> {
   return (await requireSite()).id
 }
 
+/**
+ * The site and the person acting on it, for any write that leaves an audit
+ * trail.
+ *
+ * One call rather than requireSiteId() plus a separate session read, because
+ * the two must describe the same request — and because an audit row written
+ * against the wrong user is worse than none. The name is snapshotted into the
+ * log at write time, since cp2_users lives in another database with no foreign
+ * key to protect the reference.
+ */
+export async function requireActor(): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+}> {
+  const session = await requireSession()
+  const site = await requireSite()
+  return {
+    siteId: site.id,
+    actor: { userId: session.userId, userName: session.name },
+  }
+}
+
 export { getSession }
 export type { SessionPayload }

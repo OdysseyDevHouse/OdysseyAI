@@ -1,0 +1,454 @@
+/* ============================================================================
+   Login screen — ported from the Odyssey POS project so the two products share
+   one front door.
+
+   Deliberately NOT built from the design tokens in globals.css. This screen is
+   a pixel-for-pixel match of Odyssey's login, down to its own brand blue
+   (#2563eb vs OdysseyAI's #2f6fed) and its own radii, and mixing the two would
+   leave it subtly off. The values are therefore restated locally, scoped to
+   this module, and must not be copied into any other screen: everything else in
+   the app keeps using the tokens.
+
+   Dark mode is driven by the same [data-theme="dark"] attribute the rest of the
+   app uses, so the avatar-menu theme toggle still works here.
+   ========================================================================= */
+.wrapper {
+  /* Local restatement of Odyssey's palette — see the note above. */
+  --l-surface: #ffffff;
+  --l-surface-2: #f6f8fc;
+  --l-text: #2b3445;
+  --l-label: #5a6475;
+  --l-muted: #8a94a6;
+  --l-border: #e7e9f0;
+  --l-brand: #2563eb;
+  --l-brand-dark: #1d4ed8;
+  --l-danger: #dc2626;
+  --l-warning: #d97706;
+  --l-radius: 10px;
+
+  position: relative;
+  overflow: hidden;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(37, 99, 235, 0.1), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(20, 184, 166, 0.08), transparent 55%),
+    linear-gradient(135deg, #f4f6fb 0%, #eef1f8 55%, #e8ecf6 100%);
+  padding: 24px;
+}
+
+:global([data-theme='dark']) .wrapper {
+  --l-surface: #1a212b;
+  --l-surface-2: #212a36;
+  --l-text: #e7ecf3;
+  --l-label: #b8c0cf;
+  --l-muted: #8a94a6;
+  --l-border: #2a3340;
+  --l-brand: #3b82f6;
+  --l-brand-dark: #2563eb;
+  --l-danger: #f87171;
+  --l-warning: #fbbf24;
+
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(37, 99, 235, 0.35), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(20, 184, 166, 0.22), transparent 55%),
+    linear-gradient(135deg, #0b1220 0%, #131c2e 55%, #1b2640 100%);
+}
+
+/* Decorative concentric arcs sweeping out of the bottom-right, and a faint dot
+   grid at the left — pure backdrop, behind the card (which owns its own
+   stacking context via position/z-index below). */
+.wrapper::before {
+  content: '';
+  position: absolute;
+  right: -22vw;
+  bottom: -34vh;
+  width: 92vw;
+  height: 130vh;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      closest-side,
+      transparent 62%,
+      rgba(37, 99, 235, 0.05) 63%,
+      rgba(37, 99, 235, 0.05) 66%,
+      transparent 67%
+    ),
+    radial-gradient(
+      closest-side,
+      transparent 76%,
+      rgba(37, 99, 235, 0.045) 77%,
+      rgba(37, 99, 235, 0.045) 80%,
+      transparent 81%
+    ),
+    radial-gradient(
+      closest-side,
+      transparent 89%,
+      rgba(37, 99, 235, 0.04) 90%,
+      rgba(37, 99, 235, 0.04) 93%,
+      transparent 94%
+    );
+  pointer-events: none;
+}
+
+.wrapper::after {
+  content: '';
+  position: absolute;
+  left: 2vw;
+  top: 46%;
+  width: 190px;
+  height: 150px;
+  background-image: radial-gradient(rgba(37, 99, 235, 0.16) 1.5px, transparent 1.6px);
+  background-size: 15px 15px;
+  mask-image: linear-gradient(105deg, #000, transparent 78%);
+  pointer-events: none;
+}
+
+:global([data-theme='dark']) .wrapper::before {
+  background:
+    radial-gradient(
+      closest-side,
+      transparent 62%,
+      rgba(148, 190, 255, 0.07) 63%,
+      rgba(148, 190, 255, 0.07) 66%,
+      transparent 67%
+    ),
+    radial-gradient(
+      closest-side,
+      transparent 76%,
+      rgba(148, 190, 255, 0.06) 77%,
+      rgba(148, 190, 255, 0.06) 80%,
+      transparent 81%
+    ),
+    radial-gradient(
+      closest-side,
+      transparent 89%,
+      rgba(148, 190, 255, 0.05) 90%,
+      rgba(148, 190, 255, 0.05) 93%,
+      transparent 94%
+    );
+}
+
+:global([data-theme='dark']) .wrapper::after {
+  background-image: radial-gradient(rgba(148, 190, 255, 0.16) 1.5px, transparent 1.6px);
+}
+
+/* Decoration is noise on a small screen — the card should own the viewport. */
+@media (max-width: 640px) {
+  .wrapper::before,
+  .wrapper::after {
+    display: none;
+  }
+}
+
+.card {
+  position: relative; /* above the wrapper's decorative arcs / dot grid */
+  z-index: 1;
+  width: 100%;
+  /* The card is wider than the content column it holds: the extra 60px is
+     absorbed by the side padding (36 → 66), so the form, logo and button keep
+     their 368px width and only the surface around them grows. */
+  max-width: 500px;
+  background: var(--l-surface);
+  border: 1px solid var(--l-border);
+  border-radius: 24px;
+  padding: 40px 66px 32px;
+  box-shadow: 0 24px 70px rgba(16, 24, 40, 0.12);
+  animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+:global([data-theme='dark']) .card {
+  border-color: transparent;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+}
+
+/* The wide side padding is breathing room on a desktop card; on a phone the
+   card is already viewport-width, so it would only squeeze the fields.
+   Declared after .card — same specificity, so source order decides. */
+@media (max-width: 640px) {
+  .card {
+    padding-left: 28px;
+    padding-right: 28px;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Rejected credentials: shake the card. The `rise` entry animation is dropped
+   here so the two don't fight over `transform`. */
+.cardShake {
+  animation: shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes shake {
+  10%,
+  90% {
+    transform: translateX(-2px);
+  }
+  20%,
+  80% {
+    transform: translateX(4px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-7px);
+  }
+  40%,
+  60% {
+    transform: translateX(7px);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cardShake {
+    animation: none;
+  }
+}
+
+/* Logo, greeting and subtitle stacked and centred at the top of the card. */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.logo {
+  height: 62px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+/* The wordmark is dark navy — a light plate behind the logo in dark mode so it
+   stays readable. */
+:global([data-theme='dark']) .logo {
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 14px;
+  height: 78px; /* 62px logo + plate padding */
+}
+
+.title {
+  margin: 22px 0 0;
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--l-text);
+}
+
+.subtitle {
+  margin: 7px 0 0;
+  font-size: 14px;
+  color: var(--l-muted);
+}
+
+.label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--l-label);
+  margin-bottom: 16px;
+}
+
+/* The field itself. Odyssey's shared <Input> carries this skin; here it is
+   written out so the login page needs nothing from the UI kit that would pull
+   in the token palette and shift the colours. */
+.input {
+  display: block;
+  width: 100%;
+  height: 40px;
+  margin-top: 6px;
+  padding: 11px 13px;
+  border: 1px solid var(--l-border);
+  border-radius: var(--l-radius);
+  font-size: 15px;
+  color: var(--l-text);
+  background: var(--l-surface);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.input::placeholder {
+  color: var(--l-muted);
+}
+
+.input:focus {
+  border-color: var(--l-brand);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+/* A field with a leading glyph — the icon sits in the left padding. */
+.inputWrap {
+  position: relative;
+  display: block;
+}
+
+.inputIcon {
+  position: absolute;
+  left: 13px;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  height: 40px; /* the canonical field height, so it centres on the input */
+  color: var(--l-muted);
+  pointer-events: none;
+}
+
+.inputWithIcon {
+  padding-left: 40px;
+}
+
+/* Password field + its show/hide eye. The relative box is the positioning
+   context; the input inside carries .inputPeekable so text clears the button. */
+.passwordField {
+  position: relative;
+  display: block;
+}
+
+.inputPeekable {
+  padding-right: 40px;
+}
+
+.peek {
+  position: absolute;
+  right: 4px;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 40px; /* the canonical field height, so it centres on the input */
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--l-muted);
+  cursor: pointer;
+  border-radius: var(--l-radius);
+  transition: color 0.15s;
+}
+
+.peek:hover {
+  color: var(--l-text);
+}
+
+.peek:focus-visible {
+  outline: 2px solid var(--l-brand);
+  outline-offset: -2px;
+}
+
+/* Sits under the password field; right-aligned. */
+.formRow {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 18px;
+}
+
+.forgotLink {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--l-brand);
+  text-decoration: none;
+}
+
+.forgotLink:hover {
+  text-decoration: underline;
+}
+
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 14px;
+  border: none;
+  border-radius: var(--l-radius);
+  background: linear-gradient(135deg, var(--l-brand), var(--l-brand-dark));
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28);
+  cursor: pointer;
+  transition:
+    filter 0.15s,
+    transform 0.05s,
+    box-shadow 0.15s;
+}
+
+.button:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.button:disabled {
+  opacity: 0.65;
+  cursor: default;
+  box-shadow: none;
+}
+
+/* The arrow nudges right on hover — the only motion on the button. */
+.buttonIcon {
+  transition: transform 0.18s ease;
+}
+.button:hover:not(:disabled) .buttonIcon {
+  transform: translateX(3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .buttonIcon {
+    transition: none;
+  }
+  .button:hover:not(:disabled) .buttonIcon {
+    transform: none;
+  }
+}
+
+/* Reassurance footer, with a hairline rule running out to each side. */
+.secureNote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 26px;
+  font-size: 13px;
+  color: var(--l-muted);
+}
+
+.secureNote::before,
+.secureNote::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--l-border);
+}
+
+.error {
+  background: color-mix(in srgb, var(--l-danger) 12%, var(--l-surface));
+  border: 1px solid color-mix(in srgb, var(--l-danger) 35%, var(--l-surface));
+  color: var(--l-danger);
+  padding: 10px 12px;
+  border-radius: var(--l-radius);
+  font-size: 13px;
+  margin-bottom: 16px;
+}

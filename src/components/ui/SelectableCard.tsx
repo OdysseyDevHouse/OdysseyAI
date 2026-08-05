@@ -60,15 +60,13 @@ export function SelectableCard({
           onChange={(e) => e.target.checked && onChange?.(value)}
           className="mt-0.5 size-4 shrink-0 accent-brand"
         />
-        <div className="flex flex-col gap-1">
-          <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-ink">
-            {title}
-            {badge}
-          </span>
-          {description && <span className="text-xs text-muted">{description}</span>}
-        </div>
+        <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-ink">
+          {title}
+          {badge}
+        </span>
       </div>
-      {footer && <div className="pl-6.5">{footer}</div>}
+      {description && <span className="text-xs text-muted">{description}</span>}
+      {footer && <div>{footer}</div>}
     </label>
   )
 }

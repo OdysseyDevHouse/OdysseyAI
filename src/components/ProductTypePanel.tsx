@@ -15,10 +15,25 @@ import { PRODUCT_TYPES, type ProductTypeId } from '@/lib/productTypes'
  */
 export default function ProductTypePanel({
   defaultValue,
+  onChange,
+  onSetupClick,
 }: {
   defaultValue: ProductTypeId
+  /**
+   * Told to the form so the Recipe, Refer and Serials tabs can appear with the
+   * type they belong to. Kept as a callback rather than lifting the state out
+   * entirely: the radio group still owns its own selection.
+   */
+  onChange?: (next: ProductTypeId) => void
+  /** Jumps to the tab that configures the selected type. */
+  onSetupClick?: (type: ProductTypeId) => void
 }) {
   const [selected, setSelected] = useState<ProductTypeId>(defaultValue)
+
+  function choose(next: ProductTypeId) {
+    setSelected(next)
+    onChange?.(next)
+  }
 
   return (
     <div className="grid gap-3 p-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -33,7 +48,7 @@ export default function ProductTypePanel({
             title={type.name}
             description={type.description}
             checked={isSelected}
-            onChange={(v) => setSelected(v as ProductTypeId)}
+            onChange={(v) => choose(v as ProductTypeId)}
             badge={
               type.onlineOnly && (
                 <Badge tone="brand">
@@ -44,9 +59,16 @@ export default function ProductTypePanel({
             }
             footer={
               type.setupLabel && (
-                // Disabled: nothing to configure until this is the product's
-                // type, and the screens themselves aren't built yet.
-                <Button variant="ghost" size="sm" disabled className="w-full">
+                // Only live once this IS the product's type: a recipe's
+                // ingredient list is meaningless on a product that isn't one,
+                // and its tab is not on the bar to jump to.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!isSelected || !onSetupClick}
+                  onClick={() => onSetupClick?.(type.id)}
+                  className="w-full"
+                >
                   {type.setupLabel}
                 </Button>
               )

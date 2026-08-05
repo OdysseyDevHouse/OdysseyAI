@@ -1,0 +1,374 @@
+import 'server-only'
+import type { RowDataPacket } from 'mysql2/promise'
+import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
+import { toNum } from '../decimals'
+
+/**
+ * The customer master file's supporting lists — groups, reps and categories.
+ *
+ * Groups and reps are tables because they carry behaviour: a group holds the
+ * terms a new account inherits, a rep holds an email statements copy in.
+ * Category is a plain indexed string on the customer with a DISTINCT picker,
+ * because it carries none — a lookup table for a field nothing branches on is
+ * ceremony.
+ */
+
+type Row = RowDataPacket & Record<string, unknown>
+
+/* ── Groups ──────────────────────────────────────────────────────────────── */
+
+export type CustomerGroup = {
+  id: number
+  name: string
+  code: string | null
+  defaultTermsDays: number
+  defaultCreditLimit: number
+  priceStructureId: number | null
+  sortOrder: number
+  isActive: boolean
+  /** Accounts currently in this group — shown before offering to delete it. */
+  customerCount: number
+}
+
+function mapGroup(r: Row): CustomerGroup {
+  return {
+    id: Number(r.id),
+    name: String(r.name),
+    code: (r.code as string | null) ?? null,
+    defaultTermsDays: Number(r.default_terms_days),
+    defaultCreditLimit: toNum(r.default_credit_limit),
+    priceStructureId: r.price_structure_id === null ? null : Number(r.price_structure_id),
+    sortOrder: Number(r.sort_order),
+    isActive: !!r.is_active,
+    customerCount: Number(r.customer_count ?? 0),
+  }
+}
+
+const SELECT_GROUP = `
+  SELECT g.id, g.name, g.code, g.default_terms_days, g.default_credit_limit,
+         g.price_structure_id, g.sort_order, g.is_active,
+         (SELECT COUNT(*) FROM customers c WHERE c.group_id = g.id) AS customer_count
+    FROM customer_groups g
+`
+
+export async function listCustomerGroups(
+  siteId: number,
+  includeInactive = false,
+): Promise<CustomerGroup[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_GROUP}
+      ${includeInactive ? '' : 'WHERE g.is_active = 1'}
+      ORDER BY g.sort_order ASC, g.name ASC`,
+  )
+  return rows.map(mapGroup)
+}
+
+export async function getCustomerGroup(siteId: number, id: number): Promise<CustomerGroup | null> {
+  const row = await siteQueryOne<Row>(siteId, `${SELECT_GROUP} WHERE g.id = ? LIMIT 1`, [id])
+  return row ? mapGroup(row) : null
+}
+
+export type GroupInput = {
+  name: string
+  code?: string | null
+  defaultTermsDays?: number
+  defaultCreditLimit?: number
+  priceStructureId?: number | null
+  sortOrder?: number
+  isActive?: boolean
+}
+
+export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
+
+export function validateGroup(input: GroupInput): string | null {
+  if (!input.name?.trim()) return 'A group name is required.'
+  if (input.name.trim().length > 120) return 'Name must be 120 characters or fewer.'
+  if ((input.defaultTermsDays ?? 0) < 0 || (input.defaultTermsDays ?? 0) > 365) {
+    return 'Payment terms must be between 0 and 365 days.'
+  }
+  if ((input.defaultCreditLimit ?? 0) < 0) return 'Credit limit cannot be negative.'
+  return null
+}
+
+export async function createCustomerGroup(siteId: number, input: GroupInput): Promise<SaveResult> {
+  const invalid = validateGroup(input)
+  if (invalid) return { ok: false, error: invalid }
+
+  const name = input.name.trim()
+  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+    siteId,
+    'SELECT id FROM customer_groups WHERE name = ? LIMIT 1',
+    [name],
+  )
+  if (clash) return { ok: false, error: `A group called "${name}" already exists.` }
+
+  const res = await siteExecute(
+    siteId,
+    `INSERT INTO customer_groups
+       (name, code, default_terms_days, default_credit_limit, price_structure_id, sort_order, is_active)
+     VALUES (?,?,?,?,?,?,?)`,
+    [
+      name,
+      input.code?.trim() || null,
+      input.defaultTermsDays ?? 30,
+      (input.defaultCreditLimit ?? 0).toFixed(4),
+      input.priceStructureId ?? null,
+      input.sortOrder ?? 0,
+      input.isActive === false ? 0 : 1,
+    ],
+  )
+  return { ok: true, id: res.insertId }
+}
+
+export async function updateCustomerGroup(
+  siteId: number,
+  id: number,
+  input: GroupInput,
+): Promise<SaveResult> {
+  const invalid = validateGroup(input)
+  if (invalid) return { ok: false, error: invalid }
+
+  const name = input.name.trim()
+  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+    siteId,
+    'SELECT id FROM customer_groups WHERE name = ? AND id <> ? LIMIT 1',
+    [name, id],
+  )
+  if (clash) return { ok: false, error: `A group called "${name}" already exists.` }
+
+  const res = await siteExecute(
+    siteId,
+    `UPDATE customer_groups
+        SET name = ?, code = ?, default_terms_days = ?, default_credit_limit = ?,
+            price_structure_id = ?, sort_order = ?, is_active = ?
+      WHERE id = ?`,
+    [
+      name,
+      input.code?.trim() || null,
+      input.defaultTermsDays ?? 30,
+      (input.defaultCreditLimit ?? 0).toFixed(4),
+      input.priceStructureId ?? null,
+      input.sortOrder ?? 0,
+      input.isActive === false ? 0 : 1,
+      id,
+    ],
+  )
+  if (res.affectedRows === 0) return { ok: false, error: 'Group not found.' }
+  return { ok: true, id }
+}
+
+export type DeleteResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Deletes a group only when nothing points at it.
+ *
+ * The FK is ON DELETE SET NULL, so deleting one in use would quietly unassign
+ * every account on it. Refusing beats a change nobody asked for and nobody
+ * sees — the same reasoning as deleteDepartment().
+ */
+export async function deleteCustomerGroup(siteId: number, id: number): Promise<DeleteResult> {
+  const group = await getCustomerGroup(siteId, id)
+  if (!group) return { ok: false, error: 'Group not found.' }
+
+  if (group.customerCount > 0) {
+    return {
+      ok: false,
+      error: `${group.customerCount} customer${
+        group.customerCount === 1 ? ' is' : 's are'
+      } still in "${group.name}". Reassign ${
+        group.customerCount === 1 ? 'it' : 'them'
+      } first, or deactivate this group instead.`,
+    }
+  }
+
+  await siteExecute(siteId, 'DELETE FROM customer_groups WHERE id = ?', [id])
+  return { ok: true }
+}
+
+/* ── Reps ────────────────────────────────────────────────────────────────── */
+
+export type SalesRep = {
+  id: number
+  name: string
+  code: string | null
+  email: string | null
+  phone: string | null
+  commissionPct: number
+  isActive: boolean
+  customerCount: number
+}
+
+function mapRep(r: Row): SalesRep {
+  return {
+    id: Number(r.id),
+    name: String(r.name),
+    code: (r.code as string | null) ?? null,
+    email: (r.email as string | null) ?? null,
+    phone: (r.phone as string | null) ?? null,
+    commissionPct: toNum(r.commission_pct),
+    isActive: !!r.is_active,
+    customerCount: Number(r.customer_count ?? 0),
+  }
+}
+
+const SELECT_REP = `
+  SELECT r.id, r.name, r.code, r.email, r.phone, r.commission_pct, r.is_active,
+         (SELECT COUNT(*) FROM customers c WHERE c.rep_id = r.id) AS customer_count
+    FROM sales_reps r
+`
+
+export async function listSalesReps(
+  siteId: number,
+  includeInactive = false,
+): Promise<SalesRep[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_REP}
+      ${includeInactive ? '' : 'WHERE r.is_active = 1'}
+      ORDER BY r.name ASC`,
+  )
+  return rows.map(mapRep)
+}
+
+export async function getSalesRep(siteId: number, id: number): Promise<SalesRep | null> {
+  const row = await siteQueryOne<Row>(siteId, `${SELECT_REP} WHERE r.id = ? LIMIT 1`, [id])
+  return row ? mapRep(row) : null
+}
+
+export type RepInput = {
+  name: string
+  code?: string | null
+  email?: string | null
+  phone?: string | null
+  commissionPct?: number
+  isActive?: boolean
+}
+
+export function validateRep(input: RepInput): string | null {
+  if (!input.name?.trim()) return 'A rep name is required.'
+  if (input.name.trim().length > 120) return 'Name must be 120 characters or fewer.'
+  if (input.email?.trim() && !isEmail(input.email.trim())) {
+    return 'That email address does not look valid.'
+  }
+  if ((input.commissionPct ?? 0) < 0 || (input.commissionPct ?? 0) > 100) {
+    return 'Commission must be between 0 and 100 percent.'
+  }
+  return null
+}
+
+export async function createSalesRep(siteId: number, input: RepInput): Promise<SaveResult> {
+  const invalid = validateRep(input)
+  if (invalid) return { ok: false, error: invalid }
+
+  const name = input.name.trim()
+  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+    siteId,
+    'SELECT id FROM sales_reps WHERE name = ? LIMIT 1',
+    [name],
+  )
+  if (clash) return { ok: false, error: `A rep called "${name}" already exists.` }
+
+  const res = await siteExecute(
+    siteId,
+    `INSERT INTO sales_reps (name, code, email, phone, commission_pct, is_active)
+     VALUES (?,?,?,?,?,?)`,
+    [
+      name,
+      input.code?.trim() || null,
+      input.email?.trim().toLowerCase() || null,
+      input.phone?.trim() || null,
+      (input.commissionPct ?? 0).toFixed(3),
+      input.isActive === false ? 0 : 1,
+    ],
+  )
+  return { ok: true, id: res.insertId }
+}
+
+export async function updateSalesRep(
+  siteId: number,
+  id: number,
+  input: RepInput,
+): Promise<SaveResult> {
+  const invalid = validateRep(input)
+  if (invalid) return { ok: false, error: invalid }
+
+  const name = input.name.trim()
+  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+    siteId,
+    'SELECT id FROM sales_reps WHERE name = ? AND id <> ? LIMIT 1',
+    [name, id],
+  )
+  if (clash) return { ok: false, error: `A rep called "${name}" already exists.` }
+
+  const res = await siteExecute(
+    siteId,
+    `UPDATE sales_reps
+        SET name = ?, code = ?, email = ?, phone = ?, commission_pct = ?, is_active = ?
+      WHERE id = ?`,
+    [
+      name,
+      input.code?.trim() || null,
+      input.email?.trim().toLowerCase() || null,
+      input.phone?.trim() || null,
+      (input.commissionPct ?? 0).toFixed(3),
+      input.isActive === false ? 0 : 1,
+      id,
+    ],
+  )
+  if (res.affectedRows === 0) return { ok: false, error: 'Rep not found.' }
+  return { ok: true, id }
+}
+
+export async function deleteSalesRep(siteId: number, id: number): Promise<DeleteResult> {
+  const rep = await getSalesRep(siteId, id)
+  if (!rep) return { ok: false, error: 'Rep not found.' }
+
+  if (rep.customerCount > 0) {
+    return {
+      ok: false,
+      error: `${rep.customerCount} customer${
+        rep.customerCount === 1 ? ' is' : 's are'
+      } assigned to ${rep.name}. Reassign ${
+        rep.customerCount === 1 ? 'it' : 'them'
+      } first, or deactivate this rep instead.`,
+    }
+  }
+
+  await siteExecute(siteId, 'DELETE FROM sales_reps WHERE id = ?', [id])
+  return { ok: true }
+}
+
+/* ── Categories ──────────────────────────────────────────────────────────── */
+
+/**
+ * The categories actually in use, for the filter picker and a datalist on the
+ * form. No table: the values ARE the data, so a DISTINCT is both the list and
+ * the guarantee that it never drifts from what accounts really hold.
+ */
+export async function listCustomerCategories(siteId: number): Promise<string[]> {
+  const rows = await siteQuery<RowDataPacket & { category: string }>(
+    siteId,
+    `SELECT DISTINCT category FROM customers
+      WHERE category IS NOT NULL AND category <> ''
+      ORDER BY category ASC
+      LIMIT 200`,
+  )
+  return rows.map((r) => r.category)
+}
+
+export async function listSupplierCategories(siteId: number): Promise<string[]> {
+  const rows = await siteQuery<RowDataPacket & { category: string }>(
+    siteId,
+    `SELECT DISTINCT category FROM suppliers
+      WHERE category IS NOT NULL AND category <> ''
+      ORDER BY category ASC
+      LIMIT 200`,
+  )
+  return rows.map((r) => r.category)
+}
+
+/** Shared by both master files, so one definition of "looks like an email". */
+export function isEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}

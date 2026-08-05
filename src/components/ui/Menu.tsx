@@ -81,28 +81,43 @@ export function Menu({
 export function MenuItem({
   children,
   onClick,
+  href,
+  download,
   tone = 'default',
   disabled = false,
   type = 'button',
 }: {
   children: ReactNode
   onClick?: () => void
+  /**
+   * Renders the entry as a link. Needed for downloads — a PDF or an .xlsx comes
+   * from a route handler, and only an anchor can hand the response to the
+   * browser as a file.
+   */
+  href?: string
+  download?: boolean
   /** 'danger' for destructive entries — always put them last. */
   tone?: 'default' | 'danger'
   disabled?: boolean
   /** 'submit' when the entry posts a surrounding form, e.g. sign out. */
   type?: 'button' | 'submit'
 }) {
+  const skin = `flex w-full items-center gap-2 rounded-[6px] px-2.5 py-2 text-left text-sm transition disabled:pointer-events-none disabled:text-faint ${
+    tone === 'danger' ? 'text-danger hover:bg-danger-soft' : 'text-ink-2 hover:bg-surface-2'
+  }`
+
+  if (href && !disabled) {
+    // A plain <a>, not next/link: a download must hit the server rather than be
+    // intercepted by the client router, which would try to render it as a page.
+    return (
+      <a href={href} download={download} role="menuitem" className={skin}>
+        {children}
+      </a>
+    )
+  }
+
   return (
-    <button
-      type={type}
-      role="menuitem"
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-[6px] px-2.5 py-2 text-left text-sm transition disabled:pointer-events-none disabled:text-faint ${
-        tone === 'danger' ? 'text-danger hover:bg-danger-soft' : 'text-ink-2 hover:bg-surface-2'
-      }`}
-    >
+    <button type={type} role="menuitem" disabled={disabled} onClick={onClick} className={skin}>
       {children}
     </button>
   )

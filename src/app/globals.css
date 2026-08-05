@@ -215,6 +215,17 @@ body {
   outline-offset: 2px;
 }
 
+/* Text-entry controls and selects already turn their own border brand on focus
+   (see CONTROL in components/ui/styles.ts). Letting the ring above draw as well
+   reads as a double blue line, so those controls opt out and rely on the border
+   alone — every other focusable thing keeps the ring. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable]:focus-visible {
+  outline: none;
+}
+
 /* Native controls (checkbox, radio, range) pick up the brand colour without
    every component having to remember to say so. */
 input[type='checkbox'],

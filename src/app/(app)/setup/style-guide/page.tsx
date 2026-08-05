@@ -3,27 +3,37 @@
 import { useState } from 'react'
 import {
   Badge,
+  BulkActionBar,
   Button,
   Card,
   CardBody,
   CardHeader,
   Checkbox,
+  Combobox,
+  ConfirmModal,
   CurrencyInput,
   DataTable,
+  DateRangeField,
   EmptyState,
   Field,
+  FilterBar,
+  FilterChip,
   Icons,
   Input,
   Menu,
   MenuItem,
   MenuSeparator,
+  Modal,
   NumberInput,
   PageBody,
   PageHeader,
+  Pagination,
   Radio,
   SegmentedControl,
   SelectableCard,
   Select,
+  SettingGroup,
+  SettingRow,
   Switch,
   TableToolbar,
   Tabs,
@@ -66,6 +76,7 @@ export default function StyleGuidePage() {
         <ButtonsSection />
         <FormSection />
         <BadgeSection />
+        <SettingRowSection />
         <SelectableCardSection />
         <TileSwatchSection />
         <ToastSection />
@@ -73,6 +84,12 @@ export default function StyleGuidePage() {
         <TabsSection />
         <TableControlsSection />
         <DataTableSection />
+        <SelectionSection />
+        <ModalSection />
+        <ComboboxSection />
+        <FilterBarSection />
+        <DateRangeSection />
+        <PaginationSection />
         <EmptyStateSection />
         <TokensSection />
       </PageBody>
@@ -227,6 +244,55 @@ function FormSection() {
           />
         </div>
       </Row>
+    </Card>
+  )
+}
+
+function SettingRowSection() {
+  const [on, setOn] = useState(true)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Setting rows"
+        description="<SettingGroup /> + <SettingRow /> — a labelled setting with its control on the right. Use for any settings screen rather than laying out icon, label and control by hand."
+      />
+      <CardBody>
+        <SettingGroup title="Properties" description="What a group of settings is for.">
+          <SettingRow
+            icon={<Icons.Eye size={16} />}
+            label="A switch setting"
+            description="One line explaining what switching this on actually does."
+          >
+            <Switch checked={on} onChange={setOn} />
+          </SettingRow>
+          <SettingRow
+            icon={<Icons.Percent size={16} />}
+            label="A numeric setting"
+            description="Controls keep their natural width and sit hard right, so a column of them lines up."
+            htmlFor="styleGuideSettingNumber"
+          >
+            <NumberInput
+              id="styleGuideSettingNumber"
+              precision={2}
+              defaultValue={0}
+              className="w-32 text-right"
+            />
+            <span className="text-sm text-muted">%</span>
+          </SettingRow>
+          <SettingRow
+            icon={<Icons.Barcode size={16} />}
+            label="A select setting"
+            description="The last row draws no divider, so the group closes cleanly."
+            htmlFor="styleGuideSettingSelect"
+          >
+            <Select id="styleGuideSettingSelect" className="w-52" defaultValue="a">
+              <option value="a">First choice</option>
+              <option value="b">Second choice</option>
+            </Select>
+          </SettingRow>
+        </SettingGroup>
+      </CardBody>
     </Card>
   )
 }
@@ -548,6 +614,217 @@ function DataTableSection() {
           </>
         )}
       />
+    </Card>
+  )
+}
+
+function SelectionSection() {
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const toast = useToast()
+
+  return (
+    <Card>
+      <CardHeader
+        title="Row selection + bulk actions"
+        description="<DataTable selectedKeys onSelectionChange /> with <BulkActionBar /> — click a checkbox, then shift-click another to take the range. Out-of-stock rows are unselectable via isRowSelectable."
+      />
+      <BulkActionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+        selectAll={{
+          total: 412,
+          selected: false,
+          onSelectAll: () => toast.info('Would select all 412 matching the filter'),
+        }}
+      >
+        <Button variant="ghost" size="sm" onClick={() => toast.success(`${selected.size} updated`)}>
+          <Icons.Check size={15} />
+          Change status
+        </Button>
+        <Menu label="More" variant="ghost">
+          <MenuItem onClick={() => toast.info('Emailing statements')}>
+            <Icons.Mail size={15} />
+            Email statements
+          </MenuItem>
+          <MenuItem href="#" download>
+            <Icons.Download size={15} />
+            Export selection
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem tone="danger" onClick={() => toast.error('Placed on hold')}>
+            <Icons.Ban size={15} />
+            Place on hold
+          </MenuItem>
+        </Menu>
+      </BulkActionBar>
+      <DataTable
+        columns={PRODUCT_COLUMNS}
+        rows={PRODUCTS}
+        getRowKey={(row) => row.id}
+        selectedKeys={selected}
+        onSelectionChange={setSelected}
+        /* Nothing on hand cannot be picked for a stock action — the reason a
+           row is unselectable belongs to the screen, not the table. */
+        isRowSelectable={(row) => row.qty > 0}
+      />
+    </Card>
+  )
+}
+
+function ModalSection() {
+  const [open, setOpen] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const toast = useToast()
+
+  return (
+    <Card>
+      <CardHeader
+        title="Modal"
+        description="<Modal /> and <ConfirmModal /> — built on the native <dialog>, so focus trapping, the inert background and Escape all come free"
+      />
+      <Row>
+        <Spec name="<Modal>" note="Forms and detail panels" />
+        <Button variant="secondary" onClick={() => setOpen(true)}>
+          Open modal
+        </Button>
+      </Row>
+      <Row>
+        <Spec name="<ConfirmModal>" note="Destructive confirms — danger action on the right" />
+        <Button variant="danger-ghost" onClick={() => setConfirming(true)}>
+          <Icons.Trash size={15} />
+          Delete something
+        </Button>
+      </Row>
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Set credit terms"
+        description="Applies to every selected account."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setOpen(false)
+                toast.success('Credit terms updated')
+              }}
+            >
+              Apply
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <Field label="Payment terms (days)" hint="0–365. Zero means cash on delivery.">
+            <NumberInput defaultValue={30} />
+          </Field>
+          <Field label="Credit limit">
+            <CurrencyInput defaultValue={10000} />
+          </Field>
+        </div>
+      </Modal>
+
+      <ConfirmModal
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false)
+          toast.error('Deleted')
+        }}
+        title="Delete this department?"
+        message="Fresh Produce has no products and no sub-departments, so it can be removed. This cannot be undone."
+        confirmLabel="Delete department"
+      />
+    </Card>
+  )
+}
+
+function ComboboxSection() {
+  const [query, setQuery] = useState('')
+  const [picked, setPicked] = useState<string | null>(null)
+
+  const options = PRODUCTS.filter(
+    (product) =>
+      product.name.toLowerCase().includes(query.toLowerCase()) ||
+      product.sku.toLowerCase().includes(query.toLowerCase()),
+  ).map((product) => ({
+    value: product.id,
+    label: product.name,
+    hint: product.sku,
+    trailing: rand(product.price),
+  }))
+
+  return (
+    <Card>
+      <CardHeader
+        title="Combobox"
+        description="<Combobox /> — type-ahead for lists too long for a <Select>. Arrow keys wrap, Enter takes the highlighted row, so a scanner never needs the mouse."
+      />
+      <Row>
+        <Spec name="<Combobox>" note="Product search at the till" />
+        <div className="w-80">
+          <Combobox
+            options={options}
+            query={query}
+            onQueryChange={setQuery}
+            onSelect={(option) => setPicked(option.label)}
+            placeholder="Scan or search a product…"
+          />
+        </div>
+        <p className="text-xs text-muted">{picked ? `Picked: ${picked}` : 'Nothing picked yet'}</p>
+      </Row>
+    </Card>
+  )
+}
+
+function FilterBarSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Filter bar"
+        description="<FilterBar /> + <FilterChip /> — the applied filters, each clearable on its own. Build the hrefs with hrefBuilder() from lib/searchParams so clearing one keeps the rest."
+      />
+      <div className="py-3">
+        <FilterBar clearHref="#">
+          <FilterChip label="Status" value="On hold" clearHref="#" />
+          <FilterChip label="Group" value="Trade" clearHref="#" />
+          <FilterChip label="Rep" value="N. Dlamini" clearHref="#" />
+          <FilterChip label="Balance" value="Over limit" clearHref="#" />
+        </FilterBar>
+      </div>
+    </Card>
+  )
+}
+
+function DateRangeSection() {
+  const [range, setRange] = useState({ from: '2026-08-01', to: '2026-08-05' })
+
+  return (
+    <Card>
+      <CardHeader
+        title="Date range"
+        description="<DateRangeField /> — two native date inputs plus the presets people actually ask for. Native rather than a calendar of our own: it already matches the operator's locale and keyboard."
+      />
+      <Row>
+        <Spec name="<DateRangeField>" note="Reports, statement runs, document lists" />
+        <DateRangeField value={range} onChange={setRange} />
+      </Row>
+    </Card>
+  )
+}
+
+function PaginationSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Pagination"
+        description="<Pagination /> — links, not buttons, so a server-rendered list pages without becoming a Client Component. Renders nothing at all for a single page."
+      />
+      <Pagination page={3} pageCount={9} total={412} pageSize={50} hrefFor={() => '#'} />
     </Card>
   )
 }

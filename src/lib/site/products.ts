@@ -5,6 +5,12 @@ import { toNum } from '../decimals'
 import { sanitiseHtml } from '../html'
 import { costLine, priceLine, type CostBasis, type CostLine, type PriceLine } from '../pricing'
 import { toProductType, type ProductTypeId } from '../productTypes'
+import {
+  toVariableType,
+  toPriceCalc,
+  type VariableTypeId,
+  type PriceCalcId,
+} from '../productProperties'
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
 
 export type Product = {
@@ -36,6 +42,34 @@ export type Product = {
 
   isArchived: boolean
 
+  /* ── Properties: how the product behaves at the till ───────────────── */
+  visibleInPos: boolean
+  changeDescription: boolean
+  askPriceAtSale: boolean
+  allowFractions: boolean
+  chargePctSubtotal: boolean
+  nonGpProduct: boolean
+  maxDiscountPct: number
+  variableType: VariableTypeId
+  priceCalc: PriceCalcId
+
+  /* ── Weight and size ───────────────────────────────────────────────── */
+  packWeight: number
+  weightDescription: string
+  packSize: number
+  packDescription: string
+  /** Physical size in millimetres. Zero means "not recorded". */
+  lengthMm: number
+  widthMm: number
+  heightMm: number
+  prepTimeMinutes: number
+
+  /* ── Scale properties ──────────────────────────────────────────────── */
+  scaleItem: boolean
+  labelScaleItem: boolean
+  fixedPriceScale: boolean
+  expiresInDays: number
+
   lastEditDate: Date | null
   lastPurchaseDate: Date | null
   lastSoldDate: Date | null
@@ -61,6 +95,12 @@ const SELECT_PRODUCT = `
          p.purchase_vat_rate_id, p.selling_vat_rate_id,
          p.last_cost, p.average_cost,
          p.stock_on_hand, p.min_stock, p.max_stock, p.is_archived,
+         p.visible_in_pos, p.change_description, p.ask_price_at_sale,
+         p.allow_fractions, p.charge_pct_subtotal, p.non_gp_product,
+         p.max_discount_pct, p.variable_type, p.price_calc,
+         p.pack_weight, p.weight_description, p.pack_size, p.pack_description,
+         p.length_mm, p.width_mm, p.height_mm, p.prep_time_minutes,
+         p.scale_item, p.label_scale_item, p.fixed_price_scale, p.expires_in_days,
          p.last_edit_date, p.last_purchase_date, p.last_sold_date, p.last_adjust_date,
          pv.rate AS purchase_vat_rate, sv.rate AS selling_vat_rate
     FROM products p
@@ -105,6 +145,30 @@ function mapProduct(
     maxStock: toNum(r.max_stock),
 
     isArchived: !!r.is_archived,
+
+    visibleInPos: !!r.visible_in_pos,
+    changeDescription: !!r.change_description,
+    askPriceAtSale: !!r.ask_price_at_sale,
+    allowFractions: !!r.allow_fractions,
+    chargePctSubtotal: !!r.charge_pct_subtotal,
+    nonGpProduct: !!r.non_gp_product,
+    maxDiscountPct: toNum(r.max_discount_pct),
+    variableType: toVariableType(r.variable_type),
+    priceCalc: toPriceCalc(r.price_calc),
+
+    packWeight: toNum(r.pack_weight),
+    weightDescription: String(r.weight_description ?? 'Kg'),
+    packSize: toNum(r.pack_size),
+    packDescription: String(r.pack_description ?? 'None'),
+    lengthMm: toNum(r.length_mm),
+    widthMm: toNum(r.width_mm),
+    heightMm: toNum(r.height_mm),
+    prepTimeMinutes: Number(r.prep_time_minutes ?? 0),
+
+    scaleItem: !!r.scale_item,
+    labelScaleItem: !!r.label_scale_item,
+    fixedPriceScale: !!r.fixed_price_scale,
+    expiresInDays: Number(r.expires_in_days ?? 0),
 
     lastEditDate: (r.last_edit_date as Date | null) ?? null,
     lastPurchaseDate: (r.last_purchase_date as Date | null) ?? null,
@@ -234,6 +298,64 @@ export async function getProduct(siteId: number, id: number): Promise<Product | 
   return mapProduct(row, basis, priceMap.get(id) ?? [])
 }
 
+/** The few columns a picker needs, without the price and cost-basis joins. */
+export type ProductPick = {
+  id: number
+  code: string
+  description: string
+  productType: ProductTypeId
+  stockOnHand: number
+  averageCost: number
+}
+
+/**
+ * Type-ahead search for the recipe and refer pickers.
+ *
+ * Deliberately not `listProducts`: that fans out to every price structure and
+ * the cost basis to build a full Product, and a picker firing on each keystroke
+ * would run those joins for results the user never looks at.
+ *
+ * `exclude` drops the product being edited, so a recipe cannot list itself as an
+ * ingredient. The save path refuses that too — this only keeps it off screen.
+ */
+export async function searchProductsForPicker(
+  siteId: number,
+  opts: { search?: string; exclude?: number; limit?: number } = {},
+): Promise<ProductPick[]> {
+  const where: string[] = ['p.is_archived = 0']
+  const params: unknown[] = []
+
+  if (opts.search?.trim()) {
+    const term = `%${opts.search.trim()}%`
+    where.push('(p.description LIKE ? OR p.code LIKE ? OR p.barcode = ?)')
+    params.push(term, term, opts.search.trim())
+  }
+  if (opts.exclude) {
+    where.push('p.id <> ?')
+    params.push(opts.exclude)
+  }
+
+  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 50)
+  const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand, p.average_cost
+       FROM products p
+      WHERE ${where.join(' AND ')}
+      ORDER BY p.description ASC
+      LIMIT ${limit}`,
+    params,
+  )
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    code: String(r.code),
+    description: String(r.description),
+    productType: toProductType(r.product_type),
+    stockOnHand: toNum(r.stock_on_hand),
+    averageCost: toNum(r.average_cost),
+  }))
+}
+
 export async function findByBarcode(siteId: number, barcode: string): Promise<Product | null> {
   const row = await siteQueryOne<RowDataPacket & { id: number }>(
     siteId,
@@ -264,6 +386,32 @@ export type ProductInput = {
   minStock?: number
   maxStock?: number
   isArchived?: boolean
+
+  /* ── Properties tab. Undefined means "leave as it is". ─────────────── */
+  visibleInPos?: boolean
+  changeDescription?: boolean
+  askPriceAtSale?: boolean
+  allowFractions?: boolean
+  chargePctSubtotal?: boolean
+  nonGpProduct?: boolean
+  maxDiscountPct?: number
+  variableType?: VariableTypeId
+  priceCalc?: PriceCalcId
+
+  packWeight?: number
+  weightDescription?: string
+  packSize?: number
+  packDescription?: string
+  lengthMm?: number
+  widthMm?: number
+  heightMm?: number
+  prepTimeMinutes?: number
+
+  scaleItem?: boolean
+  labelScaleItem?: boolean
+  fixedPriceScale?: boolean
+  expiresInDays?: number
+
   /** Selling price INCLUSIVE of VAT, keyed by price_structure id. */
   prices?: Record<number, number>
   /**
@@ -293,6 +441,19 @@ export function validateProduct(input: ProductInput): string | null {
   for (const value of Object.values(input.prices ?? {})) {
     if (value < 0) return 'Selling prices cannot be negative.'
   }
+
+  // Properties. A discount ceiling above 100% would let a cashier pay the
+  // customer, and none of the sizes are meaningful as negatives.
+  const pct = input.maxDiscountPct ?? 0
+  if (pct < 0 || pct > 100) return 'Maximum discount must be between 0 and 100%.'
+  if ((input.packWeight ?? 0) < 0) return 'Pack weight cannot be negative.'
+  if ((input.packSize ?? 0) < 0) return 'Pack size cannot be negative.'
+  if ((input.lengthMm ?? 0) < 0) return 'Length cannot be negative.'
+  if ((input.widthMm ?? 0) < 0) return 'Width cannot be negative.'
+  if ((input.heightMm ?? 0) < 0) return 'Height cannot be negative.'
+  if ((input.prepTimeMinutes ?? 0) < 0) return 'Preparation time cannot be negative.'
+  if ((input.expiresInDays ?? 0) < 0) return 'Expiry days cannot be negative.'
+
   return null
 }
 
@@ -309,6 +470,79 @@ async function resolveVat(
   const selling = input.sellingVatRateId ?? (defaultVat(await load(), 'sales')?.id ?? null)
 
   return { purchase, selling }
+}
+
+/**
+ * The Properties tab columns, in one place.
+ *
+ * Create and update both write the identical set, so they share this rather
+ * than repeating twenty columns twice — a field added to one list and forgotten
+ * in the other would save on create and silently reset on the next edit.
+ *
+ * Returns the column names and their values in matching order. Booleans default
+ * to false and numbers to zero, mirroring the schema defaults.
+ */
+const PROPERTY_COLUMNS = [
+  'visible_in_pos',
+  'change_description',
+  'ask_price_at_sale',
+  'allow_fractions',
+  'charge_pct_subtotal',
+  'non_gp_product',
+  'max_discount_pct',
+  'variable_type',
+  'price_calc',
+  'pack_weight',
+  'weight_description',
+  'pack_size',
+  'pack_description',
+  'length_mm',
+  'width_mm',
+  'height_mm',
+  'prep_time_minutes',
+  'scale_item',
+  'label_scale_item',
+  'fixed_price_scale',
+  'expires_in_days',
+] as const
+
+/**
+ * The same values keyed by column name, for the linked-store fan-out.
+ *
+ * Built from the identical helper so the properties written to another store
+ * can never diverge from the ones written here.
+ */
+export function propertyColumnMap(input: ProductInput): Record<string, unknown> {
+  const values = propertyValues(input)
+  return Object.fromEntries(PROPERTY_COLUMNS.map((column, i) => [column, values[i]]))
+}
+
+function propertyValues(input: ProductInput): unknown[] {
+  return [
+    // A product on file is sold unless someone says otherwise, so an absent
+    // flag means visible — matching the column default.
+    input.visibleInPos === false ? 0 : 1,
+    input.changeDescription ? 1 : 0,
+    input.askPriceAtSale ? 1 : 0,
+    input.allowFractions ? 1 : 0,
+    input.chargePctSubtotal ? 1 : 0,
+    input.nonGpProduct ? 1 : 0,
+    (input.maxDiscountPct ?? 0).toFixed(3),
+    toVariableType(input.variableType),
+    toPriceCalc(input.priceCalc),
+    (input.packWeight ?? 0).toFixed(4),
+    input.weightDescription?.trim() || 'Kg',
+    (input.packSize ?? 0).toFixed(3),
+    input.packDescription?.trim() || 'None',
+    (input.lengthMm ?? 0).toFixed(2),
+    (input.widthMm ?? 0).toFixed(2),
+    (input.heightMm ?? 0).toFixed(2),
+    Math.trunc(input.prepTimeMinutes ?? 0),
+    input.scaleItem ? 1 : 0,
+    input.labelScaleItem ? 1 : 0,
+    input.fixedPriceScale ? 1 : 0,
+    Math.trunc(input.expiresInDays ?? 0),
+  ]
 }
 
 async function writePrices(
@@ -350,8 +584,8 @@ export async function createProduct(
           department_id, brand_id, image_path, image_icon, image_color,
           purchase_vat_rate_id, selling_vat_rate_id,
           last_cost, average_cost, stock_on_hand, min_stock, max_stock,
-          is_archived, last_edit_date)
-       VALUES (?,?,?,?, ?, ?,?,?,?,?, ?,?, ?,?,?,?,?, ?, NOW())`,
+          is_archived, ${PROPERTY_COLUMNS.join(', ')}, last_edit_date)
+       VALUES (?,?,?,?, ?, ?,?,?,?,?, ?,?, ?,?,?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
       [
         code,
         input.barcode?.trim() || null,
@@ -374,6 +608,7 @@ export async function createProduct(
         (input.minStock ?? 0).toFixed(3),
         (input.maxStock ?? 0).toFixed(3),
         input.isArchived ? 1 : 0,
+        ...propertyValues(input),
       ] as never,
     )
     const id = (res as { insertId: number }).insertId
@@ -406,7 +641,9 @@ export async function updateProduct(
          image_path = ?, image_icon = ?, image_color = ?,
          purchase_vat_rate_id = ?, selling_vat_rate_id = ?,
          last_cost = ?, min_stock = ?, max_stock = ?,
-         is_archived = ?, last_edit_date = NOW()
+         is_archived = ?,
+         ${PROPERTY_COLUMNS.map((c) => `${c} = ?`).join(', ')},
+         last_edit_date = NOW()
        WHERE id = ?`,
       [
         code,
@@ -425,6 +662,7 @@ export async function updateProduct(
         (input.minStock ?? 0).toFixed(3),
         (input.maxStock ?? 0).toFixed(3),
         input.isArchived ? 1 : 0,
+        ...propertyValues(input),
         id,
       ] as never,
     )
@@ -455,8 +693,53 @@ export async function setArchived(
   )
 }
 
-export async function deleteProduct(siteId: number, id: number): Promise<void> {
-  // product_prices cascades. Once sales history exists this should refuse and
-  // archive instead — there is nothing referencing a product yet.
+export type DeleteProductResult =
+  | { ok: true; archived: false }
+  | { ok: true; archived: true; reason: string }
+  | { ok: false; error: string }
+
+/**
+ * Deletes a product — or archives it, once anything references it.
+ *
+ * This function used to just DELETE, with a comment saying it should refuse
+ * once sales history existed. That history now exists, so it does.
+ *
+ * A sold product cannot be deleted: `sales_document_lines.product_id` is ON
+ * DELETE SET NULL and `stock_movements.product_id` is RESTRICT, so deleting one
+ * would either strip the link off historical invoices or fail on a constraint
+ * nobody can read. Archiving keeps every document and every movement intact and
+ * takes the product off the till, which is what "delete" actually means to
+ * whoever clicked it.
+ *
+ * Returns which of the two happened, so the screen can say so rather than
+ * silently doing something other than what was asked.
+ */
+export async function deleteProduct(siteId: number, id: number): Promise<DeleteProductResult> {
+  const counts = await siteQueryOne<RowDataPacket & { lines: number; movements: number }>(
+    siteId,
+    `SELECT (SELECT COUNT(*) FROM sales_document_lines WHERE product_id = ?) AS lines,
+            (SELECT COUNT(*) FROM stock_movements      WHERE product_id = ?) AS movements`,
+    [id, id],
+  )
+
+  const lines = Number(counts?.lines ?? 0)
+  const movements = Number(counts?.movements ?? 0)
+
+  if (lines > 0 || movements > 0) {
+    await siteExecute(siteId, 'UPDATE products SET is_archived = 1 WHERE id = ?', [id])
+
+    const parts: string[] = []
+    if (lines > 0) parts.push(`${lines} sale line${lines === 1 ? '' : 's'}`)
+    if (movements > 0) parts.push(`${movements} stock movement${movements === 1 ? '' : 's'}`)
+
+    return {
+      ok: true,
+      archived: true,
+      reason: `It has ${parts.join(' and ')}, so it was archived instead of deleted — that history has to stay readable.`,
+    }
+  }
+
+  // Never sold, never moved: safe to remove outright. product_prices cascades.
   await siteExecute(siteId, 'DELETE FROM products WHERE id = ?', [id])
+  return { ok: true, archived: false }
 }

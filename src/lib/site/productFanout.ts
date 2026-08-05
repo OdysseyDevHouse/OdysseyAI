@@ -1,8 +1,8 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { linkedStores, type GroupMember } from '../storeGroups'
-import { shareSettingsFor } from './shareSettings'
+import { shareSettingsFor, availabilityFor, setAvailability } from './shareSettings'
 
 /**
  * Writing a product edit out to every linked store.
@@ -12,7 +12,12 @@ import { shareSettingsFor } from './shareSettings'
  * connections, and pretending otherwise would be worse than being honest: each
  * store either succeeds or is reported as failed, and the caller shows which.
  *
- * WHAT TRAVELS depends on the product's share settings:
+ * WHETHER A STORE IS WRITTEN TO AT ALL is asked first, from that store's
+ * availability flag. Product sharing being on does not mean every store carries
+ * every product — it means they CAN. A store switched off for this product is
+ * archived rather than written, and one that never had it is left alone.
+ *
+ * WHAT TRAVELS to an available store depends on the product's share settings:
  *   shared cost    -> the edited cost is written to every linked store
  *   shared selling -> the edited selling prices are written to every store
  *   not shared     -> the origin store keeps its own value; others are left
@@ -32,6 +37,13 @@ export type FanoutValues = {
   barcode: string | null
   extraDescription: string | null
   productType: string
+  /**
+   * Properties-tab settings. Shared for the same reason the description is:
+   * they describe what the product IS and how it behaves, so a scale item in
+   * one store must be a scale item in the next. Column name -> value, built by
+   * the caller so this module does not need to know the list.
+   */
+  properties?: Record<string, unknown>
   /**
    * Values typed directly against another store, keyed by that store's site id.
    *
@@ -65,7 +77,7 @@ export type FanoutValues = {
 export type FanoutOutcome = {
   siteId: number
   storeName: string
-  status: 'written' | 'created' | 'skipped' | 'failed'
+  status: 'written' | 'created' | 'archived' | 'skipped' | 'failed'
   /** Why it was skipped, or what went wrong. */
   detail?: string
 }
@@ -117,9 +129,15 @@ async function mapStructureIds(
 /**
  * Applies an edit to one linked store.
  *
- * Creates the product if that store does not have the code yet — a linked store
- * that is missing a shared product is the case that most needs fixing, and
- * silently skipping it would leave the group permanently out of step.
+ * `available` decides which of four things happens:
+ *   available, exists      -> updated in place
+ *   available, missing     -> created
+ *   unavailable, exists    -> archived, keeping its stock and history
+ *   unavailable, missing   -> nothing at all
+ *
+ * Archiving rather than deleting is what makes the toggle safe to flip back:
+ * the store keeps its own stock figures, prices and sales history, so switching
+ * a product on again restores what was there instead of starting from zero.
  */
 async function applyToStore(
   targetSiteId: number,
@@ -127,6 +145,7 @@ async function applyToStore(
   values: FanoutValues,
   shareCost: boolean,
   shareSelling: boolean,
+  available: boolean,
   originStructures: { id: number; name: string }[],
 ): Promise<Omit<FanoutOutcome, 'siteId' | 'storeName'>> {
   const existing = await siteQueryOne<RowDataPacket & { id: number }>(
@@ -134,6 +153,19 @@ async function applyToStore(
     'SELECT id FROM products WHERE code = ? LIMIT 1',
     [code],
   )
+
+  if (!available) {
+    // Nothing to archive, and nothing to create — this store simply does not
+    // carry the product.
+    if (!existing) return { status: 'skipped', detail: 'Not carried in this store' }
+
+    await siteExecute(
+      targetSiteId,
+      'UPDATE products SET is_archived = 1, last_edit_date = NOW() WHERE id = ?',
+      [Number(existing.id)],
+    )
+    return { status: 'archived', detail: 'Stock and history kept' }
+  }
 
   // A shared figure comes from the origin store; an unshared one comes from
   // what was typed against THIS store on the product screen.
@@ -171,6 +203,10 @@ async function applyToStore(
         'barcode = ?',
         'extra_description = ?',
         'product_type = ?',
+        // Switching availability back on un-archives: the store already has the
+        // row with its own stock and prices, and writing to it while leaving it
+        // archived would update a product nobody can see.
+        'is_archived = 0',
       ]
       const params: unknown[] = [
         values.description,
@@ -178,6 +214,12 @@ async function applyToStore(
         values.extraDescription,
         values.productType,
       ]
+
+      // Properties travel with the description — same product, same behaviour.
+      for (const [column, value] of Object.entries(values.properties ?? {})) {
+        sets.push(`${column} = ?`)
+        params.push(value)
+      }
 
       // Undefined only when the figure is unshared AND nothing was typed for
       // this store — then it keeps whatever it already had.
@@ -226,13 +268,24 @@ async function applyToStore(
           ? await vatRateIdFor(targetSiteId, 'sales', values.sellingVatPercent)
           : null)
 
+      // Properties are appended as named columns so a store creating the
+      // product for the first time gets the same behaviour as the origin,
+      // rather than falling back to the schema defaults.
+      const propertyEntries = Object.entries(values.properties ?? {})
+      const propertyColumns = propertyEntries.length
+        ? `, ${propertyEntries.map(([c]) => c).join(', ')}`
+        : ''
+      const propertyPlaceholders = propertyEntries.length
+        ? `, ${propertyEntries.map(() => '?').join(', ')}`
+        : ''
+
       const [res] = await tx.execute(
         `INSERT INTO products
            (code, barcode, description, extra_description, product_type,
             purchase_vat_rate_id, selling_vat_rate_id,
             last_cost, average_cost, stock_on_hand, min_stock, max_stock,
-            is_archived, last_edit_date)
-         VALUES (?,?,?,?,?, ?,?, ?,?, 0,0,0, 0, NOW())`,
+            is_archived${propertyColumns}, last_edit_date)
+         VALUES (?,?,?,?,?, ?,?, ?,?, 0,0,0, 0${propertyPlaceholders}, NOW())`,
         [
           code,
           values.barcode,
@@ -245,6 +298,7 @@ async function applyToStore(
           // as free.
           (costToWrite ?? values.lastCost).toFixed(4),
           (costToWrite ?? values.lastCost).toFixed(4),
+          ...propertyEntries.map(([, value]) => value),
         ] as never,
       )
       productId = (res as { insertId: number }).insertId
@@ -279,6 +333,12 @@ export async function fanoutProduct(
   code: string,
   values: FanoutValues,
   originStructures: { id: number; name: string }[],
+  /**
+   * Availability chosen on the product screen, keyed by site id. A store absent
+   * from this map keeps whatever it already had, so a caller that does not show
+   * the toggles cannot accidentally un-stock anything.
+   */
+  availability: Record<number, boolean> = {},
 ): Promise<FanoutOutcome[]> {
   const stores = await linkedStores(originSiteId)
   const targets = stores.filter((s) => s.siteId !== originSiteId)
@@ -306,6 +366,29 @@ export async function fanoutProduct(
       // Fall back to the group default rather than refusing to write.
     }
 
+    // What the user chose on this save, falling back to what the store already
+    // recorded. Persisted before the write so a store that turns out to be
+    // unreachable still remembers the decision and applies it on the next save.
+    let available = availability[store.siteId]
+    try {
+      if (available === undefined) available = await availabilityFor(store.siteId, code)
+      else await setAvailability(store.siteId, code, available)
+    } catch {
+      // Migration 005 not run for that store yet. Fall back to whether the
+      // store already holds the product rather than to `true`: a missing
+      // migration must not quietly restore the old behaviour of creating the
+      // product everywhere.
+      if (available === undefined) {
+        available = await siteQueryOne<RowDataPacket & { id: number }>(
+          store.siteId,
+          'SELECT id FROM products WHERE code = ? AND is_archived = 0 LIMIT 1',
+          [code],
+        )
+          .then(Boolean)
+          .catch(() => false)
+      }
+    }
+
     try {
       const result = await applyToStore(
         store.siteId,
@@ -313,6 +396,7 @@ export async function fanoutProduct(
         values,
         shareCost,
         shareSelling,
+        available,
         originStructures,
       )
       outcomes.push({ siteId: store.siteId, storeName: store.displayName, ...result })
@@ -338,6 +422,14 @@ export async function fanoutProduct(
 export type LinkedProductView = {
   store: GroupMember
   found: boolean
+  /**
+   * Whether this store is set to carry the product. Distinct from `found`: an
+   * archived product is still present in the database, so the switch state has
+   * to be read rather than inferred from the row existing.
+   */
+  available: boolean
+  /** True when the row exists but is archived — i.e. it was switched off here. */
+  archived: boolean
   lastCost: number
   prices: { structureName: string; sellIncl: number }[]
   /** Stock is never shared — it is a physical fact about one location. */
@@ -364,10 +456,11 @@ export async function readLinkedProducts(
           stock_on_hand: string
           min_stock: string
           max_stock: string
+          is_archived: number
         }
       >(
         store.siteId,
-        'SELECT id, last_cost, stock_on_hand, min_stock, max_stock FROM products WHERE code = ? LIMIT 1',
+        'SELECT id, last_cost, stock_on_hand, min_stock, max_stock, is_archived FROM products WHERE code = ? LIMIT 1',
         [code],
       )
       const settings = await shareSettingsFor(
@@ -376,11 +469,18 @@ export async function readLinkedProducts(
         store.sharesCost,
         store.sharesSelling,
       ).catch(() => ({ sharesCost: store.sharesCost, sharesSelling: store.sharesSelling }))
+      // On failure fall back to what the store holds — never to a bare `true`,
+      // which would render the switch on for a store that has never had it.
+      const available = await availabilityFor(store.siteId, code).catch(
+        () => Boolean(product) && !product?.is_archived,
+      )
 
       if (!product) {
         views.push({
           store,
           found: false,
+          available,
+          archived: false,
           lastCost: 0,
           prices: [],
           stockOnHand: 0,
@@ -407,6 +507,8 @@ export async function readLinkedProducts(
       views.push({
         store,
         found: true,
+        available,
+        archived: Boolean(product.is_archived),
         lastCost: Number(product.last_cost),
         prices: priceRows.map((r) => ({
           structureName: String(r.name),
@@ -419,9 +521,14 @@ export async function readLinkedProducts(
         sharesSelling: settings.sharesSelling,
       })
     } catch {
+      // The store could not be read at all. It is not known to carry the
+      // product, so the switch renders off rather than inviting a save that
+      // would create it there.
       views.push({
         store,
         found: false,
+        available: false,
+        archived: false,
         lastCost: 0,
         prices: [],
         stockOnHand: 0,

@@ -1,0 +1,545 @@
+'use client'
+
+import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Combobox,
+  CurrencyInput,
+  EmptyState,
+  Field,
+  Icons,
+  Input,
+  NumberInput,
+  Select,
+  useToast,
+  type ComboboxOption,
+} from '@/components/ui'
+import { formatMoney, formatQty, round } from '@/lib/decimals'
+import { apportionDiscount, weightedAverageCost } from '@/lib/documentMath'
+import type { TillProduct } from '@/lib/site/tillSearch'
+import {
+  searchProductsForPurchaseAction,
+  receiveGoodsAction,
+  loadOrderAction,
+} from '../actions'
+
+/**
+ * Receiving goods.
+ *
+ * The screen shows what each line will do to the product's average cost BEFORE
+ * anything is posted. That is the point: a receipt at an unusual price quietly
+ * moves the cost every future margin is measured against, and seeing it in
+ * advance is the difference between catching a keying error and finding it in
+ * next month's GP report.
+ */
+
+type StockLocationOption = { id: number; code: string; name: string; isMain: boolean }
+
+type ReceiveLine = {
+  key: string
+  orderLineId?: number | null
+  productId: number | null
+  productCode: string | null
+  supplierCode: string
+  description: string
+  productType: string
+  departmentId: number | null
+  qtyOrdered: number
+  qtyReceived: number
+  unitCostExcl: number
+  vatRatePct: number
+  /** Which stock room this line's goods go into. Per line, not per delivery. */
+  locationId: number | null
+  /** For the preview — what the product's cost is right now. */
+  currentAverage: number
+  currentStock: number
+}
+
+export default function ReceiveScreen({
+  suppliers,
+  openOrders,
+  defaultVatRate,
+  locations,
+}: {
+  suppliers: { id: number; code: string; name: string; terms: number }[]
+  openOrders: {
+    id: number
+    documentNumber: string | null
+    supplierId: number
+    supplierName: string | null
+    documentDate: string
+  }[]
+  defaultVatRate: number
+  /** Active stock locations. Always at least one — the main location. */
+  locations: StockLocationOption[]
+}) {
+  // Every new line starts here, so a single-location site never sees the
+  // control and a multi-location one gets the sensible default rather than an
+  // empty box it must fill in ten times.
+  const mainLocationId = locations.find((l) => l.isMain)?.id ?? locations[0]?.id ?? null
+  const multiLocation = locations.length > 1
+  const [supplierId, setSupplierId] = useState('')
+  const [orderId, setOrderId] = useState('')
+  const [invoiceNo, setInvoiceNo] = useState('')
+  const [charges, setCharges] = useState(0)
+  const [lines, setLines] = useState<ReceiveLine[]>([])
+  const [query, setQuery] = useState('')
+  const [options, setOptions] = useState<TillProduct[]>([])
+  const [searching, setSearching] = useState(false)
+  const [pending, startTransition] = useTransition()
+
+  const toast = useToast()
+  const router = useRouter()
+
+  const ordersForSupplier = openOrders.filter(
+    (o) => !supplierId || o.supplierId === Number(supplierId),
+  )
+
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setOptions([])
+      return
+    }
+    const timer = setTimeout(() => {
+      setSearching(true)
+      searchProductsForPurchaseAction(query)
+        .then(setOptions)
+        .finally(() => setSearching(false))
+    }, 180)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  /** Pulls an order's outstanding lines onto the receipt. */
+  function loadOrder(id: string) {
+    setOrderId(id)
+    if (!id) return
+
+    startTransition(async () => {
+      const order = await loadOrderAction(Number(id))
+      if (!order) return
+
+      setSupplierId(String(order.supplierId))
+      setLines(
+        order.lines
+          .filter((l) => l.qtyOutstanding > 0)
+          .map((l, index) => ({
+            key: `order-${l.id}-${index}`,
+            orderLineId: l.id,
+            productId: l.productId,
+            productCode: l.productCode,
+            supplierCode: l.supplierCode ?? '',
+            description: l.description,
+            productType: l.productType,
+            departmentId: l.departmentId,
+            qtyOrdered: l.qtyOrdered,
+            // Defaults to what is still outstanding — the common case is that
+            // everything ordered has arrived.
+            qtyReceived: l.qtyOutstanding,
+            unitCostExcl: l.unitCostExcl,
+            vatRatePct: l.vatRatePct,
+            locationId: mainLocationId,
+            currentAverage: 0,
+            currentStock: 0,
+          })),
+      )
+    })
+  }
+
+  function addProduct(product: TillProduct) {
+    setLines((current) => [
+      ...current,
+      {
+        key: `${product.id}-${Date.now()}`,
+        productId: product.id,
+        productCode: product.code,
+        supplierCode: '',
+        description: product.description,
+        productType: product.productType,
+        departmentId: product.departmentId,
+        qtyOrdered: 0,
+        qtyReceived: 1,
+        unitCostExcl: product.costExcl,
+        vatRatePct: defaultVatRate,
+        // Inherits whatever the previous line used, so allocating a whole
+        // delivery to the warehouse is one choice rather than one per line.
+        locationId: current[current.length - 1]?.locationId ?? mainLocationId,
+        currentAverage: product.costExcl,
+        currentStock: product.stockOnHand,
+      },
+    ])
+    setQuery('')
+    setOptions([])
+  }
+
+  const totals = useMemo(() => {
+    const values = lines.map((l) => round(l.qtyReceived * l.unitCostExcl, 2))
+    const spread = apportionDiscount(values, round(charges, 2))
+    const subtotal = values.reduce((s, v) => round(s + v, 2), 0)
+    const vat = lines.reduce(
+      (s, l, i) => round(s + values[i] * (l.vatRatePct / 100), 2),
+      0,
+    )
+    return {
+      values,
+      spread,
+      subtotal,
+      vat,
+      total: round(subtotal + charges + vat, 2),
+      landed: lines.map((l, i) =>
+        l.qtyReceived === 0 ? 0 : round((values[i] + spread[i]) / l.qtyReceived, 4),
+      ),
+    }
+  }, [lines, charges])
+
+  function submit() {
+    startTransition(async () => {
+      const result = await receiveGoodsAction({
+        supplierId: Number(supplierId),
+        orderId: orderId ? Number(orderId) : null,
+        supplierInvoiceNo: invoiceNo || null,
+        chargesExcl: charges,
+        lines: lines.map((l) => ({
+          orderLineId: l.orderLineId,
+          productId: l.productId,
+          locationId: l.locationId,
+          productCode: l.productCode,
+          supplierCode: l.supplierCode || null,
+          description: l.description,
+          productType: l.productType,
+          departmentId: l.departmentId,
+          qtyOrdered: l.qtyOrdered || l.qtyReceived,
+          qtyReceived: l.qtyReceived,
+          unitCostExcl: l.unitCostExcl,
+          vatRatePct: l.vatRatePct,
+        })),
+      })
+
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(`${result.documentNumber} received — stock and costs updated.`)
+      router.push(`/purchasing/${result.documentId}`)
+    })
+  }
+
+  const ready = supplierId !== '' && lines.length > 0 && lines.every((l) => l.qtyReceived > 0)
+
+  const comboOptions: ComboboxOption<TillProduct>[] = options.map((p) => ({
+    value: String(p.id),
+    label: p.description,
+    hint: `${p.code} · ${formatQty(p.stockOnHand)} on hand`,
+    trailing: formatMoney(p.costExcl),
+    data: p,
+  }))
+
+  return (
+    <div className="grid gap-4 px-6 pt-4 pb-10 lg:grid-cols-3">
+      <div className="flex flex-col gap-4 lg:col-span-2">
+        <Card>
+          <CardHeader title="Delivery" description="Who it came from, and what it came with." />
+          <CardBody className="grid gap-4 sm:grid-cols-2">
+            <Field label="Supplier">
+              <Select
+                value={supplierId}
+                onChange={(e) => {
+                  setSupplierId(e.target.value)
+                  setOrderId('')
+                }}
+              >
+                <option value="">— Choose —</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.code} — {s.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field
+              label="Against an order"
+              hint={
+                ordersForSupplier.length === 0
+                  ? 'No open orders — receiving straight in is fine.'
+                  : 'Pulls the outstanding lines in.'
+              }
+            >
+              <Select
+                value={orderId}
+                onChange={(e) => loadOrder(e.target.value)}
+                disabled={ordersForSupplier.length === 0}
+              >
+                <option value="">— No order —</option>
+                {ordersForSupplier.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.documentNumber} · {o.documentDate}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field label="Their invoice number" hint="What the payment run will match against.">
+              <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+            </Field>
+
+            <Field
+              label="Delivery and charges"
+              hint="Spread across the lines by value, so cost is landed cost."
+            >
+              <CurrencyInput
+                value={charges}
+                onChange={(e) => setCharges(Number(String(e.target.value).replace(',', '.')) || 0)}
+              />
+            </Field>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="What arrived"
+            description="Costs are exclusive of VAT — how a supplier invoice is written."
+          />
+          <CardBody className="flex flex-col gap-3">
+            <Combobox
+              options={comboOptions}
+              query={query}
+              onQueryChange={setQuery}
+              onSelect={(option) => option.data && addProduct(option.data)}
+              placeholder="Search a product to add a line…"
+              loading={searching}
+              clearOnSelect
+              emptyText={query.trim().length >= 2 ? 'No product matches.' : 'Keep typing…'}
+            />
+
+            {/* Most deliveries go to one place. Setting each line separately is
+                what the per-line control is for; this is the common case. */}
+            {multiLocation && lines.length > 1 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted">Send every line to</span>
+                <Select
+                  value=""
+                  className="w-auto"
+                  onChange={(e) => {
+                    const id = Number(e.target.value)
+                    if (!id) return
+                    setLines((c) => c.map((l) => ({ ...l, locationId: id })))
+                  }}
+                >
+                  <option value="">— Choose —</option>
+                  {locations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.code} — {loc.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+          </CardBody>
+
+          {lines.length === 0 ? (
+            <EmptyState
+              title="Nothing on this delivery yet"
+              hint="Pick an order above, or search for a product."
+              icon={<Icons.PackageOpen size={22} />}
+            />
+          ) : (
+            <div className="divide-y divide-border">
+              {lines.map((line, index) => {
+                const landed = totals.landed[index]
+                // What this receipt will do to the cost every future margin is
+                // measured against.
+                const newAverage = weightedAverageCost({
+                  existingQty: line.currentStock,
+                  existingCostExcl: line.currentAverage,
+                  receivedQty: line.qtyReceived,
+                  receivedCostExcl: landed,
+                })
+                const moved = line.currentAverage > 0 && newAverage !== line.currentAverage
+
+                return (
+                  <div key={line.key} className="px-6 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-ink">{line.description}</div>
+                        <div className="text-xs text-muted">
+                          {line.productCode}
+                          {line.qtyOrdered > 0 && (
+                            <span className="ml-2">{formatQty(line.qtyOrdered)} ordered</span>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        variant="bare"
+                        size="sm"
+                        iconOnly
+                        aria-label={`Remove ${line.description}`}
+                        onClick={() => setLines((c) => c.filter((l) => l.key !== line.key))}
+                      >
+                        <Icons.Close size={15} />
+                      </Button>
+                    </div>
+
+                    <div
+                      className={`mt-2 grid gap-3 ${multiLocation ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}
+                    >
+                      <Field label="Received">
+                        <NumberInput
+                          value={line.qtyReceived}
+                          precision={3}
+                          onChange={(e) =>
+                            setLines((c) =>
+                              c.map((l) =>
+                                l.key === line.key
+                                  ? { ...l, qtyReceived: Number(e.target.value) || 0 }
+                                  : l,
+                              ),
+                            )
+                          }
+                        />
+                      </Field>
+                      <Field label="Unit cost (excl.)">
+                        <CurrencyInput
+                          value={line.unitCostExcl}
+                          onChange={(e) =>
+                            setLines((c) =>
+                              c.map((l) =>
+                                l.key === line.key
+                                  ? {
+                                      ...l,
+                                      unitCostExcl:
+                                        Number(String(e.target.value).replace(',', '.')) || 0,
+                                    }
+                                  : l,
+                              ),
+                            )
+                          }
+                        />
+                      </Field>
+                      <Field label="Their code">
+                        <Input
+                          value={line.supplierCode}
+                          onChange={(e) =>
+                            setLines((c) =>
+                              c.map((l) =>
+                                l.key === line.key ? { ...l, supplierCode: e.target.value } : l,
+                              ),
+                            )
+                          }
+                        />
+                      </Field>
+                      {/* Only when there is a choice to make. A single-location
+                          site would get a select with one option in it. */}
+                      {multiLocation && (
+                        <Field label="Into">
+                          <Select
+                            value={line.locationId === null ? '' : String(line.locationId)}
+                            onChange={(e) =>
+                              setLines((c) =>
+                                c.map((l) =>
+                                  l.key === line.key
+                                    ? { ...l, locationId: Number(e.target.value) || null }
+                                    : l,
+                                ),
+                              )
+                            }
+                          >
+                            {locations.map((loc) => (
+                              <option key={loc.id} value={loc.id}>
+                                {loc.code}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                      )}
+
+                      <div className="flex flex-col justify-end pb-1">
+                        <div className="numeric text-sm text-ink">
+                          {formatMoney(totals.values[index])}
+                        </div>
+                        {charges > 0 && (
+                          <div className="text-xs text-muted">
+                            +{formatMoney(totals.spread[index])} charges
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* The cost preview — the reason this screen exists. */}
+                    {line.productId && (
+                      <p className="mt-2 text-xs text-muted">
+                        Landed {formatMoney(landed)} per unit ·{' '}
+                        {moved ? (
+                          <>
+                            average cost {formatMoney(line.currentAverage)} →{' '}
+                            <span
+                              className={
+                                newAverage > line.currentAverage ? 'text-warning' : 'text-success'
+                              }
+                            >
+                              {formatMoney(newAverage)}
+                            </span>
+                          </>
+                        ) : (
+                          <>average cost becomes {formatMoney(newAverage)}</>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        <Card className="p-4">
+          <dl className="flex flex-col gap-1.5 text-sm">
+            <Row label="Goods (excl.)" value={formatMoney(totals.subtotal)} />
+            {charges > 0 && <Row label="Delivery" value={formatMoney(charges)} />}
+            <Row label="VAT" value={formatMoney(totals.vat)} />
+          </dl>
+          <div className="mt-3 flex items-baseline justify-between border-t border-border pt-3">
+            <span className="font-medium text-ink">Invoice total</span>
+            <span className="numeric text-xl font-semibold text-ink">
+              {formatMoney(totals.total)}
+            </span>
+          </div>
+        </Card>
+
+        <Button variant="primary" disabled={!ready || pending} onClick={submit}>
+          <Icons.PackageOpen size={16} />
+          {pending ? 'Receiving…' : 'Receive the goods'}
+        </Button>
+
+        {!ready && (
+          <p className="text-center text-xs text-muted">
+            {!supplierId ? 'Choose a supplier.' : 'Add what arrived.'}
+          </p>
+        )}
+
+        <Card className="p-3">
+          <p className="text-xs text-muted">
+            Receiving moves stock in, blends the landed cost into each product&apos;s average, and
+            credits the supplier&apos;s account. It is the only thing in the system that changes
+            average cost.
+          </p>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <dt className="text-muted">{label}</dt>
+      <dd className="numeric text-ink-2">{value}</dd>
+    </div>
+  )
+}

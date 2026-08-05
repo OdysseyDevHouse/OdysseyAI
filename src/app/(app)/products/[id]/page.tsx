@@ -7,6 +7,11 @@ import { listDepartments } from '@/lib/site/departments'
 import { linkedStores } from '@/lib/storeGroups'
 import { shareSettingsFor } from '@/lib/site/shareSettings'
 import { readLinkedProducts } from '@/lib/site/productFanout'
+import { listGroups as listInstructionGroups, groupsForProduct } from '@/lib/site/instructions'
+import { listRecipe, getRefer } from '@/lib/site/productComposition'
+import { listSerials } from '@/lib/site/serials'
+import { listProductSuppliers } from '@/lib/site/productSuppliers'
+import { locationStockFor } from '@/lib/site/stockLocations'
 import { Button, PageHeader } from '@/components/ui'
 import ProductForm from '../ProductForm'
 import { archiveProductAction, deleteProductAction } from '../actions'
@@ -28,8 +33,8 @@ export default async function EditProductPage({
   const site = await requireSite()
   const siteId = site.id
 
-  const [product, departments, brands, vatRates, structures, costBasis, stores] = await Promise.all(
-    [
+  const [product, departments, brands, vatRates, structures, costBasis, stores, locationStock] =
+    await Promise.all([
       getProduct(siteId, productId),
       listDepartments(siteId),
       listBrands(siteId),
@@ -37,8 +42,8 @@ export default async function EditProductPage({
       listPriceStructures(siteId),
       getCostBasis(siteId),
       linkedStores(siteId),
-    ],
-  )
+      locationStockFor(siteId, productId),
+    ])
 
   if (!product) notFound()
 
@@ -55,6 +60,31 @@ export default async function EditProductPage({
     : { sharesCost: true, sharesSelling: true }
 
   const linked = stores.length ? await readLinkedProducts(siteId, product.code) : []
+
+  // The instruction library, plus the ones this product already asks. Both are
+  // tolerant of the table not existing yet so an unmigrated store still edits.
+  const instructionGroups = await listInstructionGroups(siteId).catch(() => [])
+  const attachedInstructions = await groupsForProduct(siteId, product.id)
+    .then((gs) => gs.map((g) => g.id))
+    .catch(() => [])
+
+  // The setup each product type needs. Only fetched for the type that uses it —
+  // a normal product has no ingredient list to read — and each is tolerant of
+  // its table not existing yet, so an unmigrated store still edits products.
+  const [recipeLines, referLink, serials, productSuppliers] = await Promise.all([
+    product.productType === 'recipe'
+      ? listRecipe(siteId, product.id).catch(() => [])
+      : Promise.resolve([]),
+    product.productType === 'refer'
+      ? getRefer(siteId, product.id).catch(() => null)
+      : Promise.resolve(null),
+    product.productType === 'serial'
+      ? listSerials(siteId, { productId: product.id, limit: 200 })
+          .then((r) => r.items)
+          .catch(() => [])
+      : Promise.resolve([]),
+    listProductSuppliers(siteId, product.id).catch(() => []),
+  ])
 
   // The pricing tables are laid out by THIS store's price structures, but each
   // linked store returns its own tiers by name. Map them across so a tier that
@@ -104,9 +134,16 @@ export default async function EditProductPage({
           storeName={site.displayName}
           currentSiteId={siteId}
           linkedStores={linked}
+          locationStock={locationStock}
           linkedLines={linkedLines}
           sharesCost={sharing.sharesCost}
           sharesSelling={sharing.sharesSelling}
+          instructionGroups={instructionGroups}
+          attachedInstructions={attachedInstructions}
+          recipeLines={recipeLines}
+          referLink={referLink}
+          serials={serials}
+          productSuppliers={productSuppliers}
           // Archive and delete are their own server actions, so they cannot be
           // nested inside the edit form — they are rendered beside Save instead.
           rowActions={

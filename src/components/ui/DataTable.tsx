@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { Checkbox } from './Field'
 import { EmptyState } from './EmptyState'
 import { SortAsc, SortDesc, SortNeutral } from './icons'
 import { TABLE, TABLE_HEAD_ROW, TABLE_NUMERIC, TABLE_ROW, TABLE_TD, TABLE_TH } from './styles'
@@ -32,6 +33,12 @@ export type Column<T> = {
  * Sorting is optional and works two ways: pass `sort` + `onSortChange` to drive
  * it yourself (server-side sorting, URL state), or leave both off and the table
  * sorts its own rows. Row actions render right-aligned in a trailing column.
+ *
+ * Selection is also optional and always CONTROLLED: pass `selectedKeys` and
+ * `onSelectionChange` together and a checkbox column appears. It has to be
+ * controlled because the things that act on a selection — the bulk action bar,
+ * the confirm modal — live outside this component and must read the same set.
+ * Omit both and the table renders exactly as it did before selection existed.
  */
 export function DataTable<T>({
   columns,
@@ -42,6 +49,9 @@ export function DataTable<T>({
   onSortChange,
   empty,
   onRowClick,
+  selectedKeys,
+  onSelectionChange,
+  isRowSelectable,
 }: {
   columns: readonly Column<T>[]
   rows: readonly T[]
@@ -52,8 +62,16 @@ export function DataTable<T>({
   onSortChange?: (next: SortState) => void
   empty?: { title: string; hint?: string; icon?: ReactNode; action?: ReactNode }
   onRowClick?: (row: T) => void
+  /** Selected row keys, as strings. Pass with onSelectionChange to enable selection. */
+  selectedKeys?: ReadonlySet<string>
+  onSelectionChange?: (next: ReadonlySet<string>) => void
+  /** Rows that cannot be picked — a closed account in a statement run, say. */
+  isRowSelectable?: (row: T) => boolean
 }) {
   const [internalSort, setInternalSort] = useState<SortState | undefined>(undefined)
+  /* Anchor for shift-click range selection. A ref, not state: it must not
+     re-render the table, and it is read only during a click. */
+  const lastClickedKey = useRef<string | null>(null)
 
   // Controlled when the caller passes both; uncontrolled otherwise.
   const controlled = sort !== undefined && onSortChange !== undefined
@@ -84,6 +102,60 @@ export function DataTable<T>({
     else setInternalSort(next)
   }
 
+  const selectable = selectedKeys !== undefined && onSelectionChange !== undefined
+  const selectableRows = selectable
+    ? sortedRows.filter((row) => isRowSelectable?.(row) ?? true)
+    : []
+  const selectedHere = selectableRows.filter((row) =>
+    selectedKeys!.has(String(getRowKey(row))),
+  ).length
+  const allSelected = selectableRows.length > 0 && selectedHere === selectableRows.length
+
+  function setSelection(next: Set<string>) {
+    onSelectionChange!(next)
+  }
+
+  function toggleRow(row: T, shiftKey: boolean) {
+    const key = String(getRowKey(row))
+    const next = new Set(selectedKeys!)
+
+    // Shift-click extends from the last row clicked, in the order the user is
+    // actually looking at — which is the SORTED order, not the source order.
+    if (shiftKey && lastClickedKey.current !== null) {
+      const keys = selectableRows.map((r) => String(getRowKey(r)))
+      const from = keys.indexOf(lastClickedKey.current)
+      const to = keys.indexOf(key)
+      if (from !== -1 && to !== -1) {
+        const [start, end] = from < to ? [from, to] : [to, from]
+        // The anchor's own state decides the whole range, so dragging back over
+        // a range you just selected clears it rather than toggling every row.
+        const selecting = !selectedKeys!.has(lastClickedKey.current)
+        for (const rangeKey of keys.slice(start, end + 1)) {
+          if (selecting) next.add(rangeKey)
+          else next.delete(rangeKey)
+        }
+        setSelection(next)
+        return
+      }
+    }
+
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    lastClickedKey.current = key
+    setSelection(next)
+  }
+
+  function toggleAll() {
+    const next = new Set(selectedKeys!)
+    for (const row of selectableRows) {
+      const key = String(getRowKey(row))
+      if (allSelected) next.delete(key)
+      else next.add(key)
+    }
+    lastClickedKey.current = null
+    setSelection(next)
+  }
+
   if (rows.length === 0 && empty) {
     return <EmptyState title={empty.title} hint={empty.hint} icon={empty.icon} action={empty.action} />
   }
@@ -93,6 +165,19 @@ export function DataTable<T>({
       <table className={TABLE}>
         <thead>
           <tr className={TABLE_HEAD_ROW}>
+            {selectable && (
+              <th scope="col" className={`${TABLE_TH} w-px`}>
+                <Checkbox
+                  checked={allSelected}
+                  /* Some-but-not-all. `indeterminate` is a DOM property with no
+                     HTML attribute, so Checkbox sets it via a ref. */
+                  indeterminate={selectedHere > 0 && !allSelected}
+                  disabled={selectableRows.length === 0}
+                  onChange={toggleAll}
+                  aria-label={allSelected ? 'Clear selection' : 'Select all rows'}
+                />
+              </th>
+            )}
             {columns.map((column) => {
               const sorted = activeSort?.key === column.key
               return (
@@ -127,12 +212,31 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((row) => (
+          {sortedRows.map((row) => {
+            const rowKey = String(getRowKey(row))
+            const rowSelectable = selectable && (isRowSelectable?.(row) ?? true)
+
+            return (
             <tr
               key={getRowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
               className={`${TABLE_ROW} ${onRowClick ? 'cursor-pointer' : ''}`}
             >
+              {selectable && (
+                <td className={`${TABLE_TD} w-px`}>
+                  {/* Same guard as the actions cell below: ticking a box must
+                      not also fire onRowClick and navigate away. */}
+                  <div onClick={(event) => event.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedKeys!.has(rowKey)}
+                      disabled={!rowSelectable}
+                      onChange={() => undefined}
+                      onClick={(event) => toggleRow(row, event.shiftKey)}
+                      aria-label={`Select row ${rowKey}`}
+                    />
+                  </div>
+                </td>
+              )}
               {columns.map((column) => (
                 <td
                   key={column.key}
@@ -142,7 +246,9 @@ export function DataTable<T>({
                 </td>
               ))}
               {actions && (
-                <td className="px-4 py-3">
+                <td className="px-4 py-1.5">
+                  {/* Padding matches TABLE_TD — an actions cell that kept its
+                      own taller padding would set the height of every row. */}
                   {/* Stop clicks on an action from also triggering onRowClick. */}
                   <div
                     className="flex items-center justify-end gap-1.5"
@@ -153,7 +259,8 @@ export function DataTable<T>({
                 </td>
               )}
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </div>

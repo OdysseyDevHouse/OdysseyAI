@@ -388,11 +388,26 @@ export function Checkbox({
   label,
   className = '',
   id,
+  indeterminate = false,
   ...rest
-}: Omit<ComponentProps<'input'>, 'type' | 'className'> & { label?: ReactNode; className?: string }) {
+}: Omit<ComponentProps<'input'>, 'type' | 'className'> & {
+  label?: ReactNode
+  className?: string
+  /**
+   * The "some, but not all" dash — a select-all box over a partial selection.
+   *
+   * Needs a ref because `indeterminate` is a DOM property with no matching HTML
+   * attribute: React will not set it from a prop, so writing it at the call
+   * site would mean reaching into the DOM from every table.
+   */
+  indeterminate?: boolean
+}) {
   return (
     <label className={`inline-flex cursor-pointer items-center gap-2 text-sm text-ink ${className}`}>
       <input
+        ref={(el) => {
+          if (el) el.indeterminate = indeterminate
+        }}
         type="checkbox"
         id={id}
         className="size-4 cursor-pointer rounded-[4px] border-border-strong disabled:cursor-not-allowed"

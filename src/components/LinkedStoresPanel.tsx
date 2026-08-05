@@ -1,7 +1,15 @@
 'use client'
 
-import { useState } from 'react'
-import { Badge, Checkbox, TABLE, TABLE_HEAD_ROW, TABLE_ROW, TABLE_TD, TABLE_TH } from '@/components/ui'
+import {
+  Badge,
+  Checkbox,
+  Switch,
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_ROW,
+  TABLE_TD,
+  TABLE_TH,
+} from '@/components/ui'
 import type { LinkedProductView } from '@/lib/site/productFanout'
 
 /**
@@ -28,6 +36,8 @@ export default function LinkedStoresPanel({
   currentSiteId,
   sharesCost,
   sharesSelling,
+  availability,
+  onAvailabilityChange,
   onSharesCostChange,
   onSharesSellingChange,
 }: {
@@ -37,13 +47,96 @@ export default function LinkedStoresPanel({
      decide which rows are editable, so they cannot be owned here. */
   sharesCost: boolean
   sharesSelling: boolean
+  /** Which stores carry this product, keyed by site id. */
+  availability: Record<number, boolean>
+  onAvailabilityChange: (siteId: number, value: boolean) => void
   onSharesCostChange: (value: boolean) => void
   onSharesSellingChange: (value: boolean) => void
 }) {
   const others = stores.filter((s) => s.store.siteId !== currentSiteId)
+  const current = stores.find((s) => s.store.siteId === currentSiteId)
+
+  // The store being edited always carries the product and is shown first, so
+  // the list reads as "here, and where else".
+  const rows = current ? [current, ...others] : others
 
   return (
     <div className="flex flex-col gap-5 p-6">
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-muted">
+          Which of your stores carry this product. A store is only written to once you switch it on
+          — saving never adds this product to a store on its own. Switching a store off archives it
+          there, keeping its stock and sales history.
+        </p>
+
+        <div className="overflow-x-auto">
+          <table className={TABLE}>
+            <thead>
+              <tr className={TABLE_HEAD_ROW}>
+                <th className={TH}>Store</th>
+                <th className={TH}>Status</th>
+                <th className={`${TH} text-right`}>Available</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((view) => {
+                const siteId = view.store.siteId
+                const isCurrent = siteId === currentSiteId
+                // Defaults off, not on: a store is only written to once someone
+                // deliberately switches it on.
+                const on = availability[siteId] ?? false
+
+                return (
+                  <tr key={siteId} className={TABLE_ROW}>
+                    <td className={`${TD} text-ink`}>
+                      {view.store.displayName}
+                      {isCurrent && (
+                        <Badge className="ml-2" tone="neutral">
+                          current
+                        </Badge>
+                      )}
+                    </td>
+
+                    <td className={TD}>
+                      {isCurrent ? (
+                        <span className="text-success">Available</span>
+                      ) : on ? (
+                        <span className="text-success">
+                          {view.found && !view.archived ? 'Available' : 'Will be added on save'}
+                        </span>
+                      ) : (
+                        <span className="text-muted">
+                          {view.found && !view.archived ? 'Will be removed on save' : 'Not available'}
+                        </span>
+                      )}
+                    </td>
+
+                    <td className={`${TD} text-right`}>
+                      <div className="flex justify-end">
+                        {/* The store you are signed into cannot un-stock itself —
+                            you would be archiving the product you are editing. */}
+                        <Switch
+                          checked={isCurrent ? true : on}
+                          disabled={isCurrent}
+                          onChange={(next) => onAvailabilityChange(siteId, next)}
+                        />
+                      </div>
+                      {!isCurrent && (
+                        <input
+                          type="hidden"
+                          name={`available_${siteId}`}
+                          value={on ? '1' : '0'}
+                        />
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="flex flex-col gap-3">
         {/* Hidden inputs carry the unchecked state too — an unchecked checkbox
             submits nothing, which would read as "leave unchanged" rather than
@@ -91,10 +184,12 @@ export default function LinkedStoresPanel({
                 </td>
 
                 <td className={TD}>
-                  {view.found ? (
-                    <Badge tone="success">carried</Badge>
+                  {!view.found ? (
+                    <Badge tone="neutral">not in this store</Badge>
+                  ) : view.archived ? (
+                    <Badge tone="warning">archived</Badge>
                   ) : (
-                    <Badge tone="warning">not carried yet</Badge>
+                    <Badge tone="success">carried</Badge>
                   )}
                 </td>
 
@@ -120,9 +215,8 @@ export default function LinkedStoresPanel({
       </div>
 
       <p className="text-xs text-muted">
-        A store showing “not carried yet” will have this product created in it the next time you
-        save. Linked stores are configured under{' '}
-        <strong className="text-ink">Setup → Linked stores</strong>.
+        Only the stores switched on above are written to when you save. Which stores are linked at
+        all is configured under <strong className="text-ink">Setup → Linked stores</strong>.
       </p>
     </div>
   )

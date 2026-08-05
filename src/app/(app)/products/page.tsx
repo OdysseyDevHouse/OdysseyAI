@@ -5,17 +5,40 @@ import { listProducts } from '@/lib/site/products'
 import { getCostBasis } from '@/lib/site/lookups'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
 import { formatMoney, formatQty } from '@/lib/decimals'
-import { PageHeader, PrimaryLink, Card, EmptyState, SearchBar, Badge, TABLE_HEAD_ROW, TABLE_TH } from '@/components/ui'
+import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
+import {
+  PageHeader,
+  PrimaryLink,
+  Card,
+  EmptyState,
+  SearchBar,
+  Badge,
+  FilterBar,
+  FilterChip,
+  Pagination,
+  TABLE_HEAD_ROW,
+  TABLE_TH,
+} from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
+
+/** Rows per page. The list used to render a flat 100 with no way to reach 101. */
+const PAGE_SIZE = 50
 
 export default async function ProductsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; archived?: string; low?: string; department?: string }>
+  searchParams: Promise<{
+    q?: string
+    archived?: string
+    low?: string
+    department?: string
+    page?: string
+  }>
 }) {
   const siteId = await requireSiteId()
-  const { q, archived, low, department } = await searchParams
+  const params = await searchParams
+  const { q, archived, low, department } = params
 
   const [departments, costBasis] = await Promise.all([
     listDepartments(siteId, true),
@@ -30,15 +53,26 @@ export default async function ProductsPage({
       ? [...descendantIds(departments, departmentId)]
       : undefined
 
+  const page = pageFrom(params.page)
   const { items, total } = await listProducts(siteId, {
     search: q,
     includeArchived: archived === '1',
     belowMinimum: low === '1',
     departmentIds: filterIds,
-    limit: 100,
+    limit: PAGE_SIZE,
+    offset: offsetFor(page, PAGE_SIZE),
   })
 
   const filterLabel = filterIds ? departmentPath(departments, departmentId) : null
+
+  /* Every link on this screen composes onto the current query rather than
+     replacing it, so searching no longer drops the department filter and
+     paging no longer drops both. */
+  const href = hrefBuilder('/products', params)
+  /* Any filter change returns to page 1 — page 7 of the old result set is
+     rarely a page of the new one, and landing on an empty list reads as "no
+     matches" when there are plenty. */
+  const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
 
   return (
     <>
@@ -53,18 +87,34 @@ export default async function ProductsPage({
         }
       />
 
-      <SearchBar action="/products" defaultValue={q} placeholder="Search description, code or barcode…" />
+      <SearchBar
+        action="/products"
+        defaultValue={q}
+        placeholder="Search description, code or barcode…"
+        /* A GET form submits only its own fields, so without these a search
+           would silently clear whichever filters were applied. */
+        keep={{ archived, low, department }}
+      />
 
-      {filterLabel && (
-        <div className="flex items-center gap-2 px-6 pb-1 text-xs">
-          <span className="rounded bg-brand/10 px-2 py-1 text-brand">
-            Department: {filterLabel}
-          </span>
-          <Link href="/products" className="text-muted hover:text-ink">
-            Clear
-          </Link>
-        </div>
-      )}
+      <FilterBar clearHref="/products">
+        {filterLabel && (
+          <FilterChip
+            label="Department"
+            value={filterLabel}
+            clearHref={filterHref({ department: null })}
+          />
+        )}
+        {low === '1' && (
+          <FilterChip label="Stock" value="At or below minimum" clearHref={filterHref({ low: null })} />
+        )}
+        {archived === '1' && (
+          <FilterChip
+            label="Archived"
+            value="Included"
+            clearHref={filterHref({ archived: null })}
+          />
+        )}
+      </FilterBar>
 
       <div className="flex gap-3 px-6 pb-3 text-xs">
         <Link
@@ -78,13 +128,13 @@ export default async function ProductsPage({
           Active
         </Link>
         <Link
-          href="/products?low=1"
+          href={filterHref({ low: low === '1' ? null : '1' })}
           className={low === '1' ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
         >
           At or below minimum
         </Link>
         <Link
-          href="/products?archived=1"
+          href={filterHref({ archived: archived === '1' ? null : '1' })}
           className={archived === '1' ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
         >
           Include archived
@@ -166,6 +216,14 @@ export default async function ProductsPage({
               </table>
             </div>
           )}
+
+          <Pagination
+            page={page}
+            pageCount={pageCountFor(total, PAGE_SIZE)}
+            total={total}
+            pageSize={PAGE_SIZE}
+            hrefFor={(next) => href({ page: next === 1 ? null : next })}
+          />
         </Card>
       </div>
     </>
