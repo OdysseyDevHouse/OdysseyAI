@@ -4,10 +4,14 @@
     {
       // Breakpoints in server components, server actions, route handlers and
       // anything under src/lib. This is the one you want most of the time.
+      //
+      // The `-- --inspect` is what opens the inspector on the Next server
+      // process; without it only the npm/CLI wrapper is debuggable and
+      // breakpoints in server code never bind.
       "name": "Web: server-side",
       "type": "node-terminal",
       "request": "launch",
-      "command": "npm run dev",
+      "command": "npm run dev -- --inspect",
       "cwd": "${workspaceFolder}",
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
@@ -29,7 +33,7 @@
       "name": "Web: full stack",
       "type": "node-terminal",
       "request": "launch",
-      "command": "npm run dev",
+      "command": "npm run dev -- --inspect",
       "cwd": "${workspaceFolder}",
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
       "serverReadyAction": {
@@ -41,8 +45,13 @@
     },
     {
       // Debugs electron/main.js. The preLaunchTask brings the Next dev server
-      // up first; ELECTRON_DEV_URL then tells the shell to load it instead of
-      // booting its own production server.
+      // up first — in desktop mode, so this matches `npm run dev:desktop`
+      // rather than the plain web server. ELECTRON_DEV_URL then tells the shell
+      // to load it instead of booting its own production server.
+      //
+      // ELECTRON_RUN_AS_NODE is unset deliberately: VS Code sets it in its own
+      // process tree, and if it leaks into this launch, electron.exe runs as a
+      // bare Node binary — main.js executes, no window ever opens.
       "name": "Desktop: Electron main",
       "type": "node",
       "request": "launch",
@@ -51,31 +60,49 @@
       "runtimeArgs": ["--remote-debugging-port=9223", "."],
       "env": {
         "ELECTRON_DEV_URL": "http://localhost:4100",
+        "ELECTRON_RUN_AS_NODE": null,
         "APP_MODE": "desktop",
         "NEXT_PUBLIC_APP_MODE": "desktop"
       },
-      "preLaunchTask": "dev server",
+      "preLaunchTask": "dev server (desktop)",
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"]
     },
     {
       // Attaches to the Electron window itself. Run "Desktop: Electron main"
-      // first — it opens the port this connects to.
+      // first — it opens the port this connects to. The generous timeout is for
+      // the compound below, where a cold Next start has to finish first.
       "name": "Desktop: Electron renderer",
       "type": "chrome",
       "request": "attach",
       "port": 9223,
       "webRoot": "${workspaceFolder}",
-      "timeout": 30000
+      "timeout": 90000
     },
     {
-      // Step through scripts/migrate.mjs or scripts/seed.mjs.
-      "name": "Script: current file",
+      // Step through the TypeScript runners in scripts/ (test-*.ts,
+      // check-seed.ts). They import server-only modules, so they need the same
+      // react-server condition the npm test scripts use.
+      "name": "Script: current file (.ts)",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": ["--import", "tsx", "--conditions=react-server", "--env-file=.env"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Step through the plain-JS runners: site-migrate.mjs, tickets-migrate.mjs,
+      // seed-stress.mjs, free-port.mjs. Add arguments (a site id, --dry-run) to
+      // "args" below when the script takes them.
+      "name": "Script: current file (.mjs)",
       "type": "node",
       "request": "launch",
       "program": "${file}",
       "cwd": "${workspaceFolder}",
       "runtimeArgs": ["--env-file=.env"],
+      "args": [],
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"]
     }

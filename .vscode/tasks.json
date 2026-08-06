@@ -4,6 +4,10 @@
     {
       // Background task: the Electron launch config waits on this before
       // starting, so it must signal readiness rather than run to completion.
+      //
+      // The pattern below is the deliberate no-op form for background tasks —
+      // capture groups 1-3 never exist, so nothing is reported to the Problems
+      // panel. Only the beginsPattern/endsPattern matter here.
       "label": "dev server",
       "type": "shell",
       "command": "npm run dev",
@@ -11,10 +15,37 @@
       "problemMatcher": {
         "owner": "next",
         "pattern": {
-          "regexp": "^\\s*(.*)$",
+          "regexp": ".",
           "file": 1,
-          "location": 1,
-          "message": 1
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*(Starting|compiling|Next\\.js).*",
+          "endsPattern": ".*(Ready in|Local:\\s+http).*"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      // Same server, but with APP_MODE=desktop so debugging the Electron shell
+      // matches what `npm run dev:desktop` produces. Used by the
+      // "Desktop: Electron main" launch config.
+      "label": "dev server (desktop)",
+      "type": "shell",
+      "command": "npm run dev:desktop:next",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "next",
+        "pattern": {
+          "regexp": ".",
+          "file": 1,
+          "location": 2,
+          "message": 3
         },
         "background": {
           "activeOnStart": true,
@@ -42,15 +73,39 @@
       "problemMatcher": ["$tsc"]
     },
     {
-      "label": "db: migrate",
+      "label": "test: all",
       "type": "shell",
-      "command": "npm run db:migrate",
+      "command": "npm test",
+      "group": "test",
       "problemMatcher": []
     },
     {
-      "label": "db: seed",
+      // Control database (odyssey_tickets) — shared with the v2 backend, so
+      // every migration must be additive. Run the dry run first.
+      "label": "db: migrate control (dry run)",
       "type": "shell",
-      "command": "npm run db:seed",
+      "command": "node --env-file=.env scripts/tickets-migrate.mjs --dry-run",
+      "problemMatcher": []
+    },
+    {
+      "label": "db: migrate control",
+      "type": "shell",
+      "command": "node --env-file=.env scripts/tickets-migrate.mjs",
+      "problemMatcher": []
+    },
+    {
+      // A single site's trading database. Connection details come from
+      // cp2_site_databases in the control database, so the control migrations
+      // have to have run first.
+      "label": "db: migrate site",
+      "type": "shell",
+      "command": "node --env-file=.env scripts/site-migrate.mjs ${input:siteId}",
+      "problemMatcher": []
+    },
+    {
+      "label": "db: seed (stress, small)",
+      "type": "shell",
+      "command": "npm run seed:stress:small",
       "problemMatcher": []
     },
     {
@@ -58,6 +113,14 @@
       "type": "shell",
       "command": "npm run dist",
       "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "siteId",
+      "type": "promptString",
+      "description": "Site id (cp2_sites.id) to migrate",
+      "default": "1"
     }
   ]
 }
