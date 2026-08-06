@@ -1,5 +1,5 @@
-import { requireSite } from '@/lib/auth'
-import { capabilitiesFor, can } from '@/lib/site/permissions'
+import { requireSiteUser } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { PageHeader, PageBody, Card, Icons } from '@/components/ui'
 import ReturnForm from './ReturnForm'
@@ -7,12 +7,9 @@ import ReturnForm from './ReturnForm'
 export const dynamic = 'force-dynamic'
 
 export default async function ReturnsPage() {
-  const site = await requireSite()
+  const { site, user, capabilities } = await requireSiteUser()
 
-  const [capabilities, tenders] = await Promise.all([
-    capabilitiesFor(site.id, site.role),
-    listTenderTypes(site.id),
-  ])
+  const tenders = await listTenderTypes(site.id)
 
   const allowed = can(capabilities, 'sales.credit_note')
 
@@ -32,7 +29,7 @@ export default async function ReturnsPage() {
               <Icons.Ban size={18} className="mt-0.5 shrink-0 text-danger" />
               <div>
                 <p className="font-medium text-ink">
-                  Your role ({site.role}) cannot credit a sale.
+                  Your role{user.roleName ? ` (${user.roleName})` : ''} cannot credit a sale.
                 </p>
                 <p className="text-sm text-muted">
                   An owner can grant this in Setup → Permissions. Returns without a receipt are

@@ -1,12 +1,12 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSite, requireSiteId } from '@/lib/auth'
-import { capabilitiesFor, can } from '@/lib/site/permissions'
+import { requireActor, requireSiteId, requireSiteUser } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { createCreditNote, creditableLines, type CreditNoteInput } from '@/lib/site/salesReversal'
 import {
   saveDraft,
-  parkDocument,
+  saveForLaterDocument,
   recallDocument,
   discardDocument,
   getDocument,
@@ -150,9 +150,15 @@ export async function saveAsOrderAction(
   return { ok: true, documentId: result.id }
 }
 
-export async function parkSaleAction(documentId: number): Promise<SaleResult> {
+/**
+ * Sets a basket aside so the counter can serve someone else.
+ *
+ * Not `saveSaleAction` — that already means "persist the draft's lines", which
+ * this calls first. Two different operations, two names.
+ */
+export async function saveForLaterAction(documentId: number): Promise<SaleResult> {
   const siteId = await requireSiteId()
-  const result = await parkDocument(siteId, documentId)
+  const result = await saveForLaterDocument(siteId, documentId)
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidatePath('/sales')
@@ -253,15 +259,13 @@ export type CreditNoteActionResult =
 export async function createCreditNoteAction(
   input: CreditNoteInput,
 ): Promise<CreditNoteActionResult> {
-  const session = await requireSite()
-  const actor = await requireActor()
+  const { site, user, capabilities } = await requireSiteUser()
 
-  const capabilities = await capabilitiesFor(session.id, session.role)
   if (!can(capabilities, 'sales.credit_note')) {
     return { ok: false, error: 'You do not have permission to credit a sale.' }
   }
 
-  const result = await createCreditNote(actor.siteId, actor.actor, input)
+  const result = await createCreditNote(site.id, { userId: user.id, userName: user.name }, input)
   if (!result.ok) return result
 
   revalidatePath('/sales')
@@ -290,10 +294,8 @@ export async function creditWholeSaleAction(
   reason: string,
   refunds?: { tenderTypeId: number; amount: number; reference?: string | null }[],
 ): Promise<CreditNoteActionResult> {
-  const session = await requireSite()
-  const actor = await requireActor()
+  const { site, user, capabilities } = await requireSiteUser()
 
-  const capabilities = await capabilitiesFor(session.id, session.role)
   if (!can(capabilities, 'sales.credit_note')) {
     return { ok: false, error: 'You do not have permission to credit a sale.' }
   }
@@ -301,7 +303,7 @@ export async function creditWholeSaleAction(
     return { ok: false, error: 'Give a reason for the credit.' }
   }
 
-  const lines = await creditableLines(session.id, invoiceId)
+  const lines = await creditableLines(site.id, invoiceId)
   if (!lines) return { ok: false, error: 'That sale no longer exists.' }
 
   const outstanding = lines.filter((line) => line.creditable > 0)
@@ -309,7 +311,7 @@ export async function creditWholeSaleAction(
     return { ok: false, error: 'Every line on this sale has already been credited.' }
   }
 
-  const result = await createCreditNote(actor.siteId, actor.actor, {
+  const result = await createCreditNote(site.id, { userId: user.id, userName: user.name }, {
     invoiceId,
     reason: reason.trim(),
     lines: outstanding.map((line) => ({
@@ -337,7 +339,7 @@ export async function creditWholeSaleAction(
   return result
 }
 
-/** Reloads a parked sale's lines into the till. */
+/** Reloads a saved sale's lines into the till. */
 export async function loadSaleAction(documentId: number) {
   const siteId = await requireSiteId()
   return getDocument(siteId, documentId)

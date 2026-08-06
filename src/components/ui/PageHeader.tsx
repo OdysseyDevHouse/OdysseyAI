@@ -48,9 +48,16 @@ export function PageHeader({
   )
 }
 
-/** Standard page padding and max width, so every screen gutters the same. */
+/**
+ * Standard page padding and max width, so every screen gutters the same.
+ *
+ * `pt-5` matches the `gap-5` between the sections below it, so the space under
+ * the header reads as part of the same rhythm rather than as a seam. Without
+ * it the first element — usually a toolbar or a New button — sits flush against
+ * the header's bottom border and looks wedged there.
+ */
 export function PageBody({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`flex flex-col gap-5 px-6 pb-10 ${className}`}>{children}</div>
+  return <div className={`flex flex-col gap-5 px-6 pt-5 pb-10 ${className}`}>{children}</div>
 }
 
 /**

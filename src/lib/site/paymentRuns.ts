@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { postSupplierTransaction, allocateSupplier, openSupplierDebits } from './supplierLedger'
+import { discountFor, addDays } from './interestRules'
 import { logActivity, type Actor } from './activityLog'
 
 /**
@@ -48,7 +49,11 @@ export type PaymentItem = {
   supplierName: string
   email: string | null
   amount: number
+  /** Settlement discount earned across this supplier's invoices. */
+  discountAmount: number
   transactionId: number | null
+  /** The credit note raised for the discount. Null when none was taken. */
+  discountTxnId: number | null
   remittanceStatus: 'none' | 'queued' | 'sent' | 'failed'
   remittanceError: string | null
   remittanceSentAt: Date | null
@@ -62,6 +67,8 @@ export type PaymentAllocation = {
   docDate: string | null
   docAmount: number
   amount: number
+  /** Discount taken on this invoice, so a remittance can show it line by line. */
+  discountAmount: number
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -89,6 +96,7 @@ function mapAllocation(r: Row): PaymentAllocation {
     docDate: r.doc_date === null ? null : String(r.doc_date),
     docAmount: toNum(r.doc_amount),
     amount: toNum(r.amount),
+    discountAmount: toNum(r.discount_amount),
   }
 }
 
@@ -142,7 +150,9 @@ export async function listPaymentItems(siteId: number, runId: number): Promise<P
     supplierName: String(r.supplier_name),
     email: (r.email as string | null) ?? null,
     amount: toNum(r.amount),
+    discountAmount: toNum(r.discount_amount),
     transactionId: r.transaction_id === null ? null : Number(r.transaction_id),
+    discountTxnId: r.discount_txn_id === null ? null : Number(r.discount_txn_id),
     remittanceStatus: String(r.remittance_status) as PaymentItem['remittanceStatus'],
     remittanceError: (r.remittance_error as string | null) ?? null,
     remittanceSentAt: (r.remittance_sent_at as Date | null) ?? null,
@@ -160,6 +170,12 @@ export type PayableInvoice = {
   amount: number
   outstanding: number
   daysOverdue: number
+  /** What paying by the deadline below would save. Zero when nothing is on offer. */
+  discountAvailable: number
+  /** The last date the discount can still be earned. Null when there is none. */
+  discountDeadline: string | null
+  /** Days until that deadline. Negative once missed. */
+  discountDaysRemaining: number
 }
 
 export type PayableSupplier = {
@@ -171,6 +187,16 @@ export type PayableSupplier = {
   invoices: PayableInvoice[]
   /** Everything already past its due date — the sensible default to pay. */
   overdueTotal: number
+  /**
+   * What could still be saved by paying this supplier's invoices early.
+   *
+   * The single most valuable thing a creditors ledger knows and the reason
+   * settlement terms were added in 037: "paying these six invoices by Thursday
+   * saves R4 200" is actionable in a way that an age analysis is not.
+   */
+  discountAvailable: number
+  /** The soonest discount deadline across their invoices, for sorting by urgency. */
+  nextDiscountDeadline: string | null
 }
 
 /**
@@ -189,6 +215,7 @@ export async function payableSuppliers(
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT s.id AS supplier_id, s.code, s.name, s.email, s.balance,
+            s.settlement_discount_days, s.settlement_discount_pct,
             t.id AS txn_id, t.doc_number, t.doc_date, t.due_date,
             t.amount_signed, t.amount_outstanding,
             DATEDIFF(?, COALESCE(t.due_date, t.doc_date)) AS days_overdue
@@ -214,6 +241,8 @@ export async function payableSuppliers(
         balance: toNum(row.balance),
         invoices: [],
         overdueTotal: 0,
+        discountAvailable: 0,
+        nextDiscountDeadline: null,
       }
       bySupplier.set(supplierId, entry)
     }
@@ -223,6 +252,14 @@ export async function payableSuppliers(
 
     if (opts.overdueOnly && daysOverdue <= 0) continue
 
+    // What paying this invoice early would still earn. discountFor returns zero
+    // once the window has passed — the cliff is deliberate, see interestRules.ts.
+    const terms = {
+      days: Number(row.settlement_discount_days ?? 0),
+      pct: toNum(row.settlement_discount_pct),
+    }
+    const discount = discountFor(String(row.doc_date), outstanding, terms, asAt)
+
     entry.invoices.push({
       txnId: Number(row.txn_id),
       docNumber: (row.doc_number as string | null) ?? null,
@@ -231,14 +268,32 @@ export async function payableSuppliers(
       amount: toNum(row.amount_signed),
       outstanding,
       daysOverdue: Math.max(daysOverdue, 0),
+      discountAvailable: discount.discount,
+      discountDeadline: discount.discount > 0 ? discount.deadline : null,
+      discountDaysRemaining: discount.daysRemaining,
     })
 
     if (daysOverdue > 0) entry.overdueTotal = round(entry.overdueTotal + outstanding, 2)
+
+    if (discount.discount > 0) {
+      entry.discountAvailable = round(entry.discountAvailable + discount.discount, 2)
+      if (!entry.nextDiscountDeadline || discount.deadline < entry.nextDiscountDeadline) {
+        entry.nextDiscountDeadline = discount.deadline
+      }
+    }
   }
 
   return [...bySupplier.values()]
     .filter((s) => s.invoices.length > 0)
     .sort((a, b) => {
+      // An expiring discount outranks an old invoice: the overdue one will
+      // still be payable tomorrow, the discount will not. Only real money
+      // jumps the queue, so a token saving does not displace a supplier who is
+      // about to stop supplying.
+      const aUrgent = a.discountAvailable > 0 && (a.nextDiscountDeadline ?? '') <= addDays(asAt, 7)
+      const bUrgent = b.discountAvailable > 0 && (b.nextDiscountDeadline ?? '') <= addDays(asAt, 7)
+      if (aUrgent !== bUrgent) return aUrgent ? -1 : 1
+
       const aOldest = Math.max(...a.invoices.map((i) => i.daysOverdue), 0)
       const bOldest = Math.max(...b.invoices.map((i) => i.daysOverdue), 0)
       return bOldest - aOldest || b.overdueTotal - a.overdueTotal
@@ -251,8 +306,15 @@ export type CreateRunInput = {
   notes?: string | null
   payments: {
     supplierId: number
-    /** Which invoices this payment settles, and by how much each. */
-    allocations: { txnId: number; amount: number }[]
+    /**
+     * Which invoices this payment settles, and by how much each.
+     *
+     * `discount` is settlement discount taken on that invoice. Payment plus
+     * discount must equal what is outstanding — the invoice settles in FULL or
+     * not at all. See the note on postPaymentRun for why a discount cannot
+     * simply be a smaller payment.
+     */
+    allocations: { txnId: number; amount: number; discount?: number }[]
   }[]
 }
 
@@ -277,7 +339,16 @@ export async function createPaymentRun(
     name: string
     email: string | null
     amount: number
-    allocations: { txnId: number; amount: number; docNumber: string | null; docDate: string; docAmount: number }[]
+    /** Settlement discount across this supplier's invoices, if any was taken. */
+    discount: number
+    allocations: {
+      txnId: number
+      amount: number
+      discount: number
+      docNumber: string | null
+      docDate: string
+      docAmount: number
+    }[]
   }[] = []
 
   for (const payment of input.payments) {
@@ -296,6 +367,7 @@ export async function createPaymentRun(
 
     const allocations: (typeof prepared)[number]['allocations'] = []
     let total = 0
+    let discountTotal = 0
 
     for (const allocation of payment.allocations) {
       const txn = await siteQueryOne<Row>(
@@ -311,8 +383,10 @@ export async function createPaymentRun(
 
       const outstanding = toNum(txn.amount_outstanding)
       const amount = round(allocation.amount, 2)
+      const discount = round(allocation.discount ?? 0, 2)
 
       if (amount <= 0) return { ok: false, error: 'A payment amount must be positive.' }
+      if (discount < 0) return { ok: false, error: 'A discount cannot be negative.' }
       if (amount > outstanding + 0.005) {
         return {
           ok: false,
@@ -320,14 +394,27 @@ export async function createPaymentRun(
         }
       }
 
+      // Payment plus discount must settle the invoice EXACTLY. Anything else is
+      // a discount that leaves a few rand outstanding forever, on an invoice
+      // both sides consider closed — which is how a creditors ledger fills with
+      // phantom balances nobody will ever pay or write off.
+      if (discount > 0 && round(amount + discount, 2) !== round(outstanding, 2)) {
+        return {
+          ok: false,
+          error: `${txn.doc_number ?? 'That invoice'} is ${outstanding.toFixed(2)}, but ${amount.toFixed(2)} plus ${discount.toFixed(2)} discount comes to ${round(amount + discount, 2).toFixed(2)}. A settlement discount must clear the invoice in full.`,
+        }
+      }
+
       allocations.push({
         txnId: Number(txn.id),
         amount,
+        discount,
         docNumber: (txn.doc_number as string | null) ?? null,
         docDate: String(txn.doc_date),
         docAmount: toNum(txn.amount_signed),
       })
       total = round(total + amount, 2)
+      discountTotal = round(discountTotal + discount, 2)
     }
 
     prepared.push({
@@ -336,6 +423,7 @@ export async function createPaymentRun(
       name: String(supplier.name),
       email: (supplier.email as string | null) ?? null,
       amount: total,
+      discount: discountTotal,
       allocations,
     })
   }
@@ -362,8 +450,8 @@ export async function createPaymentRun(
     for (const payment of prepared) {
       const [itemRes] = await tx.execute(
         `INSERT INTO supplier_payment_items
-           (run_id, supplier_id, supplier_code, supplier_name, email, amount)
-         VALUES (?,?,?,?,?,?)`,
+           (run_id, supplier_id, supplier_code, supplier_name, email, amount, discount_amount)
+         VALUES (?,?,?,?,?,?,?)`,
         [
           runId,
           payment.supplierId,
@@ -371,6 +459,7 @@ export async function createPaymentRun(
           payment.name,
           payment.email,
           payment.amount.toFixed(4),
+          payment.discount.toFixed(4),
         ] as never,
       )
       const itemId = (itemRes as { insertId: number }).insertId
@@ -378,8 +467,8 @@ export async function createPaymentRun(
       for (const allocation of payment.allocations) {
         await tx.execute(
           `INSERT INTO supplier_payment_allocations
-             (item_id, txn_id, doc_number, doc_date, doc_amount, amount)
-           VALUES (?,?,?,?,?,?)`,
+             (item_id, txn_id, doc_number, doc_date, doc_amount, amount, discount_amount)
+           VALUES (?,?,?,?,?,?,?)`,
           [
             itemId,
             allocation.txnId,
@@ -387,6 +476,7 @@ export async function createPaymentRun(
             allocation.docDate,
             allocation.docAmount.toFixed(4),
             allocation.amount.toFixed(4),
+            allocation.discount.toFixed(4),
           ] as never,
         )
       }
@@ -398,7 +488,9 @@ export async function createPaymentRun(
 
 /* ── Posting ─────────────────────────────────────────────────────────────── */
 
-export type PostResult = { ok: true; paid: number; total: number } | { ok: false; error: string }
+export type PostResult =
+  | { ok: true; paid: number; total: number; discount: number }
+  | { ok: false; error: string }
 
 /**
  * Posts a run: one payment per supplier, allocated against the chosen invoices.
@@ -406,6 +498,21 @@ export type PostResult = { ok: true; paid: number; total: number } | { ok: false
  * Allocation is EXPLICIT here, never auto. The whole run exists so that the
  * remittance can say which invoices were settled; falling back to oldest-first
  * at posting time would make the advice a guess again.
+ *
+ * ── WHY A DISCOUNT IS A CREDIT NOTE, NOT A SMALLER PAYMENT ───────────────
+ *
+ * Take 2% on a R1 000 invoice and pay R980. If that is all that happens, the
+ * invoice keeps R20 outstanding for ever: we consider it closed, the supplier
+ * considers it closed, and the ledger disagrees with both. Multiply by every
+ * discounted invoice and the creditors book fills with phantom balances nobody
+ * will pay and nobody will write off.
+ *
+ * So the discount is posted as its own CREDIT NOTE and allocated against the
+ * same invoices. The invoice settles in full — R980 of payment plus R20 of
+ * credit — and the saving is a visible document rather than a silent shortfall.
+ *
+ * One credit note per supplier rather than per invoice: it is a single
+ * commercial event on their account, and their remittance shows the split.
  */
 export async function postPaymentRun(
   siteId: number,
@@ -422,6 +529,7 @@ export async function postPaymentRun(
 
   let paid = 0
   let total = 0
+  let discountTotal = 0
 
   for (const item of items) {
     // Posted outside a wrapping transaction, per supplier: the ledger keeps its
@@ -445,10 +553,44 @@ export async function postPaymentRun(
       await allocateSupplier(siteId, actor, allocation.txnId, posted.id, allocation.amount)
     }
 
+    // The discount, as its own credit note against the same invoices. Posted
+    // after the payment so a failure here leaves a payment short rather than a
+    // credit floating against nothing — the first is visible on the age
+    // analysis, the second is not.
+    let discountTxnId: number | null = null
+    if (item.discountAmount > 0) {
+      const credit = await postSupplierTransaction(siteId, actor, {
+        supplierId: item.supplierId,
+        docType: 'credit_note',
+        amount: item.discountAmount,
+        docDate: run.paymentDate,
+        reference: run.reference,
+        description: `Settlement discount · payment run ${run.paymentDate}`,
+        source: 'payment_run_discount',
+        sourceDocId: runId,
+      })
+
+      if (credit.ok) {
+        discountTxnId = credit.id
+        for (const allocation of item.allocations) {
+          if (allocation.discountAmount > 0) {
+            await allocateSupplier(
+              siteId,
+              actor,
+              allocation.txnId,
+              credit.id,
+              allocation.discountAmount,
+            )
+          }
+        }
+        discountTotal = round(discountTotal + item.discountAmount, 2)
+      }
+    }
+
     await siteExecute(
       siteId,
-      'UPDATE supplier_payment_items SET transaction_id = ? WHERE id = ?',
-      [posted.id, item.id],
+      'UPDATE supplier_payment_items SET transaction_id = ?, discount_txn_id = ? WHERE id = ?',
+      [posted.id, discountTxnId, item.id],
     )
 
     paid++
@@ -465,10 +607,12 @@ export async function postPaymentRun(
     entity: 'supplier',
     entityId: null,
     action: 'payment_run',
-    detail: `Paid ${paid} supplier${paid === 1 ? '' : 's'}, ${total.toFixed(2)} total`,
+    detail:
+      `Paid ${paid} supplier${paid === 1 ? '' : 's'}, ${total.toFixed(2)} total` +
+      (discountTotal > 0 ? `, ${discountTotal.toFixed(2)} settlement discount earned` : ''),
   })
 
-  return { ok: true, paid, total }
+  return { ok: true, paid, total, discount: discountTotal }
 }
 
 export async function cancelPaymentRun(
@@ -510,8 +654,54 @@ export async function proposeOverdueRun(
       supplierId: supplier.supplierId,
       allocations: supplier.invoices
         .filter((invoice) => invoice.daysOverdue > 0)
-        .map((invoice) => ({ txnId: invoice.txnId, amount: invoice.outstanding })),
+        .map((invoice) => ({
+          // Pay the outstanding LESS any discount still on offer, and record
+          // the discount so posting raises the credit note that closes the
+          // invoice. An invoice that is both overdue and inside its discount
+          // window is unusual but not impossible — short discount terms on long
+          // payment terms — and paying full price there is throwing money away.
+          txnId: invoice.txnId,
+          amount: round(invoice.outstanding - invoice.discountAvailable, 2),
+          discount: invoice.discountAvailable,
+        })),
     })),
+  }
+}
+
+/**
+ * Proposes paying everything with a discount deadline inside the next `days`.
+ *
+ * The other half of "who should we pay this week", and the more valuable one:
+ * an overdue invoice stays payable tomorrow, a discount does not. Every invoice
+ * here settles in full — payment plus discount — so nothing is left dangling.
+ */
+export async function proposeDiscountRun(
+  siteId: number,
+  paymentDate: string,
+  withinDays = 7,
+): Promise<CreateRunInput> {
+  const suppliers = await payableSuppliers(siteId, { asAt: paymentDate })
+  const deadline = addDays(paymentDate, Math.max(withinDays, 0))
+
+  return {
+    paymentDate,
+    payments: suppliers
+      .map((supplier) => ({
+        supplierId: supplier.supplierId,
+        allocations: supplier.invoices
+          .filter(
+            (invoice) =>
+              invoice.discountAvailable > 0 &&
+              invoice.discountDeadline !== null &&
+              invoice.discountDeadline <= deadline,
+          )
+          .map((invoice) => ({
+            txnId: invoice.txnId,
+            amount: round(invoice.outstanding - invoice.discountAvailable, 2),
+            discount: invoice.discountAvailable,
+          })),
+      }))
+      .filter((p) => p.allocations.length > 0),
   }
 }
 
@@ -520,18 +710,36 @@ export async function payableInvoicesFor(
   siteId: number,
   supplierId: number,
 ): Promise<PayableInvoice[]> {
-  const lines = await openSupplierDebits(siteId, supplierId)
+  const [lines, supplier] = await Promise.all([
+    openSupplierDebits(siteId, supplierId),
+    siteQueryOne<Row>(
+      siteId,
+      'SELECT settlement_discount_days, settlement_discount_pct FROM suppliers WHERE id = ? LIMIT 1',
+      [supplierId],
+    ),
+  ])
   const today = todayIso()
 
-  return lines.map((line) => ({
-    txnId: line.id,
-    docNumber: line.docNumber,
-    docDate: line.docDate,
-    dueDate: line.dueDate,
-    amount: line.amountSigned,
-    outstanding: line.amountOutstanding,
-    daysOverdue: line.daysOverdue ?? 0,
-  }))
+  const terms = {
+    days: Number(supplier?.settlement_discount_days ?? 0),
+    pct: toNum(supplier?.settlement_discount_pct),
+  }
+
+  return lines.map((line) => {
+    const discount = discountFor(line.docDate, line.amountOutstanding, terms, today)
+    return {
+      txnId: line.id,
+      docNumber: line.docNumber,
+      docDate: line.docDate,
+      dueDate: line.dueDate,
+      amount: line.amountSigned,
+      outstanding: line.amountOutstanding,
+      daysOverdue: line.daysOverdue ?? 0,
+      discountAvailable: discount.discount,
+      discountDeadline: discount.discount > 0 ? discount.deadline : null,
+      discountDaysRemaining: discount.daysRemaining,
+    }
+  })
     // Oldest first: the order anyone settles a supplier account in.
     .sort((a, b) => (a.docDate < b.docDate ? -1 : a.docDate > b.docDate ? 1 : 0))
 }

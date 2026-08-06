@@ -465,7 +465,7 @@ export async function reservedQty(siteId: number, productId: number): Promise<nu
            JOIN sales_order_details o  ON o.document_id = d.id
           WHERE l.product_id = ?
             AND d.doc_type = 'sales_order'
-            AND d.status IN ('draft','parked','issued')
+            AND d.status IN ('draft','saved','issued')
             AND o.fulfilment_status IN ('open','part_delivered')
             AND o.reserves_stock = 1
        ), 0)
@@ -508,7 +508,7 @@ export async function reservedQtyFor(
          JOIN sales_order_details o  ON o.document_id = d.id
         WHERE l.product_id IN (${placeholders})
           AND d.doc_type = 'sales_order'
-          AND d.status IN ('draft','parked','issued')
+          AND d.status IN ('draft','saved','issued')
           AND o.fulfilment_status IN ('open','part_delivered')
           AND o.reserves_stock = 1
         GROUP BY l.product_id

@@ -37,22 +37,46 @@ export async function buildRemittance(
   // Each allocation becomes a line: what the invoice was, and what this payment
   // is putting against it. A part-payment shows both figures, which is exactly
   // what stops a supplier assuming the invoice is settled in full.
-  const lines = item.allocations.map((allocation) => ({
-    date: allocation.docDate ?? run.paymentDate,
-    docType: 'Invoice',
-    docNumber: allocation.docNumber,
-    description:
-      allocation.amount < allocation.docAmount - 0.005
-        ? `Part payment of ${allocation.docAmount.toFixed(2)}`
-        : 'Settled in full',
-    reference: null,
-    debit: allocation.docAmount,
-    credit: allocation.amount,
-    // What is left on that invoice after this payment.
-    outstanding: round(allocation.docAmount - allocation.amount, 2),
-    daysOverdue: 0,
-    balance: allocation.amount,
-  }))
+  //
+  // SETTLEMENT DISCOUNT is stated explicitly on the line it was taken on. It
+  // must be: from the supplier's side an invoice for R1 000 paid at R980 looks
+  // like a R20 short payment, and an advice that does not say "we took the 2%
+  // you offered" is the one that generates a query — or worse, a statement
+  // showing R20 still owing that nobody can reconcile.
+  const lines = item.allocations.map((allocation) => {
+    const discount = allocation.discountAmount ?? 0
+    const settled = round(allocation.amount + discount, 2)
+    const outstanding = round(allocation.docAmount - settled, 2)
+
+    return {
+      date: allocation.docDate ?? run.paymentDate,
+      docType: 'Invoice',
+      docNumber: allocation.docNumber,
+      description:
+        discount > 0
+          ? outstanding > 0.005
+            ? `Part payment; ${discount.toFixed(2)} settlement discount taken`
+            : `Settled in full, less ${discount.toFixed(2)} settlement discount`
+          : outstanding > 0.005
+            ? `Part payment of ${allocation.docAmount.toFixed(2)}`
+            : 'Settled in full',
+      reference: null,
+      debit: allocation.docAmount,
+      credit: allocation.amount,
+      // What is left after BOTH the payment and the discount. Without counting
+      // the discount this reads as unpaid on an invoice that is closed.
+      outstanding,
+      daysOverdue: 0,
+      balance: allocation.amount,
+    }
+  })
+
+  // A discount is a real reduction in what we paid, so the advice has to
+  // reconcile: invoices less discount equals the amount transferred.
+  const discountTotal = item.allocations.reduce(
+    (sum, a) => round(sum + (a.discountAmount ?? 0), 2),
+    0,
+  )
 
   return {
     format: 'open-item',
@@ -82,6 +106,7 @@ export async function buildRemittance(
     // No ageing on a remittance: it is a payment advice, not a demand.
     aging: { current: 0, d30: 0, d60: 0, d90: 0, d120: 0, total: 0 },
     dueNow: 0,
+    settlementDiscount: discountTotal > 0 ? discountTotal : undefined,
     generatedAt: new Date(),
   }
 }

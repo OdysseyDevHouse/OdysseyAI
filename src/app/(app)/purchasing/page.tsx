@@ -1,10 +1,6 @@
 import Link from 'next/link'
 import { requireSiteId } from '@/lib/auth'
-import {
-  listPurchaseDocuments,
-  PURCHASE_DOC_LABELS,
-  type PurchaseDocType,
-} from '@/lib/site/purchaseDocuments'
+import { listPurchaseDocuments, PURCHASE_DOC_LABELS } from '@/lib/site/purchaseDocuments'
 import { supplierAgingSummary } from '@/lib/site/supplierLedger'
 import { formatMoney } from '@/lib/decimals'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
@@ -16,6 +12,7 @@ import {
   StatTile,
   FilterBar,
   FilterChip,
+  LinkSegmentedControl,
   Pagination,
   EmptyState,
   Badge,
@@ -126,32 +123,28 @@ export default async function PurchasingPage({
         keep={{ type: params.type, status: params.status }}
       />
 
+      {/* Type is not a chip here — the segmented control below already shows
+          which slice is active. Status stays: the "On order" tile is the only
+          thing that sets it, and this chip is the only way to clear it. */}
       <FilterBar clearHref="/purchasing">
-        {type && (
-          <FilterChip
-            label="Type"
-            value={PURCHASE_DOC_LABELS[type as PurchaseDocType]}
-            clearHref={filterHref({ type: null })}
-          />
-        )}
         {params.status && (
           <FilterChip label="Status" value={params.status} clearHref={filterHref({ status: null })} />
         )}
       </FilterBar>
 
-      <div className="flex flex-wrap gap-3 px-6 pb-3 text-xs">
-        <Link href="/purchasing" className={!type ? 'font-medium text-brand' : 'text-muted hover:text-ink'}>
-          All
-        </Link>
-        {(['purchase_order', 'grv', 'supplier_return'] as const).map((value) => (
-          <Link
-            key={value}
-            href={filterHref({ type: type === value ? null : value })}
-            className={type === value ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-          >
-            {PURCHASE_DOC_LABELS[value]}
-          </Link>
-        ))}
+      <div className="px-6 pb-3">
+        <LinkSegmentedControl
+          aria-label="Filter by document type"
+          value={type ?? 'all'}
+          options={[
+            { value: 'all', label: 'All', href: filterHref({ type: null }) },
+            ...(['purchase_order', 'grv', 'supplier_return'] as const).map((value) => ({
+              value,
+              label: PURCHASE_DOC_LABELS[value],
+              href: filterHref({ type: value }),
+            })),
+          ]}
+        />
       </div>
 
       <div className="px-6 pb-6">

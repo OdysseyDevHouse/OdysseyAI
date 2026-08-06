@@ -23,6 +23,10 @@ export type CustomerGroup = {
   code: string | null
   defaultTermsDays: number
   defaultCreditLimit: number
+  /** Interest defaults inherited by accounts in this group that set none of their own. */
+  defaultInterestRatePct: number
+  defaultInterestEnabled: boolean
+  defaultInterestGraceDays: number
   priceStructureId: number | null
   sortOrder: number
   isActive: boolean
@@ -37,6 +41,9 @@ function mapGroup(r: Row): CustomerGroup {
     code: (r.code as string | null) ?? null,
     defaultTermsDays: Number(r.default_terms_days),
     defaultCreditLimit: toNum(r.default_credit_limit),
+    defaultInterestRatePct: toNum(r.default_interest_rate_pct),
+    defaultInterestEnabled: Boolean(r.default_interest_enabled),
+    defaultInterestGraceDays: Number(r.default_interest_grace_days ?? 0),
     priceStructureId: r.price_structure_id === null ? null : Number(r.price_structure_id),
     sortOrder: Number(r.sort_order),
     isActive: !!r.is_active,
@@ -46,6 +53,7 @@ function mapGroup(r: Row): CustomerGroup {
 
 const SELECT_GROUP = `
   SELECT g.id, g.name, g.code, g.default_terms_days, g.default_credit_limit,
+         g.default_interest_rate_pct, g.default_interest_enabled, g.default_interest_grace_days,
          g.price_structure_id, g.sort_order, g.is_active,
          (SELECT COUNT(*) FROM customers c WHERE c.group_id = g.id) AS customer_count
     FROM customer_groups g

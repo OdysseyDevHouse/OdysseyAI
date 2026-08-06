@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
-import { requireSession } from '@/lib/auth'
-import { getSiteForUser, listSitesForUser } from '@/lib/sites'
+import { requireSession, requireSiteUser } from '@/lib/auth'
+import { listSitesForUser } from '@/lib/sites'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
 import { ToastProvider } from '@/components/ui'
@@ -12,16 +12,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (session.mustChangePassword) redirect('/change-password')
   if (session.siteId === null) redirect('/select-site')
 
-  // Re-checked here rather than trusted from the token, so access revoked in
-  // the control panel takes effect on the next page load.
-  const site = await getSiteForUser(session.userId, session.siteId)
-  if (!site) redirect('/select-site')
+  // Site access, the local user record and their permissions, all re-read per
+  // request rather than trusted from the token — so access revoked upstream or
+  // a role changed on the permissions screen takes effect on the next load.
+  const { site, user, capabilities } = await requireSiteUser()
 
   const sites = await listSitesForUser(session.userId)
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar />
+      <Sidebar granted={[...capabilities.granted]} isOwner={capabilities.isOwner} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           sites={sites.map((s) => ({
@@ -32,8 +32,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             status: s.status,
           }))}
           currentSiteId={site.id}
-          userName={session.name}
+          userName={user.name}
           userEmail={session.email}
+          roleName={user.roleName}
         />
         <main className="flex-1 overflow-y-auto bg-canvas">
           {/* Toasts are the standard outcome message for any action, so the

@@ -1,10 +1,10 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { requireSite } from '@/lib/auth'
+import { requireSiteUser } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { creditNotesFor, creditableLines } from '@/lib/site/salesReversal'
 import { siteQuery } from '@/lib/siteDb'
-import { capabilitiesFor, can } from '@/lib/site/permissions'
+import { can } from '@/lib/site/permissions'
 import { formatMoney, formatQty, toNum } from '@/lib/decimals'
 import {
   PageHeader,
@@ -27,16 +27,13 @@ export default async function SalesDocumentPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const site = await requireSite()
+  const { site, capabilities } = await requireSiteUser()
   const { id } = await params
 
   const documentId = Number(id)
   if (!Number.isFinite(documentId) || documentId <= 0) notFound()
 
-  const [document, capabilities] = await Promise.all([
-    getDocument(site.id, documentId),
-    capabilitiesFor(site.id, site.role),
-  ])
+  const document = await getDocument(site.id, documentId)
   if (!document) notFound()
 
   const [credits, remaining] = await Promise.all([

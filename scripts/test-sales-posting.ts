@@ -7,7 +7,7 @@
  *   npm run test:posting
  */
 import { siteQuery, siteQueryOne, siteExecute } from '../src/lib/siteDb'
-import { saveDraft, getDocument, parkDocument, recallDocument, discardDocument } from '../src/lib/site/salesDocuments'
+import { saveDraft, getDocument, saveForLaterDocument, recallDocument, discardDocument } from '../src/lib/site/salesDocuments'
 import { finaliseDocument, voidDocument } from '../src/lib/site/salesPosting'
 import { reconcileStock, listMovements, seedOpeningStock } from '../src/lib/site/stockMovements'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
@@ -157,16 +157,17 @@ async function main() {
     }
   }
 
-  // ── Park and recall.
-  const parkDraft = await saveDraft(SITE, actor, {
+  // ── Save and recall.
+  const savedDraft = await saveDraft(SITE, actor, {
     docType: 'invoice', customerName: 'Walk-in',
-    lines: [{ productId: serviceId, productCode: `TST${stamp}S`, description: 'Parked', productType: 'service', qty: 1, unitPriceIncl: 25, vatRatePct: vatRate }],
+    lines: [{ productId: serviceId, productCode: `TST${stamp}S`, description: 'Saved', productType: 'service', qty: 1, unitPriceIncl: 25, vatRatePct: vatRate }],
   })
-  if (parkDraft.ok) {
-    ok('park a sale', (await parkDocument(SITE, parkDraft.id)).ok)
-    ok('  parked sale has no number', (await getDocument(SITE, parkDraft.id))!.documentNumber === null)
-    ok('recall it', (await recallDocument(SITE, parkDraft.id)).ok)
-    ok('discard an unposted sale', (await discardDocument(SITE, parkDraft.id)).ok)
+  if (savedDraft.ok) {
+    ok('save a sale', (await saveForLaterDocument(SITE, savedDraft.id)).ok)
+    ok('  saved sale has status saved', (await getDocument(SITE, savedDraft.id))!.status === 'saved')
+    ok('  saved sale has no number', (await getDocument(SITE, savedDraft.id))!.documentNumber === null)
+    ok('recall it', (await recallDocument(SITE, savedDraft.id)).ok)
+    ok('discard an unposted sale', (await discardDocument(SITE, savedDraft.id)).ok)
   }
 
   // ── Void: same day only, and it reverses stock.

@@ -43,6 +43,8 @@ function readInput(form: FormData): SupplierInput {
     vatNumber: text(form, 'vatNumber'),
     accountNumber: text(form, 'accountNumber'),
     paymentTermsDays: num(form, 'paymentTermsDays', 30),
+    settlementDiscountDays: num(form, 'settlementDiscountDays', 0),
+    settlementDiscountPct: num(form, 'settlementDiscountPct', 0),
     leadTimeDays: num(form, 'leadTimeDays', 0),
     minimumOrder: num(form, 'minimumOrder', 0),
     bankName: text(form, 'bankName'),

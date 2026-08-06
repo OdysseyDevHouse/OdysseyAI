@@ -20,6 +20,7 @@ import {
   type Allocatable,
   type DocType,
 } from './ledger'
+import { guardPosting } from './periodLocks'
 
 /**
  * The debtors sub-ledger.
@@ -297,6 +298,12 @@ export async function postTransaction(
   const invalid = validatePost(input)
   if (invalid) return { ok: false, error: invalid }
 
+  // A closed period refuses the posting outright. Without this, a journal dated
+  // into a month whose VAT return has been filed lands silently, and the first
+  // anyone hears of it is from an auditor. See periodLocks.ts.
+  const locked = await guardPosting(siteId, input.docDate ?? today(), 'ledger')
+  if (locked) return { ok: false, error: locked }
+
   const customer = await siteQueryOne<Row>(
     siteId,
     'SELECT id, code, name, payment_terms_days FROM customers WHERE id = ? LIMIT 1',
@@ -420,6 +427,20 @@ export async function reverseTransaction(
     [id],
   )
   if (already) return { ok: false, error: 'That transaction has already been reversed.' }
+
+  // BOTH dates are checked. The reversal itself is dated today and must land in
+  // an open period, but reversing a document that sits inside a CLOSED one also
+  // changes that period's figures — the original's outstanding drops to zero —
+  // so a closed original is refused even when today is open.
+  const originalLocked = await guardPosting(siteId, original.docDate, 'ledger')
+  if (originalLocked) {
+    return {
+      ok: false,
+      error: `That document is dated inside a closed period. ${originalLocked}`,
+    }
+  }
+  const todayLocked = await guardPosting(siteId, today(), 'ledger')
+  if (todayLocked) return { ok: false, error: todayLocked }
 
   // Allocations against the original would point at a document that no longer
   // says what it said. Unwind them first, deliberately, rather than silently.

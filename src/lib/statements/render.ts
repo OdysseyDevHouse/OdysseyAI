@@ -58,6 +58,15 @@ export type StatementData = {
   aging: Aging
   /** The figure the customer should pay: everything already due. */
   dueNow: number
+  /**
+   * Settlement discount deducted, on a remittance that took one.
+   *
+   * Optional because only a remittance can have it — a statement never does.
+   * When set, the document shows invoices, less this, equals the amount paid,
+   * so the advice reconciles on the supplier's side rather than looking like a
+   * short payment.
+   */
+  settlementDiscount?: number
   generatedAt: Date
 }
 

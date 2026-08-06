@@ -59,6 +59,10 @@ function readInput(form: FormData): CustomerInput {
     category: text(form, 'category'),
     paymentTermsDays: num(form, 'paymentTermsDays', 30),
     creditLimit: num(form, 'creditLimit', 0),
+    // A Switch posts nothing when off, so absence means false.
+    interestEnabled: form.get('interestEnabled') !== null,
+    interestRatePct: num(form, 'interestRatePct', 0),
+    interestGraceDays: num(form, 'interestGraceDays', 0),
     notes: text(form, 'notes'),
   }
 }

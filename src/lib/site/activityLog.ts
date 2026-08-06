@@ -14,7 +14,24 @@ import { siteExecute, siteQuery } from '../siteDb'
  * was describing — losing the log entry is bad, losing the edit is worse.
  */
 
-export type ActivityEntity = 'customer' | 'supplier' | 'product' | 'department'
+export type ActivityEntity =
+  | 'customer'
+  | 'supplier'
+  | 'product'
+  | 'department'
+  /* Not a record with an id — settings changes log with entityId null. Worth
+     auditing anyway: opening a public storefront is the single most
+     consequential switch in the app. */
+  | 'online_store'
+  /* A bank or cash account: captures, matches, reconciliation sign-offs and
+     statement imports. Money moving is the thing most worth an audit trail. */
+  | 'bank'
+  /* Closing and reopening an accounting period. entityId is the lock's id —
+     "who reopened February" is the question this exists to answer. */
+  | 'period'
+  /* Spending that is not stock: bills, direct payments, categories and the
+     recurring schedules that generate them. */
+  | 'expense'
 
 export type ActivityEvent = {
   id: number

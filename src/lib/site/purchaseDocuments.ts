@@ -418,7 +418,7 @@ export async function saveOrder(
  * Issues an order to the supplier.
  *
  * This is where a PO gets its number — not at draft. An order that was never
- * sent should not consume one, for the same reason a parked sale does not.
+ * sent should not consume one, for the same reason a saved sale does not.
  */
 export async function issueOrder(siteId: number, id: number): Promise<SaveResult> {
   const doc = await getPurchaseDocument(siteId, id)

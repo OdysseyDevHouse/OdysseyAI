@@ -52,6 +52,16 @@ const [rows] = await control.query(
     ORDER BY purpose LIMIT 1`,
   [siteId],
 )
+
+// Everyone with access to this site, for the user-adoption step after the
+// migrations run. Read now, while the control connection is still open.
+const [controlUsers] = await control.query(
+  `SELECT u.id, u.email, u.full_name, us.site_role
+     FROM cp2_user_sites us
+     INNER JOIN cp2_users u ON u.id = us.user_id
+    WHERE us.site_id = ? AND us.status = 'active'`,
+  [siteId],
+)
 await control.end()
 
 if (!rows.length) {
@@ -137,4 +147,50 @@ for (const file of files) {
 }
 
 console.log(ran ? `${ran} migration(s) applied` : 'already up to date')
+
+// ── Reconcile the site's users with the control database ────────────────
+//
+// 041 creates a local `users` row for every control id that appears in this
+// site's history, naming them from the audit trail because a site database
+// cannot join across to odyssey_tickets. Here we CAN see both, so the names
+// and emails get corrected, and anyone with access to the site who never
+// wrote an audit row gets the row they are missing.
+//
+// Runs on every invocation, not only when a migration was applied: access
+// granted in the control panel after the migration still has to land, and the
+// statements below are idempotent.
+const [hasUsers] = await db.query(`SHOW TABLES LIKE 'users'`)
+if (hasUsers.length && controlUsers.length) {
+  const [[owner]] = await db.query('SELECT id FROM roles WHERE is_owner = 1 LIMIT 1')
+  let added = 0
+  let updated = 0
+  for (const u of controlUsers) {
+    const name = (u.full_name || '').trim() || u.email
+    // The role only seeds a NEW row. Overwriting it on every run would undo
+    // whatever the shop set on its own Users screen the next time anyone
+    // migrates — the control panel's three-value role is a starting point
+    // here, not the authority.
+    const [res] = await db.query(
+      `INSERT INTO users (id, name, email, control_user_id, user_type, role_id, is_active)
+       VALUES (?, ?, ?, ?, 'back_office',
+               COALESCE((SELECT id FROM roles WHERE name = ? AND is_system = 1 LIMIT 1), ?), 1)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         email = VALUES(email),
+         user_type = 'back_office'`,
+      [
+        u.id,
+        name,
+        u.email,
+        u.id,
+        u.site_role === 'owner' ? 'Owner' : u.site_role === 'manager' ? 'Manager' : 'Cashier',
+        owner?.id ?? null,
+      ],
+    )
+    if (res.affectedRows === 1) added++
+    else if (res.affectedRows === 2) updated++
+  }
+  console.log(`control users: ${added} added, ${updated} refreshed`)
+}
+
 await db.end()

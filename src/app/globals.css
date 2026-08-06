@@ -66,6 +66,28 @@
   --color-tile-6: #0e7490;
   --color-tile-7: #475569;
 
+  /* --- Charts ------------------------------------------------------------- */
+  /* The categorical ramp for series colour — the dashboard's charts and the
+     tender donut read these in order and wrap when they run out. Ordered so
+     that ANY adjacent pair stays distinguishable, including for the common
+     forms of colour blindness: hue steps are large and lightness alternates,
+     so two neighbouring slices never differ by hue alone.
+
+     chart-1 is the brand blue on purpose — a single-series chart should look
+     like it belongs to this app rather than to a chart library. */
+  --color-chart-1: #2f6fed;
+  --color-chart-2: #0d9488;
+  --color-chart-3: #d97706;
+  --color-chart-4: #7c3aed;
+  --color-chart-5: #db2777;
+  --color-chart-6: #0e7490;
+
+  /* Chart furniture. Deliberately NOT the same as --color-border: a gridline
+     must sit further back than a card hairline or it competes with the data
+     drawn on top of it. */
+  --color-chart-grid: #eaecf0;
+  --color-chart-axis: #98a2b3;
+
   /* --- Radii ------------------------------------------------------------- */
   --radius-control: 8px; /* buttons, inputs, selects */
   --radius-card: 12px; /* cards, panels, modals */
@@ -149,6 +171,18 @@
 
     --color-positive: #4ade80;
 
+    /* Lifted and desaturated for dark: the light-mode ramp goes muddy on a
+       dark surface, so each hue keeps its identity but gains lightness. */
+    --color-chart-1: #6a9bff;
+    --color-chart-2: #2dd4bf;
+    --color-chart-3: #fbbf24;
+    --color-chart-4: #a78bfa;
+    --color-chart-5: #f472b6;
+    --color-chart-6: #38bdf8;
+
+    --color-chart-grid: #262c35;
+    --color-chart-axis: #6b7686;
+
     --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
     --shadow-pop: 0 12px 24px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
   }
@@ -185,6 +219,18 @@
   --color-danger-soft: #33191a;
 
   --color-positive: #4ade80;
+
+  /* Lifted and desaturated for dark: the light-mode ramp goes muddy on a
+     dark surface, so each hue keeps its identity but gains lightness. */
+  --color-chart-1: #6a9bff;
+  --color-chart-2: #2dd4bf;
+  --color-chart-3: #fbbf24;
+  --color-chart-4: #a78bfa;
+  --color-chart-5: #f472b6;
+  --color-chart-6: #38bdf8;
+
+  --color-chart-grid: #262c35;
+  --color-chart-axis: #6b7686;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
   --shadow-pop: 0 12px 24px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);

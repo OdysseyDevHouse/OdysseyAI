@@ -38,11 +38,14 @@ export default function TopBar({
   currentSiteId,
   userName,
   userEmail,
+  roleName,
 }: {
   sites: SwitcherSite[]
   currentSiteId: number
   userName: string
   userEmail: string
+  /** Null when nobody has given this person a role yet. */
+  roleName?: string | null
 }) {
   const pathname = usePathname()
   const trail = breadcrumbFor(pathname)
@@ -131,6 +134,11 @@ export default function TopBar({
               <div className="border-b border-border px-3 py-2.5">
                 <div className="truncate text-sm font-medium text-ink">{userName}</div>
                 <div className="truncate text-xs text-muted">{userEmail}</div>
+                {/* Worth showing now that roles are named by the shop: "Cashier"
+                    explains a missing menu item in a way a blank space cannot. */}
+                <div className="mt-1 truncate text-xs text-muted">
+                  {roleName ?? 'No role assigned'}
+                </div>
               </div>
 
               <div className="border-b border-border">

@@ -10,6 +10,10 @@ next-env.d.ts
 .env.local
 .env.*.local
 
+# Screenshots from scripts/screenshot.mjs — verification output, and they can
+# contain real customer data pulled from the dev database.
+.screenshots/
+
 # Customer and supplier documents. Real business paperwork — never in git.
 # Backed up alongside the site databases, not with the source.
 uploads/

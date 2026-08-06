@@ -13,6 +13,7 @@ import {
   NumberInput,
   SectionTitle,
   Select,
+  Checkbox,
   Textarea,
 } from '@/components/ui'
 import {
@@ -220,6 +221,49 @@ export default function CustomerForm({
                   <CurrencyInput value={customer.balance} readOnly disabled />
                 </Field>
               )}
+            </div>
+
+            {/* Interest is a separate decision from credit, and a legal one:
+                the National Credit Act requires it to be agreed in writing, so
+                it is off until someone deliberately turns it on. */}
+            <div className="border-t border-border pt-4">
+              {/* A Checkbox rather than a Switch: this form posts via FormData
+                  and Switch is controlled, so it would submit nothing. */}
+              <Checkbox
+                name="interestEnabled"
+                defaultChecked={customer?.interestEnabled ?? false}
+                label="Charge interest on overdue amounts"
+              />
+              <p className="mt-1 text-sm text-muted">
+                Only switch this on where the customer has agreed to it in writing — the National
+                Credit Act requires that.
+              </p>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <Field
+                  label="Interest rate (% a year)"
+                  hint={
+                    group?.defaultInterestRatePct
+                      ? `Leave at zero to use the group's ${group.defaultInterestRatePct}%.`
+                      : 'Annual nominal rate, as the agreement states it.'
+                  }
+                >
+                  <NumberInput
+                    name="interestRatePct"
+                    step="0.01"
+                    defaultValue={customer?.interestRatePct ?? 0}
+                  />
+                </Field>
+                <Field
+                  label="Grace period (days)"
+                  hint="Days past due before interest starts to accrue."
+                >
+                  <NumberInput
+                    name="interestGraceDays"
+                    defaultValue={customer?.interestGraceDays ?? 0}
+                  />
+                </Field>
+              </div>
             </div>
           </CardBody>
         </Card>

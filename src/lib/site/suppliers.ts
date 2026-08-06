@@ -40,6 +40,13 @@ export type Supplier = {
   vatNumber: string | null
   accountNumber: string | null
   paymentTermsDays: number
+  /**
+   * Settlement discount: pay within this many days of the invoice to earn
+   * `settlementDiscountPct`. Both must be non-zero for a discount to exist.
+   * '2/10 net 30' is days=10, pct=2, paymentTermsDays=30.
+   */
+  settlementDiscountDays: number
+  settlementDiscountPct: number
   leadTimeDays: number
   minimumOrder: number
   bankName: string | null
@@ -76,6 +83,8 @@ function mapSupplier(r: Row): Supplier {
     vatNumber: (r.vat_number as string | null) ?? null,
     accountNumber: (r.account_number as string | null) ?? null,
     paymentTermsDays: Number(r.payment_terms_days),
+    settlementDiscountDays: Number(r.settlement_discount_days ?? 0),
+    settlementDiscountPct: toNum(r.settlement_discount_pct),
     leadTimeDays: Number(r.lead_time_days),
     minimumOrder: toNum(r.minimum_order),
     bankName: (r.bank_name as string | null) ?? null,
@@ -94,7 +103,9 @@ function mapSupplier(r: Row): Supplier {
 const SELECT_SUPPLIER = `
   SELECT s.id, s.code, s.name, s.status, s.status_reason, s.contact_name, s.email, s.phone,
          s.address_line1, s.address_line2, s.city, s.postal_code, s.vat_number,
-         s.account_number, s.payment_terms_days, s.lead_time_days, s.minimum_order,
+         s.account_number, s.payment_terms_days,
+         s.settlement_discount_days, s.settlement_discount_pct,
+         s.lead_time_days, s.minimum_order,
          s.bank_name, s.bank_branch, s.bank_account, s.category, s.balance, s.notes,
          s.created_at, s.updated_at,
          (SELECT COUNT(*) FROM product_suppliers ps WHERE ps.supplier_id = s.id) AS product_count
@@ -225,6 +236,9 @@ export type SupplierInput = {
   vatNumber?: string | null
   accountNumber?: string | null
   paymentTermsDays?: number
+  /** '2/10 net 30' is days=10, pct=2, paymentTermsDays=30. */
+  settlementDiscountDays?: number
+  settlementDiscountPct?: number
   leadTimeDays?: number
   minimumOrder?: number
   bankName?: string | null
@@ -247,6 +261,21 @@ export function validateSupplier(input: SupplierInput): string | null {
   }
   if ((input.paymentTermsDays ?? 0) < 0 || (input.paymentTermsDays ?? 0) > 365) {
     return 'Payment terms must be between 0 and 365 days.'
+  }
+  if ((input.settlementDiscountPct ?? 0) < 0 || (input.settlementDiscountPct ?? 0) >= 100) {
+    return 'A settlement discount must be between 0 and 100 percent.'
+  }
+  if ((input.settlementDiscountDays ?? 0) < 0 || (input.settlementDiscountDays ?? 0) > 365) {
+    return 'The discount window must be between 0 and 365 days.'
+  }
+  // A discount window longer than the payment terms earns a discount for paying
+  // late, which no supplier means. Almost always the two were typed the wrong
+  // way round — 30/10 rather than 2/10 net 30.
+  if (
+    (input.settlementDiscountPct ?? 0) > 0 &&
+    (input.settlementDiscountDays ?? 0) > (input.paymentTermsDays ?? 30)
+  ) {
+    return 'The discount window is longer than the payment terms — check the two are the right way round.'
   }
   if ((input.leadTimeDays ?? 0) < 0 || (input.leadTimeDays ?? 0) > 365) {
     return 'Lead time must be between 0 and 365 days.'
@@ -274,6 +303,8 @@ function writableColumns(input: SupplierInput): unknown[] {
     input.vatNumber?.trim() || null,
     input.accountNumber?.trim() || null,
     input.paymentTermsDays ?? 30,
+    input.settlementDiscountDays ?? 0,
+    (input.settlementDiscountPct ?? 0).toFixed(4),
     input.leadTimeDays ?? 0,
     (input.minimumOrder ?? 0).toFixed(4),
     input.bankName?.trim() || null,
@@ -284,9 +315,12 @@ function writableColumns(input: SupplierInput): unknown[] {
   ]
 }
 
+/** MUST stay in the same order as writableColumns above. */
 const COLUMN_LIST = `code, name, status, status_reason, contact_name, email, phone,
                      address_line1, address_line2, city, postal_code, vat_number,
-                     account_number, payment_terms_days, lead_time_days, minimum_order,
+                     account_number, payment_terms_days,
+                     settlement_discount_days, settlement_discount_pct,
+                     lead_time_days, minimum_order,
                      bank_name, bank_branch, bank_account, category, notes`
 
 export async function createSupplier(
@@ -353,7 +387,9 @@ export async function updateSupplier(
       `UPDATE suppliers SET
          code = ?, name = ?, status = ?, status_reason = ?, contact_name = ?, email = ?,
          phone = ?, address_line1 = ?, address_line2 = ?, city = ?, postal_code = ?,
-         vat_number = ?, account_number = ?, payment_terms_days = ?, lead_time_days = ?,
+         vat_number = ?, account_number = ?, payment_terms_days = ?,
+         settlement_discount_days = ?, settlement_discount_pct = ?,
+         lead_time_days = ?,
          minimum_order = ?, bank_name = ?, bank_branch = ?, bank_account = ?,
          category = ?, notes = ?
        WHERE id = ?`,

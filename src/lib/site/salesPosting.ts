@@ -292,7 +292,7 @@ export async function finaliseDocument(
           documentNumber,
           customerId,
           // Stamped at finalise rather than at capture: a sale belongs to the
-          // shift that BANKED it, and a parked basket may be recalled by the
+          // shift that BANKED it, and a saved basket may be recalled by the
           // next person on the till.
           shiftId,
           totals.subtotalExcl.toFixed(4),

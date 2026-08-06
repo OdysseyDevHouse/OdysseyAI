@@ -41,6 +41,7 @@ export {
   Switch,
   Checkbox,
   Radio,
+  ColourInput,
 } from './Field'
 export { FileInput } from './FileInput'
 
@@ -58,6 +59,7 @@ export { DataTable, type Column, type SortState, type SortDirection } from './Da
 export {
   TableToolbar,
   SegmentedControl,
+  LinkSegmentedControl,
   ToolbarSearch,
   type SegmentedOption,
 } from './TableToolbar'
@@ -68,8 +70,11 @@ export { BulkActionBar } from './BulkActionBar'
 export { Tabs, LinkTabs, type TabItem } from './Tabs'
 export { Menu, MenuItem, MenuSeparator } from './Menu'
 export { Modal, ConfirmModal } from './Modal'
+export { PinPad } from './PinPad'
 export { Combobox, type ComboboxOption } from './Combobox'
 export { DateRangeField, type DateRange } from './DateRangeField'
+export { useChartColors, ChartTooltip, type ChartColors } from './charts'
+export { Sparkline } from './Sparkline'
 export { ToastProvider, useToast } from './Toast'
 
 export * as Icons from './icons'

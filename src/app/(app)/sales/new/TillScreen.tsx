@@ -31,12 +31,13 @@ import {
   scanAction,
   saveSaleAction,
   finaliseSaleAction,
-  parkSaleAction,
+  saveForLaterAction,
   saveAsOrderAction,
   refreshCustomerAction,
 } from '../actions'
 import { createLaybyAction } from '../laybys/actions'
 import { claimTerminalAction } from '../../setup/terminals/actions'
+import { tillSignOutAction } from './pinActions'
 import TenderPad from './TenderPad'
 import CustomerPicker from './CustomerPicker'
 
@@ -49,7 +50,7 @@ import CustomerPicker from './CustomerPicker'
  * beside the basket means looking away from the customer to find it.
  *
  * The basket lives in client state and is only written to the database when the
- * sale is parked or finalised. A draft row per keystroke would fill the table
+ * sale is saved or finalised. A draft row per keystroke would fill the table
  * with abandoned baskets, and nothing downstream needs them.
  */
 
@@ -95,16 +96,19 @@ export default function TillScreen({
   terminals,
   tenders,
   priceStructureId,
-  parkedCount,
+  savedCount,
   cashRounding,
   canOverrideDiscount,
+  operatorName,
 }: {
   terminals: Terminal[]
   tenders: TenderType[]
   priceStructureId: number | null
-  parkedCount: number
+  savedCount: number
   cashRounding: number
   canOverrideDiscount: boolean
+  /** Who entered a PIN to open this till. */
+  operatorName: string
 }) {
   const [lines, setLines] = useState<BasketLine[]>([])
   const [documentId, setDocumentId] = useState<number | null>(null)
@@ -265,19 +269,19 @@ export default function TillScreen({
     })
   }
 
-  function parkSale() {
+  function saveForLater() {
     startTransition(async () => {
       const saved = await saveSaleAction(documentId, salePayload())
       if (!saved.ok) {
         toast.error(saved.error)
         return
       }
-      const parked = await parkSaleAction(saved.documentId)
-      if (!parked.ok) {
-        toast.error(parked.error)
+      const setAside = await saveForLaterAction(saved.documentId)
+      if (!setAside.ok) {
+        toast.error(setAside.error)
         return
       }
-      toast.success('Sale parked.')
+      toast.success('Sale saved.')
       clearBasket()
       router.refresh()
     })
@@ -508,9 +512,9 @@ export default function TillScreen({
         </Button>
 
         <div className="grid grid-cols-2 gap-2">
-          <Button variant="ghost" disabled={lines.length === 0 || pending} onClick={parkSale}>
+          <Button variant="ghost" disabled={lines.length === 0 || pending} onClick={saveForLater}>
             <Icons.Clock size={15} />
-            Park
+            Save
           </Button>
           <Button
             variant="danger-ghost"
@@ -550,12 +554,33 @@ export default function TillScreen({
           Save as lay-by
         </Button>
 
-        {parkedCount > 0 && (
-          <Button variant="secondary" onClick={() => router.push('/sales?status=parked')}>
+        {savedCount > 0 && (
+          <Button variant="secondary" onClick={() => router.push('/sales?status=saved')}>
             <Icons.Receipt size={15} />
-            {parkedCount} parked sale{parkedCount === 1 ? '' : 's'}
+            {savedCount} saved sale{savedCount === 1 ? '' : 's'}
           </Button>
         )}
+
+        {/* Handing the till to the next person. Prominent because the whole
+            point of a PIN is defeated if ending a stint is hard to find. */}
+        <Button
+          variant="ghost"
+          disabled={pending || lines.length > 0}
+          title={
+            lines.length > 0
+              ? 'Finish or clear the sale in progress first.'
+              : `Signed in as ${operatorName}`
+          }
+          onClick={() =>
+            startTransition(async () => {
+              await tillSignOutAction()
+              router.refresh()
+            })
+          }
+        >
+          <Icons.LogOut size={15} />
+          {operatorName} — sign out
+        </Button>
 
         <TerminalNotice
           terminal={terminal}

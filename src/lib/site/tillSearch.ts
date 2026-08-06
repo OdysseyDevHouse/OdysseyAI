@@ -103,7 +103,7 @@ function selectProduct(costBasis: string): string {
                JOIN sales_order_details oo ON oo.document_id = od.id
               WHERE ol.product_id = p.id
                 AND od.doc_type = 'sales_order'
-                AND od.status IN ('draft','parked','issued')
+                AND od.status IN ('draft','saved','issued')
                 AND oo.fulfilment_status IN ('open','part_delivered')
                 AND oo.reserves_stock = 1
            ), 0)

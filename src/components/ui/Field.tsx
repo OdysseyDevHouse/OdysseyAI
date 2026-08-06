@@ -331,6 +331,7 @@ export function Switch({
   hint,
   disabled = false,
   id,
+  ariaLabel,
 }: {
   checked: boolean
   onChange: (next: boolean) => void
@@ -338,6 +339,12 @@ export function Switch({
   hint?: string
   disabled?: boolean
   id?: string
+  /**
+   * Accessible name for a switch with no visible label — a cell in a grid
+   * where the row and column already say what it means to a sighted user, but
+   * a screen reader would otherwise announce a bare "switch".
+   */
+  ariaLabel?: string
 }) {
   return (
     <div className="flex items-start gap-3">
@@ -346,7 +353,7 @@ export function Switch({
         role="switch"
         id={id}
         aria-checked={checked}
-        aria-label={label}
+        aria-label={ariaLabel ?? label}
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={`mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-pill border border-transparent p-0.5 transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -432,5 +439,60 @@ export function Radio({
       />
       {label}
     </label>
+  )
+}
+
+/**
+ * ColourInput — a colour, picked or typed.
+ *
+ * Both halves, always: the swatch opens the OS picker (which is what people
+ * reach for), and the hex field is how a brand colour actually arrives —
+ * copied out of a style guide or an email from a designer. Offering only the
+ * picker means hunting for a known value by eye.
+ *
+ * Emits the hex string, so callers never deal with the native input's quirks.
+ * Validation belongs at the boundary that stores it — a colour that reaches a
+ * public page must be checked server-side however it was entered.
+ */
+export function ColourInput({
+  value,
+  onChange,
+  id,
+  disabled,
+  className = '',
+}: {
+  /** A #rrggbb string. */
+  value: string
+  onChange: (next: string) => void
+  id?: string
+  disabled?: boolean
+  className?: string
+}) {
+  const wiring = useFieldWiring(id, false)
+  // The native swatch rejects anything that is not #rrggbb, and a rejected
+  // value makes it silently show black. Fall back while a hex is half-typed.
+  const swatchValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'
+
+  return (
+    <div className={`flex items-center gap-2 ${className}`}>
+      <input
+        type="color"
+        value={swatchValue}
+        disabled={disabled}
+        aria-label="Pick a colour"
+        onChange={(event) => onChange(event.target.value)}
+        className={`${CONTROL_H} w-14 shrink-0 cursor-pointer rounded-control border border-border-strong bg-surface p-1 disabled:cursor-not-allowed disabled:opacity-50`}
+      />
+      <input
+        id={wiring.id}
+        value={value}
+        disabled={disabled}
+        spellCheck={false}
+        placeholder="#2f6fed"
+        aria-describedby={wiring.describedBy}
+        onChange={(event) => onChange(event.target.value)}
+        className={`${CONTROL} ${CONTROL_H} w-32`}
+      />
+    </div>
   )
 }

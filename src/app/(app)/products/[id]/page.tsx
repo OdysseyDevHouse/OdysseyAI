@@ -13,7 +13,9 @@ import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
 import { Button, PageHeader } from '@/components/ui'
+import { listImages } from '@/lib/site/productImages'
 import ProductForm from '../ProductForm'
+import ProductImages from '../ProductImages'
 import { archiveProductAction, deleteProductAction } from '../actions'
 
 export const dynamic = 'force-dynamic'
@@ -71,7 +73,7 @@ export default async function EditProductPage({
   // The setup each product type needs. Only fetched for the type that uses it —
   // a normal product has no ingredient list to read — and each is tolerant of
   // its table not existing yet, so an unmigrated store still edits products.
-  const [recipeLines, referLink, serials, productSuppliers] = await Promise.all([
+  const [recipeLines, referLink, serials, productSuppliers, images] = await Promise.all([
     product.productType === 'recipe'
       ? listRecipe(siteId, product.id).catch(() => [])
       : Promise.resolve([]),
@@ -84,6 +86,9 @@ export default async function EditProductPage({
           .catch(() => [])
       : Promise.resolve([]),
     listProductSuppliers(siteId, product.id).catch(() => []),
+    // Tolerant like its neighbours: an unmigrated store still edits products,
+    // it simply has no gallery yet.
+    listImages(siteId, product.id).catch(() => []),
   ])
 
   // The pricing tables are laid out by THIS store's price structures, but each
@@ -181,6 +186,12 @@ export default async function EditProductPage({
             </>
           }
         />
+
+        {/* Below the form rather than inside it: images upload immediately and
+            individually, so they are not part of the product's save at all. */}
+        <div className="mt-5">
+          <ProductImages productId={product.id} initial={images} />
+        </div>
       </div>
     </>
   )

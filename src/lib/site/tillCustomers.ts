@@ -107,6 +107,35 @@ export async function searchCustomersForTill(
   return rows.map(mapCustomer)
 }
 
+/**
+ * The opening list for a customer picker, before anything is typed.
+ *
+ * Separate from searchCustomersForTill, which deliberately returns nothing
+ * under two characters: the till's picker is a type-ahead on a scanner-driven
+ * screen, and firing a hundred-row query every time it opens would be work
+ * nobody asked for. A back-office picker is the opposite — it opens with the
+ * book in front of you and you scroll or refine.
+ *
+ * Same status rule as the search, so a customer cannot appear in one and
+ * vanish from the other.
+ */
+export async function listCustomersForPicker(
+  siteId: number,
+  limit = 100,
+): Promise<TillCustomer[]> {
+  const capped = Math.min(Math.max(limit, 1), 200)
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_CUSTOMER}
+      WHERE status <> 'closed'
+      ORDER BY name ASC
+      LIMIT ${capped}`,
+  )
+
+  return rows.map(mapCustomer)
+}
+
 export async function getTillCustomer(
   siteId: number,
   customerId: number,

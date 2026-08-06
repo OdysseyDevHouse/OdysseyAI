@@ -16,6 +16,7 @@ import {
   StatTile,
   FilterBar,
   FilterChip,
+  LinkSegmentedControl,
   Pagination,
   EmptyState,
   Badge,
@@ -46,7 +47,7 @@ const PAGE_SIZE = 50
  */
 const STATUS_LABELS: Record<SalesDocStatus, string> = {
   draft: 'Draft',
-  parked: 'Parked',
+  saved: 'Saved',
   issued: 'Issued',
   finalised: 'Finalised',
   cancelled: 'Cancelled',
@@ -54,7 +55,7 @@ const STATUS_LABELS: Record<SalesDocStatus, string> = {
 
 const STATUS_TONE: Record<SalesDocStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
   draft: 'neutral',
-  parked: 'warning',
+  saved: 'warning',
   issued: 'neutral',
   finalised: 'success',
   cancelled: 'danger',
@@ -122,12 +123,12 @@ export default async function SalesPage({
           icon={<Icons.Receipt size={16} />}
         />
         <StatTile
-          label="Parked"
-          value={String(items.filter((d) => d.status === 'parked').length)}
+          label="Saved"
+          value={String(items.filter((d) => d.status === 'saved').length)}
           hint="Waiting to be recalled"
-          tone={items.some((d) => d.status === 'parked') ? 'warning' : 'default'}
+          tone={items.some((d) => d.status === 'saved') ? 'warning' : 'default'}
           icon={<Icons.Clock size={16} />}
-          href={filterHref({ status: 'parked' })}
+          href={filterHref({ status: 'saved' })}
         />
         <StatTile
           label="Cancelled"
@@ -146,33 +147,29 @@ export default async function SalesPage({
         keep={{ status: params.status, from: params.from, to: params.to }}
       />
 
+      {/* Status is not a chip here — the segmented control below already shows
+          which slice is active and how to leave it. The date filters stay: they
+          have no other visible affordance to clear them. */}
       <FilterBar clearHref="/sales">
-        {status && (
-          <FilterChip
-            label="Status"
-            value={STATUS_LABELS[status]}
-            clearHref={filterHref({ status: null })}
-          />
-        )}
         {params.from && (
           <FilterChip label="From" value={params.from} clearHref={filterHref({ from: null })} />
         )}
         {params.to && <FilterChip label="To" value={params.to} clearHref={filterHref({ to: null })} />}
       </FilterBar>
 
-      <div className="flex flex-wrap gap-3 px-6 pb-3 text-xs">
-        <Link href="/sales" className={!status ? 'font-medium text-brand' : 'text-muted hover:text-ink'}>
-          All
-        </Link>
-        {(['finalised', 'parked', 'cancelled'] as SalesDocStatus[]).map((value) => (
-          <Link
-            key={value}
-            href={filterHref({ status: status === value ? null : value })}
-            className={status === value ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-          >
-            {STATUS_LABELS[value]}
-          </Link>
-        ))}
+      <div className="px-6 pb-3">
+        <LinkSegmentedControl
+          aria-label="Filter by status"
+          value={status ?? 'all'}
+          options={[
+            { value: 'all', label: 'All', href: filterHref({ status: null }) },
+            ...(['finalised', 'saved', 'cancelled'] as SalesDocStatus[]).map((value) => ({
+              value,
+              label: STATUS_LABELS[value],
+              href: filterHref({ status: value }),
+            })),
+          ]}
+        />
       </div>
 
       <div className="px-6 pb-6">

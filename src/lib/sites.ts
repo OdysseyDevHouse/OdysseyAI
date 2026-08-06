@@ -123,3 +123,24 @@ export async function defaultSiteForUser(userId: number): Promise<Site | null> {
   const sites = await listSitesForUser(userId)
   return sites[0] ?? null
 }
+
+/**
+ * The shop's public name, for the storefront header.
+ *
+ * Returns ONLY the name — deliberately not a `Site`, which carries the VAT
+ * number, registration number, contact email and postal address. None of that
+ * belongs in a public page's props, and returning the whole record here would
+ * put it one careless `JSON.stringify` away from being served to shoppers.
+ *
+ * Not user-scoped, because a storefront visitor has no account. The caller has
+ * already proved which site it may serve by verifying the signed store token.
+ */
+export async function publicSiteName(siteId: number): Promise<string | null> {
+  const row = await queryOne<{ company_name: string; trading_name: string | null }>(
+    `SELECT company_name, trading_name FROM cp2_sites
+      WHERE id = ? AND status = 'active' LIMIT 1`,
+    [siteId],
+  )
+  if (!row) return null
+  return row.trading_name?.trim() || row.company_name
+}

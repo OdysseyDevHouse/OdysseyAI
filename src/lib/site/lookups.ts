@@ -82,6 +82,23 @@ export async function listPriceStructures(siteId: number): Promise<PriceStructur
   }))
 }
 
+// ── Sales reps ──────────────────────────────────────────────────────────
+
+export type SalesRep = { id: number; name: string; code: string | null }
+
+/** Active reps, for the clerk picker on an invoice line. */
+export async function listSalesReps(siteId: number): Promise<SalesRep[]> {
+  const rows = await siteQuery<RowDataPacket>(
+    siteId,
+    'SELECT id, name, code FROM sales_reps WHERE is_active = 1 ORDER BY name ASC',
+  )
+  return (rows as unknown as Record<string, unknown>[]).map((r) => ({
+    id: Number(r.id),
+    name: String(r.name),
+    code: (r.code as string | null) ?? null,
+  }))
+}
+
 // ── Settings ────────────────────────────────────────────────────────────
 
 /** Which cost figure this site prices from. Defaults to average. */

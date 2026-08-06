@@ -22,10 +22,21 @@ import { setSetting } from '../src/lib/site/settings'
 import {
   canEditFinalised, editFinalisedDocument, editDocumentDetails, correctionChain,
 } from '../src/lib/site/salesEdit'
+import { NO_CAPABILITIES, type CapabilitySet } from '../src/lib/site/permissions'
 import { toNum } from '../src/lib/decimals'
 
 const SITE = 1
 const actor = { userId: 1, userName: 'Edit Test' }
+
+/**
+ * These checks used to name a ROLE; permissions now take the capability set
+ * that role resolves to. The three below stand in for what the old role names
+ * meant here — an owner may do anything, and neither staff nor manager holds
+ * sales.edit_finalised by default.
+ */
+const OWNER: CapabilitySet = { isOwner: true, granted: new Set<string>() }
+const MANAGER: CapabilitySet = { isOwner: false, granted: new Set<string>() }
+const STAFF: CapabilitySet = NO_CAPABILITIES
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
   if (!cond) fails++
@@ -89,12 +100,12 @@ async function main() {
   // ── GUARD 1: the role must have the capability
   const wrongQty = await sellOnAccount(product, `EDT${stamp}`, cust.id, 10, 115, rate, account.id)
   ok('*** staff CANNOT correct a finalised invoice ***',
-    !(await canEditFinalised(SITE, 'staff', wrongQty)).ok)
+    !(await canEditFinalised(SITE, STAFF, wrongQty)).ok)
   ok('*** manager cannot either — it is owner-only by default ***',
-    !(await canEditFinalised(SITE, 'manager', wrongQty)).ok)
-  ok('*** an owner can ***', (await canEditFinalised(SITE, 'owner', wrongQty)).ok)
+    !(await canEditFinalised(SITE, MANAGER, wrongQty)).ok)
+  ok('*** an owner can ***', (await canEditFinalised(SITE, OWNER, wrongQty)).ok)
 
-  const staffTry = await editFinalisedDocument(SITE, actor, 'staff', {
+  const staffTry = await editFinalisedDocument(SITE, actor, STAFF, {
     documentId: wrongQty, reason: 'wrong qty', lines: [], tenders: [],
   })
   ok('  and the attempt itself is refused', !staffTry.ok)
@@ -105,11 +116,11 @@ async function main() {
     lines: [{ productId: product, productCode: `EDT${stamp}`, description: 'Edit test widget', productType: 'normal', qty: 1, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 40 }],
   })
   ok('a DRAFT cannot be "corrected" — just edit it',
-    draftDoc.ok && !(await canEditFinalised(SITE, 'owner', draftDoc.id)).ok)
+    draftDoc.ok && !(await canEditFinalised(SITE, OWNER, draftDoc.id)).ok)
 
   // ── A reason is mandatory
   ok('*** a correction without a reason is refused ***',
-    !(await editFinalisedDocument(SITE, actor, 'owner', {
+    !(await editFinalisedDocument(SITE, actor, OWNER, {
       documentId: wrongQty, reason: '   ',
       lines: [{ productId: product, productCode: `EDT${stamp}`, description: 'Edit test widget', productType: 'normal', qty: 8, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 40 }],
       tenders: [{ tenderTypeId: account.id, amount: 920 }],
@@ -121,7 +132,7 @@ async function main() {
   ok('before: 10 sold, balance 1150', balanceBefore === 1150 && stockBefore === 190,
     `${balanceBefore} / ${stockBefore}`)
 
-  const corrected = await editFinalisedDocument(SITE, actor, 'owner', {
+  const corrected = await editFinalisedDocument(SITE, actor, OWNER, {
     documentId: wrongQty,
     reason: 'Cashier keyed 10, customer took 8',
     lines: [{ productId: product, productCode: `EDT${stamp}`, description: 'Edit test widget', productType: 'normal', qty: 8, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 40 }],
@@ -172,8 +183,8 @@ async function main() {
 
   // ── GUARD 3: cannot correct twice
   ok('*** an already-corrected invoice cannot be corrected again ***',
-    !(await canEditFinalised(SITE, 'owner', wrongQty)).ok)
-  const twice = await canEditFinalised(SITE, 'owner', wrongQty)
+    !(await canEditFinalised(SITE, OWNER, wrongQty)).ok)
+  const twice = await canEditFinalised(SITE, OWNER, wrongQty)
   ok('  and says why', !twice.ok && twice.refusal.reason.includes('already been credited'),
     !twice.ok ? twice.refusal.reason : '')
 
@@ -188,7 +199,7 @@ async function main() {
     const alloc = await allocate(SITE, actor, payTxn.id, payment.id, 100)
     ok('  and allocates against the invoice', alloc.ok, alloc.ok ? '' : alloc.error)
 
-    const blocked = await canEditFinalised(SITE, 'owner', payTarget)
+    const blocked = await canEditFinalised(SITE, OWNER, payTarget)
     ok('*** an invoice with an allocated payment CANNOT be corrected ***', !blocked.ok)
     ok('  naming the amount', !blocked.ok && blocked.refusal.reason.includes('100.00'),
       !blocked.ok ? blocked.refusal.reason : '')
@@ -201,12 +212,12 @@ async function main() {
   const lockTarget = await sellOnAccount(product, `EDT${stamp}`, cust.id, 1, 115, rate, account.id)
   const today = new Date().toISOString().slice(0, 10)
   await setSetting(SITE, 'vat_period_locked_to', today)
-  const locked = await canEditFinalised(SITE, 'owner', lockTarget)
+  const locked = await canEditFinalised(SITE, OWNER, lockTarget)
   ok('*** a LOCKED VAT period refuses the correction ***', !locked.ok)
   ok('  naming the lock', !locked.ok && locked.refusal.reason.includes('locked'),
     !locked.ok ? locked.refusal.reason : '')
   await setSetting(SITE, 'vat_period_locked_to', '')
-  ok('  and unlocking allows it again', (await canEditFinalised(SITE, 'owner', lockTarget)).ok)
+  ok('  and unlocking allows it again', (await canEditFinalised(SITE, OWNER, lockTarget)).ok)
 
   // ── "Edit details" — the safe subset
   const details = await editDocumentDetails(SITE, actor, lockTarget, {

@@ -54,6 +54,11 @@ export type Customer = {
   paymentTermsDays: number
   creditLimit: number
   balance: number
+  /** Annual nominal rate. Zero means the group's default applies, if it has one. */
+  interestRatePct: number
+  /** Explicit opt-in, separate from the rate — see interestRules.ts on the NCA. */
+  interestEnabled: boolean
+  interestGraceDays: number
   notes: string | null
   createdAt: Date
   updatedAt: Date
@@ -97,6 +102,9 @@ function mapCustomer(r: Row): Customer {
     paymentTermsDays: Number(r.payment_terms_days),
     creditLimit,
     balance,
+    interestRatePct: toNum(r.interest_rate_pct),
+    interestEnabled: Boolean(r.interest_enabled),
+    interestGraceDays: Number(r.interest_grace_days ?? 0),
     notes: (r.notes as string | null) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
@@ -112,7 +120,9 @@ const SELECT_CUSTOMER = `
          c.contact_name, c.email, c.phone, c.address_line1, c.address_line2,
          c.city, c.postal_code, c.vat_number, c.loyalty_number,
          c.group_id, c.rep_id, c.category, c.payment_terms_days,
-         c.credit_limit, c.balance, c.notes, c.created_at, c.updated_at,
+         c.credit_limit, c.balance,
+         c.interest_rate_pct, c.interest_enabled, c.interest_grace_days,
+         c.notes, c.created_at, c.updated_at,
          g.name AS group_name,
          r.name AS rep_name
     FROM customers c
@@ -276,6 +286,11 @@ export type CustomerInput = {
   category?: string | null
   paymentTermsDays?: number
   creditLimit?: number
+  /** Annual nominal rate. Zero means fall back to the group's default. */
+  interestRatePct?: number
+  /** Explicit opt-in — see the NCA note in interestRules.ts. */
+  interestEnabled?: boolean
+  interestGraceDays?: number
   notes?: string | null
 }
 
@@ -291,6 +306,14 @@ export function validateCustomer(input: CustomerInput): string | null {
     return 'That email address does not look valid.'
   }
   if ((input.creditLimit ?? 0) < 0) return 'Credit limit cannot be negative.'
+  if ((input.interestRatePct ?? 0) < 0) return 'An interest rate cannot be negative.'
+  // Not the NCA ceiling — that depends on the repo rate and the agreement type,
+  // neither of which this system knows. A sanity bound only, to catch 1550 typed
+  // for 15.50. See the note at the top of interestRules.ts.
+  if ((input.interestRatePct ?? 0) > 100) return 'That interest rate looks wrong — enter it as a yearly percentage.'
+  if ((input.interestGraceDays ?? 0) < 0 || (input.interestGraceDays ?? 0) > 365) {
+    return 'The grace period must be between 0 and 365 days.'
+  }
   if ((input.paymentTermsDays ?? 0) < 0 || (input.paymentTermsDays ?? 0) > 365) {
     return 'Payment terms must be between 0 and 365 days.'
   }
@@ -324,13 +347,18 @@ function writableColumns(input: CustomerInput): unknown[] {
     input.category?.trim() || null,
     input.paymentTermsDays ?? 30,
     (input.creditLimit ?? 0).toFixed(4),
+    (input.interestRatePct ?? 0).toFixed(4),
+    input.interestEnabled ?? false,
+    input.interestGraceDays ?? 0,
     input.notes?.trim() || null,
   ]
 }
 
+/** MUST stay in the same order as writableColumns above. */
 const COLUMN_LIST = `code, name, status, status_reason, account_type, contact_name, email, phone,
                      address_line1, address_line2, city, postal_code, vat_number, loyalty_number,
-                     group_id, rep_id, category, payment_terms_days, credit_limit, notes`
+                     group_id, rep_id, category, payment_terms_days, credit_limit,
+                     interest_rate_pct, interest_enabled, interest_grace_days, notes`
 
 export async function createCustomer(
   siteId: number,
@@ -398,7 +426,9 @@ export async function updateCustomer(
          contact_name = ?, email = ?, phone = ?, address_line1 = ?, address_line2 = ?,
          city = ?, postal_code = ?, vat_number = ?, loyalty_number = ?,
          group_id = ?, rep_id = ?, category = ?, payment_terms_days = ?,
-         credit_limit = ?, notes = ?
+         credit_limit = ?,
+         interest_rate_pct = ?, interest_enabled = ?, interest_grace_days = ?,
+         notes = ?
        WHERE id = ?`,
       [...writableColumns(input), id] as never,
     )

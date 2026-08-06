@@ -18,6 +18,7 @@ import {
   type Allocatable,
   type DocType,
 } from './ledger'
+import { guardPosting } from './periodLocks'
 
 /**
  * The creditors sub-ledger — the mirror of customerLedger.ts.
@@ -251,6 +252,10 @@ export async function postSupplierTransaction(
   const invalid = validateSupplierPost(input)
   if (invalid) return { ok: false, error: invalid }
 
+  // See postTransaction in customerLedger.ts — a closed period refuses.
+  const locked = await guardPosting(siteId, input.docDate ?? today(), 'ledger')
+  if (locked) return { ok: false, error: locked }
+
   const supplier = await siteQueryOne<Row>(
     siteId,
     'SELECT id, code, name, payment_terms_days FROM suppliers WHERE id = ? LIMIT 1',
@@ -359,6 +364,17 @@ export async function reverseSupplierTransaction(
     [id],
   )
   if (already) return { ok: false, error: 'That transaction has already been reversed.' }
+
+  // Both dates, per reverseTransaction in customerLedger.ts.
+  const originalLocked = await guardPosting(siteId, original.docDate, 'ledger')
+  if (originalLocked) {
+    return {
+      ok: false,
+      error: `That document is dated inside a closed period. ${originalLocked}`,
+    }
+  }
+  const todayLocked = await guardPosting(siteId, today(), 'ledger')
+  if (todayLocked) return { ok: false, error: todayLocked }
 
   if (round(original.amountOutstanding, 2) !== round(original.amountSigned, 2)) {
     return {

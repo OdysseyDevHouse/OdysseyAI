@@ -169,6 +169,15 @@ export async function createCreditNote(
     if (line.qty <= 0) return { ok: false, error: `${line.description}: enter a quantity to credit.` }
   }
 
+  // Who to charge the clawback to, per original line. Empty for a return with
+  // no receipt, which reverses nothing in particular and so belongs to nobody.
+  const originalById = new Map(
+    (invoice?.lines ?? []).map((l) => [
+      l.id,
+      { salesRepId: l.salesRepId, salesRepUserId: l.salesRepUserId },
+    ]),
+  )
+
   // The period lock is the only thing standing between a correction and a
   // restated VAT return. Dated today, so a locked PAST period does not block a
   // credit raised now — that is the whole point of crediting rather than
@@ -257,11 +266,16 @@ export async function createCreditNote(
       for (const [index, line] of input.lines.entries()) {
         const c = computed[index]
         await tx.execute(
+          // source_line_id and sales_rep_user_id are carried across from the
+          // invoice line being reversed (043). Without them a clawback lands on
+          // whoever processed the refund rather than on the person who made the
+          // sale, and the refund desk slowly absorbs everybody else's negatives.
           `INSERT INTO sales_document_lines
              (document_id, line_number, product_id, product_code, description, product_type,
-              department_id, qty, unit_price_incl, discount_pct, discount_incl, vat_rate_pct,
+              department_id, source_line_id, sales_rep_id, sales_rep_user_id,
+              qty, unit_price_incl, discount_pct, discount_incl, vat_rate_pct,
               line_total_incl, line_total_excl, line_vat, unit_cost_excl)
-           VALUES (?,?,?,?,?,?,?,?,?,0,0,?,?,?,?,?)`,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?,?,?)`,
           [
             documentId,
             index + 1,
@@ -270,6 +284,9 @@ export async function createCreditNote(
             line.description.slice(0, 190),
             line.productType ?? 'normal',
             line.departmentId ?? null,
+            line.sourceLineId ?? null,
+            originalById.get(line.sourceLineId ?? 0)?.salesRepId ?? null,
+            originalById.get(line.sourceLineId ?? 0)?.salesRepUserId ?? null,
             round(-Math.abs(line.qty), 3).toFixed(3),
             round(line.unitPriceIncl, 4).toFixed(4),
             line.vatRatePct.toFixed(3),

@@ -37,6 +37,10 @@ type Invoice = {
   dueDate: string | null
   outstanding: number
   daysOverdue: number
+  /** What paying by the deadline still earns. Zero once the window has passed. */
+  discountAvailable: number
+  discountDeadline: string | null
+  discountDaysRemaining: number
 }
 
 type Supplier = {
@@ -46,6 +50,8 @@ type Supplier = {
   email: string | null
   balance: number
   overdueTotal: number
+  discountAvailable: number
+  nextDiscountDeadline: string | null
   invoices: Invoice[]
 }
 
@@ -78,7 +84,21 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
         name: supplier.name,
         allocations: supplier.invoices
           .filter((i) => (amounts[i.txnId] ?? 0) > 0)
-          .map((i) => ({ txnId: i.txnId, amount: amounts[i.txnId] })),
+          .map((i) => {
+            const amount = amounts[i.txnId]
+            // The discount is claimed only when the amount typed settles the
+            // invoice net of it, to the cent. Any other figure is an ordinary
+            // part payment — the server refuses a discount that does not clear
+            // the invoice, and claiming one here would just bounce the run.
+            const takesDiscount =
+              i.discountAvailable > 0 &&
+              round(amount + i.discountAvailable, 2) === round(i.outstanding, 2)
+            return {
+              txnId: i.txnId,
+              amount,
+              discount: takesDiscount ? i.discountAvailable : 0,
+            }
+          }),
       }))
       .filter((p) => p.allocations.length > 0)
   }, [visible, amounts])
@@ -88,10 +108,27 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
     0,
   )
 
+  /** Discount actually being claimed by the current selection. */
+  const discountTaken = chosen.reduce(
+    (sum, p) => round(sum + p.allocations.reduce((s, a) => s + a.discount, 0), 2),
+    0,
+  )
+
+  /** Everything still on offer across the visible suppliers, taken or not. */
+  const totalDiscountOnOffer = visible.reduce(
+    (sum, s) => round(sum + s.discountAvailable, 2),
+    0,
+  )
+
+  /** What to pay to settle an invoice: its balance, less any discount on offer. */
+  function payableNow(invoice: Invoice): number {
+    return round(invoice.outstanding - invoice.discountAvailable, 2)
+  }
+
   function payAll(supplier: Supplier) {
     setAmounts((current) => {
       const next = { ...current }
-      for (const invoice of supplier.invoices) next[invoice.txnId] = invoice.outstanding
+      for (const invoice of supplier.invoices) next[invoice.txnId] = payableNow(invoice)
       return next
     })
     setExpanded((current) => new Set(current).add(supplier.supplierId))
@@ -101,11 +138,34 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
     const next: Record<number, number> = {}
     for (const supplier of visible) {
       for (const invoice of supplier.invoices) {
-        if (invoice.daysOverdue > 0) next[invoice.txnId] = invoice.outstanding
+        if (invoice.daysOverdue > 0) next[invoice.txnId] = payableNow(invoice)
       }
     }
     setAmounts(next)
     setExpanded(new Set(visible.map((s) => s.supplierId)))
+  }
+
+  /**
+   * Select everything with a discount still on offer.
+   *
+   * A separate action from "pay everything overdue" because it answers a
+   * different question: not "who is chasing us" but "what do we lose by
+   * waiting". The two lists barely overlap — a discount window is usually open
+   * while an invoice is still well within terms.
+   */
+  function takeEveryDiscount() {
+    const next: Record<number, number> = { ...amounts }
+    const touched = new Set(expanded)
+    for (const supplier of visible) {
+      for (const invoice of supplier.invoices) {
+        if (invoice.discountAvailable > 0) {
+          next[invoice.txnId] = payableNow(invoice)
+          touched.add(supplier.supplierId)
+        }
+      }
+    }
+    setAmounts(next)
+    setExpanded(touched)
   }
 
   function prepare() {
@@ -136,6 +196,12 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
               <Icons.Check size={15} />
               Select everything overdue
             </Button>
+            {totalDiscountOnOffer > 0 && (
+              <Button variant="ghost" size="sm" onClick={takeEveryDiscount} disabled={pending}>
+                <Icons.Percent size={15} />
+                Take every discount ({formatMoney(totalDiscountOnOffer)})
+              </Button>
+            )}
             <Button variant="primary" disabled={chosen.length === 0 || pending} onClick={prepare}>
               <Icons.Wallet size={15} />
               {pending ? 'Preparing…' : `Prepare ${formatMoney(total)}`}
@@ -247,6 +313,17 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
                                 {invoice.daysOverdue} day{invoice.daysOverdue === 1 ? '' : 's'} overdue
                               </span>
                             )}
+                            {invoice.discountAvailable > 0 && (
+                              <span className="ml-2 text-success">
+                                save {formatMoney(invoice.discountAvailable)} if paid by{' '}
+                                {invoice.discountDeadline}
+                                {invoice.discountDaysRemaining <= 3 && (
+                                  <> — {invoice.discountDaysRemaining === 0
+                                    ? 'today'
+                                    : `${invoice.discountDaysRemaining} day${invoice.discountDaysRemaining === 1 ? '' : 's'} left`}</>
+                                )}
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -284,7 +361,16 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
           <span className="text-sm text-ink-2">
             {chosen.length} supplier{chosen.length === 1 ? '' : 's'}
           </span>
-          <span className="numeric text-lg font-semibold text-ink">{formatMoney(total)}</span>
+          <div className="flex items-baseline gap-4">
+            {/* Stated separately: the amount leaving the bank is the total, but
+                the invoices being closed are worth this much more. */}
+            {discountTaken > 0 && (
+              <span className="text-sm text-success">
+                {formatMoney(discountTaken)} discount captured
+              </span>
+            )}
+            <span className="numeric text-lg font-semibold text-ink">{formatMoney(total)}</span>
+          </div>
         </div>
       )}
     </Card>

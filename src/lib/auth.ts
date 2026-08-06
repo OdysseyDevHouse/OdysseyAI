@@ -4,6 +4,15 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { queryOne, execute } from './db'
 import { verifyPassword, hashPassword } from './password'
 import { defaultSiteForUser, getSiteForUser, type Site } from './sites'
+import { siteExecute } from './siteDb'
+import { getTillSession } from './tillSession'
+import { getUserByControlId, type SiteUser } from './site/users'
+import {
+  capabilitiesForRole,
+  can,
+  type Capability,
+  type CapabilitySet,
+} from './site/permissions'
 import {
   createSessionToken,
   setSessionCookie,
@@ -179,7 +188,8 @@ export async function changePassword(
 /** Session or redirect to login. Use at the top of every protected page. */
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession()
-  if (!session) redirect('/login')
+  // The login page is '/', not '/login' — there is no route at the latter.
+  if (!session) redirect('/')
   return session
 }
 
@@ -209,18 +219,127 @@ export async function requireSiteId(): Promise<number> {
  * One call rather than requireSiteId() plus a separate session read, because
  * the two must describe the same request — and because an audit row written
  * against the wrong user is worse than none. The name is snapshotted into the
- * log at write time, since cp2_users lives in another database with no foreign
- * key to protect the reference.
+ * log at write time, since there is no foreign key to protect the reference.
+ *
+ * The id is the SITE user's id, not the control account's. 041 gave every
+ * existing control user a local row with the same id, so historic audit rows
+ * still resolve; new POS-only users get ids above that range.
+ *
+ * THE TILL OPERATOR WINS when one is signed in. On a shared shop-floor machine
+ * the browser session is whoever opened it that morning, which is exactly the
+ * wrong name to put on a sale rung up by the person actually standing there.
+ * Everything else — a back-office screen with no till session — is unaffected.
  */
 export async function requireActor(): Promise<{
   siteId: number
   actor: { userId: number; userName: string }
 }> {
-  const session = await requireSession()
-  const site = await requireSite()
+  const { site, user } = await requireSiteUser()
+
+  const till = await getTillSession(site.id)
+  if (till) {
+    return { siteId: site.id, actor: { userId: till.userId, userName: till.name } }
+  }
+
   return {
     siteId: site.id,
-    actor: { userId: session.userId, userName: session.name },
+    actor: { userId: user.id, userName: user.name },
+  }
+}
+
+/**
+ * Gives a control account a local row on first sight.
+ *
+ * The site's first user is made an owner — a brand-new store has nobody to
+ * grant permissions, so somebody has to arrive holding them. Everyone
+ * afterwards arrives with NO role, because by then there IS an owner who can
+ * decide, and defaulting a stranger into permissions nobody chose is how a
+ * back door gets left open.
+ */
+async function adoptControlUser(
+  siteId: number,
+  controlUserId: number,
+  name: string,
+  email: string,
+): Promise<SiteUser> {
+  await siteExecute(
+    siteId,
+    `INSERT INTO users (name, email, control_user_id, user_type, role_id, is_active)
+     SELECT ?, ?, ?, 'back_office',
+            CASE WHEN (SELECT COUNT(*) FROM users u2) = 0
+                 THEN (SELECT id FROM roles WHERE is_owner = 1 LIMIT 1)
+                 ELSE NULL END,
+            1
+       FROM DUAL
+      WHERE NOT EXISTS (SELECT 1 FROM users u3 WHERE u3.control_user_id = ?)`,
+    [name, email, controlUserId, controlUserId],
+  )
+
+  const user = await getUserByControlId(siteId, controlUserId)
+  // The INSERT is guarded against duplicates, so a null here means the row was
+  // created by a concurrent request and then read back — never a real absence.
+  if (!user) throw new Error(`Could not create a site user for control account ${controlUserId}`)
+  return user
+}
+
+/**
+ * The site, the local user record, and what that user may do.
+ *
+ * This is the one place a request's permissions are decided, and it is
+ * deliberately re-read per request rather than carried in the token: a role
+ * changed on the permissions screen then takes effect on the next page load
+ * rather than at the user's next sign-in.
+ *
+ * A control account with no local row is possible — access granted upstream
+ * after the last migration ran — so one is created on sight rather than
+ * turning a legitimate sign-in into an error. It lands with no role, which
+ * under deny-by-default means they can reach the app and do nothing until
+ * somebody gives them one.
+ */
+export async function requireSiteUser(): Promise<{
+  site: Site
+  user: SiteUser
+  capabilities: CapabilitySet
+}> {
+  const session = await requireSession()
+  const site = await requireSite()
+
+  let user = await getUserByControlId(site.id, session.userId)
+  if (!user) {
+    user = await adoptControlUser(site.id, session.userId, session.name, session.email)
+  }
+
+  if (!user.isActive) redirect('/select-site?inactive=1')
+
+  const capabilities = await capabilitiesForRole(site.id, user.roleId)
+  return { site, user, capabilities }
+}
+
+/** Capabilities alone, for the many screens that need nothing else. */
+export async function requireCapabilities(): Promise<CapabilitySet> {
+  return (await requireSiteUser()).capabilities
+}
+
+/**
+ * Blocks a page or action outright.
+ *
+ * For screens where a missing permission means "you should not be here at
+ * all", as opposed to the ones that merely hide a button. Server actions must
+ * use this rather than trusting the screen that offered them: an action is a
+ * public endpoint, and the only check that counts is the one a client cannot
+ * skip.
+ */
+export async function requireCapability(capability: Capability): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+  capabilities: CapabilitySet
+}> {
+  const { site, user, capabilities } = await requireSiteUser()
+  if (!can(capabilities, capability)) redirect('/not-allowed')
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
   }
 }
 

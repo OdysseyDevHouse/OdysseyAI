@@ -2,6 +2,16 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises'
 import path from 'node:path'
+import {
+  IMAGE_EXTENSIONS_LABEL,
+  IMAGE_MIME,
+  MAX_IMAGE_BYTES,
+  type ImageFormat,
+} from './productImageModel'
+
+// Re-exported so server callers keep one import.
+export { IMAGE_EXTENSIONS_LABEL, IMAGE_MIME, MAX_IMAGE_BYTES }
+export type { ImageFormat }
 
 /**
  * Where uploaded files live on disk.
@@ -221,5 +231,137 @@ export async function deleteStoredFile(storedName: string): Promise<void> {
     await unlink(full)
   } catch (error) {
     console.error('upload delete failed', storedName, error)
+  }
+}
+
+/* ── Images ───────────────────────────────────────────────────────────────── */
+
+/**
+ * Product images are a DIFFERENT problem from account documents, and get their
+ * own path rather than reusing storeUpload.
+ *
+ * ── WHY ──────────────────────────────────────────────────────────────────
+ *
+ * A document is served with Content-Disposition: attachment, which makes its
+ * contents almost irrelevant to safety — the browser saves it and never
+ * executes it. An image has to render INLINE, on our own origin, on a public
+ * storefront. That is precisely the case where a file's contents decide
+ * whether we have just published a stored XSS.
+ *
+ * So this is stricter in three ways:
+ *
+ *   1. A much narrower extension allowlist. No .svg — an SVG is an XML
+ *      document that can carry <script>, and serving one inline from our
+ *      origin executes it. No .heic either: browsers cannot display it, so a
+ *      shopper would see a broken image.
+ *
+ *   2. The BYTES are checked, not the extension. A .png that is actually HTML
+ *      is the classic way past an extension check, because some browsers will
+ *      sniff their way to text/html and run it. The magic number is read from
+ *      the file itself and must match a format we are prepared to serve.
+ *
+ *   3. The content type served later is derived from those verified bytes, not
+ *      from what the browser claimed at upload time.
+ */
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+
+/**
+ * Identify an image from its leading bytes.
+ *
+ * Returns null for anything not on the list — including an SVG or an HTML
+ * document with an image extension, which is the attack this exists to stop.
+ */
+export function sniffImage(bytes: Buffer): ImageFormat | null {
+  if (bytes.length < 12) return null
+
+  // PNG: \x89PNG\r\n\x1a\n
+  if (
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
+  ) {
+    return 'png'
+  }
+
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpeg'
+
+  // GIF87a / GIF89a
+  if (bytes.subarray(0, 6).toString('ascii') === 'GIF87a' || bytes.subarray(0, 6).toString('ascii') === 'GIF89a') {
+    return 'gif'
+  }
+
+  // WebP: 'RIFF' .... 'WEBP'
+  if (
+    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'webp'
+  }
+
+  return null
+}
+
+export type StoredImage = StoredFile & { format: ImageFormat }
+
+export type StoreImageResult = { ok: true; file: StoredImage } | { ok: false; error: string }
+
+/**
+ * Writes one uploaded image, having proved it really is one.
+ *
+ * The extension is checked first only to fail fast with a helpful message; the
+ * verdict that matters is `sniffImage`, which reads the actual bytes. The
+ * stored name's extension is then taken from the VERIFIED format, so a file
+ * called photo.png that is really a JPEG is stored — and later served — as a
+ * JPEG rather than carrying a lie forward.
+ */
+export async function storeImageUpload(file: File): Promise<StoreImageResult> {
+  if (!file || file.size === 0) return { ok: false, error: 'That file is empty.' }
+
+  if (file.size > MAX_IMAGE_BYTES) {
+    const mb = Math.round(MAX_IMAGE_BYTES / (1024 * 1024))
+    return { ok: false, error: `Images must be ${mb}MB or smaller.` }
+  }
+
+  const filename = cleanDisplayName(file.name)
+  const ext = extensionOf(filename)
+  if (!IMAGE_EXTENSIONS.has(ext)) {
+    return { ok: false, error: `Use a ${IMAGE_EXTENSIONS_LABEL} image.` }
+  }
+
+  const bytes = Buffer.from(await file.arrayBuffer())
+
+  // Re-check after buffering: File.size is the caller's claim, the bytes are
+  // what fills the disk.
+  if (bytes.byteLength > MAX_IMAGE_BYTES) {
+    const mb = Math.round(MAX_IMAGE_BYTES / (1024 * 1024))
+    return { ok: false, error: `Images must be ${mb}MB or smaller.` }
+  }
+
+  // The check that actually decides. An .svg renamed to .png, or an HTML page
+  // with an image extension, dies here rather than on a public product page.
+  const format = sniffImage(bytes)
+  if (!format) {
+    return {
+      ok: false,
+      error: `That file is not a ${IMAGE_EXTENSIONS_LABEL} image, whatever it is named.`,
+    }
+  }
+
+  const storedName = `${randomUUID()}.${format === 'jpeg' ? 'jpg' : format}`
+
+  await mkdir(UPLOADS_ROOT, { recursive: true })
+  await writeFile(path.join(UPLOADS_ROOT, storedName), bytes)
+
+  return {
+    ok: true,
+    file: {
+      storedName,
+      filename,
+      // From the VERIFIED bytes, not from file.type. This is the value the
+      // serving route will send, so it must not be the browser's claim.
+      mimeType: IMAGE_MIME[format],
+      sizeBytes: bytes.byteLength,
+      format,
+    },
   }
 }

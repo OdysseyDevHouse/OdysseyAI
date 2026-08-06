@@ -1,9 +1,9 @@
 import { notFound, redirect } from 'next/navigation'
-import { requireSite } from '@/lib/auth'
+import { requireSiteUser } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { creditableLines } from '@/lib/site/salesReversal'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
-import { capabilitiesFor, can } from '@/lib/site/permissions'
+import { can } from '@/lib/site/permissions'
 import { isPeriodLocked } from '@/lib/site/settings'
 import { PageHeader, Card, CardBody, Icons } from '@/components/ui'
 import CreditNoteForm from './CreditNoteForm'
@@ -11,16 +11,13 @@ import CreditNoteForm from './CreditNoteForm'
 export const dynamic = 'force-dynamic'
 
 export default async function CreditNotePage({ params }: { params: Promise<{ id: string }> }) {
-  const site = await requireSite()
+  const { site, capabilities } = await requireSiteUser()
   const { id } = await params
 
   const invoiceId = Number(id)
   if (!Number.isFinite(invoiceId) || invoiceId <= 0) notFound()
 
-  const [invoice, capabilities] = await Promise.all([
-    getDocument(site.id, invoiceId),
-    capabilitiesFor(site.id, site.role),
-  ])
+  const invoice = await getDocument(site.id, invoiceId)
   if (!invoice) notFound()
 
   // Permission is checked on the way in as well as at post time: offering a

@@ -1,8 +1,8 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSite } from '@/lib/auth'
-import { capabilitiesFor, can } from '@/lib/site/permissions'
+import { requireSiteId, requireSiteUser } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { createCreditNote } from '@/lib/site/salesReversal'
 import { searchForTill, type TillProduct } from '@/lib/site/tillSearch'
 
@@ -39,8 +39,8 @@ export type ReturnLineInput = {
 }
 
 export async function searchReturnProductsAction(term: string): Promise<TillProduct[]> {
-  const site = await requireSite()
-  return searchForTill(site.id, term, null)
+  const siteId = await requireSiteId()
+  return searchForTill(siteId, term, null)
 }
 
 export async function createNoReceiptReturnAction(input: {
@@ -52,14 +52,13 @@ export async function createNoReceiptReturnAction(input: {
 }): Promise<
   { ok: true; documentId: number; documentNumber: string; total: number } | { ok: false; error: string }
 > {
-  const site = await requireSite()
-  const { actor } = await requireActor()
+  const { site, user, capabilities } = await requireSiteUser()
+  const actor = { userId: user.id, userName: user.name }
 
-  const capabilities = await capabilitiesFor(site.id, site.role)
   if (!can(capabilities, 'sales.credit_note')) {
     return {
       ok: false,
-      error: `Your role (${site.role}) cannot credit a sale. An owner can grant this in Setup → Permissions.`,
+      error: `Your role${user.roleName ? ` (${user.roleName})` : ''} cannot credit a sale. An owner can grant this in Setup → Users & roles.`,
     }
   }
 

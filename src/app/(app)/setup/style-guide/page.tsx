@@ -8,7 +8,9 @@ import {
   Card,
   CardBody,
   CardHeader,
+  ChartTooltip,
   Checkbox,
+  ColourInput,
   Combobox,
   ConfirmModal,
   CurrencyInput,
@@ -21,10 +23,12 @@ import {
   FilterChip,
   Icons,
   Input,
+  LinkSegmentedControl,
   Menu,
   MenuItem,
   MenuSeparator,
   Modal,
+  PinPad,
   NumberInput,
   PageBody,
   PageHeader,
@@ -35,6 +39,7 @@ import {
   Select,
   SettingGroup,
   SettingRow,
+  Sparkline,
   Switch,
   TableToolbar,
   Tabs,
@@ -42,9 +47,11 @@ import {
   TILE_SWATCHES,
   tileClass,
   ToolbarSearch,
+  useChartColors,
   useToast,
 } from '@/components/ui'
 import type { Column } from '@/components/ui'
+import { formatMoney } from '@/lib/decimals'
 
 /**
  * The style guide — every shared building block, rendered live and named.
@@ -87,11 +94,13 @@ export default function StyleGuidePage() {
         <DataTableSection />
         <SelectionSection />
         <ModalSection />
+        <PinPadSection />
         <ComboboxSection />
         <FilterBarSection />
         <DateRangeSection />
         <PaginationSection />
         <EmptyStateSection />
+        <ChartSection />
         <TokensSection />
       </PageBody>
     </>
@@ -171,6 +180,7 @@ function ButtonsSection() {
 
 function FormSection() {
   const [posOnly, setPosOnly] = useState(true)
+  const [colour, setColour] = useState('#2f6fed')
   const [selected, setSelected] = useState(true)
   const [pricing, setPricing] = useState('cost')
   // A real value, not a placeholder: the point of the demo is that zero renders
@@ -226,6 +236,10 @@ function FormSection() {
           label="POS only"
           hint="Hidden in the back office"
         />
+      </Row>
+      <Row>
+        <Spec name="<ColourInput />" note="A colour: swatch to pick, hex to paste" />
+        <ColourInput value={colour} onChange={setColour} />
       </Row>
       <Row>
         <Spec name="<Checkbox />" note="Selecting items in a list/grid" />
@@ -522,6 +536,24 @@ function TableControlsSection() {
         </div>
 
         <div>
+          <Spec
+            name="<LinkSegmentedControl />"
+            note="Same control, each segment a route — for list filters that live in the URL, so it works from a Server Component."
+          />
+          <div className="mt-2">
+            <LinkSegmentedControl
+              aria-label="Status"
+              value="all"
+              options={[
+                { value: 'all', label: 'All', href: '/setup/style-guide' },
+                { value: 'finalised', label: 'Finalised', href: '/setup/style-guide' },
+                { value: 'saved', label: 'Saved', href: '/setup/style-guide' },
+              ]}
+            />
+          </div>
+        </div>
+
+        <div>
           <Spec name="<ToolbarSearch />" note="Standard 36px search box with leading icon and brand focus ring." />
           <div className="mt-2">
             <ToolbarSearch
@@ -751,6 +783,43 @@ function ModalSection() {
   )
 }
 
+function PinPadSection() {
+  const [entered, setEntered] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  return (
+    <Card>
+      <CardHeader
+        title="PinPad"
+        description="<PinPad /> — till sign-in and supervisor overrides. Touch targets sized for a counter screen; the physical keyboard works too"
+      />
+      <div className="flex flex-wrap items-start gap-6 px-5 py-5">
+        <Spec name="<PinPad>" note="4 digits submit automatically; 6 need Enter" />
+        <PinPad
+          onSubmit={(pin) => {
+            // 1234 fails here purely to show the error state.
+            if (pin === '1234') {
+              setError('That PIN was not recognised.')
+              setEntered(null)
+            } else {
+              setError(null)
+              setEntered(pin)
+            }
+          }}
+          error={error}
+          onCancel={() => {
+            setEntered(null)
+            setError(null)
+          }}
+        />
+        <p className="text-xs text-muted">
+          {entered ? `Accepted ${entered.length} digits.` : 'Try 1234 to see the error state.'}
+        </p>
+      </div>
+    </Card>
+  )
+}
+
 function ComboboxSection() {
   const [query, setQuery] = useState('')
   const [picked, setPicked] = useState<string | null>(null)
@@ -850,6 +919,55 @@ function EmptyStateSection() {
         getRowKey={(row) => row.id}
         empty={{ title: 'No products match', hint: 'Try a different search or filter.' }}
       />
+    </Card>
+  )
+}
+
+function ChartSection() {
+  const colors = useChartColors()
+  // A shape with a visible peak and trough, so the sparkline demo shows what a
+  // sparkline is actually for rather than a straight line.
+  const series = [4, 9, 6, 12, 8, 15, 11, 18, 14, 21]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Charts"
+        description="useChartColors() resolves the --color-chart-* tokens for Recharts, which cannot read CSS variables. Never name a colour in a chart — take one from here."
+      />
+      <Row>
+        <Spec name="colors.series" note="Categorical ramp, consumed in order and wrapped" />
+        <div className="flex flex-wrap gap-3">
+          {colors.series.map((color, i) => (
+            <div key={color} className="flex items-center gap-2">
+              <span
+                className="size-8 rounded-control border border-border"
+                style={{ background: color }}
+              />
+              <code className="font-mono text-xs text-muted">chart-{i + 1}</code>
+            </div>
+          ))}
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<Sparkline />" note="A trend at the size of a word — KPI tiles, table rows" />
+        <div className="flex flex-1 flex-wrap items-center gap-6">
+          {colors.series.slice(0, 3).map((color) => (
+            <div key={color} className="w-32">
+              <Sparkline values={series} color={color} />
+            </div>
+          ))}
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<ChartTooltip />" note="Pass to Recharts via <Tooltip content={...} />" />
+        <ChartTooltip
+          active
+          label="12 Jun"
+          payload={[{ name: 'Turnover', value: 48250, color: colors.series[0] }]}
+          format={(v) => formatMoney(v)}
+        />
+      </Row>
     </Card>
   )
 }

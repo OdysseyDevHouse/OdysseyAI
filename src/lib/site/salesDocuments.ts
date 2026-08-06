@@ -9,7 +9,7 @@ import type { ProductTypeId } from '../productTypes'
  * Sales documents before they are posted.
  *
  * Everything here is about a document that has NOT been finalised: capturing
- * lines, parking a sale, recalling it. Nothing in this file moves stock, posts
+ * lines, saving a sale, recalling it. Nothing in this file moves stock, posts
  * to a ledger or issues a number — that is salesPosting.ts, and keeping the two
  * apart means the whole of "what happens when money changes hands" is one file
  * a reviewer can read end to end.
@@ -29,7 +29,7 @@ export type SalesDocType = (typeof DOC_TYPES)[number]
  * what the till does to a basket that never posted at all. Migration 022
  * merged the values; 029 renamed the companion columns to match.
  */
-export const DOC_STATUSES = ['draft', 'parked', 'issued', 'finalised', 'cancelled'] as const
+export const DOC_STATUSES = ['draft', 'saved', 'issued', 'finalised', 'cancelled'] as const
 export type SalesDocStatus = (typeof DOC_STATUSES)[number]
 
 /**
@@ -60,6 +60,11 @@ export type SalesLine = {
   description: string
   productType: ProductTypeId
   departmentId: number | null
+  /** Who sold this line. Null on most: a till sale is not a commission event. */
+  salesRepId: number | null
+  salesRepName: string | null
+  /** The site user commission is paid to for this line — see 043. */
+  salesRepUserId: number | null
   qty: number
   qtyDelivered: number
   unitPriceIncl: number
@@ -124,6 +129,12 @@ function mapLine(r: Row): SalesLine {
     description: String(r.description),
     productType: String(r.product_type) as ProductTypeId,
     departmentId: r.department_id === null ? null : Number(r.department_id),
+    salesRepId: r.sales_rep_id === null || r.sales_rep_id === undefined ? null : Number(r.sales_rep_id),
+    salesRepName: (r.sales_rep_name as string | null) ?? null,
+    salesRepUserId:
+      r.sales_rep_user_id === null || r.sales_rep_user_id === undefined
+        ? null
+        : Number(r.sales_rep_user_id),
     qty: toNum(r.qty),
     qtyDelivered: toNum(r.qty_delivered),
     unitPriceIncl: toNum(r.unit_price_incl),
@@ -189,7 +200,13 @@ export async function getDocument(siteId: number, id: number): Promise<SalesDocu
     siteQueryOne<Row>(siteId, `${SELECT_DOC} WHERE id = ? LIMIT 1`, [id]),
     siteQuery<Row>(
       siteId,
-      'SELECT * FROM sales_document_lines WHERE document_id = ? ORDER BY line_number ASC, id ASC',
+      // The rep's name is joined rather than snapshotted: unlike a product
+      // description, it is not part of what the customer agreed to, and a rep
+      // who marries should not leave last year's invoices under the old name.
+      `SELECT l.*, r.name AS sales_rep_name
+         FROM sales_document_lines l
+         LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
+        WHERE l.document_id = ? ORDER BY l.line_number ASC, l.id ASC`,
       [id],
     ),
   ])
@@ -266,11 +283,11 @@ export async function listDocuments(
   return { items: rows.map((r) => mapDocument(r, [])), total: Number(countRow?.total ?? 0) }
 }
 
-/** Parked sales waiting to be recalled, for the till's recall list. */
-export async function listParked(siteId: number, terminalId?: number): Promise<SalesDocument[]> {
+/** Saved sales waiting to be recalled, for the till's recall list. */
+export async function listSaved(siteId: number, terminalId?: number): Promise<SalesDocument[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_DOC} WHERE status = 'parked' ${terminalId ? 'AND terminal_id = ?' : ''}
+    `${SELECT_DOC} WHERE status = 'saved' ${terminalId ? 'AND terminal_id = ?' : ''}
       ORDER BY updated_at DESC LIMIT 50`,
     terminalId ? [terminalId] : [],
   )
@@ -285,6 +302,25 @@ export type LineInput = {
   description: string
   productType?: ProductTypeId
   departmentId?: number | null
+  salesRepId?: number | null
+  /**
+   * The site user to pay commission to for this line, resolved at sale time.
+   *
+   * Separate from `salesRepId`: a rep is a commission-earning PERSON who may
+   * not be a system user at all (012), while commission under 042 is paid to a
+   * `users` row. Recorded here rather than joined through `users.sales_rep_id`
+   * at calculation time, so re-pointing a user at a different rep cannot
+   * silently re-attribute last month's sales.
+   */
+  salesRepUserId?: number | null
+  /**
+   * The invoice line this one reverses, on a credit note.
+   *
+   * Already used transiently to copy the original cost; persisting it is what
+   * lets a commission clawback find the person who made the sale instead of
+   * whoever processed the refund.
+   */
+  sourceLineId?: number | null
   qty: number
   unitPriceIncl: number
   discountPct?: number
@@ -351,6 +387,33 @@ export function computeTotals(lines: readonly LineInput[]) {
     vatRatePct: line.vatRatePct,
   }))
   return { lines: computed, totals: documentTotals(computed) }
+}
+
+/**
+ * An empty invoice, for a capture screen that opens before anything is keyed.
+ *
+ * Separate from saveDraft because that rightly refuses a document with no
+ * lines — a SAVE with an empty basket is a mistake, whereas a NEW invoice is
+ * empty by definition. Written straight out rather than routed through the
+ * validator, so the "at least one line" rule stays intact for every save that
+ * follows this one.
+ */
+export async function createBlankInvoice(
+  siteId: number,
+  actor: { userId: number; userName: string },
+): Promise<SaveResult> {
+  const result = await siteExecute(
+    siteId,
+    `INSERT INTO sales_documents
+       (doc_type, status, document_date, user_id, user_name,
+        subtotal_excl, vat_total, discount_total, total_incl)
+     VALUES ('invoice','draft',?,?,?,0,0,0,0)`,
+    [todayIso(), actor.userId, actor.userName.slice(0, 120)],
+  )
+
+  return result.insertId
+    ? { ok: true, id: result.insertId }
+    : { ok: false, error: 'Could not start a new invoice.' }
 }
 
 /**
@@ -461,9 +524,10 @@ export async function saveDraft(
       await tx.execute(
         `INSERT INTO sales_document_lines
            (document_id, line_number, product_id, product_code, description, product_type,
-            department_id, qty, unit_price_incl, discount_pct, discount_incl, vat_rate_pct,
-            line_total_incl, line_total_excl, line_vat, unit_cost_excl)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            department_id, sales_rep_id, source_line_id, sales_rep_user_id,
+            qty, unit_price_incl, discount_pct, discount_incl,
+            vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -472,6 +536,9 @@ export async function saveDraft(
           line.description.trim().slice(0, 190),
           line.productType ?? 'normal',
           line.departmentId ?? null,
+          line.salesRepId ?? null,
+          line.sourceLineId ?? null,
+          line.salesRepUserId ?? null,
           round(line.qty, 3).toFixed(3),
           round(line.unitPriceIncl, 4).toFixed(4),
           (line.discountPct ?? 0).toFixed(3),
@@ -489,20 +556,20 @@ export async function saveDraft(
   })
 }
 
-/** Parks a draft so the counter can serve someone else. Touches nothing else. */
-export async function parkDocument(siteId: number, id: number): Promise<SaveResult> {
+/** Saves a draft so the counter can serve someone else. Touches nothing else. */
+export async function saveForLaterDocument(siteId: number, id: number): Promise<SaveResult> {
   const doc = await getDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That document no longer exists.' }
-  if (!isEditable(doc.status)) return { ok: false, error: `A ${doc.status} sale cannot be parked.` }
+  if (!isEditable(doc.status)) return { ok: false, error: `A ${doc.status} sale cannot be saved.` }
 
-  await siteExecute(siteId, "UPDATE sales_documents SET status = 'parked' WHERE id = ?", [id])
+  await siteExecute(siteId, "UPDATE sales_documents SET status = 'saved' WHERE id = ?", [id])
   return { ok: true, id }
 }
 
 export async function recallDocument(siteId: number, id: number): Promise<SaveResult> {
   const doc = await getDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
-  if (doc.status !== 'parked') return { ok: false, error: 'That sale is not parked.' }
+  if (doc.status !== 'saved') return { ok: false, error: 'That sale is not saved.' }
 
   await siteExecute(siteId, "UPDATE sales_documents SET status = 'draft' WHERE id = ?", [id])
   return { ok: true, id }
@@ -513,7 +580,7 @@ export type DeleteResult = { ok: true } | { ok: false; error: string }
 /**
  * Discards an unposted document.
  *
- * Only ever a draft or a parked sale: those never had a number, never moved
+ * Only ever a draft or a saved sale: those never had a number, never moved
  * stock and never posted, so nothing is lost. A finalised document is voided,
  * never deleted — it keeps its number so the sequence stays explainable.
  */
@@ -533,7 +600,7 @@ export async function discardDocument(siteId: number, id: number): Promise<Delet
 
 /** Statuses that may still be edited. Everything else is a posted record. */
 export function isEditable(status: SalesDocStatus): boolean {
-  return status === 'draft' || status === 'parked' || status === 'issued'
+  return status === 'draft' || status === 'saved' || status === 'issued'
 }
 
 export function todayIso(): string {

@@ -12,7 +12,24 @@ import { SESSION_COOKIE } from '@/lib/session'
 // `/` is the login page. Matched exactly — as a prefix it would make every
 // route public.
 const PUBLIC_EXACT = ['/']
-const PUBLIC_PREFIXES = ['/forgot-password', '/reset-password']
+// `/store` is the customer-facing shop and is public BY DESIGN: shoppers have
+// no account here. It is not unguarded — every route under it resolves an
+// opaque signed token to a site and then reads only what that store has
+// chosen to publish, so an invalid or absent token yields nothing at all.
+// The payment gateway's server-to-server callback. It arrives from PayFast,
+// not a browser, so it has no session and never will. It is not unguarded: the
+// URL carries a signed token naming the store, and the payload must still pass
+// signature, source-IP, post-back, merchant and amount checks.
+const PUBLIC_PREFIXES = [
+  '/forgot-password',
+  '/reset-password',
+  '/store/',
+  '/api/payments/payfast/',
+  // Product photographs for the public shop. Guarded the same way the shop
+  // itself is: the URL carries the signed store token, and the route refuses
+  // an image whose product that store does not publish.
+  '/api/store-images/',
+]
 
 export default function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl

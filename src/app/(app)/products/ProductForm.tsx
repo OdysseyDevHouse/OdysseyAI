@@ -327,7 +327,7 @@ export default function ProductForm({
 
               <div className="flex flex-wrap items-start gap-6">
                 <div className="flex flex-col gap-1.5">
-                  <span className={labelText}>Product image</span>
+                  <span className={labelText}>Colour when there is no photo</span>
                   <div className="flex items-start gap-3">
                     <div
                       className={`flex size-20 shrink-0 flex-col items-center justify-center rounded-card text-white ${tileClass(color)}`}
@@ -350,9 +350,13 @@ export default function ProductForm({
                           />
                         ))}
                       </div>
+                      {/* This tile is the FALLBACK, not the photo. Photographs
+                          are uploaded further down the page — saying they were
+                          unbuilt (which was true when this was written) now
+                          contradicts the uploader sitting below it. */}
                       <p className="max-w-64 text-xs text-muted">
-                        Upload, icon search and generated images aren&apos;t built yet — they need a
-                        storage decision first.
+                        Shown wherever this product has no photograph. Add photographs under
+                        <span className="font-medium text-ink"> Photographs</span> below.
                       </p>
                     </div>
                   </div>

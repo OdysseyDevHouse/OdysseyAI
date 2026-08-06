@@ -2,12 +2,11 @@ import 'server-only'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
 import { round, toNum } from '@/lib/decimals'
 import { isPeriodLocked } from './settings'
-import { capabilitiesFor, can } from './permissions'
+import { can, type CapabilitySet } from './permissions'
 import { getDocument, saveDraft, type SalesDocument, type LineInput } from './salesDocuments'
 import { createCreditNote } from './salesReversal'
 import { finaliseDocument } from './salesPosting'
 import type { Actor } from './activityLog'
-import type { SiteRole } from '../sites'
 
 /**
  * Correcting a finalised invoice.
@@ -66,10 +65,9 @@ export type EditableCheck =
  */
 export async function canEditFinalised(
   siteId: number,
-  role: SiteRole,
+  capabilities: CapabilitySet,
   documentId: number,
 ): Promise<EditableCheck> {
-  const capabilities = await capabilitiesFor(siteId, role)
   if (!can(capabilities, 'sales.edit_finalised')) {
     return {
       ok: false,
@@ -192,7 +190,7 @@ export type EditResult =
 export async function editFinalisedDocument(
   siteId: number,
   actor: Actor,
-  role: SiteRole,
+  capabilities: CapabilitySet,
   input: {
     documentId: number
     reason: string
@@ -210,7 +208,7 @@ export async function editFinalisedDocument(
     return { ok: false, error: 'A corrected invoice needs at least one line.' }
   }
 
-  const check = await canEditFinalised(siteId, role, input.documentId)
+  const check = await canEditFinalised(siteId, capabilities, input.documentId)
   if (!check.ok) {
     return { ok: false, error: check.refusal.reason, suggestion: check.refusal.suggestion }
   }

@@ -58,6 +58,26 @@ export const SETTING_DEFAULTS = {
    * can be raised by a store with advice supporting it.
    */
   layby_max_fee_pct: '1',
+
+  /**
+   * Whether credit notes claw commission back at all.
+   *
+   * Off by default: a return that earns nobody a clawback means the business
+   * carries every refund while the salesperson keeps the commission on a sale
+   * that came undone. Some shops choose that deliberately — hence the switch.
+   */
+  commission_exclude_returns: '0',
+  /**
+   * Charge a clawback to the rep on the ORIGINAL sale, not to whoever
+   * processed the refund. On by default: without it the person who happens to
+   * work the returns desk accumulates everybody else's negatives.
+   */
+  commission_returns_original_rep: '1',
+  /**
+   * Pay lay-by commission only once it is paid up. On by default: a lay-by
+   * that lapses was never a sale, and paying at take-on means clawing it back.
+   */
+  commission_layby_on_completion: '1',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -222,14 +242,43 @@ export function validateSetting(key: SettingKey, value: string): string | null {
 }
 
 /**
- * Whether a date falls inside a locked VAT period.
+ * Whether a date falls inside a locked period.
  *
  * The single guard behind void, credit and any future edit. Without it someone
  * will void a March invoice in July, after the VAT return went in, and the
  * first anyone hears of it is from an auditor.
+ *
+ * TWO SOURCES, and every caller gets both:
+ *
+ *   `vat_period_locked_to` — the original site-wide floor. Locks everything on
+ *   or before one date. Still honoured, so nothing that relied on it changed.
+ *
+ *   `period_locks` — the table added in 037, which can express "February is
+ *   closed while March is open", carries a reason, and records who closed it.
+ *   Only HARD locks refuse here; a soft lock is a warning and this function
+ *   returns a boolean with nowhere to put one.
+ *
+ * The table is queried directly rather than through periodLocks.ts because that
+ * module imports this one — going the other way would be a cycle. Callers
+ * wanting the reason, or wanting to distinguish soft from hard, should use
+ * periodLocks.isLocked() instead; this stays boolean for its existing callers.
  */
 export async function isPeriodLocked(siteId: number, date: string): Promise<boolean> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false
+
   const lockedTo = await getSetting(siteId, 'vat_period_locked_to')
-  if (!lockedTo) return false
-  return date <= lockedTo
+  if (lockedTo && date <= lockedTo) return true
+
+  // A missing table means 037 has not run on this site yet; treat that as
+  // unlocked rather than failing every posting path.
+  const row = await siteQueryOne<RowDataPacket & { id: number }>(
+    siteId,
+    `SELECT id FROM period_locks
+      WHERE unlocked_at IS NULL AND lock_type = 'hard'
+        AND ? BETWEEN period_from AND period_to
+      LIMIT 1`,
+    [date],
+  ).catch(() => null)
+
+  return row !== null
 }

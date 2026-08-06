@@ -44,6 +44,21 @@ export default function SupplierForm({
   })
   const [status, setStatus] = useState<SupplierStatus>(supplier?.status ?? 'active')
 
+  // Mirrored here so the preview updates as the terms are typed. The server
+  // owns the real calculation (annualisedDiscountRate in interestRules.ts,
+  // which is server-only); this is presentation of the same formula.
+  const [discountPct, setDiscountPct] = useState(supplier?.settlementDiscountPct ?? 0)
+  const [discountDays, setDiscountDays] = useState(supplier?.settlementDiscountDays ?? 0)
+  const [termsDays, setTermsDays] = useState(supplier?.paymentTermsDays ?? 30)
+
+  // Discount earned on the NET amount paid, hence pct/(100-pct), scaled by how
+  // much earlier the money leaves. 365-day year, matching interestRules.ts.
+  const daysEarly = termsDays - discountDays
+  const annualised =
+    discountPct > 0 && discountPct < 100 && daysEarly > 0
+      ? (discountPct / (100 - discountPct)) * (365 / daysEarly) * 100
+      : 0
+
   const isNew = supplier === null
 
   return (
@@ -120,6 +135,7 @@ export default function SupplierForm({
                 <NumberInput
                   name="paymentTermsDays"
                   defaultValue={supplier?.paymentTermsDays ?? 30}
+                  onChange={(e) => setTermsDays(Number(e.target.value) || 0)}
                 />
               </Field>
               <Field label="Lead time (days)" hint="Order to delivery.">
@@ -135,6 +151,57 @@ export default function SupplierForm({
                 >
                   <CurrencyInput value={supplier.balance} readOnly disabled />
                 </Field>
+              )}
+            </div>
+
+            {/* Settlement discount. Kept in its own group because it is a
+                different question from "when is this due" — it is "what do we
+                save by paying sooner", and the payment run screen ranks
+                suppliers by it. */}
+            <div className="border-t border-border pt-4">
+              <div className="grid gap-4 sm:grid-cols-4">
+                <Field
+                  label="Settlement discount (%)"
+                  hint="What they take off for early payment."
+                >
+                  <NumberInput
+                    name="settlementDiscountPct"
+                    step="0.01"
+                    defaultValue={supplier?.settlementDiscountPct ?? 0}
+                    onChange={(e) => setDiscountPct(Number(e.target.value) || 0)}
+                  />
+                </Field>
+                <Field label="…if paid within (days)" hint="Counted from the invoice date.">
+                  <NumberInput
+                    name="settlementDiscountDays"
+                    defaultValue={supplier?.settlementDiscountDays ?? 0}
+                    onChange={(e) => setDiscountDays(Number(e.target.value) || 0)}
+                  />
+                </Field>
+              </div>
+
+              {/* The two numbers are easy to enter the wrong way round, and the
+                  annualised figure is the one that says whether taking it is
+                  actually worth the cash. Both are shown as you type. */}
+              {discountPct > 0 && discountDays > 0 && (
+                <p className="mt-3 text-sm text-muted">
+                  <span className="text-ink">
+                    {discountPct}/{discountDays} net {termsDays}
+                  </span>{' '}
+                  — pay within {discountDays} days and take {discountPct}% off.
+                  {annualised > 0 && (
+                    <>
+                      {' '}
+                      That is worth about{' '}
+                      <span className={annualised >= 15 ? 'text-success' : 'text-ink'}>
+                        {annualised.toFixed(0)}% a year
+                      </span>{' '}
+                      {annualised >= 15
+                        ? '— well above most overdraft rates, so it is usually worth taking.'
+                        : '— compare that against what your overdraft costs before paying early.'}
+                    </>
+                  )}
+                </p>
               )}
             </div>
 

@@ -215,7 +215,12 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
   // ── Totals box
   const boxWidth = 200
   const boxX = MARGIN + CONTENT_WIDTH - boxWidth
-  const boxHeight = !isRemittance && data.dueNow > 0 ? 46 : 28
+  // A remittance that took a discount shows the arithmetic — invoices, less
+  // discount, equals paid — so the supplier can reconcile it rather than
+  // reading the payment as short by the discount.
+  const discount = data.settlementDiscount ?? 0
+  const showsDiscount = isRemittance && discount > 0
+  const boxHeight = showsDiscount ? 64 : !isRemittance && data.dueNow > 0 ? 46 : 28
 
   doc.rect(boxX, y, boxWidth, boxHeight).lineWidth(0.5).strokeColor(LINE).stroke()
 
@@ -226,6 +231,21 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
       .font('Helvetica-Bold')
       .fillColor(DANGER)
       .text(formatMoney(data.dueNow), boxX + 10, boxY, { width: boxWidth - 20, align: 'right' })
+    boxY += 18
+  }
+
+  if (showsDiscount) {
+    const gross = Math.abs(data.closingBalance) + discount
+
+    doc.font('Helvetica').fontSize(9).fillColor(MUTED).text('Invoices settled', boxX + 10, boxY)
+    doc.text(formatMoney(gross), boxX + 10, boxY, { width: boxWidth - 20, align: 'right' })
+    boxY += 15
+
+    doc.text('Settlement discount', boxX + 10, boxY)
+    doc.text(`-${formatMoney(discount)}`, boxX + 10, boxY, {
+      width: boxWidth - 20,
+      align: 'right',
+    })
     boxY += 18
   }
 

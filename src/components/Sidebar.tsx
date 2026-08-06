@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { PanelLeft, Search, ChevronDown, HelpCircle as CircleHelp, ArrowRight } from '@/components/ui/icons'
 import { Button, Input } from '@/components/ui'
-import { NAV, filterNav, type NavSection } from '@/lib/nav'
+import { NAV, filterNav, navFor, type NavSection } from '@/lib/nav'
 
 const STORAGE_KEY = 'odyssey.sidebar.collapsed'
 
@@ -20,7 +20,13 @@ function sectionForPath(pathname: string): string | null {
   return null
 }
 
-export default function Sidebar() {
+/**
+ * `granted` arrives as a plain array of capability strings rather than the
+ * resolved NavSection[], because every section carries an icon COMPONENT and a
+ * function cannot be serialised across the server/client boundary. The menu is
+ * therefore rebuilt here from the same NAV the server used.
+ */
+export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwner: boolean }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const [term, setTerm] = useState('')
@@ -57,7 +63,12 @@ export default function Sidebar() {
     })
   }
 
-  const sections = useMemo(() => filterNav(term), [term])
+  const visible = useMemo(() => {
+    const held = new Set(granted)
+    return navFor((capability) => isOwner || held.has(capability))
+  }, [granted, isOwner])
+
+  const sections = useMemo(() => filterNav(term, visible), [term, visible])
   // While searching, show every matching section expanded — collapsed groups
   // would hide the very results the search just found.
   const searching = term.trim().length > 0
