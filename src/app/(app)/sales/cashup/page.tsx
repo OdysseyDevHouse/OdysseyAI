@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listShifts, shiftPosition, listDrawerMovements, shiftCounts } from '@/lib/site/shifts'
 import { getNumericSetting } from '@/lib/site/settings'
@@ -22,7 +22,8 @@ import CashupClient from './CashupClient'
 export const dynamic = 'force-dynamic'
 
 export default async function CashupPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('sales.cashup')
 
   const [terminals, recent, tolerance] = await Promise.all([
     listTerminals(siteId, false),

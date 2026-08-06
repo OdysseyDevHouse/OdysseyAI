@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getSupplier } from '@/lib/site/suppliers'
 import { listSupplierCategories } from '@/lib/site/customerLookups'
 import { listActivity } from '@/lib/site/activityLog'
@@ -56,7 +56,8 @@ export default async function SupplierPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ tab?: string; saved?: string; error?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('suppliers.view')
   const { id } = await params
   const { tab, saved, error } = await searchParams
 

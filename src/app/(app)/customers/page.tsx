@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import {
   listCustomers,
   customerSummary,
@@ -53,7 +53,8 @@ export default async function CustomersPage({
 }: {
   searchParams: Promise<Search>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('customers.view')
   const params = await searchParams
 
   const status = toCustomerStatus(params.status)

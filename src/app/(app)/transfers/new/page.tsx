@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listLocations } from '@/lib/site/stockLocations'
 import { PageHeader } from '@/components/ui'
 import NewTransferScreen from './NewTransferScreen'
@@ -7,7 +7,8 @@ import NewTransferScreen from './NewTransferScreen'
 export const dynamic = 'force-dynamic'
 
 export default async function NewTransferPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('stock.transfer')
   const locations = await listLocations(siteId, false)
 
   // Nothing to transfer between. The list page explains this properly, so send

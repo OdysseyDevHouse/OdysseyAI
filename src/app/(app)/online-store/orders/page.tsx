@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listOrderStatuses, getOnlineSettings } from '@/lib/site/onlineStore'
 import { listOrders, orderCounts } from '@/lib/site/onlineOrders'
 import { PageHeader, PageBody, Badge } from '@/components/ui'
@@ -19,7 +19,8 @@ export default async function OnlineOrdersPage({
 }: {
   searchParams: Promise<{ archived?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('online.view')
   const params = await searchParams
   const archived = params.archived === '1'
 

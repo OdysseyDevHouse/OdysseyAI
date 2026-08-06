@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listCategories } from '@/lib/site/expenseCategories'
 import { spendByCategory } from '@/lib/site/expenseReports'
 import { today } from '@/lib/site/ledger'
@@ -18,7 +18,8 @@ export const dynamic = 'force-dynamic'
  * expense already posted has somewhere to go.
  */
 export default async function ExpenseCategoriesPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
 
   const to = today()
   const from = addDays(to, -365)

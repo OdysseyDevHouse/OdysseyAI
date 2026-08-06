@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getLayby, LAYBY_STATUS_LABELS, cancellationFeePct } from '@/lib/site/laybys'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { getSettings } from '@/lib/site/settings'
@@ -26,7 +26,8 @@ import LaybyActions from './LaybyActions'
 export const dynamic = 'force-dynamic'
 
 export default async function LaybyPage({ params }: { params: Promise<{ id: string }> }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('sales.view')
   const { id: raw } = await params
 
   const id = Number(raw)

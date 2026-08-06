@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getPaymentRun, listPaymentItems } from '@/lib/site/paymentRuns'
 import { isConfigured } from '@/lib/mail'
 import { formatMoney } from '@/lib/decimals'
@@ -35,7 +35,8 @@ export default async function PaymentRunPage({
 }: {
   params: Promise<{ runId: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('purchasing.pay')
   const { runId: raw } = await params
 
   const runId = Number(raw)

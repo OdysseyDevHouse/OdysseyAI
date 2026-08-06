@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getAccount } from '@/lib/site/bankAccounts'
 import { listTransactions, listReconciliations, previewReconciliation } from '@/lib/site/cashbook'
 import { listImportBatches } from '@/lib/site/bankImport'
@@ -34,7 +34,8 @@ export default async function BankAccountPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.view')
   const { id } = await params
   const accountId = Number(id)
   if (!Number.isFinite(accountId)) notFound()

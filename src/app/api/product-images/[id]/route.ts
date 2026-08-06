@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireSiteId } from '@/lib/auth'
+import { siteIdForCapability } from '@/lib/auth'
 import { getImage } from '@/lib/site/productImages'
 import { readStoredFile, sniffImage, IMAGE_MIME } from '@/lib/uploads'
 
@@ -29,7 +29,12 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Site comes from the session, so the whole read is confined to one site's
   // database before anything below runs.
-  const siteId = await requireSiteId()
+  // Checked here because api/ sits outside the (app) route group, so the
+  // layout's guard never runs for it. This URL is directly typeable.
+  const siteId = await siteIdForCapability('products.view')
+  if (siteId === null) {
+    return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
+  }
   const { id } = await params
 
   const imageId = Number(id)

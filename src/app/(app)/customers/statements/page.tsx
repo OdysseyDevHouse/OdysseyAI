@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listRuns } from '@/lib/site/statementRuns'
 import { statementCandidates } from '@/lib/statements/render'
 import { isConfigured } from '@/lib/mail'
@@ -31,7 +31,8 @@ const STATUS_TONE = {
 } as const
 
 export default async function StatementsPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('customers.view')
 
   const [runs, candidates] = await Promise.all([
     listRuns(siteId),

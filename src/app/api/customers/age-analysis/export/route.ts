@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireSiteId } from '@/lib/auth'
+import { siteIdForCapability } from '@/lib/auth'
 import { customerAging, type AgingBasis, type AgingRow } from '@/lib/site/aging'
 import { today } from '@/lib/site/ledger'
 import { exportFilename, toCsv, toXlsx, type ExportColumn } from '@/lib/export/table'
@@ -37,7 +37,12 @@ const COLUMNS: readonly ExportColumn<AgingRow>[] = [
 ]
 
 export async function GET(request: NextRequest) {
-  const siteId = await requireSiteId()
+  // Checked here because api/ sits outside the (app) route group, so the
+  // layout's guard never runs for it. This URL is directly typeable.
+  const siteId = await siteIdForCapability('customers.view')
+  if (siteId === null) {
+    return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
+  }
   const params = request.nextUrl.searchParams
 
   const asAtRaw = params.get('asAt') ?? ''

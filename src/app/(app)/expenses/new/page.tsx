@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listCategories } from '@/lib/site/expenseCategories'
 import { listSuppliers } from '@/lib/site/suppliers'
 import { listAccounts } from '@/lib/site/bankAccounts'
@@ -11,7 +11,8 @@ import { ExpenseForm } from '../ExpenseForm'
 export const dynamic = 'force-dynamic'
 
 export default async function NewExpensePage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.edit')
 
   const [categories, suppliers, accounts, departments, defaultRate] = await Promise.all([
     listCategories(siteId),

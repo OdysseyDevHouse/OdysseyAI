@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { reconcileStock } from '@/lib/site/stockMovements'
 import { reconcileBalances } from '@/lib/site/customerLedger'
 import { reconcileSupplierBalances } from '@/lib/site/supplierLedger'
@@ -39,7 +39,8 @@ export const dynamic = 'force-dynamic'
  * whatever caused it, and the cause is the thing worth knowing.
  */
 export default async function ReconciliationPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
 
   const [stock, customers, suppliers, aging, sequences] = await Promise.all([
     reconcileStock(siteId),

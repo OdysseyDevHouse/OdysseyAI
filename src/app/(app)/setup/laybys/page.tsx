@@ -1,4 +1,4 @@
-import { requireSite } from '@/lib/auth'
+import { requireSite, requireCapability } from '@/lib/auth'
 import { getSettings } from '@/lib/site/settings'
 import { PENALTY_GRACE_BUSINESS_DAYS } from '@/lib/laybyRules'
 import { PageHeader, PageBody, Card, Icons } from '@/components/ui'
@@ -7,6 +7,8 @@ import LaybySettingsForm from './LaybySettingsForm'
 export const dynamic = 'force-dynamic'
 
 export default async function LaybySetupPage() {
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  await requireCapability('setup.edit')
   const site = await requireSite()
   const settings = await getSettings(site.id, [
     'layby_cancellation_fee_pct',

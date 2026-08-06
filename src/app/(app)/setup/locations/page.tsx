@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listLocations } from '@/lib/site/stockLocations'
 import { PageHeader, PageBody } from '@/components/ui'
 import LocationsClient from './LocationsClient'
@@ -6,7 +6,8 @@ import LocationsClient from './LocationsClient'
 export const dynamic = 'force-dynamic'
 
 export default async function LocationsPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
   const locations = await listLocations(siteId, true)
 
   return (

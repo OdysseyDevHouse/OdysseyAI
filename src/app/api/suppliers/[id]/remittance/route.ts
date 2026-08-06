@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireSite } from '@/lib/auth'
+import { requireSiteUser } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { buildRemittance } from '@/lib/statements/remittance'
 import { renderStatementPdf } from '@/lib/statements/pdf'
 
@@ -18,7 +19,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const site = await requireSite()
+  // api/ is outside the (app) route group, so nothing upstream has checked a
+  // capability for this URL — and it is directly typeable.
+  const { site, capabilities } = await requireSiteUser()
+  if (!can(capabilities, 'purchasing.pay')) {
+    return new NextResponse('Not allowed', { status: 403 })
+  }
   const { id } = await params
 
   const supplierId = Number(id)

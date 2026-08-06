@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getRun, listItems, refreshCounts } from '@/lib/site/statementRuns'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -34,7 +34,8 @@ export default async function StatementRunPage({
 }: {
   params: Promise<{ runId: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('customers.view')
   const { runId: raw } = await params
 
   const runId = Number(raw)

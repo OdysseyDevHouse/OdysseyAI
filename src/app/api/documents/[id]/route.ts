@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireSiteId } from '@/lib/auth'
+import { siteIdForCapability } from '@/lib/auth'
 import { getDocument } from '@/lib/site/partyDocuments'
 import { readStoredFile } from '@/lib/uploads'
 import type { PartyKind } from '@/lib/site/partyContacts'
@@ -33,7 +33,6 @@ import type { PartyKind } from '@/lib/site/partyContacts'
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const siteId = await requireSiteId()
   const { id } = await params
 
   const documentId = Number(id)
@@ -47,6 +46,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if ((partyRaw !== 'customer' && partyRaw !== 'supplier') || !Number.isFinite(partyId) || partyId <= 0) {
     return new NextResponse('Not found', { status: 404 })
   }
+
+  // The capability depends on WHICH party's attachment this is, so the check
+  // has to come after the query string is parsed rather than at the top. Both
+  // are read permissions: seeing a supplier's signed delivery note is not the
+  // same right as seeing a customer's.
+  const siteId = await siteIdForCapability(
+    partyRaw === 'customer' ? 'customers.view' : 'suppliers.view',
+  )
+  if (siteId === null) return new NextResponse('Not allowed', { status: 403 })
 
   const doc = await getDocument(siteId, partyRaw as PartyKind, partyId, documentId)
   if (!doc) return new NextResponse('Not found', { status: 404 })

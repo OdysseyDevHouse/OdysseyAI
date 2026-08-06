@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listPurchaseDocuments, PURCHASE_DOC_LABELS } from '@/lib/site/purchaseDocuments'
 import { supplierAgingSummary } from '@/lib/site/supplierLedger'
 import { formatMoney } from '@/lib/decimals'
@@ -43,7 +43,8 @@ export default async function PurchasingPage({
 }: {
   searchParams: Promise<{ q?: string; type?: string; status?: string; page?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('purchasing.view')
   const params = await searchParams
 
   const type = (['purchase_order', 'grv', 'supplier_return'] as const).find(

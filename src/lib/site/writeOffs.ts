@@ -340,6 +340,16 @@ async function postWriteOff(
     [posted.id, id],
   )
 
+  // Debit bad debts, credit debtors — the loss becomes a cost the business
+  // bears. Cannot fail the write-off; see the note on glPosting.ts.
+  const { mirrorWriteOff } = await import('./glPosting')
+  await mirrorWriteOff(siteId, actor, {
+    transactionId: posted.id,
+    date: writeOff.writeOffDate,
+    customerId: writeOff.customerId,
+    amount: writeOff.amount,
+  })
+
   if (opts.allocateToOldest !== false) {
     const debits = await openDebits(siteId, writeOff.customerId)
     let remaining = writeOff.amount

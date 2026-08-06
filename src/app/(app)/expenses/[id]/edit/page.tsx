@@ -1,5 +1,5 @@
 import { notFound, redirect } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getExpense } from '@/lib/site/expenses'
 import { listCategories } from '@/lib/site/expenseCategories'
 import { listSuppliers } from '@/lib/site/suppliers'
@@ -17,7 +17,8 @@ export default async function EditExpensePage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.edit')
   const { id } = await params
   const expenseId = Number(id)
   if (!Number.isFinite(expenseId)) notFound()

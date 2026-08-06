@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import {
   listSuppliers,
   supplierSummary,
@@ -48,7 +48,8 @@ export default async function SuppliersPage({
 }: {
   searchParams: Promise<Search>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('suppliers.view')
   const params = await searchParams
 
   const status = toSupplierStatus(params.status)

@@ -230,7 +230,13 @@ export async function voidSaleAction(
   documentId: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { siteId, actor } = await requireActor()
+  // The Void button on /sales/[id] is already hidden without this capability.
+  // Hiding a button changes what is EASY, not what is possible — and voiding
+  // reverses stock and a debtor's balance, so this is the check that counts.
+  const ctx = await actorFor('sales.void')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
   const result = await voidDocument(siteId, actor, documentId, reason)
   if (!result.ok) return { ok: false, error: result.error }
 

@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getGateway } from '@/lib/site/payments'
 import { getOnlineSettings } from '@/lib/site/onlineStore'
 import { encryptionKeyConfigured } from '@/lib/crypto/secrets'
@@ -16,7 +16,8 @@ import GatewayForm from './GatewayForm'
 export const dynamic = 'force-dynamic'
 
 export default async function PaymentsPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('online.edit')
 
   const [gateway, settings] = await Promise.all([getGateway(siteId), getOnlineSettings(siteId)])
 

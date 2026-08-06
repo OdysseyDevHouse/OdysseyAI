@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
 import { PageHeader } from '@/components/ui'
 import CustomerForm from '../CustomerForm'
@@ -6,7 +6,8 @@ import CustomerForm from '../CustomerForm'
 export const dynamic = 'force-dynamic'
 
 export default async function NewCustomerPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('customers.edit')
 
   const [groups, reps, categories] = await Promise.all([
     listCustomerGroups(siteId),

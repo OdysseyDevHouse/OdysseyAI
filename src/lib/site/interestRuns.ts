@@ -377,6 +377,16 @@ export async function postRun(
       "UPDATE interest_run_items SET status = 'posted', transaction_id = ? WHERE id = ?",
       [result.id, item.id],
     )
+
+    // Debit debtors, credit interest received. Cannot fail the charge.
+    const { mirrorInterest } = await import('./glPosting')
+    await mirrorInterest(siteId, actor, {
+      transactionId: result.id,
+      date: run.asAtDate,
+      customerId: item.customerId,
+      amount: item.amount,
+    })
+
     posted++
     total = round(total + item.amount, 2)
   }

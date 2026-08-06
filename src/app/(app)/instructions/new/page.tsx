@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listProducts } from '@/lib/site/products'
 import { PageHeader } from '@/components/ui'
 import InstructionForm from '../InstructionForm'
@@ -6,7 +6,8 @@ import InstructionForm from '../InstructionForm'
 export const dynamic = 'force-dynamic'
 
 export default async function NewInstructionPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('products.edit')
 
   // For the optional stock link on an option. Archived products are excluded —
   // linking an option to one would deduct stock nobody sells any more.

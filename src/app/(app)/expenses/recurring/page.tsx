@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listRecurring } from '@/lib/site/recurringExpenses'
 import { listCategories } from '@/lib/site/expenseCategories'
 import { listSuppliers } from '@/lib/site/suppliers'
@@ -18,7 +18,8 @@ export const dynamic = 'force-dynamic'
  * remove the judgement, so it produces drafts for review rather than postings.
  */
 export default async function RecurringExpensesPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.edit')
 
   const [schedules, categories, suppliers, accounts, defaultRate] = await Promise.all([
     listRecurring(siteId, { includeInactive: true }),

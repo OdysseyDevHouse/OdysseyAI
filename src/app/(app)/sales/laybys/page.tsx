@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listLaybys, LAYBY_STATUS_LABELS, type LaybyStatus } from '@/lib/site/laybys'
 import { formatMoney } from '@/lib/decimals'
 import { percentPaid } from '@/lib/laybyRules'
@@ -40,7 +40,8 @@ export default async function LaybysPage({
 }: {
   searchParams: Promise<{ q?: string; status?: string; page?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('sales.view')
   const params = await searchParams
 
   const status = (['open', 'completed', 'cancelled', 'expired'] as const).find(

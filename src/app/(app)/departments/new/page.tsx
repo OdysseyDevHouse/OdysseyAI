@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listDepartments, flattenTree, departmentPath } from '@/lib/site/departments'
 import { PageHeader, Card } from '@/components/ui'
 import DepartmentForm from '../DepartmentForm'
@@ -10,7 +10,8 @@ export default async function NewDepartmentPage({
 }: {
   searchParams: Promise<{ parent?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('products.edit')
   const { parent } = await searchParams
 
   const departments = await listDepartments(siteId, true)

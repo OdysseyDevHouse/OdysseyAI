@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listSuppliers } from '@/lib/site/suppliers'
 import { openOrders } from '@/lib/site/purchaseDocuments'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
@@ -9,7 +9,8 @@ import ReceiveScreen from './ReceiveScreen'
 export const dynamic = 'force-dynamic'
 
 export default async function ReceivePage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('purchasing.edit')
 
   const [suppliers, orders, vatRates, locations] = await Promise.all([
     listSuppliers(siteId, { statuses: ['active'], limit: 200 }),

@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listReviews, reviewCounts, type ReviewStatus } from '@/lib/site/productReviews'
 import { PageHeader, PageBody, Badge } from '@/components/ui'
 import ReviewQueue from './ReviewQueue'
@@ -20,7 +20,8 @@ export default async function ReviewsPage({
 }: {
   searchParams: Promise<{ status?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('online.view')
   const params = await searchParams
   const status = STATUSES.includes(params.status as ReviewStatus)
     ? (params.status as ReviewStatus)

@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { buildVatReturn, vatPeriods } from '@/lib/site/vatReturn'
 import { formatMoney } from '@/lib/decimals'
 import { hrefBuilder } from '@/lib/searchParams'
@@ -44,7 +44,8 @@ export default async function VatReturnPage({
 }: {
   searchParams: Promise<{ from?: string; to?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('reports.financial')
   const params = await searchParams
 
   // Default to the current two-month period, which is what a vendor is usually

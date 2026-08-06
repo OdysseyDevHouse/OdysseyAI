@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { PageHeader, PageBody } from '@/components/ui'
 import TenderTypesClient from './TenderTypesClient'
@@ -6,7 +6,8 @@ import TenderTypesClient from './TenderTypesClient'
 export const dynamic = 'force-dynamic'
 
 export default async function TenderTypesPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
   // Inactive ones included: the whole point of this screen is turning them back on.
   const tenders = await listTenderTypes(siteId, true)
 

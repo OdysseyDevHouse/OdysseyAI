@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listExpenses } from '@/lib/site/expenses'
 import { expenseSummary, spendByCategory } from '@/lib/site/expenseReports'
 import { listRecurring } from '@/lib/site/recurringExpenses'
@@ -42,7 +42,8 @@ export default async function ExpensesPage({
 }: {
   searchParams: Promise<{ status?: string; from?: string; to?: string; q?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.view')
   const params = await searchParams
 
   const to = /^\d{4}-\d{2}-\d{2}$/.test(params.to ?? '') ? params.to! : today()

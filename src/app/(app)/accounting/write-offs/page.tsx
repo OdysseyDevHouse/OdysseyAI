@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listWriteOffs, writeOffSummary, writeOffCandidates } from '@/lib/site/writeOffs'
 import { formatMoney } from '@/lib/decimals'
 import { today } from '@/lib/site/ledger'
@@ -29,7 +29,8 @@ export const dynamic = 'force-dynamic'
  * waiting.
  */
 export default async function WriteOffsPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('customers.credit')
 
   const yearAgo = addDays(today(), -365)
 

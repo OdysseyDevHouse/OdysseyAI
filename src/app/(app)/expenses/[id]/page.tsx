@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getExpense } from '@/lib/site/expenses'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -35,7 +35,8 @@ export default async function ExpenseDetailPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.view')
   const { id } = await params
   const expenseId = Number(id)
   if (!Number.isFinite(expenseId)) notFound()

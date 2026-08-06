@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listDocuments } from '@/lib/site/salesDocuments'
 import { formatMoney } from '@/lib/decimals'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
@@ -36,7 +36,8 @@ export default async function InvoicingPage({
 }: {
   searchParams: Promise<{ q?: string; page?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('sales.edit')
   const params = await searchParams
   const page = pageFrom(params.page)
 

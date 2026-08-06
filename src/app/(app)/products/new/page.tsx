@@ -1,4 +1,4 @@
-import { requireSite } from '@/lib/auth'
+import { requireSite, requireCapability } from '@/lib/auth'
 import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
 import { linkedStores } from '@/lib/storeGroups'
@@ -9,6 +9,8 @@ import ProductForm from '../ProductForm'
 export const dynamic = 'force-dynamic'
 
 export default async function NewProductPage() {
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  await requireCapability('products.edit')
   const site = await requireSite()
   const siteId = site.id
 

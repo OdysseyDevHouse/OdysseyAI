@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import {
   getOnlineSettings,
   getPublishCounts,
@@ -19,7 +19,8 @@ import SetupForm from './SetupForm'
 export const dynamic = 'force-dynamic'
 
 export default async function OnlineStoreSetupPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('online.edit')
 
   const [settings, counts, zones, token] = await Promise.all([
     getOnlineSettings(siteId),

@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getAccount } from '@/lib/site/bankAccounts'
 import { PageHeader, PageBody } from '@/components/ui'
 import { AccountForm } from '../../AccountForm'
@@ -11,7 +11,8 @@ export default async function EditBankAccountPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.edit')
   const { id } = await params
   const accountId = Number(id)
   if (!Number.isFinite(accountId)) notFound()

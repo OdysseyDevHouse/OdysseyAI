@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listSupplierCategories } from '@/lib/site/customerLookups'
 import { PageHeader } from '@/components/ui'
 import SupplierForm from '../SupplierForm'
@@ -6,7 +6,8 @@ import SupplierForm from '../SupplierForm'
 export const dynamic = 'force-dynamic'
 
 export default async function NewSupplierPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('suppliers.edit')
   const categories = await listSupplierCategories(siteId)
 
   return (

@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listSequences, verifySequence, previewNext } from '@/lib/site/sequences'
 import { getSettings } from '@/lib/site/settings'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -14,7 +14,8 @@ const DOC_LABELS: Record<string, string> = {
 }
 
 export default async function NumberingPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
 
   const sequences = await listSequences(siteId)
   const [checks, settings] = await Promise.all([

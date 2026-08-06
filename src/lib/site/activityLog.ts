@@ -32,6 +32,9 @@ export type ActivityEntity =
   /* Spending that is not stock: bills, direct payments, categories and the
      recurring schedules that generate them. */
   | 'expense'
+  /* The general ledger: accounts, journals, mappings and year end. Anything
+     that changes what the financial statements say. */
+  | 'gl'
 
 export type ActivityEvent = {
   id: number

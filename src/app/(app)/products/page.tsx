@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { Plus } from '@/components/ui/icons'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listProducts } from '@/lib/site/products'
 import { getCostBasis } from '@/lib/site/lookups'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
@@ -36,7 +36,8 @@ export default async function ProductsPage({
     page?: string
   }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('products.view')
   const params = await searchParams
   const { q, archived, low, department } = params
 

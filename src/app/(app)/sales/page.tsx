@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import {
   listDocuments,
   toDocStatus,
@@ -66,7 +66,8 @@ export default async function SalesPage({
 }: {
   searchParams: Promise<{ q?: string; status?: string; from?: string; to?: string; page?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('sales.view')
   const params = await searchParams
 
   const status = toDocStatus(params.status)

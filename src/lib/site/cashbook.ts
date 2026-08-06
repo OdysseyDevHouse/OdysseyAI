@@ -430,6 +430,20 @@ export async function recordCustomerReceipt(
     return bankTxnId
   })
 
+  // Mirror into the ledger: debit bank, credit debtors. No income — the
+  // revenue was recognised when the invoice was raised, and posting it again
+  // here would double-count every credit sale. Cannot fail the receipt; see
+  // the note on glPosting.ts.
+  const { mirrorReceipt } = await import('./glPosting')
+  await mirrorReceipt(siteId, actor, {
+    transactionId: posted.id,
+    date: receiptDate,
+    customerId: input.customerId,
+    bankAccountId: input.bankAccountId,
+    amount: round(input.amount, 2),
+    reference: input.reference,
+  })
+
   return { ok: true, customerTxnId: posted.id, bankTxnId: bank }
 }
 

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { Plus, StatusSuccess as CheckCircle2 } from '@/components/ui/icons'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listGroups } from '@/lib/site/instructions'
 import {
   PageHeader,
@@ -28,7 +28,8 @@ export default async function InstructionsPage({
 }: {
   searchParams: Promise<{ saved?: string; deleted?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('products.view')
   const { saved, deleted } = await searchParams
 
   // Inactive groups are listed too: one switched off still applies to the

@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { PageHeader, PageBody } from '@/components/ui'
 import TerminalsClient from './TerminalsClient'
@@ -6,7 +6,8 @@ import TerminalsClient from './TerminalsClient'
 export const dynamic = 'force-dynamic'
 
 export default async function TerminalsPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
   const terminals = await listTerminals(siteId, true)
 
   return (

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { Plus, StatusSuccess as CheckCircle2, CornerDownRight } from '@/components/ui/icons'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
 import { PageHeader, PrimaryLink, Card, EmptyState, Badge, TABLE_HEAD_ROW, TABLE_TH } from '@/components/ui'
 
@@ -11,7 +11,8 @@ export default async function DepartmentsPage({
 }: {
   searchParams: Promise<{ saved?: string; deleted?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('products.view')
   const { saved, deleted } = await searchParams
 
   // Inactive rows are shown too — hiding them here would make a department that

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { requireSession } from '@/lib/auth'
+import { requireCapability, requireSession } from '@/lib/auth'
 import { getSiteForUser } from '@/lib/sites'
 import { listSiteDatabases, probeSiteDatabase } from '@/lib/siteDb'
 import { PageHeader, PageBody, Card, CardHeader, Badge, EmptyState, Icons } from '@/components/ui'
@@ -15,6 +15,10 @@ import { PageHeader, PageBody, Card, CardHeader, Badge, EmptyState, Icons } from
 export const dynamic = 'force-dynamic'
 
 export default async function SiteDatabasesPage() {
+  // Server hostnames, database names and usernames are on this page — worth a
+  // stronger gate than "has a session".
+  await requireCapability('setup.edit')
+
   const session = await requireSession()
   if (session.siteId === null) redirect('/select-site')
 

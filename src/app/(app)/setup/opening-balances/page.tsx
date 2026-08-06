@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { customerSummary } from '@/lib/site/customers'
 import { supplierSummary } from '@/lib/site/suppliers'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -7,7 +7,8 @@ import ImportClient from './ImportClient'
 export const dynamic = 'force-dynamic'
 
 export default async function OpeningBalancesPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
 
   const [customers, suppliers] = await Promise.all([
     customerSummary(siteId),

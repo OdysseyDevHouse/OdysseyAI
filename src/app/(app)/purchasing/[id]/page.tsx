@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getPurchaseDocument } from '@/lib/site/purchaseDocuments'
 import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
 import { formatMoney, formatQty } from '@/lib/decimals'
@@ -25,7 +25,8 @@ export default async function PurchaseDocumentPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('purchasing.edit')
   const { id } = await params
 
   const documentId = Number(id)

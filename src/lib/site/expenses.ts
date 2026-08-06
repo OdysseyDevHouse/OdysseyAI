@@ -574,6 +574,28 @@ export async function finalise(
     }
   }
 
+  // Mirror into the general ledger. Deliberately AFTER the subledger writes and
+  // deliberately unable to fail this function: the GL is a derived mirror, so a
+  // missing journal is a reporting gap that ledgerHealth() reports, not a
+  // reason to refuse an expense somebody has already paid. See 045.
+  const { mirrorExpense } = await import('./glPosting')
+  await mirrorExpense(siteId, actor, {
+    expenseId: id,
+    documentNumber,
+    expenseDate: expense.expenseDate,
+    isBill: expense.paymentType === 'on_account',
+    supplierId: expense.supplierId,
+    bankAccountId: expense.bankAccountId,
+    totalIncl: expense.totalIncl,
+    lines: expense.lines.map((l) => ({
+      categoryId: l.categoryId,
+      excl: l.lineExcl,
+      vat: l.lineVat,
+      vatClaimable: l.vatClaimable,
+      departmentId: l.departmentId,
+    })),
+  })
+
   await logActivity(siteId, actor, {
     entity: 'expense',
     entityId: id,

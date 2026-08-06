@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import {
   listUnallocatedCredits,
   unallocatedSummary,
@@ -37,7 +37,8 @@ export const dynamic = 'force-dynamic'
  *   credit that should have reduced the payment.
  */
 export default async function UnallocatedPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.view')
 
   const [summary, credits, supplierCredits, unidentified] = await Promise.all([
     unallocatedSummary(siteId),

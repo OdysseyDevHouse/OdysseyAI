@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listRuns, listItems } from '@/lib/site/interestRuns'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -23,7 +23,8 @@ export const dynamic = 'force-dynamic'
  * what, on what base, for how many days is the whole point of the screen.
  */
 export default async function InterestPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('customers.credit')
 
   const runs = await listRuns(siteId, 10)
   const draft = runs.find((r) => r.status === 'draft')

@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getTransfer } from '@/lib/site/stockTransfers'
 import { formatQty } from '@/lib/decimals'
 import {
@@ -25,7 +25,9 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
   const transferId = Number(id)
   if (!Number.isFinite(transferId) || transferId <= 0) notFound()
 
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+
+  const { siteId } = await requireCapability('stock.transfer')
   const transfer = await getTransfer(siteId, transferId)
   if (!transfer) notFound()
 

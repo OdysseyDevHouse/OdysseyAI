@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listLocks } from '@/lib/site/periodLocks'
 import { PageHeader, PageBody, Card, CardHeader, CardBody } from '@/components/ui'
 import { PeriodsClient } from './PeriodsClient'
@@ -14,7 +14,8 @@ export const dynamic = 'force-dynamic'
  * is enormous.
  */
 export default async function PeriodsPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('setup.edit')
   const locks = await listLocks(siteId, { includeUnlocked: true })
 
   return (

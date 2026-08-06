@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { StatusError as AlertCircle, Trash as Trash2, Plus } from '@/components/ui/icons'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import {
   listDepartments,
   getDepartment,
@@ -27,7 +27,9 @@ export default async function EditDepartmentPage({
   const departmentId = Number(id)
   if (!Number.isFinite(departmentId) || departmentId <= 0) notFound()
 
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+
+  const { siteId } = await requireCapability('products.edit')
   const [department, departments] = await Promise.all([
     getDepartment(siteId, departmentId),
     listDepartments(siteId, true),

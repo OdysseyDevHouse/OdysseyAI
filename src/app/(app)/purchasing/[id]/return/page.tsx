@@ -1,5 +1,5 @@
 import { notFound, redirect } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getPurchaseDocument } from '@/lib/site/purchaseDocuments'
 import { returnableLines } from '@/lib/site/purchaseReversal'
 import { PageHeader } from '@/components/ui'
@@ -12,7 +12,8 @@ export default async function SupplierReturnPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('purchasing.edit')
   const { id } = await params
 
   const grvId = Number(id)

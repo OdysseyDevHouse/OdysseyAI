@@ -1,11 +1,12 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { PageHeader, PageBody } from '@/components/ui'
 import { AccountForm } from '../AccountForm'
 
 export const dynamic = 'force-dynamic'
 
 export default async function NewBankAccountPage() {
-  await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  await requireCapability('cashbook.edit')
 
   return (
     <>

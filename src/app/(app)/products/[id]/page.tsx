@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { StatusSuccess as CheckCircle2, Trash as Trash2, Archive, ArchiveRestore } from '@/components/ui/icons'
-import { requireSite } from '@/lib/auth'
+import { requireSite, requireCapability } from '@/lib/auth'
 import { getProduct } from '@/lib/site/products'
 import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
@@ -31,6 +31,10 @@ export default async function EditProductPage({
   const { saved } = await searchParams
   const productId = Number(id)
   if (!Number.isFinite(productId) || productId <= 0) notFound()
+
+  // A hidden menu entry is not a boundary — this URL is typeable.
+
+  await requireCapability('products.edit')
 
   const site = await requireSite()
   const siteId = site.id

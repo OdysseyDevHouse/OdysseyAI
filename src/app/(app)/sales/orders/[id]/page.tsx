@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getOrder, FULFILMENT_LABELS, type FulfilmentStatus } from '@/lib/site/salesOrders'
 import { availableToSell } from '@/lib/site/stockMovements'
 import { formatMoney } from '@/lib/decimals'
@@ -32,7 +32,8 @@ const TONE: Record<FulfilmentStatus, 'success' | 'warning' | 'danger' | 'neutral
 }
 
 export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('sales.view')
   const { id: raw } = await params
 
   const id = Number(raw)

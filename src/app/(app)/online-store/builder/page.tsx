@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getLayout } from '@/lib/site/storefrontLayout'
 import { getOnlineSettings, listDepartmentVisibility } from '@/lib/site/onlineStore'
 import { createPublicStoreToken } from '@/lib/publicStoreToken'
@@ -16,7 +16,8 @@ import Builder from './Builder'
 export const dynamic = 'force-dynamic'
 
 export default async function BuilderPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('online.edit')
 
   const [layout, settings, departments, token] = await Promise.all([
     getLayout(siteId),

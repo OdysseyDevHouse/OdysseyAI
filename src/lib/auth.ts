@@ -343,5 +343,77 @@ export async function requireCapability(capability: Capability): Promise<{
   }
 }
 
+/** Several, where a screen is reachable by more than one route in. */
+export async function requireAnyCapability(
+  ...capabilities: Capability[]
+): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+  capabilities: CapabilitySet
+}> {
+  const ctx = await requireSiteUser()
+  if (!capabilities.some((c) => can(ctx.capabilities, c))) redirect('/not-allowed')
+  return {
+    siteId: ctx.site.id,
+    actor: { userId: ctx.user.id, userName: ctx.user.name },
+    capabilities: ctx.capabilities,
+  }
+}
+
+export type Denied = { ok: false; error: string }
+
+/**
+ * The server-action counterpart of `requireCapability`.
+ *
+ * Returns a refusal instead of redirecting, because an action is called from a
+ * client that is waiting for a result — a `redirect()` mid-action surfaces as
+ * an unexplained navigation rather than as the "you may not do that" the user
+ * needs to read.
+ *
+ * Use it as the first line of EVERY mutating action:
+ *
+ *   const ctx = await actorFor('products.edit')
+ *   if ('ok' in ctx) return ctx
+ *
+ * The check belongs here and not only on the screen that offered the button.
+ * A server action is a public endpoint: hiding a button changes what is easy,
+ * not what is possible.
+ */
+export async function actorFor(capability: Capability): Promise<
+  | { siteId: number; actor: { userId: number; userName: string }; capabilities: CapabilitySet }
+  | Denied
+> {
+  const { site, user, capabilities } = await requireSiteUser()
+  if (!can(capabilities, capability)) {
+    return {
+      ok: false,
+      error: 'You do not have permission to do that. An owner can grant it in Setup → Roles.',
+    }
+  }
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
+  }
+}
+
+/**
+ * The API-route counterpart.
+ *
+ * Routes under `src/app/api` sit OUTSIDE the (app) route group, so
+ * `(app)/layout.tsx` never runs for them and nothing else checks a capability
+ * on their behalf. They are also directly typeable URLs — `/api/customers/
+ * export` hands over the whole debtors book — which makes them the one place
+ * where a missing check leaks data rather than merely allowing an action.
+ *
+ * Returns a site id or null; the caller answers 403 on null. Deliberately not
+ * a redirect: a fetch following a 307 to an HTML page is worse to debug than a
+ * plain refusal.
+ */
+export async function siteIdForCapability(capability: Capability): Promise<number | null> {
+  const { site, capabilities } = await requireSiteUser()
+  return can(capabilities, capability) ? site.id : null
+}
+
 export { getSession }
 export type { SessionPayload }

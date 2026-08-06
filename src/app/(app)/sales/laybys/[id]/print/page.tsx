@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSite } from '@/lib/auth'
+import { requireSite, requireCapability } from '@/lib/auth'
 import { getLayby } from '@/lib/site/laybys'
 import { getSettings } from '@/lib/site/settings'
 import { LaybyAgreement } from '@/components/laybys/LaybyAgreement'
@@ -14,6 +14,8 @@ export const dynamic = 'force-dynamic'
  * not the application around it — the same reason the statement has one.
  */
 export default async function LaybyPrintPage({ params }: { params: Promise<{ id: string }> }) {
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  await requireCapability('sales.view')
   const site = await requireSite()
   const { id: raw } = await params
 

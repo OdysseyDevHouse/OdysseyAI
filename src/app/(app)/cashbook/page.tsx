@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listAccounts, totalCash, reconcileBankBalances } from '@/lib/site/bankAccounts'
 import { unidentifiedBankReceipts } from '@/lib/site/unallocatedReceipts'
 import { formatMoney } from '@/lib/decimals'
@@ -34,7 +34,8 @@ export const dynamic = 'force-dynamic'
 type AccountRow = Awaited<ReturnType<typeof listAccounts>>[number]
 
 export default async function CashbookPage() {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.view')
 
   const [accounts, cash, drift, unidentified] = await Promise.all([
     listAccounts(siteId),

@@ -1,4 +1,4 @@
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { listAccounts } from '@/lib/site/bankAccounts'
 import { PageHeader, PageBody, Card, CardBody, EmptyState, ButtonLink, Icons } from '@/components/ui'
 import { ImportClient } from './ImportClient'
@@ -17,7 +17,8 @@ export default async function ImportStatementPage({
 }: {
   searchParams: Promise<{ account?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('cashbook.reconcile')
   const params = await searchParams
   const accounts = await listAccounts(siteId)
 

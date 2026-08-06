@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import {
   listOrders,
   FULFILMENT_LABELS,
@@ -52,7 +52,8 @@ export default async function OrdersPage({
 }: {
   searchParams: Promise<{ q?: string; fulfilment?: string; page?: string }>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('sales.view')
   const params = await searchParams
 
   const fulfilment = toFulfilment(params.fulfilment)

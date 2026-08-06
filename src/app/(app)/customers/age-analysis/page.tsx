@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireSiteId } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { customerAging, type AgingBasis } from '@/lib/site/aging'
 import { listCustomerGroups, listSalesReps } from '@/lib/site/customerLookups'
 import { formatMoney } from '@/lib/decimals'
@@ -48,7 +48,8 @@ export default async function AgeAnalysisPage({
 }: {
   searchParams: Promise<Search>
 }) {
-  const siteId = await requireSiteId()
+  // A hidden menu entry is not a boundary — this URL is typeable.
+  const { siteId } = await requireCapability('customers.view')
   const params = await searchParams
 
   const asAt = /^\d{4}-\d{2}-\d{2}$/.test(params.asAt ?? '') ? params.asAt! : today()
