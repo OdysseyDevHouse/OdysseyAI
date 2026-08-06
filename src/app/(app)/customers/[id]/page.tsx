@@ -3,6 +3,9 @@ import { requireSiteId } from '@/lib/auth'
 import { getCustomer } from '@/lib/site/customers'
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
 import { listActivity } from '@/lib/site/activityLog'
+import { listContacts } from '@/lib/site/partyContacts'
+import { listDocuments } from '@/lib/site/partyDocuments'
+import { listComments } from '@/lib/site/partyComments'
 import { listLedger, agingFor, openDebits, unappliedCredits } from '@/lib/site/customerLedger'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -20,11 +23,27 @@ import { AgeingStrip } from '@/components/ledger/AgeingStrip'
 import CustomerForm from '../CustomerForm'
 import { autoAllocates } from '@/lib/accountTypes'
 import TransactionsTab from './TransactionsTab'
+import ContactsPanel from '@/components/party/ContactsPanel'
+import DocumentsPanel from '@/components/party/DocumentsPanel'
+import CommentsPanel from '@/components/party/CommentsPanel'
 import { deleteCustomerAction } from '../actions'
 
 export const dynamic = 'force-dynamic'
 
-type Tab = 'details' | 'transactions' | 'activity'
+type Tab = 'details' | 'contacts' | 'documents' | 'comments' | 'transactions' | 'activity'
+
+const TABS: readonly Tab[] = [
+  'details',
+  'contacts',
+  'documents',
+  'comments',
+  'transactions',
+  'activity',
+]
+
+function toTab(value: string | undefined): Tab {
+  return TABS.includes(value as Tab) ? (value as Tab) : 'details'
+}
 
 export default async function CustomerPage({
   params,
@@ -40,21 +59,35 @@ export default async function CustomerPage({
   const customerId = Number(id)
   if (!Number.isFinite(customerId) || customerId <= 0) notFound()
 
-  const active: Tab =
-    tab === 'activity' ? 'activity' : tab === 'transactions' ? 'transactions' : 'details'
+  const active: Tab = toTab(tab)
 
-  const [customer, groups, reps, categories, activity, ledger, aging, debits, credits] =
-    await Promise.all([
-      getCustomer(siteId, customerId),
-      listCustomerGroups(siteId),
-      listSalesReps(siteId),
-      listCustomerCategories(siteId),
-      listActivity(siteId, 'customer', customerId),
-      listLedger(siteId, customerId),
-      agingFor(siteId, customerId),
-      openDebits(siteId, customerId),
-      unappliedCredits(siteId, customerId),
-    ])
+  const [
+    customer,
+    groups,
+    reps,
+    categories,
+    activity,
+    ledger,
+    aging,
+    debits,
+    credits,
+    contacts,
+    documents,
+    comments,
+  ] = await Promise.all([
+    getCustomer(siteId, customerId),
+    listCustomerGroups(siteId),
+    listSalesReps(siteId),
+    listCustomerCategories(siteId),
+    listActivity(siteId, 'customer', customerId),
+    listLedger(siteId, customerId),
+    agingFor(siteId, customerId),
+    openDebits(siteId, customerId),
+    unappliedCredits(siteId, customerId),
+    listContacts(siteId, 'customer', customerId),
+    listDocuments(siteId, 'customer', customerId),
+    listComments(siteId, 'customer', customerId),
+  ])
 
   if (!customer) notFound()
 
@@ -136,8 +169,29 @@ export default async function CustomerPage({
             {
               value: 'details',
               label: 'Details',
-              icon: <Icons.Contact size={15} />,
+              icon: <Icons.Info size={15} />,
               href: `/customers/${customerId}`,
+            },
+            {
+              value: 'contacts',
+              label: 'Contacts',
+              icon: <Icons.Contact size={15} />,
+              count: contacts.length,
+              href: `/customers/${customerId}?tab=contacts`,
+            },
+            {
+              value: 'documents',
+              label: 'Documents',
+              icon: <Icons.Paperclip size={15} />,
+              count: documents.length,
+              href: `/customers/${customerId}?tab=documents`,
+            },
+            {
+              value: 'comments',
+              label: 'Comments',
+              icon: <Icons.MessageSquare size={15} />,
+              count: comments.length,
+              href: `/customers/${customerId}?tab=comments`,
             },
             {
               value: 'transactions',
@@ -159,7 +213,25 @@ export default async function CustomerPage({
         />
       </div>
 
-      {active === 'transactions' ? (
+      {active === 'contacts' ? (
+        <div className="px-6 pt-4 pb-10">
+          <Card>
+            <ContactsPanel party="customer" partyId={customerId} contacts={contacts} />
+          </Card>
+        </div>
+      ) : active === 'documents' ? (
+        <div className="px-6 pt-4 pb-10">
+          <Card>
+            <DocumentsPanel party="customer" partyId={customerId} documents={documents} />
+          </Card>
+        </div>
+      ) : active === 'comments' ? (
+        <div className="px-6 pt-4 pb-10">
+          <Card>
+            <CommentsPanel party="customer" partyId={customerId} comments={comments} />
+          </Card>
+        </div>
+      ) : active === 'transactions' ? (
         <TransactionsTab
           customerId={customerId}
           autoAllocatesByDefault={autoAllocates(customer.accountType)}

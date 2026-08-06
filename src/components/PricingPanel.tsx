@@ -58,12 +58,23 @@ const CONTROL_W = 'w-full'
 const COL_COST = 'w-[140px]'
 const COL_SELL = 'w-[168px]'
 
-/** One linked store's editable figures. */
+/**
+ * One linked store's editable figures.
+ *
+ * Only stores that CARRY the product get a line. A store that does not stock
+ * it has no cost and no price there — showing editable boxes would invite
+ * someone to price a product that store does not sell, and the figures typed
+ * would be written on the next save. Which stores carry it is decided on the
+ * Stores tab; this table follows that decision rather than second-guessing it.
+ */
 export type StoreLine = {
   siteId: number
   name: string
   siteCode: string
-  /** False when this store does not carry the product yet. */
+  /**
+   * False when the store is switched ON but has no row yet — it will be
+   * created on save, so pricing it now is meaningful.
+   */
   carried: boolean
   lastCost: number
   averageCost: number

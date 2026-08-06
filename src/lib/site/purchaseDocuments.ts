@@ -47,6 +47,10 @@ export type PurchaseLine = {
   lineTotalIncl: number
   chargeExcl: number
   landedCostExcl: number
+  /** Which pile the goods went into. A return must leave the same one. */
+  locationId: number | null
+  /** On a supplier_return line: the GRV line it sends back. Null elsewhere. */
+  sourceLineId: number | null
 }
 
 export type PurchaseDocument = {
@@ -69,7 +73,7 @@ export type PurchaseDocument = {
   orderedFromId: number | null
   reference: string | null
   notes: string | null
-  voidReason: string | null
+  cancelReason: string | null
   finalisedAt: Date | null
   createdAt: Date
   fulfilmentStatus: string | null
@@ -103,6 +107,9 @@ function mapLine(r: Row): PurchaseLine {
     lineTotalIncl: toNum(r.line_total_incl),
     chargeExcl: toNum(r.charge_excl),
     landedCostExcl: toNum(r.landed_cost_excl),
+    locationId: r.location_id === null || r.location_id === undefined ? null : Number(r.location_id),
+    sourceLineId:
+      r.source_line_id === null || r.source_line_id === undefined ? null : Number(r.source_line_id),
   }
 }
 
@@ -128,7 +135,7 @@ function mapDocument(r: Row, lines: PurchaseLine[]): PurchaseDocument {
     orderedFromId: r.ordered_from_id === null ? null : Number(r.ordered_from_id),
     reference: (r.reference as string | null) ?? null,
     notes: (r.notes as string | null) ?? null,
-    voidReason: (r.void_reason as string | null) ?? null,
+    cancelReason: (r.cancel_reason as string | null) ?? null,
     finalisedAt: (r.finalised_at as Date | null) ?? null,
     createdAt: r.created_at as Date,
     fulfilmentStatus: (r.fulfilment_status as string | null) ?? null,
@@ -306,7 +313,7 @@ export async function saveOrder(
   if (documentId) {
     const existing = await getPurchaseDocument(siteId, documentId)
     if (!existing) return { ok: false, error: 'That order no longer exists.' }
-    if (existing.status === 'finalised' || existing.status === 'void') {
+    if (existing.status === 'finalised' || existing.status === 'cancelled') {
       return { ok: false, error: 'A received order cannot be changed.' }
     }
   }
@@ -445,7 +452,7 @@ export async function cancelOrder(siteId: number, id: number, reason: string): P
 
   await siteExecute(
     siteId,
-    "UPDATE purchase_documents SET status = 'cancelled', void_reason = ? WHERE id = ?",
+    "UPDATE purchase_documents SET status = 'cancelled', cancel_reason = ? WHERE id = ?",
     [reason.trim().slice(0, 190) || 'Cancelled', id],
   )
   await siteExecute(

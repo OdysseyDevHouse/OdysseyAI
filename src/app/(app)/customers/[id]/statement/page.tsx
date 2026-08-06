@@ -3,6 +3,8 @@ import { requireSite } from '@/lib/auth'
 import { buildStatement, type StatementFormat } from '@/lib/statements/render'
 import { PageHeader, Card, ButtonLink, Menu, MenuItem, Icons, LinkTabs } from '@/components/ui'
 import { StatementDocument } from '@/components/statements/StatementDocument'
+import { withParams } from '@/lib/searchParams'
+import PeriodPicker from './PeriodPicker'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,10 +39,13 @@ export default async function StatementPage({
   })
   if (!data) notFound()
 
-  const query = new URLSearchParams({ format })
-  if (from) query.set('from', from)
-  if (to) query.set('to', to)
-  const pdfHref = `/api/customers/${customerId}/statement?${query.toString()}`
+  const basePath = `/customers/${customerId}/statement`
+
+  // Only the dates the user actually asked for. Seeding these from data.period
+  // instead would pin the 90-day default into every link, so "Reset" could
+  // never get back to it.
+  const period = { from: iso(from), to: iso(to) }
+  const pdfHref = `/api/customers/${customerId}/statement${withParams(period, { format })}`
 
   return (
     <>
@@ -56,7 +61,13 @@ export default async function StatementPage({
               Open PDF
             </ButtonLink>
             <Menu label="Send" variant="primary">
-              <MenuItem href={`${pdfHref}&download=1`} download>
+              <MenuItem
+                href={`/api/customers/${customerId}/statement${withParams(period, {
+                  format,
+                  download: '1',
+                })}`}
+                download
+              >
                 <Icons.Download size={15} />
                 Download PDF
               </MenuItem>
@@ -78,25 +89,31 @@ export default async function StatementPage({
         }
       />
 
-      <div className="px-6 pt-4">
+      <div className="flex flex-col gap-4 px-6 pt-4">
         <LinkTabs
           items={[
             {
               value: 'open-item',
               label: 'Open items',
               icon: <Icons.Receipt size={15} />,
-              href: `/customers/${customerId}/statement?format=open-item`,
+              href: `${basePath}${withParams(period, { format: 'open-item' })}`,
             },
             {
               value: 'activity',
               label: 'Full activity',
               icon: <Icons.History size={15} />,
-              href: `/customers/${customerId}/statement?format=activity`,
+              href: `${basePath}${withParams(period, { format: 'activity' })}`,
             },
           ]}
           value={format}
           aria-label="Statement format"
         />
+
+        {/* Open items are "everything still unpaid, whenever it was raised", so
+            a period would only mislead — it belongs on the activity view. */}
+        {format === 'activity' && (
+          <PeriodPicker basePath={basePath} from={data.period.from} to={data.period.to} />
+        )}
       </div>
 
       <div className="px-6 pt-4 pb-10">

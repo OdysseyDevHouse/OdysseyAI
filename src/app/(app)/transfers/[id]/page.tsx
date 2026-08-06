@@ -43,12 +43,12 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
         }
       />
       <PageBody>
-        {transfer.status === 'void' && (
+        {transfer.status === 'cancelled' && (
           <Card className="p-4">
             <div className="flex items-start gap-3">
-              <Badge tone="danger">Void</Badge>
+              <Badge tone="danger">Cancelled</Badge>
               <div className="text-sm text-muted">
-                Reversed{transfer.voidReason ? `: ${transfer.voidReason}` : '.'} The stock was
+                Reversed{transfer.cancelReason ? `: ${transfer.cancelReason}` : '.'} The stock was
                 returned to {transfer.fromLocationName}.
               </div>
             </div>

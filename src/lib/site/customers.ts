@@ -10,6 +10,9 @@ import {
 } from '../accountTypes'
 import { isEmail } from './customerLookups'
 import { logActivityTx, type Actor } from './activityLog'
+import { removeDocumentsFor } from './partyDocuments'
+import { removeCommentsFor } from './partyComments'
+import { deleteStoredFile } from '../uploads'
 
 /**
  * Customers — the debtors book.
@@ -439,7 +442,14 @@ export async function deleteCustomer(
     }
   }
 
-  return siteTransaction(siteId, async (tx) => {
+  // Contacts go with the account through ON DELETE CASCADE, but documents and
+  // comments hang off the loose (entity, entity_id) pair that has no foreign
+  // key — so nothing removes them unless this does. See the header of
+  // 028_party_contacts_documents_comments.sql.
+  const orphaned = await siteTransaction(siteId, async (tx) => {
+    const storedNames = await removeDocumentsFor(tx, 'customer', id)
+    await removeCommentsFor(tx, 'customer', id)
+
     await tx.execute('DELETE FROM customers WHERE id = ?', [id] as never)
     await logActivityTx(tx, actor, {
       entity: 'customer',
@@ -447,8 +457,15 @@ export async function deleteCustomer(
       action: 'delete',
       detail: `${customer.code} — ${customer.name}`,
     })
-    return { ok: true as const }
+    return storedNames
   })
+
+  // Only once the rows are actually committed. Unlinking inside the transaction
+  // would destroy the files even if it then rolled back, and a rollback that
+  // has already deleted the paperwork is not a rollback.
+  await Promise.all(orphaned.map(deleteStoredFile))
+
+  return { ok: true }
 }
 
 /* ── Bulk operations ─────────────────────────────────────────────────────── */

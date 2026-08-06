@@ -113,8 +113,8 @@ export default async function SalesDocumentPage({
         <div className="px-6 pt-4">
           <p className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
             <Icons.Ban size={15} />
-            Cancelled{document.voidedAt ? ` on ${document.voidedAt.toLocaleDateString('en-ZA')}` : ''}
-            {document.voidReason ? ` — ${document.voidReason}` : ''}. The number is kept so the
+            Cancelled{document.cancelledAt ? ` on ${document.cancelledAt.toLocaleDateString('en-ZA')}` : ''}
+            {document.cancelReason ? ` — ${document.cancelReason}` : ''}. The number is kept so the
             sequence stays complete.
           </p>
         </div>

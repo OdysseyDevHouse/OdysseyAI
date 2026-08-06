@@ -52,6 +52,24 @@ function flag(form: FormData, key: string, whenAbsent = false): boolean {
   return String(raw) === '1'
 }
 
+/**
+ * A number the form may legitimately not submit at all.
+ *
+ * Distinct from num(): that reads an absent field as 0, which is right for a
+ * cost box the user cleared but wrong for the reorder levels, which moved to
+ * product_location_stock and are no longer on this form. Undefined tells the
+ * update to COALESCE and keep whatever the column already held, rather than
+ * wiping it on every save.
+ */
+function optionalNum(form: FormData, key: string): number | undefined {
+  const raw = form.get(key)
+  if (raw === null) return undefined
+  const trimmed = String(raw).trim()
+  if (!trimmed) return undefined
+  const n = Number(trimmed.replace(/,/g, ''))
+  return Number.isFinite(n) ? n : undefined
+}
+
 function optionalId(form: FormData, key: string): number | null {
   const raw = String(form.get(key) ?? '').trim()
   if (!raw) return null
@@ -240,8 +258,8 @@ function readInput(form: FormData): ProductInput {
     sellingVatRateId: optionalId(form, 'sellingVatRateId'),
     lastCost: num(form, 'lastCost'),
     openingStock: num(form, 'openingStock'),
-    minStock: num(form, 'minStock'),
-    maxStock: num(form, 'maxStock'),
+    // Reorder levels are NOT here: they belong to a (product, location) pair
+    // and are written by saveLocationLevels below.
     isArchived: form.get('isArchived') === 'on',
 
     // Properties tab. The switches submit "1"/"0" through hidden inputs for the

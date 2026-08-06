@@ -169,7 +169,10 @@ export default async function ProductsPage({
                     // The default structure is the shelf price; fall back to the
                     // first if no structure is flagged default.
                     const price = p.prices.find((x) => x.isDefault) ?? p.prices[0]
-                    const belowMin = p.stockOnHand <= p.minStock && p.minStock > 0
+                    // Derived server-side now that reorder levels are per
+                    // location: "below minimum" means below it in SOME room,
+                    // which no single figure on the product can express.
+                    const belowMin = p.belowMinimum
 
                     return (
                       <tr key={p.id} className="hover:bg-surface-2">

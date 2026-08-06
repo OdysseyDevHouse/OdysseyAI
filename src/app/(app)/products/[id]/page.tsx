@@ -91,6 +91,20 @@ export default async function EditProductPage({
   // exists in both lines up, and one that doesn't simply shows empty.
   const linkedLines = linked
     .filter((view) => view.store.siteId !== siteId)
+    /*
+     * Only stores that actually carry this product get a pricing row.
+     *
+     * `available` is the switch on the Stores tab; `found && !archived` covers
+     * a store holding the product from before the switch existed. A store that
+     * is neither — 6529 "Avo each", which store 2 has never had — showed
+     * editable cost and price boxes for goods it does not sell, and anything
+     * typed there was written on the next save.
+     *
+     * Switching a store on re-renders this list from the server, so a newly
+     * ticked store gains its row (badged "will be created") before anyone
+     * needs to price it.
+     */
+    .filter((view) => view.available || (view.found && !view.archived))
     .map((view) => {
       const prices: Record<number, number> = {}
       for (const structure of structures) {

@@ -6,7 +6,6 @@ import { StatusError, Save } from '@/components/ui/icons'
 import RichText from '@/components/RichText'
 import DepartmentPicker from '@/components/DepartmentPicker'
 import PricingPanel, { type StoreLine } from '@/components/PricingPanel'
-import InventoryPanel from '@/components/InventoryPanel'
 import LocationStockPanel, { type LocationStockRow } from '@/components/LocationStockPanel'
 import LinkedStoresPanel from '@/components/LinkedStoresPanel'
 import type { LinkedProductView } from '@/lib/site/productFanout'
@@ -449,44 +448,47 @@ export default function ProductForm({
             sharesSelling={sharesSelling}
           />
 
-          {/* ── Inventory ────────────────────────────────────────────────── */}
+          {/* ── Inventory ────────────────────────────────────────────────────
+              One card, every store, every room. This replaced a per-STORE
+              Inventory table: that could only show a store total, and a total
+              is exactly the figure that hides 57 units sitting in a back
+              warehouse. Stock lives in rooms; a store is the outer grouping. */}
           <Card>
             <SectionTitle icon={<Warehouse size={16} />}>Inventory</SectionTitle>
-            <InventoryPanel
+            <LocationStockPanel
               isNew={isNew}
-              rows={[
+              stores={[
                 {
-                  // 0 marks the store being edited, whose fields keep their plain
-                  // names so the ordinary single-store save path is unchanged.
-                  storeId: 0,
+                  siteId: currentSiteId,
                   storeName,
-                  stockOnHand: product?.stockOnHand ?? 0,
-                  minStock: product?.minStock ?? 0,
-                  maxStock: product?.maxStock ?? 0,
+                  isCurrent: true,
+                  carried: true,
+                  rows: locationStock,
                 },
                 ...linkedStores
                   .filter((view) => view.store.siteId !== currentSiteId)
                   .map((view) => ({
-                    storeId: view.store.siteId,
+                    siteId: view.store.siteId,
                     storeName: view.store.displayName,
-                    stockOnHand: view.stockOnHand,
-                    minStock: view.minStock,
-                    maxStock: view.maxStock,
+                    siteCode: view.store.siteCode,
+                    isCurrent: false,
+                    carried: view.found && !view.archived,
+                    rows: view.locations.map((l) => ({
+                      locationId: l.locationId,
+                      code: l.code,
+                      name: l.name,
+                      isMain: l.isMain,
+                      // Another store's rooms are only read here, and the query
+                      // already excludes inactive ones holding nothing.
+                      isActive: true,
+                      stockOnHand: l.stockOnHand,
+                      minStock: l.minStock,
+                      maxStock: l.maxStock,
+                    })),
                   })),
               ]}
             />
           </Card>
-
-          {/* ── Stock by location ────────────────────────────────────────────
-              Only once there is more than one place to keep stock. A site with
-              a single location would see this table repeat the Inventory card
-              above it, row for row. */}
-          {locationStock.length > 1 && (
-            <Card>
-              <SectionTitle icon={<Warehouse size={16} />}>Stock by location</SectionTitle>
-              <LocationStockPanel isNew={isNew} rows={locationStock} />
-            </Card>
-          )}
 
           {/* ── Product type ─────────────────────────────────────────────── */}
           <Card>

@@ -6,6 +6,7 @@ import { apportionDiscount, weightedAverageCost } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
 import { mainLocationIdTx } from './stockLocations'
+import { receiveSerialsTx, removeReceivedSerialsTx } from './serials'
 import { isPeriodLocked } from './settings'
 import { postSupplierTransaction } from './supplierLedger'
 import { dueDateFor } from './ledger'
@@ -57,6 +58,17 @@ export type ReceiveLineInput = {
   unitCostExcl: number
   discountPct?: number
   vatRatePct: number
+  /**
+   * The serial numbers that arrived on this line, for a serial-tracked product.
+   *
+   * Captured with the receipt rather than afterwards because this is the only
+   * moment the delivery note is in the receiver's hand. One per unit, and the
+   * receipt refuses rather than posts if the count disagrees — see
+   * receiveSerialsTx for why that is a refusal and not a skip.
+   */
+  serials?: string[]
+  /** Manufacturer warranty expiry, applied to every serial on this line. */
+  warrantyUntil?: string | null
 }
 
 export type ReceiveInput = {
@@ -91,6 +103,25 @@ export function validateReceive(input: ReceiveInput): string | null {
     }
     if ((line.discountPct ?? 0) < 0 || (line.discountPct ?? 0) > 100) {
       return `${where}: discount must be between 0 and 100 percent.`
+    }
+
+    // Checked here as well as inside the transaction. This catches the mistake
+    // before any work starts and names the line by number; the transaction
+    // check is the one that cannot be bypassed by a caller that skips
+    // validateReceive, and it is also the only one holding a lock.
+    if (line.productId && (line.productType ?? 'normal') === 'serial') {
+      const serials = (line.serials ?? []).map((s) => s.trim()).filter(Boolean)
+      if (!Number.isInteger(line.qtyReceived)) {
+        return `${where}: a serial-tracked product must be received in whole units.`
+      }
+      if (serials.length !== line.qtyReceived) {
+        return `${where}: ${line.qtyReceived} arrived but ${serials.length} serial number${
+          serials.length === 1 ? ' was' : 's were'
+        } entered. Every unit needs one.`
+      }
+      if (new Set(serials).size !== serials.length) {
+        return `${where}: the same serial number is entered twice.`
+      }
     }
   }
   return null
@@ -245,6 +276,27 @@ export async function receiveGoods(
           note: input.supplierInvoiceNo ? `Inv ${input.supplierInvoiceNo}` : undefined,
         })
 
+        // The individual units, in the SAME transaction that just moved the
+        // quantity. Either both land or neither does — a receipt that moved
+        // three phones but recorded two serials would leave the two figures
+        // disagreeing with no way to tell which was right.
+        if ((line.productType ?? 'normal') === 'serial') {
+          const captured = await receiveSerialsTx(tx, actor, {
+            productId: line.productId,
+            serials: line.serials ?? [],
+            qtyReceived: line.qtyReceived,
+            documentId,
+            locationId,
+            costExcl: c.landedUnitCost,
+            warrantyUntil: line.warrantyUntil ?? null,
+            lineLabel: line.description.trim() || `Line ${index + 1}`,
+          })
+          // Thrown, not returned: we are inside the transaction, and the throw
+          // is what rolls back the stock movement written moments ago. The
+          // catch below turns it back into a refusal for the caller.
+          if (!captured.ok) throw new Error(captured.error)
+        }
+
         // THE COST MOVE. Both figures, and only here:
         //   average_cost blends what was there with what arrived
         //   last_cost is simply what we just paid
@@ -381,7 +433,7 @@ export async function voidReceipt(
     [documentId],
   )
   if (!doc) return { ok: false, error: 'That document no longer exists.' }
-  if (String(doc.status) === 'void') return { ok: false, error: 'That receipt is already void.' }
+  if (String(doc.status) === 'cancelled') return { ok: false, error: 'That receipt is already void.' }
   if (String(doc.status) !== 'finalised') {
     return { ok: false, error: 'Only a finalised receipt can be voided.' }
   }
@@ -403,30 +455,46 @@ export async function voidReceipt(
     [documentId],
   )
 
-  await siteTransaction(siteId, async (tx) => {
-    for (const line of lines) {
-      if (!line.product_id) continue
-      await recordMovement(tx, actor, {
-        productId: Number(line.product_id),
-        // Back out of the pile it went INTO, not whichever is main now.
-        // Defaulting here would take the stock off the shop floor for goods
-        // that were put in the warehouse, breaking both piles at once — and
-        // main may even have changed since the receipt was posted.
-        locationId: line.location_id === null ? null : Number(line.location_id),
-        movementType: 'adjustment',
-        qtyChange: round(-toNum(line.qty_received), 3),
-        unitCostExcl: toNum(line.landed_cost_excl),
-        source: 'void',
-        sourceDocId: documentId,
-        note: `Void of ${doc.document_number}`,
-      })
-    }
+  try {
+    await siteTransaction(siteId, async (tx) => {
+      // The serials this receipt brought in go back out with the quantity.
+      // First, because it can refuse — a unit already sold must not be
+      // deleted, and finding that out after the stock has moved would mean
+      // rolling back anyway.
+      const serials = await removeReceivedSerialsTx(tx, documentId)
+      if (!serials.ok) throw new Error(serials.error)
 
-    await tx.execute(
-      `UPDATE purchase_documents SET status = 'void', void_reason = ?, voided_at = NOW() WHERE id = ?`,
-      [reason.trim().slice(0, 190), documentId] as never,
-    )
-  })
+      for (const line of lines) {
+        if (!line.product_id) continue
+        await recordMovement(tx, actor, {
+          productId: Number(line.product_id),
+          // Back out of the pile it went INTO, not whichever is main now.
+          // Defaulting here would take the stock off the shop floor for goods
+          // that were put in the warehouse, breaking both piles at once — and
+          // main may even have changed since the receipt was posted.
+          locationId: line.location_id === null ? null : Number(line.location_id),
+          movementType: 'adjustment',
+          qtyChange: round(-toNum(line.qty_received), 3),
+          unitCostExcl: toNum(line.landed_cost_excl),
+          source: 'cancelled',
+          sourceDocId: documentId,
+          note: `Void of ${doc.document_number}`,
+        })
+      }
+
+      await tx.execute(
+        `UPDATE purchase_documents SET status = 'cancelled', cancel_reason = ?, cancelled_at = NOW() WHERE id = ?`,
+        [reason.trim().slice(0, 190), documentId] as never,
+      )
+    })
+  } catch (error) {
+    // A refusal from the serial check arrives here. Nothing has committed, so
+    // the receipt is untouched and the reason can be shown as-is.
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'That receipt could not be voided.',
+    }
+  }
 
   // Reverse what we owed them.
   await postSupplierTransaction(siteId, actor, {

@@ -3,6 +3,9 @@ import { requireSiteId } from '@/lib/auth'
 import { getSupplier } from '@/lib/site/suppliers'
 import { listSupplierCategories } from '@/lib/site/customerLookups'
 import { listActivity } from '@/lib/site/activityLog'
+import { listContacts } from '@/lib/site/partyContacts'
+import { listDocuments } from '@/lib/site/partyDocuments'
+import { listComments } from '@/lib/site/partyComments'
 import {
   listSupplierLedger,
   supplierAgingFor,
@@ -14,6 +17,7 @@ import {
   PageHeader,
   Card,
   Button,
+  ButtonLink,
   LinkTabs,
   StatTile,
   EmptyState,
@@ -23,11 +27,27 @@ import {
 import { AgeingStrip } from '@/components/ledger/AgeingStrip'
 import SupplierForm from '../SupplierForm'
 import TransactionsTab from './TransactionsTab'
+import ContactsPanel from '@/components/party/ContactsPanel'
+import DocumentsPanel from '@/components/party/DocumentsPanel'
+import CommentsPanel from '@/components/party/CommentsPanel'
 import { deleteSupplierAction } from '../actions'
 
 export const dynamic = 'force-dynamic'
 
-type Tab = 'details' | 'transactions' | 'activity'
+type Tab = 'details' | 'contacts' | 'documents' | 'comments' | 'transactions' | 'activity'
+
+const TABS: readonly Tab[] = [
+  'details',
+  'contacts',
+  'documents',
+  'comments',
+  'transactions',
+  'activity',
+]
+
+function toTab(value: string | undefined): Tab {
+  return TABS.includes(value as Tab) ? (value as Tab) : 'details'
+}
 
 export default async function SupplierPage({
   params,
@@ -43,10 +63,20 @@ export default async function SupplierPage({
   const supplierId = Number(id)
   if (!Number.isFinite(supplierId) || supplierId <= 0) notFound()
 
-  const active: Tab =
-    tab === 'activity' ? 'activity' : tab === 'transactions' ? 'transactions' : 'details'
+  const active: Tab = toTab(tab)
 
-  const [supplier, categories, activity, ledger, aging, debits, credits] = await Promise.all([
+  const [
+    supplier,
+    categories,
+    activity,
+    ledger,
+    aging,
+    debits,
+    credits,
+    contacts,
+    documents,
+    comments,
+  ] = await Promise.all([
     getSupplier(siteId, supplierId),
     listSupplierCategories(siteId),
     listActivity(siteId, 'supplier', supplierId),
@@ -54,6 +84,9 @@ export default async function SupplierPage({
     supplierAgingFor(siteId, supplierId),
     openSupplierDebits(siteId, supplierId),
     unappliedSupplierCredits(siteId, supplierId),
+    listContacts(siteId, 'supplier', supplierId),
+    listDocuments(siteId, 'supplier', supplierId),
+    listComments(siteId, 'supplier', supplierId),
   ])
 
   if (!supplier) notFound()
@@ -65,6 +98,16 @@ export default async function SupplierPage({
         subtitle={supplier.code}
         backHref="/suppliers"
         backLabel="Suppliers"
+        action={
+          // Nothing posted yet means nothing to reconcile — matches how the
+          // customer page gates its Statement button.
+          ledger.length > 0 ? (
+            <ButtonLink href={`/suppliers/${supplier.id}/statement`} variant="secondary">
+              <Icons.Receipt size={15} />
+              Statement
+            </ButtonLink>
+          ) : undefined
+        }
       />
 
       {saved === '1' && (
@@ -130,6 +173,27 @@ export default async function SupplierPage({
               href: `/suppliers/${supplierId}`,
             },
             {
+              value: 'contacts',
+              label: 'Contacts',
+              icon: <Icons.Contact size={15} />,
+              count: contacts.length,
+              href: `/suppliers/${supplierId}?tab=contacts`,
+            },
+            {
+              value: 'documents',
+              label: 'Documents',
+              icon: <Icons.Paperclip size={15} />,
+              count: documents.length,
+              href: `/suppliers/${supplierId}?tab=documents`,
+            },
+            {
+              value: 'comments',
+              label: 'Comments',
+              icon: <Icons.MessageSquare size={15} />,
+              count: comments.length,
+              href: `/suppliers/${supplierId}?tab=comments`,
+            },
+            {
               value: 'transactions',
               label: 'Transactions',
               icon: <Icons.Receipt size={15} />,
@@ -149,7 +213,25 @@ export default async function SupplierPage({
         />
       </div>
 
-      {active === 'transactions' ? (
+      {active === 'contacts' ? (
+        <div className="px-6 pt-4 pb-10">
+          <Card>
+            <ContactsPanel party="supplier" partyId={supplierId} contacts={contacts} />
+          </Card>
+        </div>
+      ) : active === 'documents' ? (
+        <div className="px-6 pt-4 pb-10">
+          <Card>
+            <DocumentsPanel party="supplier" partyId={supplierId} documents={documents} />
+          </Card>
+        </div>
+      ) : active === 'comments' ? (
+        <div className="px-6 pt-4 pb-10">
+          <Card>
+            <CommentsPanel party="supplier" partyId={supplierId} comments={comments} />
+          </Card>
+        </div>
+      ) : active === 'transactions' ? (
         <TransactionsTab
           supplierId={supplierId}
           lines={ledger}

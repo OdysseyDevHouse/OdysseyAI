@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireSiteId } from '@/lib/auth'
 import { getPurchaseDocument } from '@/lib/site/purchaseDocuments'
+import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
 import { formatMoney, formatQty } from '@/lib/decimals'
 import {
   PageHeader,
@@ -36,6 +37,14 @@ export default async function PurchaseDocumentPage({
   const today = new Date().toISOString().slice(0, 10)
   const voidable = doc.docType === 'grv' && doc.status === 'finalised' && doc.documentDate === today
 
+  // A GRV can be returned against until every line has gone back. Both reads
+  // are skipped entirely for an order or a return, which have neither.
+  const isGrv = doc.docType === 'grv' && doc.status === 'finalised'
+  const [returnLines, priorReturns] = isGrv
+    ? await Promise.all([returnableLines(siteId, documentId), returnsFor(siteId, documentId)])
+    : [null, []]
+  const returnable = (returnLines ?? []).some((l) => l.returnable > 0)
+
   return (
     <>
       <PageHeader
@@ -50,16 +59,38 @@ export default async function PurchaseDocumentPage({
             status={doc.status}
             docType={doc.docType}
             voidable={voidable}
+            returnable={returnable}
           />
         }
       />
 
-      {doc.status === 'void' && (
+      {doc.status === 'cancelled' && (
         <div className="px-6 pt-4">
           <p className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
             <Icons.Ban size={15} />
-            Voided{doc.voidReason ? ` — ${doc.voidReason}` : ''}. Stock was taken back out; the
+            Cancelled{doc.cancelReason ? ` — ${doc.cancelReason}` : ''}. Stock was taken back out; the
             average cost was deliberately left alone, since anything sold since has already moved on.
+          </p>
+        </div>
+      )}
+
+      {/* Returns raised against this receipt. Shown on the GRV rather than
+          only on the return itself, because "has any of this gone back?" is
+          asked of the receipt, not of a document you would have to find first. */}
+      {priorReturns.length > 0 && (
+        <div className="px-6 pt-4">
+          <p className="flex flex-wrap items-center gap-2 rounded-md bg-warning-soft px-3 py-2 text-sm text-warning-ink">
+            <Icons.Reverse size={15} />
+            Returned against:
+            {priorReturns.map((r) => (
+              <Link
+                key={r.id}
+                href={`/purchasing/${r.id}`}
+                className="font-medium underline underline-offset-2"
+              >
+                {r.documentNumber ?? `#${r.id}`} ({formatMoney(Math.abs(r.total))})
+              </Link>
+            ))}
           </p>
         </div>
       )}
@@ -158,7 +189,7 @@ export default async function PurchaseDocumentPage({
                 tone={
                   doc.status === 'finalised'
                     ? 'success'
-                    : doc.status === 'void'
+                    : doc.status === 'cancelled'
                       ? 'danger'
                       : doc.status === 'issued'
                         ? 'brand'

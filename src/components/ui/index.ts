@@ -42,6 +42,7 @@ export {
   Checkbox,
   Radio,
 } from './Field'
+export { FileInput } from './FileInput'
 
 export { Card, CardHeader, CardBody, CardFooter } from './Card'
 export { SettingRow, SettingGroup } from './SettingRow'

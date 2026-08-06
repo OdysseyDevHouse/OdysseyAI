@@ -10,6 +10,8 @@ import {
   type OrderInput,
 } from '@/lib/site/purchaseDocuments'
 import { receiveGoods, voidReceipt, type ReceiveInput } from '@/lib/site/purchasePosting'
+import { createSupplierReturn, type SupplierReturnInput } from '@/lib/site/purchaseReversal'
+import { availableSerials } from '@/lib/site/serials'
 import { searchForTill } from '@/lib/site/tillSearch'
 import { listSuppliers } from '@/lib/site/suppliers'
 
@@ -94,4 +96,42 @@ export async function listActiveSuppliersAction() {
 export async function loadOrderAction(id: number) {
   const siteId = await requireSiteId()
   return getPurchaseDocument(siteId, id)
+}
+
+/* ── Supplier returns ────────────────────────────────────────────────────── */
+
+export type SupplierReturnActionResult =
+  | { ok: true; documentId: number; documentNumber: string }
+  | { ok: false; error: string }
+
+export async function createSupplierReturnAction(
+  input: SupplierReturnInput,
+): Promise<SupplierReturnActionResult> {
+  const { siteId, actor } = await requireActor()
+  const result = await createSupplierReturn(siteId, actor, input)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/purchasing')
+  revalidatePath('/products')
+  revalidatePath(`/purchasing/${input.grvId}`)
+  return { ok: true, documentId: result.documentId, documentNumber: result.documentNumber }
+}
+
+/**
+ * The units the return screen may offer for a serial line.
+ *
+ * Scoped to the location the GRV line went into, so a return cannot send back a
+ * unit standing in another room — the stock movement leaves that same pile, and
+ * the two must agree.
+ */
+export async function serialsForReturnAction(productId: number, locationId: number | null) {
+  const siteId = await requireSiteId()
+  const items = await availableSerials(siteId, productId, locationId)
+  return items.map((s) => ({
+    id: s.id,
+    serial: s.serial,
+    costExcl: s.costExcl,
+    warrantyUntil: s.warrantyUntil,
+    locationCode: s.locationCode,
+  }))
 }

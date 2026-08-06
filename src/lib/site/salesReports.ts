@@ -334,7 +334,7 @@ export async function exceptionReport(
   const [voids, discounts, credits] = await Promise.all([
     siteQuery<Row>(
       siteId,
-      `SELECT COALESCE(voided_by_user_id, user_id) AS uid,
+      `SELECT COALESCE(cancelled_by_user_id, user_id) AS uid,
               COALESCE(NULLIF(user_name, ''), 'Unknown') AS name,
               COUNT(*) AS n, COALESCE(SUM(total_incl), 0) AS value
          FROM sales_documents

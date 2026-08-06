@@ -192,12 +192,12 @@ export default async function PurchasingPage({
                         {formatMoney(doc.subtotalExcl)}
                       </td>
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                        <span className={doc.status === 'void' ? 'text-faint line-through' : 'text-ink'}>
+                        <span className={doc.status === 'cancelled' ? 'text-faint line-through' : 'text-ink'}>
                           {formatMoney(doc.totalIncl)}
                         </span>
                       </td>
                       <td className={TABLE_TD}>
-                        <span title={doc.voidReason ?? undefined}>
+                        <span title={doc.cancelReason ?? undefined}>
                           <Badge tone={STATUS_TONE[doc.status] ?? 'neutral'}>
                             {doc.fulfilmentStatus === 'part_received' && doc.status === 'issued'
                               ? 'Part received'

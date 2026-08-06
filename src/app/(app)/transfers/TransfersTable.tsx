@@ -8,7 +8,7 @@ import type { StockTransfer, TransferStatus } from '@/lib/site/stockTransfers'
 const STATUS_TONE: Record<TransferStatus, 'success' | 'neutral' | 'danger'> = {
   posted: 'success',
   draft: 'neutral',
-  void: 'danger',
+  cancelled: 'danger',
 }
 
 /**

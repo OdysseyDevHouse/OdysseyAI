@@ -390,19 +390,47 @@ export async function locationStockFor(
 }
 
 /**
+ * Checks a pair of reorder levels.
+ *
+ * Lives here rather than in validateProduct because a level belongs to a
+ * (product, location) pair, not to the product. Returns the message rather
+ * than throwing, so a caller can surface it against the field the user typed.
+ */
+export function validateLevels(levels: { minStock: number; maxStock: number }): string | null {
+  if (!Number.isFinite(levels.minStock) || levels.minStock < 0) {
+    return 'Minimum level cannot be negative.'
+  }
+  if (!Number.isFinite(levels.maxStock) || levels.maxStock < 0) {
+    return 'Maximum level cannot be negative.'
+  }
+  // Zero max means "no ceiling set", so it is not a violation of min <= max.
+  if (levels.maxStock > 0 && levels.minStock > levels.maxStock) {
+    return 'Minimum level cannot be above the maximum level.'
+  }
+  return null
+}
+
+/**
  * Saves the reorder levels for one product in one location.
  *
  * Upserts because a location that has never held the product has no row yet,
  * and typing a level into it is a perfectly ordinary thing to do first.
  * stock_on_hand is untouched on the update branch — levels are settings, and
  * only a movement may change a pile.
+ *
+ * Refuses an invalid pair rather than writing it: these two figures drive the
+ * reorder report, and a minimum above the maximum would have it recommend
+ * ordering up to less than it just said was too little.
  */
 export async function saveLocationLevels(
   siteId: number,
   productId: number,
   locationId: number,
   levels: { minStock: number; maxStock: number },
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const invalid = validateLevels(levels)
+  if (invalid) return { ok: false, error: invalid }
+
   await siteExecute(
     siteId,
     `INSERT INTO product_location_stock (product_id, location_id, stock_on_hand, min_stock, max_stock)
@@ -410,4 +438,5 @@ export async function saveLocationLevels(
      ON DUPLICATE KEY UPDATE min_stock = VALUES(min_stock), max_stock = VALUES(max_stock)`,
     [productId, locationId, levels.minStock.toFixed(3), levels.maxStock.toFixed(3)],
   )
+  return { ok: true }
 }

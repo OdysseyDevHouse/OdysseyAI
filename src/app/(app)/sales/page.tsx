@@ -218,7 +218,7 @@ export default async function SalesPage({
                         </span>
                       </td>
                       <td className={TABLE_TD}>
-                        <span title={doc.voidReason ?? undefined}>
+                        <span title={doc.cancelReason ?? undefined}>
                           <Badge tone={STATUS_TONE[doc.status]}>{STATUS_LABELS[doc.status]}</Badge>
                         </span>
                       </td>

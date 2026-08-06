@@ -45,9 +45,11 @@ const COLUMNS: Column[] = [
   { label: 'Owing', width: 72, align: 'right' },
 ]
 
+export type StatementVariant = 'statement' | 'remittance' | 'supplier-statement'
+
 export function renderStatementPdf(
   data: StatementData,
-  variant: 'statement' | 'remittance' = 'statement',
+  variant: StatementVariant = 'statement',
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: MARGIN, bufferPages: true })
@@ -66,8 +68,11 @@ export function renderStatementPdf(
   })
 }
 
-function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: 'statement' | 'remittance') {
+function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVariant) {
   const isRemittance = variant === 'remittance'
+  // Our record of a supplier account. Keeps the ageing and the totals box, but
+  // must not address the reader as the debtor — see StatementDocument.
+  const isSupplier = variant === 'supplier-statement'
 
   // ── Letterhead
   doc.fillColor(INK).font('Helvetica-Bold').fontSize(14).text(data.site.name, MARGIN, MARGIN)
@@ -79,7 +84,7 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: 'statement'
     .font('Helvetica-Bold')
     .fontSize(16)
     .fillColor(INK)
-    .text(isRemittance ? 'REMITTANCE ADVICE' : 'STATEMENT', MARGIN, MARGIN, {
+    .text(isRemittance ? 'REMITTANCE ADVICE' : isSupplier ? 'SUPPLIER ACCOUNT' : 'STATEMENT', MARGIN, MARGIN, {
       width: CONTENT_WIDTH,
       align: 'right',
     })
@@ -228,7 +233,11 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: 'statement'
     .font('Helvetica-Bold')
     .fontSize(10)
     .fillColor(INK)
-    .text(isRemittance ? 'Amount paid' : 'Amount due', boxX + 10, boxY)
+    .text(
+      isRemittance ? 'Amount paid' : isSupplier ? 'Balance owed' : 'Amount due',
+      boxX + 10,
+      boxY,
+    )
   doc.text(formatMoney(Math.abs(data.closingBalance)), boxX + 10, boxY, {
     width: boxWidth - 20,
     align: 'right',
@@ -241,7 +250,9 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: 'statement'
   doc.text(
     isRemittance
       ? 'Payment has been made to the banking details we hold for you.'
-      : `Please quote your account code ${data.account.code} with any payment. Queries within 7 days of the statement date.`,
+      : isSupplier
+        ? `Our account ${data.account.code}. Our records as at ${data.period.to} — please advise of any difference against your own statement.`
+        : `Please quote your account code ${data.account.code} with any payment. Queries within 7 days of the statement date.`,
     MARGIN,
     y,
     { width: CONTENT_WIDTH },

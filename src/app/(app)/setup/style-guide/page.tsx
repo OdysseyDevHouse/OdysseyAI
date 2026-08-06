@@ -16,6 +16,7 @@ import {
   DateRangeField,
   EmptyState,
   Field,
+  FileInput,
   FilterBar,
   FilterChip,
   Icons,
@@ -207,6 +208,13 @@ function FormSection() {
         </Field>
         <Field label="Textarea" className="md:col-span-2">
           <Textarea placeholder="Notes..." />
+        </Field>
+        <Field
+          label="File input"
+          hint="Account documents. The browser draws the button; we skin it."
+          className="md:col-span-2"
+        >
+          <FileInput />
         </Field>
       </CardBody>
 

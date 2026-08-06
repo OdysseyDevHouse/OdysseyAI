@@ -10,5 +10,9 @@ next-env.d.ts
 .env.local
 .env.*.local
 
+# Customer and supplier documents. Real business paperwork — never in git.
+# Backed up alongside the site databases, not with the source.
+uploads/
+
 .DS_Store
 Thumbs.db

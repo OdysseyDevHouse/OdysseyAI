@@ -36,9 +36,24 @@ export type Product = {
   lastCost: number
   averageCost: number
 
+  /**
+   * The site total, across every location.
+   *
+   * Reorder levels are deliberately NOT here: they live per location in
+   * product_location_stock, because a level is only meaningful against the
+   * stock it governs. Read them with locationStockFor().
+   */
   stockOnHand: number
-  minStock: number
-  maxStock: number
+
+  /**
+   * True when ANY location is at or below its own minimum.
+   *
+   * Computed by the same rule the `belowMinimum` filter uses, and derived in
+   * SQL rather than on the page: with levels per room there is no product-level
+   * figure a screen could compare against, and two copies of the rule would
+   * eventually disagree about which rows the filter should have returned.
+   */
+  belowMinimum: boolean
 
   isArchived: boolean
 
@@ -89,12 +104,28 @@ export type ProductPrice = {
 
 type ProductRow = RowDataPacket & Record<string, unknown>
 
+/**
+ * "Running low" — one definition, used by both the filter and the flag.
+ *
+ * A product is low when ANY location is at or below its own minimum. A level
+ * of zero is "no level set" rather than "reorder at zero"; without that guard
+ * every room holding none of a product it has never carried would be
+ * permanently low, which is most rows in the table.
+ */
+const BELOW_MINIMUM_SQL = `EXISTS (
+  SELECT 1 FROM product_location_stock pls
+   WHERE pls.product_id = p.id
+     AND pls.min_stock > 0
+     AND pls.stock_on_hand <= pls.min_stock
+)`
+
 const SELECT_PRODUCT = `
   SELECT p.id, p.code, p.barcode, p.description, p.extra_description, p.product_type,
+         ${BELOW_MINIMUM_SQL} AS below_minimum,
          p.department_id, p.brand_id, p.image_path, p.image_icon, p.image_color,
          p.purchase_vat_rate_id, p.selling_vat_rate_id,
          p.last_cost, p.average_cost,
-         p.stock_on_hand, p.min_stock, p.max_stock, p.is_archived,
+         p.stock_on_hand, p.is_archived,
          p.visible_in_pos, p.change_description, p.ask_price_at_sale,
          p.allow_fractions, p.charge_pct_subtotal, p.non_gp_product,
          p.max_discount_pct, p.variable_type, p.price_calc,
@@ -141,8 +172,7 @@ function mapProduct(
     averageCost: cost.averageCost,
 
     stockOnHand: toNum(r.stock_on_hand),
-    minStock: toNum(r.min_stock),
-    maxStock: toNum(r.max_stock),
+    belowMinimum: !!r.below_minimum,
 
     isArchived: !!r.is_archived,
 
@@ -259,7 +289,15 @@ export async function listProducts(
     where.push('p.brand_id = ?')
     params.push(opts.brandId)
   }
-  if (opts.belowMinimum) where.push('p.stock_on_hand <= p.min_stock')
+  /*
+   * "Running low" is a question about a ROOM, not about the business.
+   *
+   * This used to compare the site total against a site-wide level. With levels
+   * per location that comparison cannot be written at all, and it was the
+   * wrong question anyway: 500 in the warehouse and 2 on the shop floor is not
+   * "well stocked", it is a shop about to run out.
+   */
+  if (opts.belowMinimum) where.push(BELOW_MINIMUM_SQL)
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500)
@@ -383,8 +421,6 @@ export type ProductInput = {
   lastCost?: number
   averageCost?: number
   openingStock?: number
-  minStock?: number
-  maxStock?: number
   isArchived?: boolean
 
   /* ── Properties tab. Undefined means "leave as it is". ─────────────── */
@@ -432,12 +468,8 @@ export function validateProduct(input: ProductInput): string | null {
   if (input.description.trim().length > 190) return 'Description must be 190 characters or fewer.'
   if ((input.lastCost ?? 0) < 0) return 'Cost cannot be negative.'
   if ((input.averageCost ?? 0) < 0) return 'Average cost cannot be negative.'
-  if ((input.minStock ?? 0) < 0) return 'Minimum level cannot be negative.'
-  if ((input.maxStock ?? 0) < 0) return 'Maximum level cannot be negative.'
-  // Zero max means "no ceiling set", so it is not a violation of min <= max.
-  if ((input.maxStock ?? 0) > 0 && (input.minStock ?? 0) > (input.maxStock ?? 0)) {
-    return 'Minimum level cannot be above the maximum level.'
-  }
+  /* Reorder levels are validated by saveLocationLevels, not here: they belong
+     to a (product, location) pair rather than to the product. */
   for (const value of Object.values(input.prices ?? {})) {
     if (value < 0) return 'Selling prices cannot be negative.'
   }
@@ -583,9 +615,9 @@ export async function createProduct(
          (code, barcode, description, extra_description, product_type,
           department_id, brand_id, image_path, image_icon, image_color,
           purchase_vat_rate_id, selling_vat_rate_id,
-          last_cost, average_cost, stock_on_hand, min_stock, max_stock,
+          last_cost, average_cost, stock_on_hand,
           is_archived, ${PROPERTY_COLUMNS.join(', ')}, last_edit_date)
-       VALUES (?,?,?,?, ?, ?,?,?,?,?, ?,?, ?,?,?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
+       VALUES (?,?,?,?, ?, ?,?,?,?,?, ?,?, ?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
       [
         code,
         input.barcode?.trim() || null,
@@ -605,14 +637,56 @@ export async function createProduct(
         // margin shown would be 100%.
         (input.averageCost ?? input.lastCost ?? 0).toFixed(4),
         (input.openingStock ?? 0).toFixed(3),
-        (input.minStock ?? 0).toFixed(3),
-        (input.maxStock ?? 0).toFixed(3),
         input.isArchived ? 1 : 0,
         ...propertyValues(input),
       ] as never,
     )
     const id = (res as { insertId: number }).insertId
     await writePrices(tx, id, input.prices)
+
+    /*
+     * Opening stock has to LAND somewhere, and be explainable.
+     *
+     * Writing products.stock_on_hand alone breaks two invariants at once: the
+     * quantity belongs to no location (C), and no movement accounts for it
+     * (A). Both show up in the reconciliation as unexplained stock, which is
+     * exactly what the reconciliation is for.
+     *
+     * The pile and the movement go in the SAME transaction as the product, so
+     * a product can never exist holding stock that nothing accounts for.
+     * Written directly rather than through recordMovement because the INSERT
+     * above already put the quantity on the product — this records what it IS
+     * rather than moving it again, the same reasoning seedOpeningStock uses.
+     */
+    const opening = input.openingStock ?? 0
+    if (opening !== 0) {
+      const [locRows] = await tx.execute(
+        'SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1',
+      )
+      const locationId = (locRows as RowDataPacket[])[0]?.id
+      if (locationId) {
+        await tx.execute(
+          `INSERT INTO product_location_stock (product_id, location_id, stock_on_hand)
+                VALUES (?,?,?)
+           ON DUPLICATE KEY UPDATE stock_on_hand = VALUES(stock_on_hand)`,
+          [id, locationId, opening.toFixed(3)] as never,
+        )
+        await tx.execute(
+          `INSERT INTO stock_movements
+             (product_id, location_id, movement_type, qty_change, qty_after,
+              unit_cost_excl, source, user_name, note)
+           VALUES (?, ?, 'opening', ?, ?, ?, 'opening', 'Product created', 'Opening stock at capture')`,
+          [
+            id,
+            locationId,
+            opening.toFixed(3),
+            opening.toFixed(3),
+            (input.averageCost ?? input.lastCost ?? 0).toFixed(4),
+          ] as never,
+        )
+      }
+    }
+
     return { ok: true as const, id }
   })
 }
@@ -640,7 +714,7 @@ export async function updateProduct(
          product_type = ?, department_id = ?, brand_id = ?,
          image_path = ?, image_icon = ?, image_color = ?,
          purchase_vat_rate_id = ?, selling_vat_rate_id = ?,
-         last_cost = ?, min_stock = ?, max_stock = ?,
+         last_cost = ?,
          is_archived = ?,
          ${PROPERTY_COLUMNS.map((c) => `${c} = ?`).join(', ')},
          last_edit_date = NOW()
@@ -659,8 +733,6 @@ export async function updateProduct(
         input.purchaseVatRateId ?? null,
         input.sellingVatRateId ?? null,
         (input.lastCost ?? 0).toFixed(4),
-        (input.minStock ?? 0).toFixed(3),
-        (input.maxStock ?? 0).toFixed(3),
         input.isArchived ? 1 : 0,
         ...propertyValues(input),
         id,

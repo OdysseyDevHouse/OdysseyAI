@@ -24,7 +24,7 @@ export default async function TransfersPage() {
   ])
 
   const posted = transfers.filter((t) => t.status === 'posted')
-  const voided = transfers.filter((t) => t.status === 'void')
+  const voided = transfers.filter((t) => t.status === 'cancelled')
   const unitsMoved = posted.reduce((sum, t) => sum + t.totalQty, 0)
 
   // A site with one location cannot transfer anything — there is nowhere for
@@ -69,10 +69,10 @@ export default async function TransfersPage() {
         <div className="grid gap-4 sm:grid-cols-3">
           <StatTile label="Posted" value={String(posted.length)} />
           <StatTile label="Units moved" value={formatQty(unitsMoved)} />
-          {/* A void is the exception worth seeing, so it is the only tile that
+          {/* A cancellation is the exception worth seeing, so it is the only tile that
               takes a tone — and only when there is actually one. */}
           <StatTile
-            label="Voided"
+            label="Cancelled"
             value={String(voided.length)}
             tone={voided.length > 0 ? 'warning' : 'default'}
           />

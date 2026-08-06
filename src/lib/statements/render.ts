@@ -157,6 +157,110 @@ export async function buildStatement(
   }
 }
 
+/**
+ * A supplier's account, in the same shape.
+ *
+ * The creditors mirror of buildStatement. Not the same function with a flag:
+ * the two read different tables, and threading a table name through shared SQL
+ * is how an injection bug gets in — the same reasoning supplierLedger.ts is
+ * written out for. What genuinely is shared is the rendering, and that is
+ * already shared, because this returns StatementData unchanged.
+ *
+ * Sign convention differs and it matters here. On the creditors table positive
+ * means WE owe THEM, so a supplier invoice is a debit exactly as a customer
+ * invoice is, and the document needs no variant to read correctly.
+ *
+ * This is a statement OF ACCOUNT — what we owe a supplier and how old it is —
+ * which is a different document from the remittance advice in remittance.ts.
+ * A remittance answers "what did this payment cover"; this answers "where does
+ * the account stand", and is what you reconcile against the supplier's own
+ * statement at month-end.
+ */
+export async function buildSupplierStatement(
+  siteId: number,
+  siteName: string,
+  siteVatNumber: string | null,
+  supplierId: number,
+  opts: StatementOptions = {},
+): Promise<StatementData | null> {
+  const { getSupplier } = await import('../site/suppliers')
+  const { listSupplierLedger, supplierAgingFor } = await import('../site/supplierLedger')
+
+  const supplier = await getSupplier(siteId, supplierId)
+  if (!supplier) return null
+
+  const format = opts.format ?? 'open-item'
+  const to = opts.to ?? today()
+  const from = opts.from ?? defaultFrom(to)
+
+  const [all, aging] = await Promise.all([
+    listSupplierLedger(siteId, supplierId, { limit: 2000 }),
+    supplierAgingFor(siteId, supplierId),
+  ])
+
+  const opening = all
+    .filter((line) => line.docDate < from)
+    .reduce((sum, line) => round(sum + line.amountSigned, 2), 0)
+
+  const inPeriod = all.filter((line) => line.docDate >= from && line.docDate <= to)
+
+  const source =
+    format === 'open-item' ? all.filter((line) => line.amountOutstanding !== 0) : inPeriod
+
+  const now = today()
+  let running = format === 'open-item' ? 0 : opening
+
+  const lines: StatementLine[] = source.map((line) => {
+    running = round(running + line.amountSigned, 2)
+    return {
+      date: line.docDate,
+      docType: line.docLabel,
+      docNumber: line.docNumber,
+      description: line.description ?? line.docLabel,
+      reference: line.reference,
+      debit: line.amountSigned > 0 ? line.amountSigned : 0,
+      credit: line.amountSigned < 0 ? -line.amountSigned : 0,
+      outstanding: line.amountOutstanding,
+      daysOverdue:
+        line.dueDate && line.amountOutstanding > 0 ? Math.max(daysBetween(line.dueDate, now), 0) : 0,
+      balance: running,
+    }
+  })
+
+  const dueNow = round(aging.d30 + aging.d60 + aging.d90 + aging.d120, 2)
+
+  return {
+    format,
+    site: { name: siteName, vatNumber: siteVatNumber },
+    account: {
+      id: supplier.id,
+      // Our account number with them, when we have one — that is the reference
+      // the supplier files it under, not our internal code.
+      code: supplier.accountNumber ?? supplier.code,
+      name: supplier.name,
+      contactName: supplier.contactName,
+      email: supplier.email,
+      phone: supplier.phone,
+      vatNumber: supplier.vatNumber,
+      addressLines: [
+        supplier.addressLine1,
+        supplier.addressLine2,
+        [supplier.city, supplier.postalCode].filter(Boolean).join(' ') || null,
+      ].filter((l): l is string => Boolean(l)),
+      // Suppliers carry no credit limit of ours; the document hides the row at 0.
+      creditLimit: 0,
+      paymentTermsDays: supplier.paymentTermsDays,
+    },
+    period: { from, to },
+    openingBalance: opening,
+    closingBalance: supplier.balance,
+    lines,
+    aging,
+    dueNow,
+    generatedAt: new Date(),
+  }
+}
+
 /** 90 days back — long enough to show a payment pattern, short enough to read. */
 function defaultFrom(to: string): string {
   const date = new Date(`${to}T00:00:00`)

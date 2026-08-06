@@ -4,6 +4,9 @@ import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import { isEmail } from './customerLookups'
 import { logActivityTx, type Actor } from './activityLog'
+import { removeDocumentsFor } from './partyDocuments'
+import { removeCommentsFor } from './partyComments'
+import { deleteStoredFile } from '../uploads'
 
 /**
  * Suppliers — the creditors book.
@@ -406,7 +409,13 @@ export async function deleteSupplier(
     }
   }
 
-  return siteTransaction(siteId, async (tx) => {
+  // Contacts cascade with the account; documents and comments do not, because
+  // they hang off the loose (entity, entity_id) pair. Same reasoning as
+  // deleteCustomer — see 028_party_contacts_documents_comments.sql.
+  const orphaned = await siteTransaction(siteId, async (tx) => {
+    const storedNames = await removeDocumentsFor(tx, 'supplier', id)
+    await removeCommentsFor(tx, 'supplier', id)
+
     await tx.execute('DELETE FROM suppliers WHERE id = ?', [id] as never)
     await logActivityTx(tx, actor, {
       entity: 'supplier',
@@ -414,8 +423,13 @@ export async function deleteSupplier(
       action: 'delete',
       detail: `${supplier.code} — ${supplier.name}`,
     })
-    return { ok: true as const }
+    return storedNames
   })
+
+  // After the commit, never inside it — see deleteCustomer.
+  await Promise.all(orphaned.map(deleteStoredFile))
+
+  return { ok: true }
 }
 
 /* ── Bulk operations ─────────────────────────────────────────────────────── */

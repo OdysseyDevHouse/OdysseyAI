@@ -254,37 +254,303 @@ export async function addSerials(
     const locationId = options.locationId ?? (await mainLocationId(siteId))
 
     await siteTransaction(siteId, async (tx) => {
-      for (const serial of fresh) {
-        const [res] = await tx.execute(
-          `INSERT INTO product_serials
-             (product_id, location_id, serial, status, cost_excl, warranty_until, received_doc_id, received_at)
-           VALUES (?,?,?,'in_stock',?,?,?,NOW())`,
-          [
-            productId,
-            locationId,
-            serial,
-            (options.costExcl ?? 0).toFixed(4),
-            options.warrantyUntil || null,
-            options.receivedDocId ?? null,
-          ] as never,
-        )
-        await tx.execute(
-          `INSERT INTO serial_movements
-             (serial_id, action, document_id, to_location_id, user_id, user_name)
-           VALUES (?, 'received', ?, ?, ?, ?)`,
-          [
-            (res as { insertId: number }).insertId,
-            options.receivedDocId ?? null,
-            locationId,
-            actor.userId,
-            actor.userName.slice(0, 120),
-          ] as never,
-        )
-      }
+      await insertSerialsTx(tx, actor, productId, fresh, { ...options, locationId })
     })
   }
 
   return { ok: true, added: fresh.length, skipped: [...already] }
+}
+
+/**
+ * Writes the serial rows themselves, inside the caller's transaction.
+ *
+ * Split out of addSerials so a GRV can capture serials in the SAME transaction
+ * that moves the stock — the reason markSold takes a tx too. A receipt that
+ * moved three phones but committed only two serial rows would break the
+ * invariant reconcileSerials exists to protect, and there would be no way to
+ * tell afterwards which of the two figures was right.
+ *
+ * Takes only serials already known to be fresh and a resolved location: the
+ * caller does the checking, because refusing a whole delivery is a decision
+ * about the delivery, not about these rows.
+ */
+async function insertSerialsTx(
+  tx: PoolConnection,
+  actor: Actor,
+  productId: number,
+  serials: readonly string[],
+  options: { costExcl?: number; warrantyUntil?: string | null; receivedDocId?: number | null; locationId: number | null },
+): Promise<void> {
+  for (const serial of serials) {
+    const [res] = await tx.execute(
+      `INSERT INTO product_serials
+         (product_id, location_id, serial, status, cost_excl, warranty_until, received_doc_id, received_at)
+       VALUES (?,?,?,'in_stock',?,?,?,NOW())`,
+      [
+        productId,
+        options.locationId,
+        serial,
+        (options.costExcl ?? 0).toFixed(4),
+        options.warrantyUntil || null,
+        options.receivedDocId ?? null,
+      ] as never,
+    )
+    await tx.execute(
+      `INSERT INTO serial_movements
+         (serial_id, action, document_id, to_location_id, user_id, user_name)
+       VALUES (?, 'received', ?, ?, ?, ?)`,
+      [
+        (res as { insertId: number }).insertId,
+        options.receivedDocId ?? null,
+        options.locationId,
+        actor.userId,
+        actor.userName.slice(0, 120),
+      ] as never,
+    )
+  }
+}
+
+export type ReceiveSerialsResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Captures the serials arriving on one GRV line, inside the receipt's own
+ * transaction.
+ *
+ * Refuses rather than skips, which is the opposite of addSerials, and
+ * deliberately so. Pasting a list into the product screen is data capture: a
+ * number already on file is a typo to point out, not a reason to lose the other
+ * forty-nine. A GRV is an assertion that these exact units arrived — if one is
+ * already in stock, either the delivery note is wrong or it was received twice,
+ * and quietly receiving three phones while recording two serials would leave
+ * stock and serials permanently disagreeing.
+ *
+ * The count must match the quantity for the same reason.
+ */
+export async function receiveSerialsTx(
+  tx: PoolConnection,
+  actor: Actor,
+  input: {
+    productId: number
+    serials: readonly string[]
+    qtyReceived: number
+    documentId: number
+    locationId: number | null
+    costExcl?: number
+    warrantyUntil?: string | null
+    /** Names the line in any refusal, so the message points at a row on screen. */
+    lineLabel: string
+  },
+): Promise<ReceiveSerialsResult> {
+  const cleaned = input.serials.map((s) => s.trim()).filter((s) => s.length > 0)
+  const unique = new Set(cleaned)
+
+  if (unique.size !== cleaned.length) {
+    return { ok: false, error: `${input.lineLabel}: the same serial number is entered twice.` }
+  }
+
+  // Whole units only. Half a serialised phone is not a thing, and the invariant
+  // "one in-stock serial per unit on hand" cannot hold against a fraction.
+  if (!Number.isInteger(input.qtyReceived)) {
+    return {
+      ok: false,
+      error: `${input.lineLabel}: a serial-tracked product must be received in whole units.`,
+    }
+  }
+  if (cleaned.length !== input.qtyReceived) {
+    return {
+      ok: false,
+      error: `${input.lineLabel}: ${input.qtyReceived} arrived but ${cleaned.length} serial number${
+        cleaned.length === 1 ? ' was' : 's were'
+      } entered. Every unit needs one.`,
+    }
+  }
+
+  const tooLong = cleaned.find((s) => s.length > 64)
+  if (tooLong) {
+    return { ok: false, error: `${input.lineLabel}: "${tooLong.slice(0, 20)}…" is too long for a serial number.` }
+  }
+
+  // Read inside the transaction: a concurrent receipt of the same serial must
+  // not slip between the check and the insert.
+  const [rows] = await tx.execute(
+    `SELECT serial FROM product_serials
+      WHERE product_id = ? AND serial IN (${cleaned.map(() => '?').join(',')})
+      FOR UPDATE`,
+    [input.productId, ...cleaned] as never,
+  )
+  const clash = (rows as Row[]).map((r) => String(r.serial))
+  if (clash.length > 0) {
+    return {
+      ok: false,
+      error: `${input.lineLabel}: serial ${clash.slice(0, 3).join(', ')}${
+        clash.length > 3 ? ` and ${clash.length - 3} more` : ''
+      } ${clash.length === 1 ? 'is' : 'are'} already on file. Check the delivery note.`,
+    }
+  }
+
+  await insertSerialsTx(tx, actor, input.productId, cleaned, {
+    costExcl: input.costExcl,
+    warrantyUntil: input.warrantyUntil,
+    receivedDocId: input.documentId,
+    locationId: input.locationId,
+  })
+
+  return { ok: true }
+}
+
+/**
+ * Removes the serials a voided GRV brought in.
+ *
+ * Deleted, not written off: a written-off serial is a real unit that was lost
+ * or scrapped, and it stays out of stock as a permanent record. A voided receipt
+ * means the units were never received at all, so leaving rows behind would put
+ * phantom warranty records on file and — because written_off does not count
+ * toward stock — would silently pass reconciliation while the shop believes it
+ * holds units it never had.
+ *
+ * A serial already sold since the receipt is NOT deleted: that would destroy the
+ * warranty trail of a real sale. It is reported instead, so the void can refuse.
+ */
+export async function removeReceivedSerialsTx(
+  tx: PoolConnection,
+  documentId: number,
+): Promise<{ ok: true; removed: number } | { ok: false; error: string }> {
+  const [rows] = await tx.execute(
+    `SELECT id, serial, status FROM product_serials WHERE received_doc_id = ? FOR UPDATE`,
+    [documentId] as never,
+  )
+  const serials = rows as Row[]
+  if (serials.length === 0) return { ok: true, removed: 0 }
+
+  const gone = serials.filter((r) => String(r.status) !== 'in_stock')
+  if (gone.length > 0) {
+    return {
+      ok: false,
+      error: `Serial ${gone.slice(0, 3).map((r) => r.serial).join(', ')} has already moved on. Raise a supplier return instead of voiding.`,
+    }
+  }
+
+  const ids = serials.map((r) => Number(r.id))
+  // The movement rows go with them — ON DELETE CASCADE on serial_movements
+  // handles that, so this is the only statement needed.
+  await tx.execute(
+    `DELETE FROM product_serials WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids as never,
+  )
+
+  return { ok: true, removed: ids.length }
+}
+
+/**
+ * Sends specific units back to the supplier, inside the return's transaction.
+ *
+ * The counterpart of receiveSerialsTx, and refusing for the same reasons: a
+ * supplier return asserts that THESE units went back, so a unit that is not in
+ * stock cannot be one of them. Told which serial is wrong, the receiver can
+ * check the box in their hand; told "invalid selection", they cannot.
+ *
+ * Status becomes 'returned_to_supplier' rather than 'returned' — see the
+ * comment on SERIAL_LABELS. The row survives either way: the unit was genuinely
+ * received and genuinely sold back, and deleting it would erase a real trail.
+ * That is the difference between this and voiding a receipt, where the units
+ * never arrived at all.
+ */
+export async function returnSerialsToSupplierTx(
+  tx: PoolConnection,
+  actor: Actor,
+  input: {
+    productId: number
+    serialIds: readonly number[]
+    qtyReturned: number
+    documentId: number
+    note?: string | null
+    /** Names the line in any refusal, so the message points at a row on screen. */
+    lineLabel: string
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ids = [...new Set(input.serialIds)]
+
+  if (ids.length !== input.serialIds.length) {
+    return { ok: false, error: `${input.lineLabel}: the same unit is selected twice.` }
+  }
+  if (!Number.isInteger(input.qtyReturned)) {
+    return {
+      ok: false,
+      error: `${input.lineLabel}: a serial-tracked product must be returned in whole units.`,
+    }
+  }
+  if (ids.length !== input.qtyReturned) {
+    return {
+      ok: false,
+      error: `${input.lineLabel}: returning ${input.qtyReturned} but ${ids.length} unit${
+        ids.length === 1 ? ' was' : 's were'
+      } chosen. Pick exactly which ones are going back.`,
+    }
+  }
+  if (ids.length === 0) return { ok: true }
+
+  // Locked for the same reason the receipt locks: two returns racing for the
+  // same unit must not both succeed.
+  const [rows] = await tx.execute(
+    `SELECT id, serial, status, product_id, location_id FROM product_serials
+      WHERE id IN (${ids.map(() => '?').join(',')})
+      FOR UPDATE`,
+    ids as never,
+  )
+  const found = rows as Row[]
+
+  if (found.length !== ids.length) {
+    return { ok: false, error: `${input.lineLabel}: one of those units no longer exists.` }
+  }
+
+  for (const row of found) {
+    if (Number(row.product_id) !== input.productId) {
+      return {
+        ok: false,
+        error: `${input.lineLabel}: serial ${row.serial} belongs to a different product.`,
+      }
+    }
+    if (String(row.status) !== 'in_stock') {
+      const status = String(row.status) as SerialStatus
+      return {
+        ok: false,
+        error: `${input.lineLabel}: serial ${row.serial} is not in stock — it is marked ${SERIAL_LABELS[
+          status
+        ].toLowerCase()}.`,
+      }
+    }
+  }
+
+  // Where each unit was standing, read from the locked rows BEFORE the update
+  // clears it. Written onto the movement so the trail says which room the unit
+  // left, which is the whole point of recording a from_location.
+  const wasIn = new Map(found.map((r) => [Number(r.id), r.location_id === null ? null : Number(r.location_id)]))
+
+  for (const serialId of ids) {
+    await tx.execute(
+      `UPDATE product_serials
+          SET status = 'returned_to_supplier',
+              location_id = NULL,
+              note = COALESCE(?, note)
+        WHERE id = ?`,
+      [input.note?.slice(0, 190) ?? null, serialId] as never,
+    )
+    await tx.execute(
+      `INSERT INTO serial_movements
+         (serial_id, action, document_id, from_location_id, user_id, user_name, note)
+       VALUES (?, 'returned_to_supplier', ?, ?, ?, ?, ?)`,
+      [
+        serialId,
+        input.documentId,
+        wasIn.get(serialId) ?? null,
+        actor.userId,
+        actor.userName.slice(0, 120),
+        input.note?.slice(0, 190) ?? null,
+      ] as never,
+    )
+  }
+
+  return { ok: true }
 }
 
 export type SellResult = { ok: true; sold: number } | { ok: false; error: string }

@@ -44,6 +44,10 @@ const TONE: Record<SerialStatus, 'success' | 'neutral' | 'warning' | 'danger'> =
   sold: 'neutral',
   returned: 'warning',
   written_off: 'danger',
+  // Neutral, not warning: the unit has left the building and been credited, so
+  // it needs no decision from anyone here. `returned` keeps the warning because
+  // that one is still on a shelf waiting to be dealt with.
+  returned_to_supplier: 'neutral',
 }
 
 function formatDate(value: Date | string | null): string {

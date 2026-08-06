@@ -22,9 +22,12 @@ export function StatementDocument({
   variant = 'statement',
 }: {
   data: StatementData
-  variant?: 'statement' | 'remittance'
+  variant?: 'statement' | 'remittance' | 'supplier-statement'
 }) {
   const isRemittance = variant === 'remittance'
+  // Our own view of a supplier account: same document, but we are the one who
+  // owes, so it must not ask them to quote a code or open a query window.
+  const isSupplier = variant === 'supplier-statement'
 
   return (
     <article className="mx-auto w-full max-w-[52rem] bg-surface p-8 text-ink">
@@ -37,7 +40,11 @@ export function StatementDocument({
         </div>
         <div className="text-right">
           <h2 className="text-xl font-semibold tracking-wide text-ink">
-            {isRemittance ? 'REMITTANCE ADVICE' : 'STATEMENT'}
+            {isRemittance
+              ? 'REMITTANCE ADVICE'
+              : isSupplier
+                ? 'SUPPLIER ACCOUNT'
+                : 'STATEMENT'}
           </h2>
           <p className="mt-1 text-xs text-muted">
             {data.period.from} to {data.period.to}
@@ -186,7 +193,7 @@ export function StatementDocument({
           )}
           <div className="flex items-center justify-between bg-surface-2 px-4 py-3">
             <span className="font-medium text-ink">
-              {isRemittance ? 'Amount paid' : 'Amount due'}
+              {isRemittance ? 'Amount paid' : isSupplier ? 'Balance owed' : 'Amount due'}
             </span>
             <span className="numeric text-lg font-semibold text-ink">
               {formatMoney(Math.abs(data.closingBalance))}
@@ -198,6 +205,11 @@ export function StatementDocument({
       <footer className="mt-8 border-t border-border pt-4 text-xs text-muted">
         {isRemittance ? (
           <p>Payment has been made to the banking details we hold for you.</p>
+        ) : isSupplier ? (
+          <p>
+            Our account <span className="text-ink-2">{data.account.code}</span>. Our records as at{' '}
+            {data.period.to} — please advise of any difference against your own statement.
+          </p>
         ) : (
           <p>
             Please quote your account code <span className="text-ink-2">{data.account.code}</span>{' '}

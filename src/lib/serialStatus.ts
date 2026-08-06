@@ -9,12 +9,26 @@
  * The values match the ENUM in migration 021.
  */
 
-export const SERIAL_STATUSES = ['in_stock', 'sold', 'returned', 'written_off'] as const
+export const SERIAL_STATUSES = [
+  'in_stock',
+  'sold',
+  'returned',
+  'written_off',
+  'returned_to_supplier',
+] as const
 export type SerialStatus = (typeof SERIAL_STATUSES)[number]
 
+/**
+ * `returned` and `returned_to_supplier` are deliberately separate.
+ *
+ * The first is a faulty unit the shop is still holding and has to decide about;
+ * the second has physically left the building and been credited. Only one of
+ * them is an answer to "what faulty stock am I sitting on?".
+ */
 export const SERIAL_LABELS: Record<SerialStatus, string> = {
   in_stock: 'In stock',
   sold: 'Sold',
   returned: 'Returned — not resellable',
   written_off: 'Written off',
+  returned_to_supplier: 'Returned to supplier',
 }

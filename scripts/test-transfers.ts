@@ -179,7 +179,7 @@ async function main() {
 
   const afterVoid = await getTransfer(SITE, moved.id)
   ok('  the voided transfer KEEPS its number', afterVoid?.documentNumber === moved.documentNumber)
-  ok('  and records the reason', afterVoid?.voidReason === 'Sent to the wrong room')
+  ok('  and records the reason', afterVoid?.cancelReason === 'Sent to the wrong room')
 
   // ── Cannot pull back what has since gone
   const again = await postTransfer(SITE, actor, {

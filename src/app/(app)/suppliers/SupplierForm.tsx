@@ -67,9 +67,8 @@ export default function SupplierForm({
         )}
 
         <Card>
+          <SectionTitle icon={<Icons.Truck size={16} />}>Account</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Truck size={15} />}>Account</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Code" hint="Unique. Appears on orders and remittances.">
                 <Input name="code" defaultValue={supplier?.code ?? ''} required maxLength={32} />
@@ -114,9 +113,8 @@ export default function SupplierForm({
         </Card>
 
         <Card>
+          <SectionTitle icon={<Icons.Clock size={16} />}>Trading terms</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Clock size={15} />}>Trading terms</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-4">
               <Field label="Payment terms (days)" hint="Drives the payables age analysis.">
                 <NumberInput
@@ -158,9 +156,8 @@ export default function SupplierForm({
         </Card>
 
         <Card>
+          <SectionTitle icon={<Icons.Mail size={16} />}>Contact</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Mail size={15} />}>Contact</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Contact name">
                 <Input name="contactName" defaultValue={supplier?.contactName ?? ''} maxLength={120} />
@@ -197,9 +194,8 @@ export default function SupplierForm({
         </Card>
 
         <Card>
+          <SectionTitle icon={<Icons.Banknote size={16} />}>Banking</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Banknote size={15} />}>Banking</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Bank">
                 <Input name="bankName" defaultValue={supplier?.bankName ?? ''} maxLength={120} />

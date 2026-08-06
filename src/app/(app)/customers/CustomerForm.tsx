@@ -86,9 +86,8 @@ export default function CustomerForm({
         )}
 
         <Card>
+          <SectionTitle icon={<Icons.Contact size={16} />}>Account</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Contact size={15} />}>Account</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Code" hint="Unique. Appears on statements and invoices.">
                 <Input name="code" defaultValue={customer?.code ?? ''} required maxLength={32} />
@@ -98,7 +97,10 @@ export default function CustomerForm({
               </Field>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            {/* Status and account type sit on one row; Reason takes the third
+                column only when the status calls for one, so the two selects
+                stay put either way rather than reflowing as it appears. */}
+            <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Status">
                 <Select
                   name="status"
@@ -109,6 +111,22 @@ export default function CustomerForm({
                   <option value="on_hold">On hold</option>
                   <option value="inactive">Inactive</option>
                   <option value="closed">Closed</option>
+                </Select>
+              </Field>
+              <Field
+                label="Account type"
+                hint="Decides whether this customer may buy on account, and who allocates their payments."
+              >
+                <Select
+                  name="accountType"
+                  value={accountType}
+                  onChange={(e) => setAccountType(toAccountType(e.target.value))}
+                >
+                  {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
                 </Select>
               </Field>
               {status !== 'active' && (
@@ -123,23 +141,6 @@ export default function CustomerForm({
               )}
             </div>
 
-            <Field
-              label="Account type"
-              hint="Decides whether this customer may buy on account, and who allocates their payments."
-            >
-              <Select
-                name="accountType"
-                value={accountType}
-                onChange={(e) => setAccountType(toAccountType(e.target.value))}
-              >
-                {ACCOUNT_TYPE_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
             {/* The chosen type's own description, rather than a hint that has to
                 describe all four at once. Selecting is the moment someone wants
                 to know what they just picked. */}
@@ -148,9 +149,8 @@ export default function CustomerForm({
         </Card>
 
         <Card>
+          <SectionTitle icon={<Icons.Users size={16} />}>Classification</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Users size={15} />}>Classification</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-3">
               <Field
                 label="Group"
@@ -197,9 +197,8 @@ export default function CustomerForm({
         </Card>
 
         <Card>
+          <SectionTitle icon={<Icons.Coins size={16} />}>Credit terms</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Coins size={15} />}>Credit terms</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Payment terms (days)" hint="Zero means cash on delivery.">
                 <NumberInput
@@ -226,9 +225,8 @@ export default function CustomerForm({
         </Card>
 
         <Card>
+          <SectionTitle icon={<Icons.Mail size={16} />}>Contact</SectionTitle>
           <CardBody className="flex flex-col gap-4">
-            <SectionTitle icon={<Icons.Mail size={15} />}>Contact</SectionTitle>
-
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Contact name">
                 <Input name="contactName" defaultValue={customer?.contactName ?? ''} maxLength={120} />

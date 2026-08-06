@@ -176,7 +176,7 @@ async function main() {
   ok('  void returned the stock', (await stockOf(normalId)) === beforeVoid + 3, `${beforeVoid} -> ${await stockOf(normalId)}`)
   const afterVoid = (await getDocument(SITE, draft.id))!
   ok('  voided document KEEPS its number', afterVoid.documentNumber === fin.documentNumber, String(afterVoid.documentNumber))
-  ok('  and records the reason', afterVoid.voidReason === 'Rang up twice')
+  ok('  and records the reason', afterVoid.cancelReason === 'Rang up twice')
   ok('  double void refused', !(await voidDocument(SITE, actor, draft.id, 'again')).ok)
   ok('  finalised document cannot be discarded', !(await discardDocument(SITE, draft.id)).ok)
 

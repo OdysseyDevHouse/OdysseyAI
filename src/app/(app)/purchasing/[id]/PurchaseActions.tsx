@@ -19,12 +19,19 @@ export default function PurchaseActions({
   status,
   docType,
   voidable,
+  returnable = false,
 }: {
   documentId: number
   documentNumber: string | null
   status: string
   docType: string
   voidable: boolean
+  /**
+   * A finalised GRV with something still left to send back. False once every
+   * line has gone, so the button does not lead to a screen that can only say
+   * there is nothing to do.
+   */
+  returnable?: boolean
 }) {
   const [cancelling, setCancelling] = useState(false)
   const [voiding, setVoiding] = useState(false)
@@ -73,10 +80,21 @@ export default function PurchaseActions({
         </Button>
       )}
 
+      {/* Offered alongside the same-day void, not instead of it: on the day
+          itself both are legitimate, and they mean different things to a VAT
+          return. Voiding says it never happened; returning says it did and the
+          goods are going back. */}
+      {returnable && (
+        <ButtonLink href={`/purchasing/${documentId}/return`} variant="secondary">
+          <Icons.Reverse size={15} />
+          Return to supplier
+        </ButtonLink>
+      )}
+
       {voidable && (
         <Button variant="danger-ghost" onClick={() => setVoiding(true)} disabled={pending}>
           <Icons.Ban size={15} />
-          Void
+          Cancel receipt
         </Button>
       )}
 
@@ -108,8 +126,9 @@ export default function PurchaseActions({
         open={voiding}
         onClose={() => setVoiding(false)}
         onConfirm={() => run(() => voidReceiptAction(documentId, reason))}
-        title={`Void ${documentNumber}?`}
-        confirmLabel="Void the receipt"
+        title={`Cancel ${documentNumber}?`}
+        confirmLabel="Yes, cancel it"
+        cancelLabel="Keep the receipt"
         busy={pending}
         message={
           <div className="flex flex-col gap-3">

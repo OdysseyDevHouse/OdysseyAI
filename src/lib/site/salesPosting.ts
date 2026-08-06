@@ -559,7 +559,7 @@ export async function voidDocument(
 
     await tx.execute(
       `UPDATE sales_documents
-          SET status = 'cancelled', void_reason = ?, voided_at = NOW(), voided_by_user_id = ?
+          SET status = 'cancelled', cancel_reason = ?, cancelled_at = NOW(), cancelled_by_user_id = ?
         WHERE id = ?`,
       [reason.trim().slice(0, 190), actor.userId, document.id] as never,
     )

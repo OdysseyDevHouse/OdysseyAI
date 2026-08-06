@@ -123,4 +123,16 @@ export {
   Bell,
   LogOut,
   CircleQuestionMark as HelpCircle,
+  // account contacts, documents and comments
+  Paperclip,
+  Pin,
+  PinOff,
+  MessageSquare,
+  UserPlus,
+  Phone,
+  Star,
+  File as FileIcon,
+  FileImage,
+  FileSpreadsheet,
+  FileArchive,
 } from 'lucide-react'

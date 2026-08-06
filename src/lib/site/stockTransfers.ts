@@ -38,7 +38,7 @@ import type { Actor } from './activityLog'
  * but it is a record of what the stock was worth, not a repricing.
  */
 
-export type TransferStatus = 'draft' | 'posted' | 'void'
+export type TransferStatus = 'draft' | 'posted' | 'cancelled'
 
 export type TransferLine = {
   id: number
@@ -63,7 +63,7 @@ export type StockTransfer = {
   reference: string | null
   note: string | null
   postedAt: Date | null
-  voidReason: string | null
+  cancelReason: string | null
   userName: string
   lines: TransferLine[]
   /** Line count and total quantity, for a list that does not load the lines. */
@@ -88,7 +88,7 @@ function mapTransfer(r: Row, lines: TransferLine[] = []): StockTransfer {
     reference: (r.reference as string | null) ?? null,
     note: (r.note as string | null) ?? null,
     postedAt: (r.posted_at as Date | null) ?? null,
-    voidReason: (r.void_reason as string | null) ?? null,
+    cancelReason: (r.cancel_reason as string | null) ?? null,
     userName: String(r.user_name ?? ''),
     lines,
     lineCount: Number(r.line_count ?? lines.length),
@@ -99,7 +99,7 @@ function mapTransfer(r: Row, lines: TransferLine[] = []): StockTransfer {
 const SELECT_TRANSFER = `
   SELECT t.id, t.document_number, t.document_date,
          t.from_location_id, t.to_location_id, t.status, t.reference, t.note,
-         t.posted_at, t.void_reason, t.user_name,
+         t.posted_at, t.cancel_reason, t.user_name,
          f.code AS from_code, f.name AS from_name,
          g.code AS to_code,   g.name AS to_name,
          (SELECT COUNT(*)             FROM stock_transfer_lines l WHERE l.transfer_id = t.id) AS line_count,
@@ -403,7 +403,7 @@ export async function voidTransfer(
 
   const transfer = await getTransfer(siteId, id)
   if (!transfer) return { ok: false, error: 'That transfer no longer exists.' }
-  if (transfer.status === 'void') return { ok: false, error: 'That transfer is already void.' }
+  if (transfer.status === 'cancelled') return { ok: false, error: 'That transfer is already void.' }
   if (transfer.status !== 'posted') return { ok: false, error: 'Only a posted transfer can be voided.' }
 
   if (await isPeriodLocked(siteId, transfer.documentDate)) {
@@ -479,7 +479,7 @@ export async function voidTransfer(
 
       await tx.execute(
         `UPDATE stock_transfers
-            SET status = 'void', void_reason = ?, voided_at = NOW()
+            SET status = 'cancelled', cancel_reason = ?, cancelled_at = NOW()
           WHERE id = ?`,
         [reason.trim().slice(0, 190), transfer.id] as never,
       )

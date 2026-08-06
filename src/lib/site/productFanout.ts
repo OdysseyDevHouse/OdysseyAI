@@ -57,9 +57,6 @@ export type FanoutValues = {
     {
       lastCost?: number
       prices?: Record<number, number>
-      /** Reorder levels are never shared — always that store's own. */
-      minStock?: number
-      maxStock?: number
     }
   >
   /**
@@ -235,16 +232,11 @@ async function applyToStore(
         sets.push('selling_vat_rate_id = ?')
         params.push(sellingVatId)
       }
-      // Levels are always that store's own; stock_on_hand is never written from
-      // here, since it is a consequence of movements rather than a setting.
-      if (own?.minStock !== undefined) {
-        sets.push('min_stock = ?')
-        params.push(own.minStock.toFixed(3))
-      }
-      if (own?.maxStock !== undefined) {
-        sets.push('max_stock = ?')
-        params.push(own.maxStock.toFixed(3))
-      }
+      /* Reorder levels are NOT fanned out. They belong to a (product,
+         location) pair in the receiving store's own product_location_stock,
+         and this fan-out knows nothing about that store's rooms — it matches
+         products by code across databases, not locations. A store sets its own
+         levels on its own product screen. */
 
       sets.push('last_edit_date = NOW()')
       params.push(productId)
@@ -283,9 +275,9 @@ async function applyToStore(
         `INSERT INTO products
            (code, barcode, description, extra_description, product_type,
             purchase_vat_rate_id, selling_vat_rate_id,
-            last_cost, average_cost, stock_on_hand, min_stock, max_stock,
+            last_cost, average_cost, stock_on_hand,
             is_archived${propertyColumns}, last_edit_date)
-         VALUES (?,?,?,?,?, ?,?, ?,?, 0,0,0, 0${propertyPlaceholders}, NOW())`,
+         VALUES (?,?,?,?,?, ?,?, ?,?, 0, 0${propertyPlaceholders}, NOW())`,
         [
           code,
           values.barcode,
@@ -434,8 +426,16 @@ export type LinkedProductView = {
   prices: { structureName: string; sellIncl: number }[]
   /** Stock is never shared — it is a physical fact about one location. */
   stockOnHand: number
-  minStock: number
-  maxStock: number
+  /**
+   * That store's own stock rooms and what each holds.
+   *
+   * Read from the store's own database, because locations are per-site: store
+   * 2's warehouse is a row in store 2's stock_locations, unrelated to any id
+   * here. The codes may even collide — two stores can both call a room MAIN —
+   * so these are only ever displayed grouped under their store, never merged
+   * into one list.
+   */
+  locations: { locationId: number; code: string; name: string; isMain: boolean; stockOnHand: number; minStock: number; maxStock: number }[]
   sharesCost: boolean
   sharesSelling: boolean
 }
@@ -454,13 +454,11 @@ export async function readLinkedProducts(
           id: number
           last_cost: string
           stock_on_hand: string
-          min_stock: string
-          max_stock: string
           is_archived: number
         }
       >(
         store.siteId,
-        'SELECT id, last_cost, stock_on_hand, min_stock, max_stock, is_archived FROM products WHERE code = ? LIMIT 1',
+        'SELECT id, last_cost, stock_on_hand, is_archived FROM products WHERE code = ? LIMIT 1',
         [code],
       )
       const settings = await shareSettingsFor(
@@ -484,13 +482,40 @@ export async function readLinkedProducts(
           lastCost: 0,
           prices: [],
           stockOnHand: 0,
-          minStock: 0,
-          maxStock: 0,
+          locations: [],
           sharesCost: settings.sharesCost,
           sharesSelling: settings.sharesSelling,
         })
         continue
       }
+
+      /*
+       * That store's rooms, from ITS database.
+       *
+       * LEFT JOIN so a room holding none of this product still appears with a
+       * zero — "the warehouse has none" is an answer, and a missing row would
+       * read as though the room did not exist. Inactive rooms are included
+       * only when they still hold something, matching locationStockFor here.
+       *
+       * Tolerates failure: a linked store that has not run the locations
+       * migration yet has no such table, and that must not take out the whole
+       * product page.
+       */
+      const locationRows = await siteQuery<
+        RowDataPacket & Record<string, unknown>
+      >(
+        store.siteId,
+        `SELECT l.id, l.code, l.name, l.is_main,
+                COALESCE(pls.stock_on_hand, 0) AS stock_on_hand,
+                COALESCE(pls.min_stock, 0)     AS min_stock,
+                COALESCE(pls.max_stock, 0)     AS max_stock
+           FROM stock_locations l
+           LEFT JOIN product_location_stock pls
+                  ON pls.location_id = l.id AND pls.product_id = ?
+          WHERE l.is_active = 1 OR COALESCE(pls.stock_on_hand, 0) <> 0
+          ORDER BY l.is_main DESC, l.sort_order ASC, l.code ASC`,
+        [product.id],
+      ).catch(() => [])
 
       const priceRows = await siteQuery<
         RowDataPacket & { name: string; selling_price_incl: string }
@@ -515,8 +540,15 @@ export async function readLinkedProducts(
           sellIncl: Number(r.selling_price_incl),
         })),
         stockOnHand: Number(product.stock_on_hand),
-        minStock: Number(product.min_stock),
-        maxStock: Number(product.max_stock),
+        locations: locationRows.map((r) => ({
+          locationId: Number(r.id),
+          code: String(r.code),
+          name: String(r.name),
+          isMain: Boolean(r.is_main),
+          stockOnHand: Number(r.stock_on_hand),
+          minStock: Number(r.min_stock),
+          maxStock: Number(r.max_stock),
+        })),
         sharesCost: settings.sharesCost,
         sharesSelling: settings.sharesSelling,
       })
@@ -532,8 +564,7 @@ export async function readLinkedProducts(
         lastCost: 0,
         prices: [],
         stockOnHand: 0,
-        minStock: 0,
-        maxStock: 0,
+        locations: [],
         sharesCost: store.sharesCost,
         sharesSelling: store.sharesSelling,
       })

@@ -25,9 +25,9 @@ export type SalesDocType = (typeof DOC_TYPES)[number]
  * A document's state.
  *
  * There is no 'void'. A posted document that is undone is CANCELLED — the two
- * were separate values meaning the same thing, and 'void' is now reserved for
+ * were separate values meaning the same thing, and "void" is now reserved for
  * what the till does to a basket that never posted at all. Migration 022
- * merged them.
+ * merged the values; 029 renamed the companion columns to match.
  */
 export const DOC_STATUSES = ['draft', 'parked', 'issued', 'finalised', 'cancelled'] as const
 export type SalesDocStatus = (typeof DOC_STATUSES)[number]
@@ -103,8 +103,8 @@ export type SalesDocument = {
   reference: string | null
   notes: string | null
   internalNote: string | null
-  voidReason: string | null
-  voidedAt: Date | null
+  cancelReason: string | null
+  cancelledAt: Date | null
   finalisedAt: Date | null
   printCount: number
   createdAt: Date
@@ -170,8 +170,8 @@ function mapDocument(r: Row, lines: SalesLine[]): SalesDocument {
     reference: (r.reference as string | null) ?? null,
     notes: (r.notes as string | null) ?? null,
     internalNote: (r.internal_note as string | null) ?? null,
-    voidReason: (r.void_reason as string | null) ?? null,
-    voidedAt: (r.voided_at as Date | null) ?? null,
+    cancelReason: (r.cancel_reason as string | null) ?? null,
+    cancelledAt: (r.cancelled_at as Date | null) ?? null,
     finalisedAt: (r.finalised_at as Date | null) ?? null,
     printCount: Number(r.print_count ?? 0),
     createdAt: r.created_at as Date,

@@ -115,7 +115,7 @@ async function main() {
   const doc = await getDocument(SITE, draft.id)
   ok('  the document is cancelled but KEEPS its number', doc?.status === 'cancelled' && doc?.documentNumber !== null,
     `${doc?.status} ${doc?.documentNumber}`)
-  ok('  with a stated reason', (doc?.voidReason ?? '').includes('wrong account'), doc?.voidReason ?? '')
+  ok('  with a stated reason', (doc?.cancelReason ?? '').includes('wrong account'), doc?.cancelReason ?? '')
 
   // ── An allocated payment must BLOCK the void, not strand the allocation
   const second = await saveDraft(SITE, actor, {

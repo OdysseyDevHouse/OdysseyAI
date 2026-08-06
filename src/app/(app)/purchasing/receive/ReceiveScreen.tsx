@@ -55,6 +55,13 @@ type ReceiveLine = {
   vatRatePct: number
   /** Which stock room this line's goods go into. Per line, not per delivery. */
   locationId: number | null
+  /**
+   * One serial per unit, for a serial-tracked product. Empty on every other
+   * line and never sent for them.
+   */
+  serials: string[]
+  /** Manufacturer expiry, applied to every serial captured on this line. */
+  warrantyUntil: string
   /** For the preview — what the product's cost is right now. */
   currentAverage: number
   currentStock: number
@@ -143,6 +150,8 @@ export default function ReceiveScreen({
             unitCostExcl: l.unitCostExcl,
             vatRatePct: l.vatRatePct,
             locationId: mainLocationId,
+            serials: [],
+            warrantyUntil: '',
             currentAverage: 0,
             currentStock: 0,
           })),
@@ -168,6 +177,8 @@ export default function ReceiveScreen({
         // Inherits whatever the previous line used, so allocating a whole
         // delivery to the warehouse is one choice rather than one per line.
         locationId: current[current.length - 1]?.locationId ?? mainLocationId,
+        serials: [],
+        warrantyUntil: '',
         currentAverage: product.costExcl,
         currentStock: product.stockOnHand,
       },
@@ -216,6 +227,10 @@ export default function ReceiveScreen({
           qtyReceived: l.qtyReceived,
           unitCostExcl: l.unitCostExcl,
           vatRatePct: l.vatRatePct,
+          // Only for the lines that carry them, so an ordinary receipt posts
+          // exactly the payload it always did.
+          serials: l.productType === 'serial' ? l.serials : undefined,
+          warrantyUntil: l.productType === 'serial' ? l.warrantyUntil || null : undefined,
         })),
       })
 
@@ -228,7 +243,24 @@ export default function ReceiveScreen({
     })
   }
 
-  const ready = supplierId !== '' && lines.length > 0 && lines.every((l) => l.qtyReceived > 0)
+  /**
+   * Lines whose serial count does not match what arrived.
+   *
+   * The posting path refuses these too — this only means the receiver is told
+   * before pressing the button rather than after, while the delivery note is
+   * still in their hand.
+   */
+  const serialGaps = lines.filter(
+    (l) =>
+      l.productType === 'serial' &&
+      (l.serials.length !== l.qtyReceived || !Number.isInteger(l.qtyReceived)),
+  )
+
+  const ready =
+    supplierId !== '' &&
+    lines.length > 0 &&
+    lines.every((l) => l.qtyReceived > 0) &&
+    serialGaps.length === 0
 
   const comboOptions: ComboboxOption<TillProduct>[] = options.map((p) => ({
     value: String(p.id),
@@ -469,6 +501,23 @@ export default function ReceiveScreen({
                       </div>
                     </div>
 
+                    {/* Serial capture, for the lines that need it. Rendered
+                        inline rather than behind a dialog: the delivery note is
+                        in the receiver's hand now, and a modal per line would
+                        make a ten-line delivery ten interruptions. */}
+                    {line.productType === 'serial' && (
+                      <SerialCapture
+                        serials={line.serials}
+                        warrantyUntil={line.warrantyUntil}
+                        qtyReceived={line.qtyReceived}
+                        onChange={(patch) =>
+                          setLines((c) =>
+                            c.map((l) => (l.key === line.key ? { ...l, ...patch } : l)),
+                          )
+                        }
+                      />
+                    )}
+
                     {/* The cost preview — the reason this screen exists. */}
                     {line.productId && (
                       <p className="mt-2 text-xs text-muted">
@@ -519,7 +568,13 @@ export default function ReceiveScreen({
 
         {!ready && (
           <p className="text-center text-xs text-muted">
-            {!supplierId ? 'Choose a supplier.' : 'Add what arrived.'}
+            {!supplierId
+              ? 'Choose a supplier.'
+              : lines.length === 0
+                ? 'Add what arrived.'
+                : serialGaps.length > 0
+                  ? `Every unit of ${serialGaps[0].description} needs a serial number.`
+                  : 'Add what arrived.'}
           </p>
         )}
 
@@ -531,6 +586,122 @@ export default function ReceiveScreen({
           </p>
         </Card>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The serial numbers arriving on one line.
+ *
+ * Built around scanning, because that is what actually happens at a delivery:
+ * the box is in one hand and the scanner in the other, and a scanner ends its
+ * read with Enter. So Enter takes the number and clears the field for the next
+ * one, and the box keeps focus throughout.
+ *
+ * Pasting a whole list is the fallback for a delivery note that arrived as a
+ * spreadsheet — splitting on commas, newlines, tabs and semicolons covers every
+ * shape one of those turns up in.
+ */
+function SerialCapture({
+  serials,
+  warrantyUntil,
+  qtyReceived,
+  onChange,
+}: {
+  serials: string[]
+  warrantyUntil: string
+  qtyReceived: number
+  onChange: (patch: { serials?: string[]; warrantyUntil?: string }) => void
+}) {
+  const [entry, setEntry] = useState('')
+
+  /** Adds one or many, refusing what is already on this line. */
+  function take(raw: string) {
+    const incoming = raw
+      .split(/[\n,;\t]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (incoming.length === 0) return
+
+    const seen = new Set(serials)
+    const fresh = incoming.filter((s) => !seen.has(s) && seen.add(s))
+    if (fresh.length > 0) onChange({ serials: [...serials, ...fresh] })
+    setEntry('')
+  }
+
+  const short = qtyReceived - serials.length
+  const whole = Number.isInteger(qtyReceived)
+
+  return (
+    <div className="mt-3 rounded-control border border-border bg-surface-2 p-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Icons.Barcode size={15} className="text-muted" />
+          <span className="text-sm font-medium text-ink">Serial numbers</span>
+          {!whole ? (
+            <Badge tone="danger">whole units only</Badge>
+          ) : short === 0 ? (
+            <Badge tone="success">{serials.length} of {qtyReceived}</Badge>
+          ) : (
+            <Badge tone="warning">
+              {serials.length} of {qtyReceived} — {short > 0 ? `${short} still to scan` : `${-short} too many`}
+            </Badge>
+          )}
+        </div>
+
+        <Field label="Warranty until" className="w-44">
+          <Input
+            type="date"
+            value={warrantyUntil}
+            onChange={(e) => onChange({ warrantyUntil: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-3 max-w-md">
+        <Input
+          value={entry}
+          placeholder="Scan or type a serial, then press Enter"
+          aria-label="Serial number"
+          onChange={(e) => {
+            // A scanner that sends its whole payload at once, including the
+            // separators, is handled here rather than waiting for Enter.
+            if (/[\n,;\t]/.test(e.target.value)) take(e.target.value)
+            else setEntry(e.target.value)
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            // Swallowed so a scanner's trailing Enter takes the serial instead
+            // of submitting the receipt half-captured.
+            e.preventDefault()
+            take(entry)
+          }}
+        />
+      </div>
+
+      {serials.length > 0 && (
+        <ul className="mt-3 flex flex-wrap gap-1.5">
+          {serials.map((serial, i) => (
+            <li key={`${serial}-${i}`}>
+              <span className="inline-flex items-center gap-1.5 rounded-pill bg-surface px-2.5 py-1 text-xs">
+                <span className="numeric text-ink-2">{serial}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove serial ${serial}`}
+                  onClick={() => onChange({ serials: serials.filter((_, x) => x !== i) })}
+                  /* A chip's own remove affordance — smaller than any kit
+                     button variant, and inside a pill rather than beside it.
+                     data-kit-ok */
+                  data-kit-ok
+                  className="text-faint transition hover:text-danger"
+                >
+                  <Icons.Close size={12} />
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
