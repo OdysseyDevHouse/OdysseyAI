@@ -2,7 +2,17 @@ import { redirect } from 'next/navigation'
 import { requireCapability, requireSession } from '@/lib/auth'
 import { getSiteForUser } from '@/lib/sites'
 import { listSiteDatabases, probeSiteDatabase } from '@/lib/siteDb'
-import { PageHeader, PageBody, Card, CardHeader, Badge, EmptyState, Icons } from '@/components/ui'
+import {
+  PageHeader,
+  PageBody,
+  Badge,
+  Callout,
+  Card,
+  CardHeader,
+  EmptyState,
+  Icons,
+  SettingRow,
+} from '@/components/ui'
 
 /**
  * Site details and database health.
@@ -10,9 +20,25 @@ import { PageHeader, PageBody, Card, CardHeader, Badge, EmptyState, Icons } from
  * The probe is the point: every configured database is contacted when this
  * page loads, so a broken connection is reported HERE, by name, rather than
  * as a 500 on whichever screen happened to read from it first.
+ *
+ * Deliberately NOT streamed/Suspense'd: the probes gate the whole page, and
+ * restructuring the server rendering is out of scope for a visual pass.
  */
 
 export const dynamic = 'force-dynamic'
+
+/** cp2_site_databases purposes, as a person would say them. */
+function purposeLabel(purpose: string): string {
+  const known: Record<string, string> = {
+    master: 'Master',
+    site: 'Site',
+    stock_file: 'Stock file',
+    customer_file: 'Customer file',
+  }
+  if (known[purpose]) return known[purpose]
+  const spaced = purpose.replace(/_/g, ' ')
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}
 
 export default async function SiteDatabasesPage() {
   // Server hostnames, database names and usernames are on this page — worth a
@@ -64,14 +90,15 @@ export default async function SiteDatabasesPage() {
       <PageBody className="lg:flex-row lg:items-start">
         <Card className="flex-1">
           <CardHeader title="Site details" description={`Signed in as ${session.email}`} />
-          <dl className="divide-y divide-border">
+          <div>
             {details.map(([label, value]) => (
-              <div key={label} className="flex justify-between gap-4 px-5 py-2.5 text-sm">
-                <dt className="shrink-0 text-muted">{label}</dt>
-                <dd className="truncate text-right text-ink">{value || '—'}</dd>
-              </div>
+              <SettingRow key={label} label={label}>
+                <span className="max-w-64 truncate text-sm text-ink" title={value ?? undefined}>
+                  {value || '—'}
+                </span>
+              </SettingRow>
             ))}
-          </dl>
+          </div>
         </Card>
 
         <Card className="flex-1">
@@ -96,33 +123,34 @@ export default async function SiteDatabasesPage() {
               {databases.map((d, i) => {
                 const probe = probes[i]
                 return (
-                  <li key={d.id} className="px-5 py-3">
+                  <li key={d.id} className="px-5 py-3.5">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-ink">{d.purpose}</span>
+                      <span className="text-sm font-medium text-ink">
+                        {purposeLabel(d.purpose)}
+                      </span>
                       {probe.ok ? (
-                        <span className="flex items-center gap-1.5 text-xs text-success">
-                          <Icons.StatusSuccess size={13} />
-                          Connected
-                        </span>
+                        <Badge tone="success">Connected</Badge>
                       ) : (
-                        <span className="flex items-center gap-1.5 text-xs text-danger">
-                          <Icons.StatusFailure size={13} />
-                          Unreachable
-                        </span>
+                        <Badge tone="danger">Unreachable</Badge>
                       )}
                     </div>
-                    <div className="mt-1 truncate text-xs text-muted">
+                    {/* Mono: a connection string gets compared character by
+                        character against configs elsewhere, and a proportional
+                        face hides the o/0 and l/1 slips. */}
+                    <div className="mt-1 truncate font-mono text-sm text-muted">
                       {d.host}:{d.port}/{d.databaseName}
                     </div>
                     {!d.credentialsUsable && (
-                      <p className="mt-1 text-xs text-warning">
+                      <Callout tone="warning" className="mt-2">
                         {process.env.ENCRYPTION_KEY
                           ? 'Stored password could not be decrypted — ENCRYPTION_KEY does not match the backend that wrote it.'
                           : 'ENCRYPTION_KEY is not set in .env — copy it from the v2 backend.'}
-                      </p>
+                      </Callout>
                     )}
                     {probe.error && (
-                      <p className="mt-1 break-words text-xs text-danger">{probe.error}</p>
+                      <Callout tone="danger" className="mt-2">
+                        <span className="break-words">{probe.error}</span>
+                      </Callout>
                     )}
                   </li>
                 )

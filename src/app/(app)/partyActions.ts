@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
 import {
   createContact,
   updateContact,
@@ -77,7 +77,8 @@ export async function saveContactAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 
@@ -109,7 +110,8 @@ export async function deleteContactAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 
@@ -138,7 +140,8 @@ export async function uploadDocumentAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 
@@ -177,7 +180,8 @@ export async function renameDocumentAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 
@@ -204,7 +208,8 @@ export async function deleteDocumentAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 
@@ -229,7 +234,8 @@ export async function saveCommentAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 
@@ -257,7 +263,8 @@ export async function pinCommentAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 
@@ -285,7 +292,8 @@ export async function deleteCommentAction(
   _prev: PartyActionState,
   form: FormData,
 ): Promise<PartyActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const target = readParty(form)
   if (!target) return { ok: false, error: 'That account could not be identified.', message: null }
 

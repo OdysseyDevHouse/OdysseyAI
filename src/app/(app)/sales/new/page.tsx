@@ -61,6 +61,7 @@ export default async function NewSalePage() {
         savedCount={saved.length}
         cashRounding={cashRounding}
         canOverrideDiscount={can(operatorCapabilities, 'sales.discount_override')}
+        canOverridePrice={can(operatorCapabilities, 'sales.price_override')}
         operatorName={till.name}
       />
     </div>

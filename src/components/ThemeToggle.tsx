@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { Moon, Sun } from '@/components/ui/icons'
 
 export const THEME_KEY = 'odyssey.theme'
@@ -38,6 +38,20 @@ export default function ThemeToggle() {
   useEffect(() => {
     setTheme(storedTheme() ?? systemTheme())
     setReady(true)
+  }, [])
+
+  /*
+   * Puts the attribute back after React's development remount clears it.
+   *
+   * Strict Mode remounts once and resets <html> to only the attributes it
+   * manages from JSX, discarding the one the inline script in layout.tsx set
+   * during parsing. Without this, a user on dark drops to light the moment
+   * React hydrates in development. A no-op in production, and useLayoutEffect
+   * rather than useEffect so it lands before the browser paints.
+   */
+  useLayoutEffect(() => {
+    const stored = storedTheme()
+    if (stored) document.documentElement.dataset.theme = stored
   }, [])
 
   // While no explicit choice exists, track the OS if it changes mid-session.

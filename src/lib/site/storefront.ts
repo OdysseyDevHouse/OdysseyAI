@@ -41,8 +41,30 @@ export type StorefrontProduct = {
   departmentId: number | null
   departmentName: string | null
   priceIncl: number
-  /** Whether the shop has any on the shelf. Never an exact count — see below. */
+  /** Whether the shop has any on the shelf. */
   inStock: boolean
+  /**
+   * How many are left, or null when the shop does not publish stock levels.
+   *
+   * Gated on the store's `showStock` setting rather than always sent, because
+   * the exact figure is genuinely sensitive: it tells a competitor what the
+   * shop is holding, and it is only ever as good as the last stock take. A
+   * shop that opts in gets "Only 3 left"; one that does not gets a plain
+   * in-stock/sold-out and this stays null all the way to the browser, so the
+   * number is never in the page source for someone to read.
+   */
+  stockOnHand: number | null
+  /** The maker's name, when the shop records one. */
+  brand: string | null
+  /**
+   * The price before a reduction, when this product is on special.
+   *
+   * Always null today: this schema has one selling price per structure and no
+   * promotions table. Carried on the type because the tiles and the product
+   * page draw savings from it, so a specials feature becomes a query change
+   * rather than a change to every screen that shows a price.
+   */
+  wasPriceIncl: number | null
   /**
    * The id of the picture to show, or null for none.
    *
@@ -108,6 +130,51 @@ const SELLABLE = `
 `
 
 /**
+ * The columns every storefront product query selects.
+ *
+ * ONE fragment, three callers — the listing, the single product and the newest
+ * row. These were three hand-maintained copies of the same SELECT, and when
+ * the picture subquery was added a `replace_all` matched two of them and
+ * silently skipped the third: a product showed its photograph on its own page
+ * and a bare tile in every listing. Sharing the text makes that impossible.
+ *
+ * `mapStorefrontProduct` is the other half of the contract — add a column here
+ * and read it there.
+ */
+const PRODUCT_COLUMNS = `
+  p.id, p.code, p.description, p.department_id,
+  dep.name AS department_name,
+  br.name AS brand_name,
+  pp.selling_price_incl AS price_incl,
+  (p.stock_on_hand > 0) AS in_stock,
+  -- The raw figure travels; whether it reaches the browser is decided by the
+  -- store's show_stock setting in mapStorefrontProduct, so a shop that does
+  -- not publish stock never has the number in its page source at all.
+  p.stock_on_hand,
+  -- The picture, by the same rule everywhere: the primary one, else the
+  -- lowest-sorted. Correlated subqueries rather than a JOIN, which would
+  -- multiply the product row once per photo.
+  (SELECT pi.id FROM product_images pi
+    WHERE pi.product_id = p.id
+    ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_id,
+  (SELECT pi.alt_text FROM product_images pi
+    WHERE pi.product_id = p.id
+    ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_alt
+`
+
+/** The joins those columns need. Travels with them for the same reason. */
+const PRODUCT_JOINS = `
+  FROM products p
+  JOIN product_prices pp
+    ON pp.product_id = p.id
+   AND pp.price_structure_id = COALESCE(?, (
+         SELECT id FROM price_structures WHERE is_default = 1 ORDER BY id LIMIT 1
+       ))
+  LEFT JOIN departments dep ON dep.id = p.department_id
+  LEFT JOIN brands br ON br.id = p.brand_id
+`
+
+/**
  * Resolve a storefront request to a store, or null when it cannot serve one.
  *
  * Null means "there is no shop here" and the route must 404 — an off store and
@@ -140,6 +207,18 @@ export type CatalogueOptions = {
   search?: string
   limit?: number
   offset?: number
+  /**
+   * Restrict to specific products — the page builder's "products I pick".
+   *
+   * Goes through this function rather than a SELECT of its own so a picked
+   * product still has to pass SELLABLE and the publish mode. An owner who
+   * picks something and later unpublishes it should see it LEAVE the row,
+   * not have the pick override the visibility rules from inside the layout.
+   *
+   * An empty array is not the same as undefined: it means "nothing was
+   * picked" and must return nothing, where undefined means "no restriction".
+   */
+  ids?: number[]
 }
 
 export async function publishedProducts(
@@ -148,6 +227,20 @@ export async function publishedProducts(
 ): Promise<StorefrontProduct[]> {
   const where: string[] = [SELLABLE, publishFilter(context.settings.publishMode)]
   const params: unknown[] = [context.settings.priceStructureId]
+
+  /*
+   * A picked list. Filtered to integers before interpolation — these go into
+   * the SQL text rather than as placeholders because the count varies, so
+   * anything that is not provably a number must not reach the string.
+   */
+  let picked: number[] | null = null
+  if (options.ids) {
+    picked = [...new Set(options.ids.filter((id) => Number.isInteger(id) && id > 0))]
+    // Asked for nothing, get nothing — an empty IN () is a syntax error, and
+    // silently dropping the clause would return the entire catalogue.
+    if (picked.length === 0) return []
+    where.push(`p.id IN (${picked.join(',')})`)
+  }
 
   if (options.departmentId) {
     // Includes the chosen department's descendants, so browsing a parent shows
@@ -174,36 +267,15 @@ export async function publishedProducts(
 
   const rows = await siteQuery<Row>(
     context.siteId,
-    `SELECT p.id, p.code, p.description, p.department_id,
-            dep.name AS department_name,
-            pp.selling_price_incl AS price_incl,
-            -- BOOLEAN, not a count. Publishing exact stock levels tells
-            -- competitors what a shop holds, and tells a shopper "3 left" on a
-            -- figure that is only as good as the last stock take.
-            (p.stock_on_hand > 0) AS in_stock,
-            -- The picture, by the same rule everywhere: the primary one, else
-            -- the lowest-sorted. Correlated subqueries rather than a JOIN,
-            -- which would multiply the product row once per photo.
-            (SELECT pi.id FROM product_images pi
-              WHERE pi.product_id = p.id
-              ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_id,
-            (SELECT pi.alt_text FROM product_images pi
-              WHERE pi.product_id = p.id
-              ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_alt
-       FROM products p
-       JOIN product_prices pp
-         ON pp.product_id = p.id
-        AND pp.price_structure_id = COALESCE(?, (
-              SELECT id FROM price_structures WHERE is_default = 1 ORDER BY id LIMIT 1
-            ))
-       LEFT JOIN departments dep ON dep.id = p.department_id
+    `SELECT ${PRODUCT_COLUMNS}
+     ${PRODUCT_JOINS}
       WHERE ${where.join(' AND ')}
-      ORDER BY p.description
+      ORDER BY ${picked ? `FIELD(p.id, ${picked.join(',')})` : 'p.description'}
       LIMIT ${limit} OFFSET ${offset}`,
     params,
   )
 
-  return rows.map(mapStorefrontProduct)
+  return rows.map((r) => mapStorefrontProduct(r, context.settings))
 }
 
 /** One product, but ONLY if the store actually publishes it. */
@@ -213,32 +285,13 @@ export async function publishedProduct(
 ): Promise<StorefrontProduct | null> {
   const rows = await siteQuery<Row>(
     context.siteId,
-    `SELECT p.id, p.code, p.description, p.department_id,
-            dep.name AS department_name,
-            pp.selling_price_incl AS price_incl,
-            (p.stock_on_hand > 0) AS in_stock,
-            -- The picture, chosen by the same rule everywhere: the primary
-            -- one, else the lowest-sorted. A correlated subquery rather than a
-            -- JOIN, because joining the image table would multiply the product
-            -- row once per photo and quietly break every other figure here.
-            (SELECT pi.id FROM product_images pi
-              WHERE pi.product_id = p.id
-              ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_id,
-            (SELECT pi.alt_text FROM product_images pi
-              WHERE pi.product_id = p.id
-              ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_alt
-       FROM products p
-       JOIN product_prices pp
-         ON pp.product_id = p.id
-        AND pp.price_structure_id = COALESCE(?, (
-              SELECT id FROM price_structures WHERE is_default = 1 ORDER BY id LIMIT 1
-            ))
-       LEFT JOIN departments dep ON dep.id = p.department_id
+    `SELECT ${PRODUCT_COLUMNS}
+     ${PRODUCT_JOINS}
       WHERE p.id = ? AND ${SELLABLE} AND ${publishFilter(context.settings.publishMode)}`,
     [context.settings.priceStructureId, productId],
   )
   const r = rows[0]
-  return r ? mapStorefrontProduct(r) : null
+  return r ? mapStorefrontProduct(r, context.settings) : null
 }
 
 /** Departments worth showing: the ones with something published in them. */
@@ -281,50 +334,112 @@ export async function newestProducts(
   const capped = Math.min(Math.max(limit, 1), 24)
   const rows = await siteQuery<Row>(
     context.siteId,
-    `SELECT p.id, p.code, p.description, p.department_id,
-            dep.name AS department_name,
-            pp.selling_price_incl AS price_incl,
-            (p.stock_on_hand > 0) AS in_stock,
-            -- The picture, chosen by the same rule everywhere: the primary
-            -- one, else the lowest-sorted. A correlated subquery rather than a
-            -- JOIN, because joining the image table would multiply the product
-            -- row once per photo and quietly break every other figure here.
-            (SELECT pi.id FROM product_images pi
-              WHERE pi.product_id = p.id
-              ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_id,
-            (SELECT pi.alt_text FROM product_images pi
-              WHERE pi.product_id = p.id
-              ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS image_alt
-       FROM products p
-       JOIN product_prices pp
-         ON pp.product_id = p.id
-        AND pp.price_structure_id = COALESCE(?, (
-              SELECT id FROM price_structures WHERE is_default = 1 ORDER BY id LIMIT 1
-            ))
-       LEFT JOIN departments dep ON dep.id = p.department_id
+    `SELECT ${PRODUCT_COLUMNS}
+     ${PRODUCT_JOINS}
       WHERE ${SELLABLE} AND ${publishFilter(context.settings.publishMode)}
       ORDER BY p.id DESC
       LIMIT ${capped}`,
     [context.settings.priceStructureId],
   )
-  return rows.map(mapStorefrontProduct)
+  return rows.map((r) => mapStorefrontProduct(r, context.settings))
 }
 
-/** Shared row → product mapping, so every query here agrees on the shape. */
-function mapStorefrontProduct(r: Row): StorefrontProduct {
+/**
+ * Shared row → product mapping, so every query here agrees on the shape.
+ *
+ * Takes the settings because one field is a PUBLISHING decision rather than a
+ * formatting one: the exact stock figure is withheld here, at the boundary,
+ * rather than in the component that draws it. A component that decides not to
+ * render a number it was given still ships that number in the HTML.
+ */
+function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProduct {
+  const onHand = r.stock_on_hand === null || r.stock_on_hand === undefined
+    ? null
+    : Number(r.stock_on_hand)
+
   return {
     id: Number(r.id),
     code: String(r.code),
     description: String(r.description),
     departmentId: r.department_id === null ? null : Number(r.department_id),
     departmentName: (r.department_name as string | null) ?? null,
+    brand: (r.brand_name as string | null) ?? null,
     priceIncl: toNum(r.price_incl),
     inStock: !!r.in_stock,
+    stockOnHand: settings.showStock ? onHand : null,
+    // No promotions table yet — see the note on the type. Every screen that
+    // shows a saving already reads this, so adding one is a query change.
+    wasPriceIncl: null,
     imageId: r.image_id === null || r.image_id === undefined ? null : Number(r.image_id),
     // Falls back to the product's own name: an <img> with no alt is invisible
     // to a screen reader, and "" would announce nothing at all.
     imageAlt: String(r.image_alt ?? '') || String(r.description ?? ''),
   }
+}
+
+/**
+ * Fill each section with the products or departments it should show.
+ *
+ * Shared by the SHOP and the page BUILDER, deliberately. What a section
+ * contains is a rule — "the newest eight", "everything in Groceries" — and if
+ * the builder re-implemented it the preview would drift from the shop the
+ * moment either changed. One function, two callers, no drift.
+ *
+ * One pass, in parallel: a page with four product rows costs four queries at
+ * once rather than four in sequence.
+ */
+export async function resolveSectionContent(
+  context: StorefrontContext,
+  sections: readonly {
+    kind: string
+    maxItems?: number
+    source?: string
+    departmentId?: number | null
+    productIds?: number[]
+  }[],
+): Promise<{ products?: StorefrontProduct[]; departments?: StorefrontDepartment[] }[]> {
+  return Promise.all(
+    sections.map(async (section) => {
+      if (section.kind === 'categories') {
+        const all = await publishedDepartments(context)
+        const max = section.maxItems ?? 0
+        return { departments: max > 0 ? all.slice(0, max) : all }
+      }
+
+      if (section.kind === 'products') {
+        const limit = section.maxItems ?? 8
+        if (section.source === 'newest') {
+          return { products: await newestProducts(context, limit) }
+        }
+        if (section.source === 'department' && section.departmentId) {
+          return {
+            products: await publishedProducts(context, {
+              departmentId: section.departmentId,
+              limit,
+            }),
+          }
+        }
+        if (section.source === 'manual') {
+          /*
+           * The owner's own list, in the owner's own order. Still subject to
+           * the publish rules, so a pick that stops being sellable drops out
+           * of the row rather than 404-ing from the front page.
+           *
+           * NOT capped by maxItems: the picked list IS the intent. A stale
+           * maxItems of 8 left over from a "newest" rule must not silently
+           * swallow the 9th product someone deliberately chose.
+           */
+          const ids = section.productIds ?? []
+          return { products: await publishedProducts(context, { ids, limit: Math.max(ids.length, 1) }) }
+        }
+        // A department rule whose department was never chosen. Empty, which
+        // the shop draws as nothing and the builder explains.
+        return { products: [] }
+      }
+
+      return {}
+    }),
+  )
 }
 
 /* ── Delivery quoting ─────────────────────────────────────────────────────── */

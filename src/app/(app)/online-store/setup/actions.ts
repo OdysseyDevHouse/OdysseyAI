@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   deleteDeliveryZone,
@@ -22,7 +22,9 @@ import {
  */
 
 export async function saveSettingsAction(input: OnlineSettingsInput): Promise<SaveResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   // Read the row before writing so the log can say what actually changed.
   // Opening a public storefront is the most consequential switch in the app
@@ -61,7 +63,9 @@ export async function saveSettingsAction(input: OnlineSettingsInput): Promise<Sa
 }
 
 export async function saveZoneAction(input: ZoneInput): Promise<SaveResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await saveDeliveryZone(siteId, input)
   if (!result.ok) return result
 
@@ -77,7 +81,9 @@ export async function saveZoneAction(input: ZoneInput): Promise<SaveResult> {
 }
 
 export async function deleteZoneAction(id: number): Promise<SaveResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await deleteDeliveryZone(siteId, id)
   if (!result.ok) return result
 

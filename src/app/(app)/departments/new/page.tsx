@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listDepartments, flattenTree, departmentPath } from '@/lib/site/departments'
-import { PageHeader, Card } from '@/components/ui'
+import { Card, CardHeader, PageBody, PageHeader } from '@/components/ui'
 import DepartmentForm from '../DepartmentForm'
 
 export const dynamic = 'force-dynamic'
@@ -35,15 +35,19 @@ export default async function NewDepartmentPage({
         title="New department"
         subtitle={under ? `Under ${under}` : 'Top level'}
       />
-      <div className="p-6">
+      <PageBody>
         <Card>
+          <CardHeader
+            title="Department"
+            description="Name, position in the tree and presentation."
+          />
           <DepartmentForm
             department={null}
             parentOptions={parentOptions}
             defaultParentId={defaultParentId}
           />
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

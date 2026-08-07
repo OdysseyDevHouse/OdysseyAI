@@ -19,7 +19,11 @@ import { setDepartmentVisibilityAction } from './actions'
  * that would read as "this is hidden" when it plainly is not.
  */
 
-/** Indent per level, matching the Inventory tree. */
+/**
+ * Indent per level, matching the Inventory tree. Applied as a spacer element's
+ * width — the one place this number lives — rather than a paddingLeft that
+ * would fight the row's own horizontal padding.
+ */
 const INDENT = 24
 
 type Node = DepartmentVisibility & { children: Node[]; depth: number }
@@ -84,6 +88,12 @@ export default function DepartmentTree({
         toast.error(result.error)
         return
       }
+      // Silence after a switch flips reads as "did nothing" — say what changed.
+      toast.success(
+        next
+          ? `${node.name} is now shown in the online store.`
+          : `${node.name} is now hidden from the online store.`,
+      )
       router.refresh()
     })
   }
@@ -147,7 +157,9 @@ export default function DepartmentTree({
           title="Shown in the online store"
           description="Ticking a department also shows everything filed under it."
           action={
-            <Badge tone={counts.departments === 0 ? 'danger' : 'success'}>
+            /* A count is a count — neutral. Colour is saved for the one state
+               that needs attention: a store publishing nothing. */
+            <Badge tone={counts.departments === 0 ? 'danger' : 'neutral'}>
               {counts.departments.toLocaleString('en-ZA')} of{' '}
               {counts.total.toLocaleString('en-ZA')} products
             </Badge>
@@ -158,11 +170,17 @@ export default function DepartmentTree({
           {rows.map((node) => {
             const inherited = node.publishedByParent
             return (
-              <li
-                key={node.id}
-                className="flex items-center gap-3 px-6 py-3"
-                style={{ paddingLeft: 24 + node.depth * INDENT }}
-              >
+              // px-4 py-1.5 — the shared table rhythm (TABLE_TD), so this
+              // list sits at the same density as every other list, even
+              // though its live Switches keep it off DataTable.
+              <li key={node.id} className="flex items-center gap-3 px-4 py-1.5">
+                {node.depth > 0 && (
+                  <span
+                    aria-hidden
+                    className="shrink-0"
+                    style={{ width: node.depth * INDENT }}
+                  />
+                )}
                 {node.children.length > 0 ? (
                   <Button
                     variant="bare"

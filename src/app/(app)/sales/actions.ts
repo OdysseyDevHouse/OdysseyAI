@@ -1,8 +1,11 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId, requireSiteUser } from '@/lib/auth'
-import { can } from '@/lib/site/permissions'
+import { requireActor, requireSiteId, requireSiteUser, actorFor, actorForOrThrow } from '@/lib/auth'
+import { can, capabilitiesForRole, type CapabilitySet } from '@/lib/site/permissions'
+import { checkPricing } from '@/lib/site/priceGuard'
+import { getTillSession } from '@/lib/tillSession'
+import { getUser } from '@/lib/site/users'
 import { createCreditNote, creditableLines, type CreditNoteInput } from '@/lib/site/salesReversal'
 import {
   saveDraft,
@@ -39,7 +42,8 @@ export async function searchProductsAction(
   term: string,
   priceStructureId: number | null,
 ): Promise<TillProduct[]> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
   return searchForTill(siteId, term, priceStructureId)
 }
 
@@ -48,12 +52,14 @@ export async function scanAction(
   code: string,
   priceStructureId: number | null,
 ): Promise<TillProduct | null> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
   return resolveScan(siteId, code, priceStructureId)
 }
 
 export async function searchCustomersAction(term: string): Promise<TillCustomer[]> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
   return searchCustomersForTill(siteId, term)
 }
 
@@ -65,7 +71,8 @@ export async function searchCustomersAction(term: string): Promise<TillCustomer[
  * and the till should not offer credit that has since been used up.
  */
 export async function refreshCustomerAction(customerId: number): Promise<TillCustomer | null> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
   return getTillCustomer(siteId, customerId)
 }
 
@@ -83,16 +90,64 @@ export async function saveSaleAction(
     lines: LineInput[]
   },
 ): Promise<SaleResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  // Checked here, not only where the input was greyed out: this action is a
+  // public endpoint and the price arrives from the client.
+  const refused = await checkPricing(
+    siteId,
+    await operatorCapabilities(siteId, ctx.capabilities),
+    input.priceStructureId ?? null,
+    input.lines,
+  )
+  if (refused) return { ok: false, error: refused }
 
   const result = await saveDraft(
     siteId,
     actor,
-    { docType: 'invoice', ...input },
+    { docType: 'invoice', ...input, lines: attributeTo(input.lines, actor.userId) },
     documentId ?? undefined,
   )
   if (!result.ok) return { ok: false, error: result.error }
   return { ok: true, documentId: result.id }
+}
+
+/**
+ * Stamps every till line with whoever is at the till.
+ *
+ * Done on the SERVER from the PIN session rather than sent up by the browser:
+ * this decides who gets paid commission, and a value the client supplies is a
+ * value the client can choose. `requireActor` already resolves the till
+ * operator ahead of the browser session, so `actor.userId` is the person
+ * standing there rather than whoever opened the browser that morning.
+ *
+ * A line that already names someone keeps them — the back-office invoicing
+ * screen sets it explicitly per line, and that is a deliberate answer this
+ * must not overwrite.
+ */
+function attributeTo<T extends { salesRepUserId?: number | null }>(
+  lines: T[],
+  userId: number,
+): T[] {
+  return lines.map((line) => ({ ...line, salesRepUserId: line.salesRepUserId ?? userId }))
+}
+
+/**
+ * The capabilities of whoever is actually at the till.
+ *
+ * NOT the browser session's. A manager signed into the back office who hands
+ * the till to a junior must not leave their own price and discount rights
+ * behind on the screen — the PIN decides, exactly as it does for attribution.
+ * Falls back to the session when no till session exists, which is the
+ * back-office case.
+ */
+async function operatorCapabilities(siteId: number, fallback: CapabilitySet) {
+  const till = await getTillSession(siteId)
+  if (!till) return fallback
+  const operator = await getUser(siteId, till.userId)
+  return operator ? capabilitiesForRole(siteId, operator.roleId) : fallback
 }
 
 /**
@@ -122,7 +177,9 @@ export async function saveAsOrderAction(
   },
   details?: { deliveryDate?: string | null; customerOrderNo?: string | null },
 ): Promise<SaleResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   if (!input.customerId) {
     return { ok: false, error: 'Attach a customer before saving an order — an order is a promise to someone.' }
@@ -134,7 +191,7 @@ export async function saveAsOrderAction(
   const result = await saveDraft(
     siteId,
     actor,
-    { docType: 'sales_order', ...input },
+    { docType: 'sales_order', ...input, lines: attributeTo(input.lines, actor.userId) },
     documentId ?? undefined,
   )
   if (!result.ok) return { ok: false, error: result.error }
@@ -157,7 +214,9 @@ export async function saveAsOrderAction(
  * this calls first. Two different operations, two names.
  */
 export async function saveForLaterAction(documentId: number): Promise<SaleResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await saveForLaterDocument(siteId, documentId)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -166,7 +225,9 @@ export async function saveForLaterAction(documentId: number): Promise<SaleResult
 }
 
 export async function recallSaleAction(documentId: number): Promise<SaleResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await recallDocument(siteId, documentId)
   if (!result.ok) return { ok: false, error: result.error }
   return { ok: true, documentId: result.id }
@@ -175,7 +236,9 @@ export async function recallSaleAction(documentId: number): Promise<SaleResult> 
 export async function discardSaleAction(
   documentId: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await discardDocument(siteId, documentId)
   revalidatePath('/sales')
   return result
@@ -204,12 +267,24 @@ export async function finaliseSaleAction(
   },
   tenders: { tenderTypeId: number; amount: number; reference?: string | null }[],
 ): Promise<FinaliseSaleResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  // The one that takes money. Same check as the draft path, repeated rather
+  // than assumed: a basket can be saved by one person and finalised by another.
+  const refusedPrice = await checkPricing(
+    siteId,
+    await operatorCapabilities(siteId, ctx.capabilities),
+    sale.priceStructureId ?? null,
+    sale.lines,
+  )
+  if (refusedPrice) return { ok: false, error: refusedPrice }
 
   const saved = await saveDraft(
     siteId,
     actor,
-    { docType: 'invoice', ...sale },
+    { docType: 'invoice', ...sale, lines: attributeTo(sale.lines, actor.userId) },
     documentId ?? undefined,
   )
   if (!saved.ok) return { ok: false, error: saved.error }
@@ -247,7 +322,8 @@ export async function voidSaleAction(
 }
 
 export async function recordPrintAction(documentId: number): Promise<void> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
   await recordPrint(siteId, documentId)
 }
 
@@ -347,6 +423,8 @@ export async function creditWholeSaleAction(
 
 /** Reloads a saved sale's lines into the till. */
 export async function loadSaleAction(documentId: number) {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   return getDocument(siteId, documentId)
 }

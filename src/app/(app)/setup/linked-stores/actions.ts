@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import {
   groupForSite,
   createGroup,
@@ -23,7 +23,9 @@ export async function linkStoreAction(
   _prev: LinkFormState,
   form: FormData,
 ): Promise<LinkFormState> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const targetSiteId = Number(form.get('siteId'))
 
   if (!Number.isFinite(targetSiteId) || targetSiteId <= 0) {
@@ -59,7 +61,8 @@ export async function linkStoreAction(
 }
 
 export async function unlinkStoreAction(form: FormData): Promise<void> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('setup.edit')
+  const { siteId } = ctx
   const targetSiteId = Number(form.get('siteId'))
   const group = await groupForSite(siteId)
   if (group && Number.isFinite(targetSiteId)) {
@@ -72,7 +75,9 @@ export async function updateSharingAction(
   _prev: LinkFormState,
   form: FormData,
 ): Promise<LinkFormState> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const targetSiteId = Number(form.get('siteId'))
   const group = await groupForSite(siteId)
 

@@ -4,7 +4,7 @@ import { toAccountType } from '@/lib/accountTypes'
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
 import {
   createCustomer,
   updateCustomer,
@@ -71,7 +71,9 @@ export async function saveCustomerAction(
   _prev: CustomerFormState,
   form: FormData,
 ): Promise<CustomerFormState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readInput(form)
 
@@ -86,7 +88,8 @@ export async function saveCustomerAction(
 }
 
 export async function deleteCustomerAction(form: FormData): Promise<void> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const id = Number(form.get('id'))
   if (!Number.isFinite(id) || id <= 0) redirect('/customers')
 
@@ -112,7 +115,8 @@ export async function bulkUpdateCustomersAction(
   ids: number[],
   change: BulkChange,
 ): Promise<BulkResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('customers.edit')
+  const { siteId, actor } = ctx
   const result = await bulkUpdateCustomers(siteId, actor, ids, change)
   revalidatePath('/customers')
   return result

@@ -2,23 +2,26 @@
 
 import { useActionState, useState } from 'react'
 import { useFormStatus } from 'react-dom'
-import { StatusError, Save, Plus, Trash } from '@/components/ui/icons'
+import { Save, Plus, Trash } from '@/components/ui/icons'
 import {
   Button,
+  Callout,
   Card,
   CardBody,
   CardHeader,
   Checkbox,
+  Combobox,
   CurrencyInput,
   Field,
   Input,
   NumberInput,
-  Select,
   Switch,
   TABLE,
   TABLE_HEAD_ROW,
+  TABLE_ROW,
   TABLE_TD,
   TABLE_TH,
+  type ComboboxOption,
 } from '@/components/ui'
 import { saveInstructionAction, type InstructionFormState } from './actions'
 import type { InstructionGroup, InstructionOption } from '@/lib/site/instructions'
@@ -40,10 +43,67 @@ type Row = {
 function SubmitButton() {
   const { pending } = useFormStatus()
   return (
-    <Button type="submit" form={FORM_ID} disabled={pending}>
+    <Button type="submit" form={FORM_ID} variant="primary" disabled={pending}>
       <Save size={15} />
       {pending ? 'Saving…' : 'Save instruction'}
     </Button>
+  )
+}
+
+/**
+ * Type-ahead picker for the optional stock link. This list is capped at 500
+ * products — as a native <select> it was a dropdown nobody could scan; typing
+ * a code or a few letters of the description is how anyone actually finds one.
+ *
+ * The chosen id travels in the hidden `optionProduct` input beside it, so the
+ * save action's parallel-array contract is untouched.
+ */
+function ProductPicker({
+  products,
+  value,
+  onChange,
+}: {
+  products: { id: number; code: string; description: string }[]
+  value: number | null
+  onChange: (next: number | null) => void
+}) {
+  const selected = value === null ? undefined : products.find((p) => p.id === value)
+  const [query, setQuery] = useState(selected?.description ?? '')
+
+  const q = query.trim().toLowerCase()
+  // The full selected label matching itself is not a search — show the whole
+  // list again so a click into the box offers the alternatives.
+  const searching = q.length > 0 && query !== selected?.description
+  const matches = (
+    searching
+      ? products.filter(
+          (p) => p.description.toLowerCase().includes(q) || p.code.toLowerCase().includes(q),
+        )
+      : products
+  ).slice(0, 50)
+
+  const options: ComboboxOption<undefined>[] = [
+    { value: '', label: 'Nothing — text only', hint: 'No stock is deducted' },
+    ...matches.map((p) => ({ value: String(p.id), label: p.description, hint: p.code })),
+  ]
+
+  return (
+    <Combobox
+      options={options}
+      query={query}
+      onQueryChange={setQuery}
+      onSelect={(option) => {
+        if (option.value === '') {
+          onChange(null)
+          setQuery('')
+        } else {
+          onChange(Number(option.value))
+          setQuery(option.label)
+        }
+      }}
+      placeholder="Nothing — text only"
+      className="w-64"
+    />
   )
 }
 
@@ -134,13 +194,9 @@ export default function InstructionForm({
         {group && <input type="hidden" name="id" value={group.id} />}
 
         {state.error && (
-          <p
-            role="alert"
-            className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
-          >
-            <StatusError size={15} />
+          <Callout tone="danger" title="Could not save">
             {state.error}
-          </p>
+          </Callout>
         )}
 
         <Card>
@@ -236,13 +292,13 @@ export default function InstructionForm({
                     <th className={`${TABLE_TH} text-right`}>Price adj.</th>
                     <th className={TABLE_TH}>Deducts stock</th>
                     <th className={`${TABLE_TH} text-right`}>Qty</th>
-                    <th className={TABLE_TH}>{single ? 'Preselected' : 'Preselected'}</th>
+                    <th className={TABLE_TH}>Preselected</th>
                     <th className={TABLE_TH} />
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => (
-                    <tr key={row.key} className="border-b border-border last:border-b-0">
+                    <tr key={row.key} className={TABLE_ROW}>
                       <td className={TABLE_TD}>
                         {/* Carries the id so an edited row keeps its identity
                             rather than being deleted and recreated. */}
@@ -266,21 +322,14 @@ export default function InstructionForm({
                       </td>
 
                       <td className={TABLE_TD}>
-                        <Select
-                          name="optionProduct"
-                          value={row.productId ?? ''}
-                          onChange={(e) =>
-                            setRow(row.key, 'productId', e.target.value ? Number(e.target.value) : null)
-                          }
-                          className="w-56"
-                        >
-                          <option value="">Nothing — text only</option>
-                          {products.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.code} · {p.description}
-                            </option>
-                          ))}
-                        </Select>
+                        {/* The picked id submits from here; the Combobox is
+                            only how it gets chosen. */}
+                        <input type="hidden" name="optionProduct" value={row.productId ?? ''} />
+                        <ProductPicker
+                          products={products}
+                          value={row.productId}
+                          onChange={(next) => setRow(row.key, 'productId', next)}
+                        />
                       </td>
 
                       <td className={TABLE_TD}>

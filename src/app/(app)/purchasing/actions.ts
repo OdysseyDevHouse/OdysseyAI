@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId } from '@/lib/auth'
+import { requireActor, requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import {
   saveOrder,
   issueOrder,
@@ -21,7 +21,9 @@ export async function saveOrderAction(
   documentId: number | null,
   input: OrderInput,
 ): Promise<PurchaseResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await saveOrder(siteId, actor, input, documentId ?? undefined)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -30,7 +32,9 @@ export async function saveOrderAction(
 }
 
 export async function issueOrderAction(id: number): Promise<PurchaseResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await issueOrder(siteId, id)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -40,7 +44,9 @@ export async function issueOrderAction(id: number): Promise<PurchaseResult> {
 }
 
 export async function cancelOrderAction(id: number, reason: string): Promise<PurchaseResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await cancelOrder(siteId, id, reason)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -58,7 +64,9 @@ export type ReceiveActionResult =
  * The one action in the app that moves average_cost — everything else reads it.
  */
 export async function receiveGoodsAction(input: ReceiveInput): Promise<ReceiveActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await receiveGoods(siteId, actor, input)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -72,7 +80,9 @@ export async function voidReceiptAction(
   id: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await voidReceipt(siteId, actor, id, reason)
   if (!result.ok) return result
 
@@ -83,18 +93,21 @@ export async function voidReceiptAction(
 
 /** Product search for the order and receiving screens. */
 export async function searchProductsForPurchaseAction(term: string) {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
   return searchForTill(siteId, term, null)
 }
 
 export async function listActiveSuppliersAction() {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
   const { items } = await listSuppliers(siteId, { statuses: ['active'], limit: 200 })
   return items.map((s) => ({ id: s.id, code: s.code, name: s.name, terms: s.paymentTermsDays }))
 }
 
 export async function loadOrderAction(id: number) {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
   return getPurchaseDocument(siteId, id)
 }
 
@@ -107,7 +120,9 @@ export type SupplierReturnActionResult =
 export async function createSupplierReturnAction(
   input: SupplierReturnInput,
 ): Promise<SupplierReturnActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await createSupplierReturn(siteId, actor, input)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -125,7 +140,8 @@ export async function createSupplierReturnAction(
  * the two must agree.
  */
 export async function serialsForReturnAction(productId: number, locationId: number | null) {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
   const items = await availableSerials(siteId, productId, locationId)
   return items.map((s) => ({
     id: s.id,

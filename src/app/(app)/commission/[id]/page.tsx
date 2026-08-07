@@ -6,11 +6,16 @@ import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
+  ButtonLink,
+  Callout,
   Card,
   CardHeader,
   Badge,
   Icons,
   EmptyState,
+  StatStrip,
+  StatTile,
+  TextLink,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
@@ -18,6 +23,7 @@ import {
   TABLE_ROW,
   TABLE_NUMERIC,
 } from '@/components/ui'
+import { LinesTable } from './LinesTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,6 +67,12 @@ export default async function CommissionRunPage({
   const lines = showFor ? await statement(site.id, runId, showFor) : []
   const person = rows.find((r) => r.userId === showFor)
 
+  // The period at a glance, from the rows already fetched. Clawback is the
+  // figure that changes what payroll does, so it alone gets a tone.
+  const totalDue = rows.reduce((sum, r) => sum + r.amount, 0)
+  const totalEarned = rows.reduce((sum, r) => sum + r.earned, 0)
+  const totalClawback = rows.reduce((sum, r) => sum + r.clawback, 0)
+
   return (
     <>
       <PageHeader
@@ -85,10 +97,38 @@ export default async function CommissionRunPage({
             <EmptyState
               title="Nothing calculated yet"
               hint="Go back and press Calculate to work out what everyone earned in this period."
+              icon={<Icons.Calculator size={28} strokeWidth={1.75} />}
+              action={<ButtonLink href="/commission">Back to periods</ButtonLink>}
             />
           </Card>
         ) : (
           <>
+            <StatStrip>
+              <StatTile
+                label="Due"
+                value={formatMoney(totalDue)}
+                hint="What payroll pays out"
+                icon={<Icons.HandCoins size={16} />}
+              />
+              <StatTile
+                label="Earned"
+                value={formatMoney(totalEarned)}
+                icon={<Icons.Coins size={16} />}
+              />
+              <StatTile
+                label="Clawback"
+                value={formatMoney(totalClawback)}
+                tone={totalClawback !== 0 ? 'danger' : 'default'}
+                hint={totalClawback !== 0 ? 'Credited sales reversed here' : undefined}
+                icon={<Icons.Reverse size={16} />}
+              />
+              <StatTile
+                label="People"
+                value={String(rows.length)}
+                icon={<Icons.Users size={16} />}
+              />
+            </StatStrip>
+
             <Card>
               <CardHeader
                 title="Who earned what"
@@ -113,16 +153,15 @@ export default async function CommissionRunPage({
                     {rows.map((r) => (
                       <tr
                         key={r.userId}
-                        className={`${TABLE_ROW} ${r.userId === showFor ? 'bg-surface-2' : ''}`}
+                        /* Brand, not surface-2: the selection has to survive the
+                           row-hover fill, which is surface-2 already. */
+                        className={`${TABLE_ROW} ${r.userId === showFor ? 'bg-brand-soft' : ''}`}
                       >
                         <td className={TABLE_TD}>
                           {seesEveryone ? (
-                            <a
-                              href={`/commission/${runId}?user=${r.userId}`}
-                              className="font-medium text-brand hover:underline"
-                            >
+                            <TextLink href={`/commission/${runId}?user=${r.userId}`}>
                               {r.userName}
-                            </a>
+                            </TextLink>
                           ) : (
                             <span className="font-medium text-ink">{r.userName}</span>
                           )}
@@ -130,8 +169,8 @@ export default async function CommissionRunPage({
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{r.entries}</td>
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(r.earned)}</td>
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {r.clawback < 0 ? (
-                            <span className="text-danger">{formatMoney(r.clawback)}</span>
+                          {r.clawback !== 0 ? (
+                            <Badge tone="danger">{formatMoney(r.clawback)}</Badge>
                           ) : (
                             <span className="text-muted">—</span>
                           )}
@@ -161,73 +200,17 @@ export default async function CommissionRunPage({
                   title={`${person.userName} — every line`}
                   description="The rule, basis and rate are the ones that were used, not today's."
                 />
-                <div className="overflow-x-auto">
-                  <table className={TABLE}>
-                    <thead>
-                      <tr className={TABLE_HEAD_ROW}>
-                        <th className={TABLE_TH}>Date</th>
-                        <th className={TABLE_TH}>Document</th>
-                        <th className={TABLE_TH}>Item</th>
-                        <th className={TABLE_TH}>Rule</th>
-                        <th className={`${TABLE_TH} text-right`}>Base</th>
-                        <th className={`${TABLE_TH} text-right`}>Rate</th>
-                        <th className={`${TABLE_TH} text-right`}>Commission</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((l) => (
-                        <tr key={l.id} className={TABLE_ROW}>
-                          <td className={TABLE_TD}>
-                            <span className="text-muted">{l.documentDate}</span>
-                          </td>
-                          <td className={TABLE_TD}>
-                            <div className="text-ink-2">{l.documentNumber}</div>
-                            {l.docType === 'credit_sale' && (
-                              <Badge tone="danger">Credit</Badge>
-                            )}
-                          </td>
-                          <td className={TABLE_TD}>
-                            <div className="text-ink-2">{l.description}</div>
-                            {l.productCode && (
-                              <div className="text-xs text-muted">{l.productCode}</div>
-                            )}
-                          </td>
-                          <td className={TABLE_TD}>
-                            <div className="text-ink-2">{l.ruleName}</div>
-                            <div className="text-xs text-muted">
-                              {l.basis === 'gross_profit' ? 'profit' : 'turnover'}
-                            </div>
-                          </td>
-                          <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                            {formatMoney(l.baseAmount)}
-                          </td>
-                          <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{l.ratePct}%</td>
-                          <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-medium text-ink`}>
-                            {formatMoney(l.amount)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <LinesTable lines={lines} />
               </Card>
             )}
 
-            <Card>
-              <div className="flex items-start gap-3 px-6 py-4">
-                <Icons.Info size={18} className="mt-0.5 shrink-0 text-muted" />
-                <div className="text-sm">
-                  <p className="font-medium text-ink">A clawback lands in the open period.</p>
-                  <p className="text-muted">
-                    Crediting a sale from a locked period does not reopen it — the reversal appears
-                    in whichever period is open when the credit is raised, so a figure somebody has
-                    already been paid stays paid. Deducting a negative from a wage needs the
-                    employee’s written consent under the BCEA, so settle it against future
-                    commission rather than payroll.
-                  </p>
-                </div>
-              </div>
-            </Card>
+            <Callout tone="brand" title="A clawback lands in the open period.">
+              Crediting a sale from a locked period does not reopen it — the reversal appears
+              in whichever period is open when the credit is raised, so a figure somebody has
+              already been paid stays paid. Deducting a negative from a wage needs the
+              employee’s written consent under the BCEA, so settle it against future
+              commission rather than payroll.
+            </Callout>
           </>
         )}
       </PageBody>

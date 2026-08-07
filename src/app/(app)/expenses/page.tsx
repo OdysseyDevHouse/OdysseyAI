@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import { listExpenses } from '@/lib/site/expenses'
 import { expenseSummary, spendByCategory } from '@/lib/site/expenseReports'
@@ -13,16 +12,16 @@ import {
   ButtonLink,
   Card,
   CardHeader,
-  CardBody,
   StatTile,
-  EmptyState,
-  Badge,
+  StatStrip,
   Icons,
-  LinkTabs,
-  DataTable,
-  type Column,
+  TableToolbar,
+  SearchBar,
+  LinkSegmentedControl,
 } from '@/components/ui'
-import { GenerateButton } from './GenerateButton'
+import { DueSchedulesCard } from './DueSchedulesCard'
+import { DateRangeFilter } from './DateRangeFilter'
+import { ExpensesTable, SpendByCategoryTable } from './ExpensesTables'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,8 +33,6 @@ export const dynamic = 'force-dynamic'
  * the VAT return) and bills not yet paid. A total nobody can act on belongs
  * lower down.
  */
-
-type ExpenseRow = Awaited<ReturnType<typeof listExpenses>>['items'][number]
 
 export default async function ExpensesPage({
   searchParams,
@@ -63,85 +60,6 @@ export default async function ExpensesPage({
   const href = hrefBuilder('/expenses', params)
   const dueSchedules = schedules.filter((s) => s.due)
 
-  const columns: Column<ExpenseRow>[] = [
-    {
-      key: 'date',
-      header: 'Date',
-      cell: (e) => (
-        <Link href={`/expenses/${e.id}`} className="block hover:text-brand">
-          <span className="text-ink">{e.expenseDate}</span>
-          <span className="mt-0.5 block text-xs text-muted">
-            {e.documentNumber ?? 'Draft'}
-          </span>
-        </Link>
-      ),
-      sortValue: (e) => e.expenseDate,
-    },
-    {
-      key: 'payee',
-      header: 'Paid to',
-      cell: (e) => (
-        <>
-          <span className="text-ink">{e.supplierName ?? 'Not stated'}</span>
-          {e.description && (
-            <span className="mt-0.5 block truncate text-xs text-muted">{e.description}</span>
-          )}
-        </>
-      ),
-      sortValue: (e) => e.supplierName ?? '',
-    },
-    {
-      key: 'type',
-      header: 'Type',
-      cell: (e) =>
-        e.paymentType === 'on_account' ? (
-          <Badge tone="warning">Bill</Badge>
-        ) : (
-          <Badge tone="default">Paid</Badge>
-        ),
-      sortValue: (e) => e.paymentType,
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      cell: (e) =>
-        e.status === 'draft' ? (
-          <Badge tone="warning">Draft</Badge>
-        ) : e.status === 'void' ? (
-          <Badge tone="default">Void</Badge>
-        ) : (
-          <Badge tone="success">Posted</Badge>
-        ),
-      sortValue: (e) => e.status,
-    },
-    {
-      key: 'vat',
-      header: 'VAT',
-      numeric: true,
-      cell: (e) =>
-        e.vatTotal === 0 ? (
-          <span className="text-faint">—</span>
-        ) : (
-          <span className={e.vatClaimable === 0 ? 'text-muted' : 'text-ink-2'}>
-            {formatMoney(e.vatTotal)}
-            {e.vatClaimable === 0 && <span className="ml-1 text-xs">(not claimable)</span>}
-          </span>
-        ),
-      sortValue: (e) => e.vatTotal,
-    },
-    {
-      key: 'total',
-      header: 'Total',
-      numeric: true,
-      cell: (e) => (
-        <span className={e.status === 'void' ? 'text-faint line-through' : 'text-ink'}>
-          {formatMoney(e.totalIncl)}
-        </span>
-      ),
-      sortValue: (e) => e.totalIncl,
-    },
-  ]
-
   return (
     <>
       <PageHeader
@@ -162,7 +80,7 @@ export default async function ExpensesPage({
       />
 
       <PageBody>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatStrip columns={summary.capital > 0 ? 5 : 4}>
           <StatTile
             label="Total cost"
             value={formatMoney(summary.totalCost)}
@@ -189,96 +107,65 @@ export default async function ExpensesPage({
             value={formatMoney(summary.vatClaimable)}
             hint="Included in the VAT return"
           />
-        </div>
+          {summary.capital > 0 && (
+            <StatTile
+              label="Capital items"
+              value={formatMoney(summary.capital)}
+              hint="Assets — depreciated, not expensed"
+            />
+          )}
+        </StatStrip>
 
         {/* Recurring schedules that are due. Leads because nothing else on the
             screen will produce these — they are simply missing until generated. */}
-        {dueSchedules.length > 0 && (
-          <Card>
-            <CardHeader
-              title={`${dueSchedules.length} recurring expense${dueSchedules.length === 1 ? '' : 's'} due`}
-              description="These have not been raised yet. Generating creates drafts to review — nothing is posted."
-              action={<GenerateButton />}
-            />
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {dueSchedules.map((s) => (
-                  <li key={s.id} className="flex items-center justify-between py-2 text-sm">
-                    <div>
-                      <span className="text-ink">{s.name}</span>
-                      <span className="ml-2 text-xs text-muted">
-                        {s.frequencyLabel.toLowerCase()} · due {s.nextDue}
-                      </span>
-                    </div>
-                    <span className="numeric text-ink-2">{formatMoney(s.totalIncl)}</span>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
-          </Card>
-        )}
-
-        {summary.capital > 0 && (
-          <Card>
-            <CardHeader
-              title="Capital items in this period"
-              description="Assets rather than costs — kept out of the expense total above, and depreciated instead."
-            />
-            <CardBody>
-              <p className="numeric text-lg font-semibold text-ink">
-                {formatMoney(summary.capital)}
-              </p>
-            </CardBody>
-          </Card>
-        )}
+        <DueSchedulesCard
+          schedules={dueSchedules.map((s) => ({
+            id: s.id,
+            name: s.name,
+            frequencyLabel: s.frequencyLabel,
+            nextDue: s.nextDue,
+            totalIncl: s.totalIncl,
+          }))}
+        />
 
         <Card>
           <CardHeader title="Expenses" description="Newest first." />
 
-          <LinkTabs
-            items={[
-              { value: 'all', label: 'All', href: href({ status: null }) },
-              { value: 'draft', label: `Drafts${summary.draftCount ? ` (${summary.draftCount})` : ''}`, href: href({ status: 'draft' }) },
-              { value: 'finalised', label: 'Posted', href: href({ status: 'finalised' }) },
-              { value: 'void', label: 'Void', href: href({ status: 'void' }) },
-            ]}
-            value={status ?? 'all'}
-            aria-label="Expense status"
-          />
-
-          {list.items.length === 0 ? (
-            <CardBody>
-              <EmptyState
-                title={
-                  params.q
-                    ? `Nothing matches "${params.q}"`
-                    : status === 'draft'
-                      ? 'No drafts waiting'
-                      : 'No expenses in this period'
-                }
-                hint={
-                  params.q
-                    ? 'Try a different search, or widen the date range.'
-                    : 'Rent, fuel, insurance, subscriptions — everything the business spends that is not stock goes here.'
-                }
-                action={
-                  !params.q ? (
-                    <ButtonLink href="/expenses/new">
-                      <Icons.Plus size={15} />
-                      Capture the first one
-                    </ButtonLink>
-                  ) : undefined
-                }
-              />
-            </CardBody>
-          ) : (
-            <DataTable
-              columns={columns}
-              rows={list.items}
-              getRowKey={(e) => e.id}
-              empty={{ title: 'No expenses', hint: 'Nothing in this period.' }}
+          <TableToolbar className="border-b border-border px-6 py-3">
+            <LinkSegmentedControl
+              aria-label="Expense status"
+              value={status ?? 'all'}
+              options={[
+                { value: 'all', label: 'All', href: href({ status: null }) },
+                {
+                  value: 'draft',
+                  label: 'Drafts',
+                  count: summary.draftCount > 0 ? summary.draftCount : undefined,
+                  href: href({ status: 'draft' }),
+                },
+                { value: 'finalised', label: 'Posted', href: href({ status: 'finalised' }) },
+                { value: 'void', label: 'Void', href: href({ status: 'void' }) },
+              ]}
             />
-          )}
+            {/* SearchBar carries its own page gutter for screens without a
+                toolbar; here the toolbar spaces it, so strip it. */}
+            <div className="w-72 max-w-full [&>form]:p-0">
+              <SearchBar
+                action="/expenses"
+                defaultValue={params.q}
+                placeholder="Search payee, number or description…"
+                keep={{ status: params.status, from: params.from, to: params.to }}
+              />
+            </div>
+            <DateRangeFilter
+              from={from}
+              to={to}
+              path="/expenses"
+              keep={{ q: params.q, status: params.status }}
+            />
+          </TableToolbar>
+
+          <ExpensesTable rows={list.items} searchQuery={params.q} status={status} />
         </Card>
 
         {byCategory.rows.length > 0 && (
@@ -287,35 +174,7 @@ export default async function ExpensesPage({
               title="Where it went"
               description="By category, against the period before this one."
             />
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {byCategory.rows.slice(0, 12).map((r) => (
-                  <li key={r.categoryId} className="flex items-center justify-between py-2 text-sm">
-                    <div className="min-w-0 flex-1">
-                      <span className="text-ink">{r.name}</span>
-                      <span className="ml-2 text-xs text-muted">
-                        {r.accountCode} · {r.count} expense{r.count === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-4">
-                      {/* Change against the prior period is what makes a figure
-                          worth reading. Only flagged when it is material. */}
-                      {r.changePct !== null && Math.abs(r.changePct) >= 20 && (
-                        <Badge tone={r.changePct > 0 ? 'warning' : 'success'}>
-                          {r.changePct > 0 ? '+' : ''}
-                          {r.changePct}%
-                        </Badge>
-                      )}
-                      {r.changePct === null && r.total > 0 && <Badge tone="brand">New</Badge>}
-                      <span className="w-12 text-right text-xs text-muted">{r.sharePct}%</span>
-                      <span className="numeric w-28 text-right text-ink">
-                        {formatMoney(r.total)}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
+            <SpendByCategoryTable rows={byCategory.rows.slice(0, 12)} />
           </Card>
         )}
       </PageBody>

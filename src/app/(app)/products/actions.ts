@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import { toProductType } from '@/lib/productTypes'
 import { toVariableType, toPriceCalc } from '@/lib/productProperties'
 import { linkedStores } from '@/lib/storeGroups'
@@ -298,7 +298,9 @@ export async function saveProductAction(
   _prev: ProductFormState,
   form: FormData,
 ): Promise<ProductFormState> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
 
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readInput(form)
@@ -433,7 +435,8 @@ export async function saveProductAction(
 }
 
 export async function archiveProductAction(form: FormData): Promise<void> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('products.edit')
+  const { siteId } = ctx
   const id = Number(form.get('id'))
   const archived = String(form.get('archived')) === '1'
 
@@ -444,7 +447,8 @@ export async function archiveProductAction(form: FormData): Promise<void> {
 }
 
 export async function deleteProductAction(form: FormData): Promise<void> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('products.edit')
+  const { siteId } = ctx
   const id = Number(form.get('id'))
   if (!Number.isFinite(id) || id <= 0) redirect('/products')
 

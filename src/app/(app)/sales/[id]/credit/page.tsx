@@ -5,7 +5,7 @@ import { creditableLines } from '@/lib/site/salesReversal'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { can } from '@/lib/site/permissions'
 import { isPeriodLocked } from '@/lib/site/settings'
-import { PageHeader, Card, CardBody, Icons } from '@/components/ui'
+import { PageHeader, PageBody, Card, ButtonLink, EmptyState, Icons } from '@/components/ui'
 import CreditNoteForm from './CreditNoteForm'
 
 export const dynamic = 'force-dynamic'
@@ -47,27 +47,37 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
       />
 
       {locked ? (
-        <div className="px-6 pt-4">
+        <PageBody>
           <Card>
-            <CardBody>
-              <p className="flex items-center gap-2 text-sm text-danger">
-                <Icons.Ban size={15} />
-                The current VAT period is locked, so nothing can be credited. Unlock it in Setup →
-                Numbering once the return has been dealt with.
-              </p>
-            </CardBody>
+            <EmptyState
+              title="The current VAT period is locked"
+              hint="Nothing can be credited into it. Unlock the period in Setup → Numbering once the return has been dealt with."
+              icon={<Icons.Lock size={22} />}
+              action={
+                <ButtonLink variant="secondary" href={`/sales/${invoiceId}`}>
+                  <Icons.ArrowLeft size={15} />
+                  Back to {invoice.documentNumber}
+                </ButtonLink>
+              }
+            />
           </Card>
-        </div>
+        </PageBody>
       ) : remaining.length === 0 ? (
-        <div className="px-6 pt-4">
+        <PageBody>
           <Card>
-            <CardBody>
-              <p className="text-sm text-muted">
-                Every line on {invoice.documentNumber} has already been credited in full.
-              </p>
-            </CardBody>
+            <EmptyState
+              title="Nothing left to credit"
+              hint={`Every line on ${invoice.documentNumber} has already been credited in full.`}
+              icon={<Icons.Reverse size={22} />}
+              action={
+                <ButtonLink variant="secondary" href={`/sales/${invoiceId}`}>
+                  <Icons.ArrowLeft size={15} />
+                  Back to {invoice.documentNumber}
+                </ButtonLink>
+              }
+            />
           </Card>
-        </div>
+        </PageBody>
       ) : (
         <CreditNoteForm
           invoiceId={invoiceId}

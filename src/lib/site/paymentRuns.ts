@@ -593,6 +593,20 @@ export async function postPaymentRun(
       [posted.id, discountTxnId, item.id],
     )
 
+    // The general ledger: debit creditors, credit bank. A run does not name a
+    // bank account — the money leaves whichever account the business pays from
+    // — so the mirror falls back to the default bank mapping, which is exactly
+    // what that fallback exists for. Cannot fail the payment.
+    const { mirrorSupplierPayment } = await import('./glPosting')
+    await mirrorSupplierPayment(siteId, actor, {
+      transactionId: posted.id,
+      date: run.paymentDate,
+      supplierId: item.supplierId,
+      bankAccountId: null,
+      amount: item.amount,
+      reference: run.reference,
+    })
+
     paid++
     total = round(total + item.amount, 2)
   }

@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import {
   saveDraft,
   finalise,
@@ -44,7 +44,9 @@ export async function saveExpenseAction(
   input: ExpenseInput,
   existingId?: number,
 ): Promise<ActionResult & { id?: number }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await saveDraft(siteId, actor, input, existingId)
   if (!result.ok) return result
@@ -64,7 +66,9 @@ export async function saveAndFinaliseAction(
   input: ExpenseInput,
   existingId?: number,
 ): Promise<ActionResult & { id?: number; documentNumber?: string }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const saved = await saveDraft(siteId, actor, input, existingId)
   if (!saved.ok) return saved
@@ -92,7 +96,9 @@ export async function saveAndFinaliseAction(
 }
 
 export async function finaliseExpenseAction(id: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await finalise(siteId, actor, id)
   if (!result.ok) return result
@@ -103,7 +109,9 @@ export async function finaliseExpenseAction(id: number): Promise<ActionResult> {
 }
 
 export async function voidExpenseAction(id: number, reason: string): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await voidExpense(siteId, actor, id, reason)
   if (!result.ok) return result
@@ -114,7 +122,9 @@ export async function voidExpenseAction(id: number, reason: string): Promise<Act
 }
 
 export async function deleteDraftAction(id: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await deleteDraft(siteId, actor, id)
   if (!result.ok) return result
@@ -154,7 +164,9 @@ export async function saveCategoryAction(
   input: CategoryInput,
   existingId?: number,
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = existingId
     ? await updateCategory(siteId, actor, existingId, input)
@@ -170,7 +182,9 @@ export async function setCategoryActiveAction(
   id: number,
   active: boolean,
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await setCategoryActive(siteId, actor, id, active)
   if (!result.ok) return result
@@ -180,7 +194,9 @@ export async function setCategoryActiveAction(
 }
 
 export async function deleteCategoryAction(id: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await deleteCategory(siteId, actor, id)
   if (!result.ok) return result
@@ -195,7 +211,9 @@ export async function saveRecurringAction(
   input: RecurringInput,
   existingId?: number,
 ): Promise<ActionResult & { id?: number }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await saveRecurring(siteId, actor, input, existingId)
   if (!result.ok) return result
@@ -209,7 +227,9 @@ export async function setRecurringActiveAction(
   id: number,
   active: boolean,
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await setRecurringActive(siteId, actor, id, active)
   if (!result.ok) return result
@@ -219,7 +239,9 @@ export async function setRecurringActiveAction(
 }
 
 export async function deleteRecurringAction(id: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await deleteRecurring(siteId, actor, id)
   if (!result.ok) return result
@@ -229,7 +251,9 @@ export async function deleteRecurringAction(id: number): Promise<ActionResult> {
 }
 
 export async function generateDueAction(): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await generateDue(siteId, actor)
   revalidatePath('/expenses/recurring')

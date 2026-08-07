@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSite } from '@/lib/auth'
+import { requireActor, requireSite, actorFor } from '@/lib/auth'
 import {
   createPaymentRun,
   postPaymentRun,
@@ -21,7 +21,9 @@ export type PaymentActionResult =
   | { ok: false; error: string }
 
 export async function createRunAction(input: CreateRunInput): Promise<PaymentActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('purchasing.pay')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await createPaymentRun(siteId, actor, input)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -34,7 +36,9 @@ export async function createRunAction(input: CreateRunInput): Promise<PaymentAct
 }
 
 export async function postRunAction(runId: number): Promise<PaymentActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('purchasing.pay')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await postPaymentRun(siteId, actor, runId)
   if (!result.ok) return { ok: false, error: result.error }
 

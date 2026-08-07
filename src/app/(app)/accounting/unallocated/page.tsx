@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import {
   listUnallocatedCredits,
@@ -10,14 +9,20 @@ import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
+  ButtonLink,
   Card,
   CardHeader,
-  CardBody,
+  StatStrip,
   StatTile,
-  EmptyState,
-  Badge,
 } from '@/components/ui'
-import { AllocateButton } from './AllocateButton'
+import {
+  UnidentifiedTable,
+  CustomerCreditsTable,
+  SupplierCreditsTable,
+  type UnidentifiedRow,
+  type CustomerCreditRow,
+  type SupplierCreditRow,
+} from './UnallocatedTables'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,6 +52,46 @@ export default async function UnallocatedPage() {
     unidentifiedBankReceipts(siteId, { limit: 100 }),
   ])
 
+  // Plain serializable rows — DataTable's columns and actions are functions,
+  // so they live in the client components and only data crosses the boundary.
+  const unidentifiedRows: UnidentifiedRow[] = unidentified.map((r) => ({
+    bankTxnId: r.bankTxnId,
+    description: r.description,
+    reference: r.reference,
+    txnDate: r.txnDate,
+    bankAccountName: r.bankAccountName,
+    daysHeld: r.daysHeld,
+    amount: r.amount,
+  }))
+
+  const creditRows: CustomerCreditRow[] = credits.map((c) => ({
+    txnId: c.txnId,
+    customerId: c.customerId,
+    customerName: c.customerName,
+    customerCode: c.customerCode,
+    docType: c.docType,
+    docNumber: c.docNumber,
+    docDate: c.docDate,
+    reference: c.reference,
+    daysHeld: c.daysHeld,
+    canAllocate: c.canAllocate,
+    openDebt: c.openDebt,
+    unapplied: c.unapplied,
+  }))
+
+  const supplierRows: SupplierCreditRow[] = supplierCredits.map((c) => ({
+    txnId: c.txnId,
+    supplierId: c.supplierId,
+    supplierName: c.supplierName,
+    supplierCode: c.supplierCode,
+    docNumber: c.docNumber,
+    docDate: c.docDate,
+    daysHeld: c.daysHeld,
+    canAllocate: c.canAllocate,
+    openDebt: c.openDebt,
+    unapplied: c.unapplied,
+  }))
+
   return (
     <>
       <PageHeader
@@ -55,11 +100,13 @@ export default async function UnallocatedPage() {
       />
 
       <PageBody>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* One tile carries a tone — the act-now one. Coloured counts on every
+            tile would leave nothing to notice. */}
+        <StatStrip>
           <StatTile
             label="Unidentified receipts"
             value={String(unidentified.length)}
-            tone={unidentified.length > 0 ? 'danger' : 'positive'}
+            tone={unidentified.length > 0 ? 'danger' : 'default'}
             hint={
               unidentified.length > 0
                 ? 'Money in, no account credited'
@@ -69,7 +116,6 @@ export default async function UnallocatedPage() {
           <StatTile
             label="Awaiting allocation"
             value={formatMoney(summary.allocatable)}
-            tone={summary.allocatableCount > 0 ? 'warning' : 'default'}
             hint={`${summary.allocatableCount} credit${summary.allocatableCount === 1 ? '' : 's'} with invoices open`}
           />
           <StatTile
@@ -80,38 +126,22 @@ export default async function UnallocatedPage() {
           <StatTile
             label="Held over 90 days"
             value={formatMoney(summary.agedTotal)}
-            tone={summary.agedCount > 0 ? 'warning' : 'default'}
             hint={`${summary.agedCount} credit${summary.agedCount === 1 ? '' : 's'}`}
           />
-        </div>
+        </StatStrip>
 
         {unidentified.length > 0 && (
           <Card>
             <CardHeader
               title="Money in, customer unknown"
               description="These reached the bank but no customer account was credited — somebody's invoice still shows as unpaid. Match them on the account's reconciliation screen."
+              action={
+                <ButtonLink href="/cashbook" variant="secondary" size="sm">
+                  Match in the cashbook
+                </ButtonLink>
+              }
             />
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {unidentified.map((r) => (
-                  <li key={r.bankTxnId} className="flex items-center justify-between gap-4 py-2">
-                    <div className="min-w-0">
-                      <span className="block truncate text-sm text-ink">
-                        {r.description ?? r.reference ?? 'No description'}
-                      </span>
-                      <span className="text-xs text-muted">
-                        {r.txnDate} · {r.bankAccountName} · held {r.daysHeld} day
-                        {r.daysHeld === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      {r.daysHeld > 30 && <Badge tone="danger">{r.daysHeld} days</Badge>}
-                      <span className="numeric text-sm text-ink">{formatMoney(r.amount)}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
+            <UnidentifiedTable rows={unidentifiedRows} />
           </Card>
         )}
 
@@ -120,49 +150,7 @@ export default async function UnallocatedPage() {
             title="Customer credits not applied"
             description="Payments and credit notes sitting on accounts without settling an invoice."
           />
-          {credits.length === 0 ? (
-            <CardBody>
-              <EmptyState
-                title="Everything is allocated"
-                hint="Every customer payment has been matched against the invoices it settles."
-              />
-            </CardBody>
-          ) : (
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {credits.map((c) => (
-                  <li key={c.txnId} className="flex items-center justify-between gap-4 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <Link
-                        href={`/customers/${c.customerId}`}
-                        className="text-sm text-ink hover:text-brand"
-                      >
-                        {c.customerName}
-                      </Link>
-                      <span className="mt-0.5 block text-xs text-muted">
-                        {c.customerCode} · {c.docType.replace('_', ' ')}
-                        {c.docNumber ? ` ${c.docNumber}` : ''} · {c.docDate}
-                        {c.reference ? ` · ${c.reference}` : ''}
-                      </span>
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-3">
-                      {c.daysHeld > 90 && <Badge tone="warning">{c.daysHeld} days</Badge>}
-                      {c.canAllocate ? (
-                        <Badge tone="brand">{formatMoney(c.openDebt)} open</Badge>
-                      ) : (
-                        <Badge tone="default">Nothing to settle</Badge>
-                      )}
-                      <span className="numeric w-28 text-right text-sm text-ink">
-                        {formatMoney(c.unapplied)}
-                      </span>
-                      <AllocateButton txnId={c.txnId} disabled={!c.canAllocate} />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
-          )}
+          <CustomerCreditsTable rows={creditRows} />
         </Card>
 
         {supplierCredits.length > 0 && (
@@ -171,31 +159,7 @@ export default async function UnallocatedPage() {
               title="Supplier credits not taken"
               description="Credits we hold that should be reducing what we pay."
             />
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {supplierCredits.map((c) => (
-                  <li key={c.txnId} className="flex items-center justify-between gap-4 py-2.5">
-                    <div className="min-w-0">
-                      <Link
-                        href={`/suppliers/${c.supplierId}`}
-                        className="text-sm text-ink hover:text-brand"
-                      >
-                        {c.supplierName}
-                      </Link>
-                      <span className="mt-0.5 block text-xs text-muted">
-                        {c.supplierCode}
-                        {c.docNumber ? ` · ${c.docNumber}` : ''} · {c.docDate} · held{' '}
-                        {c.daysHeld} day{c.daysHeld === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      {c.canAllocate && <Badge tone="brand">{formatMoney(c.openDebt)} open</Badge>}
-                      <span className="numeric text-sm text-ink">{formatMoney(c.unapplied)}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
+            <SupplierCreditsTable rows={supplierRows} />
           </Card>
         )}
       </PageBody>

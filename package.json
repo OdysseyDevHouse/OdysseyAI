@@ -34,6 +34,11 @@
     "test:accounting": "tsx --conditions=react-server --env-file=.env scripts/test-accounting.ts",
     "test:period-locks": "tsx --conditions=react-server --env-file=.env scripts/test-period-locks.ts",
     "test:expenses": "tsx --conditions=react-server --env-file=.env scripts/test-expenses.ts",
+    "test:general-ledger": "tsx --conditions=react-server --env-file=.env scripts/test-general-ledger.ts",
+    "test:fixed-assets": "tsx --conditions=react-server --env-file=.env scripts/test-fixed-assets.ts",
+    "test:quotes": "tsx --conditions=react-server --env-file=.env scripts/test-quotes.ts",
+    "test:credit-model": "tsx scripts/test-credit-model.ts",
+    "test:credit-control": "tsx --conditions=react-server --env-file=.env scripts/test-credit-control.ts",
     "test:settlement-discount": "tsx --conditions=react-server --env-file=.env scripts/test-settlement-discount.ts",
     "test:sales-orders": "tsx --conditions=react-server --env-file=.env scripts/test-sales-orders.ts",
     "test:opening-balances": "tsx --conditions=react-server --env-file=.env scripts/test-opening-balances.ts",
@@ -61,7 +66,9 @@
     "test:storefront": "tsx --conditions=react-server --env-file=.env scripts/test-storefront.ts",
     "test:payments": "tsx --conditions=react-server --env-file=.env scripts/test-payments.ts",
     "test:builder": "tsx --conditions=react-server --env-file=.env scripts/test-builder.ts",
-    "test:product-images": "tsx --conditions=react-server --env-file=.env scripts/test-product-images.ts"
+    "test:product-images": "tsx --conditions=react-server --env-file=.env scripts/test-product-images.ts",
+    "test:permissions": "tsx --conditions=react-server --env-file=.env scripts/test-permissions.ts",
+    "test:price-guard": "tsx --conditions=react-server --env-file=.env scripts/test-price-guard.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

@@ -2,9 +2,9 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import {
   Button,
+  Callout,
   Card,
   DataTable,
   Badge,
@@ -12,6 +12,8 @@ import {
   Field,
   Input,
   Icons,
+  TableToolbar,
+  TextLink,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -48,9 +50,9 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
       sortValue: (r) => r.periodStart,
       cell: (r) => (
         <div>
-          <Link href={`/commission/${r.id}`} className="font-medium text-brand hover:underline">
+          <TextLink href={`/commission/${r.id}`}>
             {r.periodStart} to {r.periodEnd}
-          </Link>
+          </TextLink>
           {r.note && <div className="text-xs text-muted">{r.note}</div>}
         </div>
       ),
@@ -70,7 +72,7 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
         ) : r.calculatedAt ? (
           <Badge tone="warning">Calculated</Badge>
         ) : (
-          <Badge tone="default">Open</Badge>
+          <Badge tone="neutral">Open</Badge>
         ),
     },
     {
@@ -84,13 +86,17 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
 
   return (
     <>
-      {canRun && (
-        <div className="flex justify-end">
-          <Button variant="primary" onClick={() => setAdding(true)}>
-            <Icons.Plus size={16} />
-            Open a period
-          </Button>
-        </div>
+      {/* The toolbar hides while the list is empty — the empty state below
+          carries the same primary, and one primary per screen is the rule. */}
+      {canRun && runs.length > 0 && (
+        <TableToolbar
+          actions={
+            <Button variant="primary" onClick={() => setAdding(true)}>
+              <Icons.Plus size={16} />
+              Open a period
+            </Button>
+          }
+        />
       )}
 
       <Card>
@@ -107,16 +113,20 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
                         <Button
                           variant="ghost"
                           size="sm"
+                          iconOnly
                           disabled={pending}
+                          aria-label="Calculate this period"
+                          title="Work out what everyone earned"
                           onClick={() => run(() => calculateRunAction(r.id))}
                         >
-                          <Icons.Refresh size={15} />
-                          Calculate
+                          <Icons.Calculator size={15} />
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
+                          iconOnly
                           disabled={pending || !r.calculatedAt}
+                          aria-label="Lock this period"
                           title={
                             r.calculatedAt
                               ? 'Freeze these figures for payment'
@@ -125,19 +135,19 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
                           onClick={() => run(() => lockRunAction(r.id))}
                         >
                           <Icons.Lock size={15} />
-                          Lock
                         </Button>
                       </>
                     ) : (
                       <Button
                         variant="ghost"
                         size="sm"
+                        iconOnly
                         disabled={pending}
+                        aria-label="Reopen this period"
                         title="Reopen so the figures can be recalculated"
                         onClick={() => run(() => unlockRunAction(r.id))}
                       >
-                        <Icons.Refresh size={15} />
-                        Reopen
+                        <Icons.Reverse size={15} />
                       </Button>
                     )}
                   </div>
@@ -147,6 +157,13 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
           empty={{
             title: 'No commission periods yet',
             hint: 'Open one for the month you want to pay, then calculate it.',
+            icon: <Icons.CalendarRange size={28} strokeWidth={1.75} />,
+            action: canRun ? (
+              <Button variant="primary" onClick={() => setAdding(true)}>
+                <Icons.Plus size={16} />
+                Open a period
+              </Button>
+            ) : undefined,
           }}
         />
       </Card>
@@ -206,12 +223,7 @@ function RunForm({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="flex flex-col gap-5">
-        {error && (
-          <div className="flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-sm">
-            <Icons.StatusWarning size={16} className="mt-0.5 shrink-0 text-danger" />
-            <span className="text-ink">{error}</span>
-          </div>
-        )}
+        {error && <Callout tone="danger">{error}</Callout>}
 
         <div className="grid gap-5 sm:grid-cols-2">
           <Field label="From">

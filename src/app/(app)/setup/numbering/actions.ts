@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor } from '@/lib/auth'
 import { updateSequence } from '@/lib/site/sequences'
 import { setSetting, type SettingKey } from '@/lib/site/settings'
 
@@ -11,7 +11,9 @@ export async function saveSequenceAction(
   docType: string,
   input: { prefix: string; nextNumber: number; padding: number; resetPeriod: 'none' | 'yearly' },
 ): Promise<NumberingActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await updateSequence(siteId, docType, input)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -23,7 +25,9 @@ export async function saveSettingAction(
   key: SettingKey,
   value: string,
 ): Promise<NumberingActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await setSetting(siteId, key, value)
   if (!result.ok) return { ok: false, error: result.error }
 

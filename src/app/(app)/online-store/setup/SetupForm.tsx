@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import Link from 'next/link'
 import {
   Badge,
   Button,
+  Callout,
   Card,
+  CardBody,
   CardFooter,
   CardHeader,
   Checkbox,
@@ -19,6 +20,7 @@ import {
   Select,
   Switch,
   Textarea,
+  TextLink,
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -70,6 +72,9 @@ export default function SetupForm({
     blurb: settings.blurb,
     paidStatusId: settings.paidStatusId,
     reviewsEnabled: settings.reviewsEnabled,
+    showStock: settings.showStock,
+    showPhotos: settings.showPhotos,
+    showBrands: settings.showBrands,
   })
 
   function patch(next: Partial<OnlineSettingsInput>) {
@@ -124,7 +129,7 @@ export default function SetupForm({
     <>
       {/* The one thing an owner comes here to check: is my shop open? */}
       <Card>
-        <div className="flex items-center gap-4 px-6 py-4">
+        <CardBody className="flex items-center gap-4">
           <span
             className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-control ${
               form.isEnabled ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'
@@ -153,7 +158,7 @@ export default function SetupForm({
             label="Online store open"
             disabled={blockers.length > 0 && !form.isEnabled}
           />
-        </div>
+        </CardBody>
 
         {/* Why the switch won't move. Stated here rather than as a save error,
             so the owner sees the work remaining before they try. */}
@@ -250,22 +255,23 @@ export default function SetupForm({
         </SettingRow>
 
         {form.publishMode !== 'all' && (
-          <div className="border-b border-border px-6 py-3 last:border-b-0">
-            <p className={`text-sm ${publishedCount === 0 ? 'text-danger' : 'text-muted'}`}>
+          // A note strip, not a SettingRow — it explains the row above it and
+          // holds no control. The zero state gets a badge rather than tinting
+          // the whole sentence.
+          <div className="flex items-start gap-2 border-b border-border px-6 py-3 last:border-b-0">
+            {publishedCount === 0 && (
+              <Badge tone="danger">Nothing published</Badge>
+            )}
+            <p className="text-sm text-muted">
               {form.publishMode === 'departments' ? (
                 <>
                   Tick “Show in online store” on a department to include it and everything
-                  filed under it.{' '}
-                  <Link href="/departments" className="font-medium text-brand hover:underline">
-                    Go to departments
-                  </Link>
+                  filed under it. <TextLink href="/departments">Go to departments</TextLink>
                 </>
               ) : (
                 <>
                   Tick “Show in online store” on a product to include it.{' '}
-                  <Link href="/products" className="font-medium text-brand hover:underline">
-                    Go to products
-                  </Link>
+                  <TextLink href="/products">Go to products</TextLink>
                 </>
               )}
             </p>
@@ -369,10 +375,10 @@ export default function SetupForm({
           // a verified gateway callback, and until that exists an order that
           // says it is paid would be taking the shopper's word for it.
           <div className="border-b border-border px-6 py-3 last:border-b-0">
-            <p className="text-sm text-danger">
-              Paying online isn&apos;t available yet — a payment gateway has to be connected
-              first. Choose “Pay on collection or delivery” to open your store.
-            </p>
+            <Callout tone="danger" title="Paying online isn't available yet.">
+              A payment gateway has to be connected first. Choose “Pay on collection or
+              delivery” to open your store.
+            </Callout>
           </div>
         )}
 
@@ -385,6 +391,42 @@ export default function SetupForm({
             checked={form.reviewsEnabled}
             onChange={(next) => patch({ reviewsEnabled: next })}
             label="Show customer reviews"
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={<Icons.FileImage size={18} />}
+          label="Show product photographs"
+          description="Off shows a plain list of names and prices, which is faster on a weak signal and fine for a shop whose products are not photographed."
+        >
+          <Switch
+            checked={form.showPhotos}
+            onChange={(next) => patch({ showPhotos: next })}
+            label="Show product photographs"
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={<Icons.Package size={18} />}
+          label="Show how many are left"
+          description="Shoppers see “Only 3 left” on low stock, which encourages them to decide. It also publishes what you are holding, and it is only as accurate as your last stock take — so leave it off if your counts drift."
+        >
+          <Switch
+            checked={form.showStock}
+            onChange={(next) => patch({ showStock: next })}
+            label="Show how many are left"
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={<Icons.Tag size={18} />}
+          label="Show brand names"
+          description="Shows the maker on each product and lets shoppers filter by it. Only useful if you record brands."
+        >
+          <Switch
+            checked={form.showBrands}
+            onChange={(next) => patch({ showBrands: next })}
+            label="Show brand names"
           />
         </SettingRow>
 

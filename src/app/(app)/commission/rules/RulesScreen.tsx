@@ -4,9 +4,12 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
+  Callout,
   Card,
+  ConfirmModal,
   DataTable,
   Badge,
+  FieldGroup,
   Modal,
   Field,
   Input,
@@ -15,6 +18,7 @@ import {
   Select,
   Switch,
   Icons,
+  TableToolbar,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -46,6 +50,7 @@ export default function RulesScreen({
 }) {
   const [editing, setEditing] = useState<CommissionRule | null>(null)
   const [adding, setAdding] = useState(false)
+  const [removing, setRemoving] = useState<CommissionRule | null>(null)
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -55,6 +60,7 @@ export default function RulesScreen({
       const result = await deleteRuleAction(rule.id)
       if (!result.ok) return toast.error(result.error)
       toast.success(result.message)
+      setRemoving(null)
       router.refresh()
     })
   }
@@ -143,12 +149,18 @@ export default function RulesScreen({
 
   return (
     <>
-      <div className="flex justify-end">
-        <Button variant="primary" onClick={() => setAdding(true)}>
-          <Icons.Plus size={16} />
-          Add rule
-        </Button>
-      </div>
+      {/* The toolbar hides while the list is empty — the empty state below
+          carries the same primary, and one primary per screen is the rule. */}
+      {rules.length > 0 && (
+        <TableToolbar
+          actions={
+            <Button variant="primary" onClick={() => setAdding(true)}>
+              <Icons.Plus size={16} />
+              Add rule
+            </Button>
+          }
+        />
+      )}
 
       <Card>
         <DataTable
@@ -172,7 +184,7 @@ export default function RulesScreen({
                 iconOnly
                 disabled={pending}
                 aria-label={`Delete ${r.name}`}
-                onClick={() => remove(r)}
+                onClick={() => setRemoving(r)}
               >
                 <Icons.Trash size={15} />
               </Button>
@@ -181,9 +193,29 @@ export default function RulesScreen({
           empty={{
             title: 'No commission rules yet',
             hint: 'Add one to start paying commission. Nothing is earned until a rule matches.',
+            icon: <Icons.HandCoins size={28} strokeWidth={1.75} />,
+            action: (
+              <Button variant="primary" onClick={() => setAdding(true)}>
+                <Icons.Plus size={16} />
+                Add rule
+              </Button>
+            ),
           }}
         />
       </Card>
+
+      {/* Deleting a rule changes what people get paid — make the user say so. */}
+      {removing && (
+        <ConfirmModal
+          open
+          onClose={() => setRemoving(null)}
+          onConfirm={() => remove(removing)}
+          title="Delete this rule?"
+          message={`"${removing.name}" stops paying as soon as it is gone. Periods already calculated keep their figures until someone recalculates them.`}
+          confirmLabel="Delete rule"
+          busy={pending}
+        />
+      )}
 
       {(adding || editing) && (
         <RuleForm
@@ -287,52 +319,36 @@ function RuleForm({
       }
     >
       <div className="flex flex-col gap-5">
-        {error && (
-          <div className="flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-sm">
-            <Icons.StatusWarning size={16} className="mt-0.5 shrink-0 text-danger" />
-            <span className="text-ink">{error}</span>
-          </div>
-        )}
+        {error && <Callout tone="danger">{error}</Callout>}
 
-        <Field label="Name">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Furniture — floor staff"
-          />
-        </Field>
-
-        <div className="grid gap-5 sm:grid-cols-2">
-          <Field
-            label="Pays on"
-            hint="Profit makes a discount cost the salesperson. Turnover does not."
-          >
-            <Select value={basis} onChange={(e) => setBasis(e.target.value as CommissionBasis)}>
-              <option value="gross_profit">Gross profit</option>
-              <option value="turnover">Turnover</option>
-            </Select>
+        <FieldGroup title="Identity">
+          <Field label="Name">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Furniture — floor staff"
+            />
           </Field>
 
           <Field
             label="Priority"
             hint="Lowest wins. Leave blank to set it from how specific the rule is."
           >
-            <Input
+            <NumberInput
               value={priority}
               onChange={(e) => setPriority(e.target.value.replace(/\D/g, ''))}
-              inputMode="numeric"
               placeholder="Automatic"
+              className="max-w-32"
             />
           </Field>
-        </div>
 
-        <div className="rounded-card border border-border p-4">
-          <p className="mb-3 text-sm font-medium text-ink">What it applies to</p>
-          <p className="mb-4 text-xs text-muted">
-            Leave everything blank for every sale. Setting more than one narrows it — all of them
-            must match.
-          </p>
+          <Switch checked={isActive} onChange={setIsActive} label="Active" />
+        </FieldGroup>
 
+        <FieldGroup
+          title="What it applies to"
+          hint="Leave everything blank for every sale. Setting more than one narrows it — all of them must match."
+        >
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Department" hint="Covers its sub-departments too.">
               <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
@@ -378,32 +394,49 @@ function RuleForm({
               </Select>
             </Field>
           </div>
-        </div>
+        </FieldGroup>
 
-        <Switch
-          checked={isExclusion}
-          onChange={setIsExclusion}
-          label="Earns nothing"
-          hint="Makes this an exclusion — matching lines pay no commission and stop looking. Use it to carve a category out of a broader rule."
-        />
+        <FieldGroup title="What it pays">
+          <Field
+            label="Pays on"
+            hint="Profit makes a discount cost the salesperson. Turnover does not."
+          >
+            <Select value={basis} onChange={(e) => setBasis(e.target.value as CommissionBasis)}>
+              <option value="gross_profit">Gross profit</option>
+              <option value="turnover">Turnover</option>
+            </Select>
+          </Field>
 
-        {!isExclusion && (
-          <>
-            <Switch
-              checked={useTiers}
-              onChange={setUseTiers}
-              label="Use tiers"
-              hint="Rate bands by the running total for the period. Each band applies only to its own slice — crossing a threshold does not re-rate what came before."
-            />
+          <Switch
+            checked={isExclusion}
+            onChange={setIsExclusion}
+            label="Earns nothing"
+            hint="Makes this an exclusion — matching lines pay no commission and stop looking. Use it to carve a category out of a broader rule."
+          />
 
-            {useTiers ? (
-              <div className="rounded-card border border-border p-4">
-                <p className="mb-3 text-sm font-medium text-ink">Tiers</p>
+          {!isExclusion && (
+            <>
+              <Switch
+                checked={useTiers}
+                onChange={setUseTiers}
+                label="Use tiers"
+                hint="Rate bands by the running total for the period. Each band applies only to its own slice — crossing a threshold does not re-rate what came before."
+              />
+
+              {useTiers ? (
                 <div className="flex flex-col gap-3">
+                  {/* Visual column headings only — each input below carries its
+                      own aria-label, so nothing leans on an empty <label>. */}
+                  <div aria-hidden="true" className="flex items-center gap-3 text-sm font-medium text-ink-2">
+                    <span className="flex-1">From</span>
+                    <span className="w-28">Rate %</span>
+                    <span className="w-8" />
+                  </div>
                   {tiers.map((tier, i) => (
-                    <div key={i} className="flex items-end gap-3">
-                      <Field label={i === 0 ? 'From' : ''} className="flex-1">
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="flex-1">
                         <CurrencyInput
+                          aria-label={`Tier ${i + 1} from amount`}
                           value={tier.fromAmount}
                           disabled={i === 0}
                           onChange={(e) =>
@@ -414,9 +447,10 @@ function RuleForm({
                             )
                           }
                         />
-                      </Field>
-                      <Field label={i === 0 ? 'Rate %' : ''} className="w-28">
+                      </div>
+                      <div className="w-28">
                         <NumberInput
+                          aria-label={`Tier ${i + 1} rate percent`}
                           value={tier.ratePct}
                           onChange={(e) =>
                             setTiers((current) =>
@@ -426,12 +460,12 @@ function RuleForm({
                             )
                           }
                         />
-                      </Field>
+                      </div>
                       <Button
                         variant="danger-ghost"
                         size="sm"
                         iconOnly
-                        aria-label="Remove tier"
+                        aria-label={`Remove tier ${i + 1}`}
                         disabled={i === 0}
                         onClick={() => setTiers((current) => current.filter((_, j) => j !== i))}
                       >
@@ -439,53 +473,52 @@ function RuleForm({
                       </Button>
                     </div>
                   ))}
+                  <div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        setTiers((current) => [
+                          ...current,
+                          {
+                            fromAmount: (current[current.length - 1]?.fromAmount ?? 0) + 10000,
+                            ratePct: 0,
+                          },
+                        ])
+                      }
+                    >
+                      <Icons.Plus size={15} />
+                      Add tier
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted">
+                    The first band always starts at 0. With 0 at 5% and 10 000 at 7.5%, a 16 000
+                    total pays 500 + 450 = 950 — not 1 200.
+                  </p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3"
-                  onClick={() =>
-                    setTiers((current) => [
-                      ...current,
-                      {
-                        fromAmount: (current[current.length - 1]?.fromAmount ?? 0) + 10000,
-                        ratePct: 0,
-                      },
-                    ])
-                  }
-                >
-                  <Icons.Plus size={15} />
-                  Add tier
-                </Button>
-                <p className="mt-3 text-xs text-muted">
-                  The first band always starts at 0. With 0 at 5% and 10 000 at 7.5%, a 16 000
-                  total pays 500 + 450 = 950 — not 1 200.
-                </p>
-              </div>
-            ) : (
-              <Field label="Rate %" hint="Of profit or turnover, whichever this rule pays on.">
-                <NumberInput
-                  value={ratePct}
-                  onChange={(e) => setRatePct(e.target.value)}
-                  className="max-w-[10rem]"
+              ) : (
+                <Field label="Rate %" hint="Of profit or turnover, whichever this rule pays on.">
+                  <NumberInput
+                    value={ratePct}
+                    onChange={(e) => setRatePct(e.target.value)}
+                    className="max-w-[10rem]"
+                  />
+                </Field>
+              )}
+
+              <Field
+                label="Threshold"
+                hint="Commission starts only once this person passes this much for the period. Leave at zero for none."
+              >
+                <CurrencyInput
+                  value={threshold}
+                  onChange={(e) => setThreshold(Number(e.target.value) || 0)}
+                  className="max-w-[12rem]"
                 />
               </Field>
-            )}
-
-            <Field
-              label="Threshold"
-              hint="Commission starts only once this person passes this much for the period. Leave at zero for none."
-            >
-              <CurrencyInput
-                value={threshold}
-                onChange={(e) => setThreshold(Number(e.target.value) || 0)}
-                className="max-w-[12rem]"
-              />
-            </Field>
-          </>
-        )}
-
-        <Switch checked={isActive} onChange={setIsActive} label="Active" />
+            </>
+          )}
+        </FieldGroup>
       </div>
     </Modal>
   )

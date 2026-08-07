@@ -12,6 +12,10 @@ export {
   // actions
   Save,
   Plus,
+  // The partner to Plus, for steppers — one fewer of a thing.
+  Minus,
+  // The shopper's basket, on the public storefront.
+  ShoppingCart,
   Pencil,
   Trash2 as Trash,
   Download,
@@ -104,6 +108,8 @@ export {
   Clock,
   Archive,
   ArchiveRestore,
+  Play,
+  Pause,
   KeyRound,
   LogIn,
   Moon,

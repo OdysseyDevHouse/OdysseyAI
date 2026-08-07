@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import { getExpense } from '@/lib/site/expenses'
+import { siteQueryOne } from '@/lib/siteDb'
 import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
@@ -12,14 +12,15 @@ import {
   Badge,
   ButtonLink,
   Icons,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
+  TextLink,
+  SettingRow,
+  SettingGroup,
+  SummaryList,
+  SummaryRow,
+  SummaryTotal,
 } from '@/components/ui'
 import { ExpenseActions } from './ExpenseActions'
+import { ExpenseLinesTable } from './ExpenseLinesTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,6 +47,37 @@ export default async function ExpenseDetailPage({
 
   const isBill = expense.paymentType === 'on_account'
 
+  // Whether any line is capital, and whether the asset already exists. Two
+  // small lookups rather than widening the expense type: this is the only
+  // screen that asks, and the asset register is the thing that knows.
+  const [capitalCheck, assetCheck] = await Promise.all([
+    siteQueryOne<{ n: number }>(
+      siteId,
+      `SELECT COUNT(*) AS n FROM expense_lines l
+         JOIN expense_categories c ON c.id = l.category_id
+        WHERE l.expense_id = ? AND c.category_type = 'capital'`,
+      [expense.id],
+    ).catch(() => null),
+    siteQueryOne<{ id: number }>(
+      siteId,
+      'SELECT id FROM fixed_assets WHERE expense_id = ? LIMIT 1',
+      [expense.id],
+    ).catch(() => null),
+  ])
+
+  const isCapital = Number(capitalCheck?.n ?? 0) > 0
+  const assetExists = assetCheck !== null
+
+  // The one status badge, placed with the header where the record is named.
+  const statusBadge =
+    expense.status === 'draft' ? (
+      <Badge tone="warning">Draft — not in any figures yet</Badge>
+    ) : expense.status === 'void' ? (
+      <Badge tone="default">Void</Badge>
+    ) : (
+      <Badge tone="success">Posted</Badge>
+    )
+
   return (
     <>
       <PageHeader
@@ -53,6 +85,7 @@ export default async function ExpenseDetailPage({
         subtitle={`${expense.expenseDate} · ${expense.supplierName ?? 'No payee stated'}`}
         action={
           <div className="flex items-center gap-2">
+            {statusBadge}
             {expense.status === 'draft' && (
               <ButtonLink href={`/expenses/${expense.id}/edit`} variant="secondary">
                 <Icons.Pencil size={15} />
@@ -69,131 +102,110 @@ export default async function ExpenseDetailPage({
       />
 
       <PageBody>
-        <div className="flex flex-wrap items-center gap-2">
-          {expense.status === 'draft' && (
-            <Badge tone="warning">Draft — not in any figures yet</Badge>
-          )}
-          {expense.status === 'void' && <Badge tone="default">Void</Badge>}
-          {expense.status === 'finalised' && <Badge tone="success">Posted</Badge>}
-          <Badge tone={isBill ? 'warning' : 'default'}>
-            {isBill ? 'Bill on account' : 'Paid directly'}
-          </Badge>
-          {expense.vatClaimable < expense.vatTotal && (
-            <Badge tone="warning">Some VAT not claimable</Badge>
-          )}
-        </div>
+        {/* Capital spending is on the balance sheet but depreciates nothing
+            until the thing itself is on the asset register. Nowhere else will
+            prompt for this, so the expense that created it does. */}
+        {isCapital && !assetExists && expense.status === 'finalised' && (
+          <Card>
+            <CardHeader
+              title="This is a capital purchase"
+              description="It is on the balance sheet as an asset, but nothing is depreciating it. Record it on the fixed asset register so it becomes a cost over the years it is used."
+              action={
+                <ButtonLink href={`/accounting/assets/new?expense=${expense.id}`} size="sm">
+                  <Icons.Plus size={15} />
+                  Record as an asset
+                </ButtonLink>
+              }
+            />
+          </Card>
+        )}
+
+        {isCapital && assetExists && (
+          <Card>
+            <CardBody>
+              <p className="text-sm text-muted">
+                This capital purchase is on the{' '}
+                <TextLink href="/accounting/assets">fixed asset register</TextLink> and
+                depreciating.
+              </p>
+            </CardBody>
+          </Card>
+        )}
 
         <Card>
           <CardHeader title="What it was spent on" />
-          <div className="overflow-x-auto">
-            <table className={TABLE}>
-              <thead>
-                <tr className={TABLE_HEAD_ROW}>
-                  <th className={TABLE_TH}>Category</th>
-                  <th className={TABLE_TH}>Description</th>
-                  <th className={TABLE_TH}>Department</th>
-                  <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Excl</th>
-                  <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>VAT</th>
-                  <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {expense.lines.map((line) => (
-                  <tr key={line.id} className={TABLE_ROW}>
-                    <td className={TABLE_TD}>
-                      <span className="text-ink">{line.categoryName}</span>
-                      <span className="ml-2 text-xs text-muted">{line.categoryCode}</span>
-                    </td>
-                    <td className={TABLE_TD}>
-                      <span className="text-muted">{line.description ?? '—'}</span>
-                    </td>
-                    <td className={TABLE_TD}>
-                      <span className="text-muted">{line.departmentName ?? '—'}</span>
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(line.lineExcl)}</td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                      {line.lineVat === 0 ? (
-                        <span className="text-faint">—</span>
-                      ) : (
-                        <span className={line.vatClaimable ? '' : 'text-warning-ink'}>
-                          {formatMoney(line.lineVat)}
-                        </span>
-                      )}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                      {formatMoney(line.lineIncl)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ExpenseLinesTable rows={expense.lines} />
 
           <CardBody>
             <div className="flex justify-end">
-              <dl className="w-64 space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-muted">Excluding VAT</dt>
-                  <dd className="numeric text-ink-2">{formatMoney(expense.subtotalExcl)}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-muted">VAT</dt>
-                  <dd className="numeric text-ink-2">{formatMoney(expense.vatTotal)}</dd>
-                </div>
+              <SummaryList className="w-64">
+                <SummaryRow label="Excluding VAT" value={formatMoney(expense.subtotalExcl)} />
+                <SummaryRow label="VAT" value={formatMoney(expense.vatTotal)} />
                 {expense.vatClaimable !== expense.vatTotal && (
-                  <div className="flex justify-between">
-                    <dt className="text-muted">…claimable on the return</dt>
-                    <dd className="numeric text-warning-ink">
-                      {formatMoney(expense.vatClaimable)}
-                    </dd>
-                  </div>
+                  <SummaryRow
+                    label="…claimable on the return"
+                    value={formatMoney(expense.vatClaimable)}
+                    tone="warning"
+                  />
                 )}
-                <div className="flex justify-between border-t border-border pt-1">
-                  <dt className="font-medium text-ink">Total</dt>
-                  <dd className="numeric text-lg font-semibold text-ink">
-                    {formatMoney(expense.totalIncl)}
-                  </dd>
-                </div>
-              </dl>
+                <SummaryTotal label="Total" value={formatMoney(expense.totalIncl)} />
+              </SummaryList>
             </div>
           </CardBody>
         </Card>
 
-        <div className="grid gap-5 lg:grid-cols-2">
-          <Card>
-            <CardHeader title="Details" />
-            <CardBody>
-              <dl className="space-y-2 text-sm">
-                <Row label="Date" value={expense.expenseDate} />
-                {expense.dueDate && <Row label="Due" value={expense.dueDate} />}
-                <Row label="Paid to" value={expense.supplierName ?? 'Not stated'} />
-                {expense.supplierInvoiceNo && (
-                  <Row label="Their invoice" value={expense.supplierInvoiceNo} />
-                )}
-                {expense.reference && <Row label="Reference" value={expense.reference} />}
-                {expense.description && <Row label="Description" value={expense.description} />}
-                <Row label="Captured by" value={expense.userName} />
-                {expense.recurringId && (
-                  <div className="flex justify-between">
-                    <dt className="text-muted">Raised by</dt>
-                    <dd>
-                      <Link
-                        href="/expenses/recurring"
-                        className="text-brand hover:underline"
-                      >
-                        a recurring schedule
-                      </Link>
-                    </dd>
-                  </div>
-                )}
-              </dl>
-              {expense.notes && (
-                <p className="mt-4 rounded-control bg-surface-2 px-3 py-2 text-sm text-ink-2">
-                  {expense.notes}
-                </p>
-              )}
-            </CardBody>
-          </Card>
+        <div className="grid items-start gap-5 lg:grid-cols-2">
+          <SettingGroup title="Details">
+            <SettingRow label="Date">
+              <span className="text-sm text-ink-2">{expense.expenseDate}</span>
+            </SettingRow>
+            {expense.dueDate && (
+              <SettingRow label="Due">
+                <span className="text-sm text-ink-2">{expense.dueDate}</span>
+              </SettingRow>
+            )}
+            <SettingRow label="Paid to">
+              <span className="text-sm text-ink-2">{expense.supplierName ?? 'Not stated'}</span>
+            </SettingRow>
+            <SettingRow
+              label="Kind"
+              description={
+                isBill ? 'Owed on the supplier account.' : 'Paid straight from an account.'
+              }
+            >
+              <span className="text-sm text-ink-2">{isBill ? 'Bill on account' : 'Paid directly'}</span>
+            </SettingRow>
+            {expense.supplierInvoiceNo && (
+              <SettingRow label="Their invoice">
+                <span className="text-sm text-ink-2">{expense.supplierInvoiceNo}</span>
+              </SettingRow>
+            )}
+            {expense.reference && (
+              <SettingRow label="Reference">
+                <span className="text-sm text-ink-2">{expense.reference}</span>
+              </SettingRow>
+            )}
+            {expense.description && (
+              <SettingRow label="Description">
+                <span className="text-sm text-ink-2">{expense.description}</span>
+              </SettingRow>
+            )}
+            <SettingRow label="Captured by">
+              <span className="text-sm text-ink-2">{expense.userName}</span>
+            </SettingRow>
+            {expense.recurringId && (
+              <SettingRow label="Raised by">
+                <TextLink href="/expenses/recurring" className="text-sm">
+                  a recurring schedule
+                </TextLink>
+              </SettingRow>
+            )}
+            {expense.notes && (
+              <SettingRow label="Notes" description={expense.notes}>
+                <span />
+              </SettingRow>
+            )}
+          </SettingGroup>
 
           <Card>
             <CardHeader
@@ -217,12 +229,9 @@ export default async function ExpenseDetailPage({
                 <div className="space-y-2 text-sm">
                   <p className="text-ink-2">
                     Posted to{' '}
-                    <Link
-                      href={`/suppliers/${expense.supplierId}`}
-                      className="text-brand hover:underline"
-                    >
+                    <TextLink href={`/suppliers/${expense.supplierId}`}>
                       {expense.supplierName}
-                    </Link>
+                    </TextLink>
                     &apos;s account as an invoice.
                   </p>
                   <p className="text-muted">
@@ -233,12 +242,9 @@ export default async function ExpenseDetailPage({
                 <div className="space-y-2 text-sm">
                   <p className="text-ink-2">
                     {formatMoney(expense.totalIncl)} came out of{' '}
-                    <Link
-                      href={`/cashbook/${expense.bankAccountId}`}
-                      className="text-brand hover:underline"
-                    >
+                    <TextLink href={`/cashbook/${expense.bankAccountId}`}>
                       {expense.bankAccountName ?? 'the account'}
-                    </Link>
+                    </TextLink>
                     .
                   </p>
                   <p className="text-muted">
@@ -251,14 +257,5 @@ export default async function ExpenseDetailPage({
         </div>
       </PageBody>
     </>
-  )
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between">
-      <dt className="text-muted">{label}</dt>
-      <dd className="text-ink-2">{value}</dd>
-    </div>
   )
 }

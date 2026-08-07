@@ -45,6 +45,7 @@ export function DataTable<T>({
   rows,
   getRowKey,
   actions,
+  actionsOnHover = false,
   sort,
   onSortChange,
   empty,
@@ -58,6 +59,13 @@ export function DataTable<T>({
   getRowKey: (row: T) => string | number
   /** Inline row actions — use size="sm" iconOnly buttons. */
   actions?: (row: T) => ReactNode
+  /**
+   * Reveal the actions only while the row is hovered or an action has focus.
+   * Use on long lists, where a visible button on every row is 50 buttons
+   * competing with the data. Only applies on mouse-driven devices — touch has
+   * no hover, so there the actions stay visible.
+   */
+  actionsOnHover?: boolean
   sort?: SortState
   onSortChange?: (next: SortState) => void
   empty?: { title: string; hint?: string; icon?: ReactNode; action?: ReactNode }
@@ -250,8 +258,14 @@ export function DataTable<T>({
                   {/* Padding matches TABLE_TD — an actions cell that kept its
                       own taller padding would set the height of every row. */}
                   {/* Stop clicks on an action from also triggering onRowClick. */}
+                  {/* pointer-fine scopes the hover-reveal to mouse devices;
+                      focus keeps keyboard users able to reach every action. */}
                   <div
-                    className="flex items-center justify-end gap-1.5"
+                    className={`flex items-center justify-end gap-1.5 ${
+                      actionsOnHover
+                        ? 'pointer-fine:opacity-0 pointer-fine:transition-opacity pointer-fine:group-hover:opacity-100 pointer-fine:focus-within:opacity-100'
+                        : ''
+                    }`}
                     onClick={(event) => event.stopPropagation()}
                   >
                     {actions(row)}

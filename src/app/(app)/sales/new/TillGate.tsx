@@ -36,7 +36,13 @@ export default function TillGate({ siteName }: { siteName: string }) {
       <Card className="w-full max-w-sm">
         <div className="flex flex-col items-center gap-6 px-6 py-8">
           <div className="text-center">
-            <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-brand/10">
+            {/* Circular avatar tile — the same tinted-glyph idiom as
+                SettingRow's icon tile, round because it is an identity mark,
+                not a control. */}
+            <div
+              data-kit-ok
+              className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-brand-soft"
+            >
               <Icons.KeyRound size={22} className="text-brand" />
             </div>
             <h2 className="text-lg font-semibold text-ink">Enter your PIN</h2>

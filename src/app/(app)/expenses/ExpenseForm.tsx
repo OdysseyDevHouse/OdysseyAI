@@ -8,18 +8,24 @@ import {
   CardHeader,
   CardBody,
   CardFooter,
+  Callout,
+  Combobox,
   Field,
   Input,
+  NumberInput,
   Select,
   CurrencyInput,
   Textarea,
-  Badge,
   Icons,
+  SegmentedControl,
+  SummaryList,
+  SummaryRow,
+  SummaryTotal,
   useToast,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
-  TABLE_TD,
+  TABLE_TD_INPUT,
   TABLE_ROW,
   TABLE_NUMERIC,
 } from '@/components/ui'
@@ -87,6 +93,16 @@ export type ExpenseFormValues = {
   lines: FormLine[]
 }
 
+/* Which field each refusal names, so the complaint can sit under the control
+   it is about rather than only in the footer. Keys are refuseExpense's exact
+   messages — an unmapped refusal simply stays footer-only. */
+const REFUSAL_FIELD: Record<string, 'date' | 'supplier' | 'payee' | 'bank'> = {
+  'That date is not valid.': 'date',
+  'A bill needs a supplier account — that is who it is owed to.': 'supplier',
+  'Choose the account the money came out of.': 'bank',
+  'Say who was paid.': 'payee',
+}
+
 export function ExpenseForm({
   categories,
   suppliers,
@@ -149,6 +165,7 @@ export function ExpenseForm({
     bankAccountId,
     lines: modelLines,
   })
+  const refusalField = refusal ? (REFUSAL_FIELD[refusal] ?? null) : null
 
   // Warn about a repeated supplier invoice number while the user is still
   // typing rather than after they post. Booking the same bill twice silently
@@ -172,6 +189,15 @@ export function ExpenseForm({
       clearTimeout(timer)
     }
   }, [supplierId, supplierInvoiceNo, existing?.id])
+
+  const payeeQuery = supplierName.trim().toLowerCase()
+  const payeeOptions = (
+    payeeQuery
+      ? suppliers.filter((s) => s.name.toLowerCase().includes(payeeQuery))
+      : suppliers
+  )
+    .slice(0, 8)
+    .map((s) => ({ value: String(s.id), label: s.name, hint: s.code }))
 
   function payload() {
     return {
@@ -235,22 +261,15 @@ export function ExpenseForm({
           description={PAYMENT_TYPE_HINTS[paymentType]}
         />
         <CardBody>
-          <div className="flex gap-2">
-            <Button
-              variant={paymentType === 'direct' ? 'primary' : 'secondary'}
-              onClick={() => setPaymentType('direct')}
-            >
-              <Icons.Wallet size={15} />
-              Paid now
-            </Button>
-            <Button
-              variant={isBill ? 'primary' : 'secondary'}
-              onClick={() => setPaymentType('on_account')}
-            >
-              <Icons.Clock size={15} />
-              Bill to pay later
-            </Button>
-          </div>
+          <SegmentedControl
+            aria-label="Kind of expense"
+            options={[
+              { value: 'direct', label: 'Paid now' },
+              { value: 'on_account', label: 'Bill to pay later' },
+            ]}
+            value={paymentType}
+            onChange={setPaymentType}
+          />
         </CardBody>
       </Card>
 
@@ -258,7 +277,7 @@ export function ExpenseForm({
         <CardHeader title="Who and when" />
         <CardBody>
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Date">
+            <Field label="Date" error={refusalField === 'date' ? refusal! : undefined}>
               <Input
                 type="date"
                 value={expenseDate}
@@ -267,7 +286,11 @@ export function ExpenseForm({
             </Field>
 
             {isBill ? (
-              <Field label="Supplier" hint="The account this is owed to.">
+              <Field
+                label="Supplier"
+                hint="The account this is owed to."
+                error={refusalField === 'supplier' ? refusal! : undefined}
+              >
                 <Select
                   value={String(supplierId ?? '')}
                   onChange={(e) => {
@@ -285,21 +308,26 @@ export function ExpenseForm({
                 </Select>
               </Field>
             ) : (
-              <Field label="Paid to" hint="A supplier, or just type who it was.">
-                <Input
-                  value={supplierName}
-                  onChange={(e) => {
-                    setSupplierName(e.target.value)
+              <Field
+                label="Paid to"
+                hint="A supplier, or just type who it was."
+                htmlFor="expense-payee"
+                error={refusalField === 'payee' ? refusal! : undefined}
+              >
+                <Combobox
+                  id="expense-payee"
+                  options={payeeOptions}
+                  query={supplierName}
+                  onQueryChange={(next) => {
+                    setSupplierName(next)
                     setSupplierId(null)
                   }}
-                  list="expense-payees"
+                  onSelect={(option) => {
+                    setSupplierName(option.label)
+                    setSupplierId(null)
+                  }}
                   placeholder="e.g. Shell Garage"
                 />
-                <datalist id="expense-payees">
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.name} />
-                  ))}
-                </datalist>
               </Field>
             )}
 
@@ -311,7 +339,11 @@ export function ExpenseForm({
                 />
               </Field>
             ) : (
-              <Field label="Paid from" hint="Where the money came out of.">
+              <Field
+                label="Paid from"
+                hint="Where the money came out of."
+                error={refusalField === 'bank' ? refusal! : undefined}
+              >
                 <Select
                   value={String(bankAccountId ?? '')}
                   onChange={(e) => setBankAccountId(Number(e.target.value) || null)}
@@ -328,11 +360,11 @@ export function ExpenseForm({
           </div>
 
           {duplicate && (
-            <p className="mt-4 rounded-control bg-warning-soft px-3 py-2 text-sm text-warning-ink">
+            <Callout tone="warning" title="This may be the same bill twice" className="mt-4">
               That invoice number is already captured on this supplier —{' '}
               {duplicate.documentNumber ?? 'a draft'} dated {duplicate.expenseDate} for{' '}
-              {formatMoney(duplicate.totalIncl)}. Check this is not the same bill twice.
-            </p>
+              {formatMoney(duplicate.totalIncl)}.
+            </Callout>
           )}
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -347,6 +379,16 @@ export function ExpenseForm({
               <Input value={reference} onChange={(e) => setReference(e.target.value)} />
             </Field>
           </div>
+
+          {/* Notes belong with the who-and-when story, not inside the lines
+              table — they describe the expense, not a split. */}
+          <Field
+            label="Notes"
+            hint="Anything worth remembering about this expense."
+            className="mt-4"
+          >
+            <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
         </CardBody>
       </Card>
 
@@ -386,7 +428,7 @@ export function ExpenseForm({
                 const computed = totals.lines[index]
                 return (
                   <tr key={line.key} className={TABLE_ROW}>
-                    <td className={TABLE_TD}>
+                    <td className={TABLE_TD_INPUT}>
                       <Select
                         value={String(line.categoryId)}
                         onChange={(e) =>
@@ -410,7 +452,7 @@ export function ExpenseForm({
                         </span>
                       )}
                     </td>
-                    <td className={TABLE_TD}>
+                    <td className={TABLE_TD_INPUT}>
                       <Input
                         value={line.description}
                         onChange={(e) => updateLine(line.key, { description: e.target.value })}
@@ -418,7 +460,7 @@ export function ExpenseForm({
                       />
                     </td>
                     {departments.length > 0 && (
-                      <td className={TABLE_TD}>
+                      <td className={TABLE_TD_INPUT}>
                         <Select
                           value={String(line.departmentId ?? '')}
                           onChange={(e) =>
@@ -436,17 +478,17 @@ export function ExpenseForm({
                         </Select>
                       </td>
                     )}
-                    <td className={TABLE_TD}>
-                      <Input
-                        type="number"
-                        step="0.01"
+                    <td className={TABLE_TD_INPUT}>
+                      <NumberInput
                         value={line.vatRatePct}
                         onChange={(e) =>
                           updateLine(line.key, { vatRatePct: Number(e.target.value) || 0 })
                         }
                       />
                     </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                    {/* The input aligns its own figures — TABLE_NUMERIC on the
+                        cell would fight the control. */}
+                    <td className={TABLE_TD_INPUT}>
                       <CurrencyInput
                         value={line.amountIncl}
                         onChange={(e) =>
@@ -458,12 +500,12 @@ export function ExpenseForm({
                       {/* The split, as it is typed. The slip says the inclusive
                           figure; the books need the other two. */}
                       {computed && computed.vat > 0 && (
-                        <span className="mt-1 block text-xs text-muted">
+                        <span className="numeric mt-1 block text-right text-xs text-muted">
                           {formatMoney(computed.excl)} + {formatMoney(computed.vat)} VAT
                         </span>
                       )}
                     </td>
-                    <td className={`${TABLE_TD} text-right`}>
+                    <td className={`${TABLE_TD_INPUT} text-right`}>
                       {lines.length > 1 && (
                         <Button
                           variant="danger-ghost"
@@ -487,44 +529,30 @@ export function ExpenseForm({
 
         <CardBody>
           <div className="flex justify-end">
-            <dl className="w-64 space-y-1 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-muted">Excluding VAT</dt>
-                <dd className="numeric text-ink-2">{formatMoney(totals.subtotalExcl)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted">VAT</dt>
-                <dd className="numeric text-ink-2">{formatMoney(totals.vatTotal)}</dd>
-              </div>
+            <SummaryList className="w-64">
+              <SummaryRow label="Excluding VAT" value={formatMoney(totals.subtotalExcl)} />
+              <SummaryRow label="VAT" value={formatMoney(totals.vatTotal)} />
               {totals.vatClaimable !== totals.vatTotal && (
-                <div className="flex justify-between">
-                  <dt className="text-muted">…of which claimable</dt>
-                  <dd className="numeric text-warning-ink">{formatMoney(totals.vatClaimable)}</dd>
-                </div>
+                <SummaryRow
+                  label="…of which claimable"
+                  value={formatMoney(totals.vatClaimable)}
+                  tone="warning"
+                />
               )}
-              <div className="flex justify-between border-t border-border pt-1">
-                <dt className="font-medium text-ink">Total</dt>
-                <dd className="numeric text-lg font-semibold text-ink">
-                  {formatMoney(totals.totalIncl)}
-                </dd>
-              </div>
-            </dl>
+              <SummaryTotal label="Total" value={formatMoney(totals.totalIncl)} />
+            </SummaryList>
           </div>
-
-          <Field label="Notes" hint="Optional — anything worth remembering about this expense.">
-            <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </Field>
         </CardBody>
 
         <CardFooter>
           <div className="flex w-full items-center justify-between">
-            <span className="text-sm text-muted">
+            <span className={`text-sm ${refusal ? 'text-danger' : 'text-muted'}`}>
               {refusal ?? (isBill
                 ? 'Posting adds this to the supplier account.'
                 : 'Posting takes the money out of the account.')}
             </span>
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => router.back()}>
+              <Button variant="ghost" onClick={() => router.back()}>
                 Cancel
               </Button>
               <Button

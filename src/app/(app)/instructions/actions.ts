@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import {
   createGroup,
   updateGroup,
@@ -79,7 +79,9 @@ export async function saveInstructionAction(
   _prev: InstructionFormState,
   form: FormData,
 ): Promise<InstructionFormState> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
 
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readGroup(form)
@@ -98,7 +100,8 @@ export async function saveInstructionAction(
 }
 
 export async function deleteInstructionAction(form: FormData): Promise<void> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('products.edit')
+  const { siteId } = ctx
   const id = Number(form.get('id'))
 
   if (Number.isFinite(id) && id > 0) {

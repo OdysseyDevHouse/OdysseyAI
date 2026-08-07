@@ -86,8 +86,10 @@ export default function DocumentActions({
 
   return (
     <div className="flex items-center gap-2">
+      {/* Print is the screen's one primary: on a posted document it is the
+          only action most visits are for — cancel and credit are exceptions. */}
       {documentNumber && (
-        <Button variant="secondary" onClick={print} disabled={pending}>
+        <Button variant="primary" onClick={print} disabled={pending}>
           <Icons.Printer size={15} />
           Print
         </Button>

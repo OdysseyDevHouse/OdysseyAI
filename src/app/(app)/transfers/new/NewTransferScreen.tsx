@@ -15,6 +15,7 @@ import {
   Icons,
   Input,
   NumberInput,
+  PageBody,
   Select,
   useToast,
   type ComboboxOption,
@@ -228,7 +229,8 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
   const totalUnits = lines.reduce((sum, l) => sum + l.qty, 0)
 
   return (
-    <div className="grid gap-4 px-6 pt-4 pb-10 lg:grid-cols-3">
+    <PageBody>
+      <div className="grid gap-4 lg:grid-cols-3">
       <div className="flex flex-col gap-4 lg:col-span-2">
         <Card>
           <CardHeader title="Where it moves" description="Out of one location, into another." />
@@ -439,24 +441,12 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
           </p>
         </Card>
 
+        {/* No footnote restating why the button is off: the location clash and
+            an overdrawn line are already marked on their own fields. */}
         <Button variant="primary" disabled={!ready || pending} onClick={submit}>
           <Icons.ArrowLeftRight size={16} />
           {pending ? 'Posting…' : 'Post the transfer'}
         </Button>
-
-        {!ready && (
-          <p className="text-center text-xs text-muted">
-            {sameLocation
-              ? 'Choose two different locations.'
-              : lines.length === 0
-                ? 'Add what is moving.'
-                : overdrawn.length > 0
-                  ? 'One line asks for more than the source holds.'
-                  : unpickedSerials.length > 0
-                    ? `Tick which units of ${unpickedSerials[0].productCode} are moving.`
-                    : 'Every line needs a quantity.'}
-          </p>
-        )}
 
         <Card className="p-3">
           <p className="text-xs text-muted">
@@ -465,6 +455,7 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
           </p>
         </Card>
       </div>
-    </div>
+      </div>
+    </PageBody>
   )
 }

@@ -520,6 +520,91 @@ async function main() {
     inv.insertId,
     cn.insertId,
   ])
+
+  /* ── Attribution reaches the calculation ───────────────────────────── */
+  //
+  // The bug this guards against shipped once: the invoicing screen wrote
+  // `sales_rep_id` (a sales_reps id) while the calculation read
+  // `sales_rep_user_id` (a users id), so every line attributed through the UI
+  // was silently ignored and paid whoever captured the document instead.
+  //
+  // 047 made commission pay a USER and converted every rep into one. What
+  // follows checks the two halves still agree — a line naming someone OTHER
+  // than the capturer must pay that someone.
+  console.log('\nattribution')
+
+  const other = await siteQueryOne<{ id: number; name: string }>(
+    SITE,
+    'SELECT id, name FROM users WHERE is_active = 1 AND id <> ? ORDER BY id LIMIT 1',
+    [user.id],
+  )
+  if (!other) {
+    check('a second user exists to attribute to', false)
+    return
+  }
+
+  const attrRule = await createRule(SITE, {
+    name: 'Test Attribution',
+    priority: 1,
+    basis: 'turnover',
+    departmentId: null,
+    productId: null,
+    brandId: null,
+    supplierId: null,
+    // Deliberately unscoped by user: the rule pays whoever the LINE names.
+    userId: null,
+    isExclusion: false,
+    ratePct: 10,
+    threshold: 0,
+    isActive: true,
+    tiers: [],
+  })
+  if (!attrRule.ok) {
+    check('the attribution rule was created', false, attrRule.error)
+    return
+  }
+  createdRules.push(attrRule.id)
+
+  const attrRun = await createRun(SITE, '2019-07-01', '2019-07-31', 'Attribution')
+  if (!attrRun.ok) {
+    check('the attribution run was created', false, attrRun.error)
+    return
+  }
+  createdRuns.push(attrRun.id)
+
+  // Captured BY user.id, sold BY other.id — the case that was broken.
+  const attrInv = await siteExecute(
+    SITE,
+    `INSERT INTO sales_documents
+       (doc_type, status, document_number, document_date, user_id, user_name,
+        subtotal_excl, vat_total, total_incl)
+     VALUES ('invoice','finalised','TESTATTR1','2019-07-15',?,?,1000,150,1150)`,
+    [user.id, user.name],
+  )
+  await siteExecute(
+    SITE,
+    `INSERT INTO sales_document_lines
+       (document_id, line_number, product_id, product_code, description, department_id,
+        sales_rep_user_id, qty, unit_price_incl, vat_rate_pct,
+        line_total_incl, line_total_excl, line_vat, unit_cost_excl)
+     VALUES (?,1,?,?,'Attribution test',?,?,1,1150,15,1150,1000,150,400)`,
+    [attrInv.insertId, product.id, product.code, product.department_id, other.id],
+  )
+
+  const attrCalc = await calculateRun(SITE, attrRun.id)
+  check('the attribution run calculated', attrCalc.ok, attrCalc.ok ? '' : attrCalc.error)
+
+  const attrRows = await runSummary(SITE, attrRun.id)
+  const paidTo = attrRows.find((r) => r.amount !== 0)
+
+  check(
+    'commission goes to the line’s salesperson, not the capturer',
+    paidTo?.userId === other.id,
+    `paid ${paidTo?.userName ?? 'nobody'} (${paidTo?.userId}), expected ${other.name} (${other.id})`,
+  )
+  if (paidTo) eq('and it is 10% of the turnover', paidTo.amount, 100)
+
+  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [attrInv.insertId])
 }
 
 async function cleanup() {

@@ -8,9 +8,12 @@ import {
   Button,
   Card,
   CardBody,
+  CardFooter,
   CardHeader,
   ColourInput,
+  EmptyState,
   Field,
+  FieldGroup,
   Icons,
   Input,
   Menu,
@@ -36,17 +39,27 @@ import {
   // The pure model, NOT lib/site/storefrontLayout — importing the server
   // module here would pull the database layer into the browser bundle.
 } from '@/lib/storefrontModel'
+import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefront'
+import type { ProductDisplay, SectionContent } from '@/app/store/[token]/HomeSections'
+import { BuilderCanvas } from './BuilderCanvas'
+import ProductPicker from './ProductPicker'
 import { discardDraftAction, publishDraftAction, saveDraftAction, saveThemeAction } from './actions'
 
 /**
- * The page builder.
+ * The page builder: the real shop on the left, the settings for whatever is
+ * selected on the right.
  *
- * A LIST plus an inspector, rather than the drag-onto-a-canvas editor the old
- * one had. A shop front page is four kinds of block in an order — the ordering
- * is the whole interaction, and up/down controls do it in one tap on a phone,
- * survive keyboard use, and need no drag library. What was lost with the
- * canvas was a preview that never quite matched the real shop anyway; "View
- * shop" opens the actual storefront instead.
+ * ── THE PREVIEW IS THE SHOP ──────────────────────────────────────────────
+ *
+ * The canvas renders the SAME HomeSections component a shopper gets, wrapped
+ * in drag handles. Not a mock — there is no second implementation, so the
+ * preview cannot drift from the thing it is previewing. Click a section to
+ * edit it; drag it to move it.
+ *
+ * An earlier version of this screen was a list of section NAMES beside the
+ * inspector. It was simpler and it was worse: arranging a page you cannot see
+ * is guesswork, and the whole reason to build a page visually is to watch it
+ * change.
  *
  * Everything writes to a DRAFT, autosaved. Publish is the only thing that
  * moves the live shop.
@@ -72,16 +85,29 @@ export default function Builder({
   theme: initialTheme,
   published,
   draft,
+  initialContent,
   departments,
+  publishedDepartments,
+  storeName,
+  blurb,
   storeOpen,
   storePath,
+  display,
 }: {
   theme: StorefrontTheme
   published: HomeSection[]
   draft: HomeSection[] | null
+  /** The sections with their real products, resolved server-side. */
+  initialContent: SectionContent[]
   departments: { id: number; name: string }[]
+  /** What the shop actually publishes — the categories section previews these. */
+  publishedDepartments: StorefrontDepartment[]
+  storeName: string
+  blurb: string
   storeOpen: boolean
   storePath: string
+  /** Passed straight to the canvas so the preview matches the shop. */
+  display: ProductDisplay
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -96,6 +122,71 @@ export default function Builder({
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const selected = sections.find((s) => s.id === selectedId) ?? null
+
+  /*
+   * What the preview draws.
+   *
+   * The section LIST is local state (it changes on every keystroke), but the
+   * products inside each row were resolved on the server. Re-pairing them by
+   * id means a rename or a reorder re-renders instantly, while the contents
+   * stay whatever the server last resolved — a new row shows empty until the
+   * draft saves and the page revalidates, which is the honest thing to show.
+   */
+  const contentById = useMemo(
+    () => new Map(initialContent.map((c) => [c.section.id, c])),
+    [initialContent],
+  )
+
+  /*
+   * Products the PICKER has resolved since the page loaded.
+   *
+   * A pick is not a keystroke: it changes what the row contains, and the whole
+   * reason to build a page visually is to watch it change. Waiting for the
+   * autosave and a revalidate would leave the row looking empty for over a
+   * second and — worse — show the "nothing you picked is published" warning
+   * while the picks were in fact perfectly fine.
+   *
+   * The picker has already fetched these products to draw its own list, so
+   * handing them over costs nothing and needs no round-trip.
+   */
+  const [pickedProducts, setPickedProducts] = useState<Map<string, StorefrontProduct[]>>(new Map())
+
+  /*
+   * Which section the picker is editing, held in a ref so `resolvePicks` keeps
+   * a STABLE identity. The picker calls it from an effect that depends on it —
+   * a fresh function each render would re-run that effect forever.
+   */
+  const pickingFor = useRef<string | null>(null)
+  pickingFor.current = selectedId
+
+  const resolvePicks = useCallback((products: StorefrontProduct[]) => {
+    const id = pickingFor.current
+    if (!id) return
+    setPickedProducts((prev) => {
+      // Same products in the same order means nothing to do. Without this the
+      // set would be replaced on every resolve, re-rendering the whole canvas
+      // for no change.
+      const before = prev.get(id)
+      if (before?.length === products.length && before.every((p, i) => p.id === products[i].id)) {
+        return prev
+      }
+      const next = new Map(prev)
+      next.set(id, products)
+      return next
+    })
+  }, [])
+
+  const content: SectionContent[] = sections.map((section) => {
+    const resolved = contentById.get(section.id)
+    const local = pickedProducts.get(section.id)
+    return {
+      ...resolved,
+      // Only a hand-picked row is overridden. A rule's contents are the
+      // server's to decide — this map has no idea what "the newest eight" is.
+      ...(local && section.source === 'manual' ? { products: local } : {}),
+      section,
+    }
+  })
 
   // What is on the server right now, so the dirty check compares like with
   // like. Normalised on both sides — see normaliseSections' key-order note.
@@ -122,6 +213,15 @@ export default function Builder({
     return () => clearTimeout(timer)
   }, [currentJson, sections, toast])
 
+  // Flash "Saved" briefly once an autosave lands, then fall back to idle.
+  // Without this the 'saved' state was computed but never shown, so the bar
+  // went silently from "Saving…" back to its resting text.
+  useEffect(() => {
+    if (saveState !== 'saved') return
+    const timer = setTimeout(() => setSaveState('idle'), 2500)
+    return () => clearTimeout(timer)
+  }, [saveState])
+
   const patch = useCallback((id: string, changes: Partial<HomeSection>) => {
     setSections((prev) => prev.map((s) => (s.id === id ? { ...s, ...changes } : s)))
   }, [])
@@ -133,6 +233,25 @@ export default function Builder({
       if (index === -1 || target < 0 || target >= prev.length) return prev
       const next = [...prev]
       ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+
+  /**
+   * Drag-and-drop reorder: lift `from` out and drop it where `to` sits.
+   *
+   * A SPLICE, not a swap. Dragging a section from the bottom to the top should
+   * push everything else down one, not trade places with whatever happened to
+   * be there — swapping is what makes a drag feel like it did the wrong thing.
+   */
+  function reorder(from: string, to: string) {
+    setSections((prev) => {
+      const fromIndex = prev.findIndex((s) => s.id === from)
+      const toIndex = prev.findIndex((s) => s.id === to)
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev
+      const next = [...prev]
+      const [moved] = next.splice(fromIndex, 1)
+      next.splice(toIndex, 0, moved)
       return next
     })
   }
@@ -196,7 +315,7 @@ export default function Builder({
   return (
     <>
       <Card>
-        <div className="flex flex-wrap items-center gap-3 px-5 py-3.5">
+        <CardBody className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-ink">
               {hasUnpublished ? 'You have changes customers cannot see yet' : 'Your page is live'}
@@ -204,9 +323,11 @@ export default function Builder({
             <p className="text-sm text-muted">
               {saveState === 'saving'
                 ? 'Saving your draft…'
-                : hasUnpublished
-                  ? 'Publish when you are happy with it.'
-                  : 'Everything here is what shoppers see.'}
+                : saveState === 'saved'
+                  ? 'Draft saved.'
+                  : hasUnpublished
+                    ? 'Publish when you are happy with it.'
+                    : 'Everything here is what shoppers see.'}
             </p>
           </div>
 
@@ -226,116 +347,30 @@ export default function Builder({
           <Button variant="primary" onClick={publish} disabled={busy || !hasUnpublished}>
             {busy ? 'Publishing…' : 'Publish'}
           </Button>
-        </div>
+        </CardBody>
       </Card>
 
       <div className="grid gap-5 lg:grid-cols-[1fr_360px] lg:items-start">
-        {/* The page, top to bottom. */}
-        <Card>
-          <CardHeader
-            title="Your front page"
-            description="The order here is the order customers see."
-            action={
-              <Menu
-                variant="secondary"
-                label={
-                  <>
-                    <Icons.Plus size={15} />
-                    Add a section
-                  </>
-                }
-              >
-                {SECTION_KINDS.map((kind) => (
-                  <MenuItem key={kind} onClick={() => add(kind)}>
-                    {SECTION_LABEL[kind]}
-                  </MenuItem>
-                ))}
-              </Menu>
-            }
+        {/* The page itself, live. Not a list of section names — the actual
+            storefront, arranged in place. See BuilderCanvas. */}
+        <Card className="overflow-hidden p-0">
+          <BuilderCanvas
+            sections={sections}
+            content={content}
+            theme={theme}
+            display={display}
+            storeName={storeName}
+            blurb={blurb}
+            departments={publishedDepartments}
+            selected={selectedId}
+            onSelect={setSelectedId}
+            onReorder={reorder}
+            onToggle={(id, enabled) => patch(id, { enabled })}
+            onAdd={add}
+            onSelectAppearance={() => setSelectedId(null)}
           />
-
-          {sections.length === 0 ? (
-            <div className="px-5 py-10 text-center">
-              <p className="text-sm font-medium text-ink">Your front page is empty</p>
-              <p className="mt-1 text-sm text-muted">
-                Shoppers will land straight on your product list. Add a section to build a
-                proper front page.
-              </p>
-            </div>
-          ) : (
-            <ul className="divide-y divide-border">
-              {sections.map((section, index) => (
-                <li
-                  key={section.id}
-                  className={`flex items-center gap-3 px-5 py-3 ${
-                    section.id === selectedId ? 'bg-brand-soft' : ''
-                  }`}
-                >
-                  {/* `ghost`, not `bare`: ordering is the builder's main
-                      interaction and a chromeless chevron gave no hint it was
-                      a control. A disabled one now reads as disabled rather
-                      than as a decorative arrow. */}
-                  <div className="flex shrink-0 flex-col gap-0.5">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label={`Move ${section.title || SECTION_LABEL[section.kind]} up`}
-                      disabled={index === 0}
-                      onClick={() => move(section.id, -1)}
-                    >
-                      <Icons.ChevronUp size={15} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label={`Move ${section.title || SECTION_LABEL[section.kind]} down`}
-                      disabled={index === sections.length - 1}
-                      onClick={() => move(section.id, 1)}
-                    >
-                      <Icons.ChevronDown size={15} />
-                    </Button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(section.id)}
-                    className="min-w-0 flex-1 text-left"
-                    data-kit-ok
-                    /* Not a kit Button: this is a selectable row, styled as a
-                       row rather than a control, and a Button variant for it
-                       would be used nowhere else. */
-                  >
-                    <span className="block truncate text-sm font-medium text-ink">
-                      {section.title || SECTION_LABEL[section.kind]}
-                    </span>
-                    {/* The kind, but only when it adds something. An untitled
-                        section already shows its kind as the title, and
-                        repeating it read as a rendering bug. */}
-                    <span className="text-xs text-muted">
-                      {section.title && section.title !== SECTION_LABEL[section.kind]
-                        ? SECTION_LABEL[section.kind]
-                        : SECTION_HINT[section.kind]}
-                    </span>
-                  </button>
-
-                  {!section.enabled && <Badge tone="neutral">Hidden</Badge>}
-
-                  <Button
-                    variant="danger-ghost"
-                    size="sm"
-                    iconOnly
-                    aria-label={`Remove ${section.title || SECTION_LABEL[section.kind]}`}
-                    onClick={() => remove(section.id)}
-                  >
-                    <Icons.Trash size={15} />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
         </Card>
+
 
         {/* Whatever is selected. */}
         <div className="flex flex-col gap-5">
@@ -415,23 +450,30 @@ export default function Builder({
                     )}
 
                     {selected.source === 'manual' && (
-                      <p className="text-sm text-muted">
-                        Picking individual products is coming. For now, use a department or
-                        the newest products.
-                      </p>
+                      <ProductPicker
+                        value={selected.productIds ?? []}
+                        onChange={(productIds) => patch(selected.id, { productIds })}
+                        onResolve={resolvePicks}
+                      />
                     )}
 
-                    <Field label="How many to show">
-                      <NumberInput
-                        value={selected.maxItems ?? 8}
-                        min={1}
-                        max={24}
-                        onChange={(e) =>
-                          patch(selected.id, { maxItems: Number(e.target.value) || 8 })
-                        }
-                        className="w-24"
-                      />
-                    </Field>
+                    {/* Only a RULE needs a count. A hand-picked row shows what
+                        was picked — offering "how many" beside a list of 5
+                        would invite the owner to set 8 and wonder where the
+                        other 3 went. */}
+                    {selected.source !== 'manual' && (
+                      <Field label="How many to show">
+                        <NumberInput
+                          value={selected.maxItems ?? 8}
+                          min={1}
+                          max={24}
+                          onChange={(e) =>
+                            patch(selected.id, { maxItems: Number(e.target.value) || 8 })
+                          }
+                          className="w-24"
+                        />
+                      </Field>
+                    )}
                   </>
                 )}
 
@@ -466,11 +508,28 @@ export default function Builder({
             </Card>
           ) : (
             <Card>
-              <div className="px-5 py-8 text-center">
-                <p className="text-sm text-muted">
-                  Choose a section on the left to change it.
-                </p>
-              </div>
+              <EmptyState
+                icon={<Icons.LayoutGrid size={22} />}
+                title="Nothing selected"
+                hint="Click a section in the preview to edit it, or add a new one."
+                action={
+                  <Menu
+                    variant="secondary"
+                    label={
+                      <>
+                        <Icons.Plus size={15} />
+                        Add a section
+                      </>
+                    }
+                  >
+                    {SECTION_KINDS.map((kind) => (
+                      <MenuItem key={kind} onClick={() => add(kind)}>
+                        {SECTION_LABEL[kind]}
+                      </MenuItem>
+                    ))}
+                  </Menu>
+                }
+              />
             </Card>
           )}
 
@@ -480,92 +539,108 @@ export default function Builder({
               title="Appearance"
               description="Applies to your shop as soon as you save it."
             />
+            {/* Grouped by what the owner is doing — one undifferentiated
+                column of eight fields is where these settings got lost. */}
             <CardBody className="flex flex-col gap-4">
-              <Field label="Your colour" hint="Used for buttons and highlights.">
-                <ColourInput
-                  value={theme.brandColour}
-                  onChange={(brandColour) => setTheme({ ...theme, brandColour })}
-                />
-              </Field>
+              <FieldGroup title="Look">
+                <Field label="Your colour" hint="Used for buttons and highlights.">
+                  <ColourInput
+                    value={theme.brandColour}
+                    onChange={(brandColour) => setTheme({ ...theme, brandColour })}
+                  />
+                </Field>
 
-              <Field label="Product layout">
-                <Select
-                  value={theme.productLayout}
-                  onChange={(e) =>
-                    setTheme({ ...theme, productLayout: e.target.value as 'grid' | 'list' })
-                  }
-                >
-                  <option value="grid">Grid of tiles</option>
-                  <option value="list">A list</option>
-                </Select>
-              </Field>
+                <Field label="Product layout">
+                  <Select
+                    value={theme.productLayout}
+                    onChange={(e) =>
+                      setTheme({ ...theme, productLayout: e.target.value as 'grid' | 'list' })
+                    }
+                  >
+                    <option value="grid">Grid of tiles</option>
+                    <option value="list">A list</option>
+                  </Select>
+                </Field>
+              </FieldGroup>
 
-              <Field label="Welcome headline" hint="The big line on your front page.">
-                <Input
-                  value={theme.heroHeadline}
-                  maxLength={120}
-                  placeholder="e.g. Fresh every morning"
-                  onChange={(e) => setTheme({ ...theme, heroHeadline: e.target.value })}
-                />
-              </Field>
+              <FieldGroup title="Front page">
+                <Field label="Welcome headline" hint="The big line on your front page.">
+                  <Input
+                    value={theme.heroHeadline}
+                    maxLength={120}
+                    placeholder="e.g. Fresh every morning"
+                    onChange={(e) => setTheme({ ...theme, heroHeadline: e.target.value })}
+                  />
+                </Field>
 
-              <Field label="Under the headline">
-                <Textarea
-                  value={theme.heroSubtext}
-                  rows={2}
-                  maxLength={300}
-                  onChange={(e) => setTheme({ ...theme, heroSubtext: e.target.value })}
-                />
-              </Field>
+                <Field label="Under the headline">
+                  <Textarea
+                    value={theme.heroSubtext}
+                    rows={2}
+                    maxLength={300}
+                    onChange={(e) => setTheme({ ...theme, heroSubtext: e.target.value })}
+                  />
+                </Field>
+              </FieldGroup>
 
-              <Field label="Opening hours" hint="Shown in the footer.">
-                <Textarea
-                  value={theme.footerHours}
-                  rows={2}
-                  maxLength={400}
-                  placeholder="Mon–Fri 8am–5pm, Sat 8am–1pm"
-                  onChange={(e) => setTheme({ ...theme, footerHours: e.target.value })}
-                />
-              </Field>
+              <FieldGroup title="Footer" hint="Shown at the bottom of every shop page.">
+                <Field label="Opening hours">
+                  <Textarea
+                    value={theme.footerHours}
+                    rows={2}
+                    maxLength={400}
+                    placeholder="Mon–Fri 8am–5pm, Sat 8am–1pm"
+                    onChange={(e) => setTheme({ ...theme, footerHours: e.target.value })}
+                  />
+                </Field>
 
-              <Field label="About your shop" hint="A line or two in the footer.">
-                <Textarea
-                  value={theme.footerAbout}
-                  rows={2}
-                  maxLength={600}
-                  onChange={(e) => setTheme({ ...theme, footerAbout: e.target.value })}
-                />
-              </Field>
+                <Field label="About your shop" hint="A line or two.">
+                  <Textarea
+                    value={theme.footerAbout}
+                    rows={2}
+                    maxLength={600}
+                    onChange={(e) => setTheme({ ...theme, footerAbout: e.target.value })}
+                  />
+                </Field>
 
-              <Field label="Facebook" hint="The full link, or leave blank.">
-                <Input
-                  value={theme.socialFacebook}
-                  placeholder="https://facebook.com/yourshop"
-                  onChange={(e) => setTheme({ ...theme, socialFacebook: e.target.value })}
-                />
-              </Field>
+                <Field label="Facebook" hint="Optional — the full link.">
+                  <div className="max-w-64">
+                    <Input
+                      value={theme.socialFacebook}
+                      placeholder="https://facebook.com/yourshop"
+                      onChange={(e) => setTheme({ ...theme, socialFacebook: e.target.value })}
+                    />
+                  </div>
+                </Field>
 
-              <Field label="Instagram">
-                <Input
-                  value={theme.socialInstagram}
-                  placeholder="https://instagram.com/yourshop"
-                  onChange={(e) => setTheme({ ...theme, socialInstagram: e.target.value })}
-                />
-              </Field>
+                <Field label="Instagram" hint="Optional.">
+                  <div className="max-w-64">
+                    <Input
+                      value={theme.socialInstagram}
+                      placeholder="https://instagram.com/yourshop"
+                      onChange={(e) => setTheme({ ...theme, socialInstagram: e.target.value })}
+                    />
+                  </div>
+                </Field>
 
-              <Field label="WhatsApp number">
-                <Input
-                  value={theme.socialWhatsapp}
-                  placeholder="27821234567"
-                  onChange={(e) => setTheme({ ...theme, socialWhatsapp: e.target.value })}
-                />
-              </Field>
+                <Field label="WhatsApp number" hint="Optional.">
+                  <div className="w-44">
+                    <Input
+                      value={theme.socialWhatsapp}
+                      placeholder="27821234567"
+                      onChange={(e) => setTheme({ ...theme, socialWhatsapp: e.target.value })}
+                    />
+                  </div>
+                </Field>
+              </FieldGroup>
             </CardBody>
-            <div className="flex justify-end gap-2 border-t border-border px-5 py-3.5">
-              <Button variant="primary" onClick={saveThemeChanges} disabled={busy}>
+            <CardFooter>
+              {/* secondary: the screen's one primary is Publish, in the bar
+                  above — two primaries is zero primaries. */}
+              <Button variant="secondary" onClick={saveThemeChanges} disabled={busy}>
                 Save appearance
               </Button>
-            </div>
+            </CardFooter>
           </Card>
 
           {!storeOpen && (

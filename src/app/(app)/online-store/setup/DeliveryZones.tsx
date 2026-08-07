@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   CardHeader,
+  ConfirmModal,
   CurrencyInput,
   DataTable,
   EmptyState,
@@ -46,6 +47,7 @@ export default function DeliveryZones({ zones }: { zones: DeliveryZone[] }) {
   const toast = useToast()
   const [saving, startSaving] = useTransition()
   const [editing, setEditing] = useState<ZoneInput | null>(null)
+  const [removing, setRemoving] = useState<DeliveryZone | null>(null)
 
   function save() {
     if (!editing) return
@@ -60,14 +62,16 @@ export default function DeliveryZones({ zones }: { zones: DeliveryZone[] }) {
     })
   }
 
-  function remove(zone: DeliveryZone) {
+  function confirmRemove() {
+    if (!removing) return
     startSaving(async () => {
-      const result = await deleteZoneAction(zone.id)
+      const result = await deleteZoneAction(removing.id)
       if (!result.ok) {
         toast.error(result.error)
         return
       }
-      toast.success(`“${zone.name}” removed.`)
+      toast.success(`“${removing.name}” removed.`)
+      setRemoving(null)
     })
   }
 
@@ -114,9 +118,14 @@ export default function DeliveryZones({ zones }: { zones: DeliveryZone[] }) {
     {
       key: 'active',
       header: 'Status',
-      cell: (z) => (
-        <Badge tone={z.isActive ? 'success' : 'neutral'}>{z.isActive ? 'On' : 'Off'}</Badge>
-      ),
+      cell: (z) =>
+        // Active is the normal case — a green badge on every row would be
+        // decoration. Colour goes to the exception: an area switched off.
+        z.isActive ? (
+          <Badge tone="neutral">On</Badge>
+        ) : (
+          <Badge tone="warning">Off</Badge>
+        ),
       sortValue: (z) => (z.isActive ? 1 : 0),
       width: 'w-24',
     },
@@ -142,7 +151,8 @@ export default function DeliveryZones({ zones }: { zones: DeliveryZone[] }) {
             title="No delivery areas yet"
             hint="Until you add one, every customer who chooses delivery is told you don't deliver to them — even the shop next door."
             action={
-              <Button variant="primary" onClick={() => setEditing({ ...BLANK })}>
+              /* secondary: the page's one primary is "Save settings" below. */
+              <Button variant="secondary" onClick={() => setEditing({ ...BLANK })}>
                 <Icons.Plus size={16} />
                 Add your first area
               </Button>
@@ -182,7 +192,7 @@ export default function DeliveryZones({ zones }: { zones: DeliveryZone[] }) {
                   iconOnly
                   aria-label={`Remove ${z.name}`}
                   disabled={saving}
-                  onClick={() => remove(z)}
+                  onClick={() => setRemoving(z)}
                 >
                   <Icons.Trash size={15} />
                 </Button>
@@ -291,6 +301,24 @@ export default function DeliveryZones({ zones }: { zones: DeliveryZone[] }) {
           </div>
         )}
       </Modal>
+
+      {/* Deleting throws the fees and matching away for good — the reversible
+          path is switching the area off — so it has to be answered. */}
+      <ConfirmModal
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        onConfirm={confirmRemove}
+        title="Remove this delivery area"
+        message={
+          <>
+            Customers in <strong>{removing?.name}</strong> will be told you don&apos;t deliver
+            to them. To stop deliveries without losing the fees you set up, switch the area off
+            instead.
+          </>
+        }
+        confirmLabel="Remove area"
+        busy={saving}
+      />
     </>
   )
 }

@@ -18,7 +18,10 @@ export function GenerateButton() {
   const [pending, startTransition] = useTransition()
 
   return (
+    // Secondary on purpose: this sits inside a card, and each screen that
+    // shows it already has its own primary (Capture expense / New schedule).
     <Button
+      variant="secondary"
       size="sm"
       disabled={pending}
       onClick={() =>

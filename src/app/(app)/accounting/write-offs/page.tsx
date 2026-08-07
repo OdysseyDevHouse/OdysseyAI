@@ -10,11 +10,18 @@ import {
   Card,
   CardHeader,
   CardBody,
+  StatStrip,
   StatTile,
-  EmptyState,
-  Badge,
 } from '@/components/ui'
 import { WriteOffActions } from './WriteOffActions'
+import {
+  PostedWriteOffsTable,
+  CategoryTable,
+  CandidatesTable,
+  type PostedWriteOffRow,
+  type CategoryRow,
+  type CandidateRow,
+} from './WriteOffTables'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +48,37 @@ export default async function WriteOffsPage() {
     writeOffCandidates(siteId, { minDaysSinceActivity: 180, minAmount: 50, limit: 25 }),
   ])
 
+  // Plain serializable rows — DataTable's columns and actions are functions,
+  // so they live in the client components and only data crosses the boundary.
+  const postedRows: PostedWriteOffRow[] = posted.map((w) => ({
+    id: w.id,
+    customerId: w.customerId,
+    customerName: w.customerName,
+    userName: w.userName,
+    approvedBy: w.approvedBy,
+    writeOffDate: w.writeOffDate,
+    categoryLabel: w.categoryLabel,
+    reason: w.reason,
+    recovered: Boolean(w.recoveredAt),
+    amount: w.amount,
+  }))
+
+  const categoryRows: CategoryRow[] = summary.rows.map((r) => ({
+    category: r.category,
+    categoryLabel: r.categoryLabel,
+    count: r.count,
+    total: r.total,
+  }))
+
+  const candidateRows: CandidateRow[] = candidates.map((c) => ({
+    customerId: c.customerId,
+    name: c.name,
+    code: c.code,
+    daysSinceActivity: c.daysSinceActivity,
+    oldestDue: c.oldestDue,
+    balance: c.balance,
+  }))
+
   return (
     <>
       <PageHeader
@@ -49,7 +87,8 @@ export default async function WriteOffsPage() {
       />
 
       <PageBody>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* One tile carries a tone — the queue somebody is waiting on. */}
+        <StatStrip>
           <StatTile
             label="Awaiting approval"
             value={String(pending.length)}
@@ -64,7 +103,6 @@ export default async function WriteOffsPage() {
           <StatTile
             label="Recovered"
             value={formatMoney(summary.recovered)}
-            tone={summary.recovered > 0 ? 'positive' : 'default'}
             hint="Paid after being written off"
           />
           <StatTile
@@ -72,7 +110,7 @@ export default async function WriteOffsPage() {
             value={String(candidates.length)}
             hint="No activity for 180 days"
           />
-        </div>
+        </StatStrip>
 
         {pending.length > 0 && (
           <Card>
@@ -81,6 +119,9 @@ export default async function WriteOffsPage() {
               description="These are above the approval threshold. No balance has moved."
             />
             <CardBody>
+              {/* Kept as a list, not a table: the request's reason needs room
+                  to wrap next to the approve/reject pair, and there are rarely
+                  more than a handful pending. */}
               <ul className="divide-y divide-border">
                 {pending.map((w) => (
                   <li key={w.id} className="flex items-center justify-between gap-4 py-3">
@@ -95,13 +136,13 @@ export default async function WriteOffsPage() {
                         {w.customerCode} · {w.categoryLabel} · requested by {w.userName} on{' '}
                         {w.writeOffDate}
                       </span>
-                      <span className="mt-1 block text-sm text-ink-2">{w.reason}</span>
+                      <span className="mt-1 line-clamp-2 block text-sm text-ink-2">{w.reason}</span>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
                       <span className="numeric text-sm font-medium text-ink">
                         {formatMoney(w.amount)}
                       </span>
-                      <WriteOffActions id={w.id} mode="approve" />
+                      <WriteOffActions id={w.id} mode="approve" customerName={w.customerName} />
                     </div>
                   </li>
                 ))}
@@ -112,45 +153,7 @@ export default async function WriteOffsPage() {
 
         <Card>
           <CardHeader title="Written off" description="Posted, with the reason kept." />
-          {posted.length === 0 ? (
-            <CardBody>
-              <EmptyState
-                title="Nothing has been written off"
-                hint="When a debt becomes uncollectable, write it off from the customer's account so the reason and the approval are on record."
-              />
-            </CardBody>
-          ) : (
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {posted.map((w) => (
-                  <li key={w.id} className="flex items-center justify-between gap-4 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <Link
-                        href={`/customers/${w.customerId}`}
-                        className="text-sm text-ink hover:text-brand"
-                      >
-                        {w.customerName}
-                      </Link>
-                      <span className="mt-0.5 block text-xs text-muted">
-                        {w.writeOffDate} · {w.categoryLabel} · {w.userName}
-                        {w.approvedBy && w.approvedBy !== w.userName
-                          ? `, approved by ${w.approvedBy}`
-                          : w.approvedBy
-                            ? ', self-approved'
-                            : ''}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-muted">{w.reason}</span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      {w.recoveredAt && <Badge tone="success">Recovered</Badge>}
-                      <span className="numeric text-sm text-ink">{formatMoney(w.amount)}</span>
-                      {!w.recoveredAt && <WriteOffActions id={w.id} mode="recover" />}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
-          )}
+          <PostedWriteOffsTable rows={postedRows} />
         </Card>
 
         {summary.rows.length > 0 && (
@@ -159,21 +162,7 @@ export default async function WriteOffsPage() {
               title="By category, last 12 months"
               description="The figure a provision is built from."
             />
-            <CardBody>
-              <ul className="space-y-2">
-                {summary.rows.map((r) => (
-                  <li key={r.category} className="flex items-center justify-between text-sm">
-                    <span className="text-ink-2">
-                      {r.categoryLabel}
-                      <span className="ml-2 text-xs text-muted">
-                        {r.count} write-off{r.count === 1 ? '' : 's'}
-                      </span>
-                    </span>
-                    <span className="numeric text-ink">{formatMoney(r.total)}</span>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
+            <CategoryTable rows={categoryRows} />
           </Card>
         )}
 
@@ -183,27 +172,7 @@ export default async function WriteOffsPage() {
               title="Worth a look"
               description="Accounts with a balance and no activity for six months. A suggestion, not a recommendation — a customer on a long project looks identical to one who has gone under."
             />
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {candidates.map((c) => (
-                  <li key={c.customerId} className="flex items-center justify-between py-2">
-                    <div>
-                      <Link
-                        href={`/customers/${c.customerId}`}
-                        className="text-sm text-ink hover:text-brand"
-                      >
-                        {c.name}
-                      </Link>
-                      <span className="ml-2 text-xs text-muted">
-                        {c.code} · nothing for {c.daysSinceActivity} days
-                        {c.oldestDue ? ` · oldest due ${c.oldestDue}` : ''}
-                      </span>
-                    </div>
-                    <span className="numeric text-sm text-ink">{formatMoney(c.balance)}</span>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
+            <CandidatesTable rows={candidateRows} />
           </Card>
         )}
       </PageBody>

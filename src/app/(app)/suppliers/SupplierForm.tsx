@@ -4,6 +4,7 @@ import { useActionState, useState, type ReactNode } from 'react'
 import { useFormStatus } from 'react-dom'
 import {
   Button,
+  Callout,
   Card,
   CardBody,
   CurrencyInput,
@@ -71,15 +72,7 @@ export default function SupplierForm({
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-5 px-6 pt-4 pb-10">
         {supplier && <input type="hidden" name="id" value={supplier.id} />}
 
-        {state.error && (
-          <p
-            role="alert"
-            className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
-          >
-            <Icons.StatusError size={15} />
-            {state.error}
-          </p>
-        )}
+        {state.error && <Callout tone="danger" title={state.error} />}
 
         <Card>
           <SectionTitle icon={<Icons.Truck size={16} />}>Account</SectionTitle>
@@ -278,10 +271,14 @@ export default function SupplierForm({
         </Card>
 
         <Card>
+          <SectionTitle icon={<Icons.FileText size={16} />}>Notes</SectionTitle>
           <CardBody>
-            <Field label="Notes">
-              <Textarea name="notes" defaultValue={supplier?.notes ?? ''} rows={4} />
-            </Field>
+            <Textarea
+              name="notes"
+              defaultValue={supplier?.notes ?? ''}
+              rows={4}
+              aria-label="Notes"
+            />
           </CardBody>
         </Card>
       </form>

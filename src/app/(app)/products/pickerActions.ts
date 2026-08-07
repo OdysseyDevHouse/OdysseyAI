@@ -1,6 +1,6 @@
 'use server'
 
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import { searchProductsForPicker, type ProductPick } from '@/lib/site/products'
 import { listSuppliers } from '@/lib/site/suppliers'
 
@@ -16,14 +16,16 @@ export async function searchProductsAction(
   search: string,
   exclude?: number,
 ): Promise<ProductPick[]> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('products.view')
+  const { siteId } = ctx
   return searchProductsForPicker(siteId, { search, exclude, limit: 20 })
 }
 
 export type SupplierPick = { id: number; code: string; name: string; canOrder: boolean }
 
 export async function searchSuppliersAction(search: string): Promise<SupplierPick[]> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('products.view')
+  const { siteId } = ctx
   // listSuppliers already drops closed accounts when no statuses are named,
   // which is what we want: linking a product to an account nobody may order
   // against is a trap rather than a choice.

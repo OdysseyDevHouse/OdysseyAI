@@ -2,10 +2,9 @@ import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { getGroup, listOptions } from '@/lib/site/instructions'
 import { listProducts } from '@/lib/site/products'
-import { Button, PageHeader } from '@/components/ui'
+import { Callout, PageBody, PageHeader } from '@/components/ui'
 import InstructionForm from '../InstructionForm'
-import { deleteInstructionAction } from '../actions'
-import { Trash, StatusError } from '@/components/ui/icons'
+import DeleteInstructionButton from '../DeleteInstructionButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,34 +36,25 @@ export default async function EditInstructionPage({
       <PageHeader
         title={group.name}
         subtitle={`${group.optionCount} option${group.optionCount === 1 ? '' : 's'} · used by ${group.productCount} product${group.productCount === 1 ? '' : 's'}`}
+        backHref="/instructions"
       />
 
-      <div className="p-6">
-        {error && (
-          <p
-            role="alert"
-            className="mb-4 flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
-          >
-            <StatusError size={15} />
-            {error}
-          </p>
-        )}
+      <PageBody>
+        {error && <Callout tone="danger">{error}</Callout>}
 
         <InstructionForm
           group={group}
           options={options}
           products={items.map((p) => ({ id: p.id, code: p.code, description: p.description }))}
           rowActions={
-            <form action={deleteInstructionAction}>
-              <input type="hidden" name="id" value={group.id} />
-              <Button type="submit" variant="danger">
-                <Trash size={15} />
-                Delete instruction
-              </Button>
-            </form>
+            <DeleteInstructionButton
+              id={group.id}
+              name={group.name}
+              productCount={group.productCount}
+            />
           }
         />
-      </div>
+      </PageBody>
     </>
   )
 }

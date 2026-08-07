@@ -138,10 +138,14 @@ type LineRow = RowDataPacket & {
 /**
  * Every commissionable line in a period.
  *
- * Attribution is `sales_document_lines.sales_rep_id` where it is set, falling
- * back to the document's own user — the person who rang it up. 033 made the rep
- * per LINE precisely because two assistants can serve one customer off one
- * invoice, and only the per-line answer pays the right person.
+ * Attribution is `sales_document_lines.sales_rep_user_id` where it is set,
+ * falling back to the document's own user — the person who rang it up. 033
+ * made the salesperson per LINE precisely because two assistants can serve one
+ * customer off one invoice, and only the per-line answer pays the right person.
+ *
+ * It is a `users` id, not a `sales_reps` id: commission is paid to a user, and
+ * 047 converted every active rep into one. `sales_rep_id` still exists on the
+ * line and still means "which rep record", but nothing here reads it.
  *
  * `original_rep_id` carries the rep from the line a credit note reverses, so a
  * clawback can be charged to whoever made the sale rather than to whoever was

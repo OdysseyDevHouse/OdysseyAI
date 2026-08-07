@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Button, Field, Icons, Input, Select, Switch } from '@/components/ui'
+import { Button, Card, Field, Icons, Input, Select, Switch } from '@/components/ui'
 import { withParams } from '@/lib/searchParams'
 
 /**
@@ -29,18 +29,23 @@ export default function AsAtForm({
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-4 rounded-card border border-border bg-surface px-4 py-3">
-      <Field label="As at" hint="Rebuilds the book as it stood on that date.">
+    <Card className="flex flex-wrap items-end gap-4 px-4 py-3.5">
+      {/* Width lives on the wrapper, not the control — the control's skin
+          stays the kit's own. */}
+      <Field label="As at" hint="Rebuilds the book as it stood on that date." className="w-44">
         <Input
           type="date"
           defaultValue={asAt}
           onChange={(e) => e.target.value && apply({ asAt: e.target.value })}
-          className="w-44"
         />
       </Field>
 
-      <Field label="Age by" hint="Due date is how overdue; document date is how old.">
-        <Select value={basis} onChange={(e) => apply({ basis: e.target.value })} className="w-48">
+      <Field
+        label="Age by"
+        hint="Due date is how overdue; document date is how old."
+        className="w-48"
+      >
+        <Select value={basis} onChange={(e) => apply({ basis: e.target.value })}>
           <option value="due">Due date</option>
           <option value="doc">Document date</option>
         </Select>
@@ -61,6 +66,6 @@ export default function AsAtForm({
           Reset
         </Button>
       </div>
-    </div>
+    </Card>
   )
 }

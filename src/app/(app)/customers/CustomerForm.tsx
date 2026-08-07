@@ -4,18 +4,20 @@ import { useActionState, useState, type ReactNode } from 'react'
 import { useFormStatus } from 'react-dom'
 import {
   Button,
+  Callout,
   Card,
   CardBody,
+  CardHeader,
   CurrencyInput,
   Field,
   Icons,
   Input,
   NumberInput,
-  SectionTitle,
   Select,
   Checkbox,
   Textarea,
 } from '@/components/ui'
+import { formatMoney } from '@/lib/decimals'
 import {
   ACCOUNT_TYPE_OPTIONS,
   DEFAULT_ACCOUNT_TYPE,
@@ -68,26 +70,23 @@ export default function CustomerForm({
 
   return (
     <>
-      <div className="flex items-center justify-end gap-2 px-6 pt-4">
+      {/* Gutters come from the page's <PageBody>, not from here. */}
+      <div className="flex items-center justify-end gap-2">
         {rowActions}
         <SubmitButton isNew={isNew} />
       </div>
 
-      <form id={FORM_ID} action={formAction} className="flex flex-col gap-5 px-6 pt-4 pb-10">
+      <form id={FORM_ID} action={formAction} className="flex flex-col gap-5">
         {customer && <input type="hidden" name="id" value={customer.id} />}
 
         {state.error && (
-          <p
-            role="alert"
-            className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
-          >
-            <Icons.StatusError size={15} />
+          <Callout tone="danger" title="Could not save">
             {state.error}
-          </p>
+          </Callout>
         )}
 
         <Card>
-          <SectionTitle icon={<Icons.Contact size={16} />}>Account</SectionTitle>
+          <CardHeader title="Account" />
           <CardBody className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Code" hint="Unique. Appears on statements and invoices.">
@@ -150,7 +149,7 @@ export default function CustomerForm({
         </Card>
 
         <Card>
-          <SectionTitle icon={<Icons.Users size={16} />}>Classification</SectionTitle>
+          <CardHeader title="Classification" />
           <CardBody className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-3">
               <Field
@@ -198,10 +197,12 @@ export default function CustomerForm({
         </Card>
 
         <Card>
-          <SectionTitle icon={<Icons.Coins size={16} />}>Credit terms</SectionTitle>
+          <CardHeader title="Credit terms" />
           <CardBody className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Payment terms (days)" hint="Zero means cash on delivery.">
+              {/* Short numeric fields stay short — a full-width input for a
+                  3-digit value tells the user the wrong thing. */}
+              <Field label="Payment terms (days)" hint="Zero means cash on delivery." className="max-w-40">
                 <NumberInput
                   name="paymentTermsDays"
                   defaultValue={customer?.paymentTermsDays ?? group?.defaultTermsDays ?? 30}
@@ -214,12 +215,17 @@ export default function CustomerForm({
                 />
               </Field>
               {customer && (
-                <Field
-                  label="Balance"
-                  hint="Moves only through posted transactions — it cannot be edited here."
-                >
-                  <CurrencyInput value={customer.balance} readOnly disabled />
-                </Field>
+                /* A figure, not a disabled input: nothing here is editable, so
+                   nothing should look like a control that refuses to work. */
+                <div>
+                  <div className="mb-1.5 text-sm font-medium text-ink-2">Balance</div>
+                  <div className="numeric flex h-control items-center text-lg font-semibold text-ink">
+                    {formatMoney(customer.balance)}
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted">
+                    Moves only through posted transactions — it cannot be edited here.
+                  </p>
+                </div>
               )}
             </div>
 
@@ -242,6 +248,7 @@ export default function CustomerForm({
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
                 <Field
                   label="Interest rate (% a year)"
+                  className="max-w-40"
                   hint={
                     group?.defaultInterestRatePct
                       ? `Leave at zero to use the group's ${group.defaultInterestRatePct}%.`
@@ -256,6 +263,7 @@ export default function CustomerForm({
                 </Field>
                 <Field
                   label="Grace period (days)"
+                  className="max-w-40"
                   hint="Days past due before interest starts to accrue."
                 >
                   <NumberInput
@@ -269,7 +277,7 @@ export default function CustomerForm({
         </Card>
 
         <Card>
-          <SectionTitle icon={<Icons.Mail size={16} />}>Contact</SectionTitle>
+          <CardHeader title="Contact" />
           <CardBody className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Contact name">
@@ -310,10 +318,9 @@ export default function CustomerForm({
         </Card>
 
         <Card>
+          <CardHeader title="Notes" />
           <CardBody>
-            <Field label="Notes">
-              <Textarea name="notes" defaultValue={customer?.notes ?? ''} rows={4} />
-            </Field>
+            <Textarea name="notes" defaultValue={customer?.notes ?? ''} rows={4} aria-label="Notes" />
           </CardBody>
         </Card>
       </form>

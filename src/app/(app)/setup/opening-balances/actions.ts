@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId } from '@/lib/auth'
+import { requireActor, requireSiteId, actorFor } from '@/lib/auth'
 import {
   planOpeningBalances,
   applyOpeningBalances,
@@ -24,7 +24,9 @@ export async function previewAction(
   side: OpeningSide,
   csv: string,
 ): Promise<{ ok: true; plan: OpeningPlan; skipped: number } | { ok: false; error: string }> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
 
   const { rows, skipped } = parseOpeningCsv(csv)
   if (rows.length === 0) {
@@ -38,7 +40,9 @@ export async function previewAction(
 export async function importAction(
   plan: OpeningPlan,
 ): Promise<{ ok: true; result: ImportResult } | { ok: false; error: string }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   if (plan.ready.length === 0) {
     return { ok: false, error: 'There is nothing ready to import.' }

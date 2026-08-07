@@ -115,7 +115,17 @@ async function evaluate(expression) {
 
 async function goto(p) {
   await send('Page.navigate', { url: `${BASE}${p}` }, sessionId)
-  await sleep(2500)
+  // A fixed wait under-shoots when the dev server is compiling the route for
+  // the first time (blank white PNGs). Poll until the page has painted real
+  // content, then settle briefly for data that streams in after the shell.
+  for (let i = 0; i < 60; i++) {
+    await sleep(500)
+    const ready = await evaluate(
+      `document.readyState === 'complete' && (document.body?.innerText || '').trim().length > 0`,
+    )
+    if (ready) break
+  }
+  await sleep(1500)
   return evaluate('location.pathname')
 }
 
@@ -177,11 +187,27 @@ for (const p of paths) {
     await sleep(2500)
   }
 
-  const { data } = await send(
-    'Page.captureScreenshot',
-    { format: 'png', captureBeyondViewport: true },
+  // The dev error overlay (<nextjs-portal>) paints above the whole app, so a
+  // single console warning would otherwise blot out every capture. Remove it —
+  // this inspects the screen, not the console.
+  await evaluate(`document.querySelectorAll('nextjs-portal').forEach((el) => el.remove())`)
+
+  // captureBeyondViewport paints black past the first couple of viewports on
+  // long pages under the software rasterizer. Resizing the emulated viewport
+  // to the document height (capped so a huge page still rasterises) and
+  // capturing plainly is reliable.
+  const fullHeight = await evaluate(
+    `Math.min(Math.max(document.documentElement.scrollHeight, 1000), 12000)`,
+  )
+  await send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: 1600, height: fullHeight, deviceScaleFactor: 1, mobile: false },
     sessionId,
   )
+  await sleep(400)
+
+  const { data } = await send('Page.captureScreenshot', { format: 'png' }, sessionId)
+  await send('Emulation.clearDeviceMetricsOverride', {}, sessionId)
   const name = (p.replace(/^\//, '').replace(/[^\w.-]+/g, '-') || 'root') + '.png'
   const file = path.join(OUT, name)
   writeFileSync(file, Buffer.from(data, 'base64'))

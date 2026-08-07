@@ -59,6 +59,7 @@ export default async function StoreLayout({
   const context = await resolve(token)
   if (!context) notFound()
 
+
   const [departments, layout] = await Promise.all([
     publishedDepartments(context),
     getPublishedLayout(context.siteId),

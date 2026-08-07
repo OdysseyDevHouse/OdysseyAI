@@ -11,15 +11,12 @@ import {
   Field,
   Input,
   CurrencyInput,
-  Badge,
   Icons,
+  Modal,
+  EmptyState,
+  DataTable,
+  type Column,
   useToast,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -67,6 +64,17 @@ export function InterestClient({ draft, items }: { draft: Draft | null; items: I
   const [periodTo, setPeriodTo] = useState(iso(lastMonthEnd))
   const [minimumCharge, setMinimumCharge] = useState(25)
 
+  // The exclusion dialog — replaces window.prompt, so the reason gets a real
+  // field, a visible error, and the customer's name repeated back.
+  const [excluding, setExcluding] = useState<Item | null>(null)
+  const [excludeReason, setExcludeReason] = useState('')
+  const [excludeTouched, setExcludeTouched] = useState(false)
+
+  const excludeError =
+    excludeTouched && !excludeReason.trim()
+      ? 'Give a reason — it stays on the run’s record.'
+      : undefined
+
   function run(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
     startTransition(async () => {
       const result = await action()
@@ -81,6 +89,48 @@ export function InterestClient({ draft, items }: { draft: Draft | null; items: I
 
   const willCharge = items.filter((i) => i.status === 'pending')
   const skipped = items.filter((i) => i.status === 'skipped')
+
+  const columns: Column<Item>[] = [
+    {
+      key: 'account',
+      header: 'Account',
+      cell: (i) => (
+        <>
+          <span className="text-ink">{i.customerName}</span>
+          <span className="ml-2 text-xs text-muted">{i.customerCode}</span>
+        </>
+      ),
+      sortValue: (i) => i.customerName,
+    },
+    {
+      key: 'overdue',
+      header: 'Overdue',
+      numeric: true,
+      cell: (i) => formatMoney(i.baseAmount),
+      sortValue: (i) => i.baseAmount,
+    },
+    {
+      key: 'rate',
+      header: 'Rate',
+      numeric: true,
+      cell: (i) => `${i.ratePct.toFixed(2)}%`,
+      sortValue: (i) => i.ratePct,
+    },
+    {
+      key: 'days',
+      header: 'Days',
+      numeric: true,
+      cell: (i) => i.days,
+      sortValue: (i) => i.days,
+    },
+    {
+      key: 'interest',
+      header: 'Interest',
+      numeric: true,
+      cell: (i) => <span className="font-medium text-ink">{formatMoney(i.amount)}</span>,
+      sortValue: (i) => i.amount,
+    },
+  ]
 
   if (!draft) {
     return (
@@ -154,63 +204,38 @@ export function InterestClient({ draft, items }: { draft: Draft | null; items: I
 
       {willCharge.length === 0 ? (
         <CardBody>
-          <div className="rounded-control bg-surface-2 px-4 py-6 text-center">
-            <p className="text-sm font-medium text-ink">Nothing would be charged</p>
-            <p className="mt-1 text-sm text-muted">
-              {skipped.length > 0
+          <EmptyState
+            title="Nothing would be charged"
+            hint={
+              skipped.length > 0
                 ? `${skipped.length} account${skipped.length === 1 ? ' was' : 's were'} considered and skipped — see below for why.`
-                : 'No account has interest enabled, or nothing is overdue past its grace period.'}
-            </p>
-          </div>
+                : 'No account has interest enabled, or nothing is overdue past its grace period.'
+            }
+          />
         </CardBody>
       ) : (
-        <div className="overflow-x-auto">
-          <table className={TABLE}>
-            <thead>
-              <tr className={TABLE_HEAD_ROW}>
-                <th className={TABLE_TH}>Account</th>
-                <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Overdue</th>
-                <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Rate</th>
-                <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Days</th>
-                <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Interest</th>
-                <th className={`${TABLE_TH} w-24`} />
-              </tr>
-            </thead>
-            <tbody>
-              {willCharge.map((i) => (
-                <tr key={i.id} className={TABLE_ROW}>
-                  <td className={TABLE_TD}>
-                    <span className="text-ink">{i.customerName}</span>
-                    <span className="ml-2 text-xs text-muted">{i.customerCode}</span>
-                  </td>
-                  <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(i.baseAmount)}</td>
-                  <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{i.ratePct.toFixed(2)}%</td>
-                  <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{i.days}</td>
-                  <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                    <span className="font-medium text-ink">{formatMoney(i.amount)}</span>
-                  </td>
-                  <td className={`${TABLE_TD} text-right`}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() => {
-                        const reason = window.prompt(
-                          `Why is ${i.customerName} being excluded from this run?`,
-                        )
-                        if (reason?.trim()) {
-                          run(() => excludeInterestItemAction(i.id, reason.trim()))
-                        }
-                      }}
-                    >
-                      Exclude
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={columns}
+          rows={willCharge}
+          getRowKey={(i) => i.id}
+          actionsOnHover
+          actions={(i) => (
+            <Button
+              variant="danger-ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Exclude ${i.customerName} from this run`}
+              disabled={pending}
+              onClick={() => {
+                setExcludeReason('')
+                setExcludeTouched(false)
+                setExcluding(i)
+              }}
+            >
+              <Icons.Ban size={15} />
+            </Button>
+          )}
+        />
       )}
 
       {skipped.length > 0 && (
@@ -237,7 +262,8 @@ export function InterestClient({ draft, items }: { draft: Draft | null; items: I
             <span className="text-muted">
               {willCharge.length} account{willCharge.length === 1 ? '' : 's'} · total{' '}
             </span>
-            <span className="numeric font-semibold text-ink">
+            {/* The figure being confirmed — the loudest thing in the footer. */}
+            <span className="numeric text-lg font-semibold text-ink">
               {formatMoney(willCharge.reduce((sum, i) => sum + i.amount, 0))}
             </span>
           </div>
@@ -250,6 +276,47 @@ export function InterestClient({ draft, items }: { draft: Draft | null; items: I
           </Button>
         </div>
       </CardFooter>
+
+      <Modal
+        open={excluding !== null}
+        onClose={() => setExcluding(null)}
+        title="Exclude from this run"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setExcluding(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={pending || !excludeReason.trim()}
+              onClick={() => {
+                if (excluding) {
+                  run(() => excludeInterestItemAction(excluding.id, excludeReason.trim()))
+                }
+                setExcluding(null)
+              }}
+            >
+              Exclude
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted">
+            {excluding?.customerName} will not be charged{' '}
+            {excluding ? formatMoney(excluding.amount) : ''} in this run. The reason is kept
+            with the run.
+          </p>
+          <Field label={`Why is ${excluding?.customerName ?? 'this account'} being excluded?`} error={excludeError}>
+            <Input
+              value={excludeReason}
+              onChange={(e) => setExcludeReason(e.target.value)}
+              onBlur={() => setExcludeTouched(true)}
+              placeholder="e.g. Charge waived — payment arrangement agreed"
+            />
+          </Field>
+        </div>
+      </Modal>
     </Card>
   )
 }

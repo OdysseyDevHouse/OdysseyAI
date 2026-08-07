@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation'
-import { StatusSuccess as CheckCircle2, Trash as Trash2, Archive, ArchiveRestore } from '@/components/ui/icons'
 import { requireSite, requireCapability } from '@/lib/auth'
 import { getProduct } from '@/lib/site/products'
 import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/lib/site/lookups'
@@ -12,11 +11,11 @@ import { listRecipe, getRefer } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
-import { Button, PageHeader } from '@/components/ui'
+import { Callout, PageBody, PageHeader } from '@/components/ui'
 import { listImages } from '@/lib/site/productImages'
 import ProductForm from '../ProductForm'
 import ProductImages from '../ProductImages'
-import { archiveProductAction, deleteProductAction } from '../actions'
+import ProductActions from './ProductActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -135,18 +134,22 @@ export default async function EditProductPage({
 
   return (
     <>
-      <PageHeader title="Edit product" subtitle={product.description} backHref="/products" />
+      <PageHeader
+        title="Edit product"
+        subtitle={product.description}
+        backHref="/products"
+        action={
+          <ProductActions
+            productId={product.id}
+            isArchived={product.isArchived}
+            name={product.description}
+          />
+        }
+      />
 
-      {saved === '1' && (
-        <div className="px-6 pt-4">
-          <p className="flex items-center gap-2 rounded-md bg-positive/10 px-3 py-2 text-sm text-positive">
-            <CheckCircle2 size={15} />
-            Product saved.
-          </p>
-        </div>
-      )}
+      <PageBody>
+        {saved === '1' && <Callout tone="success" title="Product saved." />}
 
-      <div className="p-6">
         <ProductForm
           product={product}
           departments={departments}
@@ -167,36 +170,14 @@ export default async function EditProductPage({
           referLink={referLink}
           serials={serials}
           productSuppliers={productSuppliers}
-          // Archive and delete are their own server actions, so they cannot be
-          // nested inside the edit form — they are rendered beside Save instead.
-          rowActions={
-            <>
-              <form action={archiveProductAction}>
-                <input type="hidden" name="id" value={product.id} />
-                <input type="hidden" name="archived" value={product.isArchived ? '0' : '1'} />
-                <Button type="submit" variant="ghost">
-                  {product.isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-                  {product.isArchived ? 'Restore' : 'Archive'}
-                </Button>
-              </form>
-
-              <form action={deleteProductAction}>
-                <input type="hidden" name="id" value={product.id} />
-                <Button type="submit" variant="danger-ghost">
-                  <Trash2 size={15} />
-                  Delete
-                </Button>
-              </form>
-            </>
-          }
+          // Archive and delete live in the header's Actions menu — Save stays
+          // the one primary on this screen.
         />
 
         {/* Below the form rather than inside it: images upload immediately and
             individually, so they are not part of the product's save at all. */}
-        <div className="mt-5">
-          <ProductImages productId={product.id} initial={images} />
-        </div>
-      </div>
+        <ProductImages productId={product.id} initial={images} />
+      </PageBody>
     </>
   )
 }

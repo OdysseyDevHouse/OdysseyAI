@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import {
   openShift,
   closeShift,
@@ -15,7 +15,9 @@ export async function openShiftAction(
   terminalId: number,
   openingFloat: number,
 ): Promise<CashupResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.cashup')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await openShift(siteId, actor, terminalId, openingFloat)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -28,7 +30,9 @@ export async function closeShiftAction(
   counted: { tenderTypeId: number; amount: number }[],
   varianceNote?: string,
 ): Promise<CashupResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.cashup')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await closeShift(siteId, actor, shiftId, counted, varianceNote)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -46,7 +50,9 @@ export async function drawerMovementAction(
   shiftId: number,
   input: { type: 'payout' | 'payin' | 'drop'; amount: number; reason: string },
 ): Promise<CashupResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.cashup')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await recordDrawerMovement(siteId, actor, shiftId, input)
   if (!result.ok) return { ok: false, error: result.error }
 

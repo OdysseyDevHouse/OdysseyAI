@@ -1,19 +1,28 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { Fragment, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
   Card,
-  CardBody,
+  CardFooter,
   CardHeader,
   CurrencyInput,
+  EmptyState,
   Field,
   Icons,
   Input,
   Switch,
+  TableToolbar,
   useToast,
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_NUMERIC,
+  TABLE_ROW,
+  TABLE_TD,
+  TABLE_TD_INPUT,
+  TABLE_TH,
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
 import { createRunAction } from './actions'
@@ -187,11 +196,23 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
 
   return (
     <Card>
+      {/* One primary per screen: the header keeps only the act of preparing.
+          Everything that shapes the selection lives in the toolbar below. */}
       <CardHeader
         title="Prepare a payment run"
         description="Pick the invoices to settle. Nothing is paid until the run is posted."
         action={
-          <div className="flex items-center gap-2">
+          <Button variant="primary" disabled={chosen.length === 0 || pending} onClick={prepare}>
+            <Icons.Wallet size={15} />
+            {pending ? 'Preparing…' : `Prepare ${formatMoney(total)}`}
+          </Button>
+        }
+      />
+
+      <TableToolbar
+        className="border-b border-border px-4 py-3.5"
+        actions={
+          <>
             <Button variant="ghost" size="sm" onClick={payEverythingOverdue} disabled={pending}>
               <Icons.Check size={15} />
               Select everything overdue
@@ -202,15 +223,9 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
                 Take every discount ({formatMoney(totalDiscountOnOffer)})
               </Button>
             )}
-            <Button variant="primary" disabled={chosen.length === 0 || pending} onClick={prepare}>
-              <Icons.Wallet size={15} />
-              {pending ? 'Preparing…' : `Prepare ${formatMoney(total)}`}
-            </Button>
-          </div>
+          </>
         }
-      />
-
-      <CardBody className="flex flex-wrap items-end gap-4 border-b border-border">
+      >
         <Field label="Payment date" hint="When the money leaves.">
           <Input
             type="date"
@@ -227,137 +242,179 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
             className="w-56"
           />
         </Field>
-        <div className="pb-2">
-          <Switch
-            checked={overdueOnly}
-            onChange={setOverdueOnly}
-            label="Only overdue invoices"
-            hint="Turn off to pay early."
-          />
-        </div>
-      </CardBody>
+        <Switch
+          checked={overdueOnly}
+          onChange={setOverdueOnly}
+          label="Only overdue invoices"
+          hint="Turn off to pay early."
+        />
+      </TableToolbar>
 
       {visible.length === 0 ? (
-        <CardBody>
-          <p className="text-sm text-muted">
-            {overdueOnly
-              ? 'Nothing is overdue. Turn off the filter to pay early.'
-              : 'Nothing outstanding — every supplier is settled.'}
-          </p>
-        </CardBody>
+        overdueOnly ? (
+          <EmptyState
+            title="Nothing is overdue"
+            hint="Every invoice is still within terms. Turn off the filter to pay early."
+            icon={<Icons.Wallet size={28} strokeWidth={1.75} />}
+            action={
+              <Button variant="secondary" onClick={() => setOverdueOnly(false)}>
+                Show every invoice
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState
+            title="Nothing outstanding"
+            hint="Every supplier is settled — there is nothing to pay."
+            icon={<Icons.StatusSuccess size={28} strokeWidth={1.75} />}
+          />
+        )
       ) : (
-        <div className="divide-y divide-border">
-          {visible.map((supplier) => {
-            const isOpen = expanded.has(supplier.supplierId)
-            const chosenHere = supplier.invoices
-              .filter((i) => (amounts[i.txnId] ?? 0) > 0)
-              .reduce((sum, i) => round(sum + amounts[i.txnId], 2), 0)
+        /* A table, not stacked flex rows: the outstanding figures and the
+           amount boxes each form a column, so the money lines up and a run can
+           be checked at a glance. Live inputs justify hand-building it — it
+           wears the shared TABLE_* skin so it cannot drift from DataTable. */
+        <div className="overflow-x-auto">
+          <table className={TABLE}>
+            <thead>
+              <tr className={TABLE_HEAD_ROW}>
+                <th scope="col" className={TABLE_TH}>
+                  Invoice
+                </th>
+                <th scope="col" className={TABLE_TH}>
+                  Date
+                </th>
+                <th scope="col" className={TABLE_TH}>
+                  Status
+                </th>
+                <th scope="col" className={`${TABLE_TH} text-right`}>
+                  Outstanding
+                </th>
+                <th scope="col" className={`${TABLE_TH} w-44 text-right`}>
+                  Paying
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((supplier) => {
+                const isOpen = expanded.has(supplier.supplierId)
+                const chosenHere = supplier.invoices
+                  .filter((i) => (amounts[i.txnId] ?? 0) > 0)
+                  .reduce((sum, i) => round(sum + amounts[i.txnId], 2), 0)
 
-            return (
-              <div key={supplier.supplierId} className="px-6 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpanded((c) => {
-                        const next = new Set(c)
-                        next.has(supplier.supplierId)
-                          ? next.delete(supplier.supplierId)
-                          : next.add(supplier.supplierId)
-                        return next
-                      })
-                    }
-                    /* A disclosure row, not a kit button: it spans the width and
-                       carries two lines of its own layout. */
-                    data-kit-ok
-                    className="flex min-w-0 items-center gap-2 text-left"
-                  >
-                    <Icons.ChevronRight
-                      size={15}
-                      className={`shrink-0 text-faint transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                    />
-                    <span className="min-w-0">
-                      <span className="block truncate text-ink">{supplier.name}</span>
-                      <span className="block text-xs text-muted">
-                        {supplier.code} · {supplier.invoices.length} invoice
-                        {supplier.invoices.length === 1 ? '' : 's'} ·{' '}
-                        {formatMoney(supplier.balance)} owing
-                        {!supplier.email && <span className="ml-2 text-warning">no email</span>}
-                      </span>
-                    </span>
-                  </button>
+                return (
+                  <Fragment key={supplier.supplierId}>
+                    {/* The supplier is a section header, not a data row. */}
+                    <tr className="border-b border-border bg-surface-2">
+                      <td colSpan={5} className="px-4 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpanded((c) => {
+                                const next = new Set(c)
+                                next.has(supplier.supplierId)
+                                  ? next.delete(supplier.supplierId)
+                                  : next.add(supplier.supplierId)
+                                return next
+                              })
+                            }
+                            aria-expanded={isOpen}
+                            /* A disclosure row, not a kit button: it spans the
+                               width and carries two lines of its own layout. */
+                            data-kit-ok
+                            className="flex min-w-0 items-center gap-2 text-left"
+                          >
+                            <Icons.ChevronRight
+                              size={15}
+                              className={`shrink-0 text-faint transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-ink">
+                                {supplier.name}
+                              </span>
+                              <span className="block text-xs text-muted">
+                                {supplier.code} · {supplier.invoices.length} invoice
+                                {supplier.invoices.length === 1 ? '' : 's'} ·{' '}
+                                {formatMoney(supplier.balance)} owing
+                              </span>
+                            </span>
+                          </button>
 
-                  <div className="flex items-center gap-2">
-                    {chosenHere > 0 && <Badge tone="brand">{formatMoney(chosenHere)}</Badge>}
-                    <Button variant="ghost" size="sm" onClick={() => payAll(supplier)}>
-                      Pay all
-                    </Button>
-                  </div>
-                </div>
+                          <div className="flex items-center gap-2">
+                            {/* No email means no remittance advice — worth
+                                knowing BEFORE the run is posted. */}
+                            {!supplier.email && <Badge tone="warning">No email</Badge>}
+                            {chosenHere > 0 && <Badge tone="brand">{formatMoney(chosenHere)}</Badge>}
+                            <Button variant="ghost" size="sm" onClick={() => payAll(supplier)}>
+                              Pay all
+                            </Button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
 
-                {isOpen && (
-                  <div className="mt-3 flex flex-col gap-2 pl-6">
-                    {supplier.invoices.map((invoice) => (
-                      <div
-                        key={invoice.txnId}
-                        className="flex flex-wrap items-center gap-3 rounded-control border border-border px-3 py-2"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-ink">
+                    {isOpen &&
+                      supplier.invoices.map((invoice) => (
+                        <tr key={invoice.txnId} className={TABLE_ROW}>
+                          <td className={`${TABLE_TD} text-ink`}>
                             {invoice.docNumber ?? `#${invoice.txnId}`}
-                          </div>
-                          <div className="text-xs text-muted">
-                            {invoice.docDate}
-                            {invoice.daysOverdue > 0 && (
-                              <span className="ml-2 text-danger">
-                                {invoice.daysOverdue} day{invoice.daysOverdue === 1 ? '' : 's'} overdue
-                              </span>
-                            )}
-                            {invoice.discountAvailable > 0 && (
-                              <span className="ml-2 text-success">
-                                save {formatMoney(invoice.discountAvailable)} if paid by{' '}
-                                {invoice.discountDeadline}
-                                {invoice.discountDaysRemaining <= 3 && (
-                                  <> — {invoice.discountDaysRemaining === 0
-                                    ? 'today'
-                                    : `${invoice.discountDaysRemaining} day${invoice.discountDaysRemaining === 1 ? '' : 's'} left`}</>
-                                )}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="numeric text-sm text-muted">
-                          {formatMoney(invoice.outstanding)} due
-                        </div>
-
-                        <div className="w-40">
-                          <CurrencyInput
-                            value={amounts[invoice.txnId] ?? 0}
-                            onChange={(e) => {
-                              const typed = Number(String(e.target.value).replace(',', '.')) || 0
-                              // Capped at what is outstanding: the server refuses
-                              // more anyway, and a field that lets you type an
-                              // impossible figure wastes the user's time.
-                              setAmounts((c) => ({
-                                ...c,
-                                [invoice.txnId]: Math.min(round(typed, 2), invoice.outstanding),
-                              }))
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+                          </td>
+                          <td className={TABLE_TD}>{invoice.docDate}</td>
+                          <td className={TABLE_TD}>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {invoice.daysOverdue > 0 && (
+                                <Badge tone="danger">
+                                  {invoice.daysOverdue} day{invoice.daysOverdue === 1 ? '' : 's'}{' '}
+                                  overdue
+                                </Badge>
+                              )}
+                              {invoice.discountAvailable > 0 && (
+                                <Badge tone="success">
+                                  Save {formatMoney(invoice.discountAvailable)}
+                                  {invoice.discountDaysRemaining <= 3
+                                    ? invoice.discountDaysRemaining === 0
+                                      ? ' — today only'
+                                      : ` — ${invoice.discountDaysRemaining} day${invoice.discountDaysRemaining === 1 ? '' : 's'} left`
+                                    : ` by ${invoice.discountDeadline}`}
+                                </Badge>
+                              )}
+                              {invoice.daysOverdue <= 0 && invoice.discountAvailable <= 0 && (
+                                <span className="text-xs text-faint">Within terms</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                            {formatMoney(invoice.outstanding)}
+                          </td>
+                          <td className={`${TABLE_TD_INPUT} w-44`}>
+                            <CurrencyInput
+                              value={amounts[invoice.txnId] ?? 0}
+                              aria-label={`Amount to pay against ${invoice.docNumber ?? `invoice ${invoice.txnId}`}`}
+                              onChange={(e) => {
+                                const typed = Number(String(e.target.value).replace(',', '.')) || 0
+                                // Capped at what is outstanding: the server refuses
+                                // more anyway, and a field that lets you type an
+                                // impossible figure wastes the user's time.
+                                setAmounts((c) => ({
+                                  ...c,
+                                  [invoice.txnId]: Math.min(round(typed, 2), invoice.outstanding),
+                                }))
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
       {chosen.length > 0 && (
-        <div className="flex items-center justify-between border-t border-border bg-surface-2 px-6 py-3">
+        <CardFooter className="justify-between">
           <span className="text-sm text-ink-2">
             {chosen.length} supplier{chosen.length === 1 ? '' : 's'}
           </span>
@@ -365,13 +422,11 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
             {/* Stated separately: the amount leaving the bank is the total, but
                 the invoices being closed are worth this much more. */}
             {discountTaken > 0 && (
-              <span className="text-sm text-success">
-                {formatMoney(discountTaken)} discount captured
-              </span>
+              <Badge tone="success">{formatMoney(discountTaken)} discount captured</Badge>
             )}
             <span className="numeric text-lg font-semibold text-ink">{formatMoney(total)}</span>
           </div>
-        </div>
+        </CardFooter>
       )}
     </Card>
   )

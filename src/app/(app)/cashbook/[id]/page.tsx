@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import { getAccount } from '@/lib/site/bankAccounts'
 import { listTransactions, listReconciliations, previewReconciliation } from '@/lib/site/cashbook'
@@ -14,10 +13,13 @@ import {
   CardHeader,
   CardBody,
   StatTile,
+  StatStrip,
   Badge,
+  EmptyState,
   Icons,
 } from '@/components/ui'
 import { ReconcileClient } from './ReconcileClient'
+import { MovementsTable } from './MovementsTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,7 +29,9 @@ export const dynamic = 'force-dynamic'
  *
  * The unmatched list is the working surface and gets the room. The history
  * below it is reference — present, but deliberately quieter, because nobody
- * opens this screen to read last month's reconciled deposits.
+ * opens this screen to read last month's reconciled deposits. The one primary
+ * action on this screen is signing off the statement, inside the reconcile
+ * card — so the header actions stay secondary.
  */
 export default async function BankAccountPage({
   params,
@@ -53,6 +57,17 @@ export default async function BankAccountPage({
 
   const unmatchedTotal = unmatched.reduce((sum, t) => sum + (t.unlinkedAmount ?? 0), 0)
 
+  // listTransactions returns oldest first, which is the order the running
+  // balance reads in — keep the most recent 30 of that window, newest last.
+  const movements = recent.slice(-30)
+
+  const importAction = (
+    <ButtonLink href={`/cashbook/import?account=${accountId}`} variant="secondary" size="sm">
+      <Icons.Upload size={15} />
+      Import a statement
+    </ButtonLink>
+  )
+
   return (
     <>
       <PageHeader
@@ -64,7 +79,7 @@ export default async function BankAccountPage({
               <Icons.Settings size={15} />
               Settings
             </ButtonLink>
-            <ButtonLink href={`/cashbook/import?account=${accountId}`}>
+            <ButtonLink href={`/cashbook/import?account=${accountId}`} variant="secondary">
               <Icons.Upload size={15} />
               Import statement
             </ButtonLink>
@@ -73,7 +88,7 @@ export default async function BankAccountPage({
       />
 
       <PageBody>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatStrip>
           <StatTile
             label="Balance"
             value={formatMoney(account.balance)}
@@ -104,7 +119,7 @@ export default async function BankAccountPage({
             value={formatMoney(account.openingBalance)}
             hint={account.openingDate ?? 'No date set'}
           />
-        </div>
+        </StatStrip>
 
         {/* The working surface: match, capture, reconcile. */}
         <ReconcileClient
@@ -128,50 +143,12 @@ export default async function BankAccountPage({
             title="Recent movements"
             description="Every line on this account, newest last, with the running balance."
           />
-          <CardBody>
-            {recent.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted">
-                Nothing has moved through this account yet.
-              </p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {[...recent].reverse().slice(0, 30).map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-4 py-2 text-sm">
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className={`block truncate ${t.status === 'void' ? 'text-faint line-through' : 'text-ink'}`}
-                      >
-                        {t.description ?? t.reference ?? 'No description'}
-                      </span>
-                      <span className="text-xs text-muted">
-                        {t.txnDate}
-                        {t.reference ? ` · ${t.reference}` : ''}
-                        {t.source !== 'manual' ? ` · ${t.source}` : ''}
-                      </span>
-                    </div>
-                    {t.status === 'reconciled' && (
-                      <Badge tone="success">Reconciled</Badge>
-                    )}
-                    {t.status === 'void' && <Badge tone="default">Void</Badge>}
-                    <span
-                      className={`numeric w-32 shrink-0 text-right ${
-                        t.status === 'void'
-                          ? 'text-faint'
-                          : t.amountSigned < 0
-                            ? 'text-danger'
-                            : 'text-success'
-                      }`}
-                    >
-                      {formatMoney(t.amountSigned)}
-                    </span>
-                    <span className="numeric w-32 shrink-0 text-right text-muted">
-                      {formatMoney(t.runningBalance ?? 0)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardBody>
+          <MovementsTable rows={movements} accountId={accountId} />
+          {recent.length > 30 && (
+            <p className="border-t border-border px-4 py-2 text-xs text-muted">
+              Showing the last 30 movements.
+            </p>
+          )}
         </Card>
 
         <div className="grid gap-5 lg:grid-cols-2">
@@ -179,10 +156,11 @@ export default async function BankAccountPage({
             <CardHeader title="Reconciliation history" description="Signed-off statements." />
             <CardBody>
               {reconciliations.length === 0 ? (
-                <p className="py-4 text-sm text-muted">
-                  This account has never been reconciled. Import a statement, match what it
-                  contains, then sign it off.
-                </p>
+                <EmptyState
+                  title="This account has never been reconciled"
+                  hint="Import a statement, match what it contains, then sign it off."
+                  action={importAction}
+                />
               ) : (
                 <ul className="divide-y divide-border">
                   {reconciliations.map((r) => (
@@ -213,13 +191,11 @@ export default async function BankAccountPage({
             <CardHeader title="Statement imports" description="Files read into this account." />
             <CardBody>
               {imports.length === 0 ? (
-                <p className="py-4 text-sm text-muted">
-                  No statements imported yet.{' '}
-                  <Link href={`/cashbook/import?account=${accountId}`} className="text-brand hover:underline">
-                    Import one
-                  </Link>{' '}
-                  to match receipts automatically.
-                </p>
+                <EmptyState
+                  title="No statements imported yet"
+                  hint="Importing one matches receipts automatically."
+                  action={importAction}
+                />
               ) : (
                 <ul className="divide-y divide-border">
                   {imports.map((b) => (

@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from 'react'
 import { useFormStatus } from 'react-dom'
-import { StatusError, Save } from '@/components/ui/icons'
+import { Save } from '@/components/ui/icons'
 import RichText from '@/components/RichText'
 import DepartmentPicker from '@/components/DepartmentPicker'
 import PricingPanel, { type StoreLine } from '@/components/PricingPanel'
@@ -22,6 +22,7 @@ import type { Serial } from '@/lib/site/serials'
 import type { ProductSupplier } from '@/lib/site/productSuppliers'
 import {
   Button,
+  Callout,
   Card,
   Checkbox,
   Field,
@@ -212,13 +213,9 @@ export default function ProductForm({
         {product && <input type="hidden" name="id" value={product.id} />}
 
         {state.error && (
-          <p
-            role="alert"
-            className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
-          >
-            <StatusError size={15} />
+          <Callout tone="danger" title="Could not save">
             {state.error}
-          </p>
+          </Callout>
         )}
 
         {/* Always rendered now: Properties exists whether or not this store is

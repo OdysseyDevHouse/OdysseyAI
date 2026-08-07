@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
 import { addSerials, writeOffSerial } from '@/lib/site/serials'
 
 /**
@@ -23,7 +23,8 @@ export async function addSerialsAction(
   _prev: SerialActionState,
   form: FormData,
 ): Promise<SerialActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('products.edit')
+  const { siteId, actor } = ctx
 
   const productId = Number(form.get('productId'))
   if (!Number.isFinite(productId) || productId <= 0) {
@@ -70,7 +71,8 @@ export async function writeOffSerialAction(
   _prev: SerialActionState,
   form: FormData,
 ): Promise<SerialActionState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('products.edit')
+  const { siteId, actor } = ctx
 
   const serialId = Number(form.get('serialId'))
   const productId = Number(form.get('productId'))

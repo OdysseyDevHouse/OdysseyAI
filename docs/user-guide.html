@@ -1,0 +1,829 @@
+<title>OdysseyAI User Guide — from first sign-in to month end</title>
+<style>
+  /* ============ OdysseyAI guide — tokens mirror src/app/globals.css ============ */
+  :root {
+    --canvas: #f6f7f9; --surface: #ffffff; --surface-2: #f2f4f7;
+    --border: #e4e7ec; --border-strong: #d0d5dd;
+    --ink: #16191d; --ink-2: #344054; --muted: #667085; --faint: #98a2b3;
+    --brand: #2f6fed; --brand-ink: #1b4fc0; --brand-soft: #eaf1fe;
+    --success: #17a34a; --success-ink: #0f7b37; --success-soft: #e7f8ee;
+    --warning: #d97706; --warning-ink: #b45309; --warning-soft: #fef5e7;
+    --danger: #dc2626; --danger-ink: #b42318; --danger-soft: #fdeceb;
+    --r-card: 12px; --r-ctl: 8px; --r-pill: 9999px;
+    --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --canvas: #0f1216; --surface: #171b21; --surface-2: #1f242c;
+      --border: #262c35; --border-strong: #39414d;
+      --ink: #e8ebef; --ink-2: #cbd2db; --muted: #98a2b3; --faint: #6b7686;
+      --brand: #6a9bff; --brand-ink: #8fb4ff; --brand-soft: #1c2942;
+      --success: #4ade80; --success-ink: #86efac; --success-soft: #132a1c;
+      --warning: #fbbf24; --warning-ink: #fcd34d; --warning-soft: #2e2410;
+      --danger: #f87171; --danger-ink: #fca5a5; --danger-soft: #371a1a;
+    }
+  }
+  :root[data-theme="light"] {
+    --canvas: #f6f7f9; --surface: #ffffff; --surface-2: #f2f4f7;
+    --border: #e4e7ec; --border-strong: #d0d5dd;
+    --ink: #16191d; --ink-2: #344054; --muted: #667085; --faint: #98a2b3;
+    --brand: #2f6fed; --brand-ink: #1b4fc0; --brand-soft: #eaf1fe;
+    --success: #17a34a; --success-ink: #0f7b37; --success-soft: #e7f8ee;
+    --warning: #d97706; --warning-ink: #b45309; --warning-soft: #fef5e7;
+    --danger: #dc2626; --danger-ink: #b42318; --danger-soft: #fdeceb;
+  }
+  :root[data-theme="dark"] {
+    --canvas: #0f1216; --surface: #171b21; --surface-2: #1f242c;
+    --border: #262c35; --border-strong: #39414d;
+    --ink: #e8ebef; --ink-2: #cbd2db; --muted: #98a2b3; --faint: #6b7686;
+    --brand: #6a9bff; --brand-ink: #8fb4ff; --brand-soft: #1c2942;
+    --success: #4ade80; --success-ink: #86efac; --success-soft: #132a1c;
+    --warning: #fbbf24; --warning-ink: #fcd34d; --warning-soft: #2e2410;
+    --danger: #f87171; --danger-ink: #fca5a5; --danger-soft: #371a1a;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--canvas); color: var(--ink-2);
+    font: 15px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- layout ---------- */
+  .shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); max-width: 1240px; margin: 0 auto; gap: 0; }
+  .toc {
+    position: sticky; top: 0; align-self: start; height: 100dvh; overflow-y: auto;
+    padding: 20px 14px 32px; border-right: 1px solid var(--border); background: var(--surface);
+  }
+  main { padding: 28px clamp(18px, 4vw, 56px) 96px; min-width: 0; }
+  .content { max-width: 78ch; }
+
+  @media (max-width: 960px) {
+    .shell { grid-template-columns: 1fr; }
+    .toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    .toc nav { display: none; }
+    .toc.open nav { display: block; }
+    #tocToggle { display: inline-flex; }
+  }
+  #tocToggle {
+    display: none; align-items: center; gap: 8px; width: 100%;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-ctl);
+    color: var(--ink); font: inherit; font-weight: 600; padding: 9px 12px; cursor: pointer;
+  }
+
+  /* ---------- TOC ---------- */
+  .logo { display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px; }
+  .logo .ring { width: 22px; height: 22px; border: 2.5px solid var(--brand); border-radius: 50%; flex: none; }
+  .logo b { font-size: 13px; letter-spacing: .08em; color: var(--ink); }
+  .logo span { font-size: 11px; color: var(--muted); display: block; letter-spacing: .02em; }
+  #tocFilter {
+    width: 100%; margin: 0 0 10px; padding: 7px 10px; font: inherit; font-size: 13px;
+    background: var(--canvas); color: var(--ink); border: 1px solid var(--border-strong); border-radius: var(--r-ctl);
+  }
+  #tocFilter:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+  .toc nav a {
+    display: block; padding: 5px 10px; border-radius: 8px; color: var(--muted);
+    text-decoration: none; font-size: 13.5px;
+  }
+  .toc nav a:hover { background: var(--surface-2); color: var(--ink); }
+  .toc nav a.h1 { font-weight: 600; color: var(--ink); margin-top: 10px; }
+  .toc nav a.h2 { padding-left: 22px; font-size: 13px; }
+  .toc nav a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .toc nav a[hidden] { display: none; }
+
+  /* ---------- typography ---------- */
+  h1, h2, h3, h4 { color: var(--ink); line-height: 1.25; text-wrap: balance; font-weight: 700; }
+  h1 { font-size: 30px; margin: 8px 0 6px; letter-spacing: -0.02em; }
+  h2 {
+    font-size: 22px; margin: 64px 0 4px; padding-top: 18px; letter-spacing: -0.01em;
+    border-top: 1px solid var(--border); scroll-margin-top: 18px;
+  }
+  h3 { font-size: 16.5px; margin: 34px 0 8px; scroll-margin-top: 18px; }
+  section[id] { scroll-margin-top: 12px; }
+  h4 { font-size: 14.5px; margin: 22px 0 6px; }
+  p { margin: 10px 0; }
+  .lede { font-size: 16.5px; color: var(--muted); margin: 0 0 6px; }
+  .kicker {
+    font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--brand); margin: 0;
+  }
+  ul, ol { margin: 10px 0; padding-left: 24px; }
+  li { margin: 5px 0; }
+  li::marker { color: var(--faint); }
+  a { color: var(--brand); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { color: var(--ink); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
+  /* ---------- inline chips ---------- */
+  .btn, .menu-path, kbd {
+    display: inline-block; padding: 1px 8px; border-radius: 6px; font-size: 12.5px; font-weight: 600;
+    vertical-align: baseline; white-space: nowrap;
+  }
+  .btn { background: var(--brand-soft); color: var(--brand-ink); border: 1px solid transparent; }
+  .btn.green { background: var(--success-soft); color: var(--success-ink); }
+  .btn.red { background: var(--danger-soft); color: var(--danger-ink); }
+  .btn.plain { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border-strong); }
+  kbd { background: var(--surface-2); color: var(--ink); border: 1px solid var(--border-strong); border-bottom-width: 2px; font-family: inherit; }
+  .where {
+    display: inline-flex; align-items: center; gap: 6px; margin: 2px 0 8px;
+    font-size: 12.5px; font-weight: 600; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px 12px;
+  }
+  .where b { color: var(--ink); font-weight: 600; }
+  .where .sep { color: var(--faint); }
+  .cap {
+    display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted);
+    background: var(--surface-2); border-radius: var(--r-pill); padding: 1px 9px; margin-left: 6px;
+    vertical-align: 2px;
+  }
+
+  /* ---------- callouts ---------- */
+  .co { border: 1px solid var(--border); border-left: 3px solid var(--brand); background: var(--surface);
+        border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
+  .co > p:first-child { margin-top: 0; } .co > p:last-child { margin-bottom: 0; }
+  .co b.t { display: block; color: var(--ink); margin-bottom: 2px; }
+  .co.tip { border-left-color: var(--success); background: var(--success-soft); }
+  .co.warn { border-left-color: var(--warning); background: var(--warning-soft); }
+  .co.stop { border-left-color: var(--danger); background: var(--danger-soft); }
+  .co.law { border-left-color: var(--brand); background: var(--brand-soft); }
+
+  /* ---------- steps ---------- */
+  ol.steps { counter-reset: st; list-style: none; padding: 0; margin: 14px 0; }
+  ol.steps > li {
+    counter-increment: st; position: relative; padding: 0 0 14px 44px; margin: 0;
+  }
+  ol.steps > li::before {
+    content: counter(st); position: absolute; left: 0; top: 0;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--brand-soft); color: var(--brand-ink);
+    font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps > li:not(:last-child)::after {
+    content: ""; position: absolute; left: 12.5px; top: 30px; bottom: 2px; width: 1px; background: var(--border);
+  }
+
+  /* ---------- tables ---------- */
+  .tw { overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); box-shadow: var(--shadow-card); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { text-align: left; background: var(--surface-2); color: var(--muted); font-size: 12px;
+       letter-spacing: .04em; text-transform: uppercase; padding: 8px 14px; white-space: nowrap; }
+  td { padding: 9px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+  td:first-child { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  tr:hover td { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+
+  /* ---------- screen cards ---------- */
+  .screen { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+            box-shadow: var(--shadow-card); padding: 16px 20px; margin: 16px 0; }
+  .screen > h4 { margin-top: 0; }
+  .screen > :last-child { margin-bottom: 0; }
+
+  /* ---------- misc ---------- */
+  .pill { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: var(--r-pill); padding: 1px 10px; }
+  .pill.ok { background: var(--success-soft); color: var(--success-ink); }
+  .pill.warn { background: var(--warning-soft); color: var(--warning-ink); }
+  .pill.bad { background: var(--danger-soft); color: var(--danger-ink); }
+  .pill.brand { background: var(--brand-soft); color: var(--brand-ink); }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .hero {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 26px 30px 22px; margin: 4px 0 34px; box-shadow: var(--shadow-card);
+  }
+  .hero .flow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .hero .flow span {
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2);
+    font-size: 12.5px; font-weight: 600; border-radius: var(--r-pill); padding: 4px 13px;
+  }
+  .hero .flow .arr { background: none; border: none; color: var(--faint); padding: 4px 0; }
+  footer { margin-top: 72px; padding-top: 18px; border-top: 1px solid var(--border);
+           font-size: 12.5px; color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+</style>
+
+<div class="shell">
+<aside class="toc" id="toc">
+  <div class="logo"><span class="ring"></span><div><b>ODYSSEY</b><span>User guide</span></div></div>
+  <button id="tocToggle" type="button" aria-expanded="false">☰&nbsp; Contents</button>
+  <nav aria-label="Guide contents">
+    <input id="tocFilter" type="search" placeholder="Find a topic…" aria-label="Filter contents">
+    <a class="h1" href="#welcome">1 · Welcome</a>
+    <a class="h1" href="#basics">2 · Signing in &amp; finding your way</a>
+    <a class="h2" href="#signin">Signing in</a>
+    <a class="h2" href="#layout">The screen layout</a>
+    <a class="h2" href="#permissions">Users, roles &amp; permissions</a>
+    <a class="h1" href="#setup-first">3 · First-time setup, in order</a>
+    <a class="h1" href="#selling">4 · Selling</a>
+    <a class="h2" href="#till">The till (New sale)</a>
+    <a class="h2" href="#tenderpad">Taking payment</a>
+    <a class="h2" href="#invoicing">Back-office invoicing</a>
+    <a class="h2" href="#quotes">Quotes</a>
+    <a class="h2" href="#orders">Sales orders</a>
+    <a class="h2" href="#laybys">Lay-bys</a>
+    <a class="h2" href="#fixing">Fixing a sale: cancel, credit, returns</a>
+    <a class="h2" href="#cashup">Cash-up</a>
+    <a class="h1" href="#inventory">5 · Inventory &amp; purchasing</a>
+    <a class="h2" href="#products">Products</a>
+    <a class="h2" href="#departments">Departments</a>
+    <a class="h2" href="#instructions">Instructions (till questions)</a>
+    <a class="h2" href="#receiving">Receiving goods (GRV)</a>
+    <a class="h2" href="#supplier-returns">Returning goods to a supplier</a>
+    <a class="h2" href="#transfers">Transfers between locations</a>
+    <a class="h1" href="#customers">6 · Customers &amp; money in</a>
+    <a class="h2" href="#customer-accounts">Customer accounts</a>
+    <a class="h2" href="#customer-ledger">Capturing payments &amp; allocating</a>
+    <a class="h2" href="#collections">Age analysis &amp; statements</a>
+    <a class="h1" href="#suppliers">7 · Suppliers &amp; money out</a>
+    <a class="h2" href="#supplier-accounts">Supplier accounts</a>
+    <a class="h2" href="#remittances">Paying suppliers</a>
+    <a class="h1" href="#money">8 · Cashbook, expenses &amp; accounting</a>
+    <a class="h2" href="#cashbook">Cashbook &amp; bank reconciliation</a>
+    <a class="h2" href="#expenses">Expenses</a>
+    <a class="h2" href="#statements-fin">Financial statements</a>
+    <a class="h2" href="#vat">VAT return</a>
+    <a class="h2" href="#journals">Journals &amp; chart of accounts</a>
+    <a class="h2" href="#assets">Fixed assets &amp; depreciation</a>
+    <a class="h2" href="#interest">Interest, write-offs &amp; unallocated</a>
+    <a class="h2" href="#periods">Closing a period / month end</a>
+    <a class="h1" href="#insight">9 · Dashboard &amp; reports</a>
+    <a class="h1" href="#commission">10 · Commission</a>
+    <a class="h1" href="#online">11 · The online store</a>
+    <a class="h2" href="#online-setup">Opening your store</a>
+    <a class="h2" href="#online-builder">The page builder</a>
+    <a class="h2" href="#online-orders">Handling online orders</a>
+    <a class="h2" href="#online-reviews">Reviews &amp; payments</a>
+    <a class="h1" href="#setup-ref">12 · Setup screens, one by one</a>
+    <a class="h1" href="#lookup">13 · “Where do I…?”</a>
+    <a class="h1" href="#rules">14 · Rules the system enforces</a>
+  </nav>
+</aside>
+
+<main><div class="content">
+<section id="welcome">
+  <p class="kicker">OdysseyAI back office</p>
+  <h1>The complete user guide</h1>
+  <p class="lede">Every screen, every button, and the order to do things in — from your first sign-in to month end.</p>
+
+  <div class="hero">
+    <p><strong>How this guide is organised.</strong> Chapters 2–3 get a brand-new store trading. Chapters 4–11 each cover one part of daily work — selling, stock, customers, suppliers, the books, the online store. Chapter 13 is a quick lookup (“where do I…?”), and chapter 14 lists the rules the system enforces so a refusal never comes as a surprise.</p>
+    <p>Throughout the guide, <span class="btn">Blue chips</span> are buttons exactly as they appear on screen, and the grey trail shows where to find each screen in the left-hand menu:</p>
+    <p><span class="where"><b>Sales</b> <span class="sep">›</span> Cash-up</span></p>
+    <p style="margin-bottom:6px"><strong>The shape of the whole system in one line:</strong></p>
+    <div class="flow">
+      <span>Set up</span><span class="arr">→</span>
+      <span>Buy &amp; receive stock</span><span class="arr">→</span>
+      <span>Sell</span><span class="arr">→</span>
+      <span>Cash up</span><span class="arr">→</span>
+      <span>Collect &amp; pay</span><span class="arr">→</span>
+      <span>Reconcile</span><span class="arr">→</span>
+      <span>File VAT &amp; close the month</span>
+    </div>
+  </div>
+
+  <div class="co">
+    <b class="t">Three habits that make everything below easier</b>
+    <p>① <strong>Nothing posted is ever edited.</strong> A finalised invoice, a posted journal, a paid run — mistakes are fixed by <em>cancelling</em> (same day), <em>crediting</em> or <em>reversing</em>, always with a reason that stays on record. ② <strong>Drafts are invisible to the figures.</strong> A draft invoice or draft expense is in no report — including the VAT return — until it is posted. ③ <strong>If a button is greyed out, hover it.</strong> The tooltip states the exact reason, and usually what to do instead.</p>
+  </div>
+</section>
+
+<section id="basics">
+  <h2>2 · Signing in &amp; finding your way</h2>
+
+  <h3 id="signin">Signing in</h3>
+  <p>Open the app and you land on the <strong>Welcome back</strong> screen. Enter your <strong>email and password</strong> and press <span class="btn">Sign in</span>.</p>
+  <ul>
+    <li><strong>First sign-in with a temporary password?</strong> You are taken straight to <strong>Choose your password</strong> and must set your own (at least 10 characters, and not the temporary one again) before anything else opens.</li>
+    <li><strong>Access to more than one store?</strong> You’ll see <strong>Choose a store</strong> — click the store to work in. You can switch later at any time from the top bar.</li>
+    <li><strong>Locked out?</strong> Five failed attempts locks the account for 15 minutes. Use <em>Forgot password?</em> or wait it out.</li>
+  </ul>
+  <div class="co">
+    <b class="t">Email vs PIN — two different doors</b>
+    <p>Email + password opens the <strong>back office</strong> (this app). A <strong>4- or 6-digit PIN</strong> signs a person in <em>at the till only</em>. Till-only staff have no email and no way into the back office at all — their PIN is their whole identity, which is why every PIN must be unique.</p>
+  </div>
+
+  <h3 id="layout">The screen layout</h3>
+  <ul>
+    <li><strong>Left sidebar</strong> — the menu. It only shows what your role allows, and it has its own search box (<em>“Search pages, reports, settings”</em>) — the fastest way to reach any screen. It can be collapsed with the panel icon at the top.</li>
+    <li><strong>Top bar</strong> — the breadcrumb trail, the <strong>store switcher</strong> (only clickable when your account covers more than one store), and your <strong>avatar menu</strong>: your name, email and role, a light/dark theme toggle, and <span class="btn red">Sign out</span>.</li>
+    <li><strong>Toasts</strong> — short messages at the edge of the screen confirm every save, post and refusal.</li>
+  </ul>
+
+  <h3 id="permissions">Users, roles &amp; permissions — the one concept to understand first</h3>
+  <p>Everything a person may do is decided by their <strong>role</strong>. The rules are simple and strict:</p>
+  <ul>
+    <li><strong>Deny by default.</strong> A permission not ticked is a “no”. A user with no role can sign in and do nothing — and their avatar menu says <em>“No role assigned”</em>, which is the fastest explanation for a missing menu item.</li>
+    <li><strong>The Owner role holds everything, always.</strong> It cannot be reduced or deleted — otherwise nobody could restore a permission that was switched off.</li>
+    <li><strong>Changes apply on the next page load</strong>, not the next sign-in.</li>
+    <li><strong>Hiding a menu item is not security.</strong> Every page and every action re-checks permission on the server, so a typed URL gets the same answer as a hidden button.</li>
+    <li><strong>The till runs on the PIN-holder’s permissions</strong>, not the browser’s — a manager handing the till to a junior doesn’t leave their discount rights on screen.</li>
+  </ul>
+  <p class="small muted">Where a screen needs a specific permission, this guide shows it as a chip, e.g. <span class="cap">sales.cashup</span>. You’ll find the full list under <strong>Setup › Roles &amp; permissions</strong>, grouped and explained in plain language.</p>
+</section>
+
+<section id="setup-first">
+  <h2>3 · First-time setup, in order</h2>
+  <p class="lede">Each step exists because the next one depends on it. A brand-new store can work through this list top to bottom and be trading the same day.</p>
+
+  <h3>Stage 1 — Get in and check the plumbing</h3>
+  <ol class="steps">
+    <li><strong>Sign in and set your own password.</strong> The first account to open a brand-new site automatically becomes an <strong>Owner</strong> — the person who can grant everything else.</li>
+    <li><strong>Check <span class="where"><b>Setup</b> <span class="sep">›</span> Site &amp; databases</span></strong>. Every database connection is tested when the page loads. If anything shows <span class="pill bad">Unreachable</span>, stop and fix that first — nothing downstream will work.</li>
+  </ol>
+
+  <h3>Stage 2 — Decide who does what</h3>
+  <ol class="steps">
+    <li><strong>Create roles</strong> at <span class="where"><b>Setup</b> <span class="sep">›</span> Roles &amp; permissions</span>. Name them after real jobs — <em>Cashier, Supervisor, Bookkeeper</em>. Then pick each role in the segmented control and tick its permissions; every switch saves instantly. A cashier needs at least <em>Use the till, View sales, View products,</em> and <em>Cash up</em>.</li>
+    <li><strong>Add people</strong> at <span class="where"><b>Setup</b> <span class="sep">›</span> Users</span>. Till staff: <strong>Point of sale only</strong> + a PIN. Office staff: <strong>Back office and point of sale</strong> + email + a temporary password (they’ll be forced to change it) + which stores they may open. Give everyone a role — and link salespeople to a <strong>Sales rep</strong> if you pay commission.</li>
+  </ol>
+
+  <h3>Stage 3 — The trading skeleton</h3>
+  <ol class="steps">
+    <li><strong>Stock locations</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Stock locations</span>. Add each stock room and set the <strong>main</strong> one. This is load-bearing: <em>the till sells from the main location</em>, and goods received without a location land there.</li>
+    <li><strong>Tender types</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Tender types</span>. These are the payment buttons at the till, in the order listed. Check the built-in ones’ flags (counted in the drawer, gives change, posts to the account…) and add whatever else the store takes.</li>
+    <li><strong>Tills</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Terminals</span>. Register one till per register (TILL01, TILL02…), then on each machine press <span class="btn">Use here</span> so sales record which register rang them up.</li>
+    <li><strong>Numbering</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Numbering</span>. Set prefixes and starting numbers for invoices, credit notes, quotes and orders <em>before the first document is issued</em> — the next number can only ever move forward. Set <strong>cash rounding</strong> here too.</li>
+  </ol>
+
+  <h3>Stage 4 — Master data</h3>
+  <ol class="steps">
+    <li><strong>Departments</strong>, then <strong>products</strong> (chapter 5). Departments first — products are filed under them, and the online store is browsed by them.</li>
+    <li><strong>Suppliers</strong> (chapter 7), linked to the products they supply.</li>
+    <li><strong>Expense categories</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Expense categories</span>. One per kind of non-stock spend, each with an account code and a VAT-claimable flag. These seed the chart of accounts, so getting them right now saves re-coding history later.</li>
+    <li><strong>Lay-by terms</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Lay-bys</span> — if you offer lay-bys. Write the terms text: <em>a cancellation fee is only ever chargeable if it is printed in those terms</em>.</li>
+    <li><strong>Linked stores</strong> — multi-store groups only, and only while the joining store is still <em>empty</em>; sharing cannot be switched on for a store that already holds products.</li>
+  </ol>
+
+  <h3>Stage 5 — Carry in the old system</h3>
+  <ol class="steps">
+    <li><strong>Opening balances</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Opening balances</span>. Import outstanding customer and supplier invoices from a CSV — <strong>one row per invoice, not one lump per account</strong>, keeping original dates and numbers so the age analysis is right from day one. Always <span class="btn">Preview</span> first; the import itself has <strong>no undo</strong>.</li>
+    <li><strong>Reconciliation check</strong> — <span class="where"><b>Setup</b> <span class="sep">›</span> Reconciliation</span>. Run it straight after the import. Everything should be green before you trade.</li>
+  </ol>
+
+  <h3>Stage 6 — The online store (optional, and last)</h3>
+  <p>Covered fully in chapter 11: publish departments/products → configure collection/delivery → build the front page → open the store → share the link.</p>
+
+  <div class="co tip">
+    <b class="t">Ongoing housekeeping</b>
+    <p>After every VAT return, set <strong>VAT period locked to</strong> (Setup › Numbering) or close the period properly (Accounting › Periods). Glance at Setup › Reconciliation now and then — it should stay green. And nothing a shopper writes in a review publishes itself; moderate the queue when the badge appears.</p>
+  </div>
+</section>
+<section id="selling">
+  <h2>4 · Selling</h2>
+  <p class="lede">One decision tree covers everything in this chapter: paying now → the <strong>till</strong>. Capturing off an order form → <strong>Invoicing</strong>. An offer → a <strong>quote</strong>. A promise to deliver later → a <strong>sales order</strong>. Paying it off first → a <strong>lay-by</strong>.</p>
+
+  <h3 id="till">The till (New sale) <span class="cap">sales.till</span></h3>
+  <p><span class="where"><b>Sales</b> <span class="sep">›</span> New sale</span></p>
+  <p>The touch-first register: one basket at a time. The first thing you see is the <strong>PIN pad</strong> — nobody rings up a sale unattributed. Enter your PIN; from that moment the till runs on <em>your</em> permissions and your name goes on every sale.</p>
+  <ol class="steps">
+    <li><strong>Add items.</strong> Scan a barcode, or type into the search bar (<em>“Scan a barcode, or search by code or description…”</em>). Results show stock on hand when it matters. Scanning the same item again bumps the quantity. The <span class="btn plain">Scan</span> button forces a raw barcode lookup — that’s the one for weighed-goods barcodes with the price baked in.</li>
+    <li><strong>Adjust a line</strong> with the pencil: quantity, unit price, discount %. Each product carries its own maximum discount — going past it (or changing a price) needs a <strong>supervisor’s PIN</strong>, which authorises <em>that one line only</em> and never changes who is signed in.</li>
+    <li><strong>Attach a customer if needed.</strong> Type a name for a walk-in, or press <span class="btn plain">Attach an account</span> to search accounts — that unlocks the Account tender and shows their available credit. Blocked accounts stay visible with the reason (<em>on hold, over their limit, cash-only…</em>) so you can explain, but can’t be picked.</li>
+    <li><strong>Press <span class="btn green">Pay</span></strong> and take payment (next section). Or park the basket instead: <span class="btn plain">Save</span> keeps it as a saved sale to recall later; <span class="btn">More ▸ Save as order</span> reserves the stock for later delivery; <span class="btn">More ▸ Save as lay-by</span> starts a lay-by. Both of the latter need a customer attached.</li>
+    <li><strong>After finalising</strong>, the <strong>Sale complete</strong> screen shows the document number and any <strong>change due</strong> in large numerals — then <span class="btn">Next sale</span>.</li>
+  </ol>
+  <div class="co warn">
+    <b class="t">Register not claimed?</b>
+    <p>If the machine shows <em>“Not registered to a till”</em>, sales still post — they just won’t say which register rang them up, and they can’t be cashed up per till. Press <span class="btn">Choose a till</span> once per machine (or set it up under Setup › Terminals).</p>
+  </div>
+  <p class="small muted">Signing out of the till is blocked while a basket has lines — finish or void the sale first. <span class="btn red">Void sale</span> discards an unfinalised basket entirely: nothing is recorded and no number is used.</p>
+
+  <h3 id="tenderpad">Taking payment — the tender pad</h3>
+  <p>The same payment screen is used at the till and when finalising a back-office invoice, so payment always behaves the same way. Two rules it quietly enforces:</p>
+  <ul>
+    <li><strong>A tender records what was handed over</strong>, not what was owed — R100 on an R87.50 sale is a R100 tender plus R12.50 change.</li>
+    <li><strong>Cash rounding applies to the drawer, never the invoice</strong> — the VAT you declare stays exact.</li>
+  </ul>
+  <ol class="steps">
+    <li>Pick a tender button. Unavailable ones are greyed with the reason on their face — <em>On hold, Over limit, Needs account, Cash only…</em></li>
+    <li>Enter the amount (pre-filled with what’s still owed; quick buttons offer the round notes). Some tenders demand a reference — e.g. a deposit reference for EFT.</li>
+    <li>Split freely across tenders until the box reads <strong>Settled</strong>, then <span class="btn green">Finalise sale</span>.</li>
+  </ol>
+  <p class="small">An <strong>Account</strong> tender requires an attached account customer and passes a fresh credit check at the moment of finalising — the same check that greyed or allowed the button, so the two can never disagree.</p>
+
+  <h3 id="invoicing">Back-office invoicing <span class="cap">sales.edit</span></h3>
+  <p><span class="where"><b>Sales</b> <span class="sep">›</span> Invoicing</span></p>
+  <p>The keyboard-first screen for capturing an invoice off an order form. The list here is a <strong>worklist</strong> — only drafts and saved invoices appear; a finalised invoice moves to <strong>Sales › Documents</strong>. That’s the point: an empty Invoicing screen means nothing is waiting.</p>
+  <ol class="steps">
+    <li><span class="btn">New invoice</span> opens a blank editor immediately (nothing is posted, no number used).</li>
+    <li><span class="btn plain">Select customer</span>, set the <strong>Price type</strong>, the customer’s own <strong>order number</strong> and the date.</li>
+    <li>Add lines by typing a product code or barcode and pressing Enter. Each line has a <strong>Salesperson</strong> column — this is what decides <em>who earns commission on that line</em>, and it carries down to the next line automatically. You can type the exclusive price directly for trade quotes.</li>
+    <li><span class="btn plain">Save (draft)</span> keeps it on the worklist; <span class="btn">Finalise</span> saves, then opens the tender pad.</li>
+    <li><strong>Pure account invoice?</strong> Just press Finalise and take no payment — the whole amount posts to the customer’s account in one step (an account customer must be selected).</li>
+  </ol>
+  <p class="small muted">The totals panel shows live <strong>Cost</strong> and <strong>GP&nbsp;%</strong> — the GP turns red if you’re selling below cost. The Disc % column needs the discount-override permission.</p>
+
+  <h3 id="quotes">Quotes <span class="cap">sales.view / sales.edit</span></h3>
+  <p><span class="where"><b>Sales</b> <span class="sep">›</span> Quotes</span></p>
+  <p>A quote is an offer: it reserves no stock and posts nothing. The list leads with the money at stake — <strong>Out for decision, Expiring this week, Expired, Conversion rate</strong> — and a card at the foot tallies <em>why</em> quotes are lost.</p>
+  <ol class="steps">
+    <li><span class="btn">New quote</span> — captured exactly like an invoice, same editor, same maths. The validity date is stamped at creation (default 30 days, changeable per quote).</li>
+    <li><span class="btn">Issue quote</span> gives it its QUO number. Still nothing is posted.</li>
+    <li>The customer decides: <span class="btn green">Accept</span> converts it into a <strong>draft invoice</strong> and warns you if the quote had expired, if any prices have changed since, or if stock is short — honouring the old price stays your call. <span class="btn red">Mark lost</span> asks for a reason (price, lead time, competitor…) — one lost quote tells you nothing; a hundred with reasons shows where work is being lost.</li>
+    <li>Finalise the draft invoice as normal.</li>
+  </ol>
+
+  <h3 id="orders">Sales orders <span class="cap">sales.view / sales.edit</span></h3>
+  <p><span class="where"><b>Sales</b> <span class="sep">›</span> Orders</span></p>
+  <p>An order is a commitment to deliver later. It posts nothing — no stock movement, no ledger entry — but it <strong>reserves the stock</strong> so nobody else sells it. Orders are raised at the till: ring up the goods, attach the customer, then <span class="btn">More ▸ Save as order</span>.</p>
+  <ol class="steps">
+    <li>On the order screen, set <strong>Delivery details</strong>: deliver-by date, when the reservation expires, the customer’s own order number, and whether to hold stock.</li>
+    <li>When goods go out, type the quantities in <strong>Deliver now</strong> (each defaults to the full outstanding amount) and press <span class="btn green">Deliver</span>. An invoice is raised for exactly that much — <em>take payment on the invoice to finish</em>. Part deliveries are normal; each raises its own invoice, listed on the order.</li>
+    <li>If a line asks for more than is <em>available to sell</em>, the screen warns — delivering anyway oversells, which is fine only if stock is arriving.</li>
+    <li><span class="btn red">Cancel order</span> releases the undelivered balance back to available stock. Anything already delivered stays invoiced.</li>
+  </ol>
+
+  <h3 id="laybys">Lay-bys <span class="cap">sales.view / sales.edit</span></h3>
+  <p><span class="where"><b>Sales</b> <span class="sep">›</span> Lay-bys</span></p>
+  <p>Goods put aside and paid off in instalments — governed by section 62 of the Consumer Protection Act, and the screen enforces it: <strong>the money stays the customer’s</strong> until the goods are handed over, the goods stay reserved, and <strong>no invoice or VAT exists until the final handover</strong>. The list’s standout figure is <em>Customers’ money held</em> — money in the bank that is not yet the shop’s.</p>
+  <ol class="steps">
+    <li><strong>Start at the till:</strong> ring up the goods, attach an <em>account</em> customer, then <span class="btn">More ▸ Save as lay-by</span>. Take the deposit on the lay-by screen as a real payment.</li>
+    <li><span class="btn green">Take a payment</span> for each instalment — the amount defaults to the full balance, since the last instalment is the common one. Print the agreement (<span class="btn plain">More ▸ Print</span> — two copies, one for each party).</li>
+    <li>When it’s paid up, the button becomes <span class="btn green">Hand the goods over</span> → <strong>Invoice and release</strong>. <em>This is the moment it becomes a sale</em>: invoice raised, VAT declared, stock moved.</li>
+    <li><strong>Cancelling</strong> refunds the customer — the exact refund and any fee are stated <em>before</em> you confirm. A cancellation fee can only ever be charged when the store configured one, it is printed in the lay-by terms, a due date was agreed, 60 business days have passed since it, and the customer didn’t die or get hospitalised (statutory waivers). Otherwise: full refund, always.</li>
+    <li><span class="btn plain">Sweep expired</span> on the list marks lay-bys 30+ days past due as expired so they stop holding stock — the money is still owed back; cancel each one properly to refund it.</li>
+  </ol>
+
+  <h3 id="fixing">Fixing a sale: cancel, credit &amp; no-receipt returns</h3>
+  <p>One rule decides which tool to use:</p>
+  <div class="tw"><table>
+    <tr><th>Situation</th><th>Use</th><th>Where</th></tr>
+    <tr><td>Mistake caught the same day</td><td><span class="btn red">Cancel sale</span> — stock goes back, the day’s takings drop, the number is kept for the audit trail. Same trading day only, and needs the void permission.</td><td>Open the document under Sales › Documents</td></tr>
+    <tr><td>Goods back later, receipt in hand</td><td><span class="btn">Credit sale</span> for everything, or <em>“Choose lines and quantities instead”</em> for a partial credit. The original invoice never changes — a separate credit note reverses it. Refund at the till, or leave the credit on the account.</td><td>The document → Credit</td></tr>
+    <tr><td>No receipt at all</td><td><strong>Return without a receipt</strong>. Nothing caps the quantity (there is no invoice to check against), so every one is recorded against you by name and lands on the exception report. Reason required.</td><td><span class="where"><b>Sales</b> <span class="sep">›</span> Returns</span></td></tr>
+  </table></div>
+  <p class="small muted">Crediting can never exceed what was sold, is blocked while the VAT period is locked, and always uses the <em>original</em> line’s cost — so old sales credit at the margin actually earned, not today’s.</p>
+
+  <h3 id="cashup">Cash-up <span class="cap">sales.cashup</span></h3>
+  <p><span class="where"><b>Sales</b> <span class="sep">›</span> Cash-up</span></p>
+  <p>A <strong>shift</strong> is one person on one till. Sales rung up during it belong to that shift; sales without a shift still post, they just belong to no cash-up.</p>
+  <ol class="steps">
+    <li><span class="btn">Open a shift</span> — choose the till and enter the <strong>opening float</strong>. Count it: a wrong float makes every variance for the shift wrong the same way.</li>
+    <li>During the day, record any drawer money that isn’t a sale with <span class="btn plain">Payout</span>: a payout (milk for the shop), a pay-in, or a drop to the safe — so the cash-up isn’t blamed for it.</li>
+    <li><span class="btn green">Cash up</span> at the end: count the drawer and enter what you found, one figure per tender. <strong>The expected amount only appears after you type</strong> — deliberate, so counting can’t turn into copying.</li>
+    <li>If the variance is outside the store’s tolerance, a written explanation is required before <span class="btn">Close the shift</span> will work. Recent cash-ups are listed below with <span class="pill bad">Short</span> / <span class="pill warn">Over</span> badges on exceptions only.</li>
+  </ol>
+</section>
+<section id="inventory">
+  <h2>5 · Inventory &amp; purchasing</h2>
+
+  <h3 id="products">Products <span class="cap">products.view / products.edit</span></h3>
+  <p><span class="where"><b>Inventory</b> <span class="sep">›</span> Products</span></p>
+  <p>The list shows code, department, cost, price, GP&nbsp;% and stock at a glance, with quick slices for <strong>At or below minimum</strong> and <strong>Include archived</strong>. <span class="btn">New product</span> opens the form; a saved product opens with the same form plus more tabs.</p>
+
+  <div class="screen">
+    <h4>The product form, tab by tab</h4>
+    <ul>
+      <li><strong>General</strong> — description, <strong>product code</strong> (fixed forever after the first save — stock history refers to it), barcode, department, brand, and the tile colour used wherever there’s no photo.</li>
+      <li><strong>Pricing</strong> — cost excl./incl. cross-calculate through the purchase VAT rate; the selling-price table lets you type any one of markup %, GP % or price and computes the rest. <strong>Average cost is read-only everywhere</strong> — only receiving goods changes it.</li>
+      <li><strong>Inventory</strong> — stock on hand per location (read-only; it moves only through receipts, sales, transfers and adjustments) plus editable minimum/maximum levels.</li>
+      <li><strong>Product type</strong> — eight cards that change how the item behaves when sold: <em>Normal, Returnable</em> (selling it <em>increases</em> stock — deposits and crates), <em>Service, Recipe</em> (deducts its ingredients), <em>Refer</em> (a six-pack that deducts six singles), <em>Serial</em> (each unit has a serial number), <em>Buy-out,</em> and <em>Calculate QTY</em>. Choosing one reveals its setup tab.</li>
+      <li><strong>Properties</strong> — visible at the POS, ask-price-at-sale, decimal quantities, max discount %, scale flags, pack sizes, preparation time.</li>
+      <li><strong>Instructions</strong> — tick which till questions this product asks (see below).</li>
+      <li><strong>Suppliers</strong> — link suppliers with <em>their</em> stock code and price; the first linked becomes Preferred.</li>
+      <li><strong>Serials</strong> — capture serial numbers (paste a list; duplicates are skipped and named), see each unit’s status, and write off lost or stolen units with a reason. <em>This tab saves on its own</em>, so fifty scanned serials can’t be lost to an unrelated validation error.</li>
+      <li><strong>Photographs</strong> — up to 8 images (5&nbsp;MB each), uploaded immediately; the main one leads the online-store gallery.</li>
+    </ul>
+    <p class="small muted"><strong>Deleting:</strong> a product with sales or stock history is archived instead of deleted — that history must stay readable. Archive freely; it hides the product from daily work but keeps it in reports.</p>
+  </div>
+
+  <h3 id="departments">Departments</h3>
+  <p><span class="where"><b>Inventory</b> <span class="sep">›</span> Departments</span></p>
+  <p>The product tree — nest as deep as you like. Each row’s <span class="btn plain">+</span> adds a sub-department beneath it; the product count on each row jumps to a filtered product list. A department with products or children can’t be deleted — move them first, or just mark it inactive to hide it from pickers without touching its products.</p>
+
+  <h3 id="instructions">Instructions — the questions the till asks</h3>
+  <p><span class="where"><b>Inventory</b> <span class="sep">›</span> Instructions</span></p>
+  <p>“Choice of bread”, “How would you like your eggs?” — build the question once, attach it to any number of products. Each instruction has a prompt, a choose-rule (pick one, up to N, exactly N…), a <strong>Required</strong> switch, and options that can adjust the price and even deduct stock (two eggs per “fried eggs” answer). An instruction still used by products can’t be deleted — switch it off instead.</p>
+
+  <h3 id="receiving">Receiving goods — the GRV <span class="cap">purchasing.edit</span></h3>
+  <p><span class="where"><b>Inventory</b> <span class="sep">›</span> Purchasing <span class="sep">›</span> <b>Receive goods</b></span></p>
+  <p>Receiving is how purchases enter the system — stock in, costs updated and the supplier credited, all in one posting. It is also <strong>the only thing in the whole system that changes a product’s average cost</strong>.</p>
+  <ol class="steps">
+    <li>Choose the <strong>Supplier</strong>. If they have an open purchase order, pick it under <strong>Against an order</strong> to pull the outstanding lines in — receiving straight in with no order is equally fine.</li>
+    <li>Enter <strong>Their invoice number</strong> (the payment run matches against it) and any <strong>Delivery and charges</strong> — charges are spread across the lines by value, so your cost is the true landed cost.</li>
+    <li>Add lines: quantity received, unit cost excl. VAT, and (on multi-room sites) which location each line goes <strong>Into</strong>. Under every line a preview shows exactly what it will do to the average cost — amber if it rises, green if it falls — <em>before</em> you post.</li>
+    <li>Serial-tracked lines get a scan box: every unit needs its serial before the button unlocks.</li>
+    <li><span class="btn green">Receive the goods</span>. The supplier’s account is credited with the VAT-inclusive total, due per their payment terms.</li>
+  </ol>
+  <div class="co">
+    <b class="t">Got it wrong?</b>
+    <p><strong>Same day</strong> → open the GRV and <span class="btn red">Cancel receipt</span> (“voiding says it never happened”). <strong>Any later day, or goods physically going back</strong> → <span class="btn">Return to supplier</span> (“returning says it did, and the goods are going back”). Average cost is deliberately never unwound by either — anything sold since has already moved on.</p>
+  </div>
+
+  <h3 id="supplier-returns">Returning goods to a supplier</h3>
+  <p>Open the GRV under <span class="where"><b>Inventory</b> <span class="sep">›</span> Purchasing</span> and press <span class="btn">Return to supplier</span>. Quantities are capped at what’s left to return; serial units are ticked individually from the room they were received into. A reason is required (it goes on the return and their account), and their credit note number can be captured for the payment run to match. <span class="btn green">Send it back</span> moves the stock out and credits your account with them.</p>
+
+  <h3 id="transfers">Transfers between locations <span class="cap">stock.transfer</span></h3>
+  <p><span class="where"><b>Inventory</b> <span class="sep">›</span> Transfers</span></p>
+  <p>A transfer moves stock between rooms <em>within the store</em> — the site total never changes, only where it sits. Because the till sells from the main location, <strong>warehouse → shop is how back-room stock becomes sellable</strong>, and that’s the default direction on a new transfer.</p>
+  <ol class="steps">
+    <li><span class="btn">New transfer</span> — pick <strong>From</strong> and <strong>To</strong>. (You need at least two locations; with one, the screen sends you to Setup to add another.)</li>
+    <li>Add lines. Each shows live what the source room actually holds and what will remain — you can’t move more than is there. Serial products move named units: tick them.</li>
+    <li><span class="btn green">Post the transfer</span>. To undo one, open it and <span class="btn red">Void</span> with a reason — refused if the destination no longer holds the goods (they’ve been sold on).</li>
+  </ol>
+</section>
+
+<section id="customers">
+  <h2>6 · Customers &amp; money in</h2>
+
+  <h3 id="customer-accounts">Customer accounts <span class="cap">customers.view / customers.edit</span></h3>
+  <p><span class="where"><b>Customers</b> <span class="sep">›</span> Customers</span></p>
+  <p>The debtors book. The three tiles at the top — <strong>Total owing, Over limit, On hold</strong> — are clickable filters. Select rows for bulk actions (change status, set terms or credit limits, assign a group or rep, email statements), and export the filtered list to Excel or CSV.</p>
+  <div class="screen">
+    <h4>Opening an account — the fields that matter</h4>
+    <ul>
+      <li><strong>Account type</strong> decides the whole behaviour: <em>Open item</em> (you choose which invoices each payment settles), <em>Balance brought forward</em> (payments auto-apply oldest-first), <em>Cash</em> (never buys on account), <em>Lay-by</em>.</li>
+      <li><strong>Payment terms</strong> (0 = cash on delivery) and <strong>Credit limit</strong> — and note: <em>a zero limit means no credit granted, not unlimited</em>.</li>
+      <li><strong>Charge interest on overdue amounts</strong> — off by default on every account, and the screen reminds you why: the National Credit Act requires the customer’s written agreement. Rate and grace days per account, or inherited from the group.</li>
+      <li><strong>Email</strong> is where statements go; <strong>VAT number</strong> is required on a tax invoice.</li>
+    </ul>
+  </div>
+  <p>An account’s own page carries tiles (balance, limit, available credit, terms), an ageing strip, and six tabs: <strong>Details</strong> (the form), <strong>Contacts</strong> (the buyer, the accounts clerk…), <strong>Documents</strong> (signed credit application, up to 10&nbsp;MB each), <strong>Comments</strong> (a dated, attributed log — “spoke to Sarah, paying Friday” — with pinning), <strong>Transactions</strong> (the ledger, below) and <strong>Activity</strong> (the audit trail).</p>
+
+  <h3 id="customer-ledger">Capturing payments &amp; allocating</h3>
+  <p>On the customer’s <strong>Transactions</strong> tab:</p>
+  <ol class="steps">
+    <li><span class="btn">Payment received</span> opens <strong>Post a transaction</strong> — type (payment, invoice, credit note, journal, opening balance, interest), amount, date, document number and reference. The <em>“Apply to the oldest open invoices”</em> switch is pre-set from the account type; leave it off on an open-item account to choose invoices yourself.</li>
+    <li><span class="btn plain">Allocate</span> matches a specific credit to a specific invoice — pick both, and <span class="btn plain">Use the full amount</span> caps it correctly. Or use the row menu’s <strong>Auto-allocate</strong> to apply a credit oldest-first in one click.</li>
+    <li>Mistakes are <strong>reversed, never edited</strong> — the row menu’s Reverse posts an opposite entry with your reason; the original stays exactly as issued, because the customer may be holding a printed copy.</li>
+  </ol>
+  <p class="small muted">Payments arriving through the bank can instead be matched during bank reconciliation (chapter 8) — same result, and anything left over surfaces on <strong>Accounting › Unallocated</strong>.</p>
+
+  <h3 id="collections">Age analysis &amp; statements — the collections loop</h3>
+  <p><span class="where"><b>Customers</b> <span class="sep">›</span> Age analysis</span> buckets the whole book into <strong>Current / 30 / 60 / 90 / 120+</strong> days past due. Flip on <strong>Overdue only</strong> and it becomes the collections list; the <strong>As at</strong> date rebuilds the book as it stood on any past day. Its primary action says what to do next: <span class="btn">Send statements</span>.</p>
+  <ol class="steps">
+    <li><strong>One customer:</strong> open their account → <span class="btn plain">Statement</span>. Preview it exactly as it prints — <strong>Open items</strong> (what a customer needs in order to pay) or <strong>Full activity</strong> over a period — then <span class="btn">Open PDF</span>, download, or email it.</li>
+    <li><strong>Everyone at once:</strong> <span class="where"><b>Customers</b> <span class="sep">›</span> Statements</span>. Press <span class="btn plain">Select all sendable</span>, check the period and format, and <span class="btn">Send N statements</span>. Sending runs in the background — the run page shows every account’s outcome (sent / failed / skipped, each with the reason) and offers <span class="btn">Retry failed</span>. Email (SMTP) must be configured or the screen says so up front.</li>
+  </ol>
+</section>
+
+<section id="suppliers">
+  <h2>7 · Suppliers &amp; money out</h2>
+
+  <h3 id="supplier-accounts">Supplier accounts <span class="cap">suppliers.view / suppliers.edit</span></h3>
+  <p><span class="where"><b>Suppliers</b> <span class="sep">›</span> Suppliers</span></p>
+  <p>Mirror image of customers: the balance is what <em>you</em> owe <em>them</em>. Key fields on the form: <strong>Payment terms</strong> (drives the payables ageing), <strong>lead time</strong>, and <strong>settlement discount</strong> — enter “2% if paid within 10 days” and the form works out what that’s worth as an annual rate, which is usually well above what an overdraft costs. Each account has the same Contacts / Documents / Comments / Transactions / Activity tabs; the <strong>Transactions</strong> tab is where ad-hoc payments, allocations and reversals are captured <span class="cap">purchasing.pay</span>.</p>
+  <p class="small muted"><strong>Statement vs remittance:</strong> the supplier statement screen is <em>your record of their account</em>, for checking against the statement they send you at month end. What you send <em>them</em> is a remittance advice — produced by the payment run below. <span class="where"><b>Suppliers</b> <span class="sep">›</span> Age analysis</span> shows who you owe and how late — overdue here is <em>your</em> problem.</p>
+
+  <h3 id="remittances">Paying suppliers — the payment run <span class="cap">purchasing.pay</span></h3>
+  <p><span class="where"><b>Suppliers</b> <span class="sep">›</span> Remittances</span></p>
+  <ol class="steps">
+    <li><strong>Pick what to pay.</strong> Invoices are grouped by supplier. <span class="btn plain">Select everything overdue</span> and <span class="btn plain">Take every discount</span> do the common cases in one click — the screen even warns when settlement discounts expire within the week. A discount is only claimed when your payment plus the discount clears the invoice exactly; anything else is an ordinary part payment.</li>
+    <li>Set the <strong>Payment date</strong> and <strong>Bank reference</strong>, then <span class="btn">Prepare</span>. <em>Nothing is paid yet</em> — the run sits as a draft.</li>
+    <li>Review the run and <span class="btn green">Post the payments</span>. One payment per supplier is written to the ledger and allocated against exactly the invoices listed. <strong>This does not move money at the bank</strong> — do the EFT separately, using the same reference.</li>
+    <li><span class="btn">Email the advices</span> sends each supplier a PDF listing exactly what the run settled. One bad address doesn’t stop the others; outcomes are recorded per supplier. Suppliers with no email are flagged <em>before</em> you post, not after.</li>
+  </ol>
+  <p class="small muted">A draft run can be cancelled harmlessly (nothing was paid). A posted run cannot — reverse the individual payments on each supplier’s Transactions tab instead.</p>
+</section>
+<section id="money">
+  <h2>8 · Cashbook, expenses &amp; accounting</h2>
+  <p class="lede">Everything here reads from the general ledger, and the ledger is fed automatically by sales, GRVs and expenses — you rarely touch it directly. The screens below are where you keep it honest.</p>
+
+  <h3 id="cashbook">Cashbook &amp; bank reconciliation <span class="cap">cashbook.view / .edit / .reconcile</span></h3>
+  <p><span class="where"><b>Accounting</b> <span class="sep">›</span> Cashbook</span></p>
+  <p>One card per bank account, cash float or card-settlement account. The index leads with what matters: <strong>Cash on hand</strong>, <strong>Unmatched lines</strong> (money the ledgers don’t explain), accounts <strong>never reconciled</strong>, and <strong>unidentified receipts</strong> (money in, customer unknown — chase those on <a href="#interest">Accounting › Unallocated</a>).</p>
+  <ol class="steps">
+    <li><strong>Create the account</strong> (<span class="btn">New account</span>): code, name, type, and — load-bearing — the <strong>opening balance and its as-at date</strong>, since the running balance builds on them. Mark one account as the default for money in (where takings land) and one for money out (what payment runs draw on).</li>
+    <li><strong>Import the bank statement</strong> (<span class="btn plain">Import statement</span>): choose the account and the CSV/OFX file from your bank. The screen shows what it understood — format, date format, row count, period — <em>before</em> anything is written. Already-imported lines are detected and skipped, so re-importing an overlapping file is safe. Leave <em>“Match what is obvious after importing”</em> ticked.</li>
+    <li><strong>Reconcile</strong> on the account page: enter the <strong>closing balance per statement</strong> and watch the <strong>Difference</strong> — the goal is zero. <span class="btn plain">Match what is obvious</span> auto-matches; for the rest, each row’s magnifier finds candidates with a confidence badge and a <span class="btn green">Match</span> button.</li>
+    <li><strong>What doesn’t match:</strong> bank charges, interest, an owner’s drawing — <span class="btn plain">Capture</span> them right there (a customer payment, though, belongs on the customer’s account so it settles invoices). Duplicate lines get <span class="btn red">Void</span> with a reason.</li>
+    <li><strong>Sign off</strong> when the difference reads zero. It <em>can</em> be signed off unbalanced, but then a written explanation is required and the difference is carried, visibly, to next month.</li>
+  </ol>
+
+  <h3 id="expenses">Expenses <span class="cap">cashbook.edit</span></h3>
+  <p><span class="where"><b>Accounting</b> <span class="sep">›</span> Expenses</span></p>
+  <p>Everything the business spends that isn’t stock. The loudest tile is <strong>Awaiting review</strong> — a draft expense is in <em>no</em> figures at all, including the VAT return, until it is posted.</p>
+  <ol class="steps">
+    <li><span class="btn">Capture expense</span> and make the one decision that shapes everything: <strong>Paid now</strong> (money out of a bank/cash account today) or <strong>Bill to pay later</strong> (goes on the supplier’s account, settled by a payment run).</li>
+    <li>Fill in who and when. For a bill, entering the supplier’s invoice number checks live for duplicates — <em>“This may be the same bill twice”</em> — a warning, never a refusal.</li>
+    <li>Split the amount across <strong>categories</strong> (one slip can cover several). Amounts are typed <strong>VAT-inclusive</strong>, as the slip reads, and the excl/VAT split shows underneath. Categories flag themselves: <em>“VAT cannot be claimed on this category”</em> (entertainment, passenger vehicles) or <em>“An asset — kept out of the profit and loss”</em>.</li>
+    <li><span class="btn plain">Save as draft</span> to finish later, or <span class="btn green">Save and post</span>. A posted expense is fixed — correcting it means <span class="btn red">Void</span> (with a reason) and recapture.</li>
+    <li><strong>Capital purchase?</strong> The expense page prompts <span class="btn">Record as an asset</span> so it lands on the fixed-asset register and starts depreciating — see below.</li>
+  </ol>
+  <p><strong>Recurring expenses</strong> (<span class="where"><b>Accounting</b> <span class="sep">›</span> Expenses <span class="sep">›</span> <b>Recurring</b></span>): rent on the 1st, the debit order on the 15th. Schedules <em>create drafts, never postings</em> — press <span class="btn">Create the drafts</span> when the due card appears, correct the amounts, and post each one. Missed months are caught up one draft per period, and a schedule set for the 31st falls on the last day of shorter months.</p>
+
+  <h3 id="statements-fin">The financial statements <span class="cap">reports.financial</span></h3>
+  <div class="tw"><table>
+    <tr><th>Screen</th><th>Question it answers</th><th>Worth knowing</th></tr>
+    <tr><td>Profit and loss</td><td>Did we make money over a period?</td><td>Revenue → gross profit → expenses → net; prior-period comparison with change badges. Capital purchases are excluded — they’re assets, not costs.</td></tr>
+    <tr><td>Balance sheet</td><td>What do we own and owe, right now?</td><td>A single “as at” date. If it doesn’t balance, a loud red callout sends you to the trial balance — every figure is suspect until fixed.</td></tr>
+    <tr><td>Trial balance</td><td>Is the ledger itself sound?</td><td>Health checks lead: unbalanced entries, journals out by an amount, balances that disagree with their own entries. Check this before trusting the other two. A softer card compares control accounts to their subledgers.</td></tr>
+  </table></div>
+
+  <h3 id="vat">VAT return <span class="cap">reports.financial</span></h3>
+  <p><span class="where"><b>Accounting</b> <span class="sep">›</span> VAT return</span></p>
+  <p>Pick the two-month period from the tabs (they follow the Category A cycle, so nobody types a period boundary by hand). The screen shows output VAT, input VAT, and <strong>Payable to SARS</strong> or <strong>Refund due</strong> — but read the <strong>“Check these before filing”</strong> card first: draft sales and draft expenses in the period are <em>not included</em> in the figures, odd VAT rates are flagged, and input more than double output suggests a duplicated supplier invoice. Figures are on the invoice basis, from documents captured in this system — an accountant’s journal made elsewhere isn’t in them.</p>
+  <p class="small muted">After filing, lock the period (see <a href="#periods">Periods</a>) so nothing can be backdated into it.</p>
+
+  <h3 id="journals">Journals &amp; the chart of accounts <span class="cap">reports.financial</span></h3>
+  <p><span class="where"><b>Accounting</b> <span class="sep">›</span> Journals / Chart of accounts</span></p>
+  <ul>
+    <li>Most journals are raised automatically by sales, GRVs and expenses — the <strong>Raised by</strong> column separates those from <span class="pill warn">Manual</span> ones. To undo a system journal, void its source document; reversing only the ledger entry would leave the two out of step. A posted manual journal is reversed with a mirror entry and a reason.</li>
+    <li><span class="btn">New journal</span>: date, description, then lines — each on one side only, debits must equal credits before <span class="btn green">Post journal</span> unlocks. Control accounts can’t be journalled to; their subledgers own them.</li>
+    <li>The <strong>chart of accounts</strong> lists every account by type with its balance; click through for the full entry-by-entry enquiry with a running balance — the drill-down behind every statement figure. <span class="btn">Add account</span> suggests the next free code in the right band (1000s assets, 2000s liabilities, 3000s equity, 4000s income, 6000s expenses).</li>
+  </ul>
+
+  <h3 id="assets">Fixed assets &amp; depreciation <span class="cap">reports.financial / setup.edit</span></h3>
+  <p><span class="where"><b>Accounting</b> <span class="sep">›</span> Fixed assets</span></p>
+  <ol class="steps">
+    <li><strong>Record the asset</strong> — ideally straight from the capital expense that bought it (the form pre-fills, with cost excluding any VAT you reclaimed). Cost, residual value and useful life produce the monthly charge, shown live as a sentence: <em>“R666.67 a month for 36 months, ending 2028-12…”</em></li>
+    <li><strong>Charge each month</strong> at <span class="where"><b>Fixed assets</b> <span class="sep">›</span> Depreciation</span>: <span class="btn">Work out the depreciation</span> → review the draft (exclude anything with a reason) → <span class="btn green">Charge the month</span>. Straight line, never below residual, a month can never be charged twice, one journal per run. The register nags — rightly — that an uncharged month overstates profit.</li>
+    <li><strong>Dispose</strong> when sold or scrapped: proceeds, where the money went, and the profit or loss on sale shown <em>before</em> you commit.</li>
+  </ol>
+
+  <h3 id="interest">Interest, write-offs &amp; unallocated money</h3>
+  <p><strong>Unallocated</strong> (<span class="where"><b>Accounting</b> <span class="sep">›</span> Unallocated</span>) gathers three problems, worst first: money in the bank with <em>no customer credited</em> (match it on the account’s reconcile screen), customer credits sitting unapplied while invoices are open (one click applies them oldest-first), and supplier credits you’re not deducting from payments.</p>
+  <p><strong>Interest</strong> (<span class="where"><b>Accounting</b> <span class="sep">›</span> Interest</span> <span class="cap">customers.credit</span>) follows propose → review → post: <span class="btn">Work out the interest</span> for a period, exclude accounts with a reason, then <span class="btn green">Charge</span>. It only ever touches customers whose account has interest switched on individually (written agreement — NCA), charges per invoice rather than per balance, is simple not compound, and applies the <em>in duplum</em> rule automatically (unpaid interest never exceeds the capital).</p>
+  <p><strong>Write-offs</strong> (<span class="where"><b>Accounting</b> <span class="sep">›</span> Write-offs</span> <span class="cap">customers.credit</span>): raise the request from the customer’s account when a debt turns uncollectable; small ones post immediately, larger ones queue here for <span class="btn green">Approve</span> / <span class="btn red">Reject</span> (with a reason the requester reads). If the customer later pays, one click marks it <span class="pill ok">Recovered</span>. The “Worth a look” card lists accounts with a balance and six months of silence — a suggestion, not a verdict.</p>
+
+  <h3 id="periods">Closing a period — month end <span class="cap">setup.edit</span></h3>
+  <p><span class="where"><b>Accounting</b> <span class="sep">›</span> Periods</span></p>
+  <ol class="steps">
+    <li><strong>Post everything:</strong> finalise or void draft invoices and expenses, run depreciation, run interest if you charge it.</li>
+    <li><strong>Reconcile every bank account</strong> and sign off.</li>
+    <li><strong>Trial balance</strong> — health checks clean?</li>
+    <li><strong>VAT return</strong> — clear the “check before filing” warnings, then file.</li>
+    <li><strong>Close the month:</strong> choose the month, then <strong>Soft</strong> (postings allowed but warned — for the week between “we think it’s done” and “the return is filed”) or <strong>Hard</strong> (postings refused outright — once filed). Scope can be everything or just one area.</li>
+  </ol>
+  <p class="small muted">A locked period is why you’ll occasionally see <em>“The VAT period covering {date} is locked”</em> when backdating, voiding or crediting. Reopening is always possible — and always recorded with your name and reason, because that record is what an auditor asks for.</p>
+</section>
+
+<section id="insight">
+  <h2>9 · Dashboard &amp; reports</h2>
+  <p><span class="where"><b>Dashboard</b></span> — the landing screen: turnover, gross profit, sales count, average sale and items per sale, each with a trend sparkline and a comparison to the prior period; charts for tender mix, turnover per day and sales per hour; and top products / departments / cashiers. Press <span class="btn plain">Edit layout</span> to drag, resize and choose widgets — the layout is remembered per browser. The date range defaults to this month.</p>
+  <p><span class="where"><b>Reports</b></span> <span class="cap">reports.view</span> — the trading reports, all bookmarkable by URL: day-by-day summary and slow movers, top products ranked by revenue / profit / quantity (different lists — check both), departments, cashiers, <strong>Tenders</strong> (what money arrived — reconcile against the bank; it deliberately does <em>not</em> equal sales), VAT by rate, and <strong>Exceptions</strong> — cancellations, discounts and returns by cashier, where an outlier is worth a conversation, not an accusation.</p>
+</section>
+
+<section id="commission">
+  <h2>10 · Commission</h2>
+  <p><span class="where"><b>Commission</b> <span class="sep">›</span> Rules / Periods</span></p>
+  <ol class="steps">
+    <li><strong>Write the rules</strong> <span class="cap">commission.edit</span>: each has a scope (department, brand, supplier, salesperson — all set must match), pays on <strong>profit</strong> (a discount costs the salesperson) or <strong>turnover</strong> (it doesn’t), at a flat rate or in tiers, optionally only above a threshold. <strong>One rule pays each line — never two:</strong> the lowest priority number that matches wins, and rules don’t stack. An “earns nothing” rule carves an exclusion out of a broader one.</li>
+    <li><strong>Who earns?</strong> The <strong>Salesperson</strong> on each invoice line; at the till, the line is stamped from the operator’s PIN session.</li>
+    <li><strong>Each month</strong> <span class="cap">commission.run</span>: <span class="btn">Open a period</span> (defaults to last month; periods can’t overlap) → <span class="btn plain">Calculate</span> → check each person’s lines (the rule, basis and rate shown are the ones actually used) → <span class="btn green">Lock</span>. Locked figures never change — pay on them.</li>
+  </ol>
+  <div class="co law">
+    <b class="t">Clawbacks land in the open period</b>
+    <p>Crediting a sale from a locked period doesn’t reopen it — the reversal appears in whichever period is open when the credit is raised, so a figure somebody was already paid stays paid. Settle it against future commission rather than deducting from a wage (that needs written consent under the BCEA).</p>
+  </div>
+  <p class="small muted">Staff with only “see their own commission” open the same period screens pinned to their own row.</p>
+</section>
+<section id="online">
+  <h2>11 · The online store</h2>
+  <p class="lede">A shareable shop link customers order from — no app, no account needed. Every accepted order becomes an ordinary draft sale for the till, so stock, VAT, cash-up and reports treat online exactly like walk-in. There is no parallel “online bookkeeping” anywhere.</p>
+
+  <h3 id="online-setup">Opening your store <span class="cap">online.edit</span></h3>
+  <p><span class="where"><b>Online Store</b> <span class="sep">›</span> Setup</span></p>
+  <ol class="steps">
+    <li><strong>Choose what to publish:</strong> chosen departments only, individually ticked products, or your whole product file — each option shows a live count so “the store would be empty” is never a surprise. Tick departments at <span class="where"><b>Online Store</b> <span class="sep">›</span> Departments</span> (ticking a parent publishes everything under it).</li>
+    <li><strong>How customers get orders:</strong> collection, delivery, or both — plus preparation time and a minimum order. Delivery needs at least one <strong>delivery area</strong> (matched on the suburb or postal code a customer types), each with its fee, free-over threshold and minimum.</li>
+    <li><strong>Paying:</strong> start with <em>Pay on collection or delivery</em>. <em>Pay online when ordering</em> is refused until a working payment account is connected (next section). Optional switches: show approved reviews, and let signed-in account customers charge orders to their account (credit-checked; debited only when you finalise the sale).</li>
+    <li><strong>Flip “Online store open”.</strong> The switch stays disabled until every blocker listed under it is resolved — no way to open a half-configured shop. Then copy <strong>Your shop link</strong> and share it; the link is permanent, so one printed on a slip last month still works.</li>
+  </ol>
+
+  <h3 id="online-builder">The page builder</h3>
+  <p><span class="where"><b>Online Store</b> <span class="sep">›</span> Page builder</span></p>
+  <p>The canvas <em>is</em> the shop — the same page a shopper gets, with drag handles. Everything autosaves to a draft; the live shop only changes when you press <span class="btn green">Publish</span> (so build first, open later). Four section kinds: a <strong>welcome banner</strong>, <strong>shop-by-department tiles</strong>, <strong>product rows</strong> (hand-picked, a department, or newest), and <strong>info cards</strong> (delivery info, opening hours). Click a section to edit it on the right; drag to reorder. The <strong>Appearance</strong> card (shop colour, product layout, headline, footer hours and social links) is the one thing that goes live the moment you save it.</p>
+
+  <h3 id="online-orders">Handling online orders <span class="cap">online.view</span></h3>
+  <p><span class="where"><b>Online Store</b> <span class="sep">›</span> Orders</span></p>
+  <ol class="steps">
+    <li>New orders arrive as <strong>Waiting</strong> (the sidebar badge counts them). Click a row for the full request — customer, address, note, and the prices <em>they were shown</em>.</li>
+    <li><span class="btn green">Accept</span> writes a draft sale priced from <strong>today’s</strong> product file. If anything changed since the shopper ordered — a price moved, an item withdrawn — a modal lists exactly what, old price struck through, <em>so you can tell the customer before they pay</em>.</li>
+    <li>Move the order along its pipeline with the next-status button (collection orders skip “dispatched”), and finalise the draft sale at the till when they collect or you deliver — that’s when money and stock actually move.</li>
+    <li><span class="btn red">Cancel</span> (with a reason the customer can be given) discards the draft sale. Completed and cancelled orders are <strong>archived</strong> to keep the queue clean.</li>
+  </ol>
+
+  <h3 id="online-reviews">Reviews &amp; online payments</h3>
+  <p><strong>Reviews</strong> (<span class="where"><b>Online Store</b> <span class="sep">›</span> Reviews</span>): nothing a shopper writes appears on the storefront until you <span class="btn green">Publish</span> it here — no way to switch moderation off. <span class="btn red">Reject</span> keeps it on record with your reason; Delete is forever. “Claims order …” on a card is the reviewer’s own claim, not a verified purchase.</p>
+  <p><strong>Payments</strong> (<span class="where"><b>Online Store</b> <span class="sep">›</span> Payments</span>): connect the store’s <em>own</em> PayFast account — merchant ID, key and passphrase from the PayFast dashboard. Shoppers pay you directly; the money never passes through this software, and card details never touch it (shoppers pay on PayFast’s own page). New connections default to <strong>Test mode</strong> — nothing is really charged — <em>switch it off before sharing your link</em>, and remember: connecting an account doesn’t switch the shop to online payment by itself; that’s the “When customers pay” choice back in Setup.</p>
+  <div class="co">
+    <b class="t">What shoppers see</b>
+    <p>Your built front page, department browsing and search, product pages with photos and approved reviews, and a one-screen checkout: basket, collect-or-deliver, name and phone, a “check if you deliver here” address check, then <strong>Place order</strong>. They’re told the shop confirms every order before preparing it. A closed store, a bad link and a suspended site all look like the same plain “not found” page — the link can’t be used to probe.</p>
+  </div>
+</section>
+
+<section id="setup-ref">
+  <h2>12 · Setup screens, one by one</h2>
+  <p class="lede">Chapter 3 gave the order; this is the reference for each screen under <strong>Setup</strong>. All need <em>setup.edit</em>, except Users/Roles (<em>setup.users</em>) and the Style Guide (<em>setup.view</em>).</p>
+  <div class="tw"><table>
+    <tr><th>Screen</th><th>What it does</th><th>Worth knowing</th></tr>
+    <tr><td>Users</td><td>Who may sign in — till and back office on one screen. PINs, roles, sales-rep links, which stores an account may open.</td><td>PINs: 4 or 6 digits, unique, no 1111 / 1234. A POS-only user’s PIN can’t be cleared (it’s their only way in — deactivate instead). The last active owner can’t be demoted. Removing someone deactivates and unlinks; nothing is deleted.</td></tr>
+    <tr><td>Roles &amp; permissions</td><td>Create roles, tick capabilities per role. Each switch saves instantly.</td><td>Deny by default. Owner role locked to “everything”. A role can’t be deleted while anyone holds it. Changes apply on the next page load.</td></tr>
+    <tr><td>Linked stores</td><td>Share the product file, departments and prices across stores in a group.</td><td>Sharing can only be switched on while the joining store is <em>empty</em>. De-linking changes no data.</td></tr>
+    <tr><td>Stock locations</td><td>Stock rooms, shelves, vans. One is <strong>main</strong>.</td><td>The till sells from main. Making another location main moves no stock — so what the till can sell changes immediately. Locations with history can’t be deleted, only deactivated.</td></tr>
+    <tr><td>Tender types</td><td>The payment buttons at the till, in order, with behaviour flags: posts to account, counted in drawer, gives change, opens drawer, rounds, needs a reference, min/max, surcharge.</td><td>A tender that has taken money can’t be deleted — switch it off. “Posts to account” forces “requires a customer”.</td></tr>
+    <tr><td>Terminals</td><td>Register tills; each machine claims its own with <span class="btn">Use here</span>.</td><td>A deactivated till stops at its <em>next sale</em>, not next sign-in. Tills with sales history can’t be deleted.</td></tr>
+    <tr><td>Numbering</td><td>Prefix, digits and next number per document sequence; cash rounding; the VAT period lock date; the switch allowing finalised-invoice correction.</td><td>Numbers are issued at finalise, never reused, and the next number only moves forward. A red “missing” badge means numbers can’t be accounted for — investigate.</td></tr>
+    <tr><td>Reconciliation</td><td>Read-only health check: stock vs movements, customer and supplier balances vs their ledgers, age-analysis cross-check, document numbers all accounted for.</td><td>It reports, never repairs. Anything red is a bug in a posting path, not rounding.</td></tr>
+    <tr><td>Opening balances</td><td>CSV import of outstanding invoices from the old system — one row per invoice, original dates kept.</td><td>Preview first, always; bad rows are skipped and named, never guessed at. <strong>No undo.</strong> VAT is not re-declared.</td></tr>
+    <tr><td>Lay-bys</td><td>Cancellation fee %, default period, and the printed terms text.</td><td>A fee set while the terms box is blank is never charged — undisclosed fees are unenforceable, and the screen says so.</td></tr>
+    <tr><td>Expense categories</td><td>Where non-stock money goes; each carries an account code, a type and a VAT-claimable flag.</td><td>Codes follow the SA convention (4000s cost of sales, 5000s operating, 6000s finance, 7000+ capital) but nothing enforces it — match your accountant.</td></tr>
+    <tr><td>Site &amp; databases</td><td>The store’s registered details, and a live probe of every database connection.</td><td>Diagnostic only. If something is unreachable it’s reported here by name instead of as an error on a random screen.</td></tr>
+    <tr><td>Style Guide</td><td>A living catalogue of every UI component, rendered live.</td><td>For anyone customising or discussing the app’s look — name a component from here and everyone means the same thing.</td></tr>
+  </table></div>
+</section>
+
+<section id="lookup">
+  <h2>13 · “Where do I…?”</h2>
+  <div class="tw"><table>
+    <tr><th>I want to…</th><th>Go to</th></tr>
+    <tr><td>Ring up a sale</td><td>Sales › New sale (enter your PIN)</td></tr>
+    <tr><td>Recall a saved sale</td><td>Sales › Documents → filter <em>Saved</em> (or More ▸ saved sales on the till)</td></tr>
+    <tr><td>Give a discount past the product’s limit</td><td>Edit the line at the till → a supervisor enters their PIN for that line</td></tr>
+    <tr><td>Take a customer’s account payment</td><td>Customers › open the account › Transactions › <span class="btn">Payment received</span></td></tr>
+    <tr><td>Email all statements</td><td>Customers › Statements › Select all sendable › Send</td></tr>
+    <tr><td>See who owes what, how late</td><td>Customers › Age analysis (switch on <em>Overdue only</em>)</td></tr>
+    <tr><td>Add stock that arrived</td><td>Inventory › Purchasing › <span class="btn">Receive goods</span></td></tr>
+    <tr><td>Fix a wrong price / cost</td><td>Products › open the product › Pricing (cost changes only via receiving)</td></tr>
+    <tr><td>Move stock from the storeroom to the shop</td><td>Inventory › Transfers › New transfer (warehouse → shop is the default)</td></tr>
+    <tr><td>Pay suppliers</td><td>Suppliers › Remittances → prepare → post → email advices</td></tr>
+    <tr><td>Capture the rent / a till slip expense</td><td>Accounting › Expenses › <span class="btn">Capture expense</span></td></tr>
+    <tr><td>Reconcile the bank</td><td>Accounting › Cashbook › the account → import, match, sign off</td></tr>
+    <tr><td>Get the VAT figure for SARS</td><td>Accounting › VAT return (clear its warnings first)</td></tr>
+    <tr><td>Stop postings into a filed month</td><td>Accounting › Periods → close it (soft, then hard)</td></tr>
+    <tr><td>Undo a sale from last week</td><td>Open it under Sales › Documents → <span class="btn">Credit sale</span> (cancel is same-day only)</td></tr>
+    <tr><td>Take goods back with no receipt</td><td>Sales › Returns</td></tr>
+    <tr><td>Pay commission</td><td>Commission › open period → Calculate → Lock</td></tr>
+    <tr><td>Add a staff member / change what they may do</td><td>Setup › Users / Setup › Roles &amp; permissions</td></tr>
+    <tr><td>Accept a web order</td><td>Online Store › Orders → <span class="btn green">Accept</span> → finalise the draft at the till</td></tr>
+    <tr><td>Change the shop’s online front page</td><td>Online Store › Page builder → edit → <span class="btn green">Publish</span></td></tr>
+    <tr><td>Find why a menu item is missing</td><td>Your avatar menu shows your role; an owner adjusts it under Setup › Roles</td></tr>
+  </table></div>
+</section>
+
+<section id="rules">
+  <h2>14 · Rules the system enforces</h2>
+  <p class="lede">Refusals are designed, not bugs. Knowing the rule beats fighting the button.</p>
+  <ul>
+    <li><strong>Posted documents never change.</strong> Cancel (same day), credit, void or reverse — always with a reason that stays on record.</li>
+    <li><strong>Document numbers are issued at finalise, never reused</strong>, and a cancelled document keeps its number so the sequence stays complete.</li>
+    <li><strong>A locked VAT period refuses postings</strong> — finalising into it, voiding, crediting, receiving, transferring, journalling. Reopen it under Accounting › Periods (recorded), or date the work today.</li>
+    <li><strong>Stock on hand and average cost are never typed in.</strong> Stock moves via receipts, sales, transfers and adjustments; average cost changes only when goods are received.</li>
+    <li><strong>Product codes are fixed after creation</strong>; products (and locations, tills, tenders) with history are archived or deactivated, never deleted.</li>
+    <li><strong>Credit limits are checked three times</strong> — picking the customer, opening the tender pad, and finalising — with the same rules, so the answer can’t differ.</li>
+    <li><strong>Cash rounding rounds the drawer, never the invoice.</strong> Declared VAT stays exact.</li>
+    <li><strong>The cash-up hides the expected figure until you type</strong> — a count that copies isn’t a control.</li>
+    <li><strong>Lay-by money stays the customer’s until handover</strong>; fees need prior disclosure in the printed terms plus 60 business days past due, and are waived by law on death or hospitalisation.</li>
+    <li><strong>Interest is off per customer until switched on</strong> (written agreement), simple not compound, per invoice, capped by <em>in duplum</em>.</li>
+    <li><strong>One commission rule pays each line</strong> — lowest priority wins, no stacking; locked periods keep their figures forever, and clawbacks land in the open period.</li>
+    <li><strong>The Owner role always holds every permission</strong>; the last active owner can’t be demoted; you can’t remove your own access.</li>
+    <li><strong>The online store can’t open half-configured</strong>, online payment can’t be chosen without a working gateway, and no review publishes without approval.</li>
+    <li><strong>Opening-balance imports have no undo</strong> — the preview is the safety net; use it.</li>
+  </ul>
+
+  <div class="co warn">
+    <b class="t">Known quirks in this build (for the maintainer)</b>
+    <p class="small">① The till receipt’s <em>Print</em> button targets <code>/sales/print/…</code>, a route that doesn’t exist yet — the lay-by agreement is currently the only print route. ② The cashbook card “Money in, customer unknown” has a <em>See all</em> button pointing at <code>/cashbook/unallocated</code>; the real screen is <strong>Accounting › Unallocated</strong>. ③ The bank-account form shows a Notes field that isn’t saved. Verify before documenting these three as working.</p>
+  </div>
+
+  <footer>
+    <p>OdysseyAI back office — user guide. Generated from the application source, August 2026. Button labels and messages quoted are the ones on screen; if a screen and this guide ever disagree, the screen wins and this guide needs regenerating.</p>
+  </footer>
+</section>
+</div></main>
+</div>
+
+<script>
+  (function () {
+    var toggle = document.getElementById('tocToggle');
+    var toc = document.getElementById('toc');
+    toggle.addEventListener('click', function () {
+      var open = toc.classList.toggle('open');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    // Close the mobile TOC after choosing a destination.
+    toc.querySelectorAll('nav a').forEach(function (a) {
+      a.addEventListener('click', function () { toc.classList.remove('open'); });
+    });
+
+    // Filter the contents list.
+    var filter = document.getElementById('tocFilter');
+    filter.addEventListener('input', function () {
+      var q = filter.value.trim().toLowerCase();
+      toc.querySelectorAll('nav a').forEach(function (a) {
+        a.hidden = q !== '' && a.textContent.toLowerCase().indexOf(q) === -1;
+      });
+    });
+
+    // Scroll-spy: highlight the section currently in view.
+    var links = Array.prototype.slice.call(toc.querySelectorAll('nav a'));
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+    var current = null;
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          if (current) current.classList.remove('active');
+          current = byId[e.target.id];
+          if (current) {
+            current.classList.add('active');
+          }
+        }
+      });
+    }, { rootMargin: '0px 0px -75% 0px' });
+    document.querySelectorAll('main section[id], main h3[id]').forEach(function (h) {
+      if (byId[h.id]) obs.observe(h);
+    });
+  })();
+</script>

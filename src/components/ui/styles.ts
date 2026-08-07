@@ -114,8 +114,18 @@ export const TABLE = 'w-full border-collapse text-sm'
  * A body row. Hand-built tables must use this rather than `divide-y` on the
  * body: divide-y draws no line under the last row and gives no hover, so a
  * hand-rolled table sits visibly differently from every DataTable beside it.
+ *
+ * `group` is here so cells can reveal things on row hover (DataTable's
+ * hover-revealed actions ride on it) — it costs nothing when unused.
  */
-export const TABLE_ROW = 'border-b border-border transition last:border-b-0 hover:bg-surface-2'
+export const TABLE_ROW = 'group border-b border-border transition last:border-b-0 hover:bg-surface-2'
+
+/**
+ * A totals row — the tfoot of an ageing report, the "Net profit" line of a
+ * statement. Nine screens each invented a slightly different combination of
+ * border/tint/weight for this; use this one everywhere so they stop drifting.
+ */
+export const TABLE_TOTAL_ROW = 'border-t-2 border-border bg-surface-2 font-medium text-ink'
 
 /* ── Modals ──────────────────────────────────────────────────────────────── */
 

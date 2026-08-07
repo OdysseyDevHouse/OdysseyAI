@@ -28,6 +28,7 @@ import {
   placePublicOrder,
   publishedProduct,
   publishedProducts,
+  resolveSectionContent,
   publishedDepartments,
   quoteDeliveryFor,
   storefrontContext,
@@ -280,6 +281,58 @@ async function main() {
     'order numbers are unique',
     new Set(placed.map((r) => String(r.order_number))).size === placed.length,
   )
+
+  /* ── Hand-picked product rows ─────────────────────────────────────────── */
+  console.log('\n— A hand-picked row —')
+  if (catalogue.length >= 3) {
+    /*
+     * Pick three, DELIBERATELY not in the catalogue's own order, because the
+     * whole point of a hand-picked row is that the owner's order survives.
+     * The catalogue sorts by description, so reversing guarantees the two
+     * orderings differ and the assertion can actually fail.
+     */
+    const picks = [catalogue[2], catalogue[0], catalogue[1]]
+    const pickedIds = picks.map((p) => p.id)
+
+    const [row] = await resolveSectionContent(context, [
+      { kind: 'products', source: 'manual', productIds: pickedIds, maxItems: 8 },
+    ])
+    ok('a picked row returns exactly what was picked', row.products?.length === 3, `${row.products?.length}`)
+    ok(
+      'in the order the owner picked them',
+      (row.products ?? []).map((p) => p.id).join(',') === pickedIds.join(','),
+      `${(row.products ?? []).map((p) => p.id).join(',')} vs ${pickedIds.join(',')}`,
+    )
+
+    // maxItems is a RULE's cap. A stale 2 left over from a "newest" rule must
+    // not silently swallow the third product someone deliberately chose.
+    const [uncapped] = await resolveSectionContent(context, [
+      { kind: 'products', source: 'manual', productIds: pickedIds, maxItems: 2 },
+    ])
+    ok('a stale maxItems never truncates the picks', uncapped.products?.length === 3, `${uncapped.products?.length}`)
+
+    // The publish rules still apply on top of the pick. An id that is not
+    // sellable must drop OUT of the row, not appear because it was chosen.
+    // `hidden` is resolved above: a real product outside the published
+    // department. Picking it must not override the publish rules.
+    if (hidden) {
+      const [mixed] = await resolveSectionContent(context, [
+        { kind: 'products', source: 'manual', productIds: [...pickedIds, hidden.id] },
+      ])
+      ok(
+        'a picked product that is not published drops out',
+        mixed.products?.length === 3,
+        `${mixed.products?.length}`,
+      )
+    }
+
+    // Nothing picked must mean nothing shown. If the empty list were treated
+    // as "no restriction" the front page would show the whole catalogue.
+    const [none] = await resolveSectionContent(context, [
+      { kind: 'products', source: 'manual', productIds: [] },
+    ])
+    ok('an empty pick list shows nothing, not everything', none.products?.length === 0, `${none.products?.length}`)
+  }
 
   /* ── Restore ──────────────────────────────────────────────────────────── */
   console.log('\n— Cleanup —')

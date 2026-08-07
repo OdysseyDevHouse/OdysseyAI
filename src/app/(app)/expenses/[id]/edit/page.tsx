@@ -43,7 +43,13 @@ export default async function EditExpensePage({
 
   return (
     <>
-      <PageHeader title="Edit draft expense" subtitle={expense.expenseDate} />
+      {/* The back arrow is the cancel: leaving is the same act either way. */}
+      <PageHeader
+        title="Edit draft expense"
+        subtitle={`${expense.expenseDate} · ${expense.supplierName ?? 'No payee stated'}`}
+        backHref={`/expenses/${expenseId}`}
+        backLabel="Back to the expense"
+      />
       <PageBody>
         <ExpenseForm
           categories={categories.map((c) => ({

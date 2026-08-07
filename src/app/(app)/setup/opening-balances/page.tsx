@@ -17,11 +17,11 @@ export default async function OpeningBalancesPage() {
 
   return (
     <>
+      {/* No backHref: Setup has no landing page of its own — the sidebar group
+          is the way back, and a back link must never point somewhere arbitrary. */}
       <PageHeader
         title="Opening balances"
         subtitle="Carry in what is already owed on the day you switch over"
-        backHref="/setup/style-guide"
-        backLabel="Setup"
       />
 
       <PageBody>

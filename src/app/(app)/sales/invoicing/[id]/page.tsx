@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { getDocument, isEditable } from '@/lib/site/salesDocuments'
-import { listPriceStructures, listSalesReps } from '@/lib/site/lookups'
+import { listPriceStructures } from '@/lib/site/lookups'
+import { listUsers } from '@/lib/site/users'
 import { can } from '@/lib/site/permissions'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { getNumericSetting } from '@/lib/site/settings'
@@ -25,14 +26,20 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
   const documentId = Number(id)
   if (!Number.isFinite(documentId) || documentId <= 0) notFound()
 
-  const [document, structures, reps, tenders, cashRounding] = await Promise.all([
+  const [document, structures, users, tenders, cashRounding] = await Promise.all([
     getDocument(site.id, documentId),
     listPriceStructures(site.id),
-    listSalesReps(site.id),
+    // Users, not sales_reps: commission is paid to a user (047), so the
+    // per-line picker has to name one or the attribution goes nowhere.
+    listUsers(site.id),
     listTenderTypes(site.id),
     getNumericSetting(site.id, 'sales_cash_rounding'),
   ])
   if (!document) notFound()
+
+  const reps = users
+    .filter((u) => u.isActive)
+    .map((u) => ({ id: u.id, name: u.name, code: null }))
 
   // The credit position for the attached account, so the finalise dialog can
   // judge the account tender without a round trip on open. Depends on the
@@ -51,6 +58,8 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
       customer={customer}
       editable={isEditable(document.status)}
       canOverrideDiscount={can(capabilities, 'sales.discount_override')}
+      canOverridePrice={can(capabilities, 'sales.price_override')}
+      showCost={can(capabilities, 'products.cost')}
     />
   )
 }

@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId } from '@/lib/auth'
+import { requireActor, requireSiteId, actorFor } from '@/lib/auth'
 import {
   createLayby,
   takePayment,
@@ -31,7 +31,9 @@ export async function createLaybyAction(input: {
   terminalId?: number | null
   note?: string | null
 }): Promise<Result<{ laybyId: number; laybyNumber: string }>> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await createLayby(siteId, actor, input)
   if (!result.ok) return result
@@ -59,7 +61,9 @@ export async function takePaymentAction(
     terminalId?: number | null
   },
 ): Promise<Result<{ settled: boolean; outstanding: number }>> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await takePayment(siteId, actor, laybyId, input)
   if (!result.ok) return result
@@ -81,7 +85,9 @@ export async function completeLaybyAction(
   laybyId: number,
   tenderTypeId: number,
 ): Promise<Result<{ documentId: number; documentNumber: string }>> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await completeLayby(siteId, actor, laybyId, tenderTypeId)
   if (!result.ok) return result
@@ -108,7 +114,9 @@ export async function cancelLaybyAction(
     tenderName?: string | null
   },
 ): Promise<Result> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await cancelLayby(siteId, actor, laybyId, input)
   if (!result.ok) return result
@@ -127,7 +135,9 @@ export async function cancelLaybyAction(
 }
 
 export async function expireStaleAction(): Promise<Result> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
 
   const expired = await expireStaleLaybys(siteId)
   revalidatePath('/sales/laybys')

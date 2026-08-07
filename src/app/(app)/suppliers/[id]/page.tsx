@@ -16,6 +16,7 @@ import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
   Card,
+  Callout,
   Button,
   ButtonLink,
   LinkTabs,
@@ -113,29 +114,30 @@ export default async function SupplierPage({
 
       {saved === '1' && (
         <div className="px-6 pt-4">
-          <p className="flex items-center gap-2 rounded-md bg-success/10 px-3 py-2 text-sm text-success">
-            <Icons.StatusSuccess size={15} />
-            Saved.
-          </p>
+          <Callout tone="success" title="Saved." />
         </div>
       )}
       {error && (
         <div className="px-6 pt-4">
-          <p
-            role="alert"
-            className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
-          >
-            <Icons.StatusError size={15} />
-            {error}
-          </p>
+          <Callout tone="danger" title={error} />
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-3 px-6 pt-4 lg:grid-cols-4">
+        {/* The blocked-orders warning lives here, not on the product count —
+            being on hold is an account condition, and the balance tile is the
+            account tile. */}
         <StatTile
           label="Balance"
           value={formatMoney(supplier.balance)}
-          hint={supplier.balance === 0 ? 'Nothing outstanding' : 'Owed to them'}
+          hint={
+            supplier.canOrder
+              ? supplier.balance === 0
+                ? 'Nothing outstanding'
+                : 'Owed to them'
+              : 'New orders blocked'
+          }
+          tone={supplier.canOrder ? 'default' : 'warning'}
           icon={<Icons.Coins size={16} />}
         />
         <StatTile
@@ -152,8 +154,7 @@ export default async function SupplierPage({
         <StatTile
           label="Products"
           value={String(supplier.productCount)}
-          hint={supplier.canOrder ? 'Accepting orders' : 'New orders blocked'}
-          tone={supplier.canOrder ? 'default' : 'warning'}
+          hint="Stocked from them"
           icon={<Icons.Boxes size={16} />}
         />
       </div>
@@ -214,25 +215,7 @@ export default async function SupplierPage({
         />
       </div>
 
-      {active === 'contacts' ? (
-        <div className="px-6 pt-4 pb-10">
-          <Card>
-            <ContactsPanel party="supplier" partyId={supplierId} contacts={contacts} />
-          </Card>
-        </div>
-      ) : active === 'documents' ? (
-        <div className="px-6 pt-4 pb-10">
-          <Card>
-            <DocumentsPanel party="supplier" partyId={supplierId} documents={documents} />
-          </Card>
-        </div>
-      ) : active === 'comments' ? (
-        <div className="px-6 pt-4 pb-10">
-          <Card>
-            <CommentsPanel party="supplier" partyId={supplierId} comments={comments} />
-          </Card>
-        </div>
-      ) : active === 'transactions' ? (
+      {active === 'transactions' ? (
         <TransactionsTab
           supplierId={supplierId}
           lines={ledger}
@@ -266,9 +249,17 @@ export default async function SupplierPage({
           }
         />
       ) : (
+        // Contacts, documents, comments and activity all share the same
+        // card-in-gutter shell — one wrapper, not four copies of it.
         <div className="px-6 pt-4 pb-10">
           <Card>
-            {activity.length === 0 ? (
+            {active === 'contacts' ? (
+              <ContactsPanel party="supplier" partyId={supplierId} contacts={contacts} />
+            ) : active === 'documents' ? (
+              <DocumentsPanel party="supplier" partyId={supplierId} documents={documents} />
+            ) : active === 'comments' ? (
+              <CommentsPanel party="supplier" partyId={supplierId} comments={comments} />
+            ) : activity.length === 0 ? (
               <EmptyState
                 title="Nothing recorded yet"
                 hint="Edits, status changes and orders raised will appear here."
@@ -281,10 +272,16 @@ export default async function SupplierPage({
                       <Icons.History size={15} />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone={event.action === 'status' ? 'warning' : 'neutral'}>
-                          {event.action}
-                        </Badge>
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        {/* A badge on every row is a badge on no row — only a
+                            status change is an exception worth marking. */}
+                        {event.action === 'status' ? (
+                          <Badge tone="warning">{ACTIVITY_LABELS.status}</Badge>
+                        ) : (
+                          <span className="text-xs font-medium text-muted">
+                            {ACTIVITY_LABELS[event.action] ?? sentenceCase(event.action)}
+                          </span>
+                        )}
                         <span className="text-sm text-ink">{event.detail ?? '—'}</span>
                       </div>
                       <p className="mt-0.5 text-xs text-muted">
@@ -301,4 +298,23 @@ export default async function SupplierPage({
       )}
     </>
   )
+}
+
+/** What each logged action reads as — sentence case, human words. */
+const ACTIVITY_LABELS: Record<string, string> = {
+  create: 'Created',
+  update: 'Edited',
+  status: 'Status changed',
+  bulk: 'Bulk update',
+  delete: 'Deleted',
+  contact: 'Contact',
+  document: 'Document',
+  comment: 'Comment',
+  payment_run: 'Payment run',
+}
+
+/** Fallback for an action the map does not know: "some_action" → "Some action". */
+function sentenceCase(value: string): string {
+  const words = value.replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
 }

@@ -18,6 +18,7 @@ import {
   TABLE_TD,
   TABLE_ROW,
   TABLE_NUMERIC,
+  TABLE_TOTAL_ROW,
 } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
@@ -251,7 +252,7 @@ function RateTable({
                   <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(r.incl)}</td>
                 </tr>
               ))}
-              <tr className="border-t border-border font-medium">
+              <tr className={TABLE_TOTAL_ROW}>
                 <td className={TABLE_TD}>Total</td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(total.excl)}</td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(total.vat)}</td>

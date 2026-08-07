@@ -6,6 +6,8 @@ import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
 import { formatMoney, formatQty } from '@/lib/decimals'
 import {
   PageHeader,
+  PageBody,
+  Callout,
   Card,
   Badge,
   Icons,
@@ -17,6 +19,7 @@ import {
   TABLE_NUMERIC,
 } from '@/components/ui'
 import PurchaseActions from './PurchaseActions'
+import { purchaseStatusLabel, purchaseStatusTone } from '../status'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,38 +68,38 @@ export default async function PurchaseDocumentPage({
         }
       />
 
-      {doc.status === 'cancelled' && (
-        <div className="px-6 pt-4">
-          <p className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
-            <Icons.Ban size={15} />
-            Cancelled{doc.cancelReason ? ` — ${doc.cancelReason}` : ''}. Stock was taken back out; the
-            average cost was deliberately left alone, since anything sold since has already moved on.
-          </p>
-        </div>
-      )}
+      <PageBody>
+        {doc.status === 'cancelled' && (
+          <Callout
+            tone="danger"
+            icon={<Icons.Ban size={18} />}
+            title={`Cancelled${doc.cancelReason ? ` — ${doc.cancelReason}` : ''}`}
+          >
+            Stock was taken back out; the average cost was deliberately left alone, since anything
+            sold since has already moved on.
+          </Callout>
+        )}
 
-      {/* Returns raised against this receipt. Shown on the GRV rather than
-          only on the return itself, because "has any of this gone back?" is
-          asked of the receipt, not of a document you would have to find first. */}
-      {priorReturns.length > 0 && (
-        <div className="px-6 pt-4">
-          <p className="flex flex-wrap items-center gap-2 rounded-md bg-warning-soft px-3 py-2 text-sm text-warning-ink">
-            <Icons.Reverse size={15} />
-            Returned against:
-            {priorReturns.map((r) => (
-              <Link
-                key={r.id}
-                href={`/purchasing/${r.id}`}
-                className="font-medium underline underline-offset-2"
-              >
-                {r.documentNumber ?? `#${r.id}`} ({formatMoney(Math.abs(r.total))})
-              </Link>
-            ))}
-          </p>
-        </div>
-      )}
+        {/* Returns raised against this receipt. Shown on the GRV rather than
+            only on the return itself, because "has any of this gone back?" is
+            asked of the receipt, not of a document you would have to find first. */}
+        {priorReturns.length > 0 && (
+          <Callout tone="warning" icon={<Icons.Reverse size={18} />} title="Returned against">
+            <span className="flex flex-wrap items-center gap-2">
+              {priorReturns.map((r) => (
+                <Link
+                  key={r.id}
+                  href={`/purchasing/${r.id}`}
+                  className="font-medium underline underline-offset-2"
+                >
+                  {r.documentNumber ?? `#${r.id}`} ({formatMoney(Math.abs(r.total))})
+                </Link>
+              ))}
+            </span>
+          </Callout>
+        )}
 
-      <div className="grid gap-4 px-6 pt-4 pb-10 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <Card>
             <div className="overflow-x-auto">
@@ -186,18 +189,8 @@ export default async function PurchaseDocumentPage({
               {doc.reference && <Row label="Reference" value={doc.reference} />}
             </dl>
             <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-              <Badge
-                tone={
-                  doc.status === 'finalised'
-                    ? 'success'
-                    : doc.status === 'cancelled'
-                      ? 'danger'
-                      : doc.status === 'issued'
-                        ? 'brand'
-                        : 'neutral'
-                }
-              >
-                {doc.status}
+              <Badge tone={purchaseStatusTone(doc.status)}>
+                {purchaseStatusLabel(doc.status)}
               </Badge>
               {doc.fulfilmentStatus && doc.fulfilmentStatus !== 'open' && (
                 <Badge tone="neutral">{doc.fulfilmentStatus.replace('_', ' ')}</Badge>
@@ -214,7 +207,8 @@ export default async function PurchaseDocumentPage({
             </Card>
           )}
         </div>
-      </div>
+        </div>
+      </PageBody>
     </>
   )
 }

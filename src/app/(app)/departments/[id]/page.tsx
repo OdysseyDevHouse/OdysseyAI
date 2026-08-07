@@ -1,6 +1,5 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { StatusError as AlertCircle, Trash as Trash2, Plus } from '@/components/ui/icons'
+import { Plus } from '@/components/ui/icons'
 import { requireCapability } from '@/lib/auth'
 import {
   listDepartments,
@@ -9,9 +8,9 @@ import {
   departmentPath,
   descendantIds,
 } from '@/lib/site/departments'
-import { Button, PageHeader, Card } from '@/components/ui'
+import { ButtonLink, Callout, Card, CardHeader, PageBody, PageHeader } from '@/components/ui'
 import DepartmentForm from '../DepartmentForm'
-import { deleteDepartmentAction } from '../actions'
+import DeleteDepartmentButton from '../DeleteDepartmentButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,55 +56,32 @@ export default async function EditDepartmentPage({
         backHref="/departments"
         action={
           <div className="flex items-center gap-2">
-            <Link
-              href={`/departments/new?parent=${department.id}`}
-              className="flex items-center gap-1.5 rounded-md border border-border px-3.5 py-2 text-sm text-muted transition hover:bg-surface-2 hover:text-ink"
-            >
+            <ButtonLink href={`/departments/new?parent=${department.id}`} variant="secondary">
               <Plus size={15} />
               Add sub-department
-            </Link>
+            </ButtonLink>
 
-            <form action={deleteDepartmentAction}>
-              <input type="hidden" name="id" value={department.id} />
-              <Button
-                type="submit"
-                variant="danger-ghost"
-                disabled={blocked}
-                title={
-                  blocked
-                    ? 'Still has sub-departments or products assigned'
-                    : 'Delete this department'
-                }
-              >
-                <Trash2 size={15} />
-                Delete
-              </Button>
-            </form>
+            <DeleteDepartmentButton
+              id={department.id}
+              name={department.name}
+              blocked={blocked}
+            />
           </div>
         }
       />
 
-      {error && (
-        <div className="px-6 pt-4">
-          <p
-            role="alert"
-            className="flex items-start gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
-          >
-            <AlertCircle size={15} className="mt-0.5 shrink-0" />
-            {error}
-          </p>
-        </div>
-      )}
+      <PageBody>
+        {error && <Callout tone="danger">{error}</Callout>}
 
-      <div className="p-6">
         <Card>
+          <CardHeader title="Department" description="Name, position in the tree and presentation." />
           <DepartmentForm
             department={department}
             parentOptions={parentOptions}
             defaultParentId={department.parentId}
           />
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

@@ -7,6 +7,7 @@ import {
   PageBody,
   PrimaryLink,
   Card,
+  StatStrip,
   StatTile,
   EmptyState,
   Icons,
@@ -67,7 +68,7 @@ export default async function TransfersPage() {
         }
       />
       <PageBody>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <StatStrip columns={3}>
           <StatTile label="Posted" value={String(posted.length)} />
           <StatTile label="Units moved" value={formatQty(unitsMoved)} />
           {/* A cancellation is the exception worth seeing, so it is the only tile that
@@ -77,7 +78,7 @@ export default async function TransfersPage() {
             value={String(voided.length)}
             tone={voided.length > 0 ? 'warning' : 'default'}
           />
-        </div>
+        </StatStrip>
 
         <Card>
           <TransfersTable transfers={transfers} />

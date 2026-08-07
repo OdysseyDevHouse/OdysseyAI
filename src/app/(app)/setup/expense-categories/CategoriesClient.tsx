@@ -6,7 +6,7 @@ import {
   Button,
   Card,
   CardHeader,
-  CardBody,
+  DataTable,
   Field,
   Input,
   Select,
@@ -14,13 +14,9 @@ import {
   Badge,
   Icons,
   Modal,
+  TableToolbar,
   useToast,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
+  type Column,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -78,91 +74,126 @@ export function CategoriesClient({
     })
   }
 
+  const columns: Column<Category>[] = [
+    {
+      key: 'code',
+      header: 'Code',
+      sortable: true,
+      sortValue: (c) => c.accountCode,
+      cell: (c) => <span className="numeric text-muted">{c.accountCode}</span>,
+    },
+    {
+      key: 'name',
+      header: 'Name',
+      sortable: true,
+      sortValue: (c) => c.name,
+      cell: (c) => (
+        <span className="flex items-center gap-2">
+          <span className="text-ink">{c.name}</span>
+          {!c.isActive && <Badge tone="neutral">Inactive</Badge>}
+        </span>
+      ),
+    },
+    {
+      key: 'type',
+      header: 'Type',
+      sortValue: (c) => c.categoryTypeLabel,
+      cell: (c) => (
+        // Capital is the one type worth marking: booking an asset as an
+        // expense is the commonest bookkeeping error.
+        <Badge tone={c.categoryType === 'capital' ? 'brand' : 'default'}>
+          {c.categoryTypeLabel}
+        </Badge>
+      ),
+    },
+    {
+      key: 'vat',
+      header: 'VAT',
+      sortValue: (c) => (c.vatClaimable ? 'Claimable' : 'Not claimable'),
+      cell: (c) =>
+        c.vatClaimable ? (
+          <span className="text-muted">Claimable</span>
+        ) : (
+          // Neutral, not warning: "not claimable" is a correct configuration
+          // (entertainment, salaries), not a condition needing attention.
+          <Badge tone="neutral">Not claimable</Badge>
+        ),
+    },
+    {
+      key: 'spend',
+      header: 'Last 12 months',
+      numeric: true,
+      sortable: true,
+      sortValue: (c) => c.yearSpend,
+      cell: (c) =>
+        c.yearSpend > 0 ? formatMoney(c.yearSpend) : <span className="text-faint">—</span>,
+    },
+  ]
+
   return (
     <>
+      <TableToolbar
+        actions={
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            <Icons.Plus size={15} />
+            Add category
+          </Button>
+        }
+      >
+        <Checkbox
+          checked={showInactive}
+          onChange={(e) => setShowInactive(e.target.checked)}
+          label="Show inactive"
+        />
+      </TableToolbar>
+
       <Card>
         <CardHeader
           title="Categories"
           description="Where money that is not stock goes. Spend shown is the last twelve months."
-          action={
-            <div className="flex items-center gap-3">
-              <Checkbox
-                checked={showInactive}
-                onChange={(e) => setShowInactive(e.target.checked)}
-                label="Show inactive"
-              />
-              <Button size="sm" variant="secondary" onClick={() => setCreating(true)}>
+        />
+        <DataTable
+          columns={columns}
+          rows={visible}
+          getRowKey={(c) => c.id}
+          actionsOnHover
+          actions={(c) => (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label={`Edit ${c.name}`}
+                onClick={() => setEditing(c)}
+              >
+                <Icons.Pencil size={15} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                disabled={pending}
+                aria-label={c.isActive ? `Hide ${c.name}` : `Restore ${c.name}`}
+                title={c.isActive ? 'Hide' : 'Restore'}
+                onClick={() => run(() => setCategoryActiveAction(c.id, !c.isActive))}
+              >
+                {c.isActive ? <Icons.Archive size={15} /> : <Icons.ArchiveRestore size={15} />}
+              </Button>
+            </>
+          )}
+          empty={{
+            title: showInactive ? 'No categories yet' : 'No active categories',
+            hint: showInactive
+              ? 'Add one for each kind of non-stock spend — rent, wages, bank charges.'
+              : 'Add a category, or tick “Show inactive” to see hidden ones.',
+            action: (
+              <Button variant="secondary" onClick={() => setCreating(true)}>
                 <Icons.Plus size={15} />
                 Add category
               </Button>
-            </div>
-          }
+            ),
+          }}
         />
-
-        <div className="overflow-x-auto">
-          <table className={TABLE}>
-            <thead>
-              <tr className={TABLE_HEAD_ROW}>
-                <th className={TABLE_TH}>Code</th>
-                <th className={TABLE_TH}>Name</th>
-                <th className={TABLE_TH}>Type</th>
-                <th className={TABLE_TH}>VAT</th>
-                <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Last 12 months</th>
-                <th className={`${TABLE_TH} w-32`} />
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((c) => (
-                <tr key={c.id} className={TABLE_ROW}>
-                  <td className={TABLE_TD}>
-                    <span className="numeric text-muted">{c.accountCode}</span>
-                  </td>
-                  <td className={TABLE_TD}>
-                    <span className={c.isActive ? 'text-ink' : 'text-muted line-through'}>
-                      {c.name}
-                    </span>
-                  </td>
-                  <td className={TABLE_TD}>
-                    {/* Capital is the one type worth marking: booking an asset
-                        as an expense is the commonest bookkeeping error. */}
-                    <Badge tone={c.categoryType === 'capital' ? 'brand' : 'default'}>
-                      {c.categoryTypeLabel}
-                    </Badge>
-                  </td>
-                  <td className={TABLE_TD}>
-                    {c.vatClaimable ? (
-                      <span className="text-muted">Claimable</span>
-                    ) : (
-                      <Badge tone="warning">Not claimable</Badge>
-                    )}
-                  </td>
-                  <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                    {c.yearSpend > 0 ? (
-                      formatMoney(c.yearSpend)
-                    ) : (
-                      <span className="text-faint">—</span>
-                    )}
-                  </td>
-                  <td className={`${TABLE_TD} text-right`}>
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => setEditing(c)}>
-                        Edit
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={pending}
-                        onClick={() => run(() => setCategoryActiveAction(c.id, !c.isActive))}
-                      >
-                        {c.isActive ? 'Hide' : 'Restore'}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </Card>
 
       <CategoryModal
@@ -275,18 +306,13 @@ function CategoryModal({
           </Select>
         </Field>
 
-        <div>
+        <Field hint="Leave this off where the VAT Act denies the deduction — entertainment and passenger vehicles are refused however the invoice is worded, and salaries carry no VAT at all.">
           <Checkbox
             checked={vatClaimable}
             onChange={(e) => setVatClaimable(e.target.checked)}
             label="Input VAT can be claimed on this category"
           />
-          <p className="mt-1 text-sm text-muted">
-            Leave this off where the VAT Act denies the deduction — entertainment and
-            passenger vehicles are refused however the invoice is worded, and salaries carry no
-            VAT at all.
-          </p>
-        </div>
+        </Field>
 
         <div className="flex justify-between">
           {category ? (
@@ -301,6 +327,7 @@ function CategoryModal({
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={pending || !accountCode.trim() || !name.trim()}
               onClick={() =>
                 onSave(

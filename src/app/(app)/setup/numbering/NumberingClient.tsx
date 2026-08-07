@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardHeader,
   Field,
@@ -76,9 +77,14 @@ export default function NumberingClient({
                 {sequence.check.missing > 0 && (
                   <Badge tone="danger">{sequence.check.missing} missing</Badge>
                 )}
-                <Button variant="ghost" size="sm" onClick={() => setEditing(sequence)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={`Edit ${sequence.label} numbering`}
+                  onClick={() => setEditing(sequence)}
+                >
                   <Icons.Pencil size={15} />
-                  Edit
                 </Button>
               </div>
             </SettingRow>
@@ -97,15 +103,17 @@ export default function NumberingClient({
           label="Cash rounding"
           description="Rounds what the drawer takes, never the invoice — so the VAT declared stays exact."
         >
-          <Select
-            defaultValue={settings.sales_cash_rounding}
-            onChange={(e) => run(() => saveSettingAction('sales_cash_rounding', e.target.value))}
-            className="w-40"
-          >
-            <option value="0">No rounding</option>
-            <option value="0.05">Nearest 5c</option>
-            <option value="0.1">Nearest 10c</option>
-          </Select>
+          {/* Sized by a wrapper, not by restyling the control itself. */}
+          <div className="w-40">
+            <Select
+              defaultValue={settings.sales_cash_rounding}
+              onChange={(e) => run(() => saveSettingAction('sales_cash_rounding', e.target.value))}
+            >
+              <option value="0">No rounding</option>
+              <option value="0.05">Nearest 5c</option>
+              <option value="0.1">Nearest 10c</option>
+            </Select>
+          </div>
         </SettingRow>
 
         <SettingRow
@@ -113,12 +121,19 @@ export default function NumberingClient({
           label="VAT period locked to"
           description="Nothing on or before this date may be voided, credited or backdated. Set it after each VAT return."
         >
-          <Input
-            type="date"
-            defaultValue={settings.vat_period_locked_to}
-            onChange={(e) => run(() => saveSettingAction('vat_period_locked_to', e.target.value))}
-            className="w-44"
-          />
+          <div className="w-44">
+            {/* Saved on blur, not change — a typed date fires a change event per
+                keystroke, which would post a server action for every digit. */}
+            <Input
+              type="date"
+              defaultValue={settings.vat_period_locked_to}
+              onBlur={(e) => {
+                if (e.target.value !== (settings.vat_period_locked_to ?? '')) {
+                  run(() => saveSettingAction('vat_period_locked_to', e.target.value))
+                }
+              }}
+            />
+          </div>
         </SettingRow>
 
         <SettingRow
@@ -126,12 +141,14 @@ export default function NumberingClient({
           label="Allow correcting a finalised invoice"
           description="Reverses the original and re-posts a corrected one. Leave off until that path has been proven."
         >
+          {/* ariaLabel, not label — the SettingRow already shows the name, and
+              a second visible copy beside the switch would say it twice. */}
           <Switch
             checked={settings.sales_allow_finalised_edit === '1'}
             onChange={(next) =>
               run(() => saveSettingAction('sales_allow_finalised_edit', next ? '1' : '0'))
             }
-            label="Allow correcting a finalised invoice"
+            ariaLabel="Allow correcting a finalised invoice"
           />
         </SettingRow>
       </Card>
@@ -216,10 +233,10 @@ function SequenceModal({
       }
     >
       <div className="flex flex-col gap-4">
-        <div className="rounded-card bg-surface-2 px-4 py-3">
+        <Callout tone="neutral" icon={null}>
           <p className="text-xs text-muted">The next document will be</p>
           <p className="numeric mt-0.5 text-lg font-semibold text-ink">{preview}</p>
-        </div>
+        </Callout>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Prefix" hint="Letters and hyphens only.">

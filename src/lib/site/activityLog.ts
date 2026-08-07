@@ -35,6 +35,12 @@ export type ActivityEntity =
   /* The general ledger: accounts, journals, mappings and year end. Anything
      that changes what the financial statements say. */
   | 'gl'
+  /* Chasing money that is owed: dunning runs and their levels, promises to
+     pay, and the credit holds collections places on an account. entityId is
+     the customer for anything account-level, the run for anything batch-level.
+     "Who released the final demands" and "who took this account off hold" both
+     live here. */
+  | 'credit'
 
 export type ActivityEvent = {
   id: number

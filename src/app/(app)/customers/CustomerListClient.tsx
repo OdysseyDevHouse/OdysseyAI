@@ -2,11 +2,11 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import {
   BulkActionBar,
   Badge,
   Button,
+  ButtonLink,
   DataTable,
   Field,
   Icons,
@@ -17,6 +17,7 @@ import {
   Modal,
   NumberInput,
   CurrencyInput,
+  RowTile,
   Select,
   useToast,
   type Column,
@@ -38,7 +39,6 @@ import { startRunAction } from './statements/actions'
  */
 
 type Filters = {
-  statuses: { value: string; label: string; href: string; active: boolean }[]
   groups: { id: number; name: string }[]
   reps: { id: number; name: string }[]
   categories: string[]
@@ -50,10 +50,13 @@ type BulkKind = BulkChange['kind'] | null
 export default function CustomerListClient({
   rows,
   total,
+  search,
   filters,
 }: {
   rows: Customer[]
   total: number
+  /** The active search term, echoed in the empty state. */
+  search?: string
   filters: Filters
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
@@ -127,28 +130,6 @@ export default function CustomerListClient({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5 text-xs">
-        <Link
-          href="/customers"
-          className={
-            filters.statuses.every((s) => !s.active)
-              ? 'font-medium text-brand'
-              : 'text-muted hover:text-ink'
-          }
-        >
-          All
-        </Link>
-        {filters.statuses.map((status) => (
-          <Link
-            key={status.value}
-            href={status.href}
-            className={status.active ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-          >
-            {status.label}
-          </Link>
-        ))}
-      </div>
-
       <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
         <Button variant="ghost" size="sm" onClick={() => setOpenBulk('status')} disabled={pending}>
           <Icons.Check size={15} />
@@ -180,11 +161,6 @@ export default function CustomerListClient({
             <Icons.Mail size={15} />
             Email statements
           </MenuItem>
-          <MenuSeparator />
-          <MenuItem tone="danger" onClick={() => setOpenBulk('status')}>
-            <Icons.Ban size={15} />
-            Place on hold
-          </MenuItem>
         </Menu>
       </BulkActionBar>
 
@@ -195,13 +171,37 @@ export default function CustomerListClient({
         selectedKeys={selected}
         onSelectionChange={setSelected}
         onRowClick={(row) => router.push(`/customers/${row.id}`)}
-        empty={{
-          title: 'No customers found',
-          hint:
-            total === 0
-              ? 'Create your first customer to get started.'
-              : 'Try a different search or clear the filters.',
-        }}
+        actionsOnHover
+        actions={(row) => (
+          <ButtonLink
+            href={`/customers/${row.id}/statement`}
+            variant="ghost"
+            size="sm"
+            iconOnly
+            aria-label={`Statement for ${row.name}`}
+          >
+            <Icons.FileText size={15} />
+          </ButtonLink>
+        )}
+        empty={
+          total === 0
+            ? {
+                title: 'No customers yet',
+                hint: 'Create the first account to start selling on credit.',
+                action: (
+                  <ButtonLink href="/customers/new" variant="secondary" size="sm">
+                    <Icons.Plus size={15} />
+                    New customer
+                  </ButtonLink>
+                ),
+              }
+            : {
+                title: 'No customers found',
+                hint: search
+                  ? `Nothing matches “${search}”. Try a different search or clear the filters.`
+                  : 'Try a different search or clear the filters.',
+              }
+        }
       />
 
       <BulkModals
@@ -230,32 +230,28 @@ const COLUMNS: readonly Column<Customer>[] = [
     key: 'code',
     header: 'Code',
     sortable: true,
+    sortValue: (row) => row.code,
     cell: (row) => <span className="text-brand">{row.code}</span>,
   },
   {
     key: 'name',
     header: 'Name',
     sortable: true,
-    cell: (row) => (
-      <div>
-        <div className="text-ink">{row.name}</div>
-        {row.contactName && <div className="text-xs text-muted">{row.contactName}</div>}
-      </div>
-    ),
-  },
-  {
-    key: 'group',
-    header: 'Group',
-    sortable: true,
-    sortValue: (row) => row.groupName ?? '',
-    cell: (row) => row.groupName ?? '—',
-  },
-  {
-    key: 'rep',
-    header: 'Rep',
-    sortable: true,
-    sortValue: (row) => row.repName ?? '',
-    cell: (row) => row.repName ?? '—',
+    sortValue: (row) => row.name,
+    // Group and rep ride in the subline rather than owning columns of their
+    // own — identity stays one glance wide and the table under 8 columns.
+    cell: (row) => {
+      const meta = [row.contactName, row.groupName, row.repName].filter(Boolean).join(' · ')
+      return (
+        <div className="flex items-center gap-2.5">
+          <RowTile label={row.name} />
+          <div className="min-w-0">
+            <div className="truncate text-ink">{row.name}</div>
+            {meta && <div className="truncate text-xs text-muted">{meta}</div>}
+          </div>
+        </div>
+      )
+    },
   },
   {
     key: 'terms',

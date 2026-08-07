@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireSiteId, requireActor } from '@/lib/auth'
+import { requireSiteId, requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
 import { postTransfer, voidTransfer, type TransferInput } from '@/lib/site/stockTransfers'
 import { searchForTill } from '@/lib/site/tillSearch'
 import { locationStockFor } from '@/lib/site/stockLocations'
@@ -22,7 +22,9 @@ function revalidateStock() {
 }
 
 export async function postTransferAction(input: TransferInput): Promise<TransferActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('stock.transfer')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await postTransfer(siteId, actor, input)
   if (!result.ok) return result
 
@@ -34,7 +36,9 @@ export async function voidTransferAction(
   id: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('stock.transfer')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await voidTransfer(siteId, actor, id, reason)
   if (!result.ok) return result
 
@@ -44,7 +48,8 @@ export async function voidTransferAction(
 
 /** Product search for the transfer screen. */
 export async function searchProductsForTransferAction(term: string) {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('stock.view')
+  const { siteId } = ctx
   return searchForTill(siteId, term, null)
 }
 
@@ -56,7 +61,8 @@ export async function searchProductsForTransferAction(term: string) {
  * being typed is what stops it being attempted.
  */
 export async function locationStockAction(productId: number) {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('stock.view')
+  const { siteId } = ctx
   return locationStockFor(siteId, productId)
 }
 
@@ -68,7 +74,8 @@ export async function locationStockAction(productId: number) {
  * only the ones in the room the stock is leaving.
  */
 export async function serialsInLocationAction(productId: number, locationId: number) {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('stock.view')
+  const { siteId } = ctx
   const units = await availableSerials(siteId, productId, locationId)
   return units.map((s) => ({ id: s.id, serial: s.serial }))
 }

@@ -8,12 +8,15 @@ import {
   CardHeader,
   CardBody,
   CardFooter,
+  Callout,
   Field,
   Select,
   Checkbox,
-  Badge,
   Icons,
   FileInput,
+  MiniStat,
+  Skeleton,
+  TableSkeleton,
   useToast,
   TABLE,
   TABLE_HEAD_ROW,
@@ -137,11 +140,20 @@ export function ImportClient({
         </CardBody>
       </Card>
 
+      {/* The skeleton wears the review card's shape — summary strip, then rows —
+          so the page does not collapse and then shove itself back down. */}
       {reading && (
-        <Card>
+        <Card aria-busy="true">
+          <CardHeader title="Reading the file…" description="Detecting the format and first rows." />
           <CardBody>
-            <p className="py-6 text-center text-sm text-muted">Reading the file…</p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Skeleton className="h-14" />
+              <Skeleton className="h-14" />
+              <Skeleton className="h-14" />
+              <Skeleton className="h-14" />
+            </div>
           </CardBody>
+          <TableSkeleton columns={4} rows={6} />
         </Card>
       )}
 
@@ -152,19 +164,19 @@ export function ImportClient({
             description="Check this before importing — especially the date format."
           />
           <CardBody>
-            <div className="grid gap-3 sm:grid-cols-4">
-              <Summary label="Format" value={parsed.detected.format.toUpperCase()} />
-              <Summary
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <MiniStat label="Format" value={parsed.detected.format.toUpperCase()} />
+              <MiniStat
                 label="Date format"
                 value={parsed.detected.dateFormat ?? 'Not detected'}
                 tone={parsed.detected.dateFormat ? 'default' : 'warning'}
               />
-              <Summary
+              <MiniStat
                 label="Transactions"
                 value={String(parsed.rows.length)}
                 tone={parsed.rows.length === 0 ? 'danger' : 'default'}
               />
-              <Summary
+              <MiniStat
                 label="Period"
                 value={
                   parsed.periodFrom && parsed.periodTo
@@ -175,27 +187,27 @@ export function ImportClient({
             </div>
 
             {staleWarning && (
-              <p className="mt-4 rounded-control bg-warning-soft px-3 py-2 text-sm text-warning-ink">
-                This statement ends on or before {account?.lastReconciledDate}, which has already
-                been reconciled. Most of these lines are probably already imported — that is safe,
-                they will be skipped, but check this is the file you meant.
-              </p>
+              <Callout tone="warning" title="This period has already been reconciled" className="mt-4">
+                This statement ends on or before {account?.lastReconciledDate}. Most of these
+                lines are probably already imported — that is safe, they will be skipped, but
+                check this is the file you meant.
+              </Callout>
             )}
 
             {parsed.problems.length > 0 && (
-              <div className="mt-4 rounded-control bg-danger-soft px-3 py-2">
-                <p className="text-sm font-medium text-danger-ink">
-                  {parsed.problems.length} row{parsed.problems.length === 1 ? '' : 's'} could not be
-                  read and will be skipped
-                </p>
+              <Callout
+                tone="danger"
+                title={`${parsed.problems.length} row${parsed.problems.length === 1 ? '' : 's'} could not be read and will be skipped`}
+                className="mt-4"
+              >
                 <ul className="mt-1 space-y-0.5">
                   {parsed.problems.slice(0, 5).map((p) => (
-                    <li key={p.lineNumber} className="text-xs text-danger-ink">
+                    <li key={p.lineNumber} className="text-xs">
                       Line {p.lineNumber}: {p.reason}
                     </li>
                   ))}
                 </ul>
-              </div>
+              </Callout>
             )}
           </CardBody>
 
@@ -218,11 +230,7 @@ export function ImportClient({
                       <td className={TABLE_TD}>
                         <span className="text-muted">{r.reference ?? '—'}</span>
                       </td>
-                      <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                        <span className={r.amount < 0 ? 'text-danger' : 'text-success'}>
-                          {formatMoney(r.amount)}
-                        </span>
-                      </td>
+                      <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(r.amount)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -252,28 +260,5 @@ export function ImportClient({
         </Card>
       )}
     </>
-  )
-}
-
-function Summary({
-  label,
-  value,
-  tone = 'default',
-}: {
-  label: string
-  value: string
-  tone?: 'default' | 'warning' | 'danger'
-}) {
-  return (
-    <div className="rounded-control bg-surface-2 px-3 py-2">
-      <div className="text-xs text-muted">{label}</div>
-      <div className="mt-0.5 text-sm">
-        {tone === 'default' ? (
-          <span className="text-ink">{value}</span>
-        ) : (
-          <Badge tone={tone}>{value}</Badge>
-        )}
-      </div>
-    </div>
   )
 }

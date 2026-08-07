@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import {
   Badge,
   Button,
+  Card,
   Combobox,
   Field,
   Icons,
@@ -73,7 +74,7 @@ export default function CustomerPicker({
 
   if (customer) {
     return (
-      <div className="flex flex-col gap-2 rounded-card border border-border bg-surface p-3">
+      <Card className="flex flex-col gap-2 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate font-medium text-ink">{customer.name}</div>
@@ -104,7 +105,7 @@ export default function CustomerPicker({
             </>
           )}
         </div>
-      </div>
+      </Card>
     )
   }
 

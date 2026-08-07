@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import { customerAging, type AgingBasis } from '@/lib/site/aging'
 import { listCustomerGroups, listSalesReps } from '@/lib/site/customerLookups'
@@ -7,8 +6,11 @@ import { BUCKET_LABELS, today } from '@/lib/site/ledger'
 import { hrefBuilder, withParams } from '@/lib/searchParams'
 import {
   PageHeader,
+  PageBody,
+  PrimaryLink,
   Card,
   StatTile,
+  StatStrip,
   FilterBar,
   FilterChip,
   EmptyState,
@@ -16,17 +18,26 @@ import {
   Icons,
   Menu,
   MenuItem,
+  TextLink,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
   TABLE_TD,
   TABLE_ROW,
   TABLE_NUMERIC,
+  TABLE_TOTAL_ROW,
 } from '@/components/ui'
-import { AgeingStrip } from '@/components/ledger/AgeingStrip'
 import AsAtForm from './AsAtForm'
 
 export const dynamic = 'force-dynamic'
+
+/* Copied from the customers list page (page modules cannot export extras). */
+const STATUS_LABELS: Record<string, string> = {
+  active: 'Active',
+  on_hold: 'On hold',
+  inactive: 'Inactive',
+  closed: 'Closed',
+}
 
 type Search = {
   asAt?: string
@@ -82,56 +93,61 @@ export default async function AgeAnalysisPage({
             : `${rows.length} account${rows.length === 1 ? '' : 's'} with a balance`
         }
         action={
-          <Menu label="Export" variant="secondary">
-            <MenuItem href={exportHref('xlsx')} download>
-              <Icons.Spreadsheet size={15} />
-              Excel (.xlsx)
-            </MenuItem>
-            <MenuItem href={exportHref('csv')} download>
-              <Icons.FileText size={15} />
-              CSV
-            </MenuItem>
-          </Menu>
+          <div className="flex items-center gap-2">
+            <Menu label="Export" variant="secondary">
+              <MenuItem href={exportHref('xlsx')} download>
+                <Icons.Spreadsheet size={15} />
+                Excel (.xlsx)
+              </MenuItem>
+              <MenuItem href={exportHref('csv')} download>
+                <Icons.FileText size={15} />
+                CSV
+              </MenuItem>
+            </Menu>
+            {/* The next step after reading this screen: chase the money. */}
+            <PrimaryLink href="/customers/statements">
+              <Icons.Send size={15} />
+              Send statements
+            </PrimaryLink>
+          </div>
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 px-6 pt-4 lg:grid-cols-4">
-        <StatTile
-          label="Total outstanding"
-          value={formatMoney(totals.total)}
-          icon={<Icons.Coins size={16} />}
-        />
-        <StatTile
-          label="Not yet due"
-          value={formatMoney(totals.current)}
-          hint="Within terms"
-          icon={<Icons.Clock size={16} />}
-        />
-        <StatTile
-          label="Overdue"
-          value={formatMoney(totals.d30 + totals.d60 + totals.d90 + totals.d120)}
-          tone={totals.d30 + totals.d60 + totals.d90 + totals.d120 > 0 ? 'warning' : 'default'}
-          hint="Past due date"
-          icon={<Icons.StatusWarning size={16} />}
-        />
-        <StatTile
-          label="90 days and older"
-          value={formatMoney(totals.d90 + totals.d120)}
-          tone={totals.d90 + totals.d120 > 0 ? 'danger' : 'default'}
-          hint="At risk"
-          icon={<Icons.Ban size={16} />}
-        />
-      </div>
+      <PageBody>
+        {/* The tiles ARE the bucket summary — an AgeingStrip here would say
+            the same numbers twice. */}
+        <StatStrip columns={4}>
+          <StatTile
+            label="Total outstanding"
+            value={formatMoney(totals.total)}
+            hint="The whole book"
+            icon={<Icons.Coins size={16} />}
+          />
+          <StatTile
+            label="Not yet due"
+            value={formatMoney(totals.current)}
+            hint="Within terms"
+            icon={<Icons.Clock size={16} />}
+          />
+          <StatTile
+            label="Overdue"
+            value={formatMoney(totals.d30 + totals.d60 + totals.d90 + totals.d120)}
+            tone={totals.d30 + totals.d60 + totals.d90 + totals.d120 > 0 ? 'warning' : 'default'}
+            hint="Past due date"
+            icon={<Icons.StatusWarning size={16} />}
+          />
+          <StatTile
+            label="90 days and older"
+            value={formatMoney(totals.d90 + totals.d120)}
+            tone={totals.d90 + totals.d120 > 0 ? 'danger' : 'default'}
+            hint="At risk"
+            icon={<Icons.Ban size={16} />}
+          />
+        </StatStrip>
 
-      <div className="px-6 pt-4">
-        <AgeingStrip aging={totals} />
-      </div>
-
-      <div className="px-6 pt-4">
         <AsAtForm asAt={asAt} basis={basis} overdueOnly={overdueOnly} />
-      </div>
 
-      <FilterBar clearHref="/customers/age-analysis">
+        <FilterBar clearHref="/customers/age-analysis" className="-mx-6 -my-2">
         {isHistoric && <FilterChip label="As at" value={asAt} clearHref={href({ asAt: null })} />}
         {basis === 'doc' && (
           <FilterChip label="Aged by" value="Document date" clearHref={href({ basis: null })} />
@@ -143,9 +159,8 @@ export default async function AgeAnalysisPage({
           <FilterChip label="Group" value={groupName} clearHref={href({ group: null })} />
         )}
         {repName && <FilterChip label="Rep" value={repName} clearHref={href({ rep: null })} />}
-      </FilterBar>
+        </FilterBar>
 
-      <div className="px-6 pb-10">
         <Card>
           {rows.length === 0 ? (
             <EmptyState
@@ -175,20 +190,18 @@ export default async function AgeAnalysisPage({
                   {rows.map((row) => (
                     <tr key={row.id} className={TABLE_ROW}>
                       <td className={TABLE_TD}>
-                        <Link
-                          href={`/customers/${row.id}?tab=transactions`}
-                          className="text-brand hover:underline"
-                        >
-                          {row.code}
-                        </Link>
-                        <div className="text-ink">{row.name}</div>
-                        {row.status !== 'active' && (
-                          <span className="mt-1 inline-block">
+                        {/* One line, so rows hold their 36px height. */}
+                        <div className="flex items-center gap-2">
+                          <TextLink href={`/customers/${row.id}?tab=transactions`}>
+                            {row.code}
+                          </TextLink>
+                          <span className="truncate text-ink">{row.name}</span>
+                          {row.status !== 'active' && (
                             <Badge tone={row.status === 'on_hold' ? 'danger' : 'neutral'}>
-                              {row.status === 'on_hold' ? 'On hold' : row.status}
+                              {STATUS_LABELS[row.status] ?? row.status}
                             </Badge>
-                          </span>
-                        )}
+                          )}
+                        </div>
                       </td>
                       <td className={TABLE_TD}>
                         <div className="text-ink-2">{row.contactName ?? '—'}</div>
@@ -206,35 +219,25 @@ export default async function AgeAnalysisPage({
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="border-t-2 border-border bg-surface-2">
-                    <td className={`${TABLE_TD} font-semibold text-ink`} colSpan={2}>
+                  <tr className={TABLE_TOTAL_ROW}>
+                    <td className={TABLE_TD} colSpan={2}>
                       {rows.length} account{rows.length === 1 ? '' : 's'}
                     </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold text-ink`}>
+                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                       {formatMoney(totals.current)}
                     </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold text-ink`}>
-                      {formatMoney(totals.d30)}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold text-ink`}>
-                      {formatMoney(totals.d60)}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold text-ink`}>
-                      {formatMoney(totals.d90)}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold text-ink`}>
-                      {formatMoney(totals.d120)}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold text-ink`}>
-                      {formatMoney(totals.total)}
-                    </td>
+                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(totals.d30)}</td>
+                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(totals.d60)}</td>
+                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(totals.d90)}</td>
+                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(totals.d120)}</td>
+                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(totals.total)}</td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           )}
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

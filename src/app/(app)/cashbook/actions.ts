@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId } from '@/lib/auth'
+import { requireActor, requireSiteId, actorFor } from '@/lib/auth'
 import {
   captureTransaction,
   voidTransaction,
@@ -44,7 +44,9 @@ export async function captureAction(input: {
   description?: string
   reference?: string
 }): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await captureTransaction(siteId, actor, input)
   if (!result.ok) return result
@@ -58,7 +60,9 @@ export async function voidAction(
   transactionId: number,
   reason: string,
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await voidTransaction(siteId, actor, transactionId, reason)
   if (!result.ok) return result
@@ -68,7 +72,9 @@ export async function voidAction(
 }
 
 export async function suggestAction(bankTxnId: number) {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   return suggestMatches(siteId, bankTxnId, 5)
 }
 
@@ -79,7 +85,9 @@ export async function linkAction(input: {
   ledgerTxnId: number
   amount: number
 }): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await linkTransaction(
     siteId,
@@ -96,7 +104,9 @@ export async function linkAction(input: {
 }
 
 export async function unlinkAction(bankAccountId: number, linkId: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await unlinkTransaction(siteId, actor, linkId)
   if (!result.ok) return result
@@ -106,7 +116,9 @@ export async function unlinkAction(bankAccountId: number, linkId: number): Promi
 }
 
 export async function autoMatchAction(bankAccountId: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await autoMatch(siteId, actor, bankAccountId)
   revalidateAccount(bankAccountId)
@@ -133,7 +145,9 @@ export async function completeReconciliationAction(input: {
   notes?: string
   force?: boolean
 }): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await completeReconciliation(siteId, actor, input)
   if (!result.ok) return result
@@ -152,7 +166,9 @@ export async function reopenReconciliationAction(
   reconciliationId: number,
   reason: string,
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await reopenReconciliation(siteId, actor, reconciliationId, reason)
   if (!result.ok) return result
@@ -170,7 +186,9 @@ export async function receiptAction(input: {
   description?: string
   autoAllocate?: boolean
 }): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await recordCustomerReceipt(siteId, actor, input)
   if (!result.ok) return result
@@ -194,7 +212,9 @@ export async function createAccountAction(input: {
   isDefaultReceipts?: boolean
   isDefaultPayments?: boolean
 }): Promise<ActionResult & { id?: number }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await createAccount(siteId, actor, input)
   if (!result.ok) return result
@@ -218,7 +238,9 @@ export async function updateAccountAction(
     isDefaultPayments?: boolean
   },
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await updateAccount(siteId, actor, id, input)
   if (!result.ok) return result
@@ -228,7 +250,9 @@ export async function updateAccountAction(
 }
 
 export async function closeAccountAction(id: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await closeAccount(siteId, actor, id)
   if (!result.ok) return result
@@ -238,7 +262,9 @@ export async function closeAccountAction(id: number): Promise<ActionResult> {
 }
 
 export async function repairBalanceAction(id: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await repairBankBalance(siteId, actor, id)
   if (!result.ok) return result
@@ -271,7 +297,9 @@ export async function importStatementAction(input: {
   filename?: string
   autoMatch?: boolean
 }): Promise<ActionResult & { imported?: number; duplicates?: number; autoMatched?: number }> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const parsed = parseStatement(input.text)
   const result = await importStatement(siteId, actor, {
@@ -301,7 +329,9 @@ export async function undoImportAction(
   bankAccountId: number,
   batchId: number,
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('cashbook.reconcile')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await undoImport(siteId, actor, batchId)
   if (!result.ok) return result

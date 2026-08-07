@@ -1,6 +1,6 @@
 'use server'
 
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor } from '@/lib/auth'
 import { getOrder, type OnlineOrderDetail } from '@/lib/site/onlineOrders'
 
 /**
@@ -13,7 +13,9 @@ import { getOrder, type OnlineOrderDetail } from '@/lib/site/onlineOrders'
 export async function getOrderAction(
   orderId: number,
 ): Promise<{ ok: true; order: OnlineOrderDetail } | { ok: false; error: string }> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('online.view')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const order = await getOrder(siteId, orderId)
   if (!order) return { ok: false, error: 'That order no longer exists.' }
   return { ok: true, order }

@@ -11,9 +11,11 @@ import { formatMoney } from '@/lib/decimals'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
+  PageBody,
   PrimaryLink,
   Card,
   SearchBar,
+  StatStrip,
   StatTile,
   FilterBar,
   FilterChip,
@@ -92,69 +94,70 @@ export default async function SuppliersPage({
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 px-6 pt-4 lg:grid-cols-4">
-        <StatTile
-          label="Total owed"
-          value={formatMoney(summary.totalOwed)}
-          hint={`${summary.owed} account${summary.owed === 1 ? '' : 's'} with a balance`}
-          icon={<Icons.Coins size={16} />}
-        />
-        <StatTile
-          label="On hold"
-          value={String(summary.onHold)}
-          tone={summary.onHold > 0 ? 'warning' : 'default'}
-          hint={summary.onHold > 0 ? 'No new orders' : 'None blocked'}
-          icon={<Icons.Ban size={16} />}
-          href={filterHref({ status: 'on_hold' })}
-        />
-        <StatTile
-          label="Suppliers"
-          value={String(summary.total)}
-          hint="Excluding closed"
-          icon={<Icons.Truck size={16} />}
-        />
-        <StatTile
-          label="With a balance"
-          value={String(summary.owed)}
-          hint="Awaiting payment"
-          icon={<Icons.Wallet size={16} />}
-          href={filterHref({ balance: 'owed' })}
-        />
-      </div>
-
-      <SearchBar
-        action="/suppliers"
-        defaultValue={params.q}
-        placeholder="Search name, code, email, phone or account number…"
-        keep={{ status: params.status, category: params.category, balance: params.balance }}
-      />
-
-      <FilterBar clearHref="/suppliers">
-        {status && (
-          <FilterChip
-            label="Status"
-            value={STATUS_LABELS[status]}
-            clearHref={filterHref({ status: null })}
+      <PageBody>
+        {/* Two tiles, not four: "Suppliers" restated the subtitle and "With a
+            balance" restated Total owed's hint. What is left is the money and
+            the exception — both drill into the filtered list. */}
+        <StatStrip columns={2}>
+          <StatTile
+            label="Total owed"
+            value={formatMoney(summary.totalOwed)}
+            hint={`${summary.owed} account${summary.owed === 1 ? '' : 's'} with a balance`}
+            icon={<Icons.Coins size={16} />}
+            href={filterHref({ balance: 'owed' })}
           />
-        )}
-        {category && (
-          <FilterChip label="Category" value={category} clearHref={filterHref({ category: null })} />
-        )}
-        {params.balance === 'owed' && (
-          <FilterChip label="Balance" value="Owed" clearHref={filterHref({ balance: null })} />
-        )}
-      </FilterBar>
+          <StatTile
+            label="On hold"
+            value={String(summary.onHold)}
+            tone={summary.onHold > 0 ? 'warning' : 'default'}
+            hint={summary.onHold > 0 ? 'No new orders' : 'None blocked'}
+            icon={<Icons.Ban size={16} />}
+            href={filterHref({ status: 'on_hold' })}
+          />
+        </StatStrip>
 
-      <div className="px-6 pb-6">
+        {/* SearchBar and FilterBar carry the page gutter themselves; unwind
+            PageBody's so the controls still line up with everything else. */}
+        <div className="-mx-6 -my-3">
+          <SearchBar
+            action="/suppliers"
+            defaultValue={params.q}
+            placeholder="Search name, code, email, phone or account number…"
+            keep={{ status: params.status, category: params.category, balance: params.balance }}
+          />
+        </div>
+
+        {/* Status is not a chip — the segmented control on the list already
+            shows which slice is active and how to leave it. */}
+        {(category || params.balance === 'owed') && (
+          <div className="-mx-6 -mt-5">
+            <FilterBar clearHref="/suppliers">
+              {category && (
+                <FilterChip
+                  label="Category"
+                  value={category}
+                  clearHref={filterHref({ category: null })}
+                />
+              )}
+              {params.balance === 'owed' && (
+                <FilterChip label="Balance" value="Owed" clearHref={filterHref({ balance: null })} />
+              )}
+            </FilterBar>
+          </div>
+        )}
+
         <Card>
           <SupplierListClient
             rows={items}
             total={total}
+            hasAny={summary.total > 0}
+            searchTerm={params.q?.trim() || undefined}
             filters={{
+              allHref: filterHref({ status: null }),
               statuses: Object.entries(STATUS_LABELS).map(([value, label]) => ({
                 value,
                 label,
-                href: filterHref({ status: status === value ? null : value }),
+                href: filterHref({ status: value }),
                 active: status === value,
               })),
               categories,
@@ -169,7 +172,7 @@ export default async function SuppliersPage({
             hrefFor={(next) => href({ page: next === 1 ? null : next })}
           />
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

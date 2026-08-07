@@ -2,7 +2,17 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Modal, Field, Input, Icons, useToast } from '@/components/ui'
+import {
+  Button,
+  ConfirmModal,
+  Field,
+  Icons,
+  Input,
+  Menu,
+  MenuItem,
+  Modal,
+  useToast,
+} from '@/components/ui'
 import type { ExpenseStatus } from '@/lib/expenseModel'
 import { finaliseExpenseAction, voidExpenseAction, deleteDraftAction } from '../actions'
 
@@ -13,6 +23,9 @@ import { finaliseExpenseAction, voidExpenseAction, deleteDraftAction } from '../
  * concerned. A posted expense can only be VOIDED, which reverses what it did
  * and keeps the record, because something that moved money must stay
  * explicable afterwards.
+ *
+ * Discard lives in a menu rather than beside Post: posting is what this header
+ * is for, and a destructive act should not compete with it for the same eye.
  */
 export function ExpenseActions({
   id,
@@ -27,6 +40,7 @@ export function ExpenseActions({
   const toast = useToast()
   const [pending, startTransition] = useTransition()
   const [voiding, setVoiding] = useState(false)
+  const [discarding, setDiscarding] = useState(false)
   const [reason, setReason] = useState('')
 
   function run(
@@ -51,16 +65,12 @@ export function ExpenseActions({
     <>
       {status === 'draft' ? (
         <>
-          <Button
-            variant="danger-ghost"
-            disabled={pending}
-            onClick={() => {
-              if (!window.confirm('Discard this draft? It has posted nothing.')) return
-              run(() => deleteDraftAction(id), true)
-            }}
-          >
-            Discard
-          </Button>
+          <Menu label="More">
+            <MenuItem tone="danger" disabled={pending} onClick={() => setDiscarding(true)}>
+              <Icons.Trash size={15} />
+              Discard draft
+            </MenuItem>
+          </Menu>
           <Button disabled={pending} onClick={() => run(() => finaliseExpenseAction(id))}>
             <Icons.Check size={15} />
             Post it
@@ -78,6 +88,19 @@ export function ExpenseActions({
           Void
         </Button>
       )}
+
+      <ConfirmModal
+        open={discarding}
+        onClose={() => setDiscarding(false)}
+        onConfirm={() => {
+          setDiscarding(false)
+          run(() => deleteDraftAction(id), true)
+        }}
+        title="Discard this draft"
+        message="It has posted nothing, so discarding removes it entirely."
+        confirmLabel="Discard"
+        busy={pending}
+      />
 
       <Modal open={voiding} onClose={() => setVoiding(false)} title="Void this expense">
         <div className="space-y-4">

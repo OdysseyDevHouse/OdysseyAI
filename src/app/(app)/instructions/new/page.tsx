@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listProducts } from '@/lib/site/products'
-import { PageHeader } from '@/components/ui'
+import { PageBody, PageHeader } from '@/components/ui'
 import InstructionForm from '../InstructionForm'
 
 export const dynamic = 'force-dynamic'
@@ -18,14 +18,15 @@ export default async function NewInstructionPage() {
       <PageHeader
         title="New instruction"
         subtitle="A question the till asks when an item is sold"
+        backHref="/instructions"
       />
-      <div className="p-6">
+      <PageBody>
         <InstructionForm
           group={null}
           options={[]}
           products={items.map((p) => ({ id: p.id, code: p.code, description: p.description }))}
         />
-      </div>
+      </PageBody>
     </>
   )
 }

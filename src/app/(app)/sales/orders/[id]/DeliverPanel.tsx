@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardBody,
   CardHeader,
@@ -12,6 +13,9 @@ import {
   Field,
   Icons,
   Input,
+  Menu,
+  MenuItem,
+  MenuSeparator,
   NumberInput,
   Switch,
   Textarea,
@@ -23,7 +27,7 @@ import {
   TABLE_ROW,
   TABLE_NUMERIC,
 } from '@/components/ui'
-import { formatMoney, round } from '@/lib/decimals'
+import { formatMoney, formatQty, round } from '@/lib/decimals'
 import { saveDetailsAction, deliverAction, cancelOrderAction } from '../actions'
 
 /**
@@ -159,24 +163,27 @@ export default function DeliverPanel({
             : `This order is ${fulfilmentStatus.replace('_', ' ')}.`
         }
         action={
-          <div className="flex items-center gap-2">
-            {canDeliver && (
-              <>
-                <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} disabled={pending}>
+          canDeliver ? (
+            <div className="flex items-center gap-2">
+              {/* One loud action. The occasional acts — editing the delivery
+                  details, cancelling — live behind the menu. */}
+              <Menu label="More">
+                <MenuItem onClick={() => setEditing((v) => !v)} disabled={pending}>
                   <Icons.Calendar size={15} />
-                  {editing ? 'Close' : 'Delivery details'}
-                </Button>
-                <Button variant="danger-ghost" size="sm" onClick={() => setCancelling(true)} disabled={pending}>
+                  {editing ? 'Close delivery details' : 'Delivery details'}
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem tone="danger" onClick={() => setCancelling(true)} disabled={pending}>
                   <Icons.Ban size={15} />
                   Cancel order
-                </Button>
-                <Button variant="primary" onClick={deliver} disabled={pending || chosen.length === 0}>
-                  <Icons.Truck size={15} />
-                  {pending ? 'Delivering…' : `Deliver ${formatMoney(value)}`}
-                </Button>
-              </>
-            )}
-          </div>
+                </MenuItem>
+              </Menu>
+              <Button variant="primary" onClick={deliver} disabled={pending || chosen.length === 0}>
+                <Icons.Truck size={15} />
+                {pending ? 'Delivering…' : `Deliver ${formatMoney(value)}`}
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 
@@ -214,14 +221,13 @@ export default function DeliverPanel({
 
       {short.length > 0 && canDeliver && (
         <CardBody className="border-b border-border">
-          <p className="flex items-start gap-2 text-sm text-warning">
-            <Icons.StatusWarning size={16} className="mt-0.5 shrink-0" />
-            <span>
-              {short.length === 1 ? 'One line asks' : `${short.length} lines ask`} for more than is
-              available to sell. Delivering anyway will oversell — fine if the stock is arriving,
-              otherwise someone else&apos;s order is about to break.
-            </span>
-          </p>
+          <Callout
+            tone="warning"
+            title={`${short.length === 1 ? 'One line asks' : `${short.length} lines ask`} for more than is available to sell.`}
+          >
+            Delivering anyway will oversell — fine if the stock is arriving, otherwise someone
+            else&apos;s order is about to break.
+          </Callout>
         </CardBody>
       )}
 
@@ -245,24 +251,34 @@ export default function DeliverPanel({
                   <div className="text-ink">{line.description}</div>
                   {line.productCode && <div className="text-xs text-muted">{line.productCode}</div>}
                 </td>
-                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{line.qty}</td>
+                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatQty(line.qty)}</td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                  {line.qtyDelivered > 0 ? line.qtyDelivered : <span className="text-faint">—</span>}
+                  {line.qtyDelivered > 0 ? (
+                    formatQty(line.qtyDelivered)
+                  ) : (
+                    <span className="text-faint">—</span>
+                  )}
                 </td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                   {line.qtyOutstanding > 0 ? (
-                    <span className="text-ink">{line.qtyOutstanding}</span>
+                    <span className="text-ink">{formatQty(line.qtyOutstanding)}</span>
                   ) : (
                     <Badge tone="success">Done</Badge>
                   )}
                 </td>
-                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{line.onHand ?? '—'}</td>
+                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                  {line.onHand === null ? (
+                    <span className="text-faint">—</span>
+                  ) : (
+                    formatQty(line.onHand)
+                  )}
+                </td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                   {line.available === null ? (
-                    '—'
+                    <span className="text-faint">—</span>
                   ) : (
                     <span className={line.available < line.qtyOutstanding ? 'text-warning' : 'text-ink'}>
-                      {line.available}
+                      {formatQty(line.available)}
                     </span>
                   )}
                 </td>

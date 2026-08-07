@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Badge,
   Button,
+  Callout,
   CurrencyInput,
   Field,
   Icons,
@@ -201,11 +201,7 @@ export default function TenderPad({
           </div>
         )}
 
-        {check.errors.length > 0 && (
-          <p role="alert" className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
-            {check.errors[0]}
-          </p>
-        )}
+        {check.errors.length > 0 && <Callout tone="danger">{check.errors[0]}</Callout>}
 
         {/* Tender buttons, or the amount entry for the one just picked */}
         {active ? (
@@ -246,6 +242,9 @@ export default function TenderPad({
             </Button>
           </div>
         ) : (
+          /* Taller-than-control tender keys, on purpose: this grid is hit in a
+             hurry with a customer waiting, and the second line carries the
+             refusal. Layout only — the Button skin is untouched. */
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {tenders.map((tender) => {
               const refusal = tenderRefusal(tender, customer, owedNow)

@@ -149,6 +149,70 @@ export async function deleteReview(siteId: number, reviewId: number): Promise<Sa
 }
 
 /**
+ * A review written by a member of the public.
+ *
+ * ── IT IS NEVER PUBLISHED BY WRITING IT ──────────────────────────────────
+ *
+ * Always lands as 'pending'. There is no auto-approve path and no setting to
+ * add one: this is an unauthenticated write to a public page, and a shop that
+ * discovered abuse on its own product page after the fact would be right never
+ * to trust the feature again. Staff approve, then it shows.
+ *
+ * ── THE ORDER NUMBER IS NOT PROOF ────────────────────────────────────────
+ *
+ * Stored as typed, unverified, and labelled that way on the type. It helps a
+ * shop recognise a genuine customer during moderation. It must never be
+ * rendered to shoppers as a "verified purchase" badge.
+ */
+export async function submitReview(
+  siteId: number,
+  input: {
+    productId: number
+    rating: number
+    title: string
+    body: string
+    authorName: string
+    orderNumber: string
+  },
+): Promise<SaveResult> {
+  const body = input.body.trim()
+  if (!body) return { ok: false, error: 'Please write a few words about the product.' }
+
+  // Clamped, not rejected: a rating outside 1–5 can only come from a crafted
+  // payload, and refusing it teaches nothing that clamping does not.
+  const rating = Math.min(Math.max(Math.round(Number(input.rating) || 5), 1), 5)
+
+  /*
+   * The product must be one this shop actually sells. Without this a script
+   * could seed reviews against arbitrary ids — including products of another
+   * site, since only the id is supplied.
+   */
+  const exists = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id FROM products WHERE id = ? AND is_archived = 0`,
+    [input.productId],
+  )
+  if (!exists) return { ok: false, error: 'That product is not available.' }
+
+  await siteExecute(
+    siteId,
+    `INSERT INTO product_reviews
+       (product_id, rating, title, body, author_name, order_number, status, submitted_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+    [
+      input.productId,
+      rating,
+      input.title.trim().slice(0, 120),
+      body.slice(0, 1000),
+      input.authorName.trim().slice(0, 80),
+      input.orderNumber.trim().slice(0, 30),
+    ],
+  )
+
+  return { ok: true }
+}
+
+/**
  * What the storefront shows on a product page: approved reviews only, plus the
  * average. Unused until the storefront exists, but it is the reason the table
  * is indexed on (product_id, status) and belongs with the rest.

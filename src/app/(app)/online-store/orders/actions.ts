@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   acceptOrder,
@@ -22,7 +22,9 @@ import {
  */
 
 export async function acceptOrderAction(orderId: number): Promise<AcceptResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await acceptOrder(siteId, orderId, actor)
   if (!result.ok) return result
 
@@ -45,7 +47,9 @@ export async function acceptOrderAction(orderId: number): Promise<AcceptResult> 
 }
 
 export async function moveOrderAction(orderId: number, statusId: number): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await moveOrderStatus(siteId, orderId, statusId)
   if (!result.ok) return result
 
@@ -61,7 +65,9 @@ export async function moveOrderAction(orderId: number, statusId: number): Promis
 }
 
 export async function cancelOrderAction(orderId: number, reason: string): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await cancelOrder(siteId, orderId, reason)
   if (!result.ok) return result
 
@@ -80,7 +86,9 @@ export async function archiveOrderAction(
   orderId: number,
   archived: boolean,
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await archiveOrder(siteId, orderId, archived)
   if (!result.ok) return result
 

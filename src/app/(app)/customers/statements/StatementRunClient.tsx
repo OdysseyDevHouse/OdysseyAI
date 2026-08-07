@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
+  BulkActionBar,
   Button,
   Card,
   CardBody,
@@ -11,8 +12,12 @@ import {
   DataTable,
   Field,
   Icons,
+  PageBody,
+  PageHeader,
+  RowTile,
   Select,
   Switch,
+  TableToolbar,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -29,6 +34,10 @@ import { startRunAction } from './actions'
  *
  * Hiding them would answer "who is getting one" while quietly leaving out the
  * accounts someone most needs to notice.
+ *
+ * This component owns the whole screen — header included — because the one
+ * primary action, Send, reads the selection, and only a client component can.
+ * The server page hands the rest of the screen in as `notice` and `children`.
  */
 
 type Candidate = {
@@ -42,9 +51,17 @@ type Candidate = {
 export default function StatementRunClient({
   candidates,
   mailReady,
+  subtitle,
+  notice,
+  children,
 }: {
   candidates: Candidate[]
   mailReady: boolean
+  subtitle: string
+  /** The mail-not-ready callout, server-rendered. */
+  notice?: ReactNode
+  /** Rendered below the send card — the recent-runs card. */
+  children?: ReactNode
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [owingOnly, setOwingOnly] = useState(true)
@@ -87,94 +104,106 @@ export default function StatementRunClient({
   }
 
   return (
-    <Card>
-      <CardHeader
-        title="Send statements"
-        description="Queued and sent in the background — you can leave this screen."
+    <>
+      <PageHeader
+        title="Statements"
+        subtitle={subtitle}
         action={
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={selectAllSendable} disabled={pending}>
-              <Icons.Check size={15} />
-              Select all sendable
-            </Button>
-            <Button
-              variant="primary"
-              disabled={sendable.length === 0 || pending || !mailReady}
-              onClick={send}
-            >
-              <Icons.Send size={15} />
-              {pending
-                ? 'Queueing…'
-                : `Send ${sendable.length || ''} statement${sendable.length === 1 ? '' : 's'}`}
-            </Button>
-          </div>
+          <Button
+            variant="primary"
+            disabled={sendable.length === 0 || pending || !mailReady}
+            onClick={send}
+          >
+            <Icons.Send size={15} />
+            {pending
+              ? 'Queueing…'
+              : `Send ${sendable.length || ''} statement${sendable.length === 1 ? '' : 's'}`}
+          </Button>
         }
       />
 
-      <CardBody className="flex flex-wrap items-end gap-4 border-b border-border">
-        <DateRangeField value={period} onChange={setPeriod} label="Period" />
-        <Field label="Format" hint="Open items is what a customer needs in order to pay.">
-          <Select
-            value={format}
-            onChange={(e) => setFormat(e.target.value as typeof format)}
-            className="w-48"
-          >
-            <option value="open-item">Open items</option>
-            <option value="activity">Full activity</option>
-          </Select>
-        </Field>
-        <div className="pb-2">
-          <Switch
-            checked={owingOnly}
-            onChange={setOwingOnly}
-            label="Only accounts with a balance"
-            hint="A statement saying nothing is owed is inbox noise."
+      <PageBody>
+        {notice}
+
+        <Card>
+          <CardHeader
+            title="Send statements"
+            description="Queued and sent in the background — you can leave this screen."
+            action={
+              <Button variant="ghost" size="sm" onClick={selectAllSendable} disabled={pending}>
+                <Icons.Check size={15} />
+                Select all sendable
+              </Button>
+            }
           />
-        </div>
-      </CardBody>
 
-      {chosen.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 border-b border-border bg-brand-soft px-4 py-2.5 text-sm">
-          <Badge tone="brand">{chosen.length}</Badge>
-          <span className="text-ink-2">selected</span>
-          {skipped > 0 && (
-            /* Named up front rather than discovered afterwards in the run. */
-            <span className="text-muted">
-              · {skipped} will be skipped (no email, or nothing owed)
-            </span>
-          )}
-          <Button
-            variant="bare"
-            size="sm"
-            className="ml-auto"
-            onClick={() => setSelected(new Set())}
-          >
-            Clear
-          </Button>
-        </div>
-      )}
+          <CardBody className="border-b border-border">
+            <TableToolbar>
+              <DateRangeField value={period} onChange={setPeriod} label="Period" />
+              <Field
+                label="Format"
+                hint="Open items is what a customer needs in order to pay."
+                className="w-48"
+              >
+                <Select value={format} onChange={(e) => setFormat(e.target.value as typeof format)}>
+                  <option value="open-item">Open items</option>
+                  <option value="activity">Full activity</option>
+                </Select>
+              </Field>
+              <Switch
+                checked={owingOnly}
+                onChange={setOwingOnly}
+                label="Only accounts with a balance"
+                hint="A statement saying nothing is owed is inbox noise."
+              />
+            </TableToolbar>
+          </CardBody>
 
-      <DataTable
-        columns={COLUMNS}
-        rows={rows}
-        getRowKey={(row) => row.id}
-        selectedKeys={selected}
-        onSelectionChange={setSelected}
-        // Greyed rather than hidden: an account nobody can send to is exactly
-        // the one someone needs to notice.
-        isRowSelectable={(row) => Boolean(row.email) && row.balance !== 0}
-        empty={{
-          title: owingOnly ? 'No account has a balance' : 'No accounts',
-          hint: owingOnly ? 'Turn off the filter to see everyone.' : undefined,
-        }}
-      />
-    </Card>
+          <BulkActionBar count={chosen.length} onClear={() => setSelected(new Set())}>
+            {skipped > 0 && (
+              /* Named up front rather than discovered afterwards in the run. */
+              <span className="text-sm text-muted">
+                {skipped} will be skipped — no email, or nothing owed
+              </span>
+            )}
+          </BulkActionBar>
+
+          <DataTable
+            columns={COLUMNS}
+            rows={rows}
+            getRowKey={(row) => row.id}
+            selectedKeys={selected}
+            onSelectionChange={setSelected}
+            // Greyed rather than hidden: an account nobody can send to is exactly
+            // the one someone needs to notice.
+            isRowSelectable={(row) => Boolean(row.email) && row.balance !== 0}
+            empty={{
+              title: owingOnly ? 'No account has a balance' : 'No accounts',
+              hint: owingOnly ? 'Turn off the filter to see everyone.' : undefined,
+            }}
+          />
+        </Card>
+
+        {children}
+      </PageBody>
+    </>
   )
 }
 
 const COLUMNS: readonly Column<Candidate>[] = [
   { key: 'code', header: 'Code', sortable: true, cell: (row) => row.code },
-  { key: 'name', header: 'Account', sortable: true, cell: (row) => row.name },
+  {
+    key: 'name',
+    header: 'Account',
+    sortable: true,
+    sortValue: (row) => row.name,
+    cell: (row) => (
+      <div className="flex items-center gap-2.5">
+        <RowTile label={row.name} />
+        <span className="truncate text-ink">{row.name}</span>
+      </div>
+    ),
+  },
   {
     key: 'email',
     header: 'Email',

@@ -1,9 +1,18 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { useFormStatus } from 'react-dom'
-import { Badge, Button, Card, Checkbox, SectionTitle } from '@/components/ui'
-import { Store, StatusError, StatusWarning, Trash } from '@/components/ui/icons'
+import {
+  Badge,
+  Button,
+  Callout,
+  Card,
+  CardBody,
+  CardFooter,
+  Icons,
+  SectionTitle,
+  Switch,
+} from '@/components/ui'
 import type { GroupMember, StoreContents } from '@/lib/storeGroups'
 import { updateSharingAction, unlinkStoreAction, type LinkFormState } from './actions'
 
@@ -24,7 +33,9 @@ import { updateSharingAction, unlinkStoreAction, type LinkFormState } from './ac
 function SaveButton() {
   const { pending } = useFormStatus()
   return (
-    <Button type="submit" variant="ghost" size="sm" disabled={pending}>
+    // Secondary on purpose: the screen's one primary is "Link store" at the
+    // bottom, and four cards each shouting Save would drown it out.
+    <Button type="submit" variant="secondary" disabled={pending}>
       {pending ? 'Saving…' : 'Save'}
     </Button>
   )
@@ -56,7 +67,7 @@ export default function StoreCard({
   return (
     <Card>
       <SectionTitle
-        icon={<Store size={16} />}
+        icon={<Icons.Store size={16} />}
         action={
           !isCurrent && (
             <form action={unlinkStoreAction}>
@@ -67,7 +78,7 @@ export default function StoreCard({
                 size="sm"
                 title="Unlink — neither store's data is changed"
               >
-                <Trash size={14} />
+                <Icons.Trash size={14} />
                 De-link store
               </Button>
             </form>
@@ -82,79 +93,78 @@ export default function StoreCard({
         )}
         {!member.hasDatabase && (
           <Badge tone="danger" className="ml-2">
-            no database
+            No database
           </Badge>
         )}
       </SectionTitle>
 
-      <form action={formAction} className="flex flex-col gap-4 p-6">
+      <form action={formAction}>
         <input type="hidden" name="siteId" value={member.siteId} />
 
-        {state.error && (
-          <p
-            role="alert"
-            className="flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2 text-sm text-danger-ink"
-          >
-            <StatusError size={15} className="mt-0.5 shrink-0" />
-            {state.error}
-          </p>
-        )}
+        <CardBody className="flex flex-col gap-4">
+          {state.error && <Callout tone="danger">{state.error}</Callout>}
 
-        {blocked && (
-          <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2 text-sm text-warning-ink">
-            <StatusWarning size={15} className="mt-0.5 shrink-0" />
-            {contents?.readable === false ? (
-              <span>This store&apos;s database could not be read, so sharing cannot be changed.</span>
-            ) : (
-              <span>
-                This store currently has <strong>{contents?.products} product(s)</strong> and{' '}
-                <strong>{contents?.departments} department(s)</strong>. Please delete all products
-                and departments to start using this feature.
-              </span>
-            )}
-          </p>
-        )}
+          {blocked && (
+            <Callout tone="warning">
+              {contents?.readable === false ? (
+                <>This store&apos;s database could not be read, so sharing cannot be changed.</>
+              ) : (
+                <>
+                  This store currently has <strong>{contents?.products} product(s)</strong> and{' '}
+                  <strong>{contents?.departments} department(s)</strong>. Please delete all
+                  products and departments to start using this feature.
+                </>
+              )}
+            </Callout>
+          )}
 
-        <div className="flex flex-col gap-3">
-          <Toggle
-            name="sharesProducts"
-            label="Share products file"
-            hint="Share product data between all your stores. Manage all stores’ products from one location."
-            defaultChecked={member.sharesProducts}
-            disabled={blocked}
-          />
-          <Toggle
-            name="sharesDepartments"
-            label="Share departments"
-            hint="Keep the department structure the same across all shared stores."
-            defaultChecked={member.sharesDepartments}
-            disabled={blocked}
-          />
-          <Toggle
-            name="sharesSelling"
-            label="Share selling prices"
-            hint="Automatically update selling prices to all shared stores."
-            defaultChecked={member.sharesSelling}
-            disabled={blocked}
-          />
-          <Toggle
-            name="sharesCost"
-            label="Share cost prices"
-            hint="Automatically update cost prices to all shared stores."
-            defaultChecked={member.sharesCost}
-            disabled={blocked}
-          />
-        </div>
+          <div className="flex flex-col gap-3">
+            <SharingSwitch
+              name="sharesProducts"
+              label="Share products file"
+              hint="Share product data between all your stores. Manage all stores’ products from one location."
+              defaultChecked={member.sharesProducts}
+              disabled={blocked}
+            />
+            <SharingSwitch
+              name="sharesDepartments"
+              label="Share departments"
+              hint="Keep the department structure the same across all shared stores."
+              defaultChecked={member.sharesDepartments}
+              disabled={blocked}
+            />
+            <SharingSwitch
+              name="sharesSelling"
+              label="Share selling prices"
+              hint="Automatically update selling prices to all shared stores."
+              defaultChecked={member.sharesSelling}
+              disabled={blocked}
+            />
+            <SharingSwitch
+              name="sharesCost"
+              label="Share cost prices"
+              hint="Automatically update cost prices to all shared stores."
+              defaultChecked={member.sharesCost}
+              disabled={blocked}
+            />
+          </div>
+        </CardBody>
 
-        <div>
+        <CardFooter>
           <SaveButton />
-        </div>
+        </CardFooter>
       </form>
     </Card>
   )
 }
 
-function Toggle({
+/**
+ * A kit Switch inside a plain <form action>. The switch itself is a button and
+ * submits nothing, so a hidden input mirrors checkbox semantics — present as
+ * "on" when checked, absent when not — which is exactly what the server action
+ * reads (`form.get(name) === 'on'`).
+ */
+function SharingSwitch({
   name,
   label,
   hint,
@@ -167,10 +177,17 @@ function Toggle({
   defaultChecked: boolean
   disabled?: boolean
 }) {
+  const [checked, setChecked] = useState(defaultChecked)
   return (
-    <div className={disabled ? 'opacity-50' : ''}>
-      <Checkbox name={name} label={label} defaultChecked={defaultChecked} disabled={disabled} />
-      <p className="ml-6 text-xs text-muted">{hint}</p>
-    </div>
+    <>
+      {checked && <input type="hidden" name={name} value="on" />}
+      <Switch
+        checked={checked}
+        onChange={setChecked}
+        label={label}
+        hint={hint}
+        disabled={disabled}
+      />
+    </>
   )
 }

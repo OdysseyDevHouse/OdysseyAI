@@ -6,13 +6,16 @@ import {
   Badge,
   Button,
   Card,
-  CardBody,
   CardHeader,
+  ColourInput,
   ConfirmModal,
   CurrencyInput,
   Field,
+  FieldGroup,
   Icons,
   Input,
+  Menu,
+  MenuItem,
   Modal,
   NumberInput,
   SettingRow,
@@ -74,7 +77,7 @@ export default function TenderTypesClient({ tenders }: { tenders: TenderType[] }
       <Card>
         <CardHeader
           title="Payment methods"
-          description="Shown as buttons at the till, in this order."
+          description="Shown as buttons at the till, in this order. A card machine or online provider added later — Yoco, PayFast, a loyalty wallet — is just a new tender pointing at its integration."
           action={
             <Button variant="primary" onClick={() => setAdding(true)} disabled={pending}>
               <Icons.Plus size={15} />
@@ -114,34 +117,26 @@ export default function TenderTypesClient({ tenders }: { tenders: TenderType[] }
                 >
                   <Icons.ChevronDown size={15} />
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => setEditing(tender)}>
-                  <Icons.Pencil size={15} />
-                  Edit
-                </Button>
-                <Button
-                  variant="danger-ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label={`Delete ${tender.name}`}
-                  disabled={tender.isSystem || pending}
-                  onClick={() => setDeleting(tender)}
-                >
-                  <Icons.Trash size={15} />
-                </Button>
+                {/* Reorder stays as bare arrows — it is THE act this list is
+                    for. Everything else folds into one menu per row. */}
+                <Menu label="More" variant="ghost">
+                  <MenuItem onClick={() => setEditing(tender)}>
+                    <Icons.Pencil size={15} />
+                    Edit
+                  </MenuItem>
+                  <MenuItem
+                    tone="danger"
+                    disabled={tender.isSystem || pending}
+                    onClick={() => setDeleting(tender)}
+                  >
+                    <Icons.Trash size={15} />
+                    Delete
+                  </MenuItem>
+                </Menu>
               </div>
             </SettingRow>
           ))}
         </div>
-      </Card>
-
-      <Card>
-        <CardBody>
-          <p className="text-sm text-muted">
-            Adding a card machine or online provider later — Yoco, PayFast, a loyalty wallet —
-            needs no change here beyond a new tender pointing at its integration. That is why these
-            are rows and not a fixed list.
-          </p>
-        </CardBody>
       </Card>
 
       <TenderModal
@@ -228,30 +223,43 @@ function TenderModal({
       }
     >
       <div className="flex flex-col gap-5">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Code"
-            hint={
-              tender?.isSystem
-                ? 'Built-in tenders keep their code — the engine matches on it.'
-                : 'The stable handle. Letters, digits and underscores.'
-            }
-          >
+        <Field
+          label="Code"
+          hint={
+            tender?.isSystem
+              ? 'Built-in tenders keep their code — the engine matches on it.'
+              : 'The stable handle. Letters, digits and underscores.'
+          }
+        >
+          <div className="w-48">
             <Input
               value={form.code}
               onChange={(e) => set('code', e.target.value.toUpperCase())}
               disabled={tender?.isSystem}
               maxLength={24}
             />
-          </Field>
+          </div>
+        </Field>
+
+        <FieldGroup title="Presentation" hint="Only changes how the button looks at the till.">
           <Field label="Name" hint="What the cashier sees. Rename freely.">
             <Input value={form.name} onChange={(e) => set('name', e.target.value)} maxLength={60} />
           </Field>
-        </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Icon" hint="Optional — the glyph on the till button.">
+              <Input
+                value={form.icon ?? ''}
+                onChange={(e) => set('icon', e.target.value || null)}
+                maxLength={40}
+              />
+            </Field>
+            <Field label="Colour" hint="Optional — the button’s tint.">
+              <ColourInput value={form.color ?? ''} onChange={(next) => set('color', next || null)} />
+            </Field>
+          </div>
+        </FieldGroup>
 
-        <div>
-          <p className="mb-2 text-xs font-medium text-muted">BEHAVIOUR</p>
-          <div className="flex flex-col gap-3 rounded-card border border-border p-4">
+        <FieldGroup title="Behaviour" hint="Changes what the till actually does.">
             <Switch
               checked={!!form.postsToDebtor}
               onChange={(v) => setForm((c) => ({ ...c, postsToDebtor: v, requiresCustomer: v || c.requiresCustomer }))}
@@ -316,29 +324,30 @@ function TenderModal({
               onChange={(v) => set('allowsRefund', v)}
               label="Can be refunded at the till"
             />
+        </FieldGroup>
 
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Minimum" hint="Card machines often have a floor.">
-                <CurrencyInput
-                  value={form.minAmount ?? 0}
-                  onChange={(e) => set('minAmount', money(e.target.value))}
-                />
-              </Field>
-              <Field label="Maximum" hint="Zero means no ceiling.">
-                <CurrencyInput
-                  value={form.maxAmount ?? 0}
-                  onChange={(e) => set('maxAmount', money(e.target.value))}
-                />
-              </Field>
-              <Field label="Surcharge %" hint="Passed on to the customer.">
-                <NumberInput
-                  value={form.surchargePct ?? 0}
-                  onChange={(e) => set('surchargePct', money(e.target.value))}
-                />
-              </Field>
-            </div>
+        <FieldGroup title="Limits" hint="Amount rules the till enforces per payment.">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Minimum" hint="Card machines often have a floor.">
+              <CurrencyInput
+                value={form.minAmount ?? 0}
+                onChange={(e) => set('minAmount', money(e.target.value))}
+              />
+            </Field>
+            <Field label="Maximum" hint="Zero means no ceiling.">
+              <CurrencyInput
+                value={form.maxAmount ?? 0}
+                onChange={(e) => set('maxAmount', money(e.target.value))}
+              />
+            </Field>
+            <Field label="Surcharge %" hint="Passed on to the customer.">
+              <NumberInput
+                value={form.surchargePct ?? 0}
+                onChange={(e) => set('surchargePct', money(e.target.value))}
+              />
+            </Field>
           </div>
-        </div>
+        </FieldGroup>
 
         <Switch
           checked={form.isActive !== false}

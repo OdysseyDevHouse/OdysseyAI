@@ -4,15 +4,15 @@ import { useActionState } from 'react'
 import { useFormStatus } from 'react-dom'
 import {
   Button,
+  Callout,
   Card,
   CardBody,
   CardHeader,
-  EmptyState,
   Field,
+  Icons,
   Input,
   Select,
 } from '@/components/ui'
-import { StatusError, Plus, Store } from '@/components/ui/icons'
 import type { GroupMember, StoreContents } from '@/lib/storeGroups'
 import StoreCard from './StoreCard'
 import { linkStoreAction, type LinkFormState } from './actions'
@@ -29,8 +29,10 @@ import { linkStoreAction, type LinkFormState } from './actions'
 function LinkButton() {
   const { pending } = useFormStatus()
   return (
+    // The one primary on this screen: linking is the action the page exists
+    // for. The per-store Save buttons stay secondary so they don't compete.
     <Button type="submit" variant="primary" disabled={pending}>
-      <Plus size={15} />
+      <Icons.Plus size={15} />
       {pending ? 'Linking…' : 'Link store'}
     </Button>
   )
@@ -59,26 +61,19 @@ export default function LinkedStoresSetup({
   const others = members.filter((m) => m.siteId !== currentSiteId)
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
+      {/* The card header alone carries the empty state — it already names what
+          is missing and what to do next, so an EmptyState under it would just
+          say the same thing twice. */}
       <Card>
         <CardHeader
           title={groupName ?? 'Not linked yet'}
           description={
             others.length
               ? `${currentSiteName} shares products with ${others.length} other store${others.length === 1 ? '' : 's'}.`
-              : `${currentSiteName} is standalone. Link another store to share products with it.`
+              : `${currentSiteName} is standalone. Link another store below to share products with it.`
           }
         />
-
-        {others.length === 0 && (
-          <CardBody>
-            <EmptyState
-              icon={<Store size={22} />}
-              title="No linked stores"
-              hint="Link another Odyssey store and products edited here can be written to it as well."
-            />
-          </CardBody>
-        )}
       </Card>
 
       {/* Every store in the group, including this one — its own settings decide
@@ -104,15 +99,7 @@ export default function LinkedStoresSetup({
             </p>
           ) : (
             <form action={formAction} className="flex flex-col gap-4">
-              {state.error && (
-                <p
-                  role="alert"
-                  className="flex items-center gap-2 rounded-control bg-danger-soft px-3 py-2 text-sm text-danger-ink"
-                >
-                  <StatusError size={15} />
-                  {state.error}
-                </p>
-              )}
+              {state.error && <Callout tone="danger">{state.error}</Callout>}
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Store to link">

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import {
   createDepartment,
   updateDepartment,
@@ -37,7 +37,9 @@ export async function saveDepartmentAction(
   _prev: DepartmentFormState,
   form: FormData,
 ): Promise<DepartmentFormState> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
 
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readInput(form)
@@ -55,7 +57,8 @@ export async function saveDepartmentAction(
 }
 
 export async function deleteDepartmentAction(form: FormData): Promise<void> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('products.edit')
+  const { siteId } = ctx
   const id = Number(form.get('id'))
 
   if (!Number.isFinite(id) || id <= 0) redirect('/departments')

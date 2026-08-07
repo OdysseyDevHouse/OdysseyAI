@@ -24,8 +24,26 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
-/** A range wide enough to cover whatever the test database happens to hold. */
-const WIDE: DateRange = { from: '2000-01-01', to: '2099-12-31' }
+/**
+ * A range wide enough to cover whatever the test database happens to hold, but
+ * ENDING YESTERDAY.
+ *
+ * The reconciliation checks below compare getSalesDashboard() against a
+ * separately issued SELECT. Any sale committed between those two reads makes
+ * the two disagree and fails the test for no good reason — which is exactly
+ * what happened when another suite was posting sales at the same time.
+ *
+ * Excluding today closes that window: yesterday's takings are settled and
+ * cannot change under us, while every invariant being tested (buckets sum to
+ * the headline, dimensions reconcile) holds just as well over a fixed period.
+ */
+const WIDE: DateRange = { from: '2000-01-01', to: yesterday() }
+
+function yesterday(): string {
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
 
 async function main() {
   console.log('\n— Date helpers —')

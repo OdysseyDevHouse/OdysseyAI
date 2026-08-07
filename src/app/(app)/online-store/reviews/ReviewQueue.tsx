@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  ButtonLink,
   Card,
+  ConfirmModal,
   EmptyState,
   Field,
   Icons,
   LinkSegmentedControl,
   Modal,
+  TableToolbar,
   Textarea,
   useToast,
 } from '@/components/ui'
@@ -47,6 +50,13 @@ const TONE: Record<ReviewStatus, 'warning' | 'success' | 'danger'> = {
   rejected: 'danger',
 }
 
+/** The tabs' vocabulary, so a badge never shows a raw enum like "pending". */
+const LABEL: Record<ReviewStatus, string> = {
+  pending: 'Waiting',
+  approved: 'Published',
+  rejected: 'Rejected',
+}
+
 export default function ReviewQueue({
   reviews,
   counts,
@@ -62,6 +72,7 @@ export default function ReviewQueue({
 
   const [rejecting, setRejecting] = useState<ProductReview | null>(null)
   const [reason, setReason] = useState('')
+  const [deleting, setDeleting] = useState<ProductReview | null>(null)
 
   function approve(review: ProductReview) {
     startAction(async () => {
@@ -102,41 +113,49 @@ export default function ReviewQueue({
     })
   }
 
-  function remove(review: ProductReview) {
+  function confirmDelete() {
+    if (!deleting) return
     startAction(async () => {
-      const result = await deleteReviewAction(review.id)
+      const result = await deleteReviewAction(deleting.id)
       if (!result.ok) {
         toast.error(result.error)
         return
       }
       toast.success('Review deleted.')
+      setDeleting(null)
       router.refresh()
     })
   }
 
   return (
     <>
-      <LinkSegmentedControl
-        aria-label="Review status"
-        value={status}
-        options={[
-          {
-            value: 'pending',
-            label: `Waiting (${counts.pending})`,
-            href: '/online-store/reviews?status=pending',
-          },
-          {
-            value: 'approved',
-            label: `Published (${counts.approved})`,
-            href: '/online-store/reviews?status=approved',
-          },
-          {
-            value: 'rejected',
-            label: `Rejected (${counts.rejected})`,
-            href: '/online-store/reviews?status=rejected',
-          },
-        ]}
-      />
+      {/* Same toolbar-card treatment as the orders queue, so the two
+          moderation screens read as siblings. */}
+      <Card>
+        <TableToolbar className="px-4 py-3.5">
+          <LinkSegmentedControl
+            aria-label="Review status"
+            value={status}
+            options={[
+              {
+                value: 'pending',
+                label: `Waiting (${counts.pending})`,
+                href: '/online-store/reviews?status=pending',
+              },
+              {
+                value: 'approved',
+                label: `Published (${counts.approved})`,
+                href: '/online-store/reviews?status=approved',
+              },
+              {
+                value: 'rejected',
+                label: `Rejected (${counts.rejected})`,
+                href: '/online-store/reviews?status=rejected',
+              },
+            ]}
+          />
+        </TableToolbar>
+      </Card>
 
       {reviews.length === 0 ? (
         <Card>
@@ -156,6 +175,21 @@ export default function ReviewQueue({
                   ? 'Reviews you approve show on the product page in your online store.'
                   : 'Reviews you turn down are kept here rather than deleted, so the decision stays on record.'
             }
+            action={
+              status === 'pending' ? (
+                <ButtonLink variant="secondary" href="/online-store/reviews?status=approved">
+                  See published reviews
+                </ButtonLink>
+              ) : status === 'approved' ? (
+                <ButtonLink variant="secondary" href="/online-store/setup">
+                  Check review settings
+                </ButtonLink>
+              ) : (
+                <ButtonLink variant="secondary" href="/online-store/reviews?status=pending">
+                  See what&apos;s waiting
+                </ButtonLink>
+              )
+            }
           />
         </Card>
       ) : (
@@ -170,7 +204,12 @@ export default function ReviewQueue({
                       {review.title && (
                         <span className="font-medium text-ink">{review.title}</span>
                       )}
-                      <Badge tone={TONE[review.status]}>{review.status}</Badge>
+                      {/* The tab already says what every card here is; a badge
+                          repeating it on each card is decoration. Only badge a
+                          status that CONTRADICTS the filter. */}
+                      {review.status !== status && (
+                        <Badge tone={TONE[review.status]}>{LABEL[review.status]}</Badge>
+                      )}
                     </div>
                     <p className="mt-1 text-sm text-muted">
                       {review.productDescription}
@@ -226,8 +265,10 @@ export default function ReviewQueue({
                       >
                         Reject
                       </Button>
+                      {/* success, not primary: every waiting card carries one,
+                          and publishing is the positive go. */}
                       <Button
-                        variant="primary"
+                        variant="success"
                         size="sm"
                         disabled={busy}
                         onClick={() => approve(review)}
@@ -241,7 +282,7 @@ export default function ReviewQueue({
                         variant="danger-ghost"
                         size="sm"
                         disabled={busy}
-                        onClick={() => remove(review)}
+                        onClick={() => setDeleting(review)}
                       >
                         <Icons.Trash size={15} />
                         Delete
@@ -292,6 +333,24 @@ export default function ReviewQueue({
           />
         </Field>
       </Modal>
+
+      {/* Deleting really destroys the review — rejecting is the reversible
+          path — so it has to be answered, not just clicked. */}
+      <ConfirmModal
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={confirmDelete}
+        title="Delete this review"
+        message={
+          <>
+            The review of <strong>{deleting?.productDescription}</strong> by{' '}
+            {deleting?.authorName || 'an anonymous customer'} will be gone for good. Rejecting
+            keeps a review on record; deleting does not.
+          </>
+        }
+        confirmLabel="Delete review"
+        busy={busy}
+      />
     </>
   )
 }

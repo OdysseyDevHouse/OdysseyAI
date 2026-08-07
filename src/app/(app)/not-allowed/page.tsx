@@ -1,5 +1,5 @@
 import { requireSiteUser } from '@/lib/auth'
-import { PageHeader, PageBody, Card, ButtonLink, Icons } from '@/components/ui'
+import { PageHeader, PageBody, Card, CardBody, ButtonLink, Icons } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +21,7 @@ export default async function NotAllowedPage() {
 
       <PageBody>
         <Card>
-          <div className="flex items-start gap-3 px-6 py-5">
+          <CardBody className="flex items-start gap-3">
             <Icons.Ban size={20} className="mt-0.5 shrink-0 text-danger" />
             <div className="flex flex-col gap-3">
               <div>
@@ -35,12 +35,12 @@ export default async function NotAllowedPage() {
                 </p>
               </div>
               <div>
-                <ButtonLink href="/dashboard" variant="secondary">
+                <ButtonLink href="/dashboard" variant="primary">
                   Back to the dashboard
                 </ButtonLink>
               </div>
             </div>
-          </div>
+          </CardBody>
         </Card>
       </PageBody>
     </>

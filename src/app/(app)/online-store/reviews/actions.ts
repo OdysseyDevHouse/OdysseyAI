@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   deleteReview,
@@ -23,7 +23,9 @@ export async function moderateReviewAction(
   status: 'approved' | 'rejected',
   reason = '',
 ): Promise<SaveResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await moderateReview(siteId, reviewId, status, actor.userName, reason)
   if (!result.ok) return result
@@ -43,7 +45,9 @@ export async function moderateReviewAction(
 }
 
 export async function reopenReviewAction(reviewId: number): Promise<SaveResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await reopenReview(siteId, reviewId)
   if (!result.ok) return result
@@ -60,7 +64,9 @@ export async function reopenReviewAction(reviewId: number): Promise<SaveResult> 
 }
 
 export async function deleteReviewAction(reviewId: number): Promise<SaveResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await deleteReview(siteId, reviewId)
   if (!result.ok) return result

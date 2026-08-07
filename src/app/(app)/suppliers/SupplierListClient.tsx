@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import {
   BulkActionBar,
   Badge,
@@ -11,11 +10,15 @@ import {
   Field,
   Icons,
   Input,
+  LinkSegmentedControl,
   Menu,
   MenuItem,
   Modal,
   NumberInput,
+  PrimaryLink,
+  RowTile,
   Select,
+  TableToolbar,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -26,6 +29,7 @@ import { bulkUpdateSuppliersAction } from './actions'
 /** The creditors mirror of CustomerListClient — see that file for the split. */
 
 type Filters = {
+  allHref: string
   statuses: { value: string; label: string; href: string; active: boolean }[]
   categories: string[]
 }
@@ -35,10 +39,16 @@ type BulkKind = SupplierBulkChange['kind'] | null
 export default function SupplierListClient({
   rows,
   total,
+  hasAny,
+  searchTerm,
   filters,
 }: {
   rows: Supplier[]
   total: number
+  /** Whether ANY supplier exists at all — decides which empty state to show. */
+  hasAny: boolean
+  /** The active search, echoed back when it matches nothing. */
+  searchTerm?: string
   filters: Filters
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
@@ -77,29 +87,24 @@ export default function SupplierListClient({
     })
   }
 
+  const activeStatus = filters.statuses.find((s) => s.active)?.value ?? 'all'
+
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5 text-xs">
-        <Link
-          href="/suppliers"
-          className={
-            filters.statuses.every((s) => !s.active)
-              ? 'font-medium text-brand'
-              : 'text-muted hover:text-ink'
-          }
-        >
-          All
-        </Link>
-        {filters.statuses.map((status) => (
-          <Link
-            key={status.value}
-            href={status.href}
-            className={status.active ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-          >
-            {status.label}
-          </Link>
-        ))}
-      </div>
+      <TableToolbar className="border-b border-border px-4 py-3.5">
+        <LinkSegmentedControl
+          aria-label="Filter by status"
+          value={activeStatus}
+          options={[
+            { value: 'all', label: 'All', href: filters.allHref },
+            ...filters.statuses.map((status) => ({
+              value: status.value,
+              label: status.label,
+              href: status.href,
+            })),
+          ]}
+        />
+      </TableToolbar>
 
       <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
         <Button variant="ghost" size="sm" onClick={() => setOpenBulk('status')} disabled={pending}>
@@ -125,13 +130,24 @@ export default function SupplierListClient({
         selectedKeys={selected}
         onSelectionChange={setSelected}
         onRowClick={(row) => router.push(`/suppliers/${row.id}`)}
-        empty={{
-          title: 'No suppliers found',
-          hint:
-            total === 0
-              ? 'Create your first supplier to get started.'
-              : 'Try a different search or clear the filters.',
-        }}
+        empty={
+          !hasAny
+            ? {
+                title: 'No suppliers yet',
+                hint: 'Create your first supplier to get started.',
+                icon: <Icons.Truck size={28} strokeWidth={1.75} />,
+                action: (
+                  <PrimaryLink href="/suppliers/new">
+                    <Icons.Plus size={15} />
+                    New supplier
+                  </PrimaryLink>
+                ),
+              }
+            : {
+                title: searchTerm ? `Nothing matches “${searchTerm}”` : 'No suppliers found',
+                hint: 'Try a different search or clear the filters.',
+              }
+        }
       />
 
       <BulkModals
@@ -171,10 +187,14 @@ const COLUMNS: readonly Column<Supplier>[] = [
     key: 'name',
     header: 'Name',
     sortable: true,
+    sortValue: (row) => row.name,
     cell: (row) => (
-      <div>
-        <div className="text-ink">{row.name}</div>
-        {row.contactName && <div className="text-xs text-muted">{row.contactName}</div>}
+      <div className="flex items-center gap-2.5">
+        <RowTile label={row.name} />
+        <div>
+          <div className="text-ink">{row.name}</div>
+          {row.contactName && <div className="text-xs text-muted">{row.contactName}</div>}
+        </div>
       </div>
     ),
   },
@@ -193,22 +213,8 @@ const COLUMNS: readonly Column<Supplier>[] = [
     sortValue: (row) => row.paymentTermsDays,
     cell: (row) => (row.paymentTermsDays === 0 ? 'COD' : `${row.paymentTermsDays} days`),
   },
-  {
-    key: 'lead',
-    header: 'Lead time',
-    numeric: true,
-    sortable: true,
-    sortValue: (row) => row.leadTimeDays,
-    cell: (row) => (row.leadTimeDays > 0 ? `${row.leadTimeDays} days` : '—'),
-  },
-  {
-    key: 'products',
-    header: 'Products',
-    numeric: true,
-    sortable: true,
-    sortValue: (row) => row.productCount,
-    cell: (row) => (row.productCount > 0 ? String(row.productCount) : '—'),
-  },
+  // Lead time and product count are detail-screen facts — nobody scans this
+  // list for them, and six columns beats eight.
   {
     key: 'balance',
     header: 'Balance',
@@ -216,7 +222,13 @@ const COLUMNS: readonly Column<Supplier>[] = [
     sortable: true,
     sortValue: (row) => row.balance,
     // A supplier balance is what WE owe THEM — never styled as a problem.
-    cell: (row) => formatMoney(row.balance),
+    // Zeroes recede so the accounts that hold money are the ones that read.
+    cell: (row) =>
+      row.balance === 0 ? (
+        <span className="text-faint">{formatMoney(0)}</span>
+      ) : (
+        formatMoney(row.balance)
+      ),
   },
   {
     key: 'status',

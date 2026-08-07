@@ -14,7 +14,9 @@ import {
   getOnlineSettings,
   getPublishCounts,
   listDeliveryZones,
+  listDepartmentVisibility,
   listOrderStatuses,
+  setDepartmentVisibility,
   saveDeliveryZone,
   saveOnlineSettings,
   type OnlineSettingsInput,
@@ -110,10 +112,28 @@ async function main() {
   }
 
   console.log('\n— A half-configured store cannot be opened —')
+  // CLOSE it first. "A refused save never opens the store" only means anything
+  // if the store was shut to begin with — on a site left open by hand, the
+  // check passes or fails for reasons that have nothing to do with the guards.
+  await saveOnlineSettings(SITE, { ...base, isEnabled: false }, 'test')
+
   // Publish something, so each guard below is tested in isolation rather than
   // being masked by the empty-catalogue one.
   await siteExecute(SITE, `UPDATE products SET show_online = 1 WHERE id = (SELECT MIN(id) FROM (SELECT id FROM products WHERE is_archived = 0) t)`)
-  const publishable = { ...base, publishMode: 'flagged' as const }
+  /*
+   * Collection ON, delivery OFF — pinned, not inherited.
+   *
+   * `base` is whatever the store happens to be set to, and a store left with
+   * delivery enabled and no zones makes every check below fail on the DELIVERY
+   * guard instead of the one it is testing. Each guard is only meaningful when
+   * the others are satisfied, so this fixes the fulfilment explicitly.
+   */
+  const publishable = {
+    ...base,
+    publishMode: 'flagged' as const,
+    collectEnabled: true,
+    deliverEnabled: false,
+  }
 
   const noFulfilment = await saveOnlineSettings(
     SITE,
@@ -122,12 +142,26 @@ async function main() {
   )
   ok('refuses to open with no collection and no delivery', !noFulfilment.ok)
 
+  /*
+   * Another PRECONDITION this check asserts but does not create.
+   *
+   * It opens in 'departments' mode and expects the catalogue to be empty — so
+   * every department must be unticked. A single department left published by
+   * another test, or by someone using the builder, fills the catalogue and
+   * makes this guard look broken when it is working perfectly.
+   */
+  const publishedDepts = (await listDepartmentVisibility(SITE)).filter((d) => d.showOnline)
+  for (const d of publishedDepts) await setDepartmentVisibility(SITE, d.id, false)
+
   const emptyCatalogue = await saveOnlineSettings(
     SITE,
     { ...base, isEnabled: true, publishMode: 'departments', collectEnabled: true },
     'test',
   )
   ok('refuses to open with an empty catalogue', !emptyCatalogue.ok)
+
+  // Put them back — later checks rely on there being something to publish.
+  for (const d of publishedDepts) await setDepartmentVisibility(SITE, d.id, true)
 
   // This check asserts a PRECONDITION it does not create — "there are no
   // delivery areas" — so it has to establish it. A zone left behind by another

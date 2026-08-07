@@ -398,6 +398,35 @@ export async function actorFor(capability: Capability): Promise<
 }
 
 /**
+ * For actions whose return type has no room for a refusal.
+ *
+ * A lookup returning `TillProduct[]`, or a form action returning a state
+ * object with a required `message`, cannot express "denied" in its own shape —
+ * and widening every one of those signatures would push the check into every
+ * caller, which is exactly where it gets forgotten.
+ *
+ * Throwing is right for these. They are only ever called by a screen the user
+ * already had to pass a page guard to reach, so reaching one without the
+ * capability means the client is doing something the UI never offered: the
+ * honest answer is an error, not a plausible-looking empty list.
+ */
+export async function actorForOrThrow(capability: Capability): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+  capabilities: CapabilitySet
+}> {
+  const { site, user, capabilities } = await requireSiteUser()
+  if (!can(capabilities, capability)) {
+    throw new Error(`Not allowed: ${capability}`)
+  }
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
+  }
+}
+
+/**
  * The API-route counterpart.
  *
  * Routes under `src/app/api` sit OUTSIDE the (app) route group, so

@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId } from '@/lib/auth'
+import { requireActor, requireSiteId, actorFor } from '@/lib/auth'
 import {
   setOrderDetails,
   deliverOrder,
@@ -25,7 +25,9 @@ export async function saveDetailsAction(
   documentId: number,
   input: OrderDetailsInput,
 ): Promise<ActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await setOrderDetails(siteId, documentId, input)
   if (!result.ok) return result
 
@@ -38,7 +40,9 @@ export async function deliverAction(
   documentId: number,
   lines: DeliveryLineInput[],
 ): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await deliverOrder(siteId, actor, documentId, lines)
   if (!result.ok) return result
@@ -58,7 +62,9 @@ export async function deliverAction(
 }
 
 export async function cancelOrderAction(documentId: number, reason: string): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await cancelOrder(siteId, actor, documentId, reason)
   if (!result.ok) return result
@@ -75,7 +81,9 @@ export async function cancelOrderAction(documentId: number, reason: string): Pro
 }
 
 export async function releaseStaleAction(): Promise<ActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const released = await releaseStaleReservations(siteId, actor)
   revalidatePath('/sales/orders')

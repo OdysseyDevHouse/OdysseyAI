@@ -365,6 +365,21 @@ export async function receiveGoods(
       sourceDocId: posted.documentId,
     })
 
+    // The general ledger, on the same terms: debit stock and VAT input, credit
+    // creditors. Cannot fail the receipt — the GL is a derived mirror, so a
+    // missing journal is a reporting gap rather than a reason to un-receive
+    // goods already on the shelf. See 045.
+    const { mirrorGrv } = await import('./glPosting')
+    await mirrorGrv(siteId, actor, {
+      documentId: posted.documentId,
+      documentNumber: posted.documentNumber,
+      documentDate: docDate,
+      isReturn: false,
+      supplierId: input.supplierId,
+      stockExcl: subtotalExcl,
+      vatTotal,
+    })
+
     // Update the order's fulfilment state once its lines have moved.
     if (input.orderId) await refreshOrderFulfilment(siteId, input.orderId)
 

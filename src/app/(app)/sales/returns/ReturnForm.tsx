@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   CardBody,
+  CardFooter,
   CardHeader,
   Combobox,
   CurrencyInput,
@@ -21,6 +22,7 @@ import {
   TABLE_HEAD_ROW,
   TABLE_TH,
   TABLE_TD,
+  TABLE_TD_INPUT,
   TABLE_ROW,
   TABLE_NUMERIC,
   type ComboboxOption,
@@ -197,7 +199,7 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
                   <th className={`${TABLE_TH} text-right`}>Qty</th>
                   <th className={`${TABLE_TH} text-right`}>Refund each</th>
                   <th className={`${TABLE_TH} text-right`}>Total</th>
-                  <th className={TABLE_TH} />
+                  <th className={`${TABLE_TH} w-px`} />
                 </tr>
               </thead>
               <tbody>
@@ -207,7 +209,7 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
                       <div className="text-ink">{line.description}</div>
                       <div className="text-xs text-muted">{line.productCode}</div>
                     </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                    <td className={`${TABLE_TD_INPUT} ${TABLE_NUMERIC}`}>
                       <div className="flex justify-end">
                         <div className="w-24">
                           <NumberInput
@@ -227,7 +229,7 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
                         </div>
                       </div>
                     </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                    <td className={`${TABLE_TD_INPUT} ${TABLE_NUMERIC}`}>
                       <div className="flex justify-end">
                         <div className="w-32">
                           <CurrencyInput
@@ -277,7 +279,9 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
         <CardHeader title="Why it is coming back" description="Recorded against you on the exception report." />
         <CardBody className="flex flex-col gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Reason" hint="Required.">
+            {/* Required is the default here — the optional fields are the
+                marked ones. */}
+            <Field label="Reason">
               <Select value={reason} onChange={(e) => setReason(e.target.value)}>
                 {REASONS.map((r) => (
                   <option key={r} value={r}>
@@ -295,7 +299,7 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
             </Field>
           </div>
 
-          <Field label="Note" hint="Anything the reason code does not cover.">
+          <Field label="Note" hint="Optional — anything the reason code does not cover.">
             <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -326,13 +330,11 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
             )}
           </div>
         </CardBody>
-      </Card>
 
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+        <CardFooter className="justify-between">
           <div>
-            <div className="text-sm text-muted">Refund total</div>
-            <div className="numeric text-2xl font-semibold text-ink">
+            <div className="text-xs text-muted">Refund total</div>
+            <div className="numeric text-xl font-semibold text-ink">
               {formatMoney(Math.abs(totals.totalIncl))}
             </div>
           </div>
@@ -344,7 +346,7 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
             <Icons.Reverse size={15} />
             {pending ? 'Recording…' : 'Record the return'}
           </Button>
-        </div>
+        </CardFooter>
       </Card>
     </>
   )

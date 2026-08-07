@@ -2,21 +2,9 @@ import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { getTransfer } from '@/lib/site/stockTransfers'
 import { formatQty } from '@/lib/decimals'
-import {
-  PageHeader,
-  PageBody,
-  Card,
-  CardHeader,
-  Badge,
-  Icons,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
-} from '@/components/ui'
+import { PageHeader, PageBody, Callout, Card, CardHeader, Icons } from '@/components/ui'
 import VoidTransferButton from './VoidTransferButton'
+import TransferLinesTable from './TransferLinesTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,15 +34,10 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
       />
       <PageBody>
         {transfer.status === 'cancelled' && (
-          <Card className="p-4">
-            <div className="flex items-start gap-3">
-              <Badge tone="danger">Cancelled</Badge>
-              <div className="text-sm text-muted">
-                Reversed{transfer.cancelReason ? `: ${transfer.cancelReason}` : '.'} The stock was
-                returned to {transfer.fromLocationName}.
-              </div>
-            </div>
-          </Card>
+          <Callout tone="danger" title="Cancelled">
+            Reversed{transfer.cancelReason ? `: ${transfer.cancelReason}` : '.'} The stock was
+            returned to {transfer.fromLocationName}.
+          </Callout>
         )}
 
         <Card>
@@ -66,26 +49,9 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
                 : 'This transfer has been reversed. Its movements remain, with their reversals beside them.'
             }
           />
-          <div className="overflow-x-auto">
-            <table className={TABLE}>
-              <thead>
-                <tr className={TABLE_HEAD_ROW}>
-                  <th className={TABLE_TH}>Code</th>
-                  <th className={TABLE_TH}>Description</th>
-                  <th className={`${TABLE_TH} text-right`}>Quantity</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transfer.lines.map((line) => (
-                  <tr key={line.id} className={TABLE_ROW}>
-                    <td className={`${TABLE_TD} text-ink`}>{line.productCode ?? '—'}</td>
-                    <td className={`${TABLE_TD} text-ink-2`}>{line.description}</td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatQty(line.qty)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* The lines are plain data; the columns' functions live in the
+              client component, where they are allowed to. */}
+          <TransferLinesTable lines={transfer.lines} />
         </Card>
 
         <Card className="p-4">
@@ -97,14 +63,11 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
           </dl>
         </Card>
 
-        <Card className="p-3">
-          <p className="flex items-center gap-2 text-xs text-muted">
-            <Icons.ArrowLeftRight size={14} className="text-faint" />
-            {formatQty(transfer.totalQty)} unit{transfer.totalQty === 1 ? '' : 's'} across{' '}
-            {transfer.lineCount} line{transfer.lineCount === 1 ? '' : 's'}. A transfer never changes
-            what the business owns in total — only which location holds it.
-          </p>
-        </Card>
+        <Callout tone="neutral" icon={<Icons.ArrowLeftRight size={18} />}>
+          {formatQty(transfer.totalQty)} unit{transfer.totalQty === 1 ? '' : 's'} across{' '}
+          {transfer.lineCount} line{transfer.lineCount === 1 ? '' : 's'}. A transfer never changes
+          what the business owns in total — only which location holds it.
+        </Callout>
       </PageBody>
     </>
   )

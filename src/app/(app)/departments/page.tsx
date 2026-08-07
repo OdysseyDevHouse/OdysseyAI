@@ -1,8 +1,24 @@
-import Link from 'next/link'
-import { Plus, StatusSuccess as CheckCircle2, CornerDownRight } from '@/components/ui/icons'
+import { Plus, CornerDownRight } from '@/components/ui/icons'
 import { requireCapability } from '@/lib/auth'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
-import { PageHeader, PrimaryLink, Card, EmptyState, Badge, TABLE_HEAD_ROW, TABLE_TH } from '@/components/ui'
+import {
+  PageHeader,
+  PageBody,
+  PrimaryLink,
+  ButtonLink,
+  Card,
+  Callout,
+  EmptyState,
+  Badge,
+  RowTile,
+  TextLink,
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_TH,
+  TABLE_ROW,
+  TABLE_TD,
+  TABLE_NUMERIC,
+} from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,25 +49,29 @@ export default async function DepartmentsPage({
         }
       />
 
-      {(saved || deleted) && (
-        <div className="px-6 pt-4">
-          <p className="flex items-center gap-2 rounded-md bg-positive/10 px-3 py-2 text-sm text-positive">
-            <CheckCircle2 size={15} />
-            {saved ? 'Department saved.' : 'Department deleted.'}
-          </p>
-        </div>
-      )}
+      <PageBody>
+        {(saved || deleted) && (
+          <Callout tone="success" title={saved ? 'Department saved.' : 'Department deleted.'} />
+        )}
 
-      <div className="p-6">
         <Card>
           {rows.length === 0 ? (
             <EmptyState
               title="No departments yet"
               hint="Create a top-level department, then add sub-departments beneath it."
+              action={
+                <PrimaryLink href="/departments/new">
+                  <Plus size={15} />
+                  New department
+                </PrimaryLink>
+              }
             />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              {/* Hand-built rather than DataTable for ONE reason: the tree
+                  indent, which per-row padding carries and DataTable cannot
+                  express. It still wears the shared table skin. */}
+              <table className={TABLE}>
                 <thead>
                   <tr className={TABLE_HEAD_ROW}>
                     <th className={TABLE_TH}>Department</th>
@@ -59,65 +79,57 @@ export default async function DepartmentsPage({
                     <th className={`${TABLE_TH} text-right`}>Products</th>
                     <th className={`${TABLE_TH} text-right`}>Sub-departments</th>
                     <th className={TABLE_TH}>Status</th>
-                    <th className={`${TABLE_TH} text-right`}></th>
+                    <th className={`${TABLE_TH} w-px`} />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
+                <tbody>
                   {rows.map(({ department: d, depth }) => (
-                    <tr key={d.id} className="hover:bg-surface-2">
-                      <td className="px-4 py-2.5">
-                        {/* Indentation carries the hierarchy; padding rather
-                            than nested tables keeps the columns aligned. */}
+                    <tr key={d.id} className={TABLE_ROW}>
+                      <td className={TABLE_TD}>
+                        {/* data-kit-ok: the indent IS the hierarchy — computed
+                            per row, so it cannot be a class. */}
                         <span
-                          className="flex items-center gap-1.5"
+                          data-kit-ok
+                          className="flex items-center gap-2"
                           style={{ paddingLeft: `${depth * 20}px` }}
                         >
                           {depth > 0 && (
                             <CornerDownRight size={13} className="shrink-0 text-muted opacity-60" />
                           )}
-                          {d.color && (
-                            <span
-                              aria-hidden
-                              className="size-2.5 shrink-0 rounded-full"
-                              style={{ background: d.color }}
-                            />
-                          )}
-                          <Link
-                            href={`/departments/${d.id}`}
-                            className="text-brand hover:underline"
-                          >
-                            {d.name}
-                          </Link>
+                          <RowTile label={d.name} token={d.color} />
+                          <TextLink href={`/departments/${d.id}`}>{d.name}</TextLink>
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-muted">{d.code ?? '—'}</td>
-                      <td className="numeric px-4 py-2.5 text-right">
+                      <td className={`${TABLE_TD} text-muted`}>{d.code ?? '—'}</td>
+                      <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                         {d.productCount > 0 ? (
-                          <Link
-                            href={`/products?department=${d.id}`}
-                            className="text-brand hover:underline"
-                          >
+                          <TextLink href={`/products?department=${d.id}`}>
                             {d.productCount}
-                          </Link>
+                          </TextLink>
                         ) : (
-                          <span className="text-muted">0</span>
+                          <span className="text-faint">—</span>
                         )}
                       </td>
-                      <td className="numeric px-4 py-2.5 text-right text-muted">{d.childCount}</td>
-                      <td className="px-4 py-2.5">
-                        {d.isActive ? (
-                          <Badge tone="positive">Active</Badge>
-                        ) : (
-                          <Badge>Inactive</Badge>
-                        )}
+                      <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
+                        {d.childCount > 0 ? d.childCount : <span className="text-faint">—</span>}
                       </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <Link
-                          href={`/departments/new?parent=${d.id}`}
-                          className="text-xs text-muted hover:text-brand"
-                        >
-                          Add sub
-                        </Link>
+                      <td className={TABLE_TD}>
+                        {/* Active is the normal state — badging it on every row
+                            would drown the one Inactive that matters. */}
+                        {!d.isActive && <Badge>Inactive</Badge>}
+                      </td>
+                      <td className={`${TABLE_TD} w-px`}>
+                        <div className="flex justify-end">
+                          <ButtonLink
+                            href={`/departments/new?parent=${d.id}`}
+                            variant="ghost"
+                            size="sm"
+                            iconOnly
+                            aria-label={`Add sub-department under ${d.name}`}
+                          >
+                            <Plus size={14} />
+                          </ButtonLink>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -126,7 +138,7 @@ export default async function DepartmentsPage({
             </div>
           )}
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

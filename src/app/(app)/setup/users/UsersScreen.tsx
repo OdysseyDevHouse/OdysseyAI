@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
+  Callout,
   Card,
   DataTable,
   Badge,
@@ -14,6 +15,7 @@ import {
   Switch,
   Checkbox,
   Icons,
+  TableToolbar,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -143,12 +145,14 @@ export default function UsersScreen({
 
   return (
     <>
-      <div className="flex justify-end">
-        <Button variant="primary" onClick={() => setAdding(true)}>
-          <Icons.Plus size={16} />
-          Add user
-        </Button>
-      </div>
+      <TableToolbar
+        actions={
+          <Button variant="primary" onClick={() => setAdding(true)}>
+            <Icons.Plus size={16} />
+            Add user
+          </Button>
+        }
+      />
 
       <Card>
         <DataTable
@@ -197,6 +201,13 @@ export default function UsersScreen({
           empty={{
             title: 'Nobody can sign in yet',
             hint: 'Add the people who work here — a till user needs only a PIN.',
+            action: (
+              // Secondary: the toolbar's Add user above stays the one primary.
+              <Button variant="secondary" onClick={() => setAdding(true)}>
+                <Icons.Plus size={15} />
+                Add user
+              </Button>
+            ),
           }}
         />
       </Card>
@@ -306,12 +317,7 @@ function UserForm({
       }
     >
       <div className="flex flex-col gap-5">
-        {error && (
-          <div className="flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-sm">
-            <Icons.StatusWarning size={16} className="mt-0.5 shrink-0 text-danger" />
-            <span className="text-ink">{error}</span>
-          </div>
-        )}
+        {error && <Callout tone="danger">{error}</Callout>}
 
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jan Bezuidenhout" />

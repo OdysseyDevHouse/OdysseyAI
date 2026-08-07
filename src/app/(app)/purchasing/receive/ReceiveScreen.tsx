@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
@@ -15,9 +15,17 @@ import {
   Icons,
   Input,
   NumberInput,
+  PageBody,
   Select,
   useToast,
   type ComboboxOption,
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_NUMERIC,
+  TABLE_ROW,
+  TABLE_TD,
+  TABLE_TD_INPUT,
+  TABLE_TH,
 } from '@/components/ui'
 import { formatMoney, formatQty, round } from '@/lib/decimals'
 import { apportionDiscount, weightedAverageCost } from '@/lib/documentMath'
@@ -271,12 +279,21 @@ export default function ReceiveScreen({
   }))
 
   return (
-    <div className="grid gap-4 px-6 pt-4 pb-10 lg:grid-cols-3">
+    <PageBody>
+      <div className="grid gap-4 lg:grid-cols-3">
       <div className="flex flex-col gap-4 lg:col-span-2">
         <Card>
           <CardHeader title="Delivery" description="Who it came from, and what it came with." />
           <CardBody className="grid gap-4 sm:grid-cols-2">
-            <Field label="Supplier">
+            <Field
+              label="Supplier"
+              // Marked here, not in a footnote by the button — the fix is this box.
+              error={
+                lines.length > 0 && supplierId === ''
+                  ? 'Choose who this delivery came from.'
+                  : undefined
+              }
+            >
               <Select
                 value={supplierId}
                 onChange={(e) => {
@@ -380,167 +397,219 @@ export default function ReceiveScreen({
               icon={<Icons.PackageOpen size={22} />}
             />
           ) : (
-            <div className="divide-y divide-border">
-              {lines.map((line, index) => {
-                const landed = totals.landed[index]
-                // What this receipt will do to the cost every future margin is
-                // measured against.
-                const newAverage = weightedAverageCost({
-                  existingQty: line.currentStock,
-                  existingCostExcl: line.currentAverage,
-                  receivedQty: line.qtyReceived,
-                  receivedCostExcl: landed,
-                })
-                const moved = line.currentAverage > 0 && newAverage !== line.currentAverage
-
-                return (
-                  <div key={line.key} className="px-6 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-ink">{line.description}</div>
-                        <div className="text-xs text-muted">
-                          {line.productCode}
-                          {line.qtyOrdered > 0 && (
-                            <span className="ml-2">{formatQty(line.qtyOrdered)} ordered</span>
-                          )}
-                        </div>
-                      </div>
-                      <Button
-                        variant="bare"
-                        size="sm"
-                        iconOnly
-                        aria-label={`Remove ${line.description}`}
-                        onClick={() => setLines((c) => c.filter((l) => l.key !== line.key))}
-                      >
-                        <Icons.Close size={15} />
-                      </Button>
-                    </div>
-
-                    <div
-                      className={`mt-2 grid gap-3 ${multiLocation ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}
-                    >
-                      <Field label="Received">
-                        <NumberInput
-                          value={line.qtyReceived}
-                          precision={3}
-                          onChange={(e) =>
-                            setLines((c) =>
-                              c.map((l) =>
-                                l.key === line.key
-                                  ? { ...l, qtyReceived: Number(e.target.value) || 0 }
-                                  : l,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                      <Field label="Unit cost (excl.)">
-                        <CurrencyInput
-                          value={line.unitCostExcl}
-                          onChange={(e) =>
-                            setLines((c) =>
-                              c.map((l) =>
-                                l.key === line.key
-                                  ? {
-                                      ...l,
-                                      unitCostExcl:
-                                        Number(String(e.target.value).replace(',', '.')) || 0,
-                                    }
-                                  : l,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                      <Field label="Their code">
-                        <Input
-                          value={line.supplierCode}
-                          onChange={(e) =>
-                            setLines((c) =>
-                              c.map((l) =>
-                                l.key === line.key ? { ...l, supplierCode: e.target.value } : l,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                      {/* Only when there is a choice to make. A single-location
-                          site would get a select with one option in it. */}
-                      {multiLocation && (
-                        <Field label="Into">
-                          <Select
-                            value={line.locationId === null ? '' : String(line.locationId)}
-                            onChange={(e) =>
-                              setLines((c) =>
-                                c.map((l) =>
-                                  l.key === line.key
-                                    ? { ...l, locationId: Number(e.target.value) || null }
-                                    : l,
-                                ),
-                              )
-                            }
-                          >
-                            {locations.map((loc) => (
-                              <option key={loc.id} value={loc.id}>
-                                {loc.code}
-                              </option>
-                            ))}
-                          </Select>
-                        </Field>
-                      )}
-
-                      <div className="flex flex-col justify-end pb-1">
-                        <div className="numeric text-sm text-ink">
-                          {formatMoney(totals.values[index])}
-                        </div>
-                        {charges > 0 && (
-                          <div className="text-xs text-muted">
-                            +{formatMoney(totals.spread[index])} charges
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Serial capture, for the lines that need it. Rendered
-                        inline rather than behind a dialog: the delivery note is
-                        in the receiver's hand now, and a modal per line would
-                        make a ten-line delivery ten interruptions. */}
-                    {line.productType === 'serial' && (
-                      <SerialCapture
-                        serials={line.serials}
-                        warrantyUntil={line.warrantyUntil}
-                        qtyReceived={line.qtyReceived}
-                        onChange={(patch) =>
-                          setLines((c) =>
-                            c.map((l) => (l.key === line.key ? { ...l, ...patch } : l)),
-                          )
-                        }
-                      />
+            /* A table, not stacked field grids: quantities, costs and line
+               totals each form a column, so a delivery can be checked against
+               the invoice line by line. Live inputs justify hand-building it —
+               it wears the shared TABLE_* skin so it cannot drift. */
+            <div className="overflow-x-auto">
+              <table className={TABLE}>
+                <thead>
+                  <tr className={TABLE_HEAD_ROW}>
+                    <th scope="col" className={TABLE_TH}>
+                      Item
+                    </th>
+                    <th scope="col" className={`${TABLE_TH} w-24 text-right`}>
+                      Received
+                    </th>
+                    <th scope="col" className={`${TABLE_TH} w-32 text-right`}>
+                      Unit cost (excl.)
+                    </th>
+                    <th scope="col" className={`${TABLE_TH} w-28`}>
+                      Their code
+                    </th>
+                    {/* Only when there is a choice to make. A single-location
+                        site would get a select with one option in it. */}
+                    {multiLocation && (
+                      <th scope="col" className={`${TABLE_TH} w-24`}>
+                        Into
+                      </th>
                     )}
+                    <th scope="col" className={`${TABLE_TH} text-right`}>
+                      Line total
+                    </th>
+                    <th scope="col" className={`${TABLE_TH} w-px`} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, index) => {
+                    const landed = totals.landed[index]
+                    // What this receipt will do to the cost every future margin
+                    // is measured against.
+                    const newAverage = weightedAverageCost({
+                      existingQty: line.currentStock,
+                      existingCostExcl: line.currentAverage,
+                      receivedQty: line.qtyReceived,
+                      receivedCostExcl: landed,
+                    })
+                    const moved = line.currentAverage > 0 && newAverage !== line.currentAverage
+                    const span = multiLocation ? 7 : 6
 
-                    {/* The cost preview — the reason this screen exists. */}
-                    {line.productId && (
-                      <p className="mt-2 text-xs text-muted">
-                        Landed {formatMoney(landed)} per unit ·{' '}
-                        {moved ? (
-                          <>
-                            average cost {formatMoney(line.currentAverage)} →{' '}
-                            <span
-                              className={
-                                newAverage > line.currentAverage ? 'text-warning' : 'text-success'
-                              }
+                    return (
+                      <Fragment key={line.key}>
+                        <tr className={TABLE_ROW}>
+                          <td className={TABLE_TD}>
+                            <div className="text-ink">{line.description}</div>
+                            <div className="text-xs text-muted">
+                              {line.productCode}
+                              {line.qtyOrdered > 0 && (
+                                <span className="ml-2">{formatQty(line.qtyOrdered)} ordered</span>
+                              )}
+                            </div>
+                            {/* The cost preview — the reason this screen exists. */}
+                            {line.productId && (
+                              <p className="mt-0.5 text-xs">
+                                <span className="numeric text-ink-2">
+                                  Landed {formatMoney(landed)}
+                                </span>{' '}
+                                <span className="text-muted">per unit · </span>
+                                {moved ? (
+                                  <span className="text-muted">
+                                    average cost{' '}
+                                    <span className="numeric">
+                                      {formatMoney(line.currentAverage)}
+                                    </span>{' '}
+                                    →{' '}
+                                    <span
+                                      className={`numeric ${
+                                        newAverage > line.currentAverage
+                                          ? 'text-warning'
+                                          : 'text-success'
+                                      }`}
+                                    >
+                                      {formatMoney(newAverage)}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="text-muted">
+                                    average cost becomes{' '}
+                                    <span className="numeric">{formatMoney(newAverage)}</span>
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                          </td>
+                          <td className={`${TABLE_TD_INPUT} w-24`}>
+                            <Field
+                              error={line.qtyReceived <= 0 ? 'Quantity needed.' : undefined}
                             >
-                              {formatMoney(newAverage)}
-                            </span>
-                          </>
-                        ) : (
-                          <>average cost becomes {formatMoney(newAverage)}</>
+                              <NumberInput
+                                value={line.qtyReceived}
+                                precision={3}
+                                aria-label={`Quantity of ${line.description} received`}
+                                onChange={(e) =>
+                                  setLines((c) =>
+                                    c.map((l) =>
+                                      l.key === line.key
+                                        ? { ...l, qtyReceived: Number(e.target.value) || 0 }
+                                        : l,
+                                    ),
+                                  )
+                                }
+                              />
+                            </Field>
+                          </td>
+                          <td className={`${TABLE_TD_INPUT} w-32`}>
+                            <CurrencyInput
+                              value={line.unitCostExcl}
+                              aria-label={`Unit cost of ${line.description}, excluding VAT`}
+                              onChange={(e) =>
+                                setLines((c) =>
+                                  c.map((l) =>
+                                    l.key === line.key
+                                      ? {
+                                          ...l,
+                                          unitCostExcl:
+                                            Number(String(e.target.value).replace(',', '.')) || 0,
+                                        }
+                                      : l,
+                                  ),
+                                )
+                              }
+                            />
+                          </td>
+                          <td className={`${TABLE_TD_INPUT} w-28`}>
+                            <Input
+                              value={line.supplierCode}
+                              aria-label={`Supplier's code for ${line.description}`}
+                              onChange={(e) =>
+                                setLines((c) =>
+                                  c.map((l) =>
+                                    l.key === line.key ? { ...l, supplierCode: e.target.value } : l,
+                                  ),
+                                )
+                              }
+                            />
+                          </td>
+                          {multiLocation && (
+                            <td className={`${TABLE_TD_INPUT} w-24`}>
+                              <Select
+                                value={line.locationId === null ? '' : String(line.locationId)}
+                                aria-label={`Location for ${line.description}`}
+                                onChange={(e) =>
+                                  setLines((c) =>
+                                    c.map((l) =>
+                                      l.key === line.key
+                                        ? { ...l, locationId: Number(e.target.value) || null }
+                                        : l,
+                                    ),
+                                  )
+                                }
+                              >
+                                {locations.map((loc) => (
+                                  <option key={loc.id} value={loc.id}>
+                                    {loc.code}
+                                  </option>
+                                ))}
+                              </Select>
+                            </td>
+                          )}
+                          <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                            <div className="text-ink">{formatMoney(totals.values[index])}</div>
+                            {charges > 0 && (
+                              <div className="text-xs text-muted">
+                                +{formatMoney(totals.spread[index])} charges
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-1.5">
+                            <Button
+                              variant="bare"
+                              size="sm"
+                              iconOnly
+                              aria-label={`Remove ${line.description}`}
+                              onClick={() => setLines((c) => c.filter((l) => l.key !== line.key))}
+                            >
+                              <Icons.Close size={15} />
+                            </Button>
+                          </td>
+                        </tr>
+
+                        {/* Serial capture, for the lines that need it. Rendered
+                            inline rather than behind a dialog: the delivery
+                            note is in the receiver's hand now, and a modal per
+                            line would make a ten-line delivery ten
+                            interruptions. Its badge marks each short line. */}
+                        {line.productType === 'serial' && (
+                          <tr className={TABLE_ROW}>
+                            <td colSpan={span} className={TABLE_TD}>
+                              <SerialCapture
+                                serials={line.serials}
+                                warrantyUntil={line.warrantyUntil}
+                                qtyReceived={line.qtyReceived}
+                                onChange={(patch) =>
+                                  setLines((c) =>
+                                    c.map((l) => (l.key === line.key ? { ...l, ...patch } : l)),
+                                  )
+                                }
+                              />
+                            </td>
+                          </tr>
                         )}
-                      </p>
-                    )}
-                  </div>
-                )
-              })}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </Card>
@@ -566,16 +635,11 @@ export default function ReceiveScreen({
           {pending ? 'Receiving…' : 'Receive the goods'}
         </Button>
 
-        {!ready && (
-          <p className="text-center text-xs text-muted">
-            {!supplierId
-              ? 'Choose a supplier.'
-              : lines.length === 0
-                ? 'Add what arrived.'
-                : serialGaps.length > 0
-                  ? `Every unit of ${serialGaps[0].description} needs a serial number.`
-                  : 'Add what arrived.'}
-          </p>
+        {/* Everything that blocks the button is marked at its source — the
+            supplier field, a quantity box, or a line's serial badge. The only
+            state with nowhere to point is an empty delivery. */}
+        {lines.length === 0 && (
+          <p className="text-center text-xs text-muted">Add what arrived.</p>
         )}
 
         <Card className="p-3">
@@ -586,7 +650,8 @@ export default function ReceiveScreen({
           </p>
         </Card>
       </div>
-    </div>
+      </div>
+    </PageBody>
   )
 }
 
@@ -633,7 +698,7 @@ function SerialCapture({
   const whole = Number.isInteger(qtyReceived)
 
   return (
-    <div className="mt-3 rounded-control border border-border bg-surface-2 p-3">
+    <div className="my-1.5 rounded-control border border-border bg-surface-2 p-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex items-center gap-2">
           <Icons.Barcode size={15} className="text-muted" />

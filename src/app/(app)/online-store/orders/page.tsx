@@ -1,7 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { listOrderStatuses, getOnlineSettings } from '@/lib/site/onlineStore'
 import { listOrders, orderCounts } from '@/lib/site/onlineOrders'
-import { PageHeader, PageBody, Badge } from '@/components/ui'
+import { PageHeader, PageBody, Badge, StatStrip, StatTile } from '@/components/ui'
 import OrdersQueue from './OrdersQueue'
 
 /**
@@ -36,6 +36,17 @@ export default async function OnlineOrdersPage({
 
   const waiting = orders.filter((o) => o.statusRole === 'new').length
 
+  // The queue's headline numbers, grouped by ROLE rather than status name —
+  // statuses are configurable per site, so "Preparing"/"Ready" cannot be
+  // assumed to exist, but every pipeline has a new / in-progress / done shape.
+  const countByRoles = (roles: string[]) =>
+    statuses
+      .filter((s) => roles.includes(s.role))
+      .reduce((sum, s) => sum + (countMap.get(s.id) ?? 0), 0)
+  const waitingCount = countByRoles(['new'])
+  const inProgressCount = countByRoles(['', 'dispatched'])
+  const completedCount = countByRoles(['completed'])
+
   return (
     <>
       <PageHeader
@@ -44,11 +55,33 @@ export default async function OnlineOrdersPage({
         action={
           <div className="flex items-center gap-2">
             {!settings.isEnabled && <Badge tone="warning">Store closed</Badge>}
-            {waiting > 0 && <Badge tone="brand">{waiting} waiting</Badge>}
+            {waiting > 0 && <Badge tone="warning">{waiting} waiting</Badge>}
           </div>
         }
       />
       <PageBody>
+        {!archived && (
+          <StatStrip columns={3}>
+            {/* The only tile allowed a tone: waiting orders are the ones a
+                shop can lose by not noticing. The rest are plain counts. */}
+            <StatTile
+              label="Waiting"
+              value={waitingCount.toLocaleString('en-ZA')}
+              tone={waitingCount > 0 ? 'warning' : 'default'}
+              hint="New orders to accept"
+            />
+            <StatTile
+              label="In progress"
+              value={inProgressCount.toLocaleString('en-ZA')}
+              hint="Accepted and being worked"
+            />
+            <StatTile
+              label="Completed"
+              value={completedCount.toLocaleString('en-ZA')}
+              hint="Done — file them away when handed over"
+            />
+          </StatStrip>
+        )}
         <OrdersQueue
           orders={orders}
           statuses={statuses}

@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { getPaymentRun, listPaymentItems } from '@/lib/site/paymentRuns'
@@ -7,28 +6,30 @@ import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
+  Badge,
+  Callout,
   Card,
   CardHeader,
+  StatStrip,
   StatTile,
-  Badge,
   Icons,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
 } from '@/components/ui'
 import RunActions from './RunActions'
+import RunItemsTable, { type RunItemRow } from './RunItemsTable'
 
 export const dynamic = 'force-dynamic'
 
-const REMITTANCE_TONE = {
-  none: 'neutral',
-  queued: 'neutral',
-  sent: 'success',
-  failed: 'danger',
+const RUN_STATUS_TONE = {
+  draft: 'warning',
+  posted: 'success',
+  cancelled: 'neutral',
 } as const
+
+const RUN_STATUS_LABEL: Record<keyof typeof RUN_STATUS_TONE, string> = {
+  draft: 'Draft',
+  posted: 'Posted',
+  cancelled: 'Cancelled',
+}
 
 export default async function PaymentRunPage({
   params,
@@ -48,6 +49,20 @@ export default async function PaymentRunPage({
   const invoiceCount = items.reduce((sum, i) => sum + i.allocations.length, 0)
   const withoutEmail = items.filter((i) => !i.email).length
 
+  // Only plain data crosses to the client table — the invoice count is
+  // computed here so the allocations themselves stay behind.
+  const itemRows: RunItemRow[] = items.map((item) => ({
+    id: item.id,
+    supplierId: item.supplierId,
+    supplierCode: item.supplierCode,
+    supplierName: item.supplierName,
+    email: item.email,
+    remittanceStatus: item.remittanceStatus,
+    remittanceError: item.remittanceError,
+    invoiceCount: item.allocations.length,
+    amount: item.amount,
+  }))
+
   return (
     <>
       <PageHeader
@@ -56,36 +71,35 @@ export default async function PaymentRunPage({
         backHref="/suppliers/remittances"
         backLabel="Pay suppliers"
         action={
-          <RunActions
-            runId={run.id}
-            status={run.status}
-            mailReady={isConfigured()}
-            hasItems={items.length > 0}
-          />
+          <>
+            <Badge tone={RUN_STATUS_TONE[run.status]}>{RUN_STATUS_LABEL[run.status]}</Badge>
+            <RunActions
+              runId={run.id}
+              status={run.status}
+              mailReady={isConfigured()}
+              hasItems={items.length > 0}
+            />
+          </>
         }
       />
 
       <PageBody>
         {run.status === 'draft' && (
-          <Card>
-            <div className="flex items-start gap-3 px-6 py-4">
-              <Icons.StatusWarning size={18} className="mt-0.5 shrink-0 text-warning" />
-              <div>
-                <p className="font-medium text-ink">Nothing has been paid yet.</p>
-                <p className="text-sm text-muted">
-                  Check the allocations below, then post the run. Posting writes one payment per
-                  supplier and settles exactly the invoices listed.
-                </p>
-              </div>
-            </div>
-          </Card>
+          <Callout tone="warning" title="Nothing has been paid yet.">
+            Check the allocations below, then post the run. Posting writes one payment per supplier
+            and settles exactly the invoices listed.
+          </Callout>
         )}
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatStrip columns={3}>
           <StatTile
             label="Total"
             value={formatMoney(run.totalAmount)}
-            hint={run.status === 'posted' ? 'Paid' : 'To be paid'}
+            hint={
+              run.status === 'posted'
+                ? `Paid · ${run.postedAt?.toLocaleString('en-ZA') ?? ''}`
+                : 'To be paid'
+            }
             icon={<Icons.Coins size={16} />}
           />
           <StatTile
@@ -101,84 +115,15 @@ export default async function PaymentRunPage({
             tone={withoutEmail > 0 ? 'warning' : 'default'}
             icon={<Icons.Mail size={16} />}
           />
-          <StatTile
-            label="Status"
-            value={run.status}
-            hint={run.postedAt?.toLocaleString('en-ZA') ?? 'Not posted'}
-            tone={run.status === 'posted' ? 'positive' : run.status === 'draft' ? 'warning' : 'default'}
-            icon={<Icons.Wallet size={16} />}
-          />
-        </div>
+        </StatStrip>
 
-        {items.map((item) => (
-          <Card key={item.id}>
-            <CardHeader
-              title={item.supplierName}
-              description={
-                item.email
-                  ? `${item.supplierCode} · ${item.email}`
-                  : `${item.supplierCode} · no email on file`
-              }
-              action={
-                <div className="flex items-center gap-2">
-                  {item.remittanceStatus !== 'none' && (
-                    <span title={item.remittanceError ?? undefined}>
-                      <Badge tone={REMITTANCE_TONE[item.remittanceStatus]}>
-                        {item.remittanceStatus}
-                      </Badge>
-                    </span>
-                  )}
-                  {run.status === 'posted' && (
-                    <Link
-                      href={`/api/suppliers/${item.supplierId}/remittance?run=${run.id}`}
-                      className="text-sm text-brand hover:underline"
-                    >
-                      Advice PDF
-                    </Link>
-                  )}
-                  <span className="numeric font-semibold text-ink">{formatMoney(item.amount)}</span>
-                </div>
-              }
-            />
-            <div className="overflow-x-auto">
-              <table className={TABLE}>
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Invoice</th>
-                    <th className={TABLE_TH}>Date</th>
-                    <th className={`${TABLE_TH} text-right`}>Invoice total</th>
-                    <th className={`${TABLE_TH} text-right`}>Paying</th>
-                    <th className={`${TABLE_TH} text-right`}>Left after</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {item.allocations.map((allocation) => {
-                    const remaining = Math.round((allocation.docAmount - allocation.amount) * 100) / 100
-                    return (
-                      <tr key={allocation.id} className={TABLE_ROW}>
-                        <td className={TABLE_TD}>{allocation.docNumber ?? `#${allocation.txnId}`}</td>
-                        <td className={TABLE_TD}>{allocation.docDate ?? '—'}</td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {formatMoney(allocation.docAmount)}
-                        </td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-ink`}>
-                          {formatMoney(allocation.amount)}
-                        </td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {remaining <= 0 ? (
-                            <Badge tone="success">Settled</Badge>
-                          ) : (
-                            <span className="text-warning">{formatMoney(remaining)}</span>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        ))}
+        <Card>
+          <CardHeader
+            title="Who gets paid"
+            description="A supplier's own invoices are on its statement; once posted, the advice PDF lists exactly what this run settled."
+          />
+          <RunItemsTable rows={itemRows} runId={run.id} posted={run.status === 'posted'} />
+        </Card>
       </PageBody>
     </>
   )

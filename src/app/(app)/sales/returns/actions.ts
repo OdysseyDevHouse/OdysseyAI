@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireSiteId, requireSiteUser } from '@/lib/auth'
+import { requireSiteId, requireSiteUser, actorFor, actorForOrThrow } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { createCreditNote } from '@/lib/site/salesReversal'
 import { searchForTill, type TillProduct } from '@/lib/site/tillSearch'
@@ -39,7 +39,8 @@ export type ReturnLineInput = {
 }
 
 export async function searchReturnProductsAction(term: string): Promise<TillProduct[]> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.credit_note')
+  const { siteId } = ctx
   return searchForTill(siteId, term, null)
 }
 

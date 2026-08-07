@@ -344,6 +344,51 @@ export async function finaliseDocument(
       })
     }
 
+    // 5. The general ledger, also after the commit and for the same reason.
+    //
+    // Revenue, VAT, what was tendered, and — the pair that makes a profit and
+    // loss mean anything — cost of sales against stock. Without those two,
+    // revenue appears with no cost against it and every month looks wildly
+    // profitable.
+    //
+    // Cannot fail the sale: the GL is a derived mirror, so a missing journal is
+    // a reporting gap that ledgerHealth() reports rather than a reason to
+    // un-sell goods that have left the shop. See 045.
+    const { mirrorSale } = await import('./glPosting')
+    const isCreditSale = document.docType === 'credit_sale'
+
+    // Revenue per department, so a departmental profit and loss is possible.
+    const revenueByDepartment = new Map<number | null, number>()
+    let costOfSales = 0
+    for (const line of document.lines) {
+      const departmentId = line.departmentId ?? null
+      revenueByDepartment.set(
+        departmentId,
+        round((revenueByDepartment.get(departmentId) ?? 0) + line.lineTotalExcl, 2),
+      )
+      costOfSales = round(costOfSales + line.qty * line.unitCostExcl, 2)
+    }
+
+    await mirrorSale(siteId, actor, {
+      documentId: document.id,
+      documentNumber: posted.documentNumber,
+      documentDate: document.documentDate,
+      isCreditNote: isCreditSale,
+      revenueLines: [...revenueByDepartment.entries()].map(([departmentId, excl]) => ({
+        departmentId,
+        excl,
+      })),
+      vatTotal: totals.vatTotal,
+      costOfSales,
+      tenders: tenders.map((t) => ({
+        tenderTypeId: t.type.id,
+        isAccount: t.type.postsToDebtor,
+        amount: Math.abs(t.input.amount),
+      })),
+      customerId,
+      roundingAdjustment: roundingAdj,
+    })
+
     return {
       ok: true,
       documentId: document.id,

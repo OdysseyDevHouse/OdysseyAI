@@ -9,8 +9,10 @@ import {
   PageBody,
   Card,
   CardHeader,
-  CardBody,
+  Callout,
+  EmptyState,
   StatTile,
+  StatStrip,
   Badge,
   Icons,
   TABLE,
@@ -59,37 +61,23 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
       />
 
       <PageBody>
+        {/* A cancelled order is a closed fact, not a problem — neutral. */}
         {status === 'cancelled' && (
-          <Card>
-            <div className="flex items-start gap-3 px-6 py-4">
-              <Icons.Ban size={18} className="mt-0.5 shrink-0 text-muted" />
-              <div>
-                <p className="font-medium text-ink">This order was cancelled.</p>
-                <p className="text-sm text-muted">
-                  Nothing was reversed — an order never moves stock or posts to the ledger, so
-                  cancelling one only releases what it was holding.
-                </p>
-              </div>
-            </div>
-          </Card>
+          <Callout tone="neutral" icon={<Icons.Ban size={18} />} title="This order was cancelled.">
+            Nothing was reversed — an order never moves stock or posts to the ledger, so
+            cancelling one only releases what it was holding.
+          </Callout>
         )}
 
+        {/* An expired reservation needs attention before delivery — warning. */}
         {order.details && !order.details.reservesStock && canDeliver && (
-          <Card>
-            <div className="flex items-start gap-3 px-6 py-4">
-              <Icons.StatusWarning size={18} className="mt-0.5 shrink-0 text-warning" />
-              <div>
-                <p className="font-medium text-ink">This order is no longer holding stock.</p>
-                <p className="text-sm text-muted">
-                  Its reservation expired, so the goods are available to anyone. It can still be
-                  delivered if the stock is there.
-                </p>
-              </div>
-            </div>
-          </Card>
+          <Callout tone="warning" title="This order is no longer holding stock.">
+            Its reservation expired, so the goods are available to anyone. It can still be
+            delivered if the stock is there.
+          </Callout>
         )}
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatStrip columns={4}>
           <StatTile
             label="Ordered"
             value={String(order.qtyOrdered)}
@@ -116,7 +104,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             hint={order.details?.customerOrderNo ? `Their ref ${order.details.customerOrderNo}` : 'No date set'}
             icon={<Icons.Calendar size={16} />}
           />
-        </div>
+        </StatStrip>
 
         <DeliverPanel
           documentId={order.document.id}
@@ -145,11 +133,11 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             description="Each delivery raises its own invoice against this order."
           />
           {order.deliveries.length === 0 ? (
-            <CardBody>
-              <p className="text-sm text-muted">
-                Nothing delivered yet. Stock is reserved but has not moved.
-              </p>
-            </CardBody>
+            <EmptyState
+              icon={<Icons.Truck size={22} />}
+              title="Nothing delivered yet"
+              hint="Stock is reserved but has not moved. Deliver lines above to raise the first invoice."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className={TABLE}>

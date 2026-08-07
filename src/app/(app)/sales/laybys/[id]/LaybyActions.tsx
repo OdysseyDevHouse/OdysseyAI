@@ -10,6 +10,9 @@ import {
   Field,
   Icons,
   Input,
+  Menu,
+  MenuItem,
+  MenuSeparator,
   Modal,
   Select,
   useToast,
@@ -132,15 +135,19 @@ export default function LaybyActions({
 
   return (
     <div className="flex items-center gap-2">
-      <ButtonLink href={`/sales/laybys/${laybyId}/print`} variant="secondary">
-        <Icons.Printer size={15} />
-        Print
-      </ButtonLink>
-
-      <Button variant="danger-ghost" onClick={() => setCancelling(true)} disabled={pending}>
-        <Icons.Ban size={15} />
-        Cancel lay-by
-      </Button>
+      {/* One loud action — the money one. Printing and cancelling are the
+          occasional acts, so they live behind the menu. */}
+      <Menu label="More">
+        <MenuItem href={`/sales/laybys/${laybyId}/print`}>
+          <Icons.Printer size={15} />
+          Print
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem tone="danger" onClick={() => setCancelling(true)} disabled={pending}>
+          <Icons.Ban size={15} />
+          Cancel lay-by
+        </MenuItem>
+      </Menu>
 
       {settled ? (
         <Button variant="success" onClick={() => setCompleting(true)} disabled={pending}>

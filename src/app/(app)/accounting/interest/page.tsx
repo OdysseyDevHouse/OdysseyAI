@@ -1,16 +1,14 @@
 import { requireCapability } from '@/lib/auth'
 import { listRuns, listItems } from '@/lib/site/interestRuns'
-import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
   Card,
   CardHeader,
   CardBody,
-  EmptyState,
-  Badge,
 } from '@/components/ui'
 import { InterestClient } from './InterestClient'
+import { RunsTable, type RunRow } from './RunsTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +27,21 @@ export default async function InterestPage() {
   const runs = await listRuns(siteId, 10)
   const draft = runs.find((r) => r.status === 'draft')
   const draftItems = draft ? await listItems(siteId, draft.id) : []
+  // Plain serializable rows — DataTable's columns are functions, so they live
+  // in the client component and only data crosses the boundary.
+  const previousRuns: RunRow[] = runs
+    .filter((r) => r.status !== 'draft')
+    .map((r) => ({
+      id: r.id,
+      periodFrom: r.periodFrom,
+      periodTo: r.periodTo,
+      asAtDate: r.asAtDate,
+      userName: r.userName,
+      status: r.status,
+      postedAtDate: r.postedAt ? r.postedAt.toISOString().slice(0, 10) : null,
+      postedCount: r.postedCount,
+      totalAmount: r.totalAmount,
+    }))
 
   return (
     <>
@@ -68,44 +81,7 @@ export default async function InterestPage() {
 
         <Card>
           <CardHeader title="Previous runs" />
-          {runs.filter((r) => r.status !== 'draft').length === 0 ? (
-            <CardBody>
-              <EmptyState
-                title="No interest has been charged"
-                hint="Interest is off on every account until it is switched on individually — charging it needs a written agreement with the customer."
-              />
-            </CardBody>
-          ) : (
-            <CardBody>
-              <ul className="divide-y divide-border">
-                {runs
-                  .filter((r) => r.status !== 'draft')
-                  .map((r) => (
-                    <li key={r.id} className="flex items-center justify-between py-2.5">
-                      <div>
-                        <span className="text-sm text-ink">
-                          {r.periodFrom} → {r.periodTo}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-muted">
-                          as at {r.asAtDate} · {r.userName}
-                          {r.postedAt ? ` · posted ${r.postedAt.toISOString().slice(0, 10)}` : ''}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Badge tone={r.status === 'posted' ? 'success' : 'default'}>
-                          {r.status === 'posted'
-                            ? `${r.postedCount} charged`
-                            : 'Cancelled'}
-                        </Badge>
-                        <span className="numeric text-sm text-ink">
-                          {formatMoney(r.totalAmount)}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-              </ul>
-            </CardBody>
-          )}
+          <RunsTable rows={previousRuns} />
         </Card>
 
         <Card>

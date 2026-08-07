@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
-import { PageHeader } from '@/components/ui'
+import { PageHeader, PageBody } from '@/components/ui'
 import CustomerForm from '../CustomerForm'
 
 export const dynamic = 'force-dynamic'
@@ -18,7 +18,9 @@ export default async function NewCustomerPage() {
   return (
     <>
       <PageHeader title="New customer" backHref="/customers" backLabel="Customers" />
-      <CustomerForm customer={null} groups={groups} reps={reps} categories={categories} />
+      <PageBody>
+        <CustomerForm customer={null} groups={groups} reps={reps} categories={categories} />
+      </PageBody>
     </>
   )
 }

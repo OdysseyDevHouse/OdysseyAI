@@ -8,6 +8,8 @@ import {
   PageBody,
   Card,
   CardHeader,
+  StatStrip,
+  StatTile,
   Badge,
   Icons,
   TABLE,
@@ -37,7 +39,16 @@ export default async function CashupPage() {
   const movements = await Promise.all(open.map((s) => listDrawerMovements(siteId, s.id)))
 
   const closed = recent.filter((s) => !s.isOpen)
-  const closedCounts = await Promise.all(closed.slice(0, 5).map((s) => shiftCounts(siteId, s.id)))
+  // Per-tender counts for EVERY closed shift the table renders — computing
+  // them for a shorter slice left the later rows with an empty breakdown.
+  const closedCounts = await Promise.all(closed.map((s) => shiftCounts(siteId, s.id)))
+
+  const expectedNow = positions.reduce((sum, p) => sum + (p?.expectedCash ?? 0), 0)
+  const today = new Date().toISOString().slice(0, 10)
+  const closedToday = closed.filter(
+    (s) => s.closedAt && s.closedAt.toISOString().slice(0, 10) === today,
+  )
+  const varianceToday = closedToday.reduce((sum, s) => sum + s.variance, 0)
 
   return (
     <>
@@ -46,6 +57,34 @@ export default async function CashupPage() {
         subtitle="What the drawer should hold, against what was counted."
       />
       <PageBody>
+        {(open.length > 0 || closed.length > 0) && (
+          <StatStrip columns={3}>
+            <StatTile
+              label="Expected in drawers"
+              value={formatMoney(expectedNow)}
+              hint={`Across ${open.length} open shift${open.length === 1 ? '' : 's'}`}
+              icon={<Icons.Banknote size={16} />}
+            />
+            <StatTile
+              label="Open shifts"
+              value={String(open.length)}
+              hint="One person on one till"
+              icon={<Icons.Terminal size={16} />}
+            />
+            <StatTile
+              label="Variance today"
+              value={formatMoney(varianceToday)}
+              tone={Math.abs(varianceToday) > tolerance ? 'danger' : 'default'}
+              hint={
+                closedToday.length === 0
+                  ? 'No cash-ups yet today'
+                  : `${closedToday.length} cash-up${closedToday.length === 1 ? '' : 's'} today`
+              }
+              icon={<Icons.Scale size={16} />}
+            />
+          </StatStrip>
+        )}
+
         <CashupClient
           terminals={terminals.map((t) => ({ id: t.id, code: t.code, name: t.name }))}
           shifts={open.flatMap((shift, index) => {
@@ -99,6 +138,12 @@ export default async function CashupPage() {
                     const counts = closedCounts[index] ?? []
                     const short = shift.variance < 0
                     const outside = Math.abs(shift.variance) > tolerance
+                    const byTender = counts
+                      .filter((c) => c.variance !== 0)
+                      .map(
+                        (c) =>
+                          `${c.tenderName} ${c.variance < 0 ? '−' : '+'}${formatMoney(Math.abs(c.variance))}`,
+                      )
                     return (
                       <tr key={shift.id} className={TABLE_ROW}>
                         <td className={TABLE_TD}>{shift.terminalCode}</td>
@@ -118,18 +163,21 @@ export default async function CashupPage() {
                           {formatMoney(shift.countedTotal)}
                         </td>
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {shift.variance === 0 ? (
-                            <Badge tone="success">Exact</Badge>
+                          {/* State gets a form: only the exceptions wear a
+                              badge, so they pop without reading a digit. A
+                              variance inside tolerance — zero included — is a
+                              plain figure. */}
+                          {outside ? (
+                            <Badge tone={short ? 'danger' : 'warning'}>
+                              {short ? 'Short' : 'Over'} {formatMoney(Math.abs(shift.variance))}
+                            </Badge>
                           ) : (
-                            <span
-                              title={counts
-                                .filter((c) => c.variance !== 0)
-                                .map((c) => `${c.tenderName} ${c.variance.toFixed(2)}`)
-                                .join(', ')}
-                              className={outside ? (short ? 'text-danger' : 'text-warning') : 'text-ink-2'}
-                            >
-                              {formatMoney(shift.variance)}
-                            </span>
+                            <span className="text-ink-2">{formatMoney(shift.variance)}</span>
+                          )}
+                          {byTender.length > 0 && (
+                            <div className="text-xs whitespace-nowrap text-muted">
+                              {byTender.join(' · ')}
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -137,17 +185,6 @@ export default async function CashupPage() {
                   })}
                 </tbody>
               </table>
-            </div>
-          </Card>
-        )}
-
-        {open.length === 0 && closed.length === 0 && (
-          <Card>
-            <div className="flex items-center gap-3 px-6 py-6">
-              <Icons.Coins size={20} className="text-faint" />
-              <p className="text-sm text-muted">
-                No shifts yet. Open one on a till to start counting its drawer.
-              </p>
             </div>
           </Card>
         )}

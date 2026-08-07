@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardBody,
   CardFooter,
+  ConfirmModal,
   Field,
   Input,
   Select,
@@ -26,6 +27,9 @@ import { createAccountAction, updateAccountAction, closeAccountAction } from './
  * account IS, where it starts, and how it is used. The opening balance sits in
  * its own group because it is the one field that moves a figure — everything
  * else here is descriptive.
+ *
+ * KNOWN GAP: the create/update actions do not yet accept `notes`, so the Notes
+ * field is captured here but not sent — see the note at payload().
  */
 
 export type AccountFormValues = {
@@ -61,12 +65,25 @@ export function AccountForm({ account }: { account?: AccountFormValues }) {
   const [isDefaultReceipts, setIsDefaultReceipts] = useState(account?.isDefaultReceipts ?? false)
   const [isDefaultPayments, setIsDefaultPayments] = useState(account?.isDefaultPayments ?? false)
   const [notes, setNotes] = useState(account?.notes ?? '')
+  const [errors, setErrors] = useState<{ code?: string; name?: string }>({})
+  const [closing, setClosing] = useState(false)
 
   const isEdit = account?.id !== undefined
   const isBank = accountType === 'bank'
 
   function save() {
+    // The button stays enabled and the complaint lands under the field it
+    // names — a silently disabled button is a puzzle, not validation.
+    const nextErrors: { code?: string; name?: string } = {}
+    if (!code.trim()) nextErrors.code = 'Give the account a short code.'
+    if (!name.trim()) nextErrors.name = 'Give the account a name.'
+    setErrors(nextErrors)
+    if (nextErrors.code || nextErrors.name) return
+
     startTransition(async () => {
+      // `notes` is deliberately not sent: createAccountAction/updateAccountAction
+      // do not take it yet. Add it to their input type in ./actions.ts and
+      // include it here — the library layer (AccountInput) already persists it.
       const payload = {
         code: code.trim(),
         name: name.trim(),
@@ -99,21 +116,31 @@ export function AccountForm({ account }: { account?: AccountFormValues }) {
         <CardHeader title="What this account is" />
         <CardBody>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Code" hint="Short handle used on screens and imports.">
+            <Field
+              label="Code"
+              hint="Short handle used on screens and imports."
+              error={errors.code}
+            >
               {/* Constrained: a 24-character code in a full-width box invites a
                   sentence. See the note on field width in odyssey-craft. */}
               <Input
                 value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                onChange={(e) => {
+                  setCode(e.target.value.toUpperCase())
+                  setErrors((prev) => ({ ...prev, code: undefined }))
+                }}
                 placeholder="FNB-CHQ"
                 maxLength={24}
                 className="max-w-40"
               />
             </Field>
-            <Field label="Name">
+            <Field label="Name" error={errors.name}>
               <Input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  setErrors((prev) => ({ ...prev, name: undefined }))
+                }}
                 placeholder="FNB Cheque Account"
               />
             </Field>
@@ -141,19 +168,20 @@ export function AccountForm({ account }: { account?: AccountFormValues }) {
           </div>
 
           {/* Bank details only matter for a real bank or card account — a petty
-              cash tin has no branch code. */}
+              cash tin has no branch code. Only Code and Name are required, so
+              these carry no "Optional" chorus. */}
           {accountType !== 'cash' && (
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
-              <Field label="Bank" hint="Optional">
+              <Field label="Bank">
                 <Input value={bankName} onChange={(e) => setBankName(e.target.value)} />
               </Field>
-              <Field label="Account number" hint="Optional">
+              <Field label="Account number">
                 <Input
                   value={accountNumber}
                   onChange={(e) => setAccountNumber(e.target.value)}
                 />
               </Field>
-              <Field label="Branch code" hint="Optional">
+              <Field label="Branch code">
                 <Input
                   value={branchCode}
                   onChange={(e) => setBranchCode(e.target.value)}
@@ -188,7 +216,7 @@ export function AccountForm({ account }: { account?: AccountFormValues }) {
                 className="max-w-48"
               />
             </Field>
-            <Field label="As at" hint="Optional — the date that balance was true.">
+            <Field label="As at" hint="The date that balance was true.">
               <Input
                 type="date"
                 value={openingDate}
@@ -219,46 +247,59 @@ export function AccountForm({ account }: { account?: AccountFormValues }) {
               label="Money goes out from here by default"
               hint="Which account a supplier payment run draws on."
             />
-            <Field label="Notes" hint="Optional">
+            <Field label="Notes">
               <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </Field>
           </div>
         </CardBody>
         <CardFooter>
-          <div className="flex w-full items-center justify-between">
-            {isEdit ? (
-              <Button
-                variant="danger-ghost"
-                disabled={pending}
-                onClick={() => {
-                  if (!window.confirm('Close this account? Its history is kept.')) return
-                  startTransition(async () => {
-                    const result = await closeAccountAction(account!.id!)
-                    if (result.ok) {
-                      toast.success(result.message)
-                      router.push('/cashbook')
-                    } else {
-                      toast.error(result.error)
-                    }
-                  })
-                }}
-              >
-                Close account
-              </Button>
-            ) : (
-              <span />
-            )}
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => router.back()}>
-                Cancel
-              </Button>
-              <Button disabled={pending || !code.trim() || !name.trim()} onClick={save}>
-                {isEdit ? 'Save changes' : 'Create account'}
-              </Button>
-            </div>
+          <div className="flex w-full items-center justify-end gap-2">
+            <Button variant="secondary" onClick={() => router.back()}>
+              Cancel
+            </Button>
+            <Button disabled={pending} onClick={save}>
+              {isEdit ? 'Save changes' : 'Create account'}
+            </Button>
           </div>
         </CardFooter>
       </Card>
+
+      {/* Closing lives in its own clearly-separated section rather than beside
+          Save, so a destructive act is never one slip away from a routine one. */}
+      {isEdit && (
+        <Card>
+          <CardHeader
+            title="Close this account"
+            description="A closed account stops appearing in pickers. Its history is kept, and closing is refused while it still holds money."
+          />
+          <CardBody>
+            <Button variant="danger-ghost" disabled={pending} onClick={() => setClosing(true)}>
+              Close account
+            </Button>
+          </CardBody>
+        </Card>
+      )}
+
+      <ConfirmModal
+        open={closing}
+        onClose={() => setClosing(false)}
+        onConfirm={() => {
+          setClosing(false)
+          startTransition(async () => {
+            const result = await closeAccountAction(account!.id!)
+            if (result.ok) {
+              toast.success(result.message)
+              router.push('/cashbook')
+            } else {
+              toast.error(result.error)
+            }
+          })
+        }}
+        title="Close this account"
+        message={`Close ${name.trim() || code.trim() || 'this account'}? Its history is kept.`}
+        confirmLabel="Close account"
+        busy={pending}
+      />
     </>
   )
 }

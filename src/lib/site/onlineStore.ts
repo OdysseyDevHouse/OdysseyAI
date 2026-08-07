@@ -39,6 +39,20 @@ export type OnlineSettings = {
   paidStatusId: number | null
   /** Whether the storefront shows reviews and invites new ones. */
   reviewsEnabled: boolean
+  /**
+   * Whether shoppers see how many are left.
+   *
+   * Off by default. "Only 3 left" converts, but it also publishes what the
+   * shop is holding to anyone who looks, and it is only ever as accurate as
+   * the last stock take — so it is the owner's call, not ours. Off means the
+   * count never leaves the server; a product reads simply as in stock or
+   * sold out.
+   */
+  showStock: boolean
+  /** Whether product photographs are shown. Off falls back to a text list. */
+  showPhotos: boolean
+  /** Whether brand names are shown and offered as a filter. */
+  showBrands: boolean
   updatedAt: Date | null
   updatedBy: string
 }
@@ -113,6 +127,9 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       blurb: '',
       paidStatusId: null,
       reviewsEnabled: false,
+      showStock: false,
+      showPhotos: true,
+      showBrands: true,
       updatedAt: null,
       updatedBy: '',
     }
@@ -131,6 +148,9 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
     blurb: String(row.blurb ?? ''),
     paidStatusId: row.paid_status_id === null ? null : Number(row.paid_status_id),
     reviewsEnabled: !!row.reviews_enabled,
+    showStock: !!row.show_stock,
+    showPhotos: !!row.show_photos,
+    showBrands: !!row.show_brands,
     updatedAt: row.updated_at instanceof Date ? row.updated_at : null,
     updatedBy: String(row.updated_by ?? ''),
   }
@@ -222,7 +242,8 @@ export async function saveOnlineSettings(
         SET is_enabled = ?, collect_enabled = ?, deliver_enabled = ?,
             payment_mode = ?, allow_account = ?, publish_mode = ?,
             price_structure_id = ?, lead_time_minutes = ?, min_order_incl = ?,
-            blurb = ?, paid_status_id = ?, reviews_enabled = ?, updated_by = ?
+            blurb = ?, paid_status_id = ?, reviews_enabled = ?,
+            show_stock = ?, show_photos = ?, show_brands = ?, updated_by = ?
       WHERE id = 1`,
     [
       input.isEnabled ? 1 : 0,
@@ -237,6 +258,9 @@ export async function saveOnlineSettings(
       input.blurb.slice(0, 500),
       input.paidStatusId,
       input.reviewsEnabled ? 1 : 0,
+      input.showStock ? 1 : 0,
+      input.showPhotos ? 1 : 0,
+      input.showBrands ? 1 : 0,
       updatedBy.slice(0, 120),
     ],
   )

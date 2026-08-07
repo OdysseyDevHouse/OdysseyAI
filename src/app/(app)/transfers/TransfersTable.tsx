@@ -11,6 +11,12 @@ const STATUS_TONE: Record<TransferStatus, 'success' | 'neutral' | 'danger'> = {
   cancelled: 'danger',
 }
 
+const STATUS_LABEL: Record<TransferStatus, string> = {
+  posted: 'Posted',
+  draft: 'Draft',
+  cancelled: 'Cancelled',
+}
+
 /**
  * The transfer list.
  *
@@ -66,7 +72,7 @@ export default function TransfersTable({ transfers }: { transfers: StockTransfer
     {
       key: 'status',
       header: 'Status',
-      cell: (t) => <Badge tone={STATUS_TONE[t.status]}>{t.status}</Badge>,
+      cell: (t) => <Badge tone={STATUS_TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge>,
       sortValue: (t) => t.status,
     },
   ]

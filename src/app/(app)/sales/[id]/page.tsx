@@ -8,9 +8,16 @@ import { can } from '@/lib/site/permissions'
 import { formatMoney, formatQty, toNum } from '@/lib/decimals'
 import {
   PageHeader,
+  PageBody,
   Card,
+  CardHeader,
+  CardBody,
+  Callout,
   Badge,
   Icons,
+  SummaryList,
+  SummaryRow,
+  SummaryTotal,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
@@ -18,6 +25,7 @@ import {
   TABLE_ROW,
   TABLE_NUMERIC,
 } from '@/components/ui'
+import { STATUS_LABELS, STATUS_TONE } from '../status'
 import DocumentActions from './DocumentActions'
 
 export const dynamic = 'force-dynamic'
@@ -94,30 +102,31 @@ export default async function SalesDocumentPage({
         backHref="/sales"
         backLabel="Sales"
         action={
-          <DocumentActions
-            documentId={document.id}
-            documentNumber={document.documentNumber}
-            voidable={voidable}
-            isVoid={document.status === 'cancelled'}
-            creditable={creditable}
-            voidBlockedReason={voidBlockedReason}
-            creditBlockedReason={creditBlockedReason}
-          />
+          <>
+            <Badge tone={STATUS_TONE[document.status]}>{STATUS_LABELS[document.status]}</Badge>
+            <DocumentActions
+              documentId={document.id}
+              documentNumber={document.documentNumber}
+              voidable={voidable}
+              isVoid={document.status === 'cancelled'}
+              creditable={creditable}
+              voidBlockedReason={voidBlockedReason}
+              creditBlockedReason={creditBlockedReason}
+            />
+          </>
         }
       />
 
-      {document.status === 'cancelled' && (
-        <div className="px-6 pt-4">
-          <p className="flex items-center gap-2 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
-            <Icons.Ban size={15} />
-            Cancelled{document.cancelledAt ? ` on ${document.cancelledAt.toLocaleDateString('en-ZA')}` : ''}
+      <PageBody className="grid lg:grid-cols-3">
+        {document.status === 'cancelled' && (
+          <Callout tone="danger" title="This sale is cancelled" className="lg:col-span-3">
+            Cancelled
+            {document.cancelledAt ? ` on ${document.cancelledAt.toLocaleDateString('en-ZA')}` : ''}
             {document.cancelReason ? ` — ${document.cancelReason}` : ''}. The number is kept so the
             sequence stays complete.
-          </p>
-        </div>
-      )}
+          </Callout>
+        )}
 
-      <div className="grid gap-4 px-6 pt-4 pb-10 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <Card>
             <div className="overflow-x-auto">
@@ -159,97 +168,96 @@ export default async function SalesDocumentPage({
         </div>
 
         <div className="flex flex-col gap-4">
-          <Card className="p-4">
-            <dl className="flex flex-col gap-1.5 text-sm">
-              <Row label="Subtotal (excl.)" value={formatMoney(document.subtotalExcl)} />
-              {document.discountTotal > 0 && (
-                <Row label="Discount" value={`−${formatMoney(document.discountTotal)}`} />
-              )}
-              <Row label="VAT" value={formatMoney(document.vatTotal)} />
-              {document.roundingAdj !== 0 && (
-                <Row label="Cash rounding" value={formatMoney(document.roundingAdj)} />
-              )}
-            </dl>
-            <div className="mt-3 flex items-baseline justify-between border-t border-border pt-3">
-              <span className="font-medium text-ink">Total</span>
-              <span className="numeric text-xl font-semibold text-ink">
-                {formatMoney(document.totalIncl)}
-              </span>
-            </div>
+          <Card>
+            <CardHeader title="Totals" />
+            <CardBody>
+              <SummaryList>
+                <SummaryRow label="Subtotal (excl.)" value={formatMoney(document.subtotalExcl)} />
+                {document.discountTotal > 0 && (
+                  <SummaryRow label="Discount" value={`−${formatMoney(document.discountTotal)}`} />
+                )}
+                <SummaryRow label="VAT" value={formatMoney(document.vatTotal)} />
+                {document.roundingAdj !== 0 && (
+                  <SummaryRow label="Cash rounding" value={formatMoney(document.roundingAdj)} />
+                )}
+                <SummaryTotal label="Total" value={formatMoney(document.totalIncl)} />
+              </SummaryList>
+            </CardBody>
           </Card>
 
           {tenders.length > 0 && (
-            <Card className="p-4">
-              <p className="mb-2 text-xs font-medium text-muted">PAID BY</p>
-              <dl className="flex flex-col gap-1.5 text-sm">
-                {tenders.map((tender, index) => (
-                  <Row
-                    key={index}
-                    label={String(tender.tender_name)}
-                    value={formatMoney(toNum(tender.amount))}
-                    hint={tender.reference ? String(tender.reference) : undefined}
-                  />
-                ))}
-                {document.changeGiven > 0 && (
-                  <Row label="Change given" value={formatMoney(document.changeGiven)} />
-                )}
-              </dl>
+            <Card>
+              <CardHeader title="Paid by" />
+              <CardBody>
+                <SummaryList>
+                  {tenders.map((tender, index) => (
+                    <SummaryRow
+                      key={index}
+                      label={
+                        <>
+                          {String(tender.tender_name)}
+                          {tender.reference ? (
+                            <span className="ml-1 text-xs text-faint">
+                              {String(tender.reference)}
+                            </span>
+                          ) : null}
+                        </>
+                      }
+                      value={formatMoney(toNum(tender.amount))}
+                    />
+                  ))}
+                  {document.changeGiven > 0 && (
+                    <SummaryRow label="Change given" value={formatMoney(document.changeGiven)} />
+                  )}
+                </SummaryList>
+              </CardBody>
             </Card>
           )}
 
           {credits.length > 0 && (
-            <Card className="p-4">
-              <p className="mb-2 text-xs font-medium text-muted">CREDITED BY</p>
-              <ul className="flex flex-col gap-1.5 text-sm">
-                {credits.map((credit) => (
-                  <li key={credit.id} className="flex items-baseline justify-between gap-3">
-                    <Link href={`/sales/${credit.id}`} className="text-brand hover:underline">
-                      {credit.documentNumber}
-                    </Link>
-                    <span className="numeric text-ink-2">
-                      {formatMoney(Math.abs(credit.total))}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              {credits.some((c) => c.reason) && (
-                <p className="mt-2 border-t border-border pt-2 text-xs text-muted">
-                  {credits.find((c) => c.reason)?.reason}
-                </p>
-              )}
+            <Card>
+              <CardHeader title="Credited by" />
+              <CardBody>
+                <ul className="flex flex-col gap-1.5 text-sm">
+                  {credits.map((credit) => (
+                    <li key={credit.id} className="flex items-baseline justify-between gap-3">
+                      <Link href={`/sales/${credit.id}`} className="text-brand hover:underline">
+                        {credit.documentNumber}
+                      </Link>
+                      <span className="numeric text-ink-2">
+                        {formatMoney(Math.abs(credit.total))}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {credits.some((c) => c.reason) && (
+                  <p className="mt-2 border-t border-border pt-2 text-xs text-muted">
+                    {credits.find((c) => c.reason)?.reason}
+                  </p>
+                )}
+              </CardBody>
             </Card>
           )}
 
-          <Card className="p-4">
-            <dl className="flex flex-col gap-1.5 text-sm">
-              <Row label="Customer" value={document.customerName ?? 'Walk-in'} />
-              <Row label="Cashier" value={document.userName || '—'} />
-              <Row label="Till" value={document.terminalCode ?? '—'} />
-              {document.reference && <Row label="Reference" value={document.reference} />}
-              {document.printCount > 0 && (
-                <Row label="Printed" value={`${document.printCount} time${document.printCount === 1 ? '' : 's'}`} />
-              )}
-            </dl>
-            <div className="mt-3 border-t border-border pt-3">
-              <Badge tone={document.status === 'finalised' ? 'success' : document.status === 'cancelled' ? 'danger' : 'neutral'}>
-                {document.status}
-              </Badge>
-            </div>
+          <Card>
+            <CardHeader title="Details" />
+            <CardBody>
+              <SummaryList>
+                <SummaryRow label="Customer" value={document.customerName ?? 'Walk-in'} />
+                <SummaryRow label="Cashier" value={document.userName || '—'} />
+                <SummaryRow label="Till" value={document.terminalCode ?? '—'} />
+                {document.reference && <SummaryRow label="Reference" value={document.reference} />}
+                {document.printCount > 0 && (
+                  <SummaryRow
+                    label="Printed"
+                    value={`${document.printCount} time${document.printCount === 1 ? '' : 's'}`}
+                  />
+                )}
+              </SummaryList>
+            </CardBody>
           </Card>
         </div>
-      </div>
+      </PageBody>
     </>
-  )
-}
-
-function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="flex justify-between gap-4">
-      <dt className="text-muted">
-        {label}
-        {hint && <span className="ml-1 text-xs text-faint">{hint}</span>}
-      </dt>
-      <dd className="numeric text-ink-2">{value}</dd>
-    </div>
   )
 }

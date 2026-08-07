@@ -60,6 +60,16 @@ export const SETTING_DEFAULTS = {
   layby_max_fee_pct: '1',
 
   /**
+   * How long a quote's prices stand, in days.
+   *
+   * 30 is the ordinary commercial term. Zero means quotes never expire, for a
+   * business that would rather not chase validity.
+   */
+  quote_validity_days: '30',
+  /** Printed at the foot of a quote. Blank until a store writes its own terms. */
+  quote_terms_text: '',
+
+  /**
    * Whether credit notes claw commission back at all.
    *
    * Off by default: a return that earns nobody a clawback means the business

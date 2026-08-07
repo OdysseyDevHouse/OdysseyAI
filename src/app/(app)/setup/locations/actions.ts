@@ -1,6 +1,6 @@
 'use server'
 
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor } from '@/lib/auth'
 import {
   createLocation,
   updateLocation,
@@ -28,7 +28,9 @@ export async function saveLocationAction(
   id: number | null,
   input: LocationInput,
 ): Promise<LocationActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = id ? await updateLocation(siteId, id, input) : await createLocation(siteId, input)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -37,7 +39,9 @@ export async function saveLocationAction(
 }
 
 export async function deleteLocationAction(id: number): Promise<LocationActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await deleteLocation(siteId, id)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -54,7 +58,9 @@ export async function deleteLocationAction(id: number): Promise<LocationActionRe
  * know why.
  */
 export async function setMainLocationAction(id: number): Promise<LocationActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await setMainLocation(siteId, id)
   if (!result.ok) return { ok: false, error: result.error }
 

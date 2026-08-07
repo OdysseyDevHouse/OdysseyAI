@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  Callout,
   Card,
   Combobox,
   ConfirmModal,
@@ -12,11 +13,17 @@ import {
   EmptyState,
   Field,
   Icons,
-  Input,
+  Menu,
+  MenuItem,
+  MenuSeparator,
   Modal,
   NumberInput,
   Select,
   useToast,
+  TABLE,
+  TABLE_TD,
+  TABLE_ROW,
+  TABLE_NUMERIC,
   type ComboboxOption,
 } from '@/components/ui'
 import { formatMoney, formatQty, round } from '@/lib/decimals'
@@ -40,6 +47,7 @@ import { claimTerminalAction } from '../../setup/terminals/actions'
 import { tillSignOutAction } from './pinActions'
 import TenderPad from './TenderPad'
 import CustomerPicker from './CustomerPicker'
+import OverridePrompt from './OverridePrompt'
 
 /**
  * The till.
@@ -68,6 +76,8 @@ export type BasketLine = {
   vatRatePct: number
   unitCostExcl: number
   maxDiscountPct: number
+  /** The structure price, so the modal can tell a change from the shelf figure. Null when the product is priced at the counter. */
+  shelfPriceIncl: number | null
   allowFractions: boolean
 }
 
@@ -99,6 +109,7 @@ export default function TillScreen({
   savedCount,
   cashRounding,
   canOverrideDiscount,
+  canOverridePrice,
   operatorName,
 }: {
   terminals: Terminal[]
@@ -107,6 +118,7 @@ export default function TillScreen({
   savedCount: number
   cashRounding: number
   canOverrideDiscount: boolean
+  canOverridePrice: boolean
   /** Who entered a PIN to open this till. */
   operatorName: string
 }) {
@@ -191,6 +203,7 @@ export default function TillScreen({
           vatRatePct: product.vatRatePct,
           unitCostExcl: product.costExcl,
           maxDiscountPct: product.maxDiscountPct,
+          shelfPriceIncl: product.askPriceAtSale ? null : product.priceIncl,
           allowFractions: product.allowFractions,
         },
       ]
@@ -385,23 +398,24 @@ export default function TillScreen({
 
         <Card className="flex flex-1 flex-col overflow-hidden">
           {lines.length === 0 ? (
-            <EmptyState
-              title="Nothing on this sale yet"
-              hint="Scan an item or search for it above."
-              icon={<Icons.Receipt size={22} />}
-            />
+            /* Centred in the card's full height, so the layout does not jump
+               the moment the first item is scanned. */
+            <div className="flex flex-1 items-center justify-center">
+              <EmptyState
+                title="Nothing on this sale yet"
+                hint="Scan an item or search for it above."
+                icon={<Icons.Receipt size={22} />}
+              />
+            </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
-              <table className="w-full text-sm">
+              <table className={TABLE}>
                 <tbody>
                   {lines.map((line, index) => {
                     const computed = totals.perLine[index]
                     return (
-                      <tr
-                        key={line.key}
-                        className="border-b border-border transition last:border-b-0 hover:bg-surface-2"
-                      >
-                        <td className="px-4 py-3">
+                      <tr key={line.key} className={TABLE_ROW}>
+                        <td className={TABLE_TD}>
                           <div className="text-ink">{line.description}</div>
                           <div className="text-xs text-muted">
                             {line.productCode}
@@ -410,13 +424,13 @@ export default function TillScreen({
                             )}
                           </div>
                         </td>
-                        <td className="numeric px-2 py-3 text-right text-muted whitespace-nowrap">
+                        <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
                           {formatQty(line.qty)} × {formatMoney(line.unitPriceIncl)}
                         </td>
-                        <td className="numeric px-4 py-3 text-right font-medium text-ink whitespace-nowrap">
+                        <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-medium text-ink`}>
                           {formatMoney(computed.lineTotalIncl)}
                         </td>
-                        <td className="w-px px-2 py-3">
+                        <td className={`${TABLE_TD} w-px`}>
                           <div className="flex items-center gap-1">
                             <Button
                               variant="bare"
@@ -511,76 +525,55 @@ export default function TillScreen({
           Pay {formatMoney(totals.doc.totalIncl)}
         </Button>
 
-        <div className="grid grid-cols-2 gap-2">
-          <Button variant="ghost" disabled={lines.length === 0 || pending} onClick={saveForLater}>
+        {/* Pay stays the loudest thing on the rail. Save and Void stay visible
+            — they are the two everyday exits — and the occasional exits
+            (order, lay-by, recalling a saved sale) share one menu instead of
+            stacking three more full-width buttons under the total. */}
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            className="flex-1"
+            disabled={lines.length === 0 || pending}
+            onClick={saveForLater}
+          >
             <Icons.Clock size={15} />
             Save
           </Button>
           <Button
             variant="danger-ghost"
+            className="flex-1"
             disabled={lines.length === 0 || pending}
             onClick={() => setClearing(true)}
           >
             <Icons.Trash size={15} />
             Void sale
           </Button>
+          <Menu label="More" align="right">
+            <MenuItem
+              onClick={saveAsOrder}
+              disabled={lines.length === 0 || pending || !customer}
+            >
+              <Icons.ListOrdered size={15} />
+              Save as order
+            </MenuItem>
+            <MenuItem
+              onClick={saveAsLayby}
+              disabled={lines.length === 0 || pending || !customer}
+            >
+              <Icons.Package size={15} />
+              Save as lay-by
+            </MenuItem>
+            {savedCount > 0 && (
+              <>
+                <MenuSeparator />
+                <MenuItem onClick={() => router.push('/sales?status=saved')}>
+                  <Icons.Receipt size={15} />
+                  {savedCount} saved sale{savedCount === 1 ? '' : 's'}
+                </MenuItem>
+              </>
+            )}
+          </Menu>
         </div>
-
-        <Button
-          variant="ghost"
-          disabled={lines.length === 0 || pending || !customer}
-          onClick={saveAsOrder}
-          title={
-            customer
-              ? 'Reserve this stock and deliver it later.'
-              : 'Attach a customer first — an order is a promise to someone.'
-          }
-        >
-          <Icons.ListOrdered size={15} />
-          Save as order
-        </Button>
-
-        <Button
-          variant="ghost"
-          disabled={lines.length === 0 || pending || !customer}
-          onClick={saveAsLayby}
-          title={
-            customer
-              ? 'Put these aside and let the customer pay them off.'
-              : 'Attach a customer first — a lay-by is held for someone.'
-          }
-        >
-          <Icons.Package size={15} />
-          Save as lay-by
-        </Button>
-
-        {savedCount > 0 && (
-          <Button variant="secondary" onClick={() => router.push('/sales?status=saved')}>
-            <Icons.Receipt size={15} />
-            {savedCount} saved sale{savedCount === 1 ? '' : 's'}
-          </Button>
-        )}
-
-        {/* Handing the till to the next person. Prominent because the whole
-            point of a PIN is defeated if ending a stint is hard to find. */}
-        <Button
-          variant="ghost"
-          disabled={pending || lines.length > 0}
-          title={
-            lines.length > 0
-              ? 'Finish or clear the sale in progress first.'
-              : `Signed in as ${operatorName}`
-          }
-          onClick={() =>
-            startTransition(async () => {
-              await tillSignOutAction()
-              router.refresh()
-            })
-          }
-        >
-          <Icons.LogOut size={15} />
-          {operatorName} — sign out
-        </Button>
 
         <TerminalNotice
           terminal={terminal}
@@ -600,6 +593,32 @@ export default function TillScreen({
             })
           }
         />
+
+        {/* Handing the till to the next person: a quiet footer row, not a
+            full-width button competing with the sale actions above it. */}
+        <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-2">
+          <span className="truncate text-xs text-muted">Signed in as {operatorName}</span>
+          <Button
+            variant="bare"
+            size="sm"
+            iconOnly
+            aria-label={`Sign out ${operatorName}`}
+            disabled={pending || lines.length > 0}
+            title={
+              lines.length > 0
+                ? 'Finish or clear the sale in progress first.'
+                : `Sign out ${operatorName}`
+            }
+            onClick={() =>
+              startTransition(async () => {
+                await tillSignOutAction()
+                router.refresh()
+              })
+            }
+          >
+            <Icons.LogOut size={15} />
+          </Button>
+        </div>
       </div>
 
       <TenderPad
@@ -616,6 +635,7 @@ export default function TillScreen({
       <LineModal
         line={editing}
         canOverrideDiscount={canOverrideDiscount}
+        canOverridePrice={canOverridePrice}
         onClose={() => setEditing(null)}
         onSave={(changes) => {
           if (editing) updateLine(editing.key, changes)
@@ -677,24 +697,25 @@ function TerminalNotice({
 
   return (
     <>
-      <Card className="border-warning/40 bg-warning-soft p-3">
-        <p className="text-xs text-ink-2">
-          This machine is not registered to a till. Sales will still post, but they will not say
-          which register rang them up.
-        </p>
-        {available.length > 0 && device.id && (
-          <Button
-            variant="secondary"
-            size="sm"
-            className="mt-2"
-            onClick={() => setPicking(true)}
-            disabled={pending}
-          >
-            <Icons.Terminal size={15} />
-            Choose a till
-          </Button>
-        )}
-      </Card>
+      <Callout
+        tone="warning"
+        title="Not registered to a till"
+        action={
+          available.length > 0 && device.id ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setPicking(true)}
+              disabled={pending}
+            >
+              <Icons.Terminal size={15} />
+              Choose a till
+            </Button>
+          ) : undefined
+        }
+      >
+        Sales will still post, but they will not say which register rang them up.
+      </Callout>
 
       <Modal
         open={picking}
@@ -741,11 +762,13 @@ function TerminalNotice({
 function LineModal({
   line,
   canOverrideDiscount,
+  canOverridePrice,
   onClose,
   onSave,
 }: {
   line: BasketLine | null
   canOverrideDiscount: boolean
+  canOverridePrice: boolean
   onClose: () => void
   onSave: (changes: Partial<BasketLine>) => void
 }) {
@@ -754,18 +777,41 @@ function LineModal({
   const [discount, setDiscount] = useState(0)
   const [seeded, setSeeded] = useState<string | null>(null)
 
+  /**
+   * A supervisor's authorisation, held only while this modal is open.
+   *
+   * Deliberately per-line and not remembered: authorising one discount is not
+   * authorising every discount for the rest of the shift, and a permission
+   * that quietly persists is one nobody can reason about afterwards.
+   */
+  const [authorised, setAuthorised] = useState<{ price: boolean; discount: boolean }>({
+    price: false,
+    discount: false,
+  })
+  const [asking, setAsking] = useState<'price' | 'discount' | null>(null)
+  const toast = useToast()
+
   if (line && seeded !== line.key) {
     setSeeded(line.key)
     setQty(line.qty)
     setPrice(line.unitPriceIncl)
     setDiscount(line.discountPct)
+    setAuthorised({ price: false, discount: false })
   }
   if (!line && seeded !== null) setSeeded(null)
 
   // max_discount_pct has been on the product table since the first migration
   // with nothing enforcing it. This is where it finally bites.
   const cap = line?.maxDiscountPct ?? 0
-  const overCap = cap > 0 && discount > cap && !canOverrideDiscount
+  const mayDiscount = canOverrideDiscount || authorised.discount
+  const overCap = cap > 0 && discount > cap && !mayDiscount
+
+  // A product with no shelf price is priced at the counter by design — see
+  // priceGuard.ts. Locking its price box would stop the till working.
+  const shelf = line?.shelfPriceIncl ?? null
+  const mayPrice = canOverridePrice || authorised.price || shelf === null
+  const priceChanged = shelf !== null && Math.abs(price - shelf) > 0.005
+  const priceLocked = !mayPrice
 
   return (
     <Modal
@@ -801,11 +847,31 @@ function LineModal({
           />
         </Field>
 
-        <Field label="Unit price (incl. VAT)">
-          <CurrencyInput
-            value={price}
-            onChange={(e) => setPrice(Number(String(e.target.value).replace(',', '.')) || 0)}
-          />
+        <Field
+          label="Unit price (incl. VAT)"
+          hint={
+            priceLocked
+              ? `Sells at ${formatMoney(shelf ?? 0)}. A supervisor can authorise a change.`
+              : shelf === null
+                ? 'This item is priced at the counter.'
+                : authorised.price
+                  ? 'Authorised.'
+                  : undefined
+          }
+        >
+          <div className="flex items-center gap-2">
+            <CurrencyInput
+              value={price}
+              disabled={priceLocked}
+              onChange={(e) => setPrice(Number(String(e.target.value).replace(',', '.')) || 0)}
+            />
+            {priceLocked && (
+              <Button variant="secondary" onClick={() => setAsking('price')}>
+                <Icons.KeyRound size={15} />
+                Authorise
+              </Button>
+            )}
+          </div>
         </Field>
 
         <Field
@@ -813,12 +879,40 @@ function LineModal({
           hint={cap > 0 ? `This item allows up to ${cap}%.` : undefined}
           error={overCap ? `Above the ${cap}% limit for this item.` : undefined}
         >
-          <NumberInput
-            value={discount}
-            onChange={(e) => setDiscount(Number(e.target.value) || 0)}
-          />
+          <div className="flex items-center gap-2">
+            <NumberInput
+              value={discount}
+              onChange={(e) => setDiscount(Number(e.target.value) || 0)}
+            />
+            {overCap && (
+              <Button variant="secondary" onClick={() => setAsking('discount')}>
+                <Icons.KeyRound size={15} />
+                Authorise
+              </Button>
+            )}
+          </div>
         </Field>
       </div>
+
+      {asking && (
+        <OverridePrompt
+          capability={asking === 'price' ? 'sales.price_override' : 'sales.discount_override'}
+          title={asking === 'price' ? 'Authorise a price change' : 'Authorise this discount'}
+          reason={
+            asking === 'price'
+              ? `${line?.description ?? 'This item'} sells at ${formatMoney(shelf ?? 0)}.`
+              : `${discount}% is above the ${cap}% this item allows.`
+          }
+          onAuthorised={(by) => {
+            setAuthorised((current) => ({ ...current, [asking]: true }))
+            setAsking(null)
+            // Named rather than a bare "authorised": the cashier should be able
+            // to say who approved it if anybody asks later.
+            toast.success(`Authorised by ${by}.`)
+          }}
+          onCancel={() => setAsking(null)}
+        />
+      )}
     </Modal>
   )
 }

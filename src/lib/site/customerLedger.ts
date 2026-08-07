@@ -340,7 +340,7 @@ export async function postTransaction(
   const signed = signedAmount(input.docType, input.amount)
   const { gross, net, vat } = splitVat(Math.abs(signed), input.vatRatePct ?? 0)
 
-  return siteTransaction(siteId, async (tx) => {
+  const posted = await siteTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO customer_transactions
          (customer_id, doc_type, doc_number, doc_date, due_date, reference, description,
@@ -393,6 +393,35 @@ export async function postTransaction(
     }
     return result
   })
+
+  // ── Credit control: a settled account starts the ladder again ──────────
+  //
+  // Without this an account that reached a final demand two years ago and has
+  // paid on time ever since would still be sitting at the top rung, so the
+  // next time it slipped a day it would be sent a final demand rather than a
+  // friendly reminder.
+  //
+  // AFTER the transaction, deliberately, and swallowing its own errors. This
+  // is bookkeeping about chasing, not about money — a credit-control table
+  // being missing or locked must never undo a customer's payment.
+  if (posted.ok && signed < 0) {
+    try {
+      const { resetLevel } = await import('./creditControl')
+      const owing = await siteQueryOne<Row>(
+        siteId,
+        `SELECT COALESCE(SUM(amount_outstanding), 0) AS overdue
+           FROM customer_transactions
+          WHERE customer_id = ? AND amount_outstanding > 0
+            AND due_date IS NOT NULL AND due_date < ?`,
+        [input.customerId, today()],
+      )
+      if (toNum(owing?.overdue) <= 0) await resetLevel(siteId, input.customerId)
+    } catch (error) {
+      console.error('credit level reset failed', error)
+    }
+  }
+
+  return posted
 }
 
 /** Applies the balance delta. The only place customers.balance is ever written. */

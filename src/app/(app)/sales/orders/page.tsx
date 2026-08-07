@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import {
   listOrders,
@@ -6,38 +5,26 @@ import {
   FULFILMENT_STATUSES,
   type FulfilmentStatus,
 } from '@/lib/site/salesOrders'
-import { formatMoney } from '@/lib/decimals'
+import { formatMoney, formatQty } from '@/lib/decimals'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
+  PageBody,
   PrimaryLink,
+  ButtonLink,
   Card,
   SearchBar,
   StatTile,
-  FilterBar,
-  FilterChip,
+  StatStrip,
+  LinkSegmentedControl,
   Pagination,
-  EmptyState,
-  Badge,
   Icons,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
 } from '@/components/ui'
+import OrdersTable, { type OrderTableRow } from './OrdersTable'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
-
-const TONE: Record<FulfilmentStatus, 'success' | 'warning' | 'danger' | 'neutral' | 'brand'> = {
-  open: 'brand',
-  part_delivered: 'warning',
-  delivered: 'success',
-  cancelled: 'neutral',
-}
 
 function toFulfilment(value: unknown): FulfilmentStatus | 'outstanding' | undefined {
   const raw = String(value ?? '')
@@ -76,6 +63,31 @@ export default async function OrdersPage({
   const href = hrefBuilder('/sales/orders', params)
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
 
+  // DataTable's cells are functions, which cannot cross the server→client
+  // boundary — so the table lives in OrdersTable and gets plain rows.
+  const rows: OrderTableRow[] = items.map((order) => ({
+    id: order.id,
+    documentNumber: order.documentNumber,
+    customerOrderNo: order.customerOrderNo,
+    documentDate: order.documentDate,
+    customerName: order.customerName,
+    deliveryDate: order.deliveryDate,
+    fulfilmentStatus: order.fulfilmentStatus,
+    fulfilmentLabel: FULFILMENT_LABELS[order.fulfilmentStatus],
+    reservesStock: order.reservesStock,
+    qtyOrdered: order.qtyOrdered,
+    qtyOutstanding: order.qtyOutstanding,
+    totalIncl: order.totalIncl,
+  }))
+
+  const filtered = Boolean(fulfilment)
+  const filterLabel =
+    fulfilment === 'outstanding'
+      ? 'Outstanding'
+      : fulfilment
+        ? FULFILMENT_LABELS[fulfilment]
+        : undefined
+
   return (
     <>
       <PageHeader
@@ -89,165 +101,108 @@ export default async function OrdersPage({
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 px-6 pt-4 lg:grid-cols-4">
-        <StatTile
-          label="Outstanding orders"
-          value={String(openOrders.length)}
-          hint="Still to be delivered"
-          icon={<Icons.ListOrdered size={16} />}
-          href={filterHref({ fulfilment: 'outstanding' })}
-        />
-        <StatTile
-          label="Value committed"
-          value={formatMoney(committed)}
-          hint="Ordered but not yet invoiced"
-          icon={<Icons.Coins size={16} />}
-        />
-        <StatTile
-          label="Past delivery date"
-          value={String(late.length)}
-          hint={late.length > 0 ? 'Customers are waiting' : 'Nothing overdue'}
-          tone={late.length > 0 ? 'warning' : 'default'}
-          icon={<Icons.Clock size={16} />}
-        />
-        <StatTile
-          label="Units reserved"
-          value={String(
-            Math.round(openOrders.reduce((sum, o) => sum + (o.reservesStock ? o.qtyOutstanding : 0), 0) * 1000) / 1000,
-          )}
-          hint="Held off available stock"
-          icon={<Icons.Boxes size={16} />}
-        />
-      </div>
-
-      <SearchBar
-        action="/sales/orders"
-        defaultValue={params.q}
-        placeholder="Search by order number, customer or their order number…"
-        keep={{ fulfilment: params.fulfilment }}
-      />
-
-      <FilterBar clearHref="/sales/orders">
-        {fulfilment && (
-          <FilterChip
-            label="Status"
-            value={fulfilment === 'outstanding' ? 'Outstanding' : FULFILMENT_LABELS[fulfilment]}
-            clearHref={filterHref({ fulfilment: null })}
+      <PageBody>
+        <StatStrip columns={4}>
+          <StatTile
+            label="Outstanding orders"
+            value={String(openOrders.length)}
+            hint="Still to be delivered"
+            icon={<Icons.ListOrdered size={16} />}
+            href={filterHref({ fulfilment: 'outstanding' })}
           />
-        )}
-      </FilterBar>
+          <StatTile
+            label="Value committed"
+            value={formatMoney(committed)}
+            hint="Ordered but not yet invoiced"
+            icon={<Icons.Coins size={16} />}
+          />
+          <StatTile
+            label="Past delivery date"
+            value={String(late.length)}
+            hint={late.length > 0 ? 'Customers are waiting' : 'Nothing overdue'}
+            tone={late.length > 0 ? 'warning' : 'default'}
+            icon={<Icons.Clock size={16} />}
+          />
+          <StatTile
+            label="Units reserved"
+            value={formatQty(
+              openOrders.reduce((sum, o) => sum + (o.reservesStock ? o.qtyOutstanding : 0), 0),
+            )}
+            hint="Held off available stock"
+            icon={<Icons.Boxes size={16} />}
+          />
+        </StatStrip>
 
-      <div className="flex flex-wrap gap-3 px-6 pb-3 text-xs">
-        <Link
-          href="/sales/orders"
-          className={!fulfilment ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-        >
-          All
-        </Link>
-        <Link
-          href={filterHref({ fulfilment: fulfilment === 'outstanding' ? null : 'outstanding' })}
-          className={fulfilment === 'outstanding' ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-        >
-          Outstanding
-        </Link>
-        {FULFILMENT_STATUSES.map((value) => (
-          <Link
-            key={value}
-            href={filterHref({ fulfilment: fulfilment === value ? null : value })}
-            className={fulfilment === value ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-          >
-            {FULFILMENT_LABELS[value]}
-          </Link>
-        ))}
-      </div>
+        {/* SearchBar carries its own page gutter, so back PageBody's out. */}
+        <div className="-mx-6 -my-3">
+          <SearchBar
+            action="/sales/orders"
+            defaultValue={params.q}
+            placeholder="Search by order number, customer or their order number…"
+            keep={{ fulfilment: params.fulfilment }}
+          />
+        </div>
 
-      <div className="px-6 pb-6">
+        <div>
+          <LinkSegmentedControl
+            aria-label="Filter by fulfilment"
+            value={fulfilment ?? 'all'}
+            options={[
+              { value: 'all', label: 'All', href: filterHref({ fulfilment: null }) },
+              {
+                value: 'outstanding',
+                label: 'Outstanding',
+                href: filterHref({ fulfilment: 'outstanding' }),
+              },
+              ...FULFILMENT_STATUSES.map((value) => ({
+                value,
+                label: FULFILMENT_LABELS[value],
+                href: filterHref({ fulfilment: value }),
+              })),
+            ]}
+          />
+        </div>
+
         <Card>
-          {items.length === 0 ? (
-            <EmptyState
-              title="No sales orders"
-              hint="Raise one when a customer commits to buy something you will deliver later."
-              icon={<Icons.ListOrdered size={22} />}
-              action={
-                <PrimaryLink href="/sales/new">
-                  <Icons.Plus size={15} />
-                  New order at the till
-                </PrimaryLink>
-              }
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className={TABLE}>
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Order</th>
-                    <th className={TABLE_TH}>Date</th>
-                    <th className={TABLE_TH}>Customer</th>
-                    <th className={TABLE_TH}>Deliver by</th>
-                    <th className={`${TABLE_TH} text-right`}>Ordered</th>
-                    <th className={`${TABLE_TH} text-right`}>Outstanding</th>
-                    <th className={`${TABLE_TH} text-right`}>Value</th>
-                    <th className={TABLE_TH}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((order) => {
-                    const overdue =
-                      order.deliveryDate !== null &&
-                      order.deliveryDate < today &&
-                      (order.fulfilmentStatus === 'open' || order.fulfilmentStatus === 'part_delivered')
-
-                    return (
-                      <tr key={order.id} className={TABLE_ROW}>
-                        <td className={TABLE_TD}>
-                          <Link href={`/sales/orders/${order.id}`} className="text-brand hover:underline">
-                            {order.documentNumber ?? `Order #${order.id}`}
-                          </Link>
-                          {order.customerOrderNo && (
-                            <div className="text-xs text-muted">Their ref {order.customerOrderNo}</div>
-                          )}
-                        </td>
-                        <td className={TABLE_TD}>{order.documentDate}</td>
-                        <td className={TABLE_TD}>{order.customerName ?? 'Walk-in'}</td>
-                        <td className={TABLE_TD}>
-                          {order.deliveryDate ? (
-                            <span className={overdue ? 'text-warning' : undefined}>
-                              {order.deliveryDate}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{order.qtyOrdered}</td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {order.qtyOutstanding > 0 ? (
-                            <span className="text-ink">{order.qtyOutstanding}</span>
-                          ) : (
-                            <span className="text-faint">—</span>
-                          )}
-                        </td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(order.totalIncl)}</td>
-                        <td className={TABLE_TD}>
-                          <div className="flex items-center gap-2">
-                            <Badge tone={TONE[order.fulfilmentStatus]}>
-                              {FULFILMENT_LABELS[order.fulfilmentStatus]}
-                            </Badge>
-                            {!order.reservesStock &&
-                              (order.fulfilmentStatus === 'open' ||
-                                order.fulfilmentStatus === 'part_delivered') && (
-                                <span className="text-xs text-muted" title="This order no longer holds stock.">
-                                  not reserving
-                                </span>
-                              )}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <OrdersTable
+            rows={rows}
+            today={today}
+            empty={
+              params.q
+                ? {
+                    icon: <Icons.Search size={22} />,
+                    title: `Nothing matches “${params.q}”`,
+                    hint: 'Try a different order number, customer or their order number.',
+                    action: (
+                      <ButtonLink href="/sales/orders" variant="secondary">
+                        Clear the search
+                      </ButtonLink>
+                    ),
+                  }
+                : filtered
+                  ? {
+                      icon: <Icons.ListOrdered size={22} />,
+                      title: `No ${filterLabel?.toLowerCase()} orders`,
+                      hint: 'Nothing is in this slice right now.',
+                      action: (
+                        <ButtonLink href="/sales/orders" variant="secondary">
+                          Show all orders
+                        </ButtonLink>
+                      ),
+                    }
+                  : {
+                      icon: <Icons.ListOrdered size={22} />,
+                      title: 'No sales orders',
+                      hint: 'Raise one when a customer commits to buy something you will deliver later.',
+                      action: (
+                        <PrimaryLink href="/sales/new">
+                          <Icons.Plus size={15} />
+                          New order at the till
+                        </PrimaryLink>
+                      ),
+                    }
+            }
+          />
 
           <Pagination
             page={page}
@@ -257,7 +212,7 @@ export default async function OrdersPage({
             hrefFor={(next) => href({ page: next === 1 ? null : next })}
           />
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

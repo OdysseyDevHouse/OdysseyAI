@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { Fragment, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
@@ -15,6 +15,8 @@ import {
   Badge,
   Icons,
   Modal,
+  MiniStat,
+  SegmentedControl,
   EmptyState,
   useToast,
   TABLE,
@@ -70,6 +72,11 @@ type Suggestion = {
   reasons: string[]
 }
 
+/* Same hover-reveal DataTable uses: row actions stay out of the way until the
+   row is hovered or an action holds focus. TABLE_ROW carries the `group`. */
+const HOVER_REVEAL =
+  'pointer-fine:opacity-0 pointer-fine:transition-opacity pointer-fine:group-hover:opacity-100 pointer-fine:focus-within:opacity-100'
+
 export function ReconcileClient({
   accountId,
   accountName,
@@ -97,6 +104,8 @@ export function ReconcileClient({
   const [captureOpen, setCaptureOpen] = useState(false)
   const [signOffOpen, setSignOffOpen] = useState(false)
   const [notes, setNotes] = useState('')
+  const [voidingLine, setVoidingLine] = useState<UnmatchedLine | null>(null)
+  const [voidReason, setVoidReason] = useState('')
 
   // The live difference. Recomputed here rather than fetched so it responds as
   // the statement balance is typed — that immediacy is what makes the screen
@@ -160,7 +169,7 @@ export function ReconcileClient({
         />
 
         <CardBody>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Statement date">
               <Input
                 type="date"
@@ -176,34 +185,19 @@ export function ReconcileClient({
                 }
               />
             </Field>
-            <Field label="Difference" hint={balanced ? 'It balances.' : 'Still unexplained'}>
-              {/* The one number that matters on this screen, so it is the one
-                  thing given colour and weight. */}
-              <div
-                className={`numeric flex h-control items-center rounded-control border px-3 text-lg font-semibold ${
-                  balanced
-                    ? 'border-success/30 bg-success-soft text-success-ink'
-                    : 'border-danger/30 bg-danger-soft text-danger-ink'
-                }`}
-              >
-                {formatMoney(difference)}
-              </div>
-            </Field>
           </div>
 
-          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-            <div className="flex justify-between rounded-control bg-surface-2 px-3 py-2">
-              <span className="text-muted">Our books say</span>
-              <span className="numeric text-ink">{formatMoney(bookBalance)}</span>
-            </div>
-            <div className="flex justify-between rounded-control bg-surface-2 px-3 py-2">
-              <span className="text-muted">Not yet on the statement</span>
-              <span className="numeric text-ink">{formatMoney(unreconciledTotal)}</span>
-            </div>
-            <div className="flex justify-between rounded-control bg-surface-2 px-3 py-2">
-              <span className="text-muted">Bank says</span>
-              <span className="numeric text-ink">{formatMoney(statementBalance)}</span>
-            </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <MiniStat label="Our books say" value={formatMoney(bookBalance)} />
+            <MiniStat label="Not yet on the statement" value={formatMoney(unreconciledTotal)} />
+            <MiniStat label="Bank says" value={formatMoney(statementBalance)} />
+            {/* The one number that matters on this screen, so it is the one
+                figure given a tone. */}
+            <MiniStat
+              label="Difference"
+              value={formatMoney(difference)}
+              tone={balanced ? 'success' : 'danger'}
+            />
           </div>
         </CardBody>
 
@@ -223,16 +217,17 @@ export function ReconcileClient({
                   <th className={TABLE_TH}>Description</th>
                   <th className={TABLE_TH}>Reference</th>
                   <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Amount</th>
-                  <th className={`${TABLE_TH} w-48`} />
+                  <th className={`${TABLE_TH} w-px`} />
                 </tr>
               </thead>
               <tbody>
                 {unmatched.map((line) => {
                   const rowSuggestions = suggestions[line.id] ?? []
                   const isOpen = openRow === line.id
+                  const isLoading = loadingRow === line.id
                   return (
-                    <>
-                      <tr key={line.id} className={TABLE_ROW}>
+                    <Fragment key={line.id}>
+                      <tr className={TABLE_ROW}>
                         <td className={TABLE_TD}>{line.txnDate}</td>
                         <td className={TABLE_TD}>
                           <span className="text-ink">{line.description ?? '—'}</span>
@@ -249,18 +244,26 @@ export function ReconcileClient({
                           </span>
                         </td>
                         <td className={`${TABLE_TD} text-right`}>
-                          <div className="flex justify-end gap-1">
+                          <div
+                            className={`flex items-center justify-end gap-1.5 ${
+                              isOpen || isLoading ? '' : HOVER_REVEAL
+                            }`}
+                          >
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled={loadingRow === line.id}
+                              iconOnly
+                              aria-label={isOpen ? 'Hide suggestions' : 'Find a match'}
+                              disabled={isLoading}
                               onClick={() => loadSuggestions(line.id)}
                             >
-                              {loadingRow === line.id
-                                ? 'Looking…'
-                                : isOpen
-                                  ? 'Hide'
-                                  : 'Find match'}
+                              {isLoading ? (
+                                <Icons.Spinner size={15} className="animate-spin" />
+                              ) : isOpen ? (
+                                <Icons.ChevronUp size={15} />
+                              ) : (
+                                <Icons.Search size={15} />
+                              )}
                             </Button>
                             <Button
                               variant="danger-ghost"
@@ -269,10 +272,8 @@ export function ReconcileClient({
                               aria-label="Void this line"
                               disabled={pending}
                               onClick={() => {
-                                const reason = window.prompt('Why is this line being voided?')
-                                if (reason?.trim()) {
-                                  run(() => voidAction(accountId, line.id, reason.trim()))
-                                }
+                                setVoidReason('')
+                                setVoidingLine(line)
                               }}
                             >
                               <Icons.Trash size={15} />
@@ -282,7 +283,7 @@ export function ReconcileClient({
                       </tr>
 
                       {isOpen && (
-                        <tr key={`${line.id}-matches`}>
+                        <tr>
                           <td colSpan={5} className="bg-surface-2 px-4 py-3">
                             {rowSuggestions.length === 0 ? (
                               <p className="text-sm text-muted">
@@ -323,7 +324,10 @@ export function ReconcileClient({
                                       <span className="numeric text-sm text-ink">
                                         {formatMoney(s.amount)}
                                       </span>
+                                      {/* A positive go, not the screen's primary
+                                          — that stays with the sign-off. */}
                                       <Button
+                                        variant="success"
                                         size="sm"
                                         disabled={pending}
                                         onClick={() =>
@@ -351,7 +355,7 @@ export function ReconcileClient({
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -386,6 +390,45 @@ export function ReconcileClient({
       />
 
       <Modal
+        open={voidingLine !== null}
+        onClose={() => setVoidingLine(null)}
+        title="Void this movement"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted">
+            {voidingLine
+              ? `${formatMoney(voidingLine.amountSigned)} on ${voidingLine.txnDate} will be
+                 marked void and kept, with your reason.`
+              : ''}
+          </p>
+          <Field label="Why is it being voided?">
+            <Input
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="e.g. Duplicate import"
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setVoidingLine(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={pending || !voidReason.trim()}
+              onClick={() => {
+                const line = voidingLine
+                if (!line) return
+                run(() => voidAction(accountId, line.id, voidReason.trim()))
+                setVoidingLine(null)
+              }}
+            >
+              Void
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         open={signOffOpen}
         onClose={() => setSignOffOpen(false)}
         title="Sign off this statement"
@@ -415,7 +458,14 @@ export function ReconcileClient({
                 and it will still be there next month — explain it here so the next person
                 knows what happened.
               </p>
-              <Field label="What is the difference?" hint="Required when signing off out of balance.">
+              <Field
+                label="What is the difference?"
+                error={
+                  notes.trim()
+                    ? undefined
+                    : 'Required — an out-of-balance sign-off must say what the difference is.'
+                }
+              >
                 <Textarea
                   rows={3}
                   value={notes}
@@ -496,22 +546,15 @@ function CaptureModal({
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
           <Field label="Direction">
-            <div className="flex gap-2">
-              <Button
-                variant={direction === 'out' ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setDirection('out')}
-              >
-                Money out
-              </Button>
-              <Button
-                variant={direction === 'in' ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setDirection('in')}
-              >
-                Money in
-              </Button>
-            </div>
+            <SegmentedControl
+              aria-label="Direction"
+              options={[
+                { value: 'out', label: 'Money out' },
+                { value: 'in', label: 'Money in' },
+              ]}
+              value={direction}
+              onChange={setDirection}
+            />
           </Field>
         </div>
 

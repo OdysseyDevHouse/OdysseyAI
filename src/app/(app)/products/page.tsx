@@ -1,6 +1,8 @@
 import Link from 'next/link'
-import { Plus } from '@/components/ui/icons'
+import { Pencil, Plus } from '@/components/ui/icons'
 import { requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
+import ProductsTable from './ProductsTable'
 import { listProducts } from '@/lib/site/products'
 import { getCostBasis } from '@/lib/site/lookups'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
@@ -8,22 +10,33 @@ import { formatMoney, formatQty } from '@/lib/decimals'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
+  PageBody,
   PrimaryLink,
+  ButtonLink,
   Card,
-  EmptyState,
   SearchBar,
   Badge,
-  FilterBar,
+  RowTile,
+  TextLink,
   FilterChip,
   Pagination,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
+  TableToolbar,
+  LinkSegmentedControl,
+  DataTable,
+  type Column,
 } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
 /** Rows per page. The list used to render a flat 100 with no way to reach 101. */
 const PAGE_SIZE = 50
+
+type ProductRow = Awaited<ReturnType<typeof listProducts>>['items'][number]
+
+/** The shelf price: the structure flagged default, else the first one. */
+function defaultPrice(p: ProductRow) {
+  return p.prices.find((x) => x.isDefault) ?? p.prices[0]
+}
 
 export default async function ProductsPage({
   searchParams,
@@ -37,7 +50,8 @@ export default async function ProductsPage({
   }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('products.view')
+  const { siteId, capabilities } = await requireCapability('products.view')
+  const showCost = can(capabilities, 'products.cost')
   const params = await searchParams
   const { q, archived, low, department } = params
 
@@ -66,6 +80,13 @@ export default async function ProductsPage({
 
   const filterLabel = filterIds ? departmentPath(departments, departmentId) : null
 
+  // A plain id -> path map rather than the department tree plus the function
+  // that walks it: ProductsTable is a client component, and departments.ts is
+  // server-only.
+  const departmentPaths: Record<number, string> = Object.fromEntries(
+    departments.map((d) => [d.id, departmentPath(departments, d.id)]),
+  )
+
   /* Every link on this screen composes onto the current query rather than
      replacing it, so searching no longer drops the department filter and
      paging no longer drops both. */
@@ -74,6 +95,44 @@ export default async function ProductsPage({
      rarely a page of the new one, and landing on an empty list reads as "no
      matches" when there are plenty. */
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
+
+  /* Which slice the segmented control shows. The two flags are mutually
+     exclusive here: a segmented control is one choice, and "archived products
+     below minimum" was a combination nobody ever asked for. */
+  const slice = archived === '1' ? 'archived' : low === '1' ? 'low' : 'all'
+
+  /* Empty means one of three things — say which, and offer the way out. */
+  const empty = q
+    ? {
+        title: `Nothing matches “${q}”`,
+        hint: 'Check the spelling, or search by code or barcode.',
+        action: (
+          <ButtonLink variant="secondary" href={filterHref({ q: null })}>
+            Clear search
+          </ButtonLink>
+        ),
+      }
+    : slice !== 'all' || filterLabel
+      ? {
+          title: 'No products match this filter',
+          hint: 'Nothing on file fits the current slice.',
+          action: (
+            <ButtonLink variant="secondary" href="/products">
+              Clear filters
+            </ButtonLink>
+          ),
+        }
+      : {
+          title: 'No products yet',
+          hint: 'Create your first product to get started.',
+          action: (
+            <PrimaryLink href="/products/new">
+              <Plus size={15} />
+              New product
+            </PrimaryLink>
+          ),
+        }
+
 
   return (
     <>
@@ -88,138 +147,55 @@ export default async function ProductsPage({
         }
       />
 
-      <SearchBar
-        action="/products"
-        defaultValue={q}
-        placeholder="Search description, code or barcode…"
-        /* A GET form submits only its own fields, so without these a search
-           would silently clear whichever filters were applied. */
-        keep={{ archived, low, department }}
-      />
-
-      <FilterBar clearHref="/products">
-        {filterLabel && (
-          <FilterChip
-            label="Department"
-            value={filterLabel}
-            clearHref={filterHref({ department: null })}
-          />
-        )}
-        {low === '1' && (
-          <FilterChip label="Stock" value="At or below minimum" clearHref={filterHref({ low: null })} />
-        )}
-        {archived === '1' && (
-          <FilterChip
-            label="Archived"
-            value="Included"
-            clearHref={filterHref({ archived: null })}
-          />
-        )}
-      </FilterBar>
-
-      <div className="flex gap-3 px-6 pb-3 text-xs">
-        <Link
-          href="/products"
-          className={
-            !archived && !low && !filterLabel
-              ? 'font-medium text-brand'
-              : 'text-muted hover:text-ink'
-          }
-        >
-          Active
-        </Link>
-        <Link
-          href={filterHref({ low: low === '1' ? null : '1' })}
-          className={low === '1' ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-        >
-          At or below minimum
-        </Link>
-        <Link
-          href={filterHref({ archived: archived === '1' ? null : '1' })}
-          className={archived === '1' ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-        >
-          Include archived
-        </Link>
-      </div>
-
-      <div className="px-6 pb-6">
-        <Card>
-          {items.length === 0 ? (
-            <EmptyState
-              title="No products found"
-              hint={q ? 'Try a different search.' : 'Create your first product to get started.'}
+      <PageBody>
+        <TableToolbar>
+          <div className="w-80 max-w-full">
+            <SearchBar
+              action="/products"
+              defaultValue={q}
+              placeholder="Search description, code or barcode…"
+              className="p-0"
+              /* A GET form submits only its own fields, so without these a
+                 search would silently clear whichever filters were applied. */
+              keep={{ archived, low, department }}
             />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Code</th>
-                    <th className={TABLE_TH}>Description</th>
-                    <th className={TABLE_TH}>Department</th>
-                    <th className={`${TABLE_TH} text-right`}>
-                      {costBasis === 'last' ? 'Last cost' : 'Avg cost'}
-                    </th>
-                    <th className={`${TABLE_TH} text-right`}>Price incl.</th>
-                    <th className={`${TABLE_TH} text-right`}>GP %</th>
-                    <th className={`${TABLE_TH} text-right`}>On hand</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {items.map((p) => {
-                    // The default structure is the shelf price; fall back to the
-                    // first if no structure is flagged default.
-                    const price = p.prices.find((x) => x.isDefault) ?? p.prices[0]
-                    // Derived server-side now that reorder levels are per
-                    // location: "below minimum" means below it in SOME room,
-                    // which no single figure on the product can express.
-                    const belowMin = p.belowMinimum
+          </div>
 
-                    return (
-                      <tr key={p.id} className="hover:bg-surface-2">
-                        <td className="px-4 py-2.5">
-                          <Link href={`/products/${p.id}`} className="text-brand hover:underline">
-                            {p.code}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-2.5 text-ink">
-                          {p.description}
-                          {p.isArchived && (
-                            <span className="ml-2">
-                              <Badge>Archived</Badge>
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-muted">
-                          {departmentPath(departments, p.departmentId) || '—'}
-                        </td>
-                        <td className="numeric px-4 py-2.5 text-right text-muted">
-                          {formatMoney(p.cost.effective)}
-                        </td>
-                        <td className="numeric px-4 py-2.5 text-right text-ink">
-                          {price ? formatMoney(price.sellIncl) : '—'}
-                        </td>
-                        <td
-                          className={`numeric px-4 py-2.5 text-right ${
-                            price && price.gp < 0 ? 'text-danger' : 'text-muted'
-                          }`}
-                        >
-                          {price ? `${price.gp.toFixed(1)}%` : '—'}
-                        </td>
-                        <td
-                          className={`numeric px-4 py-2.5 text-right ${
-                            belowMin ? 'text-warning' : 'text-ink'
-                          }`}
-                        >
-                          {formatQty(p.stockOnHand)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <LinkSegmentedControl
+            aria-label="Filter products"
+            value={slice}
+            options={[
+              { value: 'all', label: 'Active', href: filterHref({ low: null, archived: null }) },
+              {
+                value: 'low',
+                label: 'At or below minimum',
+                href: filterHref({ low: '1', archived: null }),
+              },
+              {
+                value: 'archived',
+                label: 'Include archived',
+                href: filterHref({ archived: '1', low: null }),
+              },
+            ]}
+          />
+
+          {filterLabel && (
+            <FilterChip
+              label="Department"
+              value={filterLabel}
+              clearHref={filterHref({ department: null })}
+            />
           )}
+        </TableToolbar>
+
+        <Card>
+          <ProductsTable
+            items={items}
+            departmentPaths={departmentPaths}
+            costBasis={costBasis}
+            showCost={showCost}
+            empty={empty}
+          />
 
           <Pagination
             page={page}
@@ -229,7 +205,7 @@ export default async function ProductsPage({
             hrefFor={(next) => href({ page: next === 1 ? null : next })}
           />
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

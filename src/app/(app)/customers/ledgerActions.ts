@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import {
   postTransaction,
   allocate,
@@ -35,7 +35,9 @@ export async function postTransactionAction(input: {
   vatRatePct?: number
   autoAllocate?: boolean
 }): Promise<LedgerActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const docType = toDocType(input.docType)
   if (!docType) return { ok: false, error: 'Choose a document type.' }
@@ -65,7 +67,9 @@ export async function allocateAction(
   creditId: number,
   amount: number,
 ): Promise<LedgerActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await allocate(siteId, actor, debitId, creditId, amount)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -78,7 +82,9 @@ export async function unallocateAction(
   debitId: number,
   creditId: number,
 ): Promise<LedgerActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await unallocate(siteId, actor, debitId, creditId)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -90,7 +96,9 @@ export async function autoAllocateAction(
   customerId: number,
   creditId: number,
 ): Promise<LedgerActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await autoAllocate(siteId, actor, creditId)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -109,7 +117,9 @@ export async function reverseTransactionAction(
   transactionId: number,
   reason: string,
 ): Promise<LedgerActionResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const result = await reverseTransaction(siteId, actor, transactionId, reason)
   if (!result.ok) return { ok: false, error: result.error }
 

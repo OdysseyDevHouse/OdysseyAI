@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import { payableSuppliers, listPaymentRuns } from '@/lib/site/paymentRuns'
 import { supplierAgingSummary } from '@/lib/site/supplierLedger'
@@ -11,26 +10,15 @@ import {
   Card,
   CardHeader,
   CardBody,
+  StatStrip,
   StatTile,
-  Badge,
   Icons,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
 } from '@/components/ui'
 import { AgeingStrip } from '@/components/ledger/AgeingStrip'
 import PaymentRunClient from './PaymentRunClient'
+import RunsTable, { type PaymentRunRow } from './RunsTable'
 
 export const dynamic = 'force-dynamic'
-
-const STATUS_TONE = {
-  draft: 'warning',
-  posted: 'success',
-  cancelled: 'neutral',
-} as const
 
 export default async function RemittancesPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
@@ -57,6 +45,18 @@ export default async function RemittancesPage() {
   )
   const expiringSoon = round2(expiring.reduce((sum, s) => sum + s.discountAvailable, 0))
 
+  // Only plain data crosses to the client table — the run's Date fields and
+  // notes stay behind, since the list never shows them.
+  const runRows: PaymentRunRow[] = runs.map((run) => ({
+    id: run.id,
+    paymentDate: run.paymentDate,
+    reference: run.reference,
+    userName: run.userName,
+    supplierCount: run.supplierCount,
+    totalAmount: run.totalAmount,
+    status: run.status,
+  }))
+
   return (
     <>
       <PageHeader
@@ -64,7 +64,7 @@ export default async function RemittancesPage() {
         subtitle={`${payables.length} account${payables.length === 1 ? '' : 's'} with something outstanding`}
       />
       <PageBody>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatStrip>
           <StatTile
             label="Total owed"
             value={formatMoney(aging.total)}
@@ -108,7 +108,7 @@ export default async function RemittancesPage() {
             hint={drafts.length > 0 ? 'Prepared but not paid' : 'None waiting'}
             icon={<Icons.Wallet size={16} />}
           />
-        </div>
+        </StatStrip>
 
         {aging.total !== 0 && <AgeingStrip aging={aging} />}
 
@@ -160,51 +160,7 @@ export default async function RemittancesPage() {
             title="Recent runs"
             description="A run sits as a draft until it is posted — money only moves when you say so."
           />
-          {runs.length === 0 ? (
-            <CardBody>
-              <p className="text-sm text-muted">
-                No runs yet. Choose what to pay above and prepare one.
-              </p>
-            </CardBody>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className={TABLE}>
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Payment date</th>
-                    <th className={TABLE_TH}>Reference</th>
-                    <th className={TABLE_TH}>Prepared by</th>
-                    <th className={`${TABLE_TH} text-right`}>Suppliers</th>
-                    <th className={`${TABLE_TH} text-right`}>Total</th>
-                    <th className={TABLE_TH}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((run) => (
-                    <tr key={run.id} className={TABLE_ROW}>
-                      <td className={TABLE_TD}>
-                        <Link
-                          href={`/suppliers/remittances/${run.id}`}
-                          className="text-brand hover:underline"
-                        >
-                          {run.paymentDate}
-                        </Link>
-                      </td>
-                      <td className={TABLE_TD}>{run.reference ?? '—'}</td>
-                      <td className={TABLE_TD}>{run.userName || '—'}</td>
-                      <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{run.supplierCount}</td>
-                      <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-ink`}>
-                        {formatMoney(run.totalAmount)}
-                      </td>
-                      <td className={TABLE_TD}>
-                        <Badge tone={STATUS_TONE[run.status]}>{run.status}</Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <RunsTable runs={runRows} />
         </Card>
       </PageBody>
     </>

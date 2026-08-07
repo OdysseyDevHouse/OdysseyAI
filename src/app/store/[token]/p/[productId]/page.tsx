@@ -1,12 +1,14 @@
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
+import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
-import { publishedProduct, storefrontContext } from '@/lib/site/storefront'
+import { publishedProduct, publishedProducts, storefrontContext } from '@/lib/site/storefront'
 import { approvedReviewsFor } from '@/lib/site/productReviews'
 import { listImages } from '@/lib/site/productImages'
-import { Badge, Icons } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import AddToBasket from './AddToBasket'
+import { Stars } from '../../ShopBits'
+import ProductGrid from '../../ProductGrid'
+import ProductDetail from './ProductDetail'
+import ReviewForm from './ReviewForm'
 
 /**
  * One product.
@@ -18,116 +20,115 @@ import AddToBasket from './AddToBasket'
 
 export const dynamic = 'force-dynamic'
 
+async function resolve(token: string, productId: string) {
+  const siteId = await verifyPublicStoreToken(token)
+  if (siteId === null) return null
+  const context = await storefrontContext(siteId)
+  if (!context) return null
+  const id = Number(productId)
+  if (!Number.isInteger(id) || id <= 0) return null
+  const product = await publishedProduct(context, id)
+  if (!product) return null
+  return { context, product }
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string; productId: string }>
+}): Promise<Metadata> {
+  const { token, productId } = await params
+  const found = await resolve(token, productId)
+  if (!found) return { title: 'Not found', robots: { index: false, follow: false } }
+
+  const { context, product } = found
+  return {
+    title: `${product.description} · ${context.storeName}`,
+    description: `${product.description} — ${formatMoney(product.priceIncl)} at ${context.storeName}.`,
+    robots: { index: false, follow: false },
+  }
+}
+
 export default async function ProductPage({
   params,
 }: {
   params: Promise<{ token: string; productId: string }>
 }) {
   const { token, productId } = await params
+  const found = await resolve(token, productId)
+  if (!found) notFound()
 
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) notFound()
-  const context = await storefrontContext(siteId)
-  if (!context) notFound()
-
-  const id = Number(productId)
-  if (!Number.isInteger(id) || id <= 0) notFound()
-
-  const product = await publishedProduct(context, id)
-  if (!product) notFound()
+  const { context, product } = found
+  const { settings, siteId } = context
 
   // Only APPROVED reviews, and only when the shop has switched them on.
-  const [reviews, images] = await Promise.all([
-    context.settings.reviewsEnabled
-      ? approvedReviewsFor(siteId, id)
+  const [reviews, images, related] = await Promise.all([
+    settings.reviewsEnabled
+      ? approvedReviewsFor(siteId, product.id)
       : Promise.resolve({ reviews: [], average: 0, count: 0 }),
-    listImages(siteId, id),
+    listImages(siteId, product.id),
+    product.departmentId === null
+      ? Promise.resolve([])
+      : publishedProducts(context, { departmentId: product.departmentId, limit: 6 }),
   ])
 
-  return (
-    <div className="flex flex-col gap-6">
-      <Link
-        href={`/store/${token}`}
-        className="flex items-center gap-1.5 text-sm text-muted transition hover:text-ink"
-      >
-        <Icons.ArrowLeft size={15} />
-        Back to the shop
-      </Link>
+  // Never suggest the thing already being looked at.
+  const alsoLike = related.filter((p) => p.id !== product.id).slice(0, 5)
 
-      {images.length > 0 && (
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {images.map((image, index) => (
-            <li key={image.id}>
-              <img
-                src={`/api/store-images/${token}/${image.id}?p=${product.id}`}
-                alt={image.altText || product.description}
-                /* The first picture is what the shopper came to see, so it is
-                   fetched eagerly; the rest wait until they scroll. */
-                loading={index === 0 ? 'eager' : 'lazy'}
-                className="aspect-square w-full rounded-card border border-border bg-surface object-contain"
-              />
-            </li>
-          ))}
-        </ul>
+  return (
+    <div className="flex flex-col gap-10">
+      <ProductDetail
+        token={token}
+        product={product}
+        images={images.map((i) => ({ id: i.id, altText: i.altText }))}
+        showStock={settings.showStock}
+        showBrands={settings.showBrands}
+        reviewAverage={reviews.average}
+        reviewCount={reviews.count}
+      />
+
+      {settings.reviewsEnabled && (
+        <section>
+          <h2 className="text-base font-semibold text-ink">Reviews</h2>
+
+          {reviews.reviews.length === 0 ? (
+            <p className="mt-3 text-sm text-muted">
+              No reviews yet — be the first to say what you thought.
+            </p>
+          ) : (
+            <ul className="mt-3 flex flex-col gap-3">
+              {reviews.reviews.map((review) => (
+                <li key={review.id} className="rounded-card border border-border bg-surface p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Stars value={review.rating} />
+                    <span className="text-sm font-medium text-ink">{review.title || 'Review'}</span>
+                  </div>
+                  {review.body && (
+                    <p className="mt-2 whitespace-pre-line text-sm text-ink-2">{review.body}</p>
+                  )}
+                  <p className="mt-2 text-xs text-muted">{review.authorName || 'A customer'}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <ReviewForm token={token} productId={product.id} />
+        </section>
       )}
 
-      <div className="rounded-card border border-border bg-surface p-5 shadow-card">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-ink">{product.description}</h1>
-            <p className="mt-0.5 text-sm text-muted">
-              {product.departmentName ?? 'Uncategorised'} · {product.code}
-            </p>
-          </div>
-          {!product.inStock && <Badge tone="neutral">Out of stock</Badge>}
-        </div>
-
-        <p className="numeric mt-4 text-2xl font-semibold text-ink">
-          {formatMoney(product.priceIncl)}
-        </p>
-
-        {reviews.count > 0 && (
-          <p className="mt-2 flex items-center gap-1.5 text-sm text-muted">
-            <Icons.Star size={15} className="fill-warning text-warning" aria-hidden />
-            {reviews.average} out of 5 · {reviews.count}{' '}
-            {reviews.count === 1 ? 'review' : 'reviews'}
-          </p>
-        )}
-
-        <div className="mt-5">
-          <AddToBasket product={product} token={token} />
-        </div>
-      </div>
-
-      {reviews.reviews.length > 0 && (
+      {alsoLike.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold text-ink">What customers say</h2>
-          <ul className="flex flex-col gap-3">
-            {reviews.reviews.map((review) => (
-              <li
-                key={review.id}
-                className="rounded-card border border-border bg-surface p-4 shadow-card"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-0.5" aria-label={`${review.rating} of 5`}>
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <Icons.Star
-                        key={n}
-                        size={13}
-                        className={n <= review.rating ? 'fill-warning text-warning' : 'text-faint'}
-                        aria-hidden
-                      />
-                    ))}
-                  </span>
-                  {review.title && (
-                    <span className="text-sm font-medium text-ink">{review.title}</span>
-                  )}
-                </div>
-                <p className="mt-1.5 whitespace-pre-wrap text-sm text-ink-2">{review.body}</p>
-                <p className="mt-1.5 text-xs text-muted">{review.authorName || 'Anonymous'}</p>
-              </li>
-            ))}
-          </ul>
+          <h2 className="mb-3 text-base font-semibold text-ink">You may also like</h2>
+          {/* Forced to grid regardless of the shop's list/grid preference: a
+              suggestion strip is browsed by eye, and a row of names is not. */}
+          <ProductGrid
+            token={token}
+            products={alsoLike}
+            layout="grid"
+            showStock={settings.showStock}
+            showPhotos={settings.showPhotos}
+            showBrands={settings.showBrands}
+          />
         </section>
       )}
     </div>

@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireSiteId } from '@/lib/auth'
+import { requireSiteId, actorFor } from '@/lib/auth'
 import {
   createTerminal,
   updateTerminal,
@@ -17,7 +17,9 @@ export async function saveTerminalAction(
   id: number | null,
   input: TerminalInput,
 ): Promise<TerminalActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = id ? await updateTerminal(siteId, id, input) : await createTerminal(siteId, input)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -26,7 +28,9 @@ export async function saveTerminalAction(
 }
 
 export async function deleteTerminalAction(id: number): Promise<TerminalActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await deleteTerminal(siteId, id)
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -36,7 +40,9 @@ export async function deleteTerminalAction(id: number): Promise<TerminalActionRe
 
 /** Frees a till so a replacement machine can claim it. */
 export async function releaseTerminalAction(id: number): Promise<TerminalActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   await releaseTerminal(siteId, id)
   revalidatePath('/setup/terminals')
   return { ok: true, message: 'Till released. Another machine can now claim it.' }
@@ -55,7 +61,9 @@ export async function claimTerminalAction(
   deviceId: string,
   deviceLabel: string,
 ): Promise<TerminalActionResult> {
-  const siteId = await requireSiteId()
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
   const result = await claimTerminal(siteId, id, deviceId, deviceLabel)
   if (!result.ok) return { ok: false, error: result.error }
 

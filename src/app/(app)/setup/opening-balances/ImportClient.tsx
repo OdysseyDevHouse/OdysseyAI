@@ -5,22 +5,20 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardBody,
   CardHeader,
   ConfirmModal,
+  DataTable,
   Field,
   Icons,
   SegmentedControl,
+  StatStrip,
   StatTile,
   Textarea,
   useToast,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
+  type Column,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { OpeningPlan, OpeningSide, ImportResult } from '@/lib/site/openingBalances'
@@ -42,6 +40,18 @@ const SAMPLE = `code,invoice,date,amount,reference
 ACC001,INV-4471,2026-03-14,1150.00,March delivery
 ACC001,INV-4488,2026-05-02,2300.00,
 ACC002,INV-4490,2026-06-11,575.00,`
+
+type ProblemRow = { key: number; row: number; code: string; docNumber: string; reason: string }
+type ReadyRow = {
+  key: number
+  accountId: number
+  accountName: string
+  code: string
+  docNumber: string
+  docDate: string
+  amount: number
+}
+type FailedRow = { key: number; code: string; docNumber: string; reason: string }
 
 export default function ImportClient({
   customerCount,
@@ -99,9 +109,40 @@ export default function ImportClient({
     })
   }
 
+  // "Why" cells stay neutral ink on purpose — the card's own title carries the
+  // alarm, and a column that is entirely coloured stops marking anything.
+  const problemColumns: Column<ProblemRow>[] = [
+    { key: 'row', header: 'Row', numeric: true, cell: (p) => p.row },
+    { key: 'code', header: 'Code', cell: (p) => p.code || '—' },
+    { key: 'doc', header: 'Document', cell: (p) => p.docNumber || '—' },
+    { key: 'why', header: 'Why', cell: (p) => p.reason },
+  ]
+
+  const readyColumns: Column<ReadyRow>[] = [
+    {
+      key: 'account',
+      header: 'Account',
+      cell: (r) => (
+        <div>
+          <div className="text-ink">{r.accountName}</div>
+          <div className="text-xs text-muted">{r.code}</div>
+        </div>
+      ),
+    },
+    { key: 'doc', header: 'Document', cell: (r) => r.docNumber },
+    { key: 'date', header: 'Date', cell: (r) => r.docDate },
+    { key: 'amount', header: 'Amount', numeric: true, cell: (r) => formatMoney(r.amount) },
+  ]
+
+  const failedColumns: Column<FailedRow>[] = [
+    { key: 'code', header: 'Code', cell: (f) => f.code },
+    { key: 'doc', header: 'Document', cell: (f) => f.docNumber },
+    { key: 'why', header: 'Why', cell: (f) => f.reason },
+  ]
+
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatStrip columns={3}>
         <StatTile
           label="Customers"
           value={String(customerCount)}
@@ -115,34 +156,23 @@ export default function ImportClient({
           icon={<Icons.Truck size={16} />}
         />
         <StatTile
-          label="Importing"
-          value={side === 'customer' ? 'Debtors' : 'Creditors'}
-          hint="Switch below"
-          icon={<Icons.FileText size={16} />}
-        />
-        <StatTile
           label="Ready to post"
           value={plan ? String(plan.ready.length) : '—'}
           hint={plan ? formatMoney(plan.total) : 'Preview first'}
-          tone={plan && plan.ready.length > 0 ? 'positive' : 'default'}
+          tone={plan && plan.ready.length > 0 ? 'success' : 'default'}
           icon={<Icons.Check size={16} />}
         />
-      </div>
+      </StatStrip>
 
-      <Card>
-        <div className="flex items-start gap-3 px-6 py-4">
-          <Icons.StatusWarning size={18} className="mt-0.5 shrink-0 text-warning" />
-          <div className="text-sm">
-            <p className="font-medium text-ink">One row per outstanding invoice — not one per account.</p>
-            <p className="text-muted">
-              Each row keeps its original date and document number, so the age analysis is right on
-              day one and a customer paying &ldquo;the March invoice&rdquo; has a March invoice to
-              pay. A single lump per account would age every debt as current and settle against
-              nothing. VAT is not re-declared: these invoices were taxed under the old system.
-            </p>
-          </div>
-        </div>
-      </Card>
+      <Callout
+        tone="warning"
+        title="One row per outstanding invoice — not one per account."
+      >
+        Each row keeps its original date and document number, so the age analysis is right on day
+        one and a customer paying &ldquo;the March invoice&rdquo; has a March invoice to pay. A
+        single lump per account would age every debt as current and settle against nothing. VAT is
+        not re-declared: these invoices were taxed under the old system.
+      </Callout>
 
       <Card>
         <CardHeader
@@ -165,7 +195,13 @@ export default function ImportClient({
               <Button variant="ghost" size="sm" onClick={() => setCsv(SAMPLE)} disabled={pending}>
                 Use a sample
               </Button>
-              <Button variant="primary" onClick={preview} disabled={pending || csv.trim().length === 0}>
+              {/* Demoted once a plan exists — from there "Import R…" below is
+                  the screen's one primary, and re-previewing is the side path. */}
+              <Button
+                variant={plan ? 'secondary' : 'primary'}
+                onClick={preview}
+                disabled={pending || csv.trim().length === 0}
+              >
                 <Icons.Search size={15} />
                 {pending ? 'Checking…' : 'Preview'}
               </Button>
@@ -177,6 +213,8 @@ export default function ImportClient({
             label="CSV"
             hint="code, invoice number, date, amount, reference — a header row is optional. Dates are read day-first (05/08/2026 is 5 August)."
           >
+            {/* Mono, small on purpose: this is raw CSV entry, and columns only
+                line up in a fixed-width face. */}
             <Textarea
               value={csv}
               onChange={(e) => {
@@ -194,28 +232,22 @@ export default function ImportClient({
       {plan && (
         <>
           {plan.alreadyImported.length > 0 && (
-            <Card>
-              <div className="flex items-start gap-3 px-6 py-4">
-                <Icons.StatusWarning size={18} className="mt-0.5 shrink-0 text-danger" />
-                <div className="text-sm">
-                  <p className="font-medium text-ink">
-                    {plan.alreadyImported.length} account
-                    {plan.alreadyImported.length === 1 ? '' : 's'} already carry an opening balance.
-                  </p>
-                  <p className="text-muted">
-                    Importing again will post the debt a second time. Remove the earlier rows first
-                    unless that is what you intend.
-                  </p>
-                  <p className="mt-1 text-muted">
-                    {plan.alreadyImported
-                      .slice(0, 6)
-                      .map((a) => `${a.code} (${a.count})`)
-                      .join(' · ')}
-                    {plan.alreadyImported.length > 6 && ` · +${plan.alreadyImported.length - 6} more`}
-                  </p>
-                </div>
-              </div>
-            </Card>
+            <Callout
+              tone="danger"
+              title={`${plan.alreadyImported.length} account${plan.alreadyImported.length === 1 ? '' : 's'} already carry an opening balance.`}
+            >
+              <p>
+                Importing again will post the debt a second time. Remove the earlier rows first
+                unless that is what you intend.
+              </p>
+              <p className="mt-1">
+                {plan.alreadyImported
+                  .slice(0, 6)
+                  .map((a) => `${a.code} (${a.count})`)
+                  .join(' · ')}
+                {plan.alreadyImported.length > 6 && ` · +${plan.alreadyImported.length - 6} more`}
+              </p>
+            </Callout>
           )}
 
           {plan.problems.length > 0 && (
@@ -224,28 +256,11 @@ export default function ImportClient({
                 title={`${plan.problems.length} row${plan.problems.length === 1 ? '' : 's'} will not import`}
                 description="Fix these in the file and preview again. They are skipped, never guessed at."
               />
-              <div className="overflow-x-auto">
-                <table className={TABLE}>
-                  <thead>
-                    <tr className={TABLE_HEAD_ROW}>
-                      <th className={TABLE_TH}>Row</th>
-                      <th className={TABLE_TH}>Code</th>
-                      <th className={TABLE_TH}>Document</th>
-                      <th className={TABLE_TH}>Why</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {plan.problems.slice(0, 100).map((problem) => (
-                      <tr key={`${problem.row}-${problem.docNumber}`} className={TABLE_ROW}>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{problem.row}</td>
-                        <td className={TABLE_TD}>{problem.code || '—'}</td>
-                        <td className={TABLE_TD}>{problem.docNumber || '—'}</td>
-                        <td className={`${TABLE_TD} text-warning`}>{problem.reason}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={problemColumns}
+                rows={plan.problems.slice(0, 100).map((p, key) => ({ ...p, key }))}
+                getRowKey={(p) => p.key}
+              />
             </Card>
           )}
 
@@ -273,38 +288,20 @@ export default function ImportClient({
                 <p className="text-sm text-muted">Nothing here will post. Fix the rows above.</p>
               </CardBody>
             ) : (
-              <div className="overflow-x-auto">
-                <table className={TABLE}>
-                  <thead>
-                    <tr className={TABLE_HEAD_ROW}>
-                      <th className={TABLE_TH}>Account</th>
-                      <th className={TABLE_TH}>Document</th>
-                      <th className={TABLE_TH}>Date</th>
-                      <th className={`${TABLE_TH} text-right`}>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {plan.ready.slice(0, 200).map((row, index) => (
-                      <tr key={`${row.accountId}-${row.docNumber}-${index}`} className={TABLE_ROW}>
-                        <td className={TABLE_TD}>
-                          <div className="text-ink">{row.accountName}</div>
-                          <div className="text-xs text-muted">{row.code}</div>
-                        </td>
-                        <td className={TABLE_TD}>{row.docNumber}</td>
-                        <td className={TABLE_TD}>{row.docDate}</td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(row.amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <>
+                <DataTable
+                  columns={readyColumns}
+                  rows={plan.ready.slice(0, 200).map((r, key) => ({ ...r, key }))}
+                  getRowKey={(r) => r.key}
+                />
                 {plan.ready.length > 200 && (
-                  <CardBody>
-                    <p className="text-sm text-muted">
-                      Showing the first 200 of {plan.ready.length}. All of them will import.
-                    </p>
-                  </CardBody>
+                  // Outside the table's horizontal scroll container, so the
+                  // note never scrolls out of view with the columns.
+                  <p className="border-t border-border px-6 py-3 text-sm text-muted">
+                    Showing the first 200 of {plan.ready.length}. All of them will import.
+                  </p>
                 )}
-              </div>
+              </>
             )}
           </Card>
         </>
@@ -324,26 +321,11 @@ export default function ImportClient({
             }
           />
           {result.failed.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className={TABLE}>
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Code</th>
-                    <th className={TABLE_TH}>Document</th>
-                    <th className={TABLE_TH}>Why</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.failed.map((problem) => (
-                    <tr key={`${problem.code}-${problem.docNumber}`} className={TABLE_ROW}>
-                      <td className={TABLE_TD}>{problem.code}</td>
-                      <td className={TABLE_TD}>{problem.docNumber}</td>
-                      <td className={`${TABLE_TD} text-danger`}>{problem.reason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={failedColumns}
+              rows={result.failed.map((f, key) => ({ ...f, key }))}
+              getRowKey={(f) => f.key}
+            />
           )}
         </Card>
       )}

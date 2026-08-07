@@ -3,23 +3,27 @@
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Badge,
   Button,
   Card,
   CardBody,
+  CardFooter,
   CardHeader,
-  CurrencyInput,
   Field,
   Icons,
   Input,
   NumberInput,
+  PageBody,
   Select,
+  SummaryList,
+  SummaryRow,
+  SummaryTotal,
   Switch,
   useToast,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
   TABLE_TD,
+  TABLE_TD_INPUT,
   TABLE_ROW,
   TABLE_NUMERIC,
 } from '@/components/ui'
@@ -139,7 +143,7 @@ export default function CreditNoteForm({
   const ready = chosen.length > 0 && reason.trim().length > 0
 
   return (
-    <div className="grid gap-4 px-6 pt-4 pb-10 lg:grid-cols-3">
+    <PageBody className="grid lg:grid-cols-3">
       <div className="lg:col-span-2">
         <Card>
           <CardHeader
@@ -178,7 +182,7 @@ export default function CreditNoteForm({
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                         {formatMoney(line.unitPriceIncl)}
                       </td>
-                      <td className={`${TABLE_TD} w-36`}>
+                      <td className={`${TABLE_TD_INPUT} w-44`}>
                         <div className="flex items-center gap-1.5">
                           <NumberInput
                             value={q}
@@ -187,7 +191,7 @@ export default function CreditNoteForm({
                             className="text-right"
                           />
                           <Button
-                            variant="bare"
+                            variant="ghost"
                             size="sm"
                             onClick={() => setLineQty(line, line.creditable)}
                             title={`Credit all ${formatQty(line.creditable)}`}
@@ -209,22 +213,19 @@ export default function CreditNoteForm({
       </div>
 
       <div className="flex flex-col gap-4">
-        <Card className="p-4">
-          <dl className="flex flex-col gap-1.5 text-sm">
-            <Row label="Subtotal (excl.)" value={formatMoney(Math.abs(totals.subtotalExcl))} />
-            <Row label="VAT" value={formatMoney(Math.abs(totals.vatTotal))} />
-          </dl>
-          <div className="mt-3 flex items-baseline justify-between border-t border-border pt-3">
-            <span className="font-medium text-ink">Credit total</span>
-            <span className="numeric text-xl font-semibold text-ink">
-              {formatMoney(Math.abs(totals.totalIncl))}
-            </span>
-          </div>
-        </Card>
-
-        <Card className="p-4">
-          <div className="flex flex-col gap-4">
-            <Field label="Reason" hint="Recorded on the credit and in the audit trail.">
+        <Card>
+          <CardHeader
+            title="Reason and refund"
+            description="The original invoice keeps saying exactly what it said — the customer may be holding a copy. This raises a separate document that reverses part of it."
+          />
+          <CardBody className="flex flex-col gap-4">
+            <Field
+              label="Reason"
+              hint="Recorded on the credit and in the audit trail."
+              error={
+                chosen.length > 0 && reason.trim().length === 0 ? 'Give a reason.' : undefined
+              }
+            >
               <Input
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
@@ -270,36 +271,34 @@ export default function CreditNoteForm({
                 </Select>
               </Field>
             )}
-          </div>
+          </CardBody>
         </Card>
 
-        <Button variant="danger" disabled={!ready || pending} onClick={submit}>
-          <Icons.Reverse size={16} />
-          {pending ? 'Posting…' : `Credit ${formatMoney(Math.abs(totals.totalIncl))}`}
-        </Button>
-
-        {!ready && (
-          <p className="text-center text-xs text-muted">
-            {chosen.length === 0 ? 'Choose what is coming back.' : 'Give a reason.'}
-          </p>
-        )}
-
-        <Card className="p-3">
-          <p className="text-xs text-muted">
-            The original invoice keeps saying exactly what it said — the customer may be holding a
-            copy of it. This raises a separate document that reverses part of it.
-          </p>
+        <Card>
+          <CardHeader title="Totals" />
+          <CardBody>
+            <SummaryList>
+              <SummaryRow
+                label="Subtotal (excl.)"
+                value={formatMoney(Math.abs(totals.subtotalExcl))}
+              />
+              <SummaryRow label="VAT" value={formatMoney(Math.abs(totals.vatTotal))} />
+              <SummaryTotal label="Credit total" value={formatMoney(Math.abs(totals.totalIncl))} />
+            </SummaryList>
+          </CardBody>
+          {/* Primary, not danger: crediting is the routine job this screen
+              exists for, and the confirm already spells out what it does. */}
+          <CardFooter className={!ready && chosen.length === 0 ? 'justify-between' : ''}>
+            {!ready && chosen.length === 0 && (
+              <span className="text-xs text-muted">Choose what is coming back.</span>
+            )}
+            <Button variant="primary" disabled={!ready || pending} onClick={submit}>
+              <Icons.Reverse size={16} />
+              {pending ? 'Posting…' : `Credit ${formatMoney(Math.abs(totals.totalIncl))}`}
+            </Button>
+          </CardFooter>
         </Card>
       </div>
-    </div>
-  )
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between">
-      <dt className="text-muted">{label}</dt>
-      <dd className="numeric text-ink-2">{value}</dd>
-    </div>
+    </PageBody>
   )
 }

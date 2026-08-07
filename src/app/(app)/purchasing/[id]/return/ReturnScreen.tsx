@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
@@ -14,8 +14,16 @@ import {
   Icons,
   Input,
   NumberInput,
+  PageBody,
   Textarea,
   useToast,
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_NUMERIC,
+  TABLE_ROW,
+  TABLE_TD,
+  TABLE_TD_INPUT,
+  TABLE_TH,
 } from '@/components/ui'
 import { formatMoney, formatQty, round } from '@/lib/decimals'
 import { createSupplierReturnAction, serialsForReturnAction } from '../../actions'
@@ -179,7 +187,8 @@ export default function ReturnScreen({
   const nothingLeft = lines.every((l) => l.returnable <= 0)
 
   return (
-    <div className="grid gap-4 px-6 pt-4 pb-10 lg:grid-cols-3">
+    <PageBody>
+      <div className="grid gap-4 lg:grid-cols-3">
       <div className="flex flex-col gap-4 lg:col-span-2">
         <Card>
           <CardHeader
@@ -194,107 +203,144 @@ export default function ReturnScreen({
               icon={<Icons.PackageOpen size={22} />}
             />
           ) : (
-            <div className="divide-y divide-border">
-              {lines.map((line) => {
-                const isSerial = line.productType === 'serial'
-                const options = serialOptions[line.id] ?? []
-                const picked = chosen[line.id] ?? []
-                const q = qtyFor(line)
-                const spent = line.returnable <= 0
+            /* A table, not stacked flex rows: quantities and costs each form a
+               column, so the money lines up. Live inputs justify hand-building
+               it — it wears the shared TABLE_* skin so it cannot drift. */
+            <div className="overflow-x-auto">
+              <table className={TABLE}>
+                <thead>
+                  <tr className={TABLE_HEAD_ROW}>
+                    <th scope="col" className={TABLE_TH}>
+                      Item
+                    </th>
+                    <th scope="col" className={`${TABLE_TH} text-right`}>
+                      Received
+                    </th>
+                    <th scope="col" className={`${TABLE_TH} text-right`}>
+                      Unit cost
+                    </th>
+                    <th scope="col" className={`${TABLE_TH} w-36 text-right`}>
+                      Return
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line) => {
+                    const isSerial = line.productType === 'serial'
+                    const options = serialOptions[line.id] ?? []
+                    const picked = chosen[line.id] ?? []
+                    const q = qtyFor(line)
+                    const spent = line.returnable <= 0
+                    const over = !spent && q > line.returnable + 0.0005
 
-                return (
-                  <div key={line.id} className={`px-6 py-3 ${spent ? 'opacity-60' : ''}`}>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-ink">{line.description}</div>
-                        <div className="text-xs text-muted">
-                          {line.productCode}
-                          <span className="ml-2">{formatQty(line.qtyReceived)} received</span>
-                          {line.alreadyReturned > 0 && (
-                            <span className="ml-2">
-                              · {formatQty(line.alreadyReturned)} already returned
-                            </span>
-                          )}
-                          <span className="ml-2">· {formatMoney(line.unitCostExcl)} each</span>
-                        </div>
-                      </div>
+                    return (
+                      <Fragment key={line.id}>
+                        <tr className={`${TABLE_ROW} ${spent ? 'opacity-60' : ''}`}>
+                          <td className={TABLE_TD}>
+                            <div className="text-ink">{line.description}</div>
+                            <div className="text-xs text-muted">
+                              {line.productCode}
+                              {line.alreadyReturned > 0 && (
+                                <span className="ml-2">
+                                  · {formatQty(line.alreadyReturned)} already returned
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                            {formatQty(line.qtyReceived)}
+                          </td>
+                          <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                            {formatMoney(line.unitCostExcl)}
+                          </td>
+                          <td className={`${TABLE_TD_INPUT} w-36 text-right`}>
+                            {spent ? (
+                              <Badge>Fully returned</Badge>
+                            ) : isSerial ? (
+                              /* A count, not a judgement — the ticks below drive it. */
+                              <span className="numeric text-sm text-ink-2">
+                                {q} of {formatQty(line.returnable)} chosen
+                              </span>
+                            ) : (
+                              <Field
+                                error={
+                                  over
+                                    ? `Only ${formatQty(line.returnable)} left to return.`
+                                    : undefined
+                                }
+                              >
+                                <NumberInput
+                                  value={qty[line.id] ?? 0}
+                                  precision={3}
+                                  aria-label={`Quantity of ${line.description} to return`}
+                                  onChange={(e) =>
+                                    setQty((c) => ({
+                                      ...c,
+                                      [line.id]: Number(e.target.value) || 0,
+                                    }))
+                                  }
+                                />
+                              </Field>
+                            )}
+                          </td>
+                        </tr>
 
-                      {spent ? (
-                        <Badge>fully returned</Badge>
-                      ) : isSerial ? (
-                        <Badge tone={q > 0 ? 'warning' : 'neutral'}>
-                          {q} of {formatQty(line.returnable)} chosen
-                        </Badge>
-                      ) : (
-                        <Field label="Return" className="w-32">
-                          <NumberInput
-                            value={qty[line.id] ?? 0}
-                            precision={3}
-                            aria-label={`Quantity of ${line.description} to return`}
-                            onChange={(e) =>
-                              setQty((c) => ({ ...c, [line.id]: Number(e.target.value) || 0 }))
-                            }
-                          />
-                        </Field>
-                      )}
-                    </div>
-
-                    {!spent && q > line.returnable + 0.0005 && (
-                      <p className="mt-2 text-xs text-danger">
-                        Only {formatQty(line.returnable)} left to return on this line.
-                      </p>
-                    )}
-
-                    {/* A serial line picks units, not a number. */}
-                    {isSerial && !spent && (
-                      <div className="mt-3 rounded-control border border-border bg-surface-2 p-3">
-                        <div className="flex items-center gap-2">
-                          <Icons.Barcode size={15} className="text-muted" />
-                          <span className="text-sm font-medium text-ink">
-                            Which units are going back
-                          </span>
-                        </div>
-
-                        {options.length === 0 ? (
-                          <p className="mt-2 text-xs text-muted">
-                            No units of this product are in stock at the location it was received
-                            into, so there is nothing to send back.
-                          </p>
-                        ) : (
-                          <ul className="mt-2 flex flex-col gap-1">
-                            {options.map((option) => (
-                              <li key={option.id}>
-                                <label
-                                  /* A full-width selectable row with a trailing
-                                     figure — not a kit component.
-                                     data-kit-ok */
-                                  data-kit-ok
-                                  className="flex cursor-pointer items-center gap-3 rounded-control px-2 py-1.5 transition hover:bg-surface"
-                                >
-                                  <Checkbox
-                                    checked={picked.includes(option.id)}
-                                    onChange={(e) =>
-                                      toggleSerial(line.id, option.id, e.target.checked)
-                                    }
-                                  />
-                                  <span className="numeric min-w-0 flex-1 truncate text-sm text-ink">
-                                    {option.serial}
+                        {/* A serial line picks units, not a number. */}
+                        {isSerial && !spent && (
+                          <tr className={TABLE_ROW}>
+                            <td colSpan={4} className={TABLE_TD}>
+                              <div className="my-1.5 rounded-control border border-border bg-surface-2 p-3">
+                                <div className="flex items-center gap-2">
+                                  <Icons.Barcode size={15} className="text-muted" />
+                                  <span className="text-sm font-medium text-ink">
+                                    Which units are going back
                                   </span>
-                                  {option.warrantyUntil && (
-                                    <span className="text-xs text-muted">
-                                      warranty {String(option.warrantyUntil).slice(0, 10)}
-                                    </span>
-                                  )}
-                                </label>
-                              </li>
-                            ))}
-                          </ul>
+                                </div>
+
+                                {options.length === 0 ? (
+                                  <p className="mt-2 text-xs text-muted">
+                                    No units of this product are in stock at the location it was
+                                    received into, so there is nothing to send back.
+                                  </p>
+                                ) : (
+                                  <ul className="mt-2 flex flex-col gap-1">
+                                    {options.map((option) => (
+                                      <li key={option.id}>
+                                        <label
+                                          /* A full-width selectable row with a trailing
+                                             figure — not a kit component.
+                                             data-kit-ok */
+                                          data-kit-ok
+                                          className="flex cursor-pointer items-center gap-3 rounded-control px-2 py-1.5 transition hover:bg-surface"
+                                        >
+                                          <Checkbox
+                                            checked={picked.includes(option.id)}
+                                            onChange={(e) =>
+                                              toggleSerial(line.id, option.id, e.target.checked)
+                                            }
+                                          />
+                                          <span className="numeric min-w-0 flex-1 truncate text-sm text-ink">
+                                            {option.serial}
+                                          </span>
+                                          {option.warrantyUntil && (
+                                            <span className="text-xs text-muted">
+                                              warranty {String(option.warrantyUntil).slice(0, 10)}
+                                            </span>
+                                          )}
+                                        </label>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </Card>
@@ -304,7 +350,16 @@ export default function ReturnScreen({
         <Card>
           <CardHeader title="Why" description="Kept on the return and on the supplier's account." />
           <CardBody className="flex flex-col gap-4">
-            <Field label="Reason">
+            <Field
+              label="Reason"
+              // Surfaces only once something is chosen — the reason is then the
+              // one thing still standing between the user and the button.
+              error={
+                anything && reason.trim().length === 0
+                  ? 'Give a reason — it goes on the return and their account.'
+                  : undefined
+              }
+            >
               <Textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
@@ -339,15 +394,9 @@ export default function ReturnScreen({
           {pending ? 'Returning…' : 'Send it back'}
         </Button>
 
-        {!ready && (
-          <p className="text-center text-xs text-muted">
-            {!anything
-              ? 'Choose what is going back.'
-              : problems.length > 0
-                ? `${problems[0].description}: more than is left to return.`
-                : 'Give a reason.'}
-          </p>
-        )}
+        {/* Line and reason problems are marked on their own fields; the only
+            state with nowhere to point is an empty selection. */}
+        {!anything && <p className="text-center text-xs text-muted">Choose what is going back.</p>}
 
         <Card className="p-3">
           <p className="text-xs text-muted">
@@ -357,7 +406,8 @@ export default function ReturnScreen({
           </p>
         </Card>
       </div>
-    </div>
+      </div>
+    </PageBody>
   )
 }
 

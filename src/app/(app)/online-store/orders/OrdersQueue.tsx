@@ -337,7 +337,7 @@ export default function OrdersQueue({
                 </Button>
               ) : !storeOpen && !archived ? (
                 <Link href="/online-store/setup">
-                  <Button variant="primary">Set up your store</Button>
+                  <Button variant="secondary">Set up your store</Button>
                 </Link>
               ) : undefined
             }
@@ -348,6 +348,7 @@ export default function OrdersQueue({
             rows={visible}
             getRowKey={(o) => o.id}
             onRowClick={(o) => setDetailId(o.id)}
+            actionsOnHover
             actions={(o) => {
               const next = nextFor(o)
               const isNew = o.statusRole === 'new'
@@ -355,8 +356,10 @@ export default function OrdersQueue({
 
               return (
                 <div className="flex items-center justify-end gap-1">
+                  {/* success, not primary: a queue of new orders would render a
+                      dozen primaries, and "accept" is a positive go anyway. */}
                   {!archived && isNew && (
-                    <Button variant="primary" size="sm" disabled={busy} onClick={() => accept(o)}>
+                    <Button variant="success" size="sm" disabled={busy} onClick={() => accept(o)}>
                       Accept
                     </Button>
                   )}

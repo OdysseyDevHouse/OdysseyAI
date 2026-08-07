@@ -5,6 +5,7 @@ import {
   Badge,
   BulkActionBar,
   Button,
+  Callout,
   Card,
   CardBody,
   CardHeader,
@@ -18,11 +19,13 @@ import {
   DateRangeField,
   EmptyState,
   Field,
+  FieldGroup,
   FileInput,
   FilterBar,
   FilterChip,
   Icons,
   Input,
+  MiniStat,
   LinkSegmentedControl,
   Menu,
   MenuItem,
@@ -37,13 +40,21 @@ import {
   SegmentedControl,
   SelectableCard,
   Select,
+  RowTile,
   SettingGroup,
   SettingRow,
   Sparkline,
+  StatStrip,
+  StatTile,
+  SummaryList,
+  SummaryRow,
+  SummaryTotal,
   Switch,
+  TableSkeleton,
   TableToolbar,
   Tabs,
   Textarea,
+  TextLink,
   TILE_SWATCHES,
   tileClass,
   ToolbarSearch,
@@ -83,7 +94,12 @@ export default function StyleGuidePage() {
       <PageBody>
         <ButtonsSection />
         <FormSection />
+        <FieldGroupSection />
         <BadgeSection />
+        <CalloutSection />
+        <StatsSection />
+        <SummarySection />
+        <IdentitySection />
         <SettingRowSection />
         <SelectableCardSection />
         <TileSwatchSection />
@@ -100,6 +116,7 @@ export default function StyleGuidePage() {
         <DateRangeSection />
         <PaginationSection />
         <EmptyStateSection />
+        <SkeletonSection />
         <ChartSection />
         <TokensSection />
       </PageBody>
@@ -422,6 +439,140 @@ function BadgeSection() {
         <Badge tone="brand">New</Badge>
         <Badge tone="neutral">42</Badge>
       </CardBody>
+    </Card>
+  )
+}
+
+function CalloutSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Callouts"
+        description="<Callout tone title action> — the inline notice. One per condition; when several conditions hold, show only the most severe."
+      />
+      <CardBody className="flex flex-col gap-3">
+        <Callout tone="danger" title="This invoice is cancelled">
+          Cancelled on 12 May by Thabo. The stock has been returned to the shelf.
+        </Callout>
+        <Callout
+          tone="warning"
+          title="Mail is not set up"
+          action={
+            <Button variant="secondary" size="sm">
+              Open settings
+            </Button>
+          }
+        >
+          Statements can be generated but not sent until an SMTP server is configured.
+        </Callout>
+        <Callout tone="success" title="Statement run complete">
+          142 statements sent, none failed.
+        </Callout>
+        <Callout tone="brand">
+          Lay-bys are held for 60 days by default. Change the period under Setup → Lay-bys.
+        </Callout>
+      </CardBody>
+    </Card>
+  )
+}
+
+function StatsSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Stat strip"
+        description="<StatStrip> of <StatTile> — a list screen's headline numbers. Tone only the tile that means “act on me”; three tiles all in the same ink is three tiles nobody looks at. <MiniStat> is the compact figure inside other chrome."
+      />
+      <CardBody className="flex flex-col gap-4">
+        <StatStrip>
+          <StatTile label="Products" value="1,284" hint="86 archived" />
+          <StatTile label="Stock value" value={rand(482210.4)} hint="At cost" />
+          <StatTile label="Below minimum" value="37" tone="warning" hint="Reorder these" />
+          <StatTile label="Out of stock" value="4" tone="danger" hint="Losing sales" />
+        </StatStrip>
+        <div className="flex flex-wrap gap-2">
+          <MiniStat label="Parsed" value="212" />
+          <MiniStat label="Matched" value="196" tone="success" />
+          <MiniStat label="Problems" value="3" tone="danger" />
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+function SummarySection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Summary totals"
+        description="<SummaryList> + <SummaryRow> + <SummaryTotal> — the totals panel on documents and forms. The grand total is the loudest number on purpose."
+      />
+      <CardBody className="max-w-xs">
+        <SummaryList>
+          <SummaryRow label="Subtotal" value={rand(1073.9)} />
+          <SummaryRow label="Discount" value={`-${rand(53.7)}`} tone="warning" />
+          <SummaryRow label="VAT (15%)" value={rand(153.03)} />
+          <SummaryTotal label="Total inclusive" value={rand(1173.23)} />
+        </SummaryList>
+      </CardBody>
+    </Card>
+  )
+}
+
+function IdentitySection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Row identity"
+        description="<RowTile> — the leading initials tile that makes a row findable by shape. <TextLink> — the inline brand link for record references."
+      />
+      <CardBody className="flex flex-col gap-3 text-sm text-ink-2">
+        {PRODUCTS.map((p) => (
+          <div key={p.id} className="flex items-center gap-3">
+            <RowTile label={p.name} />
+            <TextLink href="/setup/style-guide">{p.sku}</TextLink>
+            <span>{p.name}</span>
+          </div>
+        ))}
+      </CardBody>
+    </Card>
+  )
+}
+
+function FieldGroupSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Field groups"
+        description="<FieldGroup title hint> — a titled cluster of related fields inside one card, for forms whose sections are too small to each deserve their own Card."
+      />
+      <CardBody className="grid max-w-2xl gap-4 sm:grid-cols-2">
+        <FieldGroup title="What it applies to" hint="Leave both off to apply storewide.">
+          <Field label="Department">
+            <Select defaultValue="">
+              <option value="">All departments</option>
+              <option>Beverages</option>
+            </Select>
+          </Field>
+        </FieldGroup>
+        <FieldGroup title="What it pays">
+          <Field label="Rate" className="max-w-32">
+            <NumberInput defaultValue={2.5} />
+          </Field>
+        </FieldGroup>
+      </CardBody>
+    </Card>
+  )
+}
+
+function SkeletonSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Loading skeleton"
+        description="<TableSkeleton columns rows> — holds a table's real 36px row rhythm while data loads, instead of a spinner that collapses the page."
+      />
+      <TableSkeleton columns={4} rows={3} />
     </Card>
   )
 }

@@ -4,12 +4,16 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
+  Callout,
   Card,
   CardHeader,
+  DataTable,
+  SegmentedControl,
   Switch,
   Modal,
   Field,
   Input,
+  TableToolbar,
   Textarea,
   Badge,
   Icons,
@@ -19,6 +23,7 @@ import {
   TABLE_TH,
   TABLE_TD,
   TABLE_ROW,
+  type Column,
 } from '@/components/ui'
 import type { RoleSummary, RoleMatrix } from '@/lib/site/permissions'
 import {
@@ -42,12 +47,17 @@ type Group = {
  * checkboxes into one submit invites someone to walk away mid-edit believing
  * they had granted something.
  *
+ * ONE ROLE AT A TIME, chosen by the segmented control. A column per role reads
+ * nicely at three roles and becomes an unscrollable wall at eight — capping the
+ * grid to the role being edited keeps its width constant however many roles a
+ * store invents.
+ *
  * Grouped by module and collapsed by default because the full grid is thirty-
  * odd rows. Showing all of them at once is how a permissions screen becomes a
  * thing nobody reads before ticking.
  *
- * The owner column is shown but locked. Seeing that an owner has everything is
- * the point — it is what makes "who can put this back?" answerable.
+ * The owner role is selectable but locked. Seeing that an owner has everything
+ * is the point — it is what makes "who can put this back?" answerable.
  */
 export default function RolesScreen({
   roles,
@@ -62,10 +72,15 @@ export default function RolesScreen({
   const [open, setOpen] = useState<Set<string>>(new Set([groups[0]?.key].filter(Boolean) as string[]))
   const [editing, setEditing] = useState<RoleSummary | null>(null)
   const [adding, setAdding] = useState(false)
+  const [selectedId, setSelectedId] = useState<number | null>(roles[0]?.id ?? null)
   const [pending, startTransition] = useTransition()
 
   const toast = useToast()
   const router = useRouter()
+
+  // Falls back to the first role so deleting the selected one never strands
+  // the grid on a role that no longer exists.
+  const selected = roles.find((r) => r.id === selectedId) ?? roles[0]
 
   function toggle(roleId: number, capability: string, next: boolean) {
     const previous = local[roleId]?.[capability] ?? false
@@ -107,143 +122,177 @@ export default function RolesScreen({
       return next
     })
 
+  const roleColumns: Column<RoleSummary>[] = [
+    {
+      key: 'role',
+      header: 'Role',
+      sortable: true,
+      sortValue: (role) => role.name,
+      cell: (role) => (
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-ink">{role.name}</span>
+            {role.isOwner && <Badge tone="brand">Every permission</Badge>}
+          </div>
+          {role.description && <div className="text-xs text-muted">{role.description}</div>}
+        </div>
+      ),
+    },
+    {
+      key: 'people',
+      header: 'People',
+      numeric: true,
+      sortable: true,
+      sortValue: (role) => role.userCount,
+      cell: (role) =>
+        role.userCount === 0 ? (
+          // A role nobody holds is usually a leftover — worth a flag, not a 0
+          // that reads identically to every other number at scanning speed.
+          <Badge tone="warning">Unused</Badge>
+        ) : (
+          role.userCount
+        ),
+    },
+  ]
+
   return (
     <>
-      <div className="flex justify-end">
-        <Button variant="primary" onClick={() => setAdding(true)}>
-          <Icons.Plus size={16} />
-          Add role
-        </Button>
-      </div>
+      <TableToolbar
+        actions={
+          <Button variant="primary" onClick={() => setAdding(true)}>
+            <Icons.Plus size={16} />
+            Add role
+          </Button>
+        }
+      />
 
       {/* The roles themselves, before the grid — you cannot tick a box for a
           role you have not created, so the list comes first. */}
       <Card>
         <CardHeader title="Roles" description="Named after the job, not the billing relationship." />
-        <div className="overflow-x-auto">
-          <table className={TABLE}>
-            <thead>
-              <tr className={TABLE_HEAD_ROW}>
-                <th className={TABLE_TH}>Role</th>
-                <th className={TABLE_TH}>People</th>
-                <th className={`${TABLE_TH} text-right`}>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((role) => (
-                <tr key={role.id} className={TABLE_ROW}>
-                  <td className={TABLE_TD}>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-ink">{role.name}</span>
-                      {role.isOwner && <Badge tone="brand">Every permission</Badge>}
-                    </div>
-                    {role.description && (
-                      <div className="text-xs text-muted">{role.description}</div>
-                    )}
-                  </td>
-                  <td className={TABLE_TD}>
-                    <span className="text-ink-2">{role.userCount}</span>
-                  </td>
-                  <td className={`${TABLE_TD} text-right`}>
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label={`Rename ${role.name}`}
-                        onClick={() => setEditing(role)}
-                      >
-                        <Icons.Pencil size={15} />
-                      </Button>
-                      {!role.isOwner && (
-                        <Button
-                          variant="danger-ghost"
-                          size="sm"
-                          iconOnly
-                          disabled={pending}
-                          aria-label={`Delete ${role.name}`}
-                          onClick={() => removeRole(role)}
-                        >
-                          <Icons.Trash size={15} />
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={roleColumns}
+          rows={roles}
+          getRowKey={(role) => role.id}
+          actions={(role) => (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label={`Rename ${role.name}`}
+                onClick={() => setEditing(role)}
+              >
+                <Icons.Pencil size={15} />
+              </Button>
+              {!role.isOwner && (
+                <Button
+                  variant="danger-ghost"
+                  size="sm"
+                  iconOnly
+                  disabled={pending}
+                  aria-label={`Delete ${role.name}`}
+                  onClick={() => removeRole(role)}
+                >
+                  <Icons.Trash size={15} />
+                </Button>
+              )}
+            </>
+          )}
+          empty={{
+            title: 'No roles yet',
+            hint: 'Add one for each job people actually do here — cashier, supervisor, bookkeeper.',
+            action: (
+              <Button variant="secondary" onClick={() => setAdding(true)}>
+                <Icons.Plus size={15} />
+                Add role
+              </Button>
+            ),
+          }}
+        />
       </Card>
 
-      {groups.map((group) => {
-        const expanded = open.has(group.key)
-        return (
-          <Card key={group.key}>
-            {/* Not a <Button>: this is a full-width disclosure row that must
-                fill the card header, which button chrome would fight. */}
-            <button
-              data-kit-ok
-              type="button"
-              onClick={() => toggleGroup(group.key)}
-              aria-expanded={expanded}
-              className="flex w-full items-center gap-2 px-6 py-4 text-left transition hover:bg-surface-2"
-            >
-              <Icons.ChevronDown
-                size={16}
-                className={`shrink-0 text-muted transition-transform ${expanded ? '' : '-rotate-90'}`}
-              />
-              <span className="font-medium text-ink">{group.label}</span>
-              <span className="text-xs text-muted">{group.capabilities.length} permissions</span>
-            </button>
+      {selected && (
+        <TableToolbar>
+          <span className="text-sm text-muted">Permissions for</span>
+          <SegmentedControl
+            aria-label="Role to edit"
+            value={String(selected.id)}
+            onChange={(next) => setSelectedId(Number(next))}
+            options={roles.map((role) => ({ value: String(role.id), label: role.name }))}
+          />
+        </TableToolbar>
+      )}
 
-            {expanded && (
-              <div className="overflow-x-auto">
-                <table className={TABLE}>
-                  <thead>
-                    <tr className={TABLE_HEAD_ROW}>
-                      <th className={TABLE_TH}>Permission</th>
-                      {roles.map((role) => (
-                        <th key={role.id} className={`${TABLE_TH} text-right`}>
-                          {role.name}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.capabilities.map((capability) => (
-                      <tr key={capability.key} className={TABLE_ROW}>
-                        <td className={TABLE_TD}>
-                          <div className="text-ink">{capability.label}</div>
-                          <div className="text-xs text-muted">{capability.hint}</div>
-                        </td>
-                        {roles.map((role) => (
-                          <td key={role.id} className={`${TABLE_TD} text-right`}>
+      {selected &&
+        groups.map((group) => {
+          const expanded = open.has(group.key)
+          return (
+            <Card key={group.key}>
+              {/* Not a <Button>: this is a full-width disclosure row that must
+                  fill the card header, which button chrome would fight. */}
+              <button
+                data-kit-ok
+                type="button"
+                onClick={() => toggleGroup(group.key)}
+                aria-expanded={expanded}
+                className="flex w-full items-center gap-2 px-6 py-4 text-left transition hover:bg-surface-2"
+              >
+                <Icons.ChevronDown
+                  size={16}
+                  className={`shrink-0 text-muted transition-transform ${expanded ? '' : '-rotate-90'}`}
+                />
+                <span className="font-medium text-ink">{group.label}</span>
+                <span className="text-xs text-muted">{group.capabilities.length} permissions</span>
+              </button>
+
+              {expanded && (
+                /* Hand-built rather than DataTable: the cells hold live
+                   switches, so it wears the shared table skin instead. */
+                <div className="overflow-x-auto">
+                  <table className={TABLE}>
+                    <thead>
+                      <tr className={TABLE_HEAD_ROW}>
+                        <th className={TABLE_TH}>Permission</th>
+                        <th className={`${TABLE_TH} w-28 text-right`}>{selected.name}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.capabilities.map((capability) => (
+                        <tr key={capability.key} className={TABLE_ROW}>
+                          <td className={TABLE_TD}>
+                            <div className="text-ink">{capability.label}</div>
+                            <div className="text-xs text-muted">{capability.hint}</div>
+                          </td>
+                          <td className={`${TABLE_TD} text-right`}>
                             <div className="flex justify-end">
-                              {role.isOwner ? (
-                                <span title="The owner role always has every permission.">
-                                  <Icons.Check size={16} className="text-success" />
-                                </span>
-                              ) : (
-                                <Switch
-                                  checked={local[role.id]?.[capability.key] ?? false}
-                                  disabled={pending}
-                                  onChange={(next) => toggle(role.id, capability.key, next)}
-                                  ariaLabel={`${capability.label} for ${role.name}`}
-                                />
-                              )}
+                              {/* Locked on, not hidden: an owner's switch that
+                                  looks editable but refuses would be a lie. */}
+                              <Switch
+                                checked={
+                                  selected.isOwner
+                                    ? true
+                                    : (local[selected.id]?.[capability.key] ?? false)
+                                }
+                                disabled={selected.isOwner || pending}
+                                onChange={(next) => toggle(selected.id, capability.key, next)}
+                                ariaLabel={
+                                  selected.isOwner
+                                    ? `${capability.label} — the owner role always has every permission`
+                                    : `${capability.label} for ${selected.name}`
+                                }
+                              />
                             </div>
                           </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        )
-      })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )
+        })}
 
       {(adding || editing) && (
         <RoleForm
@@ -303,12 +352,7 @@ function RoleForm({ role, onClose }: { role: RoleSummary | null; onClose: () => 
       }
     >
       <div className="flex flex-col gap-5">
-        {error && (
-          <div className="flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-sm">
-            <Icons.StatusWarning size={16} className="mt-0.5 shrink-0 text-danger" />
-            <span className="text-ink">{error}</span>
-          </div>
-        )}
+        {error && <Callout tone="danger">{error}</Callout>}
 
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Supervisor" />

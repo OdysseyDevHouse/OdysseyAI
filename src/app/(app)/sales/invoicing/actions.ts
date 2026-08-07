@@ -1,7 +1,8 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId } from '@/lib/auth'
+import { requireActor, requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
+import { checkPricing } from '@/lib/site/priceGuard'
 import {
   saveDraft,
   getDocument,
@@ -33,7 +34,7 @@ export type InvoiceLinePayload = {
   description: string
   productType?: string
   departmentId: number | null
-  salesRepId: number | null
+  salesRepUserId: number | null
   qty: number
   unitPriceIncl: number
   discountPct: number
@@ -60,7 +61,7 @@ function toLineInputs(lines: InvoiceLinePayload[]): LineInput[] {
     description: line.description,
     productType: (line.productType ?? 'normal') as LineInput['productType'],
     departmentId: line.departmentId,
-    salesRepId: line.salesRepId,
+    salesRepUserId: line.salesRepUserId,
     qty: line.qty,
     unitPriceIncl: line.unitPriceIncl,
     discountPct: line.discountPct,
@@ -71,7 +72,8 @@ function toLineInputs(lines: InvoiceLinePayload[]): LineInput[] {
 
 /** The first page of the debtors book, for a picker that has just opened. */
 export async function listCustomersAction(): Promise<TillCustomer[]> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.edit')
+  const { siteId } = ctx
   return listCustomersForPicker(siteId, 100)
 }
 
@@ -82,7 +84,8 @@ export async function listCustomersAction(): Promise<TillCustomer[]> {
  * tender may be used, and the editor is only given an id and a name.
  */
 export async function getInvoiceCustomerAction(customerId: number): Promise<TillCustomer | null> {
-  const siteId = await requireSiteId()
+  const ctx = await actorForOrThrow('sales.edit')
+  const { siteId } = ctx
   return getTillCustomer(siteId, customerId)
 }
 
@@ -91,7 +94,9 @@ export async function getInvoiceCustomerAction(customerId: number): Promise<Till
  * to attach lines to. Nothing is posted and no number is issued.
  */
 export async function newInvoiceAction(): Promise<InvoiceResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await createBlankInvoice(siteId, actor)
   if (!result.ok) return { ok: false, error: result.error }
@@ -102,7 +107,20 @@ export async function newInvoiceAction(): Promise<InvoiceResult> {
 
 /** Writes the document without posting it. Stock has not moved. */
 export async function saveInvoiceAction(payload: InvoicePayload): Promise<InvoiceResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  // `finaliseInvoiceAction` routes through here, so both paths are covered by
+  // the one check. The editor also disables the cells, but that is a courtesy
+  // to the user rather than the thing that stops a crafted request.
+  const refused = await checkPricing(
+    siteId,
+    ctx.capabilities,
+    payload.priceStructureId ?? null,
+    payload.lines,
+  )
+  if (refused) return { ok: false, error: refused }
 
   const result = await saveDraft(
     siteId,
@@ -157,7 +175,9 @@ export async function finaliseInvoiceAction(
   payload: InvoicePayload,
   tenders?: InvoiceTenderPayload[],
 ): Promise<FinaliseInvoiceResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const saved = await saveInvoiceAction(payload)
   if (!saved.ok) return saved

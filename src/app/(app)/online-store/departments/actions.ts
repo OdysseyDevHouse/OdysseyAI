@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import { setDepartmentVisibility, type SaveResult } from '@/lib/site/onlineStore'
 
@@ -14,7 +14,9 @@ export async function setDepartmentVisibilityAction(
   name: string,
   showOnline: boolean,
 ): Promise<SaveResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await setDepartmentVisibility(siteId, departmentId, showOnline)
   if (!result.ok) return result

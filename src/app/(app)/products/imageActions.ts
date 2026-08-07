@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   addImage,
@@ -32,7 +32,9 @@ export async function uploadImageAction(
   productId: number,
   formData: FormData,
 ): Promise<ImagesResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const file = formData.get('file')
   if (!(file instanceof File)) return { ok: false, error: 'Choose an image to upload.' }
@@ -55,7 +57,9 @@ export async function deleteImageAction(
   productId: number,
   imageId: number,
 ): Promise<ImagesResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
 
   const result = await deleteImage(siteId, productId, imageId)
   if (!result.ok) return result

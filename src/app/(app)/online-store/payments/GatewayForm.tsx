@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import Link from 'next/link'
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardBody,
   CardFooter,
@@ -12,7 +12,9 @@ import {
   Field,
   Icons,
   Input,
+  SettingRow,
   Switch,
+  TextLink,
   useToast,
 } from '@/components/ui'
 import { saveGatewayAction } from './actions'
@@ -53,10 +55,14 @@ export default function GatewayForm({
   const [merchantId, setMerchantId] = useState(gateway?.merchantId ?? '')
   const [merchantKey, setMerchantKey] = useState('')
   const [passphrase, setPassphrase] = useState('')
+  /** Field errors only appear after a save attempt — flipping the switch on
+      must not instantly paint the form red. */
+  const [attempted, setAttempted] = useState(false)
 
   const alreadyHasKey = gateway?.hasKey ?? false
 
   function save() {
+    setAttempted(true)
     startSaving(async () => {
       const result = await saveGatewayAction({
         isActive,
@@ -76,64 +82,47 @@ export default function GatewayForm({
       toast.success(isActive ? 'Payment account connected.' : 'Payment account disconnected.')
       setMerchantKey('')
       setPassphrase('')
+      setAttempted(false)
     })
   }
 
   // Blank key on a store that has none, while switching on — the save will be
-  // refused, so say so before they try.
-  const missingKey = isActive && !alreadyHasKey && merchantKey.trim() === ''
+  // refused, so say so once they have tried.
+  const missingKey = attempted && isActive && !alreadyHasKey && merchantKey.trim() === ''
+
+  /*
+   * The screen's one banner. Several conditions can hold at once, but four
+   * stacked cards bury the one that matters — show only the most severe:
+   * cannot save at all > stored credentials broken > collecting play money >
+   * connected but not switched on.
+   */
+  const banner = !encryptionReady ? (
+    <Callout tone="danger" title="ENCRYPTION_KEY is not set.">
+      Payment credentials are stored encrypted, so they cannot be saved until it is configured
+      in your environment.
+    </Callout>
+  ) : gateway && !gateway.credentialsUsable ? (
+    <Callout tone="warning" title="The stored credentials cannot be read back.">
+      ENCRYPTION_KEY has changed since they were saved. Enter your merchant key and passphrase
+      again to reconnect.
+    </Callout>
+  ) : isActive && isSandbox ? (
+    // Test mode satisfies every other check, so without this a store could
+    // open to the public and collect play money for days before noticing.
+    <Callout tone="warning" title="Test mode — no real money is taken.">
+      Customers can order and everything will look as though they paid. Switch test mode off
+      before you share your shop link.
+    </Callout>
+  ) : gateway?.isActive && gateway.credentialsUsable && paymentMode !== 'online' ? (
+    <Callout tone="neutral" title="Your shop still asks customers to pay on collection.">
+      Connecting an account does not change that by itself — choose “Pay online when ordering”
+      in <TextLink href="/online-store/setup">setup</TextLink>.
+    </Callout>
+  ) : null
 
   return (
     <>
-      {!encryptionReady && (
-        <Card>
-          <div className="flex items-start gap-3 px-6 py-4">
-            <Icons.StatusError size={18} className="mt-0.5 shrink-0 text-danger" />
-            <div className="text-sm">
-              <p className="font-medium text-ink">ENCRYPTION_KEY is not set.</p>
-              <p className="text-muted">
-                Payment credentials are stored encrypted, so they cannot be saved until it is
-                configured in your environment.
-              </p>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {gateway && !gateway.credentialsUsable && (
-        <Card>
-          <div className="flex items-start gap-3 px-6 py-4">
-            <Icons.StatusWarning size={18} className="mt-0.5 shrink-0 text-warning" />
-            <div className="text-sm">
-              <p className="font-medium text-ink">
-                The stored credentials cannot be read back.
-              </p>
-              <p className="text-muted">
-                ENCRYPTION_KEY has changed since they were saved. Enter your merchant key and
-                passphrase again to reconnect.
-              </p>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {isActive && isSandbox && (
-        // The most important warning on the screen. Test mode satisfies every
-        // other check, so without this a store could open to the public and
-        // collect play money for days before noticing.
-        <Card>
-          <div className="flex items-start gap-3 px-6 py-4">
-            <Icons.StatusWarning size={18} className="mt-0.5 shrink-0 text-warning" />
-            <div className="text-sm">
-              <p className="font-medium text-ink">Test mode — no real money is taken.</p>
-              <p className="text-muted">
-                Customers can order and everything will look as though they paid. Switch test
-                mode off before you share your shop link.
-              </p>
-            </div>
-          </div>
-        </Card>
-      )}
+      {banner}
 
       <Card>
         <CardHeader
@@ -150,43 +139,48 @@ export default function GatewayForm({
           }
         />
 
+        {/* SettingRows sit flush to the card edge (their dividers span it),
+            so they live between header and body rather than inside CardBody. */}
+        <SettingRow
+          icon={<Icons.CreditCard size={18} />}
+          label="Take payments online"
+          description="Off means customers pay when they collect or receive their order."
+        >
+          <Switch
+            checked={isActive}
+            onChange={setIsActive}
+            disabled={!encryptionReady}
+            label="Take payments online"
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={<Icons.StatusWarning size={18} />}
+          label="Test mode"
+          description="Uses PayFast's sandbox. Nothing is really charged."
+        >
+          <Switch checked={isSandbox} onChange={setIsSandbox} label="Test mode" />
+        </SettingRow>
+
         <CardBody className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-4 rounded-control bg-surface-2 px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-ink">Take payments online</p>
-              <p className="text-sm text-muted">
-                Off means customers pay when they collect or receive their order.
-              </p>
-            </div>
-            <Switch
-              checked={isActive}
-              onChange={setIsActive}
-              disabled={!encryptionReady}
-              label="Take payments online"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-4 rounded-control bg-surface-2 px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-ink">Test mode</p>
-              <p className="text-sm text-muted">
-                Uses PayFast&apos;s sandbox. Nothing is really charged.
-              </p>
-            </div>
-            <Switch checked={isSandbox} onChange={setIsSandbox} label="Test mode" />
-          </div>
-
           <Field
             label="Merchant ID"
             hint="From your PayFast dashboard. All digits."
-            error={isActive && merchantId.trim() === '' ? 'Enter your merchant ID.' : undefined}
+            error={
+              attempted && isActive && merchantId.trim() === ''
+                ? 'Enter your merchant ID.'
+                : undefined
+            }
           >
-            <Input
-              value={merchantId}
-              inputMode="numeric"
-              placeholder="10000100"
-              onChange={(e) => setMerchantId(e.target.value)}
-            />
+            {/* An 8-digit id in a full-width box hints at the wrong content. */}
+            <div className="w-40">
+              <Input
+                value={merchantId}
+                inputMode="numeric"
+                placeholder="10000100"
+                onChange={(e) => setMerchantId(e.target.value)}
+              />
+            </div>
           </Field>
 
           <Field
@@ -231,27 +225,6 @@ export default function GatewayForm({
           </Button>
         </CardFooter>
       </Card>
-
-      {gateway?.isActive && gateway.credentialsUsable && paymentMode !== 'online' && (
-        <Card>
-          <div className="flex items-start gap-3 px-6 py-4">
-            <Icons.Info size={18} className="mt-0.5 shrink-0 text-muted" />
-            <div className="text-sm">
-              <p className="font-medium text-ink">
-                Your shop still asks customers to pay on collection.
-              </p>
-              <p className="text-muted">
-                Connecting an account does not change that by itself — choose “Pay online when
-                ordering” in{' '}
-                <Link href="/online-store/setup" className="font-medium text-brand hover:underline">
-                  setup
-                </Link>
-                .
-              </p>
-            </div>
-          </div>
-        </Card>
-      )}
     </>
   )
 }

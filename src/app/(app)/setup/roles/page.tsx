@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { can, listRoles, capabilityMatrix, CAPABILITY_GROUPS } from '@/lib/site/permissions'
-import { PageHeader, PageBody, Card, Icons } from '@/components/ui'
+import { PageHeader, PageBody, Callout } from '@/components/ui'
 import RolesScreen from './RolesScreen'
 
 export const dynamic = 'force-dynamic'
@@ -30,19 +30,11 @@ export default async function RolesPage() {
           }))}
         />
 
-        <Card>
-          <div className="flex items-start gap-3 px-6 py-4">
-            <Icons.Info size={18} className="mt-0.5 shrink-0 text-muted" />
-            <div className="text-sm">
-              <p className="font-medium text-ink">A missing permission means denied.</p>
-              <p className="text-muted">
-                Nothing defaults to allowed. The owner role always keeps every permission — if the
-                last person who could restore one were denied it, the only way back would be editing
-                the database by hand. Changes take effect on the next screen a user opens.
-              </p>
-            </div>
-          </div>
-        </Card>
+        <Callout tone="neutral" title="A missing permission means denied.">
+          Nothing defaults to allowed. The owner role always keeps every permission — if the last
+          person who could restore one were denied it, the only way back would be editing the
+          database by hand. Changes take effect on the next screen a user opens.
+        </Callout>
       </PageBody>
     </>
   )

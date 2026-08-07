@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireActor } from '@/lib/auth'
+import { requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
 import {
   createSupplier,
   updateSupplier,
@@ -59,7 +59,9 @@ export async function saveSupplierAction(
   _prev: SupplierFormState,
   form: FormData,
 ): Promise<SupplierFormState> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorFor('suppliers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readInput(form)
 
@@ -74,7 +76,8 @@ export async function saveSupplierAction(
 }
 
 export async function deleteSupplierAction(form: FormData): Promise<void> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('suppliers.edit')
+  const { siteId, actor } = ctx
   const id = Number(form.get('id'))
   if (!Number.isFinite(id) || id <= 0) redirect('/suppliers')
 
@@ -91,7 +94,8 @@ export async function bulkUpdateSuppliersAction(
   ids: number[],
   change: SupplierBulkChange,
 ): Promise<SupplierBulkResult> {
-  const { siteId, actor } = await requireActor()
+  const ctx = await actorForOrThrow('suppliers.edit')
+  const { siteId, actor } = ctx
   const result = await bulkUpdateSuppliers(siteId, actor, ids, change)
   revalidatePath('/suppliers')
   return result

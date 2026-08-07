@@ -5,7 +5,7 @@ import { listRules } from '@/lib/site/commission'
 import { listUsers } from '@/lib/site/users'
 import { listDepartments } from '@/lib/site/departments'
 import { siteQuery } from '@/lib/siteDb'
-import { PageHeader, PageBody, Card, Icons } from '@/components/ui'
+import { PageHeader, PageBody, Callout } from '@/components/ui'
 import RulesScreen from './RulesScreen'
 
 export const dynamic = 'force-dynamic'
@@ -36,6 +36,8 @@ export default async function CommissionRulesPage() {
       <PageHeader
         title="Commission rules"
         subtitle="What each person earns, and on which sales"
+        backHref="/commission"
+        backLabel="Commission"
       />
 
       <PageBody>
@@ -49,20 +51,12 @@ export default async function CommissionRulesPage() {
           suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
         />
 
-        <Card>
-          <div className="flex items-start gap-3 px-6 py-4">
-            <Icons.Info size={18} className="mt-0.5 shrink-0 text-muted" />
-            <div className="text-sm">
-              <p className="font-medium text-ink">One rule pays each line — never two.</p>
-              <p className="text-muted">
-                The lowest priority number that matches wins, and rules do not stack. Every figure
-                is calculated excluding VAT and after discount. Paying on profit means a discount
-                comes out of the salesperson’s own commission; paying on turnover means it does
-                not.
-              </p>
-            </div>
-          </div>
-        </Card>
+        <Callout tone="brand" title="One rule pays each line — never two.">
+          The lowest priority number that matches wins, and rules do not stack. Every figure
+          is calculated excluding VAT and after discount. Paying on profit means a discount
+          comes out of the salesperson’s own commission; paying on turnover means it does
+          not.
+        </Callout>
       </PageBody>
     </>
   )

@@ -3,17 +3,20 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
   CurrencyInput,
+  EmptyState,
   Field,
   Icons,
   Input,
+  MiniStat,
   Modal,
   Select,
+  StatTile,
+  TableToolbar,
   useToast,
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
@@ -87,42 +90,50 @@ export default function CashupClient({
 
   return (
     <>
-      <Card>
-        <CardHeader
-          title="Open shifts"
-          description="A shift is one person on one till. Sales are stamped with whichever shift banked them."
-          action={
-            <Button
-              variant="primary"
-              onClick={() => setOpening(true)}
-              disabled={pending || free.length === 0}
-            >
-              <Icons.Plus size={15} />
-              Open a shift
-            </Button>
-          }
-        />
+      {shifts.length === 0 ? (
+        <Card>
+          <EmptyState
+            title="No shift is open"
+            hint="Sales still post without one — they just will not belong to a cash-up."
+            icon={<Icons.Coins size={22} />}
+            action={
+              <Button
+                variant="primary"
+                onClick={() => setOpening(true)}
+                disabled={pending || free.length === 0}
+              >
+                <Icons.Plus size={15} />
+                Open a shift
+              </Button>
+            }
+          />
+        </Card>
+      ) : (
+        <>
+          <TableToolbar
+            actions={
+              <Button
+                variant="primary"
+                onClick={() => setOpening(true)}
+                disabled={pending || free.length === 0}
+              >
+                <Icons.Plus size={15} />
+                Open a shift
+              </Button>
+            }
+          >
+            <p className="text-sm text-muted">
+              A shift is one person on one till. Sales are stamped with whichever shift banked
+              them.
+            </p>
+          </TableToolbar>
 
-        {shifts.length === 0 ? (
-          <div className="px-6 py-6 text-sm text-muted">
-            No shift is open. Sales still post without one — they just will not belong to a
-            cash-up.
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {shifts.map((shift) => (
-              <div key={shift.id} className="px-6 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="font-medium text-ink">
-                      {shift.terminalCode} — {shift.userName}
-                    </div>
-                    <div className="text-xs text-muted">
-                      Opened {new Date(shift.openedAt).toLocaleString('en-ZA')} ·{' '}
-                      {shift.salesCount} sale{shift.salesCount === 1 ? '' : 's'} ·{' '}
-                      {formatMoney(shift.takingsTotal)} taken
-                    </div>
-                  </div>
+          {shifts.map((shift) => (
+            <Card key={shift.id}>
+              <CardHeader
+                title={`${shift.terminalCode} — ${shift.userName}`}
+                description={`Opened ${new Date(shift.openedAt).toLocaleString('en-ZA')} · ${shift.salesCount} sale${shift.salesCount === 1 ? '' : 's'} · ${formatMoney(shift.takingsTotal)} taken`}
+                action={
                   <div className="flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={() => setMoving(shift)}>
                       <Icons.Coins size={15} />
@@ -133,25 +144,34 @@ export default function CashupClient({
                       Cash up
                     </Button>
                   </div>
-                </div>
-
-                <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
-                  <Stat label="Float" value={formatMoney(shift.openingFloat)} />
+                }
+              />
+              <CardBody className="flex flex-col gap-3">
+                {/* Expected cash is the figure this screen exists for, so it
+                    gets the headline treatment; the rest are working figures. */}
+                <StatTile
+                  label="Expected cash"
+                  value={formatMoney(shift.expectedCash)}
+                  hint="What the drawer should hold right now"
+                  tone="success"
+                  icon={<Icons.Banknote size={16} />}
+                />
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <MiniStat label="Float" value={formatMoney(shift.openingFloat)} />
                   {shift.tenders.map((tender) => (
-                    <Stat
+                    <MiniStat
                       key={tender.tenderTypeId}
-                      label={tender.tenderName}
+                      label={`${tender.tenderName} · ${tender.transactionCount}`}
                       value={formatMoney(tender.expected)}
-                      hint={`${tender.transactionCount}`}
                     />
                   ))}
                   {shift.movementsTotal !== 0 && (
-                    <Stat label="Payouts" value={formatMoney(shift.movementsTotal)} />
+                    <MiniStat label="Payouts" value={formatMoney(shift.movementsTotal)} />
                   )}
-                </dl>
+                </div>
 
                 {shift.movements.length > 0 && (
-                  <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted">
+                  <ul className="flex flex-col gap-0.5 text-xs text-muted">
                     {shift.movements.map((m) => (
                       <li key={m.id}>
                         {m.reason} — {formatMoney(m.amount)}
@@ -159,11 +179,11 @@ export default function CashupClient({
                     ))}
                   </ul>
                 )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+              </CardBody>
+            </Card>
+          ))}
+        </>
+      )}
 
       <OpenModal
         open={opening}
@@ -178,7 +198,7 @@ export default function CashupClient({
         tolerance={tolerance}
         pending={pending}
         onClose={() => setCounting(null)}
-        onClose2={(counted, note) =>
+        onCloseShift={(counted, note) =>
           counting && run(() => closeShiftAction(counting.id, counted, note))
         }
       />
@@ -190,18 +210,6 @@ export default function CashupClient({
         onRecord={(input) => moving && run(() => drawerMovementAction(moving.id, input))}
       />
     </>
-  )
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-muted">
-        {label}
-        {hint && <span className="ml-1 text-faint">({hint})</span>}
-      </dt>
-      <dd className="numeric text-ink">{value}</dd>
-    </div>
   )
 }
 
@@ -272,13 +280,15 @@ function CountModal({
   tolerance,
   pending,
   onClose,
-  onClose2,
+  onCloseShift,
 }: {
   shift: OpenShift | null
   tolerance: number
   pending: boolean
+  /** Dismiss without closing anything. */
   onClose: () => void
-  onClose2: (counted: { tenderTypeId: number; amount: number }[], note?: string) => void
+  /** Actually close the shift with what was counted. */
+  onCloseShift: (counted: { tenderTypeId: number; amount: number }[], note?: string) => void
 }) {
   const [counted, setCounted] = useState<Record<number, number>>({})
   const [note, setNote] = useState('')
@@ -333,7 +343,7 @@ function CountModal({
             variant="success"
             disabled={!allCounted || pending || (outside && !note.trim())}
             onClick={() =>
-              onClose2(
+              onCloseShift(
                 rows.map((r) => ({ tenderTypeId: r.tender.tenderTypeId, amount: r.counted ?? 0 })),
                 note.trim() || undefined,
               )

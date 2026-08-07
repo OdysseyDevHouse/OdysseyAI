@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { DateRangeField, Icons, Button } from '@/components/ui'
+import { Card, DateRangeField, Icons, Button } from '@/components/ui'
 import { withParams } from '@/lib/searchParams'
 
 /** The creditors twin of the debtors picker — see that file for the reasoning. */
@@ -18,7 +18,7 @@ export default function PeriodPicker({
   const params = useSearchParams()
 
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4 rounded-card border border-border bg-surface px-4 py-3">
+    <Card className="flex flex-wrap items-end justify-between gap-4 px-4 py-3.5">
       <DateRangeField
         value={{ from, to }}
         onChange={(next) =>
@@ -33,6 +33,6 @@ export default function PeriodPicker({
         <Icons.Refresh size={15} />
         Reset
       </Button>
-    </div>
+    </Card>
   )
 }

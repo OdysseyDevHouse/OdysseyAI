@@ -8,6 +8,7 @@ import {
   Card,
   CardHeader,
   ConfirmModal,
+  EmptyState,
   Field,
   Icons,
   Input,
@@ -72,10 +73,18 @@ export default function LocationsClient({ locations }: { locations: StockLocatio
         />
 
         {locations.length === 0 ? (
-          <div className="px-6 py-8 text-center text-sm text-muted">
-            No locations yet. Add one for each stock room — every product’s stock is counted per
-            location.
-          </div>
+          <EmptyState
+            icon={<Icons.Warehouse size={22} />}
+            title="No locations yet"
+            hint="Add one for each stock room — every product’s stock is counted per location."
+            action={
+              // Secondary: the header's Add location stays the one primary.
+              <Button variant="secondary" onClick={() => setAdding(true)} disabled={pending}>
+                <Icons.Plus size={15} />
+                Add location
+              </Button>
+            }
+          />
         ) : (
           <div>
             {locations.map((location) => (
@@ -101,9 +110,14 @@ export default function LocationsClient({ locations }: { locations: StockLocatio
                     </Button>
                   )}
 
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(location)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    aria-label={`Edit ${location.name}`}
+                    onClick={() => setEditing(location)}
+                  >
                     <Icons.Pencil size={15} />
-                    Edit
                   </Button>
                   <Button
                     variant="danger-ghost"
@@ -225,7 +239,7 @@ function LocationModal({
       closeOnBackdrop={false}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
+          <Button variant="secondary" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
           <Button
@@ -270,10 +284,14 @@ function LocationModal({
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={190} rows={2} />
         </Field>
         <Field label="Sort order" hint="Lower numbers appear first in lists.">
-          <NumberInput
-            value={sortOrder}
-            onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
-          />
+          {/* Narrow on purpose: a full-width box for a 1–2 digit number tells
+              the user the wrong thing about what belongs in it. */}
+          <div className="w-28">
+            <NumberInput
+              value={sortOrder}
+              onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
+            />
+          </div>
         </Field>
 
         {location?.isMain ? (

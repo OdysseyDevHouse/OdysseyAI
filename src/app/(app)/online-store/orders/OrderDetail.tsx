@@ -7,6 +7,8 @@ import {
   EmptyState,
   Icons,
   Modal,
+  Skeleton,
+  TableSkeleton,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_NUMERIC,
@@ -83,7 +85,27 @@ export default function OrderDetail({
       {error ? (
         <EmptyState icon={<Icons.StatusError size={22} />} title="Couldn't load" hint={error} />
       ) : loading || !order ? (
-        <p className="py-10 text-center text-sm text-muted">Loading…</p>
+        /* The same shape as the loaded order — badges, two detail columns,
+           the lines table — so the modal keeps its height instead of
+           collapsing to a spinner and jumping when the data lands. */
+        <div aria-hidden className="flex flex-col gap-5">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-6 w-24 rounded-pill" />
+            <Skeleton className="h-6 w-20 rounded-pill" />
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-full" />
+            </div>
+          </div>
+          <TableSkeleton columns={4} rows={4} />
+        </div>
       ) : (
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap items-center gap-2">

@@ -41,6 +41,8 @@ import {
   Scale,
   Percent,
   Lock,
+  Bell,
+  Handshake,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -90,7 +92,7 @@ export const NAV: NavSection[] = [
       { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.edit' },
       { label: 'Documents', href: '/sales', icon: Receipt, built: true, capability: 'sales.view' },
       { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view' },
-      { label: 'Quotes', href: '/sales/quotes', icon: FileText, capability: 'sales.view' },
+      { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view' },
       { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note' },
       { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup' },
@@ -116,6 +118,10 @@ export const NAV: NavSection[] = [
     items: [
       { label: 'Customers', href: '/customers', icon: Contact, built: true, capability: 'customers.view' },
       { label: 'Age analysis', href: '/customers/age-analysis', icon: BarChart, built: true, capability: 'customers.view' },
+      /* Directly after the age analysis: that screen says what is overdue,
+         this one is where somebody does something about it. */
+      { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view' },
+      { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view' },
       { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view' },
     ],
   },
@@ -134,11 +140,21 @@ export const NAV: NavSection[] = [
     label: 'Accounting',
     icon: Scale,
     items: [
+      // The three statements lead: they are what anyone opens this menu for,
+      // and everything below them is the machinery that produces them.
+      { label: 'Profit and loss', href: '/accounting/income-statement', icon: LineChart, built: true, capability: 'reports.financial' },
+      { label: 'Balance sheet', href: '/accounting/balance-sheet', icon: Scale, built: true, capability: 'reports.financial' },
+      { label: 'Trial balance', href: '/accounting/trial-balance', icon: BarChart, built: true, capability: 'reports.financial' },
       { label: 'Cashbook', href: '/cashbook', icon: Landmark, built: true, capability: 'cashbook.view' },
       // Everything the business spends that is not stock. Sits directly under
       // the cashbook because most expenses come straight out of one.
       { label: 'Expenses', href: '/expenses', icon: Receipt, built: true, capability: 'cashbook.view' },
       { label: 'VAT return', href: '/accounting/vat', icon: Percent, built: true, capability: 'reports.financial' },
+      { label: 'Journals', href: '/accounting/journals', icon: FileText, built: true, capability: 'reports.financial' },
+      { label: 'Chart of accounts', href: '/accounting/accounts', icon: ListOrdered, built: true, capability: 'reports.financial' },
+      // What the business owns and uses, and the depreciation that turns it
+      // into a cost over the years it is used.
+      { label: 'Fixed assets', href: '/accounting/assets', icon: Warehouse, built: true, capability: 'reports.financial' },
       { label: 'Unallocated', href: '/accounting/unallocated', icon: Coins, built: true, capability: 'cashbook.view' },
       { label: 'Interest', href: '/accounting/interest', icon: Percent, built: true, capability: 'customers.credit' },
       { label: 'Write-offs', href: '/accounting/write-offs', icon: Reverse, built: true, capability: 'customers.credit' },

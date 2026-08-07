@@ -8,11 +8,13 @@ import {
   Card,
   CardHeader,
   ConfirmModal,
+  EmptyState,
   Field,
   Icons,
   Input,
   Modal,
   SettingRow,
+  Skeleton,
   Switch,
   useToast,
 } from '@/components/ui'
@@ -43,16 +45,26 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
 
   // Device identity is only knowable in the browser, so it is read after mount
   // rather than during render — otherwise the server and client markup differ.
-  const [device, setDevice] = useState<{ id: string | null; label: string; desktop: boolean }>({
-    id: null,
-    label: '',
-    desktop: false,
-  })
+  // `ready` gates the status cells: until the effect has run, device.id is
+  // null for one frame even on a machine that HAS claimed a till, and showing
+  // "unclaimed" for that frame is a lie. A skeleton holds the space instead.
+  const [device, setDevice] = useState<{
+    id: string | null
+    label: string
+    desktop: boolean
+    ready: boolean
+  }>({ id: null, label: '', desktop: false, ready: false })
   useEffect(() => {
-    setDevice({ id: deviceId(), label: deviceLabel(), desktop: isDesktopShell() })
+    setDevice({ id: deviceId(), label: deviceLabel(), desktop: isDesktopShell(), ready: true })
   }, [])
 
   const claimedHere = device.id ? terminals.find((t) => t.deviceId === device.id) : undefined
+
+  // When this machine has no till yet, claiming one IS the screen's main act —
+  // but only when there is exactly one candidate is the primary unambiguous.
+  const claimable = terminals.filter((t) => t.isActive && t.deviceId !== device.id)
+  const claimIsPrimary =
+    device.ready && device.id !== null && !claimedHere && claimable.length === 1
 
   function run(work: () => Promise<{ ok: true; message: string } | { ok: false; error: string }>) {
     startTransition(async () => {
@@ -82,25 +94,37 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
         />
         <SettingRow
           icon={<Icons.Terminal size={16} />}
-          label={claimedHere ? `Registered as ${claimedHere.name}` : 'Not registered to a till'}
+          label={
+            !device.ready
+              ? 'Identifying this machine…'
+              : claimedHere
+                ? `Registered as ${claimedHere.name}`
+                : 'Not registered to a till'
+          }
           description={
-            claimedHere
-              ? `${claimedHere.code} · ${device.label}`
-              : device.id
-                ? `${device.label} · claim a till below to ring up sales from this machine`
-                : 'This browser cannot store an identifier, so a till must be chosen each time.'
+            !device.ready
+              ? ''
+              : claimedHere
+                ? `${claimedHere.code} · ${device.label}`
+                : device.id
+                  ? `${device.label} · claim a till below to ring up sales from this machine`
+                  : 'This browser cannot store an identifier, so a till must be chosen each time.'
           }
         >
-          {claimedHere && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={pending}
-              onClick={() => run(() => releaseTerminalAction(claimedHere.id))}
-            >
-              <Icons.Close size={15} />
-              Release
-            </Button>
+          {!device.ready ? (
+            <Skeleton className="h-4 w-20" />
+          ) : (
+            claimedHere && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={pending}
+                onClick={() => run(() => releaseTerminalAction(claimedHere.id))}
+              >
+                <Icons.Close size={15} />
+                Release
+              </Button>
+            )
           )}
         </SettingRow>
       </Card>
@@ -110,7 +134,11 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
           title="Tills"
           description="Every register in the store. A sale records which one rang it up."
           action={
-            <Button variant="primary" onClick={() => setAdding(true)} disabled={pending}>
+            <Button
+              variant={claimIsPrimary ? 'secondary' : 'primary'}
+              onClick={() => setAdding(true)}
+              disabled={pending}
+            >
               <Icons.Plus size={15} />
               Register a till
             </Button>
@@ -118,10 +146,18 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
         />
 
         {terminals.length === 0 ? (
-          <div className="px-6 py-8 text-center text-sm text-muted">
-            No tills registered yet. Add one for each register — the codes print on the slip and
-            group every report.
-          </div>
+          <EmptyState
+            icon={<Icons.Terminal size={22} />}
+            title="No tills registered yet"
+            hint="Add one for each register — the codes print on the slip and group every report."
+            action={
+              // Secondary: the header's Register a till stays the one primary.
+              <Button variant="secondary" onClick={() => setAdding(true)} disabled={pending}>
+                <Icons.Plus size={15} />
+                Register a till
+              </Button>
+            }
+          />
         ) : (
           <div>
             {terminals.map((terminal) => (
@@ -132,31 +168,44 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
                 description={describe(terminal, device.id)}
               >
                 <div className="flex items-center gap-1.5">
-                  {!terminal.isActive && <Badge tone="neutral">Off</Badge>}
-                  {terminal.deviceId === device.id && device.id && (
-                    <Badge tone="success">This machine</Badge>
-                  )}
-                  {terminal.deviceId && terminal.deviceId !== device.id && (
-                    <Badge tone="brand">Claimed</Badge>
+                  {!device.ready ? (
+                    // The claim state is unknowable until the browser has been
+                    // asked — hold the space rather than flash "unclaimed".
+                    <Skeleton className="h-4 w-24" />
+                  ) : (
+                    <>
+                      {!terminal.isActive && <Badge tone="neutral">Off</Badge>}
+                      {terminal.deviceId === device.id && device.id && (
+                        <Badge tone="success">This machine</Badge>
+                      )}
+                      {terminal.deviceId && terminal.deviceId !== device.id && (
+                        <Badge tone="brand">Claimed</Badge>
+                      )}
+
+                      {terminal.isActive && terminal.deviceId !== device.id && device.id && (
+                        <Button
+                          variant={claimIsPrimary ? 'primary' : 'secondary'}
+                          size="sm"
+                          disabled={pending}
+                          onClick={() =>
+                            run(() => claimTerminalAction(terminal.id, device.id!, device.label))
+                          }
+                        >
+                          <Icons.Check size={15} />
+                          Use here
+                        </Button>
+                      )}
+                    </>
                   )}
 
-                  {terminal.isActive && terminal.deviceId !== device.id && device.id && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() =>
-                        run(() => claimTerminalAction(terminal.id, device.id!, device.label))
-                      }
-                    >
-                      <Icons.Check size={15} />
-                      Use here
-                    </Button>
-                  )}
-
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(terminal)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    aria-label={`Edit ${terminal.name}`}
+                    onClick={() => setEditing(terminal)}
+                  >
                     <Icons.Pencil size={15} />
-                    Edit
                   </Button>
                   <Button
                     variant="danger-ghost"
@@ -249,7 +298,7 @@ function TerminalModal({
       closeOnBackdrop={false}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
+          <Button variant="secondary" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
           <Button

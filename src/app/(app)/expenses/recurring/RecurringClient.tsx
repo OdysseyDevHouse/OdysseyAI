@@ -4,9 +4,11 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
+  Callout,
   Card,
   CardHeader,
-  CardBody,
+  ConfirmModal,
+  DataTable,
   Field,
   Input,
   Select,
@@ -14,8 +16,10 @@ import {
   Badge,
   Icons,
   Modal,
-  EmptyState,
+  PageHeader,
+  PageBody,
   useToast,
+  type Column,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -28,8 +32,8 @@ import {
   saveRecurringAction,
   setRecurringActiveAction,
   deleteRecurringAction,
-  generateDueAction,
 } from '../actions'
+import { DueSchedulesCard } from '../DueSchedulesCard'
 
 type Schedule = {
   id: number
@@ -44,6 +48,8 @@ type Schedule = {
   bankAccountId: number | null
   bankAccountName: string | null
   description: string | null
+  /** The first line's category — what the modal edits. */
+  categoryId: number | null
   totalIncl: number
   startsOn: string
   endsOn: string | null
@@ -57,6 +63,11 @@ type Option = { id: number; name: string }
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
+/**
+ * The recurring-expenses screen. Owns its PageHeader so "New schedule" — the
+ * screen's one primary — can open the modal, which a Server Component header
+ * could not do.
+ */
 export function RecurringClient({
   schedules,
   categories,
@@ -75,7 +86,9 @@ export function RecurringClient({
   const [pending, startTransition] = useTransition()
   const [editing, setEditing] = useState<Schedule | null>(null)
   const [creating, setCreating] = useState(false)
+  const [deleting, setDeleting] = useState<Schedule | null>(null)
 
+  const active = schedules.filter((s) => s.isActive)
   const due = schedules.filter((s) => s.due && s.isActive)
 
   function run(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
@@ -90,122 +103,186 @@ export function RecurringClient({
     })
   }
 
+  const columns: Column<Schedule>[] = [
+    {
+      key: 'name',
+      header: 'Schedule',
+      cell: (s) => (
+        <>
+          <span className={s.isActive ? 'text-ink' : 'text-muted line-through'}>{s.name}</span>
+          <span className="mt-0.5 block text-xs text-muted">
+            {s.frequencyLabel.toLowerCase()}
+            {s.dayOfMonth ? ` on day ${s.dayOfMonth}` : ''}
+            {s.dayOfWeek ? ` on ${WEEKDAYS[s.dayOfWeek - 1]}` : ''}
+            {' · '}
+            {s.supplierName ?? s.bankAccountName ?? 'no payee'}
+            {s.endsOn ? ` · ends ${s.endsOn}` : ''}
+          </span>
+        </>
+      ),
+      sortValue: (s) => s.name,
+    },
+    {
+      key: 'kind',
+      // Bill vs Paid is a category, not an exception — neutral either way.
+      header: 'Kind',
+      cell: (s) => (
+        <Badge tone="default">{s.paymentType === 'on_account' ? 'Bill' : 'Paid'}</Badge>
+      ),
+      sortValue: (s) => s.paymentType,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      cell: (s) =>
+        s.due && s.isActive ? (
+          <Badge tone="warning">Due</Badge>
+        ) : !s.isActive ? (
+          <Badge tone="default">Paused</Badge>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
+      sortValue: (s) => (s.due && s.isActive ? 0 : s.isActive ? 1 : 2),
+    },
+    {
+      key: 'next',
+      header: 'Next due',
+      cell: (s) =>
+        s.isActive && s.nextDue ? (
+          <span className="text-ink-2">{s.nextDue}</span>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
+      sortValue: (s) => (s.isActive ? (s.nextDue ?? '') : ''),
+    },
+    {
+      key: 'amount',
+      header: 'Amount',
+      numeric: true,
+      cell: (s) => <span className="text-ink">{formatMoney(s.totalIncl)}</span>,
+      sortValue: (s) => s.totalIncl,
+    },
+  ]
+
   return (
     <>
-      {due.length > 0 && (
-        <Card>
-          <CardHeader
-            title={`${due.length} schedule${due.length === 1 ? '' : 's'} due`}
-            description="Creating the drafts does not post anything — you review each one first."
-            action={
-              <Button
-                size="sm"
-                disabled={pending}
-                onClick={() => run(() => generateDueAction())}
-              >
-                <Icons.Plus size={15} />
-                Create the drafts
-              </Button>
-            }
-          />
-        </Card>
-      )}
+      <PageHeader
+        title="Recurring expenses"
+        subtitle={`${active.length} active`}
+        action={
+          <Button onClick={() => setCreating(true)}>
+            <Icons.Plus size={15} />
+            New schedule
+          </Button>
+        }
+      />
 
-      <Card>
-        <CardHeader
-          title="Schedules"
-          description="Rent, insurance, subscriptions — anything that arrives on a cycle."
-          action={
-            <Button size="sm" variant="secondary" onClick={() => setCreating(true)}>
-              <Icons.Plus size={15} />
-              New schedule
-            </Button>
-          }
+      <PageBody>
+        <DueSchedulesCard
+          schedules={due.map((s) => ({
+            id: s.id,
+            name: s.name,
+            frequencyLabel: s.frequencyLabel,
+            nextDue: s.nextDue,
+            totalIncl: s.totalIncl,
+          }))}
         />
 
-        {schedules.length === 0 ? (
-          <CardBody>
-            <EmptyState
-              title="No recurring expenses set up"
-              hint="Rent on the first, the insurance debit order on the fifteenth — set them up once and they stop being something to remember."
-              action={
+        <Card>
+          <CardHeader
+            title="Schedules"
+            description="Rent, insurance, subscriptions — anything that arrives on a cycle."
+          />
+          <DataTable
+            columns={columns}
+            rows={schedules}
+            getRowKey={(s) => s.id}
+            actionsOnHover
+            actions={(s) => (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={`Edit ${s.name}`}
+                  title="Edit"
+                  onClick={() => setEditing(s)}
+                >
+                  <Icons.Pencil size={15} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={s.isActive ? `Pause ${s.name}` : `Resume ${s.name}`}
+                  title={s.isActive ? 'Pause' : 'Resume'}
+                  disabled={pending}
+                  onClick={() => run(() => setRecurringActiveAction(s.id, !s.isActive))}
+                >
+                  {s.isActive ? <Icons.Pause size={15} /> : <Icons.Play size={15} />}
+                </Button>
+              </>
+            )}
+            empty={{
+              title: 'No recurring expenses set up',
+              hint: 'Rent on the first, the insurance debit order on the fifteenth — set them up once and they stop being something to remember. Each schedule creates drafts to review, never postings.',
+              action: (
                 <Button onClick={() => setCreating(true)}>
                   <Icons.Plus size={15} />
                   New schedule
                 </Button>
-              }
-            />
-          </CardBody>
-        ) : (
-          <CardBody>
-            <ul className="divide-y divide-border">
-              {schedules.map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className={s.isActive ? 'text-ink' : 'text-muted line-through'}>
-                        {s.name}
-                      </span>
-                      {s.due && s.isActive && <Badge tone="warning">Due</Badge>}
-                      {!s.isActive && <Badge tone="default">Paused</Badge>}
-                      <Badge tone={s.paymentType === 'on_account' ? 'warning' : 'default'}>
-                        {s.paymentType === 'on_account' ? 'Bill' : 'Paid'}
-                      </Badge>
-                    </div>
-                    <span className="mt-0.5 block text-xs text-muted">
-                      {s.frequencyLabel.toLowerCase()}
-                      {s.dayOfMonth ? ` on day ${s.dayOfMonth}` : ''}
-                      {s.dayOfWeek ? ` on ${WEEKDAYS[s.dayOfWeek - 1]}` : ''}
-                      {' · '}
-                      {s.supplierName ?? s.bankAccountName ?? 'no payee'}
-                      {s.isActive && s.nextDue ? ` · next ${s.nextDue}` : ''}
-                      {s.endsOn ? ` · ends ${s.endsOn}` : ''}
-                    </span>
-                  </div>
+              ),
+            }}
+          />
+        </Card>
 
-                  <div className="flex shrink-0 items-center gap-3">
-                    <span className="numeric text-sm text-ink">{formatMoney(s.totalIncl)}</span>
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(s)}>
-                      Edit
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() => run(() => setRecurringActiveAction(s.id, !s.isActive))}
-                    >
-                      {s.isActive ? 'Pause' : 'Resume'}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </CardBody>
-        )}
-      </Card>
+        <Callout tone="brand" title="Schedules create drafts, never postings">
+          Every draft is reviewed before money moves. Missed months are caught up one draft per
+          period, the same period is never produced twice, and a schedule set for the 31st falls
+          on the last day of shorter months.
+        </Callout>
+      </PageBody>
 
-      <ScheduleModal
-        open={creating || editing !== null}
-        schedule={editing}
-        categories={categories}
-        suppliers={suppliers}
-        bankAccounts={bankAccounts}
-        defaultVatRate={defaultVatRate}
-        pending={pending}
-        onClose={() => {
-          setCreating(false)
+      {/* Keyed per schedule (and mounted only while open) so its fields seed
+          once from props — the old render-time re-seed skipped categoryId and
+          silently rewrote a schedule's category to the first in the list. */}
+      {(creating || editing !== null) && (
+        <ScheduleModal
+          key={editing?.id ?? 'new'}
+          open
+          schedule={editing}
+          categories={categories}
+          suppliers={suppliers}
+          bankAccounts={bankAccounts}
+          defaultVatRate={defaultVatRate}
+          pending={pending}
+          onClose={() => {
+            setCreating(false)
+            setEditing(null)
+          }}
+          onDelete={() => setDeleting(editing)}
+          onSave={(input, id) => {
+            run(() => saveRecurringAction(input, id))
+            setCreating(false)
+            setEditing(null)
+          }}
+        />
+      )}
+
+      <ConfirmModal
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => {
+          const schedule = deleting
+          if (!schedule) return
+          run(() => deleteRecurringAction(schedule.id))
+          setDeleting(null)
           setEditing(null)
         }}
-        onDelete={(id) => {
-          if (!window.confirm('Delete this schedule? The expenses it produced are kept.')) return
-          run(() => deleteRecurringAction(id))
-          setEditing(null)
-        }}
-        onSave={(input, id) => {
-          run(() => saveRecurringAction(input, id))
-          setCreating(false)
-          setEditing(null)
-        }}
+        title="Delete this schedule"
+        message={`Delete "${deleting?.name}"? The expenses it produced are kept.`}
+        confirmLabel="Delete"
+        busy={pending}
       />
     </>
   )
@@ -234,6 +311,8 @@ function ScheduleModal({
   onSave: (input: Parameters<typeof saveRecurringAction>[0], id?: number) => void
   onDelete: (id: number) => void
 }) {
+  // Seeded once from props; the caller keys this component per schedule, so a
+  // different schedule mounts a fresh modal rather than mutating this one.
   const [name, setName] = useState(schedule?.name ?? '')
   const [frequency, setFrequency] = useState<RecurringFrequency>(schedule?.frequency ?? 'monthly')
   const [dayOfMonth, setDayOfMonth] = useState(schedule?.dayOfMonth ?? 1)
@@ -245,26 +324,12 @@ function ScheduleModal({
   const [bankAccountId, setBankAccountId] = useState<number | null>(
     schedule?.bankAccountId ?? bankAccounts[0]?.id ?? null,
   )
-  const [categoryId, setCategoryId] = useState<number>(categories[0]?.id ?? 0)
+  const [categoryId, setCategoryId] = useState<number>(
+    schedule?.categoryId ?? categories[0]?.id ?? 0,
+  )
   const [amount, setAmount] = useState(schedule?.totalIncl ?? 0)
   const [startsOn, setStartsOn] = useState(schedule?.startsOn ?? todayIso())
   const [endsOn, setEndsOn] = useState(schedule?.endsOn ?? '')
-
-  // Re-seed when a different schedule is opened for editing.
-  const [seededFor, setSeededFor] = useState<number | null>(schedule?.id ?? null)
-  if (open && schedule && seededFor !== schedule.id) {
-    setSeededFor(schedule.id)
-    setName(schedule.name)
-    setFrequency(schedule.frequency)
-    setDayOfMonth(schedule.dayOfMonth ?? 1)
-    setDayOfWeek(schedule.dayOfWeek ?? 1)
-    setPaymentType(schedule.paymentType)
-    setSupplierId(schedule.supplierId)
-    setBankAccountId(schedule.bankAccountId)
-    setAmount(schedule.totalIncl)
-    setStartsOn(schedule.startsOn)
-    setEndsOn(schedule.endsOn ?? '')
-  }
 
   const isBill = paymentType === 'on_account'
   const isWeekly = frequency === 'weekly'

@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listReviews, reviewCounts, type ReviewStatus } from '@/lib/site/productReviews'
-import { PageHeader, PageBody, Badge } from '@/components/ui'
+import { PageHeader, PageBody, Badge, StatStrip, StatTile } from '@/components/ui'
 import ReviewQueue from './ReviewQueue'
 
 /**
@@ -41,6 +41,26 @@ export default async function ReviewsPage({
         }
       />
       <PageBody>
+        <StatStrip columns={3}>
+          {/* Waiting is the only tile that means "act on me"; the other two
+              are plain counts. */}
+          <StatTile
+            label="Waiting"
+            value={counts.pending.toLocaleString('en-ZA')}
+            tone={counts.pending > 0 ? 'warning' : 'default'}
+            hint="Need a decision before anyone sees them"
+          />
+          <StatTile
+            label="Published"
+            value={counts.approved.toLocaleString('en-ZA')}
+            hint="Showing on your product pages"
+          />
+          <StatTile
+            label="Rejected"
+            value={counts.rejected.toLocaleString('en-ZA')}
+            hint="Turned down, kept on record"
+          />
+        </StatStrip>
         <ReviewQueue reviews={reviews} counts={counts} status={status} />
       </PageBody>
     </>

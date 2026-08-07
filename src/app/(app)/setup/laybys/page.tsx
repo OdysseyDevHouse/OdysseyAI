@@ -54,7 +54,9 @@ export default async function LaybySetupPage() {
           defaultDays={settings.layby_default_days ?? '90'}
           termsText={settings.layby_terms_text ?? ''}
           maxPct={maxPct}
-          canEdit={site.role === 'owner'}
+          // Always true by the time this renders — the guard above already
+          // refused anyone without setup.edit.
+          canEdit
         />
       </PageBody>
     </>

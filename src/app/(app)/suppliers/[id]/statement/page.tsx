@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
 import { buildSupplierStatement, type StatementFormat } from '@/lib/statements/render'
-import { PageHeader, Card, ButtonLink, Icons, LinkTabs } from '@/components/ui'
+import { PageHeader, PageBody, Card, ButtonLink, Icons, LinkTabs } from '@/components/ui'
 import { StatementDocument } from '@/components/statements/StatementDocument'
 import { withParams } from '@/lib/searchParams'
 import PeriodPicker from './PeriodPicker'
@@ -69,7 +69,7 @@ export default async function SupplierStatementPage({
         }
       />
 
-      <div className="flex flex-col gap-4 px-6 pt-4">
+      <PageBody>
         <LinkTabs
           items={[
             {
@@ -92,13 +92,11 @@ export default async function SupplierStatementPage({
         {format === 'activity' && (
           <PeriodPicker basePath={basePath} from={data.period.from} to={data.period.to} />
         )}
-      </div>
 
-      <div className="px-6 pt-4 pb-10">
         <Card className="overflow-hidden">
           <StatementDocument data={data} variant="supplier-statement" />
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }

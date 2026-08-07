@@ -1,33 +1,20 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { getRun, listItems, refreshCounts } from '@/lib/site/statementRuns'
-import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
   Card,
   CardHeader,
+  Callout,
   StatTile,
-  Badge,
+  StatStrip,
   Icons,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
 } from '@/components/ui'
 import RunProgress from './RunProgress'
+import RunItemsTable from './RunItemsTable'
 
 export const dynamic = 'force-dynamic'
-
-const ITEM_TONE = {
-  queued: 'neutral',
-  sent: 'success',
-  failed: 'danger',
-  skipped: 'warning',
-} as const
 
 export default async function StatementRunPage({
   params,
@@ -50,6 +37,7 @@ export default async function StatementRunPage({
 
   const inFlight = run.status === 'pending' || run.status === 'running'
   const done = run.sentCount + run.failedCount + run.skippedCount
+  const pct = run.totalCount === 0 ? null : Math.round((done / run.totalCount) * 100)
 
   return (
     <>
@@ -62,11 +50,11 @@ export default async function StatementRunPage({
       />
 
       <PageBody>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatStrip columns={4}>
           <StatTile
             label="Sent"
             value={String(run.sentCount)}
-            tone={run.sentCount > 0 ? 'positive' : 'default'}
+            tone={run.sentCount > 0 ? 'success' : 'default'}
             hint={`of ${run.totalCount}`}
             icon={<Icons.Send size={16} />}
           />
@@ -86,21 +74,19 @@ export default async function StatementRunPage({
           />
           <StatTile
             label="Progress"
-            value={run.totalCount === 0 ? '—' : `${Math.round((done / run.totalCount) * 100)}%`}
+            value={pct === null ? '—' : `${pct}%`}
+            // Warning while in flight, success only once everything is done —
+            // the tile answers "can I close this screen yet".
+            tone={pct === 100 && !inFlight ? 'success' : inFlight ? 'warning' : 'default'}
             hint={inFlight ? 'Still sending…' : (run.finishedAt?.toLocaleString('en-ZA') ?? '')}
             icon={<Icons.Clock size={16} />}
           />
-        </div>
+        </StatStrip>
 
         {run.error && (
-          <Card>
-            <div className="px-6 py-4">
-              <p className="flex items-center gap-2 text-sm text-danger">
-                <Icons.StatusError size={15} />
-                {run.error}
-              </p>
-            </div>
-          </Card>
+          <Callout tone="danger" title="The run stopped">
+            {run.error}
+          </Callout>
         )}
 
         <Card>
@@ -108,61 +94,21 @@ export default async function StatementRunPage({
             title="Every account"
             description="What happened to each one, and why — kept so a failure can be chased."
           />
-          <div className="overflow-x-auto">
-            <table className={TABLE}>
-              <thead>
-                <tr className={TABLE_HEAD_ROW}>
-                  <th className={TABLE_TH}>Account</th>
-                  <th className={TABLE_TH}>Sent to</th>
-                  <th className={`${TABLE_TH} text-right`}>Balance</th>
-                  <th className={`${TABLE_TH} text-right`}>Overdue</th>
-                  <th className={TABLE_TH}>When</th>
-                  <th className={TABLE_TH}>Outcome</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.id} className={TABLE_ROW}>
-                    <td className={TABLE_TD}>
-                      <Link
-                        href={`/customers/${item.customerId}`}
-                        className="text-brand hover:underline"
-                      >
-                        {item.customerCode}
-                      </Link>
-                      <div className="text-ink">{item.customerName}</div>
-                    </td>
-                    <td className={TABLE_TD}>
-                      {item.email ?? <span className="text-faint">—</span>}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                      {formatMoney(item.closingBalance)}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                      {item.overdueAmount > 0 ? (
-                        <span className="text-danger">{formatMoney(item.overdueAmount)}</span>
-                      ) : (
-                        <span className="text-faint">—</span>
-                      )}
-                    </td>
-                    <td className={TABLE_TD}>
-                      {item.sentAt?.toLocaleString('en-ZA') ?? '—'}
-                    </td>
-                    <td className={TABLE_TD}>
-                      <span title={item.error ?? undefined}>
-                        <Badge tone={ITEM_TONE[item.status]}>{item.status}</Badge>
-                      </span>
-                      {item.error && (
-                        <div className="mt-0.5 max-w-xs truncate text-xs text-muted">
-                          {item.error}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RunItemsTable
+            items={items.map((item) => ({
+              id: item.id,
+              customerId: item.customerId,
+              code: item.customerCode,
+              name: item.customerName,
+              email: item.email,
+              balance: item.closingBalance,
+              overdue: item.overdueAmount,
+              when: item.sentAt?.toLocaleString('en-ZA') ?? null,
+              whenSort: item.sentAt?.getTime() ?? 0,
+              status: item.status,
+              error: item.error,
+            }))}
+          />
         </Card>
       </PageBody>
     </>

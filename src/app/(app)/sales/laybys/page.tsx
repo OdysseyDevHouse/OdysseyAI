@@ -1,39 +1,26 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
-import { listLaybys, LAYBY_STATUS_LABELS, type LaybyStatus } from '@/lib/site/laybys'
+import { listLaybys, LAYBY_STATUS_LABELS } from '@/lib/site/laybys'
 import { formatMoney } from '@/lib/decimals'
-import { percentPaid } from '@/lib/laybyRules'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
+  PageBody,
+  PrimaryLink,
+  ButtonLink,
   Card,
   SearchBar,
   StatTile,
-  FilterBar,
-  FilterChip,
+  StatStrip,
+  LinkSegmentedControl,
   Pagination,
-  EmptyState,
-  Badge,
   Icons,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_TH,
-  TABLE_TD,
-  TABLE_ROW,
-  TABLE_NUMERIC,
 } from '@/components/ui'
 import ExpireButton from './ExpireButton'
+import LaybysTable, { type LaybyTableRow } from './LaybysTable'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
-
-const TONE: Record<LaybyStatus, 'success' | 'warning' | 'danger' | 'neutral' | 'brand'> = {
-  open: 'brand',
-  completed: 'success',
-  cancelled: 'neutral',
-  expired: 'danger',
-}
 
 export default async function LaybysPage({
   searchParams,
@@ -65,152 +52,134 @@ export default async function LaybysPage({
   const href = hrefBuilder('/sales/laybys', params)
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
 
+  // DataTable's cells are functions, which cannot cross the server→client
+  // boundary — so the table lives in LaybysTable and gets plain rows.
+  const rows: LaybyTableRow[] = items.map((layby) => ({
+    id: layby.id,
+    laybyNumber: layby.laybyNumber,
+    customerName: layby.customerName,
+    dueDate: layby.dueDate,
+    status: layby.status,
+    statusLabel: LAYBY_STATUS_LABELS[layby.status],
+    totalIncl: layby.totalIncl,
+    paidTotal: layby.paidTotal,
+    outstanding: layby.outstanding,
+  }))
+
   return (
     <>
       <PageHeader
         title="Lay-bys"
         subtitle={`${total} lay-by${total === 1 ? '' : 's'}`}
-        action={<ExpireButton />}
+        action={
+          <>
+            <ExpireButton />
+            <PrimaryLink href="/sales/new">
+              <Icons.Plus size={15} />
+              New lay-by at the till
+            </PrimaryLink>
+          </>
+        }
       />
 
-      <div className="grid grid-cols-2 gap-3 px-6 pt-4 lg:grid-cols-4">
-        <StatTile
-          label="Open"
-          value={String(open.length)}
-          hint="Being paid off"
-          icon={<Icons.Package size={16} />}
-          href={filterHref({ status: 'open' })}
-        />
-        {/* The figure a manager needs to understand and most systems hide:
-            this is money in the bank that is not the shop's. */}
-        <StatTile
-          label="Customers' money held"
-          value={formatMoney(held)}
-          hint="Refundable — not yet earned"
-          tone={held > 0 ? 'warning' : 'default'}
-          icon={<Icons.Coins size={16} />}
-        />
-        <StatTile
-          label="Still to collect"
-          value={formatMoney(committed)}
-          hint="Before the goods go out"
-          icon={<Icons.HandCoins size={16} />}
-        />
-        <StatTile
-          label="Past due"
-          value={String(overdue.length)}
-          hint={overdue.length > 0 ? 'Chase these' : 'Nothing overdue'}
-          tone={overdue.length > 0 ? 'danger' : 'default'}
-          icon={<Icons.Clock size={16} />}
-        />
-      </div>
-
-      <SearchBar
-        action="/sales/laybys"
-        defaultValue={params.q}
-        placeholder="Search by lay-by number or customer…"
-        keep={{ status: params.status }}
-      />
-
-      <FilterBar clearHref="/sales/laybys">
-        {status && (
-          <FilterChip
-            label="Status"
-            value={LAYBY_STATUS_LABELS[status]}
-            clearHref={filterHref({ status: null })}
+      <PageBody>
+        <StatStrip columns={4}>
+          <StatTile
+            label="Open"
+            value={String(open.length)}
+            hint="Being paid off"
+            icon={<Icons.Package size={16} />}
+            href={filterHref({ status: 'open' })}
           />
-        )}
-      </FilterBar>
+          {/* The figure a manager needs to understand and most systems hide:
+              this is money in the bank that is not the shop's. */}
+          <StatTile
+            label="Customers' money held"
+            value={formatMoney(held)}
+            hint="Refundable — not yet earned"
+            tone={held > 0 ? 'warning' : 'default'}
+            icon={<Icons.Coins size={16} />}
+          />
+          <StatTile
+            label="Still to collect"
+            value={formatMoney(committed)}
+            hint="Before the goods go out"
+            icon={<Icons.HandCoins size={16} />}
+          />
+          <StatTile
+            label="Past due"
+            value={String(overdue.length)}
+            hint={overdue.length > 0 ? 'Chase these' : 'Nothing overdue'}
+            tone={overdue.length > 0 ? 'danger' : 'default'}
+            icon={<Icons.Clock size={16} />}
+          />
+        </StatStrip>
 
-      <div className="flex flex-wrap gap-3 px-6 pb-3 text-xs">
-        <Link
-          href="/sales/laybys"
-          className={!status ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-        >
-          All
-        </Link>
-        {(['open', 'completed', 'cancelled', 'expired'] as LaybyStatus[]).map((value) => (
-          <Link
-            key={value}
-            href={filterHref({ status: status === value ? null : value })}
-            className={status === value ? 'font-medium text-brand' : 'text-muted hover:text-ink'}
-          >
-            {LAYBY_STATUS_LABELS[value]}
-          </Link>
-        ))}
-      </div>
+        {/* SearchBar carries its own page gutter, so back PageBody's out. */}
+        <div className="-mx-6 -my-3">
+          <SearchBar
+            action="/sales/laybys"
+            defaultValue={params.q}
+            placeholder="Search by lay-by number or customer…"
+            keep={{ status: params.status }}
+          />
+        </div>
 
-      <div className="px-6 pb-6">
+        <div>
+          <LinkSegmentedControl
+            aria-label="Filter by status"
+            value={status ?? 'all'}
+            options={[
+              { value: 'all', label: 'All', href: filterHref({ status: null }) },
+              ...(['open', 'completed', 'cancelled', 'expired'] as const).map((value) => ({
+                value,
+                label: LAYBY_STATUS_LABELS[value],
+                href: filterHref({ status: value }),
+              })),
+            ]}
+          />
+        </div>
+
         <Card>
-          {items.length === 0 ? (
-            <EmptyState
-              title="No lay-bys"
-              hint="Start one from the till: ring up the goods, attach a customer, then Save as lay-by."
-              icon={<Icons.Package size={22} />}
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className={TABLE}>
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Number</th>
-                    <th className={TABLE_TH}>Customer</th>
-                    <th className={TABLE_TH}>Due</th>
-                    <th className={`${TABLE_TH} text-right`}>Total</th>
-                    <th className={`${TABLE_TH} text-right`}>Paid</th>
-                    <th className={`${TABLE_TH} text-right`}>Outstanding</th>
-                    <th className={TABLE_TH}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((layby) => {
-                    const late = layby.status === 'open' && layby.dueDate && layby.dueDate < today
-                    return (
-                      <tr key={layby.id} className={TABLE_ROW}>
-                        <td className={TABLE_TD}>
-                          <Link
-                            href={`/sales/laybys/${layby.id}`}
-                            className="text-brand hover:underline"
-                          >
-                            {layby.laybyNumber ?? `#${layby.id}`}
-                          </Link>
-                          <div className="text-xs text-muted">
-                            {percentPaid(layby)}% paid
-                          </div>
-                        </td>
-                        <td className={TABLE_TD}>{layby.customerName ?? '—'}</td>
-                        <td className={TABLE_TD}>
-                          {layby.dueDate ? (
-                            <span className={late ? 'text-danger' : undefined}>{layby.dueDate}</span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {formatMoney(layby.totalIncl)}
-                        </td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {formatMoney(layby.paidTotal)}
-                        </td>
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                          {layby.outstanding > 0 ? (
-                            <span className="text-ink">{formatMoney(layby.outstanding)}</span>
-                          ) : (
-                            <span className="text-faint">—</span>
-                          )}
-                        </td>
-                        <td className={TABLE_TD}>
-                          <Badge tone={TONE[layby.status]}>
-                            {LAYBY_STATUS_LABELS[layby.status]}
-                          </Badge>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <LaybysTable
+            rows={rows}
+            today={today}
+            empty={
+              params.q
+                ? {
+                    icon: <Icons.Search size={22} />,
+                    title: `Nothing matches “${params.q}”`,
+                    hint: 'Try a different lay-by number or customer.',
+                    action: (
+                      <ButtonLink href="/sales/laybys" variant="secondary">
+                        Clear the search
+                      </ButtonLink>
+                    ),
+                  }
+                : status
+                  ? {
+                      icon: <Icons.Package size={22} />,
+                      title: `No ${LAYBY_STATUS_LABELS[status].toLowerCase()} lay-bys`,
+                      hint: 'Nothing is in this slice right now.',
+                      action: (
+                        <ButtonLink href="/sales/laybys" variant="secondary">
+                          Show all lay-bys
+                        </ButtonLink>
+                      ),
+                    }
+                  : {
+                      icon: <Icons.Package size={22} />,
+                      title: 'No lay-bys',
+                      hint: 'Start one from the till: ring up the goods, attach a customer, then Save as lay-by.',
+                      action: (
+                        <PrimaryLink href="/sales/new">
+                          <Icons.Plus size={15} />
+                          New lay-by at the till
+                        </PrimaryLink>
+                      ),
+                    }
+            }
+          />
 
           <Pagination
             page={page}
@@ -220,7 +189,7 @@ export default async function LaybysPage({
             hrefFor={(next) => href({ page: next === 1 ? null : next })}
           />
         </Card>
-      </div>
+      </PageBody>
     </>
   )
 }
