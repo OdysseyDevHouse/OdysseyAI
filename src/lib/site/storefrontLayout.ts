@@ -2,10 +2,12 @@ import 'server-only'
 import { siteExecute, siteQueryOne } from '../siteDb'
 import {
   defaultSections,
+  isScheduledNow,
   normaliseSections,
   readTheme,
   safeColour,
   safeUrl,
+  shopToday,
   type HomeSection,
   type StorefrontTheme,
 } from '../storefrontModel'
@@ -47,7 +49,7 @@ export type LayoutState = {
 export async function getLayout(siteId: number): Promise<LayoutState> {
   const row = await siteQueryOne<Row & { home_layout?: unknown }>(
     siteId,
-    `SELECT brand_colour, product_layout, hero_headline, hero_subtext,
+    `SELECT brand_colour, product_layout, logo_image_id, hero_headline, hero_subtext,
             footer_about, footer_hours, social_facebook, social_instagram,
             social_whatsapp, home_layout, home_layout_draft
        FROM online_store_settings WHERE id = 1`,
@@ -70,14 +72,27 @@ export async function getLayout(siteId: number): Promise<LayoutState> {
   }
 }
 
-/** What the SHOP renders: published sections only, never a draft. */
+/**
+ * What the SHOP renders: published sections only, never a draft.
+ *
+ * Two gates, deliberately separate. `enabled` is the owner saying "not this";
+ * the schedule is them saying "not yet" or "not any more". A section fails if
+ * either says so, and the builder shows both states differently — off looks
+ * off, out-of-season looks dated.
+ *
+ * Evaluated on every READ rather than by a nightly job that flips flags: a
+ * date passing is not an event anybody triggers, so a stored answer would be
+ * wrong between the moment the date turned and the moment the job ran. This is
+ * the same argument `quoteState` makes about expiry.
+ */
 export async function getPublishedLayout(
   siteId: number,
 ): Promise<{ theme: StorefrontTheme; sections: HomeSection[] }> {
   const state = await getLayout(siteId)
+  const today = shopToday()
   return {
     theme: state.theme,
-    sections: state.published.filter((s) => s.enabled),
+    sections: state.published.filter((s) => s.enabled && isScheduledNow(s, today)),
   }
 }
 
@@ -95,13 +110,19 @@ export async function saveTheme(siteId: number, theme: Partial<StorefrontTheme>)
   await siteExecute(
     siteId,
     `UPDATE online_store_settings
-        SET brand_colour = ?, product_layout = ?, hero_headline = ?, hero_subtext = ?,
+        SET brand_colour = ?, product_layout = ?, logo_image_id = ?,
+            hero_headline = ?, hero_subtext = ?,
             footer_about = ?, footer_hours = ?, social_facebook = ?,
             social_instagram = ?, social_whatsapp = ?
       WHERE id = 1`,
     [
       safeColour(theme.brandColour),
       theme.productLayout === 'list' ? 'list' : 'grid',
+      // An id or nothing. Anything unusable becomes NULL rather than 0, which
+      // would be a reference to a picture that cannot exist.
+      Number.isInteger(theme.logoImageId) && (theme.logoImageId ?? 0) > 0
+        ? theme.logoImageId
+        : null,
       (theme.heroHeadline ?? '').slice(0, 120),
       (theme.heroSubtext ?? '').slice(0, 300),
       (theme.footerAbout ?? '').slice(0, 600),

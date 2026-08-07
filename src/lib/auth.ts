@@ -444,5 +444,28 @@ export async function siteIdForCapability(capability: Capability): Promise<numbe
   return can(capabilities, capability) ? site.id : null
 }
 
+/**
+ * The same check, but keeping the caller's whole capability set.
+ *
+ * For routes whose OUTPUT depends on more than the one permission that opened
+ * them — a report export, where `reports.view` grants the file but
+ * `products.cost` decides whether the margin columns are in it. Returning only
+ * a site id would force the route to re-read the session to answer that, and
+ * the version that "just exports everything" is exactly the leak this avoids.
+ */
+export async function actorForCapability(capability: Capability): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+  capabilities: CapabilitySet
+} | null> {
+  const { site, user, capabilities } = await requireSiteUser()
+  if (!can(capabilities, capability)) return null
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
+  }
+}
+
 export { getSession }
 export type { SessionPayload }

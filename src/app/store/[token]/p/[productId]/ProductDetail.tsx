@@ -4,7 +4,15 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { Badge, Button, Icons } from '@/components/ui'
 import type { StorefrontProduct } from '@/lib/site/storefront'
-import { AddControl, Price, Stars, initialsOf, savingPercent, stockState } from '../../ShopBits'
+import {
+  AddControl,
+  FavouriteButton,
+  Price,
+  Stars,
+  initialsOf,
+  savingPercent,
+  stockState,
+} from '../../ShopBits'
 import { useCart } from '../../CartContext'
 
 /**
@@ -199,6 +207,7 @@ export default function ProductDetail({
             <div className="min-w-[9rem] flex-1">
               <AddControl product={product} showStock={showStock} />
             </div>
+            <FavouriteButton product={product} />
             {inBasket > 0 && (
               <Link href={`/store/${token}/checkout`}>
                 <Button variant="secondary">Go to checkout</Button>

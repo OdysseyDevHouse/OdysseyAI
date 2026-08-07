@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
-import { listQuotes, quoteSummary, lostReasons, QUOTE_STATE_LABELS } from '@/lib/site/quotes'
+import { listQuotes, quoteSummary, lostReasons } from '@/lib/site/quotes'
 import { formatMoney } from '@/lib/decimals'
 import { today } from '@/lib/site/ledger'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
@@ -12,21 +12,16 @@ import {
   CardBody,
   StatTile,
   EmptyState,
-  Badge,
-  Icons,
   LinkTabs,
   SearchBar,
   Pagination,
-  DataTable,
-  type Column,
 } from '@/components/ui'
 import { NewQuoteButton } from './NewQuoteButton'
+import { QuotesTable, type QuoteTableRow } from './QuotesTable'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
-
-type QuoteRow = Awaited<ReturnType<typeof listQuotes>>['items'][number]
 
 /**
  * The quote register.
@@ -71,76 +66,17 @@ export default async function QuotesPage({
 
   const href = hrefBuilder('/sales/quotes', params)
 
-  const columns: Column<QuoteRow>[] = [
-    {
-      key: 'number',
-      header: 'Number',
-      cell: (q) => (
-        <Link href={`/sales/quotes/${q.id}`} className="block hover:text-brand">
-          <span className="text-ink">{q.documentNumber ?? `Draft #${q.id}`}</span>
-          <span className="mt-0.5 block text-xs text-muted">{q.documentDate}</span>
-        </Link>
-      ),
-      sortValue: (q) => q.documentNumber ?? '',
-    },
-    {
-      key: 'customer',
-      header: 'Customer',
-      cell: (q) => <span className="text-ink">{q.customerName ?? 'Not stated'}</span>,
-      sortValue: (q) => q.customerName ?? '',
-    },
-    {
-      key: 'state',
-      header: 'State',
-      cell: (q) => (
-        <Badge
-          tone={
-            q.state === 'accepted'
-              ? 'success'
-              : q.state === 'expired'
-                ? 'danger'
-                : q.state === 'declined' || q.state === 'cancelled'
-                  ? 'default'
-                  : 'warning'
-          }
-        >
-          {QUOTE_STATE_LABELS[q.state]}
-        </Badge>
-      ),
-      sortValue: (q) => q.state,
-    },
-    {
-      key: 'valid',
-      header: 'Valid until',
-      cell: (q) =>
-        q.validUntil === null ? (
-          <span className="text-faint">No expiry</span>
-        ) : (
-          <>
-            <span className={q.state === 'expired' ? 'text-danger' : 'text-ink-2'}>
-              {q.validUntil}
-            </span>
-            {/* Days left only where it is actionable — a quote expiring in a
-                week is a phone call; one expiring in three months is not. */}
-            {q.state === 'open' && q.daysRemaining !== null && q.daysRemaining <= 7 && (
-              <span className="mt-0.5 block text-xs text-warning-ink">
-                {q.daysRemaining <= 0
-                  ? 'expires today'
-                  : `${q.daysRemaining} day${q.daysRemaining === 1 ? '' : 's'} left`}
-              </span>
-            )}
-          </>
-        ),
-      sortValue: (q) => q.validUntil ?? '',
-    },
-    {
-      key: 'total',
-      header: 'Total',
-      numeric: true,
-      cell: (q) => <span className="text-ink">{formatMoney(q.totalIncl)}</span>,
-      sortValue: (q) => q.totalIncl,
-    },
-  ]
+  // Plain rows; the table that draws them owns its columns. See QuotesTable.
+  const rows: QuoteTableRow[] = items.map((q) => ({
+    id: q.id,
+    documentNumber: q.documentNumber,
+    documentDate: q.documentDate,
+    customerName: q.customerName,
+    state: q.state,
+    validUntil: q.validUntil,
+    daysRemaining: q.daysRemaining,
+    totalIncl: q.totalIncl,
+  }))
 
   return (
     <>
@@ -231,12 +167,7 @@ export default async function QuotesPage({
             </CardBody>
           ) : (
             <>
-              <DataTable
-                columns={columns}
-                rows={items}
-                getRowKey={(q) => q.id}
-                empty={{ title: 'No quotes', hint: 'Nothing in this filter.' }}
-              />
+              <QuotesTable rows={rows} />
               <Pagination
                 page={page}
                 pageCount={pageCountFor(total, PAGE_SIZE)}

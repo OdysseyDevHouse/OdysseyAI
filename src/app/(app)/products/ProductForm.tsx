@@ -114,9 +114,15 @@ export default function ProductForm({
   referLink,
   serials,
   productSuppliers,
+  suggestedCode = null,
   rowActions,
 }: {
   product: Product | null
+  /**
+   * Pre-filled code for a new product, or null when auto-numbering is off.
+   * A suggestion only — see lib/site/masterCodes.ts.
+   */
+  suggestedCode?: string | null
   departments: Department[]
   brands: Brand[]
   vatRates: VatRate[]
@@ -297,13 +303,21 @@ export default function ProductForm({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
-                  label="Product code *"
-                  hint={isNew ? undefined : 'Fixed after creation — stock movements refer to it'}
+                  label={isNew && suggestedCode ? 'Product code' : 'Product code *'}
+                  hint={
+                    !isNew
+                      ? 'Fixed after creation — stock movements refer to it'
+                      : suggestedCode
+                        ? 'Filled in for you. Type over it to use your own.'
+                        : undefined
+                  }
                 >
+                  {/* Clearing the field is how a user asks for the next code —
+                      see the note in CustomerForm. */}
                   <Input
                     name="code"
-                    defaultValue={product?.code ?? ''}
-                    required
+                    defaultValue={product?.code ?? suggestedCode ?? ''}
+                    required={!(isNew && suggestedCode)}
                     maxLength={48}
                     // Editable on create, fixed afterwards: the code is how stock
                     // movements and orders refer to this product.

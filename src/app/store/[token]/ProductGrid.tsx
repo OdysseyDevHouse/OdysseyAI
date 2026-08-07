@@ -8,6 +8,7 @@ import {
   AddControl,
   Price,
   ProductImage,
+  FavouriteButton,
   Stars,
   StockBadge,
   savingPercent,
@@ -63,8 +64,18 @@ export default function ProductGrid({
   const asGrid = layout === 'grid' && showPhotos
 
   if (asGrid) {
+    /*
+     * @container on the list itself, so the tile count follows the width this
+     * grid actually has rather than the window's.
+     *
+     * Declared here rather than relying on an ancestor because ProductGrid has
+     * four callers — the front page, a department, a search result and the
+     * related row — and only some of them sit inside a container. A grid that
+     * silently fell back to viewport breakpoints in half its call sites would
+     * be worse than one that never used them.
+     */
     return (
-      <ul className="grid grid-cols-2 items-stretch gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <ul className="@container grid grid-cols-2 items-stretch gap-3 @sm:grid-cols-3 @lg:grid-cols-4 @xl:grid-cols-5">
         {products.map((product, i) => (
           <Tile
             key={product.id}
@@ -196,7 +207,10 @@ function Tile({
       {/* mt-auto is essential: names wrap to one or two lines, and without it
           the buttons sit at different heights across a row. */}
       <div className="mt-auto flex items-center gap-2 px-3 pb-3 pt-2.5">
-        <AddControl product={product} showStock={showStock} />
+        <span className="min-w-0 flex-1">
+          <AddControl product={product} showStock={showStock} />
+        </span>
+        <FavouriteButton product={product} />
       </div>
     </li>
   )

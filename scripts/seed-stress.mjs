@@ -696,13 +696,27 @@ async function seedCustomerPayments(db, customers) {
 async function reconcile(db) {
   console.log('\nReconciling derived state…')
 
+  // ── BOTH HALVES MUST COVER THE SAME PRODUCTS ─────────────────────────────
+  //
+  // They did not. The piles were rewritten for EVERY product while the totals
+  // were only fixed for seeded ones, so a pre-existing product that the seeder
+  // sold against had its pile driven to the movement sum and its total left
+  // where it was — drifting the two apart by exactly the opening stock the
+  // seeder never wrote a movement for.
+  //
+  // That is invariant (C) broken by the tool whose job is to satisfy it, and
+  // it fails the app's own reconciler on a product nobody touched by hand.
+  // Filtering both halves the same way is the fix; the filter itself stays so
+  // a seed run cannot rewrite stock the seeder does not own.
   console.log('  product_location_stock from movements…')
   await db.query(`
     UPDATE product_location_stock pls
+      JOIN products p ON p.id = pls.product_id
       JOIN (SELECT product_id, location_id, SUM(qty_change) AS total
               FROM stock_movements GROUP BY product_id, location_id) m
         ON m.product_id = pls.product_id AND m.location_id = pls.location_id
-       SET pls.stock_on_hand = m.total`)
+       SET pls.stock_on_hand = m.total
+     WHERE p.code LIKE ?`, [`${P_PREFIX}%`])
 
   console.log('  products.stock_on_hand from locations…')
   await db.query(`

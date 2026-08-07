@@ -3,6 +3,7 @@ import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/l
 import { listDepartments } from '@/lib/site/departments'
 import { linkedStores } from '@/lib/storeGroups'
 import { listGroups as listInstructionGroups } from '@/lib/site/instructions'
+import { suggestedMasterCode } from '@/lib/site/masterCodes'
 import { PageHeader } from '@/components/ui'
 import ProductForm from '../ProductForm'
 
@@ -14,14 +15,17 @@ export default async function NewProductPage() {
   const site = await requireSite()
   const siteId = site.id
 
-  const [departments, brands, vatRates, structures, costBasis, stores] = await Promise.all([
-    listDepartments(siteId),
-    listBrands(siteId),
-    listVatRates(siteId),
-    listPriceStructures(siteId),
-    getCostBasis(siteId),
-    linkedStores(siteId),
-  ])
+  const [departments, brands, vatRates, structures, costBasis, stores, suggestedCode] =
+    await Promise.all([
+      listDepartments(siteId),
+      listBrands(siteId),
+      listVatRates(siteId),
+      listPriceStructures(siteId),
+      getCostBasis(siteId),
+      linkedStores(siteId),
+      // Null when auto-numbering is off. Claims nothing.
+      suggestedMasterCode(siteId, 'product'),
+    ])
 
   const thisStore = stores.find((s) => s.siteId === siteId)
 
@@ -35,6 +39,7 @@ export default async function NewProductPage() {
       <div className="p-6">
         <ProductForm
           product={null}
+          suggestedCode={suggestedCode}
           departments={departments}
           brands={brands}
           vatRates={vatRates}

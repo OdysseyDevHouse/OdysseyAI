@@ -1,7 +1,5 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import { listRuns } from '@/lib/site/creditControl'
-import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
@@ -9,15 +7,11 @@ import {
   CardHeader,
   CardBody,
   EmptyState,
-  Badge,
-  DataTable,
   ButtonLink,
-  type Column,
 } from '@/components/ui'
+import { RunsTable, type RunRow } from './RunsTable'
 
 export const dynamic = 'force-dynamic'
-
-type Run = Awaited<ReturnType<typeof listRuns>>[number]
 
 /**
  * Every reminder run ever built, including the ones nobody sent.
@@ -30,90 +24,25 @@ export default async function RunsPage() {
   const { siteId } = await requireCapability('customers.view')
   const runs = await listRuns(siteId, 50)
 
-  const columns: Column<Run>[] = [
-    {
-      key: 'run',
-      header: 'Run',
-      cell: (r) => (
-        <Link href={`/credit/runs/${r.id}`} className="block hover:text-brand">
-          <span className="text-ink">#{r.id}</span>
-          <span className="mt-0.5 block text-xs text-muted">as at {r.asAt}</span>
-        </Link>
-      ),
-      sortValue: (r) => r.id,
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      cell: (r) => (
-        <Badge
-          tone={
-            r.status === 'completed'
-              ? 'success'
-              : r.status === 'draft'
-                ? 'brand'
-                : r.status === 'sending'
-                  ? 'warning'
-                  : 'default'
-          }
-        >
-          {r.status === 'draft'
-            ? 'Awaiting review'
-            : r.status === 'sending'
-              ? 'Sending'
-              : r.status === 'completed'
-                ? 'Sent'
-                : 'Cancelled'}
-        </Badge>
-      ),
-      sortValue: (r) => r.status,
-    },
-    {
-      key: 'sent',
-      header: 'Sent',
-      numeric: true,
-      cell: (r) => (
-        <>
-          <span className="text-ink">{r.status === 'draft' ? '—' : r.sentCount}</span>
-          {r.failedCount > 0 && (
-            <span className="mt-0.5 block text-xs text-danger">{r.failedCount} failed</span>
-          )}
-        </>
-      ),
-      sortValue: (r) => r.sentCount,
-    },
-    {
-      key: 'skipped',
-      header: 'Not chased',
-      numeric: true,
-      cell: (r) => <span className="text-muted">{r.skippedCount}</span>,
-      sortValue: (r) => r.skippedCount,
-    },
-    {
-      key: 'value',
-      header: 'Chased',
-      numeric: true,
-      cell: (r) => <span className="text-ink">{formatMoney(r.totalOverdue)}</span>,
-      sortValue: (r) => r.totalOverdue,
-    },
-    {
-      key: 'who',
-      header: 'Released by',
-      cell: (r) => (
-        <>
-          <span className="text-ink-2">{r.sentByName ?? '—'}</span>
-          <span className="mt-0.5 block text-xs text-muted">built by {r.userName}</span>
-        </>
-      ),
-      sortValue: (r) => r.sentByName ?? '',
-    },
-  ]
+  // Plain serialisable rows — the Dates on a run never cross the boundary, and
+  // the table that draws them owns its own columns. See RunsTable.
+  const rows: RunRow[] = runs.map((r) => ({
+    id: r.id,
+    asAt: r.asAt,
+    status: r.status,
+    sentCount: r.sentCount,
+    failedCount: r.failedCount,
+    skippedCount: r.skippedCount,
+    totalOverdue: r.totalOverdue,
+    userName: r.userName,
+    sentByName: r.sentByName,
+  }))
 
   return (
     <>
       <PageHeader
         title="Reminder runs"
-        subtitle={`${runs.length} run${runs.length === 1 ? '' : 's'}`}
+        subtitle={`${rows.length} run${rows.length === 1 ? '' : 's'}`}
         action={<ButtonLink href="/credit">Collections</ButtonLink>}
       />
 
@@ -123,7 +52,7 @@ export default async function RunsPage() {
             title="Runs"
             description="Cancelled runs are kept — a proposal that was deliberately not sent is a decision worth recording."
           />
-          {runs.length === 0 ? (
+          {rows.length === 0 ? (
             <CardBody>
               <EmptyState
                 title="No reminder runs yet"
@@ -132,12 +61,7 @@ export default async function RunsPage() {
               />
             </CardBody>
           ) : (
-            <DataTable
-              columns={columns}
-              rows={runs}
-              getRowKey={(r) => r.id}
-              empty={{ title: 'No runs', hint: '' }}
-            />
+            <RunsTable rows={rows} />
           )}
         </Card>
       </PageBody>

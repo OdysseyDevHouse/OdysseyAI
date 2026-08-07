@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { getProduct } from '@/lib/site/products'
 import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
@@ -33,7 +34,7 @@ export default async function EditProductPage({
 
   // A hidden menu entry is not a boundary — this URL is typeable.
 
-  await requireCapability('products.edit')
+  const { capabilities } = await requireCapability('products.edit')
 
   const site = await requireSite()
   const siteId = site.id
@@ -143,6 +144,7 @@ export default async function EditProductPage({
             productId={product.id}
             isArchived={product.isArchived}
             name={product.description}
+            canDelete={can(capabilities, 'products.delete')}
           />
         }
       />

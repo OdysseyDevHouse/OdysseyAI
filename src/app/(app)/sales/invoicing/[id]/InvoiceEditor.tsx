@@ -34,6 +34,11 @@ import {
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
 import { documentTotals, lineTotals } from '@/lib/documentMath'
+import {
+  computeSpecials,
+  effectiveDiscountPct,
+  type Special,
+} from '@/lib/specialsEngine'
 import type { SalesDocument } from '@/lib/site/salesDocuments'
 import type { PriceStructure, SalesRep } from '@/lib/site/lookups'
 import type { TenderType } from '@/lib/site/tenderTypes'
@@ -107,6 +112,7 @@ export default function InvoiceEditor({
   canOverrideDiscount,
   canOverridePrice,
   showCost,
+  specials,
 }: {
   document: SalesDocument
   structures: PriceStructure[]
@@ -118,6 +124,8 @@ export default function InvoiceEditor({
   editable: boolean
   canOverrideDiscount: boolean
   canOverridePrice: boolean
+  /** The shop's live promotions. See the note on lineSpecials below. */
+  specials: Special[]
   /** Whether this person may see cost and margin. */
   showCost: boolean
 }) {
@@ -182,12 +190,38 @@ export default function InvoiceEditor({
 
   /* ── Totals ──────────────────────────────────────────────────────────── */
 
+  /*
+   * ── What each line is entitled to ──────────────────────────────────────
+   *
+   * Recomputed when the lines change, and DELIBERATELY NOT on a timer — unlike
+   * the till. A till is worked in seconds and a slip must match the shelf edge
+   * right now; an invoice is edited over minutes, and re-pricing it under
+   * someone's cursor while they type would be worse than a figure that is a
+   * few minutes stale. It refreshes on the next edit or reload.
+   */
+  const lineSpecials = useMemo(() => {
+    if (specials.length === 0) return lines.map(() => undefined)
+    return computeSpecials(
+      lines.map((l) => ({
+        productId: l.productId ?? -1,
+        departmentId: l.departmentId ?? null,
+        priceIncl: l.unitPriceIncl,
+        // A credit line earns nothing — see the engine's note on refunds.
+        qty: Math.max(l.qty, 0),
+      })),
+      specials,
+      new Date(),
+    ).lineSpecials
+  }, [lines, specials])
+
   const computed = useMemo(() => {
-    const per = lines.map((l) =>
+    const per = lines.map((l, i) =>
       lineTotals({
         qty: l.qty,
         unitPriceIncl: l.unitPriceIncl,
-        discountPct: l.discountPct,
+        // The better of the special and any discount typed by hand. They never
+        // compound — see effectiveDiscountPct.
+        discountPct: effectiveDiscountPct(l.discountPct, lineSpecials[i]),
         vatRatePct: l.vatRatePct,
       }),
     )
@@ -266,7 +300,7 @@ export default function InvoiceEditor({
       documentDate,
       reference: reference.trim() || null,
       notes: notes.trim() || null,
-      lines: lines.map((l) => ({
+      lines: lines.map((l, i) => ({
         productId: l.productId,
         productCode: l.productCode,
         description: l.description,
@@ -275,7 +309,9 @@ export default function InvoiceEditor({
         salesRepUserId: l.salesRepUserId,
         qty: l.qty,
         unitPriceIncl: l.unitPriceIncl,
-        discountPct: l.discountPct,
+        // What the screen showed, so the saved invoice matches it.
+        discountPct: effectiveDiscountPct(l.discountPct, lineSpecials[i]),
+        specialId: lineSpecials[i]?.specialId ?? null,
         vatRatePct: l.vatRatePct,
         unitCostExcl: l.unitCostExcl,
       })),

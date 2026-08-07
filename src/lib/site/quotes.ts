@@ -7,6 +7,13 @@ import { getDocument, listDocuments } from './salesDocuments'
 import { getNumericSetting } from './settings'
 import { nextDocumentNumber } from './sequences'
 import { today } from './ledger'
+// The pure half, imported for use here as well as re-exported below —
+// `export *` re-publishes these names but does not bring them into scope.
+import {
+  quoteState,
+  type QuoteOutcome,
+  type QuoteState,
+} from '../quotesModel'
 
 /**
  * Quotes.
@@ -38,25 +45,13 @@ import { today } from './ledger'
  * into the invoice destroys the evidence.
  */
 
-export type QuoteOutcome = 'open' | 'accepted' | 'declined'
-
-/**
- * What a quote is, right now.
- *
- * `expired` is DERIVED rather than stored: a date passing is not an event
- * anybody triggers, so a stored status would need a nightly job to stay true
- * and would be wrong in between. Computed on read, it is always right.
+/*
+ * The states, labels and `quoteState` live in lib/quotesModel.ts, which
+ * carries no `server-only` marker so the register table in the browser can
+ * apply the identical rules. Re-exported here so a server caller keeps one
+ * import.
  */
-export type QuoteState = 'draft' | 'open' | 'expired' | 'accepted' | 'declined' | 'cancelled'
-
-export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
-  draft: 'Draft',
-  open: 'Awaiting a decision',
-  expired: 'Expired',
-  accepted: 'Accepted',
-  declined: 'Declined',
-  cancelled: 'Cancelled',
-}
+export * from '../quotesModel'
 
 export type Quote = {
   id: number
@@ -84,30 +79,6 @@ export type Quote = {
 }
 
 type Row = RowDataPacket & Record<string, unknown>
-
-/**
- * The state of a quote, from its stored fields and today's date.
- *
- * Order matters. A declined quote that has also expired is DECLINED — the
- * customer answered, and the date passing afterwards changes nothing. Reading
- * expiry first would relabel every old decision as "expired" and lose the
- * outcome that was recorded.
- */
-export function quoteState(input: {
-  status: string
-  outcome: QuoteOutcome
-  validUntil: string | null
-  asAt?: string
-}): QuoteState {
-  if (input.status === 'cancelled') return 'cancelled'
-  if (input.outcome === 'accepted') return 'accepted'
-  if (input.outcome === 'declined') return 'declined'
-  if (input.status === 'draft' || input.status === 'saved') return 'draft'
-
-  const asAt = input.asAt ?? today()
-  if (input.validUntil && input.validUntil < asAt) return 'expired'
-  return 'open'
-}
 
 function mapQuote(r: Row, asAt: string): Quote {
   const validUntil = r.valid_until === null ? null : String(r.valid_until)

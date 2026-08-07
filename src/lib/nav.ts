@@ -19,6 +19,7 @@ import {
   Wrench,
   ShoppingBag,
   Gem,
+  Stamp,
   Plus,
   Receipt,
   FileText,
@@ -42,7 +43,11 @@ import {
   Percent,
   Lock,
   Bell,
+  Clock,
+  CalendarRange,
   Handshake,
+  Sparkles,
+  Repeat,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -94,6 +99,7 @@ export const NAV: NavSection[] = [
       { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view' },
       { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view' },
       { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view' },
+      { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note' },
       { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup' },
     ],
@@ -107,7 +113,7 @@ export const NAV: NavSection[] = [
       { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, capability: 'stock.adjust' },
       { label: 'Purchasing', href: '/purchasing', icon: PackageOpen, built: true, capability: 'purchasing.view' },
       { label: 'Transfers', href: '/transfers', icon: ArrowLeftRight, built: true, capability: 'stock.transfer' },
-      { label: 'Specials', href: '/specials', icon: Tag, capability: 'products.edit' },
+      { label: 'Specials', href: '/specials', icon: Tag, built: true, capability: 'products.edit' },
       { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view' },
       { label: 'Manufacturing', href: '/manufacturing', icon: Factory, capability: 'products.edit' },
     ],
@@ -161,7 +167,40 @@ export const NAV: NavSection[] = [
       { label: 'Periods', href: '/accounting/periods', icon: Lock, built: true, capability: 'setup.edit' },
     ],
   },
-  { label: 'Reports', icon: PieChart, href: '/reports', built: true, capability: 'reports.view' },
+  {
+    label: 'Reports',
+    icon: PieChart,
+    items: [
+      /* The hub leads because it is the one entry point people should learn:
+         built-in reports, whatever the shop has built, and their favourites are
+         all on it. The two below are shortcuts to the same place, kept in the
+         menu because "build a report" and "email me this" are things people go
+         looking for by name. */
+      { label: 'All reports', href: '/reports', icon: PieChart, built: true, capability: 'reports.view' },
+      { label: 'Build a report', href: '/reports/builder', icon: Table, built: true, capability: 'reports.build' },
+      { label: 'Generate with AI', href: '/reports/ask', icon: Sparkles, built: true, capability: 'reports.ai' },
+      { label: 'Scheduled reports', href: '/reports/schedules', icon: Clock, built: true, capability: 'reports.schedule' },
+    ],
+  },
+  {
+    // Sits beside Commission because the two answer the same question from
+    // opposite ends: what the business pays a person, and what that person
+    // brought in.
+    label: 'Staff',
+    icon: Users,
+    items: [
+      /* The clock leads: it is the screen somebody opens every morning, while
+         People is opened when a person joins or their terms change. */
+      { label: 'Clock in and out', href: '/staff/clock', icon: Clock, built: true, capability: 'staff.clock' },
+      { label: 'Timesheets', href: '/staff/timesheets', icon: ClipboardList, built: true, capability: 'staff.view_own' },
+      { label: 'Leave', href: '/staff/leave', icon: CalendarRange, built: true, capability: 'staff.view_own' },
+      { label: 'People', href: '/staff', icon: Contact, built: true, capability: 'staff.view_all' },
+      { label: 'Cost per employee', href: '/staff/cost', icon: Coins, built: true, capability: 'staff.cost' },
+      /* Last, and on staff.cost: this is configuration rather than a daily
+         screen, and it decides what every figure above it comes to. */
+      { label: 'Pay rules', href: '/staff/pay-rules', icon: Settings, built: true, capability: 'staff.cost' },
+    ],
+  },
   {
     label: 'Commission',
     icon: Percent,
@@ -178,6 +217,7 @@ export const NAV: NavSection[] = [
       { label: 'Roles & permissions', href: '/setup/roles', icon: KeyRound, built: true, capability: 'setup.users' },
       { label: 'Linked stores', href: '/setup/linked-stores', icon: Store, built: true, capability: 'setup.edit' },
       { label: 'Stock locations', href: '/setup/locations', icon: Warehouse, built: true, capability: 'setup.edit' },
+      { label: 'Price types & VAT', href: '/setup/pricing', icon: Percent, built: true, capability: 'setup.edit' },
       { label: 'Tender types', href: '/setup/tender-types', icon: CreditCard, built: true, capability: 'setup.edit' },
       { label: 'Terminals', href: '/setup/terminals', icon: Monitor, built: true, capability: 'setup.edit' },
       { label: 'Numbering', href: '/setup/numbering', icon: Hash, built: true, capability: 'setup.edit' },
@@ -198,12 +238,22 @@ export const NAV: NavSection[] = [
       { label: 'Orders', href: '/online-store/orders', icon: Receipt, built: true, capability: 'online.view' },
       { label: 'Departments', href: '/online-store/departments', icon: LayoutGrid, built: true, capability: 'online.edit' },
       { label: 'Reviews', href: '/online-store/reviews', icon: MessageSquare, built: true, capability: 'online.view' },
+      { label: 'Order statuses', href: '/online-store/statuses', icon: ListOrdered, built: true, capability: 'online.edit' },
       { label: 'Page builder', href: '/online-store/builder', icon: Palette, built: true, capability: 'online.edit' },
       { label: 'Payments', href: '/online-store/payments', icon: CreditCard, built: true, capability: 'online.edit' },
       { label: 'Setup', href: '/online-store/setup', icon: Settings, built: true, capability: 'online.edit' },
     ],
   },
-  { label: 'Loyalty', icon: Gem, items: [] },
+  {
+    label: 'Loyalty',
+    icon: Gem,
+    items: [
+      { label: 'Members', href: '/loyalty', icon: Contact, built: true, capability: 'loyalty.view' },
+      { label: 'Programme', href: '/loyalty/programme', icon: Settings, built: true, capability: 'loyalty.view' },
+      { label: 'Tiers', href: '/loyalty/tiers', icon: Gem, built: true, capability: 'loyalty.view' },
+      { label: 'Punch cards', href: '/loyalty/cards', icon: Stamp, built: true, capability: 'loyalty.view' },
+    ],
+  },
 ]
 
 /**
@@ -250,6 +300,9 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   /* A posted transfer is a record of what moved, not something anyone edits. */
   '/transfers': { new: 'New transfer', edit: 'Transfer' },
   '/sales/laybys': { new: 'New lay-by', edit: 'Lay-by' },
+  /* A contract's detail screen is a record of what it bills and what it has
+     billed, not an edit form — editing is a separate route under it. */
+  '/sales/contracts': { new: 'New contract', edit: 'Contract' },
 }
 
 /**

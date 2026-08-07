@@ -158,11 +158,26 @@ export async function saveGateway(
 
 /* ── Intents ──────────────────────────────────────────────────────────────── */
 
+/**
+ * What is being paid for.
+ *
+ *   online_order   — a storefront order; target_id is an online order id
+ *   debtor_invoice — an emailed invoice's pay-link; target_id is a
+ *                    sales_documents id, and settling it posts a receipt to the
+ *                    customer's account rather than invoicing an order
+ *
+ * `purpose` plus target is what makes this table reusable, exactly as
+ * 038_payments.sql anticipated: a new way to be paid is a new purpose and a
+ * settlement handler, not a second gateway integration.
+ */
+export const INTENT_PURPOSES = ['online_order', 'debtor_invoice'] as const
+export type IntentPurpose = (typeof INTENT_PURPOSES)[number]
+
 export type PaymentIntent = {
   id: number
   reference: string
   provider: PaymentProvider
-  purpose: 'online_order'
+  purpose: IntentPurpose
   targetId: number
   amountIncl: number
   status: IntentStatus
@@ -177,7 +192,7 @@ function mapIntent(r: Row): PaymentIntent {
     id: Number(r.id),
     reference: String(r.reference),
     provider: String(r.provider) as PaymentProvider,
-    purpose: String(r.purpose) as 'online_order',
+    purpose: String(r.purpose) as IntentPurpose,
     targetId: Number(r.target_id),
     amountIncl: toNum(r.amount_incl),
     status: String(r.status) as IntentStatus,
@@ -202,7 +217,7 @@ function newReference(): string {
 
 export async function createIntent(
   siteId: number,
-  input: { targetId: number; amountIncl: number; purpose?: 'online_order' },
+  input: { targetId: number; amountIncl: number; purpose?: IntentPurpose },
 ): Promise<PaymentIntent> {
   const reference = newReference()
   const amount = round(input.amountIncl, 2)

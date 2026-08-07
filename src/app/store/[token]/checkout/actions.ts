@@ -2,6 +2,7 @@
 
 import { headers } from 'next/headers'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { getCustomerSession } from '@/lib/customerSession'
 import { createCallbackToken } from '@/lib/callbackToken'
 import { buildCheckoutForm } from '@/lib/payfast/checkout'
 import { createIntent, getGateway } from '@/lib/site/payments'
@@ -94,11 +95,40 @@ export async function placeOrderAction(
     note: typeof l.note === 'string' ? l.note : undefined,
   }))
 
-  const result = await placePublicOrder(siteId, { ...input, lines })
+  /*
+   * The customer comes from the SESSION COOKIE, never from the payload.
+   *
+   * `input` is whatever was posted, and it is spread below — so an explicit
+   * customerId in it would otherwise let anyone charge any account in the shop
+   * by guessing an id. Overwriting it after the spread is what makes that
+   * impossible rather than merely unlikely.
+   */
+  const session = await getCustomerSession(siteId)
+
+  const result = await placePublicOrder(siteId, {
+    ...input,
+    lines,
+    customerId: session?.customerId ?? null,
+    // Still only a request: placePublicOrder re-checks the store setting, the
+    // account's status and the credit against the total it computed itself.
+    payOnAccount: input.payOnAccount === true,
+  })
   if (!result.ok) return result
 
   const context = await storefrontContext(siteId)
-  if (context?.settings.paymentMode !== 'online') {
+
+  /*
+   * An account order NEVER goes to the gateway, even at a pay-online shop.
+   *
+   * The whole meaning of "put it on my account" is that there is nothing to
+   * pay now — sending them to PayFast would ask them to settle a debt they
+   * just agreed to owe. `result.onAccount` is the SERVER's decision, not the
+   * checkbox, so a request that was refused still takes the payment path.
+   *
+   * It also means a shop with no working gateway can still take account
+   * orders, which is how most of them start.
+   */
+  if (result.onAccount || context?.settings.paymentMode !== 'online') {
     return { ok: true, orderNumber: result.orderNumber, total: result.total }
   }
 

@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  Badge,
   Button,
   Card,
   CardBody,
@@ -20,7 +21,12 @@ import {
   useToast,
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
-import { openShiftAction, closeShiftAction, drawerMovementAction } from './actions'
+import {
+  openShiftAction,
+  closeShiftAction,
+  drawerMovementAction,
+  setCashupModeAction,
+} from './actions'
 
 /**
  * Counting the drawer.
@@ -40,9 +46,11 @@ type TenderPosition = {
   transactionCount: number
 }
 
+type CashupMode = 'terminal' | 'user'
+
 type OpenShift = {
   id: number
-  terminalCode: string
+  terminalCode: string | null
   userName: string
   openedAt: string
   openingFloat: number
@@ -55,10 +63,14 @@ type OpenShift = {
 }
 
 export default function CashupClient({
+  mode,
+  canSetMode,
   terminals,
   shifts,
   tolerance,
 }: {
+  mode: CashupMode
+  canSetMode: boolean
   terminals: { id: number; code: string; name: string }[]
   shifts: OpenShift[]
   tolerance: number
@@ -85,53 +97,54 @@ export default function CashupClient({
     })
   }
 
-  const busyTills = new Set(shifts.map((s) => s.terminalCode))
-  const free = terminals.filter((t) => !busyTills.has(t.code))
+  // A till with a shift already on it cannot take another. In user mode no till
+  // is claimed at all, so every one of them stays available.
+  const busyTills = new Set(shifts.map((s) => s.terminalCode).filter(Boolean))
+  const free = mode === 'user' ? terminals : terminals.filter((t) => !busyTills.has(t.code))
+  const cannotOpen = pending || (mode === 'terminal' && free.length === 0)
+
+  const openButton = (
+    <Button variant="primary" onClick={() => setOpening(true)} disabled={cannotOpen}>
+      <Icons.Plus size={15} />
+      {mode === 'user' ? 'Start my shift' : 'Open a shift'}
+    </Button>
+  )
 
   return (
     <>
+      {canSetMode && (
+        <ModeCard
+          mode={mode}
+          disabled={pending || shifts.length > 0}
+          onChange={(next) => run(() => setCashupModeAction(next))}
+        />
+      )}
+
       {shifts.length === 0 ? (
         <Card>
           <EmptyState
             title="No shift is open"
             hint="Sales still post without one — they just will not belong to a cash-up."
             icon={<Icons.Coins size={22} />}
-            action={
-              <Button
-                variant="primary"
-                onClick={() => setOpening(true)}
-                disabled={pending || free.length === 0}
-              >
-                <Icons.Plus size={15} />
-                Open a shift
-              </Button>
-            }
+            action={openButton}
           />
         </Card>
       ) : (
         <>
-          <TableToolbar
-            actions={
-              <Button
-                variant="primary"
-                onClick={() => setOpening(true)}
-                disabled={pending || free.length === 0}
-              >
-                <Icons.Plus size={15} />
-                Open a shift
-              </Button>
-            }
-          >
+          <TableToolbar actions={openButton}>
             <p className="text-sm text-muted">
-              A shift is one person on one till. Sales are stamped with whichever shift banked
-              them.
+              {mode === 'user'
+                ? 'A shift is one person and their own float, across whatever tills they work. Sales follow the PIN that rang them up.'
+                : 'A shift is one person on one till. Sales are stamped with whichever shift banked them.'}
             </p>
           </TableToolbar>
 
           {shifts.map((shift) => (
             <Card key={shift.id}>
               <CardHeader
-                title={`${shift.terminalCode} — ${shift.userName}`}
+                title={
+                  shift.terminalCode ? `${shift.terminalCode} — ${shift.userName}` : shift.userName
+                }
                 description={`Opened ${new Date(shift.openedAt).toLocaleString('en-ZA')} · ${shift.salesCount} sale${shift.salesCount === 1 ? '' : 's'} · ${formatMoney(shift.takingsTotal)} taken`}
                 action={
                   <div className="flex items-center gap-2">
@@ -187,6 +200,7 @@ export default function CashupClient({
 
       <OpenModal
         open={opening}
+        mode={mode}
         terminals={free}
         pending={pending}
         onClose={() => setOpening(false)}
@@ -205,6 +219,8 @@ export default function CashupClient({
 
       <MovementModal
         shift={moving}
+        mode={mode}
+        terminals={terminals}
         pending={pending}
         onClose={() => setMoving(null)}
         onRecord={(input) => moving && run(() => drawerMovementAction(moving.id, input))}
@@ -213,27 +229,107 @@ export default function CashupClient({
   )
 }
 
+/**
+ * How this site reconciles.
+ *
+ * Lives on the cash-up screen rather than in Setup because it is only
+ * comprehensible next to the thing it changes — and because the one moment it
+ * may be switched is the moment every shift is closed, which is what this
+ * screen already shows.
+ */
+function ModeCard({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: CashupMode
+  disabled: boolean
+  onChange: (mode: CashupMode) => void
+}) {
+  return (
+    <Card>
+      <CardHeader
+        title="How this site cashes up"
+        description="Sales bank into whichever shift owns them. Changing this needs every shift closed first."
+      />
+      <CardBody>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          {(
+            [
+              {
+                value: 'terminal',
+                title: 'By till',
+                blurb:
+                  'One drawer, counted by whoever is on it. Retail, where a cashier stands at a register.',
+                icon: <Icons.Terminal size={16} />,
+              },
+              {
+                value: 'user',
+                title: 'By person',
+                blurb:
+                  'One person and their own float, across whatever tills they work. Hospitality, where waiters share registers.',
+                icon: <Icons.Users size={16} />,
+              },
+            ] as const
+          ).map((option) => {
+            const active = mode === option.value
+            return (
+              <button
+                key={option.value}
+                type="button"
+                disabled={disabled || active}
+                onClick={() => onChange(option.value)}
+                className={`flex flex-1 flex-col gap-1 rounded-card border p-3 text-left transition-colors ${
+                  active
+                    ? 'border-brand bg-brand-soft'
+                    : 'border-border hover:border-brand disabled:hover:border-border'
+                } disabled:cursor-not-allowed`}
+              >
+                <span className="flex items-center gap-2 text-sm font-medium text-ink">
+                  {option.icon}
+                  {option.title}
+                  {active && <Badge tone="brand">In use</Badge>}
+                </span>
+                <span className="text-xs text-muted">{option.blurb}</span>
+              </button>
+            )
+          })}
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
 function OpenModal({
   open,
+  mode,
   terminals,
   pending,
   onClose,
   onOpen,
 }: {
   open: boolean
+  mode: CashupMode
   terminals: { id: number; code: string; name: string }[]
   pending: boolean
   onClose: () => void
-  onOpen: (terminalId: number, float: number) => void
+  onOpen: (terminalId: number | null, float: number) => void
 }) {
   const [terminalId, setTerminalId] = useState('')
   const [float, setFloat] = useState(0)
+
+  // In user mode the shift belongs to whoever is signed in at the till, so
+  // there is nothing to choose — only a float to count.
+  const needsTill = mode === 'terminal'
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Open a shift"
+      title={needsTill ? 'Open a shift' : 'Start my shift'}
+      description={
+        needsTill ? undefined : 'The shift belongs to whoever is signed in at the till right now.'
+      }
       size="sm"
       footer={
         <>
@@ -242,8 +338,8 @@ function OpenModal({
           </Button>
           <Button
             variant="primary"
-            disabled={!terminalId || pending}
-            onClick={() => onOpen(Number(terminalId), float)}
+            disabled={(needsTill && !terminalId) || pending}
+            onClick={() => onOpen(needsTill ? Number(terminalId) : null, float)}
           >
             {pending ? 'Opening…' : 'Open'}
           </Button>
@@ -251,18 +347,20 @@ function OpenModal({
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Till">
-          <Select value={terminalId} onChange={(e) => setTerminalId(e.target.value)}>
-            <option value="">— Choose —</option>
-            {terminals.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.code} — {t.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        {needsTill && (
+          <Field label="Till">
+            <Select value={terminalId} onChange={(e) => setTerminalId(e.target.value)}>
+              <option value="">— Choose —</option>
+              {terminals.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.code} — {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field
-          label="Opening float"
+          label={needsTill ? 'Opening float' : 'Your float'}
           hint="Count it. A float that is wrong at the start makes every variance for the shift wrong the same way."
         >
           <CurrencyInput
@@ -331,8 +429,12 @@ function CountModal({
     <Modal
       open={shift !== null}
       onClose={onClose}
-      title={`Cash up ${shift.terminalCode}`}
-      description="Count the drawer, then enter what you found."
+      title={`Cash up ${shift.terminalCode ?? shift.userName}`}
+      description={
+        shift.terminalCode
+          ? 'Count the drawer, then enter what you found.'
+          : 'Count what you are holding, then enter what you found.'
+      }
       closeOnBackdrop={false}
       footer={
         <>
@@ -361,7 +463,9 @@ function CountModal({
               label={row.tender.tenderName}
               hint={
                 row.tender.countsAsDrawerCash
-                  ? 'Everything in the drawer, including the float.'
+                  ? shift.terminalCode
+                    ? 'Everything in the drawer, including the float.'
+                    : 'Everything you are holding, including your float.'
                   : 'What the terminal or bank says.'
               }
             >
@@ -431,18 +535,28 @@ function CountModal({
 
 function MovementModal({
   shift,
+  mode,
+  terminals,
   pending,
   onClose,
   onRecord,
 }: {
   shift: OpenShift | null
+  mode: CashupMode
+  terminals: { id: number; code: string; name: string }[]
   pending: boolean
   onClose: () => void
-  onRecord: (input: { type: 'payout' | 'payin' | 'drop'; amount: number; reason: string }) => void
+  onRecord: (input: {
+    type: 'payout' | 'payin' | 'drop'
+    amount: number
+    reason: string
+    terminalId?: number | null
+  }) => void
 }) {
   const [type, setType] = useState<'payout' | 'payin' | 'drop'>('payout')
   const [amount, setAmount] = useState(0)
   const [reason, setReason] = useState('')
+  const [terminalId, setTerminalId] = useState('')
 
   return (
     <Modal
@@ -459,7 +573,14 @@ function MovementModal({
           <Button
             variant="primary"
             disabled={amount <= 0 || !reason.trim() || pending}
-            onClick={() => onRecord({ type, amount, reason })}
+            onClick={() =>
+              onRecord({
+                type,
+                amount,
+                reason,
+                terminalId: terminalId ? Number(terminalId) : null,
+              })
+            }
           >
             Record
           </Button>
@@ -474,6 +595,21 @@ function MovementModal({
             <option value="drop">Drop — moved to the safe</option>
           </Select>
         </Field>
+        {/* In user mode the shift names no till, so which drawer this came out
+            of is otherwise unrecorded — and a waiter paying from their own
+            float is a different event from one raiding a register. */}
+        {mode === 'user' && (
+          <Field label="Out of which drawer" hint="Leave blank if it came from your own float.">
+            <Select value={terminalId} onChange={(e) => setTerminalId(e.target.value)}>
+              <option value="">My own float</option>
+              {terminals.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.code} — {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="Amount">
           <CurrencyInput
             value={amount}

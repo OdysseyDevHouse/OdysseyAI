@@ -7,15 +7,30 @@ import { headroomRefusal } from '../creditRules'
 import { toAccountType } from '../accountTypes'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement, stockDirectionFor, canSellNow } from './stockMovements'
-import { getTenderType, checkTenders, type TenderType } from './tenderTypes'
+import { getTenderType, getTenderByCode, checkTenders, type TenderType } from './tenderTypes'
 import { validateTerminalClaim } from './terminals'
-import { openShiftFor } from './shifts'
+import { shiftToBankInto } from './shifts'
 import { getNumericSetting, isPeriodLocked } from './settings'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
 import { resolveComponents, type ResolvedComponent } from './productComposition'
 import { checkSellable, markSold } from './serials'
 import { postTransaction, reverseTransaction } from './customerLedger'
 import type { Actor } from './activityLog'
+import {
+  getLoyaltySettings,
+  listTiers,
+  redeemPointsForSale,
+  awardSaleLoyalty,
+  reverseSaleLoyalty,
+} from './loyalty'
+import {
+  redeemVoucherForSale,
+  awardSaleStamps,
+  reverseSaleStamps,
+  restoreVoucherForDocument,
+  findVoucher,
+} from './loyaltyCards'
+import { spendWalletForSale, refundWalletForSale } from './loyaltyWallet'
 
 /**
  * Finalise — the one moment a sale becomes real.
@@ -60,6 +75,14 @@ export type FinaliseInput = {
    * when the basket was built may well not be the one they hand over.
    */
   serials?: Record<number, number[]>
+  /**
+   * Loyalty voucher codes the cashier scanned.
+   *
+   * Spent inside the sale's transaction, so a code cannot be used at two tills
+   * at once. A rand-value voucher also funds part of the basket, and that slice
+   * earns no points — see `fundedAmount` below.
+   */
+  voucherCodes?: string[]
 }
 
 export type FinaliseResult =
@@ -96,6 +119,32 @@ export async function finaliseDocument(
 
   const customerId = input.customerId ?? document.customerId ?? null
 
+  // Which of the tenders spend a loyalty balance, and which vouchers were
+  // scanned. Resolved before the tender arithmetic because a voucher changes
+  // what is owed; the balances themselves are spent inside the transaction.
+  const pointsTender = tenders.find(
+    (t) => t.type.integrationKey === 'loyalty' && t.type.code === 'LOYALTY_POINTS',
+  )
+  const walletTender = tenders.find(
+    (t) => t.type.integrationKey === 'loyalty' && t.type.code === 'LOYALTY_WALLET',
+  )
+  const voucherCodes = [...new Set((input.voucherCodes ?? []).map((c) => c.trim().toUpperCase()))]
+    .filter(Boolean)
+
+  const usesLoyalty = !!pointsTender || !!walletTender || voucherCodes.length > 0
+  const loyaltySettings = usesLoyalty || customerId ? await getLoyaltySettings(siteId) : null
+
+  if (usesLoyalty) {
+    if (!loyaltySettings?.enabled) {
+      return { ok: false, error: 'The loyalty programme is not running.' }
+    }
+    // requires_customer on the tender row already refuses this for the two
+    // tenders, but a voucher is not a tender and would otherwise slip through.
+    if (!customerId) {
+      return { ok: false, error: 'Attach a customer before using loyalty.' }
+    }
+  }
+
   // Recompute totals from the stored lines rather than trusting the header:
   // the header is a cache, and finalising against a stale one would post a
   // figure that does not match the lines it is made of.
@@ -121,9 +170,32 @@ export async function finaliseDocument(
       ? roundToCash(totals.totalIncl, denomination)
       : { rounded: totals.totalIncl, adjustment: 0 }
 
+  // A rand-value voucher REDUCES WHAT IS OWED — it is not a tender. Priced here,
+  // before the tender check, or the till would be asked to cover the voucher's
+  // value in cash and every voucher sale would refuse with "still to pay".
+  //
+  // Priced from the stored row rather than from anything the till sent, so a
+  // client claiming a R500 voucher gets the R25 the database says it is worth.
+  // Only the value is read now; the state machine still flips inside the
+  // transaction, which is what makes a code single-use.
+  const voucherPreview = await previewVouchers(siteId, voucherCodes)
+  if (!voucherPreview.ok) return { ok: false, error: voucherPreview.error }
+  const voucherCredit = voucherPreview.credit
+
+  // The tender row a redeemed voucher is recorded against. Looked up rather
+  // than assumed: a store that has never switched loyalty on has no such row,
+  // and in that case previewVouchers has already refused the sale.
+  const voucherTenderId =
+    voucherCredit > 0
+      ? ((await getTenderByCode(siteId, 'LOYALTY_POINTS'))?.id ?? null)
+      : null
+  if (voucherCredit > 0 && !voucherTenderId) {
+    return { ok: false, error: 'Switch the Loyalty points tender on before taking vouchers.' }
+  }
+
   const check = checkTenders(
     tenders.map((t) => ({ tender: t.type, amount: t.input.amount, reference: t.input.reference })),
-    payable,
+    round(Math.max(0, payable - voucherCredit), 2),
     customerId !== null,
   )
   if (check.errors.length > 0) return { ok: false, error: check.errors[0] }
@@ -182,11 +254,20 @@ export async function finaliseDocument(
     if (!sellable.ok) return { ok: false, error: `${line.description}: ${sellable.error}` }
   }
 
-  // Which shift banks this sale. Null when the till has no shift open, which is
-  // allowed — a store that does not cash up still needs to trade.
-  const shiftId = document.terminalId
-    ? ((await openShiftFor(siteId, document.terminalId))?.id ?? null)
-    : null
+  // Which shift banks this sale — the till's in terminal mode, the operator's
+  // own in user mode. Null when there is no open shift to bank into, which is
+  // allowed: a store that does not cash up still needs to trade.
+  //
+  // The actor is the PIN operator, not the browser session (requireActor
+  // resolves it that way), so in a restaurant this is the waiter who rang the
+  // sale up rather than whoever opened the browser that morning.
+  const shiftId = await shiftToBankInto(siteId, document.terminalId ?? null, actor.userId ?? null)
+
+  // Rand of this basket paid for by a value voucher. Set inside the
+  // transaction, read after it commits to keep that slice out of the earn
+  // basis. Declared out here because a closure cannot return it and the
+  // document number at once without restructuring the result.
+  let voucherFunded = 0
 
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
@@ -282,6 +363,78 @@ export async function finaliseDocument(
       // 3. The number, LAST. See the module comment on lock ordering.
       const documentNumber = await nextDocumentNumber(tx, document.docType)
 
+      // 4. Loyalty SPEND — points, wallet and vouchers.
+      //
+      // Inside the transaction, and after the number exists so every row can
+      // name the sale it belongs to. All three throw rather than returning a
+      // refusal: an unaffordable redemption must roll the whole sale back, not
+      // leave goods sold and a balance untouched.
+      //
+      // A customer is guaranteed here — the guard above refused the sale
+      // otherwise — but TypeScript cannot see that through the closure.
+      if (usesLoyalty && customerId && loyaltySettings) {
+        const tiers = await listTiers(siteId)
+
+        if (pointsTender) {
+          await redeemPointsForSale(
+            tx,
+            actor,
+            {
+              customerId,
+              documentId: document.id,
+              documentNumber,
+              randAmount: Math.abs(pointsTender.input.amount),
+            },
+            loyaltySettings,
+            tiers,
+          )
+        }
+
+        if (walletTender) {
+          await spendWalletForSale(tx, actor, {
+            customerId,
+            documentId: document.id,
+            documentNumber,
+            amount: Math.abs(walletTender.input.amount),
+          })
+        }
+
+        for (const code of voucherCodes) {
+          const voucher = await redeemVoucherForSale(tx, {
+            code,
+            documentId: document.id,
+            documentNumber,
+          })
+
+          // Recorded against the LOYALTY_POINTS tender so the document balances:
+          // total_incl stays the exact figure the customer was charged (and so
+          // the VAT declared stays exact), while tendered_total accounts for
+          // every rand of it. Writing the voucher off as a discount instead
+          // would understate turnover and the VAT on it.
+          if (voucher.rewardType === 'value' && voucher.rewardValue > 0 && voucherTenderId) {
+            await tx.execute(
+              `INSERT INTO sales_tenders
+                 (document_id, tender_type_id, tender_code, tender_name, amount, change_given, surcharge, reference)
+               VALUES (?,?,?,?,?,'0.0000','0.0000',?)`,
+              [
+                document.id,
+                voucherTenderId,
+                'LOYALTY_POINTS',
+                'Loyalty voucher',
+                round(voucher.rewardValue, 2).toFixed(4),
+                voucher.code,
+              ] as never,
+            )
+          }
+
+          // A rand-value voucher pays for part of the basket, so that slice
+          // must not also earn points — otherwise a reward buys the next one.
+          if (voucher.rewardType === 'value') {
+            voucherFunded = round(voucherFunded + voucher.rewardValue, 2)
+          }
+        }
+      }
+
       await tx.execute(
         `UPDATE sales_documents SET
            status = 'finalised', document_number = ?, finalised_at = NOW(),
@@ -300,7 +453,10 @@ export async function finaliseDocument(
           totals.discountTotal.toFixed(4),
           totals.totalIncl.toFixed(4),
           roundingAdj.toFixed(4),
-          check.tendered.toFixed(4),
+          // The vouchers count towards what settled the sale — they have their
+          // own sales_tenders rows — so the header total has to include them or
+          // it disagrees with the rows beneath it.
+          round(check.tendered + voucherCredit, 2).toFixed(4),
           check.change.toFixed(4),
           document.id,
         ] as never,
@@ -380,14 +536,78 @@ export async function finaliseDocument(
       })),
       vatTotal: totals.vatTotal,
       costOfSales,
-      tenders: tenders.map((t) => ({
-        tenderTypeId: t.type.id,
-        isAccount: t.type.postsToDebtor,
-        amount: Math.abs(t.input.amount),
-      })),
+      // The voucher rides along as a tender here for the same reason it is one
+      // on the document: the journal must account for every rand of the total,
+      // and a voucher-funded slice with no tender behind it leaves the entry
+      // unbalanced by exactly its value.
+      tenders: [
+        ...tenders.map((t) => ({
+          tenderTypeId: t.type.id,
+          isAccount: t.type.postsToDebtor,
+          amount: Math.abs(t.input.amount),
+        })),
+        ...(voucherCredit > 0 && voucherTenderId
+          ? [{ tenderTypeId: voucherTenderId, isAccount: false, amount: voucherCredit }]
+          : []),
+      ],
       customerId,
       roundingAdjustment: roundingAdj,
     })
+
+    // 6. Loyalty EARNING, after the commit and fail-soft.
+    //
+    // The mirror image of the redemption above, and deliberately on the other
+    // side of the commit. Spending a balance is a condition of the sale;
+    // earning is a consequence of it. A loyalty table that is briefly
+    // unreachable must never stop a shop trading — missing points are visible
+    // on the account and can be granted by hand, while an un-postable sale at a
+    // queue of customers cannot be undone.
+    //
+    // Skipped entirely for a credit note: a return does not earn. What it does
+    // instead is reverse the original sale's points, which happens in
+    // reverseLoyaltyForDocument when the credit note names its parent.
+    if (customerId && loyaltySettings?.enabled && !isCreditSale) {
+      const loyaltyLines = document.lines.map((line) => ({
+        productId: line.productId ?? null,
+        departmentId: line.departmentId ?? null,
+        qty: line.qty,
+        lineTotalIncl: line.lineTotalIncl,
+        discountIncl: line.discountIncl,
+      }))
+
+      // Points and wallet rand already belong to the customer, so the slice
+      // they paid for earns nothing. Wallet spend is excluded too: the points
+      // were granted when the money was spent, not when it was loaded.
+      const funded = round(
+        (pointsTender ? Math.abs(pointsTender.input.amount) : 0) +
+          (walletTender ? Math.abs(walletTender.input.amount) : 0) +
+          voucherFunded,
+        2,
+      )
+
+      try {
+        await awardSaleLoyalty(siteId, actor, {
+          customerId,
+          documentId: document.id,
+          documentNumber: posted.documentNumber,
+          lines: loyaltyLines,
+          fundedAmount: funded,
+        })
+      } catch (error) {
+        console.error('[loyalty] award failed for', posted.documentNumber, error)
+      }
+
+      try {
+        await awardSaleStamps(siteId, actor, {
+          customerId,
+          documentId: document.id,
+          documentNumber: posted.documentNumber,
+          lines: loyaltyLines,
+        })
+      } catch (error) {
+        console.error('[loyalty] stamps failed for', posted.documentNumber, error)
+      }
+    }
 
     return {
       ok: true,
@@ -403,6 +623,46 @@ export async function finaliseDocument(
     const message = error instanceof Error ? error.message : 'The sale could not be posted.'
     return { ok: false, error: message }
   }
+}
+
+/**
+ * Prices scanned vouchers, before anything is written.
+ *
+ * Two jobs. It tells the tender engine how much of the basket the vouchers
+ * cover — a R25 voucher means R25 less to collect, not R25 of tender — and it
+ * refuses a code that cannot be spent while the sale can still be abandoned
+ * cleanly. Nothing is reserved here: the row is re-read and flipped under a
+ * lock inside the transaction, which is what actually makes a code single-use.
+ *
+ * A `free_item` voucher contributes NOTHING to the credit. The free product is
+ * rung up as a line at zero, so crediting its value here would discount the
+ * basket twice.
+ */
+async function previewVouchers(
+  siteId: number,
+  codes: readonly string[],
+): Promise<{ ok: true; credit: number } | { ok: false; error: string }> {
+  if (codes.length === 0) return { ok: true, credit: 0 }
+
+  const today = new Date().toISOString().slice(0, 10)
+  let credit = 0
+
+  for (const code of codes) {
+    const voucher = await findVoucher(siteId, code)
+    if (!voucher) return { ok: false, error: `No voucher with code ${code}.` }
+    if (voucher.status === 'redeemed') {
+      return { ok: false, error: `Voucher ${code} has already been used.` }
+    }
+    if (voucher.status === 'void') return { ok: false, error: `Voucher ${code} has been cancelled.` }
+    if (voucher.status === 'expired') return { ok: false, error: `Voucher ${code} has expired.` }
+    if (voucher.expiresOn && voucher.expiresOn < today) {
+      return { ok: false, error: `Voucher ${code} expired on ${voucher.expiresOn}.` }
+    }
+
+    if (voucher.rewardType === 'value') credit = round(credit + voucher.rewardValue, 2)
+  }
+
+  return { ok: true, credit }
 }
 
 /** Everything that stops a document being posted. Runs before any write. */
@@ -616,7 +876,50 @@ export async function voidDocument(
     )
   })
 
+  // Loyalty, after the void has committed and fail-soft for the same reason
+  // earning is: the goods are already back on the shelf, and a loyalty table
+  // that is briefly unreachable must not leave the document half-voided.
+  await reverseLoyaltyForDocument(siteId, actor, document.id, `Void of ${document.documentNumber}`)
+
   return { ok: true }
+}
+
+/**
+ * Undoes everything a sale did to a loyalty account.
+ *
+ * Called on a void, and by the credit-note path when a sale comes back. Covers
+ * all four things a sale can touch, because doing only the obvious one leaves a
+ * customer either robbed or paid twice:
+ *
+ *   POINTS — earned points clawed back, spent points returned.
+ *   WALLET — money settled from the card put back on it.
+ *   STAMPS — this sale's stamps removed, and any voucher they issued voided.
+ *   VOUCHERS — a voucher SPENT on this sale restored to `issued`, so the
+ *              customer still has the reward they came in with.
+ *
+ * Never throws. Each step is independent, so one failing does not abandon the
+ * rest, and every failure is logged with the document it belongs to.
+ */
+export async function reverseLoyaltyForDocument(
+  siteId: number,
+  actor: Actor,
+  documentId: number,
+  reason: string,
+): Promise<void> {
+  const steps: [string, () => Promise<unknown>][] = [
+    ['points', () => reverseSaleLoyalty(siteId, actor, documentId, reason)],
+    ['wallet', () => refundWalletForSale(siteId, actor, documentId, reason)],
+    ['stamps', () => reverseSaleStamps(siteId, documentId)],
+    ['voucher', () => restoreVoucherForDocument(siteId, documentId)],
+  ]
+
+  for (const [label, run] of steps) {
+    try {
+      await run()
+    } catch (error) {
+      console.error(`[loyalty] ${label} reversal failed for document`, documentId, error)
+    }
+  }
 }
 
 /**

@@ -14,7 +14,7 @@ import { nextDocumentNumber } from './sequences'
 import { getSettings } from './settings'
 import { saveDraft, getDocument, todayIso } from './salesDocuments'
 import { finaliseDocument } from './salesPosting'
-import { openShiftFor } from './shifts'
+import { shiftToBankInto } from './shifts'
 import type { Actor } from './activityLog'
 
 /**
@@ -339,7 +339,7 @@ export async function createLayby(
   const settings = await getSettings(siteId, ['layby_default_days'])
   const dueDate = input.dueDate ?? defaultDueDate(Number(settings.layby_default_days) || 90)
 
-  const shiftId = input.terminalId ? ((await openShiftFor(siteId, input.terminalId))?.id ?? null) : null
+  const shiftId = await shiftToBankInto(siteId, input.terminalId ?? null, actor.userId ?? null)
 
   const created = await siteTransaction(siteId, async (tx) => {
     const laybyNumber = await nextDocumentNumber(tx, 'layby')
@@ -458,7 +458,7 @@ export async function takePayment(
   const refusal = paymentRefusal(layby, input.amount)
   if (refusal) return { ok: false, error: refusal }
 
-  const shiftId = input.terminalId ? ((await openShiftFor(siteId, input.terminalId))?.id ?? null) : null
+  const shiftId = await shiftToBankInto(siteId, input.terminalId ?? null, actor.userId ?? null)
   const amount = round(input.amount, 2)
 
   await siteTransaction(siteId, async (tx) => {
@@ -637,7 +637,7 @@ export async function cancelLayby(
     waiverReason: waiver,
   })
 
-  const shiftId = input.terminalId ? ((await openShiftFor(siteId, input.terminalId))?.id ?? null) : null
+  const shiftId = await shiftToBankInto(siteId, input.terminalId ?? null, actor.userId ?? null)
 
   await siteTransaction(siteId, async (tx) => {
     if (outcome.refund > 0) {

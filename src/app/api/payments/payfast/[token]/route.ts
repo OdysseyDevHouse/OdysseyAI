@@ -3,6 +3,7 @@ import { readCallbackToken } from '@/lib/callbackToken'
 import { verifyItn } from '@/lib/payfast/itn'
 import { getGateway, getIntent, settleIntent } from '@/lib/site/payments'
 import { invoicePaidOrder, markOrderPayment } from '@/lib/site/paidOrders'
+import { settlePaidInvoice } from '@/lib/site/paidInvoices'
 
 /**
  * PayFast ITN — the server-to-server callback that says a payment happened.
@@ -102,7 +103,34 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
       return ack()
     }
 
-    // 5. The money is confirmed in. Now the order becomes a real invoice.
+    // 5. The money is confirmed in. What that MEANS depends on what was being
+    //    paid for — a shop order becomes an invoice, whereas an invoice that
+    //    was already raised gets a receipt against the customer's account.
+    //    Branching here rather than in settleIntent keeps the intent table
+    //    ignorant of what its targets are, which is what lets a third purpose
+    //    be added without touching the settling code.
+    if (outcome.intent.purpose === 'debtor_invoice') {
+      const receipted = await settlePaidInvoice(
+        claim.siteId,
+        // There is nobody signed in at a callback. The ledger row records who
+        // it came from rather than pretending a person keyed it.
+        { userId: 0, userName: 'Online payment' },
+        outcome.intent.targetId,
+        verified.data.amountGross,
+        verified.data.providerRef || claim.reference,
+      )
+
+      if (!receipted.ok) {
+        // The payment stands — the money really did arrive. Only the paperwork
+        // failed, which is a job for a person, not a reason to unwind it.
+        console.error(
+          `[payfast] settled ${claim.reference} but could not receipt invoice ${outcome.intent.targetId}: ${receipted.error}`,
+        )
+      }
+
+      return ack()
+    }
+
     await markOrderPayment(claim.siteId, outcome.intent.targetId, 'paid')
 
     const invoiced = await invoicePaidOrder(

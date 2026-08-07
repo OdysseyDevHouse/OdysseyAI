@@ -59,6 +59,18 @@ const OPEN_ROUTES = new Set([
   'src/app/api/health/route.ts', // Electron's startup probe, before any session
   'src/app/api/auth/signout/route.ts', // signing out cannot require being signed in
   'src/app/api/payments/payfast/[token]/route.ts', // PayFast's server-to-server callback
+  // Cron's heartbeat for scheduled reports. There is nobody signed in at 07:00,
+  // so it proves itself with REPORT_CRON_SECRET compared by timingSafeEqual,
+  // and refuses everything when that is unset. A capability check would be the
+  // wrong tool — there is no user to have one.
+  'src/app/api/reports/schedules/tick/route.ts',
+  // Cron's heartbeat for contract billing. Same reasoning as the reports tick:
+  // there is nobody signed in at 05:00, so it proves itself with
+  // CONTRACT_CRON_SECRET compared by timingSafeEqual and refuses every request
+  // when that is unset. Raising invoices is exactly why it is a shared secret
+  // rather than nothing — a biller running wide open would let anyone bill
+  // every customer in the system.
+  'src/app/api/contracts/tick/route.ts',
   'src/app/store-images/[token]/[imageId]/route.ts',
   'src/app/api/store-images/[token]/[imageId]/route.ts', // public storefront asset
 ])
@@ -168,8 +180,18 @@ async function main() {
   )
   check(`permissions.ts declares capabilities`, declared.size > 20, `${declared.size} found`)
 
+  // Wider than `everything`: a capability can legitimately be enforced deep in
+  // a library rather than at the entry point — `sales.edit_finalised` is
+  // checked inside salesEdit.ts, because the correction path is reached from
+  // several callers and guarding each one would be the easy thing to forget.
+  // Scanning only pages/actions/routes reported it as an unenforced gap.
+  const guardSites = [
+    ...everything,
+    ...(await walk(path.join(ROOT, 'src', 'lib'), (n) => n.endsWith('.ts'))).map(rel),
+  ]
+
   const used = new Set<string>()
-  for (const f of everything) {
+  for (const f of guardSites) {
     const src = await readFile(path.join(ROOT, f), 'utf8')
     for (const m of src.matchAll(
       /(?:requireCapability|actorFor|actorForOrThrow|siteIdForCapability)\(\s*'([a-z_]+\.[a-z_]+)'/g,

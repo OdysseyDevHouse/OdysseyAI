@@ -266,6 +266,8 @@ export async function finaliseSaleAction(
     lines: LineInput[]
   },
   tenders: { tenderTypeId: number; amount: number; reference?: string | null }[],
+  /** Loyalty reward codes the cashier applied. Priced and spent server-side. */
+  voucherCodes: string[] = [],
 ): Promise<FinaliseSaleResult> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
@@ -293,6 +295,7 @@ export async function finaliseSaleAction(
     documentId: saved.id,
     tenders,
     customerId: sale.customerId ?? null,
+    voucherCodes,
   })
   if (!posted.ok) return { ok: false, error: posted.error }
 

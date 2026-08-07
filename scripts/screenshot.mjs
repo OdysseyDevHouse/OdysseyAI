@@ -133,8 +133,34 @@ async function goto(p) {
 // The form posts a server action, not a plain endpoint, so it has to be
 // driven as a user: React ignores a raw `.value =`, hence the native setter
 // plus an input event.
-await goto('/login')
-const submitted = await evaluate(`(() => {
+// '/' IS the login page. There is no route at /login — src/app/login/ holds
+// only the form component and its action, with no page.tsx, so navigating
+// there 404s and the fields are never found.
+const at = await goto('/')
+
+// ALREADY SIGNED IN. Chrome is launched with a fresh --user-data-dir, but the
+// profile directory is keyed on the pid and a previous run's can be reused
+// when a pid repeats — so the session cookie survives and '/' redirects
+// straight to /dashboard. There is then no form to fill in, and the script
+// used to report "has the form changed?" while looking at a working app.
+const alreadyIn = at !== '/' && !at.startsWith('/login')
+
+// Otherwise wait for the form specifically. `goto` returns once the body has
+// text, which on a cold route happens while React is still hydrating — the
+// inputs exist in the server HTML but the handler that submits them does not,
+// so a login driven a moment too early silently does nothing.
+if (!alreadyIn) {
+  for (let i = 0; i < 40; i++) {
+    const ready = await evaluate(
+      `!!document.querySelector('input[name="email"]') &&
+       !!document.querySelector('button[type="submit"]')`,
+    )
+    if (ready) break
+    await sleep(500)
+  }
+}
+
+const submitted = alreadyIn || (await evaluate(`(() => {
   const set = (el, v) => {
     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')
       .set.call(el, v)
@@ -147,7 +173,7 @@ const submitted = await evaluate(`(() => {
   set(pass, ${JSON.stringify(PASSWORD)})
   email.closest('form').querySelector('button[type="submit"]').click()
   return true
-})()`)
+})()`))
 
 if (!submitted) {
   console.error('Could not find the login fields — has the form changed?')
@@ -172,19 +198,57 @@ console.log('signed in, landed on', landed)
 const CLICK = process.env.SHOT_CLICK
 
 for (const p of paths) {
-  const at = await goto(p)
+  const landedOn = await goto(p)
 
-  if (CLICK) {
+  // Split on '>>' so a control that only appears after another was pressed can
+  // still be reached — SHOT_CLICK="New in >> Add products". A single label has
+  // no separator and comes through as a one-step chain, unchanged.
+  for (const step of CLICK ? CLICK.split('>>') : []) {
+    const label = step.trim()
+    if (!label) continue
     const clicked = await evaluate(`(() => {
-      const wanted = ${JSON.stringify(CLICK)}.trim().toLowerCase()
+      const wanted = ${JSON.stringify(label)}.trim().toLowerCase()
+      // Falls back to aria-label because a control is not always its text: an
+      // icon-only button, or the invisible overlay that selects a section in
+      // the page builder, carry their whole name in the attribute.
+      const name = (b) =>
+        ((b.textContent || '').trim() + ' ' + (b.getAttribute('aria-label') || ''))
+          .trim()
+          .toLowerCase()
       const el = [...document.querySelectorAll('button, [role="button"], a')]
-        .find((b) => (b.textContent || '').trim().toLowerCase().includes(wanted))
+        .find((b) => name(b).includes(wanted))
       if (!el) return false
       el.click()
       return true
     })()`)
-    if (!clicked) console.warn(`  (no control matching "${CLICK}" on ${p})`)
+    if (!clicked) console.warn(`  (no control matching "${label}" on ${p})`)
     await sleep(2500)
+  }
+
+  // SHOT_DIAG=1 prints what the page actually says BEFORE the overlay below is
+  // stripped. A screen that fails to render captures as a near-black rectangle
+  // that tells you nothing; the overlay holds the message that does.
+  //
+  // innerText of the rendered elements, not textContent of the shadow root —
+  // the latter returns the overlay's own stylesheet before any of its text.
+  if (process.env.SHOT_DIAG) {
+    const diag = await evaluate(
+      `(() => {
+         const out = []
+         const portal = document.querySelector('nextjs-portal')
+         const root = portal && portal.shadowRoot
+         if (root) {
+           root.querySelectorAll('h1, h2, p, pre, code, [data-nextjs-codeframe]').forEach((el) => {
+             const t = (el.innerText || el.textContent || '').trim()
+             if (t && !out.includes(t)) out.push(t)
+           })
+         }
+         const body = document.body ? document.body.innerText.trim() : ''
+         if (body) out.push(body)
+         return out.join('\\n').slice(0, 2000)
+       })()`,
+    )
+    if (diag) console.log(`--- ${p} says ---\n${diag}\n--- end ---`)
   }
 
   // The dev error overlay (<nextjs-portal>) paints above the whole app, so a
@@ -196,8 +260,24 @@ for (const p of paths) {
   // long pages under the software rasterizer. Resizing the emulated viewport
   // to the document height (capped so a huge page still rasterises) and
   // capturing plainly is reliable.
+  //
+  // The app layout is `h-screen overflow-hidden` with the scrolling done by an
+  // inner <main class="overflow-y-auto">, so documentElement.scrollHeight is
+  // ALWAYS one viewport — every screenshot of a long screen was silently cut
+  // off at the fold. Measure the tallest scrolling element instead, and fall
+  // back to the document for pages (login, store) that scroll normally.
+  // <main> specifically, not every element: walking the whole tree calling
+  // getComputedStyle on each node takes minutes on a busy screen.
   const fullHeight = await evaluate(
-    `Math.min(Math.max(document.documentElement.scrollHeight, 1000), 12000)`,
+    `(() => {
+       let tallest = document.documentElement.scrollHeight
+       document.querySelectorAll('main').forEach((el) => {
+         // Its own content height, plus whatever sits above it on the page.
+         const height = el.scrollHeight + el.getBoundingClientRect().top
+         if (height > tallest) tallest = height
+       })
+       return Math.min(Math.max(tallest, 1000), 12000)
+     })()`,
   )
   await send(
     'Emulation.setDeviceMetricsOverride',
@@ -211,7 +291,7 @@ for (const p of paths) {
   const name = (p.replace(/^\//, '').replace(/[^\w.-]+/g, '-') || 'root') + '.png'
   const file = path.join(OUT, name)
   writeFileSync(file, Buffer.from(data, 'base64'))
-  console.log(`${p} -> ${at} -> ${file}`)
+  console.log(`${p} -> ${landedOn} -> ${file}`)
 }
 
 ws.close()

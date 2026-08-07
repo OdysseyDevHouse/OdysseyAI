@@ -18,6 +18,11 @@ import {
   MAX_SECTIONS,
   MAX_SECTION_CARDS,
   MAX_SECTION_ITEMS,
+  MAX_SECTION_TEXT,
+  describeLayoutChanges,
+  isScheduledNow,
+  safeDate,
+  safeLinkTarget,
   defaultSections,
   discardDraft,
   getLayout,
@@ -96,7 +101,202 @@ async function main() {
   )
   ok('key order is stable whatever the input order', orderA === orderB)
 
+  console.log('\n— The newer section kinds —')
+
+  // Tone is written for EVERY kind, so the key order stays identical whatever
+  // the section is — the JSON dirty check depends on it.
+  ok(
+    'an unknown tone falls back to plain',
+    normaliseSections([{ kind: 'hero', id: 'h', tone: 'rainbow' }])[0].tone === 'plain',
+  )
+  ok(
+    'a tinted band survives',
+    normaliseSections([{ kind: 'cards', id: 'c', tone: 'tinted' }])[0].tone === 'tinted',
+  )
+
+  // Null is a REAL value for a row's layout — "follow the shop" — so an
+  // unusable one must not default to a grid the owner never chose.
+  const layouts = normaliseSections([
+    { kind: 'products', id: 'a', layout: 'grid' },
+    { kind: 'products', id: 'b', layout: 'list' },
+    { kind: 'products', id: 'c', layout: 'carousel' },
+    { kind: 'products', id: 'd' },
+  ])
+  ok('a row layout override is kept', layouts[0].layout === 'grid' && layouts[1].layout === 'list')
+  ok(
+    'an unknown row layout becomes "follow the shop"',
+    layouts[2].layout === null && layouts[3].layout === null,
+  )
+
+  ok(
+    'the two new product rules survive',
+    normaliseSections([
+      { kind: 'products', id: 'p', source: 'special' },
+      { kind: 'products', id: 'q', source: 'popular' },
+    ]).map((s) => s.source).join(',') === 'special,popular',
+  )
+
+  const banner = normaliseSections([
+    { kind: 'banner', id: 'b', imageId: '7', imageAlt: 'x'.repeat(500), buttonLabel: 'y'.repeat(99) },
+  ])[0]
+  ok('a banner image id is coerced to a number', banner.imageId === 7, String(banner.imageId))
+  ok('a junk banner image id becomes none',
+    normaliseSections([{ kind: 'banner', id: 'b', imageId: 'evil' }])[0].imageId === null)
+  ok('banner alt text is truncated', banner.imageAlt!.length === 190, String(banner.imageAlt!.length))
+  ok('a banner button label is truncated', banner.buttonLabel!.length === 40)
+
+  const long = 'w'.repeat(MAX_SECTION_TEXT + 500)
+  const text = normaliseSections([{ kind: 'text', id: 't', text: long, align: 'justify' }])[0]
+  ok('a paragraph is capped', text.text!.length === MAX_SECTION_TEXT, String(text.text!.length))
+  ok('an unknown alignment falls back to left', text.align === 'left')
+  ok(
+    'centring survives',
+    normaliseSections([{ kind: 'text', id: 't', align: 'center' }])[0].align === 'center',
+  )
+
+  console.log('\n— Scheduling a section —')
+
+  ok('a junk date becomes no bound', safeDate('not-a-date') === '')
+  ok('a wrongly shaped date becomes no bound', safeDate('2026/12/25') === '')
+  // Shape alone is not enough: this one matches the pattern and is not a day,
+  // and a window bounded by a date that never arrives hides a section forever.
+  ok('an impossible date becomes no bound', safeDate('2026-02-31') === '', safeDate('2026-02-31'))
+  ok('a real date survives', safeDate('2026-12-25') === '2026-12-25')
+
+  ok('no dates means always on', isScheduledNow({}))
+  ok('before the window it is off', !isScheduledNow({ showFrom: '2026-12-01' }, '2026-11-30'))
+  ok('after the window it is off', !isScheduledNow({ showUntil: '2026-12-26' }, '2026-12-27'))
+  ok('inside the window it is on', isScheduledNow({ showFrom: '2026-12-01', showUntil: '2026-12-26' }, '2026-12-10'))
+  // BOTH ends inclusive — "until the 26th" that stopped on the 25th is how a
+  // seasonal banner comes down a day early.
+  ok('the first day counts', isScheduledNow({ showFrom: '2026-12-01' }, '2026-12-01'))
+  ok('the last day counts', isScheduledNow({ showUntil: '2026-12-26' }, '2026-12-26'))
+  ok(
+    'dates the wrong way round show nothing',
+    !isScheduledNow({ showFrom: '2026-12-26', showUntil: '2026-12-01' }, '2026-12-10'),
+  )
+
+  console.log('\n— What publishing would change —')
+
+  const base = normaliseSections([
+    { kind: 'hero', id: 'a', title: 'Welcome' },
+    { kind: 'products', id: 'b', title: 'New in', source: 'newest' },
+    { kind: 'cards', id: 'c', title: 'Info' },
+  ])
+  ok('an unchanged page reports nothing', describeLayoutChanges(base, base).length === 0)
+
+  const added = describeLayoutChanges(base, normaliseSections([...base, { kind: 'text', id: 'd', title: 'Notice' }]))
+  ok('a new section is reported', added.length === 1 && added[0].kind === 'added', JSON.stringify(added))
+
+  const removed = describeLayoutChanges(base, base.slice(0, 2))
+  ok('a removed section is reported', removed.length === 1 && removed[0].kind === 'removed')
+  ok('and it is named', removed[0]?.label === 'Info', removed[0]?.label)
+
+  /*
+   * The property that makes the summary worth reading: dragging ONE section
+   * must report one move, not "everything changed". Reporting every section
+   * the drag pushed past is true and useless.
+   */
+  const moved = describeLayoutChanges(base, [base[2], base[0], base[1]])
+  ok(
+    'a reorder reports moves, not edits',
+    moved.length > 0 && moved.every((c) => c.kind === 'moved'),
+    JSON.stringify(moved.map((c) => c.kind)),
+  )
+  ok(
+    'dragging one section reports exactly one move',
+    moved.length === 1 && moved[0].label === 'Info',
+    `${moved.length}: ${moved.map((c) => c.label).join(', ')}`,
+  )
+
+  // A section removed from the middle displaces the ones below it, but nobody
+  // moved them — that must read as one removal, not a removal plus two moves.
+  const removedMiddle = describeLayoutChanges(base, [base[0], base[2]])
+  ok(
+    'removing from the middle is not also a reorder',
+    removedMiddle.length === 1 && removedMiddle[0].kind === 'removed',
+    JSON.stringify(removedMiddle.map((c) => c.kind)),
+  )
+
+  const hidden = describeLayoutChanges(
+    base,
+    base.map((s) => (s.id === 'b' ? { ...s, enabled: false } : s)),
+  )
+  ok('switching a section off is its own kind', hidden.length === 1 && hidden[0].kind === 'hidden')
+
+  /*
+   * ── THE PRESET CASE ─────────────────────────────────────────────────
+   *
+   * Applying a ready-made page rebuilds every section with a fresh id. Diffed
+   * naively that reads as "New: Welcome banner" directly above "Removed:
+   * Welcome banner" for every row — accurate, and worthless to read. Found by
+   * looking at the real dialog.
+   */
+  const reIded = base.map((s) => ({ ...s, id: `${s.id}-fresh` }))
+  ok(
+    'the same page with new ids reports no change at all',
+    describeLayoutChanges(base, reIded).length === 0,
+    JSON.stringify(describeLayoutChanges(base, reIded)),
+  )
+
+  const reIdedEdited = reIded.map((s) =>
+    s.id === 'a-fresh' ? { ...s, tone: 'tinted' as const } : s,
+  )
+  const presetEdit = describeLayoutChanges(base, reIdedEdited)
+  ok(
+    'but a real difference under a new id still reports',
+    presetEdit.length === 1 && presetEdit[0].kind === 'edited' && presetEdit[0].detail === 'background',
+    JSON.stringify(presetEdit),
+  )
+
+  // A genuinely different section must not be swallowed by the pairing.
+  const swapped = describeLayoutChanges(
+    base,
+    [...base.slice(0, 2), { ...base[2], id: 'z', title: 'Something else' }],
+  )
+  ok(
+    'a differently named replacement is still an add and a remove',
+    swapped.some((c) => c.kind === 'added') && swapped.some((c) => c.kind === 'removed'),
+    JSON.stringify(swapped.map((c) => c.kind)),
+  )
+
+  const retitled = describeLayoutChanges(
+    base,
+    base.map((s) => (s.id === 'a' ? { ...s, title: 'Hello' } : s)),
+  )
+  ok('an edit is reported', retitled.length === 1 && retitled[0].kind === 'edited')
+  ok('and says WHAT changed', retitled[0]?.detail === 'heading', retitled[0]?.detail)
+
+  const rescheduled = describeLayoutChanges(
+    base,
+    base.map((s) => (s.id === 'c' ? { ...s, showUntil: '2026-12-26' } : s)),
+  )
+  ok(
+    'a schedule change is reported in the owner’s words',
+    rescheduled[0]?.detail === 'when it shows',
+    rescheduled[0]?.detail,
+  )
+
   console.log('\n— Nothing hostile reaches a public page —')
+
+  /*
+   * A banner link is the one place a shop owner supplies an href that lands on
+   * a public page, so it gets its own guard rather than reusing safeUrl: the
+   * common case is an in-shop path, which safeUrl rejects outright.
+   */
+  ok('a javascript: banner link is refused', safeLinkTarget('javascript:alert(1)') === '')
+  ok('a data: banner link is refused', safeLinkTarget('data:text/html,<script>') === '')
+  // The subtle one. A browser reads `//host` as protocol-relative and follows
+  // it off-site, so a banner pointing there would quietly leave the shop.
+  ok('a protocol-relative banner link is refused', safeLinkTarget('//evil.example/x') === '')
+  ok('an in-shop path is allowed', safeLinkTarget('/store/abc?department=2') === '/store/abc?department=2')
+  ok('an https banner link is allowed', safeLinkTarget('https://example.com/sale').startsWith('https://'))
+  ok('a blank banner link stays blank', safeLinkTarget('  ') === '')
+  ok(
+    'a hostile link never survives normalisation',
+    normaliseSections([{ kind: 'banner', id: 'b', linkUrl: 'javascript:alert(1)' }])[0].linkUrl === '',
+  )
+
   ok('a CSS-injection colour is refused', safeColour('red; background:url(//evil)') === DEFAULT_BRAND_COLOUR)
   ok('a valid hex is kept', safeColour('#ff0000') === '#ff0000')
   ok('a short hex is kept', safeColour('#f00') === '#f00')

@@ -1,7 +1,28 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
+import { siteExecute, siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
+import { sanitiseEmailHtml } from '../orderEmailTemplate'
+// The pure model — labels, roles and shapes the SETUP SCREEN also needs.
+// Re-exported so server callers have one import, while the client imports
+// straight from the model and never reaches this file.
+import {
+  REQUIRED_ROLES,
+  STATUS_NOTIFY_KINDS,
+  roleMeaning,
+  type OrderStatus,
+  type OrderStatusInput,
+  type StatusNotifyKind,
+} from '../orderStatusModel'
+export {
+  NOTIFY_KIND_LABEL,
+  REQUIRED_ROLES,
+  ROLE_LABEL,
+  STATUS_NOTIFY_KINDS,
+  type OrderStatus,
+  type OrderStatusInput,
+  type StatusNotifyKind,
+} from '../orderStatusModel'
 import { canTakePayments } from './payments'
 
 /**
@@ -84,15 +105,6 @@ export type DeliveryZone = {
   sortOrder: number
 }
 
-export type OrderStatus = {
-  id: number
-  code: string
-  name: string
-  tone: 'neutral' | 'brand' | 'success' | 'warning' | 'danger'
-  sortOrder: number
-  role: '' | 'new' | 'completed' | 'cancelled' | 'dispatched'
-  isActive: boolean
-}
 
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 
@@ -525,5 +537,211 @@ export async function listOrderStatuses(
     sortOrder: Number(r.sort_order),
     role: String(r.role) as OrderStatus['role'],
     isActive: !!r.is_active,
+    // Coerced rather than trusted: one malformed row must not take down the
+    // whole order queue.
+    notifyKind: (STATUS_NOTIFY_KINDS as readonly string[]).includes(String(r.notify_kind))
+      ? (String(r.notify_kind) as StatusNotifyKind)
+      : '',
+    useTemplate: !!r.use_template,
+    emailSubject: String(r.email_subject ?? ''),
+    // Sanitised on READ as well as on write: a row could predate the
+    // sanitiser, or have been edited straight in the database.
+    emailHtml: sanitiseEmailHtml(String(r.email_html ?? '')),
   }))
+}
+
+/* ── Editing the pipeline ─────────────────────────────────────────────────── */
+
+/** How many orders sit in each status right now, keyed by status id. */
+export async function statusOrderCounts(siteId: number): Promise<Map<number, number>> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT status_id, COUNT(*) AS n FROM online_orders GROUP BY status_id`,
+  )
+  return new Map(rows.map((r) => [Number(r.status_id), Number(r.n)]))
+}
+
+/**
+ * A stable key derived from the name ONCE, on creation.
+ *
+ * Never regenerated on rename: the code is what an order carries, so renaming
+ * "Ready" to "Waiting at the counter" must not strand every order sitting in
+ * it. That is the whole reason a code exists separately from a name.
+ */
+function makeCode(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 24)
+  return base || 'status'
+}
+
+export async function saveOrderStatus(
+  siteId: number,
+  input: OrderStatusInput,
+): Promise<SaveResult> {
+  const name = input.name.trim().slice(0, 60)
+  if (!name) return { ok: false, error: 'Give the status a name.' }
+
+  const useTemplate = input.useTemplate
+  const emailHtml = sanitiseEmailHtml(input.emailHtml)
+  const emailSubject = input.emailSubject.trim().slice(0, 255)
+
+  if (useTemplate && !emailHtml.trim()) {
+    return { ok: false, error: 'Write the email you want this status to send, or switch it off.' }
+  }
+  if (useTemplate && !emailSubject) {
+    return { ok: false, error: 'Give the email a subject line.' }
+  }
+
+  const existing = await listOrderStatuses(siteId)
+  const current = input.id ? existing.find((s) => s.id === input.id) : null
+
+  /*
+   * A required role cannot simply be moved off a status — it has to be given
+   * to another one first. Otherwise a shop can leave itself with nowhere for a
+   * new order to land, and only find out when the next one arrives.
+   */
+  if (current && current.role && (REQUIRED_ROLES as readonly string[]).includes(current.role)) {
+    if (input.role !== current.role) {
+      return {
+        ok: false,
+        error: `“${current.name}” is the status that means ${roleMeaning(current.role)}. Give that to another status first, then change this one.`,
+      }
+    }
+    if (!input.isActive) {
+      return {
+        ok: false,
+        error: `“${current.name}” is the status that means ${roleMeaning(current.role)}, so it has to stay switched on. Give that to another status first.`,
+      }
+    }
+  }
+
+  if (!current && input.role && (REQUIRED_ROLES as readonly string[]).includes(input.role) && !input.isActive) {
+    return { ok: false, error: 'A status with a job to do has to stay switched on.' }
+  }
+
+  return siteTransaction(siteId, async (tx) => {
+    /*
+     * A role is MOVED, never duplicated. Clearing it from whoever holds it now
+     * is what makes "only one status can mean this" true, rather than a rule
+     * the screen merely asks people to respect.
+     */
+    if (input.role) {
+      await tx.query(
+        `UPDATE online_order_statuses SET role = '' WHERE role = ? AND id <> ?`,
+        [input.role, input.id ?? 0],
+      )
+    }
+
+    if (input.id) {
+      await tx.query(
+        `UPDATE online_order_statuses
+            SET name = ?, tone = ?, role = ?, is_active = ?,
+                notify_kind = ?, use_template = ?, email_subject = ?, email_html = ?
+          WHERE id = ?`,
+        [
+          name,
+          input.tone,
+          input.role,
+          input.isActive ? 1 : 0,
+          input.notifyKind,
+          useTemplate ? 1 : 0,
+          emailSubject,
+          emailHtml,
+          input.id,
+        ],
+      )
+      return { ok: true as const }
+    }
+
+    // A new status lands at the END. Slotting it into the middle would change
+    // the meaning of a pipeline the shop already works to.
+    const nextSort = Math.max(0, ...existing.map((s) => s.sortOrder)) + 10
+
+    // The code has to be unique, and two statuses can easily be named
+    // similarly. Suffix until one is free rather than refusing the name.
+    const base = makeCode(name)
+    const taken = new Set(existing.map((s) => s.code))
+    let code = base
+    for (let n = 2; taken.has(code) && n < 500; n++) code = `${base.slice(0, 26)}_${n}`
+    if (taken.has(code)) {
+      return { ok: false as const, error: 'Too many statuses with that name — try a different one.' }
+    }
+
+    await tx.query(
+      `INSERT INTO online_order_statuses
+         (code, name, tone, sort_order, role, is_active,
+          notify_kind, use_template, email_subject, email_html)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [
+        code,
+        name,
+        input.tone,
+        nextSort,
+        input.role,
+        input.isActive ? 1 : 0,
+        input.notifyKind,
+        useTemplate ? 1 : 0,
+        emailSubject,
+        emailHtml,
+      ],
+    )
+    return { ok: true as const }
+  })
+}
+
+export async function deleteOrderStatus(siteId: number, id: number): Promise<SaveResult> {
+  const status = (await listOrderStatuses(siteId)).find((s) => s.id === id)
+  if (!status) return { ok: false, error: 'That status no longer exists.' }
+
+  if (status.role && (REQUIRED_ROLES as readonly string[]).includes(status.role)) {
+    return {
+      ok: false,
+      error: `“${status.name}” is the status that means ${roleMeaning(status.role)}, so it can't be deleted. Give that to another status first.`,
+    }
+  }
+
+  /*
+   * Orders in it block deletion, because the alternative is orders pointing at
+   * a status that no longer exists. The refusal names the way out — switching
+   * it off keeps those orders labelled and takes it off the buttons.
+   */
+  const count = (await statusOrderCounts(siteId)).get(id) ?? 0
+  if (count > 0) {
+    return {
+      ok: false,
+      error: `${count} order${count === 1 ? ' is' : 's are'} in “${status.name}”, so deleting it would leave ${count === 1 ? 'it' : 'them'} with no status. Switch it off instead — it disappears from the buttons and those orders keep their label.`,
+    }
+  }
+
+  await siteExecute(siteId, `DELETE FROM online_order_statuses WHERE id = ?`, [id])
+  return { ok: true }
+}
+
+/**
+ * Put the pipeline in this order.
+ *
+ * Ids the caller left out are APPENDED rather than dropped, and ids that are
+ * not this shop's are ignored — so a stale browser tab cannot silently remove
+ * a status from the workflow by not knowing about it.
+ */
+export async function reorderOrderStatuses(siteId: number, ids: number[]): Promise<SaveResult> {
+  const existing = await listOrderStatuses(siteId)
+  const known = new Set(existing.map((s) => s.id))
+  const ordered = ids.filter((id) => known.has(id))
+  for (const s of existing) if (!ordered.includes(s.id)) ordered.push(s.id)
+
+  await siteTransaction(siteId, async (tx) => {
+    for (const [index, id] of ordered.entries()) {
+      // Gaps of ten, so a later insert can be slotted between two without
+      // rewriting the whole list.
+      await tx.query(`UPDATE online_order_statuses SET sort_order = ? WHERE id = ?`, [
+        (index + 1) * 10,
+        id,
+      ])
+    }
+  })
+  return { ok: true }
 }

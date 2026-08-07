@@ -18,11 +18,14 @@ export default function ProductActions({
   productId,
   isArchived,
   name,
+  canDelete,
 }: {
   productId: number
   isArchived: boolean
   /** The product's description, repeated back in the delete confirm. */
   name: string
+  /** `products.delete`. The action enforces it too — this only hides the item. */
+  canDelete: boolean
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const deleteForm = useRef<HTMLFormElement>(null)
@@ -38,11 +41,15 @@ export default function ProductActions({
             {isArchived ? 'Restore' : 'Archive'}
           </MenuItem>
         </form>
-        <MenuSeparator />
-        <MenuItem tone="danger" onClick={() => setConfirmingDelete(true)}>
-          <Trash size={15} />
-          Delete
-        </MenuItem>
+        {canDelete && (
+          <>
+            <MenuSeparator />
+            <MenuItem tone="danger" onClick={() => setConfirmingDelete(true)}>
+              <Trash size={15} />
+              Delete
+            </MenuItem>
+          </>
+        )}
       </Menu>
 
       {/* Submitted by the confirm below — never directly. */}

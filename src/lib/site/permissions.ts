@@ -47,6 +47,14 @@ export const CAPABILITY_GROUPS = [
       { key: 'sales.discount_override', label: 'Discount beyond the product limit', hint: 'Exceed a product’s maximum discount percentage.' },
       { key: 'sales.price_override', label: 'Change a price at the till', hint: 'Sell at something other than the price structure figure.' },
       { key: 'sales.cashup', label: 'Cash up', hint: 'Close a shift and record the drawer count.' },
+      { key: 'contracts.view', label: 'View contracts', hint: 'Open recurring billing agreements and see what they have billed.' },
+      { key: 'contracts.edit', label: 'Create and edit contracts', hint: 'Set up recurring billing, its products, escalation and billing day.' },
+      // Separate from contracts.edit deliberately. Editing a contract changes
+      // what WILL be billed and somebody can still review it; turning on
+      // automatic sending means invoices post to a customer's account and reach
+      // them with nobody in the loop. That is a different decision, and a shop
+      // should be able to let a clerk maintain contracts without granting it.
+      { key: 'contracts.auto_send', label: 'Let a contract bill and send itself', hint: 'Turn on automatic invoicing, which posts and emails with no review.' },
     ],
   },
   {
@@ -110,6 +118,9 @@ export const CAPABILITY_GROUPS = [
       { key: 'dashboard.view', label: 'View the dashboard', hint: 'The sales overview on the home screen.' },
       { key: 'reports.view', label: 'Run reports', hint: 'Sales, stock and account reports.' },
       { key: 'reports.financial', label: 'Run financial reports', hint: 'Turnover, margin and profitability figures.' },
+      { key: 'reports.build', label: 'Build custom reports', hint: 'Compose a report from any data the user may already see, and save it for everyone.' },
+      { key: 'reports.schedule', label: 'Schedule reports by email', hint: 'Send a report to people on a timer. It runs unattended, so grant it deliberately.' },
+      { key: 'reports.ai', label: 'Generate a report with AI', hint: 'Describe a report in plain English and have it built. Uses a paid AI call.' },
     ],
   },
   {
@@ -121,6 +132,18 @@ export const CAPABILITY_GROUPS = [
     ],
   },
   {
+    key: 'loyalty',
+    label: 'Loyalty',
+    capabilities: [
+      { key: 'loyalty.view', label: 'View loyalty', hint: 'See members, balances, tiers and punch cards.' },
+      { key: 'loyalty.edit', label: 'Set up the programme', hint: 'Change the rates, the tier ladder and the punch cards.' },
+      /* Separate from `edit` on purpose: points and wallet rand are money. The
+         supervisor who tunes the earn rate once a year is rarely the person who
+         should be able to put 10 000 points on their own account. */
+      { key: 'loyalty.adjust', label: 'Adjust balances', hint: 'Hand out points, issue vouchers and reverse a refunded sale.' },
+    ],
+  },
+  {
     key: 'commission',
     label: 'Commission',
     capabilities: [
@@ -128,6 +151,22 @@ export const CAPABILITY_GROUPS = [
       { key: 'commission.view_all', label: 'See everyone’s commission', hint: 'Every salesperson’s figures, not just their own.' },
       { key: 'commission.edit', label: 'Set commission rules', hint: 'Decide the rates, tiers and what they apply to.' },
       { key: 'commission.run', label: 'Run and lock commission', hint: 'Calculate a period and freeze it for payment.' },
+    ],
+  },
+  {
+    key: 'staff',
+    label: 'Staff',
+    capabilities: [
+      { key: 'staff.view_own', label: 'See their own hours and leave', hint: 'What they worked, and what leave they have left.' },
+      { key: 'staff.view_all', label: 'See everyone’s hours and leave', hint: 'The whole team’s attendance, not just their own.' },
+      { key: 'staff.clock', label: 'Clock in and out', hint: 'Record their own start and end of day at the till.' },
+      { key: 'staff.edit', label: 'Correct hours and leave', hint: 'Amend a time entry somebody got wrong, or capture leave on their behalf.' },
+      { key: 'staff.approve', label: 'Approve leave and timesheets', hint: 'Sign off what gets paid.' },
+      /* Split from view_all deliberately, exactly as products.cost is split
+         from products.view: a supervisor checking who worked Saturday should
+         not thereby learn what everybody earns. */
+      { key: 'staff.cost', label: 'See pay rates and staff cost', hint: 'What each person is paid, and what they cost the business.' },
+      { key: 'staff.run', label: 'Run and lock a pay period', hint: 'Freeze a period’s figures once they have been paid.' },
     ],
   },
   {

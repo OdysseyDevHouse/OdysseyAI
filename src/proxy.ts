@@ -29,6 +29,29 @@ const PUBLIC_PREFIXES = [
   // itself is: the URL carries the signed store token, and the route refuses
   // an image whose product that store does not publish.
   '/api/store-images/',
+  // The scheduled-reports heartbeat. Cron calls it with no browser and no
+  // session, so a cookie gate here would redirect it to the login page and the
+  // scheduler would silently never run — a failure nobody would see until
+  // someone noticed their morning report had stopped arriving.
+  //
+  // It is not unguarded: the route itself requires REPORT_CRON_SECRET, compares
+  // it in constant time, and refuses every request outright when the secret is
+  // not configured at all.
+  '/api/reports/schedules/tick',
+  // Contract billing's heartbeat. Same reasoning as the reports tick above, and
+  // the same protection: CONTRACT_CRON_SECRET, compared in constant time, with
+  // the route refusing everything when it is not set. Behind a cookie gate the
+  // biller would 307 to the login page and silently never raise an invoice —
+  // which nobody would notice until a customer mentioned they had not been
+  // billed for a month.
+  '/api/contracts/tick',
+  // The landing page for an emailed "pay this invoice" link. The payer is a
+  // customer, not a user of the back office, and will never have a session.
+  //
+  // It is not unguarded: the URL carries a signed token binding site and
+  // payment intent together, the page shows only the invoice number, the payee
+  // and the amount, and it can mark NOTHING paid — only the ITN callback does.
+  '/pay/',
 ]
 
 export default function proxy(req: NextRequest) {

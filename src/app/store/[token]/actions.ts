@@ -1,8 +1,13 @@
 'use server'
 
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
-import { storefrontContext } from '@/lib/site/storefront'
+import {
+  publishedProducts,
+  storefrontContext,
+  type StorefrontProduct,
+} from '@/lib/site/storefront'
 import { submitReview, type SaveResult } from '@/lib/site/productReviews'
+import { MAX_WISHLIST } from '@/lib/wishlist'
 
 /**
  * Writes an anonymous shopper is allowed to make.
@@ -20,6 +25,37 @@ import { submitReview, type SaveResult } from '@/lib/site/productReviews'
  * kept a form open, or forged the request. The gate is the store's setting,
  * checked server-side, not the absence of a form in the page.
  */
+
+/**
+ * The saved products, for a wishlist held in the browser.
+ *
+ * Goes through `publishedProducts`, so the shop's publish rules apply exactly
+ * as they do everywhere else: an id that is not published resolves to nothing
+ * rather than being served because someone asked for it by number.
+ *
+ * It returns FEWER products than were asked for when some are unavailable, and
+ * the caller reports that gap rather than hiding it.
+ */
+export async function wishlistProductsAction(
+  token: string,
+  ids: number[],
+): Promise<StorefrontProduct[]> {
+  const siteId = await verifyPublicStoreToken(token)
+  if (siteId === null) return []
+  const context = await storefrontContext(siteId)
+  if (!context) return []
+
+  const wanted = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))]
+  if (wanted.length === 0) return []
+
+  /*
+   * 120 is publishedProducts's own hard ceiling on `limit`. Asking for more
+   * would be silently clamped there and quietly drop saved items, which the
+   * page would then report as "no longer available" — so the wishlist cap
+   * matches it rather than exceeding it.
+   */
+  return publishedProducts(context, { ids: wanted.slice(0, MAX_WISHLIST), limit: MAX_WISHLIST })
+}
 
 export async function submitReviewAction(
   token: string,

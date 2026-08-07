@@ -4,20 +4,31 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { PanelLeft, Search, ChevronDown, HelpCircle as CircleHelp, ArrowRight } from '@/components/ui/icons'
-import { Button, Input } from '@/components/ui'
+import { Button, ButtonLink, Input } from '@/components/ui'
 import { NAV, filterNav, navFor, type NavSection } from '@/lib/nav'
 
 const STORAGE_KEY = 'odyssey.sidebar.collapsed'
 
-/** The section containing this path, so it opens on load. */
+/**
+ * The section containing this path, so it opens on load.
+ *
+ * Longest href wins rather than first declared, for the same reason the
+ * highlight uses it: /sales sits in Sales and /setup/laybys in Setup, so a
+ * first-match scan would open the wrong group for the deeper route.
+ */
 function sectionForPath(pathname: string): string | null {
+  let best: { label: string; length: number } | null = null
+
   for (const section of NAV) {
-    if (section.href && pathname.startsWith(section.href)) return section.label
-    for (const item of section.items ?? []) {
-      if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return section.label
+    const hrefs = [section.href, ...(section.items ?? []).map((i) => i.href)]
+    for (const href of hrefs) {
+      if (!href) continue
+      if (pathname !== href && !pathname.startsWith(`${href}/`)) continue
+      if (!best || href.length > best.length) best = { label: section.label, length: href.length }
     }
   }
-  return null
+
+  return best?.label ?? null
 }
 
 /**
@@ -81,7 +92,28 @@ export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwn
       return next
     })
 
-  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
+  /**
+   * Longest match wins, not every match. A section can hold both /sales and
+   * /sales/cashup, and a plain prefix test would light up "Documents" on top of
+   * "Cash-up" — two rows highlighted for one page. Computed across the whole
+   * menu rather than per section, since the winner may live in another one:
+   * /customers/age-analysis and /credit sit under Customers, but /credit's own
+   * children could just as easily have been split across sections.
+   */
+  const activeHref = useMemo(() => {
+    let best: string | null = null
+    for (const section of visible) {
+      const hrefs = [section.href, ...(section.items ?? []).map((i) => i.href)]
+      for (const href of hrefs) {
+        if (!href) continue
+        if (pathname !== href && !pathname.startsWith(`${href}/`)) continue
+        if (!best || href.length > best.length) best = href
+      }
+    }
+    return best
+  }, [pathname, visible])
+
+  const isActive = (href: string) => href === activeHref
 
   return (
     <aside
@@ -147,10 +179,22 @@ export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwn
               <span className="text-sm font-semibold text-ink">Need help?</span>
             </div>
             <p className="mt-1 text-xs text-muted">Visit our help centre or contact support.</p>
-            <Button variant="primary" size="sm" className="mt-3 w-full justify-between">
+            {/* The guide is a static file under public/, so it needs a real
+                navigation rather than a client-side route change — hence
+                prefetch={false} and its own tab, which also means a
+                half-finished capture on this screen survives reading the help. */}
+            <ButtonLink
+              href="/help.html"
+              target="_blank"
+              rel="noopener"
+              prefetch={false}
+              variant="primary"
+              size="sm"
+              className="mt-3 w-full justify-between"
+            >
               Go to Help Centre
               <ArrowRight size={14} />
-            </Button>
+            </ButtonLink>
           </div>
         </div>
       )}

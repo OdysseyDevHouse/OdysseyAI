@@ -7,6 +7,7 @@ import { Icons, Input, ToastProvider } from '@/components/ui'
 import type { StorefrontDepartment } from '@/lib/site/storefront'
 import type { StorefrontTheme } from '@/lib/storefrontModel'
 import { useCart } from './CartContext'
+import { useWishlist } from './WishlistContext'
 import CartBar from './CartBar'
 
 /**
@@ -32,6 +33,8 @@ export default function StoreChrome({
   blurb,
   departments,
   theme,
+  allowAccount,
+  customerName,
 
   children,
 }: {
@@ -40,6 +43,10 @@ export default function StoreChrome({
   blurb: string
   departments: StorefrontDepartment[]
   theme: StorefrontTheme
+  /** Whether this shop offers account ordering at all. */
+  allowAccount: boolean
+  /** The signed-in customer, or null. Name only — never the account itself. */
+  customerName: string | null
 
   children: ReactNode
 }) {
@@ -61,15 +68,62 @@ export default function StoreChrome({
           <div className="border-b border-border">
             <div className="mx-auto flex w-full max-w-6xl items-center gap-4 px-4 py-4">
               <Link href={base} className="min-w-0 shrink-0" aria-label={storeName}>
-                <span className="block truncate text-base font-semibold leading-tight text-ink">
-                  {storeName}
-                </span>
-                {blurb && <span className="block truncate text-sm text-muted">{blurb}</span>}
+                {theme.logoImageId ? (
+                  /*
+                    The logo REPLACES the name, it does not sit beside it: a
+                    logo almost always contains the shop's name already, and
+                    printing it twice is the commonest way a masthead ends up
+                    looking wrong.
+
+                    The name still travels — as the alt text and as the link's
+                    aria-label above — so a shopper who cannot see the image,
+                    or whose connection drops it, still gets the shop's name.
+
+                    A capped height with w-auto, so a wide logo and a square
+                    one both sit on the same line without one of them
+                    stretching the header.
+                  */
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`/api/store-images/${token}/shop/${theme.logoImageId}`}
+                    alt={storeName}
+                    className="h-9 w-auto max-w-48 object-contain"
+                  />
+                ) : (
+                  <>
+                    <span className="block truncate text-base font-semibold leading-tight text-ink">
+                      {storeName}
+                    </span>
+                    {blurb && <span className="block truncate text-sm text-muted">{blurb}</span>}
+                  </>
+                )}
               </Link>
 
               <SearchForm token={token} className="hidden min-w-0 flex-1 md:flex" />
 
-              <div className="ml-auto shrink-0">
+              <div className="ml-auto flex shrink-0 items-center">
+                {/* Only when the shop offers accounts. A shop that does not
+                    should never show a sign-in for something it has not got. */}
+                {allowAccount && (
+                  <Link
+                    href={`${base}/account`}
+                    className="flex w-16 flex-col items-center px-1 py-1 text-ink transition hover:opacity-75"
+                    aria-label={
+                      customerName ? `Your account, signed in as ${customerName}` : 'Sign in'
+                    }
+                  >
+                    <span className="flex h-6 w-6 items-center justify-center">
+                      <Icons.Contact size={20} />
+                    </span>
+                    {/* The first name only. The full account name is often a
+                        company and would not fit — and the point is only to
+                        show that they ARE signed in. */}
+                    <span className="mt-1 hidden max-w-full truncate text-xs font-medium leading-none sm:block">
+                      {customerName ? customerName.split(/\s+/)[0] : 'Sign in'}
+                    </span>
+                  </Link>
+                )}
+                <WishlistAction token={token} />
                 <BasketAction token={token} />
               </div>
             </div>
@@ -145,6 +199,30 @@ function SearchForm({ token, className = '' }: { token: string; className?: stri
         className="w-full"
       />
     </form>
+  )
+}
+
+/** Saved for later. The count stays hidden until storage has been read. */
+function WishlistAction({ token }: { token: string }) {
+  const wishlist = useWishlist()
+  const showCount = wishlist.ready && wishlist.count > 0
+
+  return (
+    <Link
+      href={`/store/${token}/wishlist`}
+      className="relative flex w-16 flex-col items-center px-1 py-1 text-ink transition hover:opacity-75"
+      aria-label={showCount ? `Wishlist, ${wishlist.count} saved` : 'Wishlist'}
+    >
+      <span className="relative flex h-6 w-6 items-center justify-center">
+        <Icons.Heart size={20} />
+        {showCount && (
+          <span className="absolute -right-2.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-pill bg-brand px-1 text-[11px] font-semibold leading-none text-white">
+            {wishlist.count > 99 ? '99+' : wishlist.count}
+          </span>
+        )}
+      </span>
+      <span className="mt-1 hidden truncate text-xs font-medium leading-none sm:block">Saved</span>
+    </Link>
   )
 }
 

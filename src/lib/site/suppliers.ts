@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import { isEmail } from './customerLookups'
+import { resolveMasterCode } from './masterCodes'
 import { logActivityTx, type Actor } from './activityLog'
 import { removeDocumentsFor } from './partyDocuments'
 import { removeCommentsFor } from './partyComments'
@@ -328,10 +329,13 @@ export async function createSupplier(
   actor: Actor,
   input: SupplierInput,
 ): Promise<SaveResult> {
-  const invalid = validateSupplier(input)
+  // BEFORE validate, which rejects a blank code — see masterCodes.ts.
+  const withCode = { ...input, code: await resolveMasterCode(siteId, 'supplier', input.code) }
+
+  const invalid = validateSupplier(withCode)
   if (invalid) return { ok: false, error: invalid }
 
-  const code = input.code.trim()
+  const code = withCode.code.trim()
   const clash = await siteQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM suppliers WHERE code = ? LIMIT 1',
@@ -344,7 +348,7 @@ export async function createSupplier(
     const [res] = await tx.execute(
       `INSERT INTO suppliers (${COLUMN_LIST})
        VALUES (${Array.from({ length: placeholders }, () => '?').join(',')})`,
-      writableColumns(input) as never,
+      writableColumns(withCode) as never,
     )
     const id = (res as { insertId: number }).insertId
 

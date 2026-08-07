@@ -19,6 +19,10 @@ export type ActivityEntity =
   | 'supplier'
   | 'product'
   | 'department'
+  /* A promotion. Worth auditing because it changes what things sell for
+     without anyone touching a price: "why did this go out at R75" needs an
+     answer, and so does "who switched that off". */
+  | 'special'
   /* Not a record with an id — settings changes log with entityId null. Worth
      auditing anyway: opening a public storefront is the single most
      consequential switch in the app. */
@@ -41,6 +45,21 @@ export type ActivityEntity =
      "Who released the final demands" and "who took this account off hold" both
      live here. */
   | 'credit'
+  /* Files attached to a record — the supplier PDF behind a GRV, the receipt
+     behind an expense. entityId is the record the file hangs on, not the file,
+     because "what happened to GRV-00412" is the question being asked. Worth an
+     audit trail on its own: a deleted attachment is a deleted piece of
+     evidence. */
+  | 'attachment'
+  /* The loyalty programme: its rates, tiers, punch cards, and every manual
+     movement of points or wallet money. entityId is the CUSTOMER for anything
+     touching a member's balance, and null for programme-level settings.
+
+     Points earned and spent by a sale are deliberately NOT logged here — the
+     loyalty ledger is already an immutable record of those, and duplicating
+     every till transaction into the audit trail would bury the thing this is
+     for: "who gave that customer 5 000 points, and why". */
+  | 'loyalty'
 
 export type ActivityEvent = {
   id: number

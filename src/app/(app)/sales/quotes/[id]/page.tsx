@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { getDocument, isEditable } from '@/lib/site/salesDocuments'
+import { liveSpecials } from '@/lib/site/specials'
 import { getQuote } from '@/lib/site/quotes'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { listUsers } from '@/lib/site/users'
@@ -39,13 +40,15 @@ export default async function QuoteEditorPage({
   const documentId = Number(id)
   if (!Number.isFinite(documentId) || documentId <= 0) notFound()
 
-  const [document, quote, structures, users, tenders, cashRounding] = await Promise.all([
+  const [document, quote, structures, users, tenders, cashRounding, specials] = await Promise.all([
     getDocument(site.id, documentId),
     getQuote(site.id, documentId),
     listPriceStructures(site.id),
     listUsers(site.id),
     listTenderTypes(site.id),
     getNumericSetting(site.id, 'sales_cash_rounding'),
+    // A quote is priced like an invoice, so it sees the same promotions.
+    liveSpecials(site.id),
   ])
 
   if (!document) notFound()
@@ -86,6 +89,7 @@ export default async function QuoteEditorPage({
         reps={reps}
         tenders={tenders}
         cashRounding={cashRounding}
+        specials={specials}
         customer={customer}
         // A quote stays editable while it is open. Once accepted it is the
         // record of what was offered, and the invoice it became is where any

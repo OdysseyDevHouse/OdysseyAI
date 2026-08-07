@@ -1,6 +1,13 @@
 import { requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { listTerminals } from '@/lib/site/terminals'
-import { listShifts, shiftPosition, listDrawerMovements, shiftCounts } from '@/lib/site/shifts'
+import {
+  listShifts,
+  shiftPosition,
+  listDrawerMovements,
+  shiftCounts,
+  cashupMode,
+} from '@/lib/site/shifts'
 import { getNumericSetting } from '@/lib/site/settings'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -25,12 +32,13 @@ export const dynamic = 'force-dynamic'
 
 export default async function CashupPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('sales.cashup')
+  const { siteId, capabilities } = await requireCapability('sales.cashup')
 
-  const [terminals, recent, tolerance] = await Promise.all([
+  const [terminals, recent, tolerance, mode] = await Promise.all([
     listTerminals(siteId, false),
     listShifts(siteId, { limit: 20 }),
     getNumericSetting(siteId, 'cashup_variance_tolerance'),
+    cashupMode(siteId),
   ])
 
   // The open shifts, with their live drawer position.
@@ -43,6 +51,11 @@ export default async function CashupPage() {
   // them for a shorter slice left the later rows with an empty breakdown.
   const closedCounts = await Promise.all(closed.map((s) => shiftCounts(siteId, s.id)))
 
+  // Whether the history below still has tills worth a column. Asked of the rows
+  // rather than the setting, so switching a site to user mode does not blank
+  // the till out of every cash-up it did before the switch.
+  const showTill = closed.some((s) => s.terminalCode !== null)
+
   const expectedNow = positions.reduce((sum, p) => sum + (p?.expectedCash ?? 0), 0)
   const today = new Date().toISOString().slice(0, 10)
   const closedToday = closed.filter(
@@ -54,13 +67,17 @@ export default async function CashupPage() {
     <>
       <PageHeader
         title="Cash-up"
-        subtitle="What the drawer should hold, against what was counted."
+        subtitle={
+          mode === 'user'
+            ? 'What each person took, against what they handed over.'
+            : 'What the drawer should hold, against what was counted.'
+        }
       />
       <PageBody>
         {(open.length > 0 || closed.length > 0) && (
           <StatStrip columns={3}>
             <StatTile
-              label="Expected in drawers"
+              label={mode === 'user' ? 'Held by staff' : 'Expected in drawers'}
               value={formatMoney(expectedNow)}
               hint={`Across ${open.length} open shift${open.length === 1 ? '' : 's'}`}
               icon={<Icons.Banknote size={16} />}
@@ -68,8 +85,8 @@ export default async function CashupPage() {
             <StatTile
               label="Open shifts"
               value={String(open.length)}
-              hint="One person on one till"
-              icon={<Icons.Terminal size={16} />}
+              hint={mode === 'user' ? 'One person and their float' : 'One person on one till'}
+              icon={mode === 'user' ? <Icons.Users size={16} /> : <Icons.Terminal size={16} />}
             />
             <StatTile
               label="Variance today"
@@ -86,6 +103,8 @@ export default async function CashupPage() {
         )}
 
         <CashupClient
+          mode={mode}
+          canSetMode={can(capabilities, 'setup.edit')}
           terminals={terminals.map((t) => ({ id: t.id, code: t.code, name: t.name }))}
           shifts={open.flatMap((shift, index) => {
             const position = positions[index]
@@ -125,8 +144,14 @@ export default async function CashupPage() {
               <table className={TABLE}>
                 <thead>
                   <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Till</th>
-                    <th className={TABLE_TH}>Cashier</th>
+                    {/* Driven by the ROWS, not the site's current mode. A shift
+                        records the mode it was opened under, so a site that
+                        switches still has terminal-mode history to show — and
+                        hiding the column would silently drop the one thing
+                        identifying those cash-ups. Gone only when nothing
+                        listed has a till, where it would be a row of dashes. */}
+                    {showTill && <th className={TABLE_TH}>Till</th>}
+                    <th className={TABLE_TH}>{mode === 'user' ? 'Person' : 'Cashier'}</th>
                     <th className={TABLE_TH}>Closed</th>
                     <th className={`${TABLE_TH} text-right`}>Expected</th>
                     <th className={`${TABLE_TH} text-right`}>Counted</th>
@@ -146,7 +171,7 @@ export default async function CashupPage() {
                       )
                     return (
                       <tr key={shift.id} className={TABLE_ROW}>
-                        <td className={TABLE_TD}>{shift.terminalCode}</td>
+                        {showTill && <td className={TABLE_TD}>{shift.terminalCode ?? '—'}</td>}
                         <td className={TABLE_TD}>
                           <div className="text-ink">{shift.userName}</div>
                           {shift.varianceNote && (

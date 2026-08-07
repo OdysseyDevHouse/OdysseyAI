@@ -3,7 +3,9 @@ import { notFound } from 'next/navigation'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext, publishedDepartments } from '@/lib/site/storefront'
 import { getPublishedLayout } from '@/lib/site/storefrontLayout'
+import { getCustomerSession } from '@/lib/customerSession'
 import { CartProvider } from './CartContext'
+import { WishlistProvider } from './WishlistContext'
 import StoreChrome from './StoreChrome'
 
 /**
@@ -60,6 +62,9 @@ export default async function StoreLayout({
   if (!context) notFound()
 
 
+  // Read here so the masthead can show who is signed in on every page.
+  const session = await getCustomerSession(context.siteId)
+
   const [departments, layout] = await Promise.all([
     publishedDepartments(context),
     getPublishedLayout(context.siteId),
@@ -67,15 +72,21 @@ export default async function StoreLayout({
 
   return (
     <CartProvider token={token}>
-      <StoreChrome
+      {/* Inside the cart provider so a tile can reach both — the same tile
+          carries an Add button and a heart. */}
+      <WishlistProvider token={token}>
+        <StoreChrome
         token={token}
         storeName={context.storeName}
         blurb={context.settings.blurb}
         departments={departments}
         theme={layout.theme}
+        allowAccount={context.settings.allowAccount}
+        customerName={session?.name ?? null}
       >
         {children}
-      </StoreChrome>
+        </StoreChrome>
+      </WishlistProvider>
     </CartProvider>
   )
 }

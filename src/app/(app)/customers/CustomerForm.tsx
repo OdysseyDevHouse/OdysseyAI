@@ -46,12 +46,19 @@ export default function CustomerForm({
   groups,
   reps,
   categories,
+  suggestedCode = null,
   rowActions,
 }: {
   customer: Customer | null
   groups: CustomerGroup[]
   reps: SalesRep[]
   categories: string[]
+  /**
+   * Pre-filled code for a new customer, or null when auto-numbering is off.
+   * A suggestion only — the user may type over it, and the real code is
+   * claimed on save. See lib/site/masterCodes.ts.
+   */
+  suggestedCode?: string | null
   /** Delete lives in its own <form>, so it is rendered outside this one. */
   rowActions?: ReactNode
 }) {
@@ -89,8 +96,24 @@ export default function CustomerForm({
           <CardHeader title="Account" />
           <CardBody className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Code" hint="Unique. Appears on statements and invoices.">
-                <Input name="code" defaultValue={customer?.code ?? ''} required maxLength={32} />
+              <Field
+                label="Code"
+                hint={
+                  isNew && suggestedCode
+                    ? 'Filled in for you. Type over it to use your own.'
+                    : 'Unique. Appears on statements and invoices.'
+                }
+              >
+                {/* Not `required` once a code is suggested: clearing the field
+                    is how a user asks for the next one, and the server fills it
+                    in. Still required when auto-numbering is off, because then
+                    a blank code has nothing to become. */}
+                <Input
+                  name="code"
+                  defaultValue={customer?.code ?? suggestedCode ?? ''}
+                  required={!(isNew && suggestedCode)}
+                  maxLength={32}
+                />
               </Field>
               <Field label="Name">
                 <Input name="name" defaultValue={customer?.name ?? ''} required maxLength={160} />

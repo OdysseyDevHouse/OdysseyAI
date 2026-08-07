@@ -16,6 +16,9 @@ export {
   Minus,
   // The shopper's basket, on the public storefront.
   ShoppingCart,
+  // Saved for later. Filled or outlined via the `fill` prop, so the shape
+  // never jumps between states.
+  Heart,
   Pencil,
   Trash2 as Trash,
   Download,
@@ -27,6 +30,11 @@ export {
   RefreshCw as Refresh,
   Printer,
   Copy,
+  // Step back and forward through an edit history. Distinct from `Reverse`
+  // above, which means reversing a posted DOCUMENT — a business act, not an
+  // editing one — and must not be confused with it.
+  Undo2 as Undo,
+  Redo2 as Redo,
   // navigation / disclosure
   ChevronDown,
   ChevronUp,
@@ -67,6 +75,17 @@ export {
   Settings,
   Palette,
   ChartColumn as BarChart,
+  ChartLine as LineChart,
+  ChartPie as PieChart,
+  // The report builder's vocabulary: a dataset to read, the columns chosen from
+  // it, and the sum at the foot of one.
+  Table2 as TableIcon,
+  Columns3 as ColumnsIcon,
+  Sigma,
+  // "Generate with AI" — the wand is the action, the sparkle marks anything the
+  // model produced so a generated report is never mistaken for a built one.
+  Wand as Wand,
+  Sparkles,
   Percent,
   Barcode,
   Globe,
@@ -83,6 +102,8 @@ export {
   Send,
   Calendar,
   CalendarRange,
+  // a recurring billing agreement — the same thing, every month
+  Repeat,
   Contact,
   CreditCard,
   Receipt,
@@ -91,6 +112,11 @@ export {
   Sheet as Spreadsheet,
   Wallet,
   HandCoins,
+  // loyalty — the programme itself, a punch card's stamp, and a reward voucher.
+  // Gem matches the rail icon the nav already uses for Loyalty.
+  Gem,
+  Stamp,
+  Ticket,
   Undo2 as Reverse,
   CircleDollarSign as Money,
   Monitor as Terminal,
@@ -139,6 +165,9 @@ export {
   Star,
   File as FileIcon,
   FileImage,
+  // A picture itself, rather than a file containing one — the storefront's
+  // banner sections and their library.
+  Image as Picture,
   FileSpreadsheet,
   FileArchive,
 } from 'lucide-react'

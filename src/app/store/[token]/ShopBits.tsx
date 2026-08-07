@@ -4,6 +4,7 @@ import { Badge, Button, Icons } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { StorefrontProduct } from '@/lib/site/storefront'
 import { useCart } from './CartContext'
+import { useWishlist } from './WishlistContext'
 
 /**
  * The small parts every storefront screen is built from.
@@ -231,6 +232,45 @@ export function AddControl({
         <Icons.Plus size={15} />
       </Button>
     </div>
+  )
+}
+
+/**
+ * Save for later.
+ *
+ * ── NOTHING IS ANNOUNCED ─────────────────────────────────────────────────
+ *
+ * No toast. The heart filling IS the confirmation, and a toast per heart
+ * across a grid of forty products is noise. The count in the masthead is the
+ * quieter second signal.
+ *
+ * ── THE LABEL DOES NOT CHANGE, THE FILL DOES ─────────────────────────────
+ *
+ * `aria-pressed` carries the state, so a screen reader announces "pressed"
+ * rather than the label changing under someone mid-sentence. The visible
+ * difference is the fill.
+ */
+export function FavouriteButton({ product }: { product: StorefrontProduct }) {
+  const wishlist = useWishlist()
+  // Gated on `ready`: before storage has been read every heart would render
+  // empty and then pop full, which reads as the page losing the list.
+  const saved = wishlist.ready && wishlist.has(product.id)
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      iconOnly
+      aria-pressed={saved}
+      aria-label={
+        saved ? `Remove ${product.description} from your wishlist` : `Save ${product.description} for later`
+      }
+      title={saved ? 'Saved — tap to remove' : 'Save for later'}
+      className={saved ? 'text-danger' : 'text-muted'}
+      onClick={() => wishlist.toggle(product.id)}
+    >
+      <Icons.Heart size={18} fill={saved ? 'currentColor' : 'none'} />
+    </Button>
   )
 }
 

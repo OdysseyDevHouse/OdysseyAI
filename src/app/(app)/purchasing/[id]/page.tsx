@@ -9,6 +9,8 @@ import {
   PageBody,
   Callout,
   Card,
+  CardHeader,
+  CardBody,
   Badge,
   Icons,
   TABLE,
@@ -20,6 +22,8 @@ import {
 } from '@/components/ui'
 import PurchaseActions from './PurchaseActions'
 import { purchaseStatusLabel, purchaseStatusTone } from '../status'
+import { listAttachments } from '@/lib/site/attachments'
+import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,6 +41,12 @@ export default async function PurchaseDocumentPage({
 
   const doc = await getPurchaseDocument(siteId, documentId)
   if (!doc) notFound()
+
+  // The entity follows the document type: a purchase order's attachment is the
+  // supplier's quote, a GRV's is the invoice it was keyed from. Filing both
+  // under one entity would mix them on a screen that shows one document.
+  const attachTo = doc.docType === 'purchase_order' ? 'purchase_order' : 'grv'
+  const attachments = await listAttachments(siteId, attachTo, documentId)
 
   const today = new Date().toISOString().slice(0, 10)
   const voidable = doc.docType === 'grv' && doc.status === 'finalised' && doc.documentDate === today
@@ -206,6 +216,38 @@ export default async function PurchaseDocumentPage({
               </p>
             </Card>
           )}
+
+          {/* The document this was keyed from. When a supplier queries what
+              was received, the answer is here rather than in someone's inbox. */}
+          <Card>
+            <CardHeader
+              title={attachTo === 'purchase_order' ? 'Attachments' : 'Supplier invoice'}
+              description={
+                attachTo === 'purchase_order'
+                  ? 'The quote or order confirmation behind this order.'
+                  : 'The invoice or delivery note this receipt was captured from.'
+              }
+            />
+            <CardBody>
+              <AttachmentsPanel
+                entity={attachTo}
+                entityId={documentId}
+                hint={
+                  attachTo === 'purchase_order'
+                    ? 'Attach the supplier’s quote, so what was agreed sits with what was ordered.'
+                    : 'Attach the supplier’s invoice, so the paperwork sits with the receipt rather than in an inbox.'
+                }
+                attachments={attachments.map((a) => ({
+                  id: a.id,
+                  filename: a.filename,
+                  description: a.description,
+                  sizeBytes: a.sizeBytes,
+                  uploadedName: a.uploadedName,
+                  createdAt: a.createdAt.toISOString(),
+                }))}
+              />
+            </CardBody>
+          </Card>
         </div>
         </div>
       </PageBody>

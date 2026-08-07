@@ -15,6 +15,10 @@ import {
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+// The pure model rather than a hand-copied union: this file used to declare
+// its own QuoteState, which meant adding a state to the real one silently left
+// this screen behind.
+import type { QuoteOutcome, QuoteState } from '@/lib/quotesModel'
 import {
   setValidUntilAction,
   declineQuoteAction,
@@ -22,15 +26,13 @@ import {
   convertQuoteAction,
 } from '../actions'
 
-type QuoteState = 'draft' | 'open' | 'expired' | 'accepted' | 'declined' | 'cancelled'
-
 type Quote = {
   id: number
   documentNumber: string | null
   state: QuoteState
   validUntil: string | null
   daysRemaining: number | null
-  outcome: 'open' | 'accepted' | 'declined'
+  outcome: QuoteOutcome
   lostReason: string | null
   convertedToId: number | null
   convertedToNumber: string | null

@@ -26,6 +26,8 @@ import {
 } from '../src/lib/site/onlineStore'
 import {
   placePublicOrder,
+  popularProducts,
+  productsOnSpecial,
   publishedProduct,
   publishedProducts,
   resolveSectionContent,
@@ -333,6 +335,126 @@ async function main() {
     ])
     ok('an empty pick list shows nothing, not everything', none.products?.length === 0, `${none.products?.length}`)
   }
+
+  console.log('\n— The self-maintaining product rules —')
+
+  /*
+   * ── THE REGRESSION THIS EXISTS FOR ──────────────────────────────────
+   *
+   * `popularProducts` originally ranked the best sellers and THEN applied the
+   * publish rules. On a shop publishing a handful of a large catalogue, every
+   * one of the top rows was something it does not sell online, so the filter
+   * removed the lot and the row came back empty while the shop plainly had
+   * recent sales. Over-fetching a fixed multiple only moves the number at
+   * which that happens.
+   *
+   * The fix put the publish filter INSIDE the ranking query. This asserts the
+   * property that fix guarantees: whatever comes back is published, and if
+   * anything published has sold recently, something comes back.
+   */
+  const popular = await popularProducts(context, 8)
+
+  /*
+   * "Is each of these published?" asked of the publish query ITSELF, by id.
+   *
+   * NOT by membership of a fetched list: `publishedProducts` caps at 120, and
+   * this shop publishes far more than that, so a sampled set would report
+   * perfectly well-published products as missing. That mistake failed this
+   * assertion on eight real products before the cap was the obvious culprit —
+   * the sample is the thing that was wrong, not the row.
+   */
+  const backCheck = popular.length
+    ? await publishedProducts(context, {
+        ids: popular.map((p) => p.id),
+        limit: popular.length,
+      })
+    : []
+  ok(
+    'every best seller returned is actually published',
+    backCheck.length === popular.length,
+    `${backCheck.length} of ${popular.length} confirmed`,
+  )
+
+  /*
+   * Does anything published have a recent sale at all? If so the row must not
+   * be empty — that is exactly the regression.
+   *
+   * The publish rule is expressed in SQL here rather than by listing ids, for
+   * the same reason as above: a shop can publish more products than any one
+   * query returns, so the question has to be asked of the whole catalogue.
+   */
+  const [recent] = await siteQuery<Record<string, unknown>>(
+    SITE,
+    `SELECT COUNT(DISTINCT l.product_id) AS n
+       FROM sales_document_lines l
+       JOIN sales_documents d ON d.id = l.document_id
+       JOIN products p ON p.id = l.product_id
+       JOIN product_prices pp
+         ON pp.product_id = p.id
+        AND pp.price_structure_id = COALESCE(?, (
+              SELECT id FROM price_structures WHERE is_default = 1 ORDER BY id LIMIT 1
+            ))
+      WHERE d.status = 'finalised'
+        AND d.doc_type IN ('invoice','credit_note')
+        AND d.document_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+        AND p.is_archived = 0
+        AND p.product_type IN ('normal','returnable')
+        AND pp.selling_price_incl > 0`,
+    [context.settings.priceStructureId],
+  )
+  const soldRecently = Number(recent?.n ?? 0)
+  if (soldRecently > 0) {
+    ok(
+      'a published product with recent sales reaches the best-seller row',
+      popular.length > 0,
+      `${soldRecently} published products sold recently, row returned ${popular.length}`,
+    )
+  } else {
+    ok('nothing published has sold recently, so an empty row is correct', popular.length === 0)
+  }
+
+  ok('the best-seller row honours its limit', (await popularProducts(context, 2)).length <= 2)
+
+  /*
+   * The specials rule answers "what is reduced" by pricing the catalogue the
+   * way the shop does and keeping what came back struck through — so a row it
+   * returns can never disagree with the shelf. Assert exactly that.
+   */
+  const onSpecial = await productsOnSpecial(context, 8)
+  ok(
+    'every product on the specials row really is reduced',
+    onSpecial.every((p) => p.wasPriceIncl !== null && p.wasPriceIncl > p.priceIncl),
+    onSpecial.map((p) => `${p.id}:${p.wasPriceIncl}->${p.priceIncl}`).join(' ') || 'none on special',
+  )
+  const specialsBackCheck = onSpecial.length
+    ? await publishedProducts(context, {
+        ids: onSpecial.map((p) => p.id),
+        limit: onSpecial.length,
+      })
+    : []
+  ok(
+    'every product on the specials row is published',
+    specialsBackCheck.length === onSpecial.length,
+    `${specialsBackCheck.length} of ${onSpecial.length} confirmed`,
+  )
+  ok(
+    'the specials row is sorted by biggest saving first',
+    onSpecial.every(
+      (p, i) =>
+        i === 0 ||
+        (onSpecial[i - 1].wasPriceIncl ?? 0) - onSpecial[i - 1].priceIncl >=
+          (p.wasPriceIncl ?? 0) - p.priceIncl,
+    ),
+  )
+
+  // Both rules go through resolveSectionContent in the shop, so the wiring
+  // matters as much as the functions.
+  const [specialRow, popularRow] = await resolveSectionContent(context, [
+    { kind: 'products', source: 'special', maxItems: 4 },
+    { kind: 'products', source: 'popular', maxItems: 4 },
+  ])
+  ok('the specials rule is wired into the resolver', Array.isArray(specialRow.products))
+  ok('the best-seller rule is wired into the resolver', Array.isArray(popularRow.products))
 
   /* ── Restore ──────────────────────────────────────────────────────────── */
   console.log('\n— Cleanup —')

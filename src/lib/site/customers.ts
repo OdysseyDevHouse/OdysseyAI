@@ -9,6 +9,7 @@ import {
   type AccountType,
 } from '../accountTypes'
 import { isEmail } from './customerLookups'
+import { resolveMasterCode } from './masterCodes'
 import { logActivityTx, type Actor } from './activityLog'
 import { removeDocumentsFor } from './partyDocuments'
 import { removeCommentsFor } from './partyComments'
@@ -365,10 +366,14 @@ export async function createCustomer(
   actor: Actor,
   input: CustomerInput,
 ): Promise<SaveResult> {
-  const invalid = validateCustomer(input)
+  // BEFORE validate, which rejects a blank code — see masterCodes.ts. Every
+  // creation path lands here, so the till's quick-add gets a code too.
+  const withCode = { ...input, code: await resolveMasterCode(siteId, 'customer', input.code) }
+
+  const invalid = validateCustomer(withCode)
   if (invalid) return { ok: false, error: invalid }
 
-  const code = input.code.trim()
+  const code = withCode.code.trim()
   const clash = await siteQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM customers WHERE code = ? LIMIT 1',
@@ -381,7 +386,7 @@ export async function createCustomer(
     const [res] = await tx.execute(
       `INSERT INTO customers (${COLUMN_LIST})
        VALUES (${Array.from({ length: placeholders }, () => '?').join(',')})`,
-      writableColumns(input) as never,
+      writableColumns(withCode) as never,
     )
     const id = (res as { insertId: number }).insertId
 

@@ -1,6 +1,6 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 
 /**
  * Document numbering.
@@ -234,6 +234,154 @@ export async function updateSequence(
     [input.prefix.trim(), input.nextNumber, input.padding, input.resetPeriod, docType],
   )
   return { ok: true }
+}
+
+/* ── Master-data codes ──────────────────────────────────────────────────────
+ *
+ * Customer, supplier and product codes reuse the sequence machinery above but
+ * NOT its rules. See sql/site/062_master_data_codes.sql for why: a document
+ * number is a legal artefact that must be accounted for, a master-data code is
+ * an internal reference where a gap costs nothing.
+ *
+ * Three consequences follow from that, and each is a deliberate departure from
+ * the document path:
+ *
+ * 1. It opens its own connection. nextDocumentNumber must join the caller's
+ *    transaction so the number and the document commit together; here the
+ *    opposite is wanted. A customer whose INSERT fails on a duplicate email
+ *    should not roll the counter back into a value the next save will collide
+ *    with, and holding the sequence lock across a whole product save — which
+ *    resolves VAT and writes properties — would serialise every till adding a
+ *    customer.
+ *
+ * 2. A clash is skipped, not fatal. The counter starts at 1 on a store that
+ *    already types codes by hand, so CUST00001 may well exist. Refusing to
+ *    save would strand the user on a form with an error they cannot act on;
+ *    stepping past the taken code is what they would do themselves.
+ *
+ * 3. It never throws. A missing sequence row means a site migrated before this
+ *    existed. Returning null lets the caller fall back to whatever the user
+ *    typed, rather than making an unrelated screen fail to save.
+ */
+
+/** Which table each master-data code must be unique in. */
+const CODE_TABLES: Record<string, string> = {
+  customer: 'customers',
+  supplier: 'suppliers',
+  product: 'products',
+}
+
+export type CodeDocType = 'customer' | 'supplier' | 'product'
+
+/**
+ * Claims the next free code for a customer, supplier or product.
+ *
+ * Returns null when the sequence is missing or every candidate in a reasonable
+ * window is taken — the caller then keeps whatever code the user supplied.
+ *
+ * The loop bound is the point of the design: without it, a store that has
+ * hand-typed PRD00001..PRD09000 would spin the counter forward one query at a
+ * time on every save. Twenty attempts nudges past the odd collision; more than
+ * that means the numbering does not fit the data, and asking the user to
+ * choose a prefix beats silently hammering the database.
+ */
+export async function nextMasterCode(
+  siteId: number,
+  docType: CodeDocType,
+): Promise<string | null> {
+  const table = CODE_TABLES[docType]
+  if (!table) return null
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const code = await claimCode(siteId, docType)
+    if (!code) return null
+
+    const taken = await siteQueryOne<RowDataPacket & { id: number }>(
+      siteId,
+      `SELECT id FROM ${table} WHERE code = ? LIMIT 1`,
+      [code],
+    )
+    if (!taken) return code
+  }
+  return null
+}
+
+/**
+ * One atomic claim.
+ *
+ * ── WHY THIS NEEDS ITS OWN TRANSACTION ───────────────────────────────────
+ *
+ * The UPDATE alone is atomic, but the value it wrote is read by a SECOND
+ * statement — and `last_issued_number` is a column, not a per-session value
+ * like LAST_INSERT_ID. On a pooled connection with no transaction, each
+ * statement commits as it runs, so two concurrent claims interleave as:
+ *
+ *   A: UPDATE (last_issued = 13)
+ *   B: UPDATE (last_issued = 14)
+ *   A: SELECT -> 14        ← A reads B's write
+ *   B: SELECT -> 14        ← and so does B
+ *
+ * Both then return CUST0014, the uniqueness re-check in nextMasterCode sees
+ * nothing taken yet for either, and the second INSERT dies on the unique
+ * index. A concurrency test caught exactly this; it is invisible sequentially.
+ *
+ * Wrapping both statements in one transaction fixes it: the UPDATE takes the
+ * exclusive row lock and holds it until COMMIT, so B's UPDATE blocks until A
+ * has read its own value back. This is the same discipline as
+ * nextDocumentNumber — which gets it for free by joining the caller's
+ * transaction — expressed here, where there is no caller transaction to join.
+ *
+ * A short, dedicated transaction rather than the caller's: see the module note
+ * above on why a master-data code must NOT roll back with the row it names.
+ */
+async function claimCode(siteId: number, docType: string): Promise<string | null> {
+  return siteTransaction(siteId, async (tx) => {
+    const [result] = await tx.execute(
+      `UPDATE document_sequences
+          SET last_issued_number = next_number,
+              next_number = next_number + 1,
+              last_issued_at = NOW()
+        WHERE doc_type = ?`,
+      [docType] as never,
+    )
+    if ((result as { affectedRows: number }).affectedRows === 0) return null
+
+    const [rows] = await tx.execute(
+      'SELECT prefix, last_issued_number, padding FROM document_sequences WHERE doc_type = ?',
+      [docType] as never,
+    )
+    const row = (rows as Row[])[0]
+    if (!row) return null
+
+    // No period key: these codes never carry a year. A customer created in
+    // 2026 is not a different customer in 2027, and CUST-2026-00001 would
+    // suggest the account itself expires.
+    return formatNumber(
+      String(row.prefix ?? ''),
+      Number(row.last_issued_number),
+      Number(row.padding),
+      null,
+    )
+  })
+}
+
+/**
+ * What the next code WOULD be. Claims nothing, so an abandoned form burns no
+ * codes — the real one is taken on save.
+ *
+ * Because it claims nothing, two people opening New Customer at the same
+ * moment both see the same preview and the second one saves under the next
+ * code up. That is the right trade: showing a code the user cannot rely on is
+ * a smaller problem than punching a hole in the numbering for every form
+ * somebody opened and thought better of.
+ */
+export async function previewMasterCode(
+  siteId: number,
+  docType: CodeDocType,
+): Promise<string | null> {
+  const sequence = await getSequence(siteId, docType)
+  if (!sequence) return null
+  return formatNumber(sequence.prefix, sequence.nextNumber, sequence.padding, null)
 }
 
 export type SequenceCheck = {

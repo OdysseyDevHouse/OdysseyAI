@@ -71,7 +71,9 @@ export async function writeOffSerialAction(
   _prev: SerialActionState,
   form: FormData,
 ): Promise<SerialActionState> {
-  const ctx = await actorForOrThrow('products.edit')
+  // Writing off a serial destroys stock value — that is a stock adjustment,
+  // not a product edit, however much it looks like one from this screen.
+  const ctx = await actorForOrThrow('stock.adjust')
   const { siteId, actor } = ctx
 
   const serialId = Number(form.get('serialId'))

@@ -4,6 +4,8 @@ import { siteExecute, siteQuery, siteQueryOne, siteTransaction } from '../siteDb
 import { round, toNum } from '../decimals'
 import { saveDraft, type LineInput } from './salesDocuments'
 import { getSetting } from './settings'
+import { accountCanCover, customerAccount } from './customerAuth'
+import { notifyStatusReached } from './orderNotify'
 import { getOnlineSettings, listOrderStatuses, type OrderStatus } from './onlineStore'
 
 /**
@@ -63,6 +65,8 @@ export type OnlineOrder = {
   documentNumber: string | null
   documentStatus: string | null
   customerId: number | null
+  /** The shopper asked to charge this to their account when they placed it. */
+  payOnAccount: boolean
   contactName: string
   contactPhone: string
   contactEmail: string
@@ -118,6 +122,7 @@ function mapOrder(r: Row): OnlineOrder {
     documentNumber: (r.document_number as string | null) ?? null,
     documentStatus: (r.document_status as string | null) ?? null,
     customerId: r.customer_id === null ? null : Number(r.customer_id),
+    payOnAccount: !!r.pay_on_account,
     contactName: String(r.contact_name ?? ''),
     contactPhone: String(r.contact_phone ?? ''),
     contactEmail: String(r.contact_email ?? ''),
@@ -378,6 +383,31 @@ export async function acceptOrder(
   }
 
   const settings = await getOnlineSettings(siteId)
+
+  /*
+   * ── An account order is re-checked against the credit AS IT IS NOW ──────
+   *
+   * The check at checkout was against the balance at that moment. Between then
+   * and now the customer may have bought in store, had a payment reverse, or
+   * been put on hold — and this is the point where the debt actually becomes
+   * real, because the invoice below posts to their account.
+   *
+   * It REFUSES rather than silently converting to a cash sale. Staff are
+   * standing in front of the customer and can take payment another way; an
+   * invoice quietly written against an over-limit account is discovered at
+   * month end by whoever chases it.
+   */
+  if (order.payOnAccount && order.customerId) {
+    const account = await customerAccount(siteId, order.customerId)
+    const allowed = accountCanCover(account, order.totalIncl)
+    if (!allowed.ok) {
+      return {
+        ok: false,
+        error: `${allowed.reason} Take payment another way, or ask them to settle first.`,
+      }
+    }
+  }
+
   const productIds = order.lines
     .map((l) => l.productId)
     .filter((id): id is number => id !== null)
@@ -494,6 +524,10 @@ export async function acceptOrder(
     }
   }
 
+  // Accepting also MOVES the order, so it announces itself the same way a
+  // manual move does. After the link above, for the same reason.
+  await notifyStatusReached(siteId, orderId, landing)
+
   return { ok: true, documentId: saved.id, repriced, alreadyAccepted: false }
 }
 
@@ -524,6 +558,17 @@ export async function moveOrderStatus(
     statusId,
     orderId,
   ])
+
+  /*
+   * AFTER the write, and deliberately not awaited into the result.
+   *
+   * An email cannot be rolled back, so it must not be sent before the change
+   * it announces is committed. And a mail server that is down must not stop
+   * staff working the queue — `notifyStatusReached` never throws, and its
+   * outcome does not change what this function returns.
+   */
+  await notifyStatusReached(siteId, orderId, target)
+
   return { ok: true }
 }
 

@@ -144,3 +144,22 @@ export async function publicSiteName(siteId: number): Promise<string | null> {
   if (!row) return null
   return row.trading_name?.trim() || row.company_name
 }
+
+/**
+ * The ids of every active site, for unattended background work.
+ *
+ * Ids only, and deliberately so: this is for a scheduler sweeping sites with no
+ * user in the picture, and it must not become a way to enumerate company
+ * details. Anything needing more than an id should go through the user-scoped
+ * functions above.
+ *
+ * Suspended sites are EXCLUDED — unlike `listSitesForUser`, which includes them
+ * so their owner can still sign in and settle the account. A suspended site
+ * should stop emailing reports out, not carry on as though nothing happened.
+ */
+export async function activeSiteIds(): Promise<number[]> {
+  const rows = await query<{ id: number }>(
+    `SELECT id FROM cp2_sites WHERE status = 'active' ORDER BY id`,
+  )
+  return rows.map((r) => Number(r.id))
+}

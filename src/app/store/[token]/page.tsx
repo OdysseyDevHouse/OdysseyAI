@@ -80,11 +80,16 @@ export default async function StorePage({
     ...resolved[i],
   }))
   const anythingToShow = content.some(
-    ({ section, products, departments }) =>
+    ({ section, products, departments, image }) =>
       (section.kind === 'products' && (products?.length ?? 0) > 0) ||
       (section.kind === 'categories' && (departments?.length ?? 0) > 0) ||
       (section.kind === 'cards' && (section.cards ?? []).some((c) => c.heading || c.text)) ||
-      (section.kind === 'hero' && (layout.theme.heroHeadline || layout.theme.heroSubtext)),
+      (section.kind === 'hero' && (layout.theme.heroHeadline || layout.theme.heroSubtext)) ||
+      // Mirrors sectionBody: a banner with no picture and a paragraph with no
+      // words both render nothing, and a page of only those must still fall
+      // back to the catalogue rather than showing a blank shop.
+      (section.kind === 'banner' && Boolean(image)) ||
+      (section.kind === 'text' && Boolean(section.text?.trim() || section.title)),
   )
 
   // A front page that would render nothing is worse than no front page: fall
@@ -115,6 +120,10 @@ export default async function StorePage({
         showPhotos: settings.showPhotos,
         showBrands: settings.showBrands,
       }}
+      // The PUBLIC route: it re-checks the store is open before serving a
+      // byte. The builder passes the back-office one, which does not — see
+      // ImageSrc on why that difference lives in the callers.
+      imageSrc={(imageId) => `/api/store-images/${token}/shop/${imageId}`}
     />
   )
 }

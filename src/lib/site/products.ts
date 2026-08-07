@@ -12,6 +12,7 @@ import {
   type PriceCalcId,
 } from '../productProperties'
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
+import { resolveMasterCode } from './masterCodes'
 
 export type Product = {
   id: number
@@ -344,6 +345,15 @@ export type ProductPick = {
   productType: ProductTypeId
   stockOnHand: number
   averageCost: number
+  /**
+   * The default-structure selling price, VAT inclusive.
+   *
+   * Carried so a picker can show what a product costs TODAY. The specials form
+   * needs it: a marked-down price means nothing without the figure it is
+   * marked down from, and the discount-percentage box is worked out against it.
+   */
+  sellingIncl: number
+  departmentId: number | null
 }
 
 /**
@@ -376,7 +386,14 @@ export async function searchProductsForPicker(
   const limit = Math.min(Math.max(opts.limit ?? 20, 1), 50)
   const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
     siteId,
-    `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand, p.average_cost
+    `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand,
+            p.average_cost, p.department_id,
+            -- The DEFAULT structure's price. A picker shows one number, so it
+            -- shows the shelf price rather than making the caller choose.
+            (SELECT pp.selling_price_incl FROM product_prices pp
+              JOIN price_structures ps ON ps.id = pp.price_structure_id
+             WHERE pp.product_id = p.id
+             ORDER BY ps.is_default DESC, ps.id LIMIT 1) AS selling_incl
        FROM products p
       WHERE ${where.join(' AND ')}
       ORDER BY p.description ASC
@@ -391,6 +408,8 @@ export async function searchProductsForPicker(
     productType: toProductType(r.product_type),
     stockOnHand: toNum(r.stock_on_hand),
     averageCost: toNum(r.average_cost),
+    sellingIncl: toNum(r.selling_incl),
+    departmentId: r.department_id === null ? null : Number(r.department_id),
   }))
 }
 
@@ -596,10 +615,12 @@ export async function createProduct(
   siteId: number,
   input: ProductInput,
 ): Promise<SaveResult> {
-  const invalid = validateProduct(input)
+  // BEFORE validate, which rejects a blank code — see masterCodes.ts.
+  const code = await resolveMasterCode(siteId, 'product', input.code)
+
+  const invalid = validateProduct({ ...input, code })
   if (invalid) return { ok: false, error: invalid }
 
-  const code = input.code.trim()
   const clash = await siteQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM products WHERE code = ? LIMIT 1',

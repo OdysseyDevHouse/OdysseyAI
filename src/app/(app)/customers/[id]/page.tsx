@@ -3,6 +3,8 @@ import { requireCapability } from '@/lib/auth'
 import { getCustomer } from '@/lib/site/customers'
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
 import { listActivity } from '@/lib/site/activityLog'
+import { getCustomerLogin } from '@/lib/site/customerAuth'
+import OnlineAccess from '../OnlineAccess'
 import { listContacts } from '@/lib/site/partyContacts'
 import { listDocuments } from '@/lib/site/partyDocuments'
 import { listComments } from '@/lib/site/partyComments'
@@ -28,6 +30,10 @@ import { autoAllocates } from '@/lib/accountTypes'
 import TransactionsTab from './TransactionsTab'
 import ActivityTable from './ActivityTable'
 import { CreditTab } from './CreditTab'
+import { LoyaltyTab } from './LoyaltyTab'
+import { getLoyaltySettings, getMember, listLedger as listLoyaltyLedger } from '@/lib/site/loyalty'
+import { listVouchers, getCardProgress } from '@/lib/site/loyaltyCards'
+import { listWallet } from '@/lib/site/loyaltyWallet'
 import ContactsPanel from '@/components/party/ContactsPanel'
 import DocumentsPanel from '@/components/party/DocumentsPanel'
 import CommentsPanel from '@/components/party/CommentsPanel'
@@ -42,6 +48,8 @@ type Tab =
   | 'comments'
   | 'transactions'
   | 'credit'
+  | 'loyalty'
+  | 'online'
   | 'activity'
 
 const TABS: readonly Tab[] = [
@@ -51,11 +59,80 @@ const TABS: readonly Tab[] = [
   'comments',
   'transactions',
   'credit',
+  'loyalty',
+  'online',
   'activity',
 ]
 
 function toTab(value: string | undefined): Tab {
   return TABS.includes(value as Tab) ? (value as Tab) : 'details'
+}
+
+function when(date: Date | null): string {
+  if (!date) return ''
+  return new Date(date).toLocaleString('en-ZA', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/** Everything the loyalty tab shows, shaped for the client component. */
+async function loadLoyalty(siteId: number, customerId: number) {
+  const settings = await getLoyaltySettings(siteId)
+
+  const [member, ledger, vouchers, cards, wallet] = await Promise.all([
+    getMember(siteId, customerId, settings),
+    listLoyaltyLedger(siteId, customerId),
+    listVouchers(siteId, { customerId }),
+    getCardProgress(siteId, customerId),
+    listWallet(siteId, customerId),
+  ])
+  if (!member) return null
+
+  return {
+    enabled: settings.enabled,
+    member,
+    ledger: ledger.map((e) => ({
+      id: e.id,
+      when: when(e.createdAt),
+      entryType: e.entryType,
+      points: e.points,
+      documentNumber: e.documentNumber,
+      note: e.note,
+      userName: e.userName,
+    })),
+    vouchers: vouchers.map((v) => ({
+      id: v.id,
+      code: v.code,
+      description: v.description,
+      rewardLabel:
+        v.rewardType === 'free_item'
+          ? (v.rewardProductName ?? 'A free product')
+          : formatMoney(v.rewardValue),
+      status: v.status,
+      expiresOn: v.expiresOn,
+      redeemedDocNumber: v.redeemedDocNumber,
+    })),
+    cards: cards.map((c) => ({
+      cardId: c.cardId,
+      name: c.name,
+      stamps: c.stamps,
+      requiredStamps: c.requiredStamps,
+      rewardLabel: c.rewardLabel,
+    })),
+    wallet: wallet.map((w) => ({
+      id: w.id,
+      when: when(w.createdAt),
+      entryType: w.entryType,
+      amount: w.amount,
+      tenderName: w.tenderName,
+      documentNumber: w.documentNumber,
+      note: w.note,
+    })),
+  }
 }
 
 export default async function CustomerPage({
@@ -81,6 +158,7 @@ export default async function CustomerPage({
     reps,
     categories,
     activity,
+    onlineLogin,
     ledger,
     aging,
     debits,
@@ -95,6 +173,7 @@ export default async function CustomerPage({
     listSalesReps(siteId),
     listCustomerCategories(siteId),
     listActivity(siteId, 'customer', customerId),
+    getCustomerLogin(siteId, customerId),
     listLedger(siteId, customerId),
     agingFor(siteId, customerId),
     openDebits(siteId, customerId),
@@ -104,6 +183,12 @@ export default async function CustomerPage({
     listComments(siteId, 'customer', customerId),
     accountCredit(siteId, customerId),
   ])
+
+  // Loyalty is loaded separately and defensively: a site that has never run the
+  // migration has no loyalty tables, and a customer screen must still open.
+  const loyalty = can(capabilities, 'loyalty.view')
+    ? await loadLoyalty(siteId, customerId).catch(() => null)
+    : null
 
   if (!customer) notFound()
 
@@ -213,6 +298,19 @@ export default async function CustomerPage({
               href: `/customers/${customerId}?tab=credit`,
             },
             {
+              value: 'loyalty',
+              label: 'Loyalty',
+              icon: <Icons.Gem size={15} />,
+              count: loyalty ? Math.floor(loyalty.member.points) : 0,
+              href: `/customers/${customerId}?tab=loyalty`,
+            },
+            {
+              value: 'online',
+              label: 'Online access',
+              icon: <Icons.Globe size={15} />,
+              href: `/customers/${customerId}?tab=online`,
+            },
+            {
               value: 'activity',
               label: 'Activity',
               icon: <Icons.History size={15} />,
@@ -301,6 +399,38 @@ export default async function CustomerPage({
                 outstanding: d.outstanding,
               })),
             }}
+          />
+        ) : active === 'loyalty' ? (
+          loyalty ? (
+            <LoyaltyTab
+              customerId={customerId}
+              enabled={loyalty.enabled}
+              points={loyalty.member.points}
+              pointsValue={loyalty.member.pointsValue}
+              walletBalance={loyalty.member.walletBalance}
+              tierName={loyalty.member.tier?.name ?? ''}
+              tierColor={loyalty.member.tier?.color ?? ''}
+              qualifyingSpend={loyalty.member.qualifyingSpend}
+              nextTierName={loyalty.member.next?.tier.name ?? null}
+              nextTierShortfall={loyalty.member.next?.shortfall ?? 0}
+              ledger={loyalty.ledger}
+              vouchers={loyalty.vouchers}
+              cards={loyalty.cards}
+              wallet={loyalty.wallet}
+              canAdjust={can(capabilities, 'loyalty.adjust')}
+            />
+          ) : (
+            <Card>
+              <Callout tone="warning">
+                Loyalty could not be loaded for this customer.
+              </Callout>
+            </Card>
+          )
+        ) : active === 'online' ? (
+          <OnlineAccess
+            customerId={customerId}
+            customerEmail={customer.email ?? ''}
+            login={onlineLogin}
           />
         ) : active === 'activity' ? (
           <Card>

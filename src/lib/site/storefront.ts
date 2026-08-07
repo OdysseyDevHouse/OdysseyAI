@@ -10,6 +10,9 @@ import {
   type DeliveryZone,
   type OnlineSettings,
 } from './onlineStore'
+import { accountCanCover, customerAccount } from './customerAuth'
+import { liveSpecials, specialPriceFor } from './specials'
+import { storefrontImagesByIds, type StorefrontImage } from './storefrontImages'
 
 /**
  * What the PUBLIC storefront may see and do.
@@ -57,12 +60,11 @@ export type StorefrontProduct = {
   /** The maker's name, when the shop records one. */
   brand: string | null
   /**
-   * The price before a reduction, when this product is on special.
+   * The shelf price, when a special has reduced this product.
    *
-   * Always null today: this schema has one selling price per structure and no
-   * promotions table. Carried on the type because the tiles and the product
-   * page draw savings from it, so a specials feature becomes a query change
-   * rather than a change to every screen that shows a price.
+   * Null when nothing applies. When it is set, `priceIncl` is ALREADY the
+   * reduced price — so every total computed downstream is the real one, and
+   * this is only what gets struck through beside it.
    */
   wasPriceIncl: number | null
   /**
@@ -77,6 +79,10 @@ export type StorefrontProduct = {
 }
 
 export type StorefrontDepartment = { id: number; name: string; productCount: number }
+
+// Re-exported so a caller rendering a front page has one import for everything
+// on it — the same reasoning as storefrontLayout re-exporting the model.
+export type { StorefrontImage }
 
 export type StorefrontContext = {
   siteId: number
@@ -275,7 +281,7 @@ export async function publishedProducts(
     params,
   )
 
-  return rows.map((r) => mapStorefrontProduct(r, context.settings))
+  return withSpecials(context.siteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
 }
 
 /** One product, but ONLY if the store actually publishes it. */
@@ -291,7 +297,9 @@ export async function publishedProduct(
     [context.settings.priceStructureId, productId],
   )
   const r = rows[0]
-  return r ? mapStorefrontProduct(r, context.settings) : null
+  if (!r) return null
+  const [priced] = await withSpecials(context.siteId, [mapStorefrontProduct(r, context.settings)])
+  return priced ?? null
 }
 
 /** Departments worth showing: the ones with something published in them. */
@@ -341,7 +349,172 @@ export async function newestProducts(
       LIMIT ${capped}`,
     [context.settings.priceStructureId],
   )
-  return rows.map((r) => mapStorefrontProduct(r, context.settings))
+  return withSpecials(context.siteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+}
+
+/**
+ * Published products that a live special has actually reduced.
+ *
+ * ── WHY THIS ASKS THE PRICING ENGINE RATHER THAN THE SPECIALS TABLE ──────
+ *
+ * A special can name a product OR a whole department, can be scheduled, can be
+ * inactive, and can be a kind that does not reduce a shelf price at all (a
+ * buy-two-get-one is not a markdown). Reading `special_items` and calling the
+ * product ids in it "the specials" would put products on the front page at
+ * their normal price, and miss every product covered by a departmental one.
+ *
+ * So the question is asked the only way that cannot disagree with the shelf:
+ * price a page of the catalogue exactly as the shop does, then keep the rows
+ * where a `wasPriceIncl` actually appeared. If it is struck through in the
+ * row, it is on special; if it is not, it is not.
+ *
+ * ── WHY IT SCANS A WINDOW ────────────────────────────────────────────────
+ *
+ * `withSpecials` prices whatever list it is handed, so the candidates have to
+ * be fetched first. The window is capped: a catalogue of 40 000 products must
+ * not be paged through to fill a row of eight. A shop whose specials all sit
+ * alphabetically past the window shows fewer than it could — the honest
+ * failure, and far better than a front page that takes ten seconds.
+ */
+const SPECIALS_SCAN_LIMIT = 120
+
+export async function productsOnSpecial(
+  context: StorefrontContext,
+  limit: number,
+): Promise<StorefrontProduct[]> {
+  const capped = Math.min(Math.max(limit, 1), 24)
+
+  // No live specials means no query at all — the common case for most shops
+  // on most days.
+  const specials = await liveSpecials(context.siteId)
+  if (specials.length === 0) return []
+
+  const candidates = await publishedProducts(context, { limit: SPECIALS_SCAN_LIMIT })
+
+  // Already priced by publishedProducts, so a struck-through price IS the
+  // answer. The saving is computed once per product rather than inside the
+  // comparator, which a sort calls O(n log n) times for the same figures.
+  const reduced = candidates
+    .map((product) => ({ product, saving: (product.wasPriceIncl ?? 0) - product.priceIncl }))
+    .filter((entry) => entry.saving > 0)
+
+  // Biggest saving first: a specials row is a shop window, and the best deal
+  // earns the first tile.
+  reduced.sort((a, b) => b.saving - a.saving)
+  return reduced.slice(0, capped).map((entry) => entry.product)
+}
+
+/**
+ * The published products that have sold most recently.
+ *
+ * ── NINETY DAYS, AND WHY IT IS NOT "EVER" ────────────────────────────────
+ *
+ * All-time best sellers are a monument: the thing that sold well three years
+ * ago stays at the top of the front page forever, and no amount of trading
+ * changes it. A trailing window makes the row reflect the shop as it is now,
+ * and lets a new line reach the front page by actually selling.
+ *
+ * ── FINALISED ONLY, AND CREDIT NOTES SUBTRACT ────────────────────────────
+ *
+ * Quotes, orders and parked sales have not happened. Credit notes carry a
+ * negative qty by the sign convention in 015_sales_core.sql, so summing plain
+ * `qty` across both means a returned product correctly falls back down the
+ * list rather than counting twice.
+ *
+ * ── THE PUBLISH RULES ARE IN THE RANKING, NOT AFTER IT ───────────────────
+ *
+ * This query joins the catalogue and applies SELLABLE and the publish filter
+ * BEFORE taking the top N, so the N it returns are N publishable products.
+ *
+ * Ranking first and filtering afterwards looks equivalent and is not: a shop
+ * publishing 5 of its 40 000 products has a best-seller list whose first
+ * several hundred rows are all things it does not sell online, so the filter
+ * removes everything and the row comes back empty while the shop plainly has
+ * recent sales. Over-fetching a fixed multiple only moves the number at which
+ * that happens — it does not fix it. Found exactly that way on a real store.
+ */
+export async function popularProducts(
+  context: StorefrontContext,
+  limit: number,
+): Promise<StorefrontProduct[]> {
+  const capped = Math.min(Math.max(limit, 1), 24)
+
+  const rows = await siteQuery<Row>(
+    context.siteId,
+    `SELECT l.product_id, SUM(l.qty) AS sold
+       FROM sales_document_lines l
+       JOIN sales_documents d ON d.id = l.document_id
+       JOIN products p ON p.id = l.product_id
+       JOIN product_prices pp
+         ON pp.product_id = p.id
+        AND pp.price_structure_id = COALESCE(?, (
+              SELECT id FROM price_structures WHERE is_default = 1 ORDER BY id LIMIT 1
+            ))
+      WHERE d.status = 'finalised'
+        AND d.doc_type IN ('invoice','credit_note')
+        AND d.document_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+        AND l.product_id IS NOT NULL
+        AND ${SELLABLE}
+        AND ${publishFilter(context.settings.publishMode)}
+      GROUP BY l.product_id
+      HAVING sold > 0
+      ORDER BY sold DESC
+      LIMIT ${capped}`,
+    [context.settings.priceStructureId],
+  )
+
+  const ids = rows.map((r) => Number(r.product_id)).filter((id) => Number.isInteger(id) && id > 0)
+  if (ids.length === 0) return []
+
+  // Still fetched through the ordinary published query rather than selecting
+  // the columns here: that is the one place a storefront product is built, and
+  // it is what applies specials to the prices.
+  const products = await publishedProducts(context, { ids, limit: ids.length })
+
+  // publishedProducts returns them in FIELD() order — the id order it was
+  // given — which is already the sold-most-first order from above.
+  return products
+}
+
+/**
+ * Apply the shop's live specials to a list of products.
+ *
+ * ── ONE LOAD PER REQUEST, NOT ONE PER PRODUCT ────────────────────────────
+ *
+ * A listing renders 120 products; asking the database for the specials once
+ * per row would be 120 round trips to answer the same question. They are
+ * loaded once and the pure engine does the rest.
+ *
+ * ── THE SAME FUNCTION FEEDS THE SHOP AND THE ORDER ───────────────────────
+ *
+ * Which is why a shopper cannot be shown one price and charged another: there
+ * is no second place where a special price is worked out.
+ */
+async function withSpecials(
+  siteId: number,
+  products: StorefrontProduct[],
+): Promise<StorefrontProduct[]> {
+  if (products.length === 0) return products
+
+  const specials = await liveSpecials(siteId)
+  if (specials.length === 0) return products
+
+  const now = new Date()
+  return products.map((product) => {
+    const deal = specialPriceFor(
+      {
+        productId: product.id,
+        departmentId: product.departmentId,
+        priceIncl: product.priceIncl,
+      },
+      specials,
+      now,
+    )
+    if (!deal) return product
+    // The reduced price becomes THE price, and the old one is what gets
+    // struck through — so every total downstream is already the real one.
+    return { ...product, priceIncl: deal.priceIncl, wasPriceIncl: deal.wasPriceIncl }
+  })
 }
 
 /**
@@ -367,8 +540,8 @@ function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProdu
     priceIncl: toNum(r.price_incl),
     inStock: !!r.in_stock,
     stockOnHand: settings.showStock ? onHand : null,
-    // No promotions table yet — see the note on the type. Every screen that
-    // shows a saving already reads this, so adding one is a query change.
+    // Filled in by `withSpecials` after the query returns — specials are
+    // loaded once per request rather than once per product.
     wasPriceIncl: null,
     imageId: r.image_id === null || r.image_id === undefined ? null : Number(r.image_id),
     // Falls back to the product's own name: an <img> with no alt is invisible
@@ -396,10 +569,33 @@ export async function resolveSectionContent(
     source?: string
     departmentId?: number | null
     productIds?: number[]
+    imageId?: number | null
   }[],
-): Promise<{ products?: StorefrontProduct[]; departments?: StorefrontDepartment[] }[]> {
+): Promise<{
+  products?: StorefrontProduct[]
+  departments?: StorefrontDepartment[]
+  image?: StorefrontImage | null
+}[]> {
+  /*
+   * Every banner's picture, in ONE query for the whole page.
+   *
+   * Resolved up front rather than inside the map: a page can hold several
+   * banners, and asking per section is several round trips to answer one
+   * question. An id that no longer resolves is simply absent — see the module
+   * header of storefrontImages.ts on why a deleted picture is not an error.
+   */
+  const bannerIds = sections
+    .filter((s) => s.kind === 'banner')
+    .map((s) => s.imageId)
+    .filter((id): id is number => typeof id === 'number' && id > 0)
+  const images = await storefrontImagesByIds(context.siteId, bannerIds)
+
   return Promise.all(
     sections.map(async (section) => {
+      if (section.kind === 'banner') {
+        return { image: section.imageId ? images.get(section.imageId) ?? null : null }
+      }
+
       if (section.kind === 'categories') {
         const all = await publishedDepartments(context)
         const max = section.maxItems ?? 0
@@ -410,6 +606,12 @@ export async function resolveSectionContent(
         const limit = section.maxItems ?? 8
         if (section.source === 'newest') {
           return { products: await newestProducts(context, limit) }
+        }
+        if (section.source === 'special') {
+          return { products: await productsOnSpecial(context, limit) }
+        }
+        if (section.source === 'popular') {
+          return { products: await popularProducts(context, limit) }
         }
         if (section.source === 'department' && section.departmentId) {
           return {
@@ -546,10 +748,28 @@ export type PublicOrderInput = {
   deliveryNotes?: string
   customerNote?: string
   lines: BasketLine[]
+  /**
+   * The signed-in customer, resolved from the session by the CALLER.
+   *
+   * Deliberately not a customer id in the payload. This function is reached
+   * from a server action a script can call with any body it likes, and an id
+   * taken from that body would let anyone charge any account in the shop.
+   * The caller must read it from the session cookie.
+   */
+  customerId?: number | null
+  /** Whether the shopper asked to charge it. Only a REQUEST — see below. */
+  payOnAccount?: boolean
 }
 
 export type PlaceOrderResult =
-  | { ok: true; orderId: number; orderNumber: string; total: number }
+  | {
+      ok: true
+      orderId: number
+      orderNumber: string
+      total: number
+      /** What the server DECIDED, which may differ from what was asked. */
+      onAccount: boolean
+    }
   | { ok: false; error: string }
 
 /** Sequential per store, and readable over the phone. */
@@ -670,6 +890,32 @@ export async function placePublicOrder(
 
   const total = round(goodsTotal + deliveryFee, 2)
 
+  /*
+   * ── Whether this goes on account is decided HERE, not by the browser ────
+   *
+   * `payOnAccount` in the payload is a request. Everything that grants it is
+   * re-checked server-side against the current record: the store allows it,
+   * the shopper is actually signed in, the account is open, and the credit
+   * covers TOTAL — which the browser did not compute and cannot influence.
+   *
+   * Refusing outright rather than silently falling back to pay-on-collection:
+   * a shopper who chose their account and then finds an invoice waiting has
+   * been told something untrue at the moment they committed.
+   */
+  let onAccount = false
+  if (input.payOnAccount) {
+    if (!settings.allowAccount) {
+      return { ok: false, error: 'This shop is not taking orders on account.' }
+    }
+    if (!input.customerId) {
+      return { ok: false, error: 'Please sign in to put this order on your account.' }
+    }
+    const account = await customerAccount(siteId, input.customerId)
+    const allowed = accountCanCover(account, total)
+    if (!allowed.ok) return { ok: false, error: allowed.reason }
+    onAccount = true
+  }
+
   // Where a new order lands is the store's choice, not this file's.
   const startStatus = (await listOrderStatuses(siteId)).find((s) => s.role === 'new')
   if (!startStatus) {
@@ -684,8 +930,9 @@ export async function placePublicOrder(
         `INSERT INTO online_orders
            (order_number, status_id, fulfilment, contact_name, contact_phone, contact_email,
             delivery_line1, delivery_line2, delivery_suburb, delivery_postcode, delivery_notes,
-            delivery_fee_incl, zone_id, total_incl, customer_note)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            delivery_fee_incl, zone_id, total_incl, customer_note,
+            customer_id, pay_on_account)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           orderNumber,
           startStatus.id,
@@ -702,6 +949,15 @@ export async function placePublicOrder(
           zoneId,
           total.toFixed(4),
           (input.customerNote ?? '').trim().slice(0, 500),
+          /*
+           * The customer is recorded whenever one is signed in, even for an
+           * order they are paying for now. Staff seeing "this is Jan's Spaza"
+           * on a collection order is useful, and it is what lets the shopper's
+           * own order history show every order rather than only the credit
+           * ones.
+           */
+          input.customerId ?? null,
+          onAccount ? 1 : 0,
         ],
       )
 
@@ -727,7 +983,7 @@ export async function placePublicOrder(
         )
       }
 
-      return { ok: true as const, orderId, orderNumber, total }
+      return { ok: true as const, orderId, orderNumber, total, onAccount }
     })
   } catch (error) {
     // Two shoppers checking out in the same instant can pick the same number;

@@ -28,6 +28,11 @@ import {
 } from '@/components/ui'
 import { formatMoney, formatQty, round } from '@/lib/decimals'
 import { lineTotals, documentTotals } from '@/lib/documentMath'
+import {
+  computeSpecials,
+  effectiveDiscountPct,
+  type Special,
+} from '@/lib/specialsEngine'
 import { deviceId, deviceLabel } from '@/lib/deviceId'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
@@ -45,7 +50,8 @@ import {
 import { createLaybyAction } from '../laybys/actions'
 import { claimTerminalAction } from '../../setup/terminals/actions'
 import { tillSignOutAction } from './pinActions'
-import TenderPad from './TenderPad'
+import TenderPad, { type LoyaltyStanding } from './TenderPad'
+import { tillStandingAction } from '@/app/(app)/loyalty/actions'
 import CustomerPicker from './CustomerPicker'
 import OverridePrompt from './OverridePrompt'
 
@@ -110,6 +116,7 @@ export default function TillScreen({
   cashRounding,
   canOverrideDiscount,
   canOverridePrice,
+  specials,
   operatorName,
 }: {
   terminals: Terminal[]
@@ -119,6 +126,13 @@ export default function TillScreen({
   cashRounding: number
   canOverrideDiscount: boolean
   canOverridePrice: boolean
+  /**
+   * The shop's live promotions, windows UNevaluated.
+   *
+   * Re-checked against the till's own clock on every basket change and on a
+   * timer, so a happy hour opens and closes mid-sale without a reload.
+   */
+  specials: Special[]
   /** Who entered a PIN to open this till. */
   operatorName: string
 }) {
@@ -134,6 +148,7 @@ export default function TillScreen({
   const [editing, setEditing] = useState<BasketLine | null>(null)
   const [receipt, setReceipt] = useState<{ number: string; change: number } | null>(null)
   const [pending, startTransition] = useTransition()
+  const [loyalty, setLoyalty] = useState<LoyaltyStanding | null>(null)
 
   const toast = useToast()
   const router = useRouter()
@@ -142,20 +157,85 @@ export default function TillScreen({
   // Terminal identity is browser-only, so it is resolved after mount.
   const [device, setDevice] = useState<{ id: string | null; label: string }>({ id: null, label: '' })
   useEffect(() => setDevice({ id: deviceId(), label: deviceLabel() }), [])
+
+  /* What the attached customer is holding.
+
+     Re-read whenever the customer changes AND whenever the tender pad opens: a
+     balance can move at another till while a basket sits on screen, and the
+     figure the cashier is about to quote should be the current one. Failures
+     are swallowed to null — loyalty must never be able to block a sale. */
+  useEffect(() => {
+    if (!customer) {
+      setLoyalty(null)
+      return
+    }
+    let cancelled = false
+    tillStandingAction(customer.id)
+      .then((standing) => {
+        if (!cancelled) setLoyalty(standing)
+      })
+      .catch(() => {
+        if (!cancelled) setLoyalty(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [customer, tendering])
   const terminal = device.id ? terminals.find((t) => t.deviceId === device.id) : undefined
 
+  /*
+   * ── Specials, re-checked as the clock moves ────────────────────────────
+   *
+   * A basket can sit open while a window opens or closes, so this ticks every
+   * half minute as well as on every basket change. A slip that kept a price
+   * the shop stopped offering ten minutes ago is a slip the till and the
+   * shelf edge disagree about.
+   */
+  const [specialsClock, setSpecialsClock] = useState(() => Date.now())
+  useEffect(() => {
+    if (specials.length === 0) return
+    const timer = setInterval(() => setSpecialsClock(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [specials.length])
+
+  const lineSpecials = useMemo(() => {
+    if (specials.length === 0) return lines.map(() => undefined)
+    return computeSpecials(
+      lines.map((line) => ({
+        productId: line.productId ?? -1,
+        departmentId: line.departmentId,
+        priceIncl: line.unitPriceIncl,
+        /*
+         * A refund line goes in at zero.
+         *
+         * It must keep its slot so the results stay index-aligned with the
+         * basket, but goods coming back neither qualify for a deal nor earn
+         * one — a three-for-two must not be completed by a return.
+         */
+        qty: Math.max(line.qty, 0),
+      })),
+      specials,
+      new Date(specialsClock),
+    ).lineSpecials
+    // specialsClock is the tick; it has no other reader.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, specials, specialsClock])
+
   const totals = useMemo(() => {
-    const computed = lines.map((line) => ({
+    const computed = lines.map((line, index) => ({
       ...lineTotals({
         qty: line.qty,
         unitPriceIncl: line.unitPriceIncl,
-        discountPct: line.discountPct,
+        // A special and a cashier's own discount do NOT stack — the better of
+        // the two applies. Compounding is how a staff discount during a
+        // promotion quietly sells below cost.
+        discountPct: effectiveDiscountPct(line.discountPct, lineSpecials[index]),
         vatRatePct: line.vatRatePct,
       }),
       vatRatePct: line.vatRatePct,
     }))
     return { perLine: computed, doc: documentTotals(computed) }
-  }, [lines])
+  }, [lines, lineSpecials])
 
   /* ── Search ──────────────────────────────────────────────────────────── */
 
@@ -253,7 +333,7 @@ export default function TillScreen({
       terminalId: terminal?.id ?? null,
       terminalCode: terminal?.code ?? null,
       priceStructureId,
-      lines: lines.map((line) => ({
+      lines: lines.map((line, index) => ({
         productId: line.productId,
         productCode: line.productCode,
         description: line.description,
@@ -261,16 +341,21 @@ export default function TillScreen({
         departmentId: line.departmentId,
         qty: line.qty,
         unitPriceIncl: line.unitPriceIncl,
-        discountPct: line.discountPct,
+        // What the screen showed, so the slip and the posted sale agree.
+        discountPct: effectiveDiscountPct(line.discountPct, lineSpecials[index]),
+        specialId: lineSpecials[index]?.specialId ?? null,
         vatRatePct: line.vatRatePct,
         unitCostExcl: line.unitCostExcl,
       })),
     }
   }
 
-  function finalise(paid: { tenderTypeId: number; amount: number; reference?: string | null }[]) {
+  function finalise(
+    paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
+    voucherCodes: string[] = [],
+  ) {
     startTransition(async () => {
-      const result = await finaliseSaleAction(documentId, salePayload(), paid)
+      const result = await finaliseSaleAction(documentId, salePayload(), paid, voucherCodes)
       if (!result.ok) {
         toast.error(result.error)
         return
@@ -332,7 +417,7 @@ export default function TillScreen({
       const result = await createLaybyAction({
         customerId: customer!.id,
         terminalId: terminal?.id ?? null,
-        lines: lines.map((line) => ({
+        lines: lines.map((line, index) => ({
           productId: line.productId,
           productCode: line.productCode,
           description: line.description,
@@ -340,7 +425,9 @@ export default function TillScreen({
           departmentId: line.departmentId,
           qty: line.qty,
           unitPriceIncl: line.unitPriceIncl,
-          discountPct: line.discountPct,
+          // What the screen showed, so the slip and the posted sale agree.
+        discountPct: effectiveDiscountPct(line.discountPct, lineSpecials[index]),
+        specialId: lineSpecials[index]?.specialId ?? null,
           vatRatePct: line.vatRatePct,
           unitCostExcl: line.unitCostExcl,
         })),
@@ -419,9 +506,28 @@ export default function TillScreen({
                           <div className="text-ink">{line.description}</div>
                           <div className="text-xs text-muted">
                             {line.productCode}
-                            {line.discountPct > 0 && (
-                              <span className="ml-2 text-warning">−{line.discountPct}%</span>
-                            )}
+                            {/*
+                              The special is NAMED, not just shown as a
+                              percentage. A cashier asked "why is that cheaper
+                              than the shelf?" needs to be able to answer, and
+                              a bare −20% does not tell them.
+
+                              Only shown when the special is what is actually
+                              in charge — a bigger manual discount overrides
+                              it, and crediting the promotion for that would
+                              be wrong.
+                            */}
+                            {lineSpecials[index] &&
+                              lineSpecials[index]!.pct >= line.discountPct && (
+                                <span className="ml-2 text-brand">
+                                  {lineSpecials[index]!.name} −
+                                  {Math.round(lineSpecials[index]!.pct * 10) / 10}%
+                                </span>
+                              )}
+                            {line.discountPct > 0 &&
+                              line.discountPct > (lineSpecials[index]?.pct ?? 0) && (
+                                <span className="ml-2 text-warning">−{line.discountPct}%</span>
+                              )}
                           </div>
                         </td>
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
@@ -628,6 +734,7 @@ export default function TillScreen({
         totalIncl={totals.doc.totalIncl}
         cashRounding={cashRounding}
         customer={customer}
+        loyalty={loyalty}
         pending={pending}
         onFinalise={finalise}
       />

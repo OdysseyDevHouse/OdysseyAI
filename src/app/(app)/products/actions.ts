@@ -447,7 +447,9 @@ export async function archiveProductAction(form: FormData): Promise<void> {
 }
 
 export async function deleteProductAction(form: FormData): Promise<void> {
-  const ctx = await actorForOrThrow('products.edit')
+  // Deleting is its own capability, not a stronger flavour of editing: somebody
+  // who fixes descriptions all day should not be able to remove the record.
+  const ctx = await actorForOrThrow('products.delete')
   const { siteId } = ctx
   const id = Number(form.get('id'))
   if (!Number.isFinite(id) || id <= 0) redirect('/products')

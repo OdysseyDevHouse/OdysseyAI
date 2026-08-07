@@ -8,6 +8,7 @@ import { getNumericSetting } from '@/lib/site/settings'
 import { can, capabilitiesForRole } from '@/lib/site/permissions'
 import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
+import { liveSpecials } from '@/lib/site/specials'
 import { PageHeader } from '@/components/ui'
 import TillScreen from './TillScreen'
 import TillGate from './TillGate'
@@ -39,12 +40,20 @@ export default async function NewSalePage() {
     ? await capabilitiesForRole(site.id, operator.roleId)
     : capabilities
 
-  const [terminals, tenders, saved, structures, cashRounding] = await Promise.all([
+  const [terminals, tenders, saved, structures, cashRounding, specials] = await Promise.all([
     listTerminals(site.id, false),
     listTenderTypes(site.id),
     listSaved(site.id),
     listPriceStructures(site.id),
     getNumericSetting(site.id, 'sales_cash_rounding'),
+    /*
+     * Sent WHOLE, with their windows unevaluated.
+     *
+     * The till re-checks them against its own clock on every basket change,
+     * so a happy hour starting at five begins on time even though this page
+     * was loaded at ten to.
+     */
+    liveSpecials(site.id),
   ])
 
   // The default structure is the shelf price; fall back to the first if none is
@@ -62,6 +71,7 @@ export default async function NewSalePage() {
         cashRounding={cashRounding}
         canOverrideDiscount={can(operatorCapabilities, 'sales.discount_override')}
         canOverridePrice={can(operatorCapabilities, 'sales.price_override')}
+        specials={specials}
         operatorName={till.name}
       />
     </div>

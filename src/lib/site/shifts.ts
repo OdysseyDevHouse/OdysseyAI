@@ -2,7 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
-import { getNumericSetting } from './settings'
+import { getNumericSetting, getSetting } from './settings'
 import type { Actor } from './activityLog'
 
 /**
@@ -19,12 +19,27 @@ import type { Actor } from './activityLog'
  * Only tenders flagged `counts_as_drawer_cash` are physically in the drawer, so
  * only those can be short. Card and EFT are reconciled against the bank, not
  * the till, and are reported for completeness rather than counted.
+ *
+ * WHAT A SHIFT OWNS depends on the site's mode. In 'terminal' mode it owns a
+ * register's drawer; in 'user' mode it owns one person and their own float,
+ * across whatever tills they worked. Everything below the point where a sale is
+ * banked is identical either way, because the reconciliation only ever keys on
+ * shift_id — which is exactly why one table serves both.
  */
+
+export type CashupMode = 'terminal' | 'user'
+
+/** How this site reconciles. Defensive, like every other setting read. */
+export async function cashupMode(siteId: number): Promise<CashupMode> {
+  return (await getSetting(siteId, 'cashup_mode')) === 'user' ? 'user' : 'terminal'
+}
 
 export type Shift = {
   id: number
-  terminalId: number
-  terminalCode: string
+  mode: CashupMode
+  /** Null in user mode — the person is the owner, not a register. */
+  terminalId: number | null
+  terminalCode: string | null
   userId: number | null
   userName: string
   openedAt: Date
@@ -43,8 +58,9 @@ type Row = RowDataPacket & Record<string, unknown>
 function mapShift(r: Row): Shift {
   return {
     id: Number(r.id),
-    terminalId: Number(r.terminal_id),
-    terminalCode: String(r.terminal_code),
+    mode: r.mode === 'user' ? 'user' : 'terminal',
+    terminalId: r.terminal_id === null ? null : Number(r.terminal_id),
+    terminalCode: (r.terminal_code as string | null) ?? null,
     userId: r.user_id === null ? null : Number(r.user_id),
     userName: String(r.user_name ?? ''),
     openedAt: r.opened_at as Date,
@@ -60,7 +76,7 @@ function mapShift(r: Row): Shift {
 }
 
 const SELECT_SHIFT = `
-  SELECT id, terminal_id, terminal_code, user_id, user_name, opened_at, closed_at,
+  SELECT id, mode, terminal_id, terminal_code, user_id, user_name, opened_at, closed_at,
          opening_float, counted_total, expected_total, variance, variance_note, closed_by_name
     FROM shifts
 `
@@ -70,19 +86,67 @@ export async function getShift(siteId: number, id: number): Promise<Shift | null
   return row ? mapShift(row) : null
 }
 
-/** The open shift on a till, if any. What the sale posting engine stamps onto documents. */
+/**
+ * The open shift on a till, if any.
+ *
+ * Scoped to terminal-mode rows: in user mode a till has no shift of its own,
+ * and matching one there would bank a waiter's sale into whichever colleague
+ * happened to be reconciling that register.
+ */
 export async function openShiftFor(siteId: number, terminalId: number): Promise<Shift | null> {
   const row = await siteQueryOne<Row>(
     siteId,
-    `${SELECT_SHIFT} WHERE terminal_id = ? AND closed_at IS NULL LIMIT 1`,
+    `${SELECT_SHIFT} WHERE terminal_id = ? AND mode = 'terminal' AND closed_at IS NULL LIMIT 1`,
     [terminalId],
   )
   return row ? mapShift(row) : null
 }
 
+/** The open shift belonging to a person, if any. The user-mode counterpart. */
+export async function openShiftForUser(siteId: number, userId: number): Promise<Shift | null> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `${SELECT_SHIFT} WHERE user_id = ? AND mode = 'user' AND closed_at IS NULL LIMIT 1`,
+    [userId],
+  )
+  return row ? mapShift(row) : null
+}
+
+/**
+ * Which shift banks a sale.
+ *
+ * THE HINGE OF THE WHOLE FEATURE. Everything downstream — the drawer position,
+ * the count screen, the variance — keys on shift_id alone, so getting this one
+ * lookup right is what makes both modes work without touching any of it.
+ *
+ * Null is a legitimate answer in both modes: a store that does not cash up
+ * still needs to trade, and a waiter who has not opened a shift must still be
+ * able to serve a table. The sale keeps its user_id and terminal_id either way,
+ * so nothing about it is lost — it simply belongs to no reconciliation.
+ */
+export async function shiftToBankInto(
+  siteId: number,
+  terminalId: number | null,
+  userId: number | null,
+): Promise<number | null> {
+  if ((await cashupMode(siteId)) === 'user') {
+    return userId ? ((await openShiftForUser(siteId, userId))?.id ?? null) : null
+  }
+  return terminalId ? ((await openShiftFor(siteId, terminalId))?.id ?? null) : null
+}
+
+/** Open shifts, for the cash-up screen. Ordered so the oldest is dealt with first. */
+export async function openShifts(siteId: number): Promise<Shift[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_SHIFT} WHERE closed_at IS NULL ORDER BY opened_at`,
+  )
+  return rows.map(mapShift)
+}
+
 export async function listShifts(
   siteId: number,
-  opts: { terminalId?: number; from?: string; to?: string; limit?: number } = {},
+  opts: { terminalId?: number; userId?: number; from?: string; to?: string; limit?: number } = {},
 ): Promise<Shift[]> {
   const where: string[] = []
   const params: unknown[] = []
@@ -90,6 +154,10 @@ export async function listShifts(
   if (opts.terminalId) {
     where.push('terminal_id = ?')
     params.push(opts.terminalId)
+  }
+  if (opts.userId) {
+    where.push('user_id = ?')
+    params.push(opts.userId)
   }
   if (opts.from) {
     where.push('DATE(opened_at) >= ?')
@@ -120,39 +188,58 @@ export type OpenResult = { ok: true; shiftId: number } | { ok: false; error: str
  * The float is COUNTED, not assumed: a float that is wrong at the start makes
  * every variance for the rest of the shift wrong in the same direction, and
  * nobody can tell afterwards which end it came from.
+ *
+ * The till is required in terminal mode and ignored in user mode, where the
+ * shift belongs to the person opening it and their own float travels with them.
  */
 export async function openShift(
   siteId: number,
   actor: Actor,
-  terminalId: number,
+  terminalId: number | null,
   openingFloat: number,
 ): Promise<OpenResult> {
   if (openingFloat < 0) return { ok: false, error: 'The opening float cannot be negative.' }
 
-  const terminal = await siteQueryOne<Row>(
-    siteId,
-    'SELECT id, code, is_active FROM terminals WHERE id = ? LIMIT 1',
-    [terminalId],
-  )
-  if (!terminal) return { ok: false, error: 'That till no longer exists.' }
-  if (!terminal.is_active) return { ok: false, error: 'That till is deactivated.' }
+  const mode = await cashupMode(siteId)
 
-  const existing = await openShiftFor(siteId, terminalId)
-  if (existing) {
-    return {
-      ok: false,
-      error: `${existing.userName || 'Someone'} already has a shift open on this till. Cash it up first.`,
+  let terminalCode: string | null = null
+  if (mode === 'terminal') {
+    if (!terminalId) return { ok: false, error: 'Choose a till.' }
+
+    const terminal = await siteQueryOne<Row>(
+      siteId,
+      'SELECT id, code, is_active FROM terminals WHERE id = ? LIMIT 1',
+      [terminalId],
+    )
+    if (!terminal) return { ok: false, error: 'That till no longer exists.' }
+    if (!terminal.is_active) return { ok: false, error: 'That till is deactivated.' }
+    terminalCode = String(terminal.code)
+
+    const existing = await openShiftFor(siteId, terminalId)
+    if (existing) {
+      return {
+        ok: false,
+        error: `${existing.userName || 'Someone'} already has a shift open on this till. Cash it up first.`,
+      }
+    }
+  } else {
+    if (!actor.userId) return { ok: false, error: 'Sign in at the till before opening a shift.' }
+
+    const existing = await openShiftForUser(siteId, actor.userId)
+    if (existing) {
+      return { ok: false, error: 'You already have a shift open. Cash it up first.' }
     }
   }
 
   try {
     const res = await siteExecute(
       siteId,
-      `INSERT INTO shifts (terminal_id, terminal_code, user_id, user_name, opening_float)
-       VALUES (?,?,?,?,?)`,
+      `INSERT INTO shifts (mode, terminal_id, terminal_code, user_id, user_name, opening_float)
+       VALUES (?,?,?,?,?,?)`,
       [
-        terminalId,
-        String(terminal.code),
+        mode,
+        mode === 'terminal' ? terminalId : null,
+        terminalCode,
         actor.userId,
         actor.userName.slice(0, 120),
         round(openingFloat, 2).toFixed(4),
@@ -160,9 +247,15 @@ export async function openShift(
     )
     return { ok: true, shiftId: res.insertId }
   } catch {
-    // The unique index on open_terminal_id is the real guard — the check above
-    // is only to give a better message. Two people opening at once land here.
-    return { ok: false, error: 'A shift was just opened on this till. Refresh and try again.' }
+    // The unique index is the real guard — the checks above only buy a better
+    // message. Two people opening at once land here.
+    return {
+      ok: false,
+      error:
+        mode === 'terminal'
+          ? 'A shift was just opened on this till. Refresh and try again.'
+          : 'A shift was just opened for you. Refresh and try again.',
+    }
   }
 }
 
@@ -272,7 +365,17 @@ export async function recordDrawerMovement(
   siteId: number,
   actor: Actor,
   shiftId: number,
-  input: { type: 'payout' | 'payin' | 'drop'; amount: number; reason: string },
+  input: {
+    type: 'payout' | 'payin' | 'drop'
+    amount: number
+    reason: string
+    /**
+     * Which drawer it came out of. The shift already answers this in terminal
+     * mode; in user mode it is the only record, and a waiter paying out of
+     * their own float is a different event from one raiding a till.
+     */
+    terminalId?: number | null
+  },
 ): Promise<MovementResult> {
   if (!input.reason?.trim()) return { ok: false, error: 'Give a reason.' }
   if (input.amount <= 0) return { ok: false, error: 'Enter an amount.' }
@@ -287,10 +390,11 @@ export async function recordDrawerMovement(
 
   const res = await siteExecute(
     siteId,
-    `INSERT INTO shift_movements (shift_id, movement_type, amount, reason, user_id, user_name)
-     VALUES (?,?,?,?,?,?)`,
+    `INSERT INTO shift_movements (shift_id, terminal_id, movement_type, amount, reason, user_id, user_name)
+     VALUES (?,?,?,?,?,?,?)`,
     [
       shiftId,
+      input.terminalId ?? shift.terminalId,
       input.type,
       round(signed, 2).toFixed(4),
       input.reason.trim().slice(0, 190),
@@ -304,8 +408,10 @@ export async function recordDrawerMovement(
 export async function listDrawerMovements(siteId: number, shiftId: number) {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT id, movement_type, amount, reason, user_name, created_at
-       FROM shift_movements WHERE shift_id = ? ORDER BY created_at`,
+    `SELECT m.id, m.movement_type, m.amount, m.reason, m.user_name, m.created_at, t.code AS terminal_code
+       FROM shift_movements m
+       LEFT JOIN terminals t ON t.id = m.terminal_id
+      WHERE m.shift_id = ? ORDER BY m.created_at`,
     [shiftId],
   )
   return rows.map((r) => ({
@@ -314,6 +420,7 @@ export async function listDrawerMovements(siteId: number, shiftId: number) {
     amount: toNum(r.amount),
     reason: String(r.reason),
     userName: String(r.user_name ?? ''),
+    terminalCode: (r.terminal_code as string | null) ?? null,
     createdAt: r.created_at as Date,
   }))
 }

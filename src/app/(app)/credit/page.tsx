@@ -1,9 +1,10 @@
 import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
-import { listPositions, creditSummary, listPromises, listRuns } from '@/lib/site/creditControl'
+import { listPositionsPage, creditSummary, listPromises, listRuns } from '@/lib/site/creditControl'
 import { RISK_LABELS } from '@/lib/creditModel'
 import { formatMoney } from '@/lib/decimals'
 import { today } from '@/lib/site/ledger'
+import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
   PageBody,
@@ -12,18 +13,15 @@ import {
   CardBody,
   StatTile,
   EmptyState,
-  Badge,
   Callout,
   LinkTabs,
-  DataTable,
+  Pagination,
   ButtonLink,
-  type Column,
 } from '@/components/ui'
 import { BuildRunButton } from './BuildRunButton'
+import { PositionsTable, type PositionRow } from './PositionsTable'
 
 export const dynamic = 'force-dynamic'
-
-type Position = Awaited<ReturnType<typeof listPositions>>[number]
 
 /**
  * Collections — the screen someone opens every morning.
@@ -40,122 +38,58 @@ type Position = Awaited<ReturnType<typeof listPositions>>[number]
  * ageing report saying 60 accounts are overdue when 44 of them have live
  * promises is a report that produces 44 unnecessary phone calls.
  */
+const PAGE_SIZE = 50
+
 export default async function CreditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ risk?: string }>
+  searchParams: Promise<{ risk?: string; page?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('customers.view')
   const params = await searchParams
+  const page = pageFrom(params.page)
 
   const risk =
     params.risk === 'bad' || params.risk === 'poor' || params.risk === 'watch'
       ? params.risk
       : undefined
 
-  const [summary, positions, promises, runs] = await Promise.all([
+  const [summary, { items: positions, total }, promises, runs] = await Promise.all([
     creditSummary(siteId),
-    listPositions(siteId, { onlyOverdue: true }),
+    // One page, not the whole book. A real debtors book is thousands of rows,
+    // and pushing all of them into the client table is what broke this screen.
+    listPositionsPage(siteId, {
+      risk,
+      limit: PAGE_SIZE,
+      offset: offsetFor(page, PAGE_SIZE),
+    }),
     listPromises(siteId, { status: 'open' }),
     listRuns(siteId, 5),
   ])
 
   const now = today()
-  const shown = risk ? positions.filter((p) => p.risk === risk) : positions
+  const href = hrefBuilder('/credit', params)
   const draft = runs.find((r) => r.status === 'draft')
+
+  // Flattened before it crosses the boundary — see PositionsTable for why.
+  const shown: PositionRow[] = positions.map((p) => ({
+    customerId: p.customerId,
+    code: p.code,
+    name: p.name,
+    overdueAmount: p.overdueAmount,
+    oldestDays: p.oldestDays,
+    dunningLevel: p.dunningLevel,
+    lastDunnedAt: p.lastDunnedAt,
+    pausedUntil: p.pausedUntil,
+    hasOpenPromise: p.hasOpenPromise,
+    openPromiseDate: p.openPromiseDate,
+    isHeld: p.heldAt !== null,
+    risk: p.risk,
+    riskReason: p.riskReason,
+  }))
   const brokenPromises = promises.filter((p) => p.state === 'broken')
   const dueToday = promises.filter((p) => p.state === 'due-today')
-
-  const columns: Column<Position>[] = [
-    {
-      key: 'account',
-      header: 'Account',
-      cell: (p) => (
-        <Link href={`/customers/${p.customerId}`} className="block hover:text-brand">
-          <span className="text-ink">{p.name}</span>
-          <span className="mt-0.5 block text-xs text-muted">{p.code}</span>
-        </Link>
-      ),
-      sortValue: (p) => p.name,
-    },
-    {
-      key: 'risk',
-      header: 'Risk',
-      cell: (p) => (
-        <>
-          <Badge
-            tone={
-              p.risk === 'bad'
-                ? 'danger'
-                : p.risk === 'poor'
-                  ? 'warning'
-                  : p.risk === 'watch'
-                    ? 'brand'
-                    : 'default'
-            }
-          >
-            {RISK_LABELS[p.risk]}
-          </Badge>
-          {/* The band always carries the fact that caused it — a collector
-              reads "3 promises broken", never an opaque score. */}
-          <span className="mt-0.5 block text-xs text-muted">{p.riskReason}</span>
-        </>
-      ),
-      sortValue: (p) => ['good', 'watch', 'poor', 'bad'].indexOf(p.risk),
-    },
-    {
-      key: 'overdue',
-      header: 'Overdue',
-      numeric: true,
-      cell: (p) => <span className="text-ink">{formatMoney(p.overdueAmount)}</span>,
-      sortValue: (p) => p.overdueAmount,
-    },
-    {
-      key: 'age',
-      header: 'Oldest',
-      numeric: true,
-      cell: (p) => (
-        <span className={p.oldestDays >= 60 ? 'text-danger' : 'text-ink-2'}>
-          {p.oldestDays} days
-        </span>
-      ),
-      sortValue: (p) => p.oldestDays,
-    },
-    {
-      key: 'level',
-      header: 'Chased',
-      cell: (p) =>
-        p.dunningLevel === 0 ? (
-          <span className="text-faint">Never</span>
-        ) : (
-          <>
-            <span className="text-ink-2">Level {p.dunningLevel}</span>
-            {p.lastDunnedAt && (
-              <span className="mt-0.5 block text-xs text-muted">{p.lastDunnedAt}</span>
-            )}
-          </>
-        ),
-      sortValue: (p) => p.dunningLevel,
-    },
-    {
-      key: 'state',
-      header: 'Status',
-      // Why an account will NOT be chased, stated on the row. Without it the
-      // list looks like 60 accounts nobody is bothering to phone.
-      cell: (p) =>
-        p.heldAt ? (
-          <Badge tone="danger">On hold</Badge>
-        ) : p.hasOpenPromise ? (
-          <Badge tone="success">Promised {p.openPromiseDate}</Badge>
-        ) : p.pausedUntil && p.pausedUntil >= now ? (
-          <Badge tone="default">Paused</Badge>
-        ) : (
-          <span className="text-faint">—</span>
-        ),
-      sortValue: (p) => (p.heldAt ? 3 : p.hasOpenPromise ? 2 : p.pausedUntil ? 1 : 0),
-    },
-  ]
 
   return (
     <>
@@ -248,23 +182,29 @@ export default async function CreditPage({
             }
           />
 
+          {/* Every tab drops back to page one: staying on page 7 while
+              switching to a band with two accounts shows an empty table. */}
           <LinkTabs
             items={[
-              { value: 'all', label: `All (${positions.length})`, href: '/credit' },
+              {
+                value: 'all',
+                label: `All (${summary.overdueAccounts})`,
+                href: href({ risk: null, page: null }),
+              },
               {
                 value: 'bad',
                 label: `Bad (${summary.byRisk.bad.count})`,
-                href: '/credit?risk=bad',
+                href: href({ risk: 'bad', page: null }),
               },
               {
                 value: 'poor',
                 label: `Poor (${summary.byRisk.poor.count})`,
-                href: '/credit?risk=poor',
+                href: href({ risk: 'poor', page: null }),
               },
               {
                 value: 'watch',
                 label: `Watch (${summary.byRisk.watch.count})`,
-                href: '/credit?risk=watch',
+                href: href({ risk: 'watch', page: null }),
               },
             ]}
             value={risk ?? 'all'}
@@ -283,12 +223,16 @@ export default async function CreditPage({
               />
             </CardBody>
           ) : (
-            <DataTable
-              columns={columns}
-              rows={shown}
-              getRowKey={(p) => p.customerId}
-              empty={{ title: 'No accounts', hint: 'Nothing in this filter.' }}
-            />
+            <>
+              <PositionsTable rows={shown} today={now} />
+              <Pagination
+                page={page}
+                pageCount={pageCountFor(total, PAGE_SIZE)}
+                total={total}
+                pageSize={PAGE_SIZE}
+                hrefFor={(p) => href({ page: p === 1 ? null : String(p) })}
+              />
+            </>
           )}
         </Card>
       </PageBody>

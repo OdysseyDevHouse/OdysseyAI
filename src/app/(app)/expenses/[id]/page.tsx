@@ -21,6 +21,9 @@ import {
 } from '@/components/ui'
 import { ExpenseActions } from './ExpenseActions'
 import { ExpenseLinesTable } from './ExpenseLinesTable'
+import { listAttachments } from '@/lib/site/attachments'
+import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
+import { can } from '@/lib/site/permissions'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,13 +40,15 @@ export default async function ExpenseDetailPage({
   params: Promise<{ id: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('cashbook.view')
+  const { siteId, capabilities } = await requireCapability('cashbook.view')
   const { id } = await params
   const expenseId = Number(id)
   if (!Number.isFinite(expenseId)) notFound()
 
   const expense = await getExpense(siteId, expenseId)
   if (!expense) notFound()
+
+  const attachments = await listAttachments(siteId, 'expense', expenseId)
 
   const isBill = expense.paymentType === 'on_account'
 
@@ -252,6 +257,32 @@ export default async function ExpenseDetailPage({
                   </p>
                 </div>
               )}
+            </CardBody>
+          </Card>
+
+          {/* The receipt. This is what an auditor asks for when they query a
+              VAT input claim, and without it the answer is someone walking to
+              a filing cabinet. */}
+          <Card>
+            <CardHeader
+              title="Receipt"
+              description="The slip or bill this expense was captured from."
+            />
+            <CardBody>
+              <AttachmentsPanel
+                entity="expense"
+                entityId={expenseId}
+                canEdit={can(capabilities, 'cashbook.edit')}
+                hint="Attach the receipt or supplier bill. It is the support for this expense — and for the VAT claimed on it."
+                attachments={attachments.map((a) => ({
+                  id: a.id,
+                  filename: a.filename,
+                  description: a.description,
+                  sizeBytes: a.sizeBytes,
+                  uploadedName: a.uploadedName,
+                  createdAt: a.createdAt.toISOString(),
+                }))}
+              />
             </CardBody>
           </Card>
         </div>

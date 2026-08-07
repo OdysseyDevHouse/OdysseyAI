@@ -19,12 +19,10 @@ import {
   CardBody,
   StatTile,
   EmptyState,
-  Badge,
   Icons,
   LinkTabs,
-  DataTable,
-  type Column,
 } from '@/components/ui'
+import { AssetsTable, type AssetTableRow } from './AssetsTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,66 +66,20 @@ export default async function AssetsPage({
 
   const href = hrefBuilder('/accounting/assets', params)
 
-  const columns: Column<AssetRow>[] = [
-    {
-      key: 'asset',
-      header: 'Asset',
-      cell: (a) => (
-        <Link href={`/accounting/assets/${a.id}`} className="block hover:text-brand">
-          <span className="text-ink">{a.name}</span>
-          <span className="mt-0.5 block text-xs text-muted">
-            {a.assetCode}
-            {a.serialNumber ? ` · ${a.serialNumber}` : ''}
-            {a.location ? ` · ${a.location}` : ''}
-          </span>
-        </Link>
-      ),
-      sortValue: (a) => a.name,
-    },
-    {
-      key: 'category',
-      header: 'Category',
-      cell: (a) => <span className="text-muted">{a.categoryName}</span>,
-      sortValue: (a) => a.categoryName ?? '',
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      cell: (a) =>
-        a.status === 'disposed' ? (
-          <Badge tone="default">Disposed</Badge>
-        ) : a.status === 'pending' ? (
-          <Badge tone="warning">Not in use</Badge>
-        ) : a.fullyDepreciated ? (
-          // Still owned and still on the balance sheet, but no longer a cost.
-          <Badge tone="default">Fully depreciated</Badge>
-        ) : (
-          <Badge tone="success">In use</Badge>
-        ),
-      sortValue: (a) => a.status,
-    },
-    {
-      key: 'cost',
-      header: 'Cost',
-      numeric: true,
-      cell: (a) => formatMoney(a.cost),
-      sortValue: (a) => a.cost,
-    },
-    {
-      key: 'accumulated',
-      header: 'Depreciated',
-      numeric: true,
-      cell: (a) => <span className="text-muted">{formatMoney(a.accumulatedDepreciation)}</span>,
-      sortValue: (a) => a.accumulatedDepreciation,
-    },
-    {
-      key: 'book',
-      header: 'Book value',
-      numeric: true,
-      cell: (a) => <span className="text-ink">{formatMoney(a.bookValue)}</span>,
-      sortValue: (a) => a.bookValue,
-    },
-  ]
+  // Plain rows; the table that draws them owns its columns. See AssetsTable.
+  const assetRows: AssetTableRow[] = assets.map((a) => ({
+    id: a.id,
+    assetCode: a.assetCode,
+    name: a.name,
+    serialNumber: a.serialNumber,
+    location: a.location,
+    categoryName: a.categoryName ?? null,
+    status: a.status,
+    fullyDepreciated: a.fullyDepreciated,
+    cost: a.cost,
+    accumulatedDepreciation: a.accumulatedDepreciation,
+    bookValue: a.bookValue,
+  }))
 
   return (
     <>
@@ -269,12 +221,7 @@ export default async function AssetsPage({
               />
             </CardBody>
           ) : (
-            <DataTable
-              columns={columns}
-              rows={assets}
-              getRowKey={(a) => a.id}
-              empty={{ title: 'No assets', hint: 'Nothing in this filter.' }}
-            />
+            <AssetsTable rows={assetRows} />
           )}
         </Card>
 

@@ -323,6 +323,42 @@ export async function listPositions(
   })
 }
 
+/**
+ * One page of overdue accounts, for the collections screen.
+ *
+ * ── WHY THIS EXISTS SEPARATELY FROM listPositions ────────────────────────
+ *
+ * listPositions returns the whole book, and its callers need that: the summary
+ * totals it, buildRun assesses every account, accountCredit finds one. The
+ * SCREEN does not. On a real book that is 3 400 rows and about 1.5MB of props
+ * pushed into a client table in one go, which is enough to fail the render
+ * outright — as it did.
+ *
+ * So the page is cut here rather than in the browser. The risk filter has to
+ * be applied before the slice, or page 2 of "bad" would be built from the
+ * first fifty rows of everything.
+ *
+ * Sorting and filtering still happen in memory over the full set because risk
+ * is computed in TypeScript, not SQL — but only one page ever crosses the
+ * boundary, which is the part that was breaking.
+ */
+export async function listPositionsPage(
+  siteId: number,
+  options: {
+    asAt?: string
+    risk?: RiskBand
+    limit: number
+    offset: number
+  },
+): Promise<{ items: AccountPosition[]; total: number }> {
+  const all = await listPositions(siteId, { asAt: options.asAt, onlyOverdue: true })
+  const filtered = options.risk ? all.filter((p) => p.risk === options.risk) : all
+  return {
+    items: filtered.slice(options.offset, options.offset + options.limit),
+    total: filtered.length,
+  }
+}
+
 /** The unpaid documents behind one account's overdue figure. */
 export async function overdueDocuments(
   siteId: number,

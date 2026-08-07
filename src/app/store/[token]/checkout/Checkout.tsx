@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import {
   Button,
   Card,
+  Checkbox,
   EmptyState,
   Field,
   Icons,
@@ -45,6 +46,9 @@ export default function Checkout({
   minOrderIncl,
   leadTimeMinutes,
   payOnline,
+  allowAccount,
+  storeName,
+  account,
 }: {
   token: string
   collectEnabled: boolean
@@ -53,6 +57,22 @@ export default function Checkout({
   leadTimeMinutes: number
   /** True when the shop takes payment at checkout rather than on collection. */
   payOnline: boolean
+  /** Whether this shop offers account orders at all. */
+  allowAccount: boolean
+  storeName: string
+  /**
+   * The signed-in customer, or null when nobody is signed in.
+   *
+   * Only what the panel needs to draw. Whether the order may go on the account
+   * is decided server-side when it is placed, never from this.
+   */
+  account: {
+    name: string
+    phone: string
+    email: string
+    availableCredit: number
+    accountOpen: boolean
+  } | null
 }) {
   const cart = useCart()
   const router = useRouter()
@@ -61,15 +81,24 @@ export default function Checkout({
   const [fulfilment, setFulfilment] = useState<'collect' | 'deliver'>(
     collectEnabled ? 'collect' : 'deliver',
   )
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
-  const [email, setEmail] = useState('')
+  /*
+   * Prefilled for a signed-in customer, and EDITABLE.
+   *
+   * We already know who they are, so making them retype it is friction for no
+   * gain. Editable because the person collecting is often not the person whose
+   * name is on the account — and what they type here goes on this order only,
+   * never back onto their customer record.
+   */
+  const [name, setName] = useState(account?.name ?? '')
+  const [phone, setPhone] = useState(account?.phone ?? '')
+  const [email, setEmail] = useState(account?.email ?? '')
   const [line1, setLine1] = useState('')
   const [suburb, setSuburb] = useState('')
   const [postcode, setPostcode] = useState('')
   const [deliveryNotes, setDeliveryNotes] = useState('')
   const [customerNote, setCustomerNote] = useState('')
   const [error, setError] = useState('')
+  const [payOnAccount, setPayOnAccount] = useState(false)
 
   const [quote, setQuote] = useState<{ fee: number; reason: string; deliverable: boolean } | null>(
     null,
@@ -78,6 +107,23 @@ export default function Checkout({
   const belowMinimum = minOrderIncl > 0 && cart.subtotal < minOrderIncl
   const deliveryFee = fulfilment === 'deliver' && quote?.deliverable ? quote.fee : 0
   const total = cart.subtotal + deliveryFee
+
+  /*
+   * ── Whether this order is actually going on the account ────────────────
+   *
+   * `payOnAccount` is what the shopper ticked. `chargingAccount` is whether it
+   * currently applies — and it is the second one that is submitted.
+   *
+   * The box is NOT unticked when the total grows past the remaining credit.
+   * Un-ticking a control someone deliberately set is startling, and they may
+   * be about to remove a line and bring the total back down. Instead the tick
+   * stays, this goes false, and the reason appears beside it.
+   */
+  const accountUsable = allowAccount && !!account?.accountOpen
+  const overCredit =
+    accountUsable &&
+    total > account!.availableCredit + 0.005
+  const chargingAccount = payOnAccount && accountUsable && !overCredit
 
   /*
    * Quote delivery as the address is typed, debounced.
@@ -142,6 +188,7 @@ export default function Checkout({
         deliveryNotes,
         customerNote,
         lines: cart.lines.map((l) => ({ productId: l.productId, qty: l.qty })),
+        payOnAccount: chargingAccount,
       })
 
       if (!result.ok) {
@@ -406,6 +453,64 @@ export default function Checkout({
               </p>
             )}
 
+            {/* ── On account ──────────────────────────────────────────────
+                Three states, and a fourth that renders nothing at all: a shop
+                with accounts switched off never mentions the word. */}
+            {allowAccount && account && account.accountOpen && (
+              <div
+                className={`mt-4 rounded-control border px-3 py-3 ${
+                  chargingAccount ? 'border-brand bg-brand-soft' : 'border-border bg-surface-2'
+                }`}
+              >
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <Checkbox
+                    checked={payOnAccount}
+                    onChange={(e) => setPayOnAccount(e.target.checked)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-ink">
+                      Put this on my account
+                    </span>
+                    <span className="block text-xs text-muted">
+                      {formatMoney(account.availableCredit)} available. Nothing to pay now.
+                    </span>
+                  </span>
+                </label>
+
+                {/* Only once they have asked for it. Telling someone their
+                    order is too big for an account they were not trying to
+                    use is noise. */}
+                {payOnAccount && overCredit && (
+                  <p role="alert" className="mt-2 text-xs text-danger">
+                    This order is more than the{' '}
+                    {formatMoney(account.availableCredit)} left on your
+                    account, so it can&rsquo;t go on account. Please remove an item or pay as
+                    usual.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {allowAccount && account && !account.accountOpen && (
+              <p className="mt-4 text-xs text-muted">
+                Your account is on hold, so this order can&rsquo;t go on it. Please contact{' '}
+                {storeName}.
+              </p>
+            )}
+
+            {allowAccount && !account && (
+              <p className="mt-4 text-xs text-muted">
+                Have an account with {storeName}?{' '}
+                <Link
+                  href={`/store/${token}/account`}
+                  className="font-medium text-brand underline-offset-2 hover:underline"
+                >
+                  Sign in
+                </Link>{' '}
+                to put this order on it.
+              </p>
+            )}
+
             {error && (
               <p
                 role="alert"
@@ -423,15 +528,19 @@ export default function Checkout({
             >
               {placing
                 ? 'Please wait…'
-                : payOnline
-                  ? `Pay ${formatMoney(total)}`
-                  : `Place order · ${formatMoney(total)}`}
+                : chargingAccount
+                  ? `Place order on account · ${formatMoney(total)}`
+                  : payOnline
+                    ? `Pay ${formatMoney(total)}`
+                    : `Place order · ${formatMoney(total)}`}
             </Button>
 
             <p className="mt-2 text-center text-xs text-muted">
-              {payOnline
-                ? 'You’ll pay securely on the next screen.'
-                : `You pay when you ${fulfilment === 'deliver' ? 'receive' : 'collect'} your order.`}
+              {chargingAccount
+                ? 'Nothing to pay now — it goes on your statement.'
+                : payOnline
+                  ? 'You’ll pay securely on the next screen.'
+                  : `You pay when you ${fulfilment === 'deliver' ? 'receive' : 'collect'} your order.`}
             </p>
           </div>
         </Card>

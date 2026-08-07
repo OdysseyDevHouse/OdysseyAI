@@ -75,6 +75,14 @@ export type SalesLine = {
   lineTotalExcl: number
   lineVat: number
   unitCostExcl: number
+  /**
+   * The special that caused this line's discount, if one did.
+   *
+   * The reduction itself is in `discountPct` — this records WHY, so a
+   * promotion's cost and effectiveness can be reported on rather than
+   * guessed at. Null for an ordinary line, or a discount given by hand.
+   */
+  specialId: number | null
 }
 
 export type SalesDocument = {
@@ -145,6 +153,7 @@ function mapLine(r: Row): SalesLine {
     lineTotalExcl: toNum(r.line_total_excl),
     lineVat: toNum(r.line_vat),
     unitCostExcl: toNum(r.unit_cost_excl),
+    specialId: r.special_id === null || r.special_id === undefined ? null : Number(r.special_id),
   }
 }
 
@@ -327,6 +336,15 @@ export type LineInput = {
   discountIncl?: number
   vatRatePct: number
   unitCostExcl?: number
+  /**
+   * The special that caused this line's discount, when one did.
+   *
+   * The discount itself still rides on `discountPct` — this only records WHY,
+   * so "what did that promotion cost us, and did it sell anything" can be
+   * answered from the sales data rather than guessed at. Null for an ordinary
+   * line or a discount a cashier gave by hand.
+   */
+  specialId?: number | null
 }
 
 export type DocumentInput = {
@@ -526,8 +544,9 @@ export async function saveDraft(
            (document_id, line_number, product_id, product_code, description, product_type,
             department_id, sales_rep_id, source_line_id, sales_rep_user_id,
             qty, unit_price_incl, discount_pct, discount_incl,
-            vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,
+            special_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -548,6 +567,7 @@ export async function saveDraft(
           computed.lineTotalExcl.toFixed(4),
           computed.lineVat.toFixed(4),
           (line.unitCostExcl ?? 0).toFixed(4),
+          line.specialId ?? null,
         ] as never,
       )
     }

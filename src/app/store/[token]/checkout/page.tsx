@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext } from '@/lib/site/storefront'
+import { customerAccount } from '@/lib/site/customerAuth'
+import { getCustomerSession } from '@/lib/customerSession'
 import Checkout from './Checkout'
 
 export const dynamic = 'force-dynamic'
@@ -19,6 +21,15 @@ export default async function CheckoutPage({
 
   const { settings } = context
 
+  /*
+   * The account is resolved here, server-side, and only what the checkout
+   * needs to DRAW is sent: the name, whether it is open, and how much credit
+   * is left. Whether the order may actually go on it is decided again when the
+   * order is placed — this is for the panel, not for the decision.
+   */
+  const session = settings.allowAccount ? await getCustomerSession(siteId) : null
+  const account = session ? await customerAccount(siteId, session.customerId) : null
+
   return (
     <Checkout
       token={token}
@@ -27,6 +38,17 @@ export default async function CheckoutPage({
       minOrderIncl={settings.minOrderIncl}
       leadTimeMinutes={settings.leadTimeMinutes}
       payOnline={settings.paymentMode === 'online'}
+      allowAccount={settings.allowAccount}
+      storeName={context.storeName}
+      account={
+        account && {
+          name: account.name,
+          phone: account.phone,
+          email: account.email,
+          availableCredit: account.availableCredit,
+          accountOpen: account.accountOpen,
+        }
+      }
     />
   )
 }

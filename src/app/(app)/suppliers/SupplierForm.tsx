@@ -34,10 +34,16 @@ function SubmitButton({ isNew }: { isNew: boolean }) {
 export default function SupplierForm({
   supplier,
   categories,
+  suggestedCode = null,
   rowActions,
 }: {
   supplier: Supplier | null
   categories: string[]
+  /**
+   * Pre-filled code for a new supplier, or null when auto-numbering is off.
+   * A suggestion only — see lib/site/masterCodes.ts.
+   */
+  suggestedCode?: string | null
   rowActions?: ReactNode
 }) {
   const [state, formAction] = useActionState<SupplierFormState, FormData>(saveSupplierAction, {
@@ -78,8 +84,22 @@ export default function SupplierForm({
           <SectionTitle icon={<Icons.Truck size={16} />}>Account</SectionTitle>
           <CardBody className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Code" hint="Unique. Appears on orders and remittances.">
-                <Input name="code" defaultValue={supplier?.code ?? ''} required maxLength={32} />
+              <Field
+                label="Code"
+                hint={
+                  isNew && suggestedCode
+                    ? 'Filled in for you. Type over it to use your own.'
+                    : 'Unique. Appears on orders and remittances.'
+                }
+              >
+                {/* Clearing the field is how a user asks for the next code —
+                    see the note in CustomerForm. */}
+                <Input
+                  name="code"
+                  defaultValue={supplier?.code ?? suggestedCode ?? ''}
+                  required={!(isNew && suggestedCode)}
+                  maxLength={32}
+                />
               </Field>
               <Field label="Name">
                 <Input name="name" defaultValue={supplier?.name ?? ''} required maxLength={160} />

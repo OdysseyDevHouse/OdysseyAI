@@ -39,6 +39,24 @@ import type { TillCustomer } from '@/lib/site/tillCustomers'
 
 type Taken = { tenderTypeId: number; amount: number; reference?: string | null }
 
+/**
+ * What this customer is holding, as the till sees it.
+ *
+ * Fetched when the customer is attached, so the cashier can say "you have R124
+ * in points" before the customer asks. Every figure is re-checked by the
+ * posting engine under a lock at finalise — this is what to OFFER, never what
+ * to trust.
+ */
+export type LoyaltyStanding = {
+  points: number
+  pointsValue: number
+  /** The most of a sale points may settle, already capped by the minimum. */
+  maxRedeemable: number
+  walletBalance: number
+  tierName: string
+  vouchers: { code: string; description: string; rewardLabel: string; value: number }[]
+}
+
 export default function TenderPad({
   open,
   onClose,
@@ -46,6 +64,7 @@ export default function TenderPad({
   totalIncl,
   cashRounding,
   customer,
+  loyalty = null,
   pending,
   onFinalise,
 }: {
@@ -56,14 +75,25 @@ export default function TenderPad({
   cashRounding: number
   /** Null for a walk-in. Non-null unlocks the account tender, subject to credit. */
   customer: TillCustomer | null
+  /**
+   * Null when the programme is off, or the customer is a walk-in.
+   *
+   * Optional so the back-office invoicing editor — which posts through the same
+   * pad but has no till session to read a balance with — needs no change. Omit
+   * it and the loyalty panel and tenders simply do not appear.
+   */
+  loyalty?: LoyaltyStanding | null
   pending: boolean
-  onFinalise: (taken: Taken[]) => void
+  onFinalise: (taken: Taken[], voucherCodes: string[]) => void
 }) {
   const hasCustomer = customer !== null
   const [taken, setTaken] = useState<Taken[]>([])
   const [active, setActive] = useState<TenderType | null>(null)
   const [amount, setAmount] = useState(0)
   const [reference, setReference] = useState('')
+  const [vouchers, setVouchers] = useState<string[]>([])
+  const [voucherCode, setVoucherCode] = useState('')
+  const [voucherError, setVoucherError] = useState<string | null>(null)
 
   // Reset between sales, so the next customer never inherits the last one's
   // half-entered payment.
@@ -73,8 +103,44 @@ export default function TenderPad({
       setActive(null)
       setAmount(0)
       setReference('')
+      setVouchers([])
+      setVoucherCode('')
+      setVoucherError(null)
     }
   }, [open])
+
+  /* Rand of the basket already covered by a scanned voucher. A voucher is not a
+     tender — it REDUCES what is owed — so it comes off the payable figure the
+     tender arithmetic works against, exactly as the posting engine does it. */
+  const voucherCredit = useMemo(
+    () =>
+      round(
+        vouchers.reduce(
+          (sum, code) => sum + (loyalty?.vouchers.find((v) => v.code === code)?.value ?? 0),
+          0,
+        ),
+        2,
+      ),
+    [vouchers, loyalty],
+  )
+
+  function addVoucher() {
+    const code = voucherCode.trim().toUpperCase()
+    if (!code) return
+
+    const match = loyalty?.vouchers.find((v) => v.code === code)
+    if (!match) {
+      setVoucherError('No reward with that code on this account.')
+      return
+    }
+    if (vouchers.includes(code)) {
+      setVoucherError('That reward is already on this sale.')
+      return
+    }
+    setVouchers((current) => [...current, code])
+    setVoucherCode('')
+    setVoucherError(null)
+  }
 
   /* What the drawer actually asks for, once cash rounding is applied. The
      invoice total is untouched — only this figure moves. */
@@ -82,10 +148,11 @@ export default function TenderPad({
     (t) => tenders.find((x) => x.id === t.tenderTypeId)?.roundsToCashDenomination,
   )
   const activeRounds = active?.roundsToCashDenomination ?? false
+  const afterVouchers = round(Math.max(0, totalIncl - voucherCredit), 2)
   const { rounded: payable, adjustment } =
     (roundsToCash || activeRounds) && cashRounding > 0
-      ? roundToCash(totalIncl, cashRounding)
-      : { rounded: totalIncl, adjustment: 0 }
+      ? roundToCash(afterVouchers, cashRounding)
+      : { rounded: afterVouchers, adjustment: 0 }
 
   const check = useMemo(() => {
     // flatMap rather than map+filter: it drops the unmatched entries without
@@ -106,7 +173,12 @@ export default function TenderPad({
     // Pre-fill with what is still owed: the overwhelmingly common case is one
     // tender for the whole sale, and typing the total again is wasted keystrokes.
     const owed = round(payable - taken.reduce((sum, t) => sum + t.amount, 0), 2)
-    setAmount(Math.max(owed, 0))
+
+    // A loyalty tender is capped by what the customer actually holds, so the
+    // pre-fill offers the smaller of the two rather than an amount the posting
+    // engine is going to refuse.
+    const ceiling = loyaltyCeiling(tender, loyalty)
+    setAmount(Math.max(ceiling === null ? owed : Math.min(owed, ceiling), 0))
   }
 
   function add() {
@@ -138,7 +210,7 @@ export default function TenderPad({
           <Button
             variant="success"
             disabled={!settled || pending}
-            onClick={() => onFinalise(taken)}
+            onClick={() => onFinalise(taken, vouchers)}
           >
             <Icons.Check size={16} />
             {pending ? 'Posting…' : 'Finalise sale'}
@@ -168,6 +240,84 @@ export default function TenderPad({
             </p>
           )}
         </div>
+
+        {/* What this customer is holding. Shown before the tender keys so the
+            cashier can offer the reward rather than wait to be asked for it. */}
+        {loyalty && (loyalty.points > 0 || loyalty.walletBalance > 0 || loyalty.vouchers.length > 0) && (
+          <div className="rounded-card border border-border px-4 py-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-sm font-medium text-ink">
+                {loyalty.tierName ? `${loyalty.tierName} member` : 'Loyalty member'}
+              </span>
+              <span className="text-sm text-muted">
+                {Math.floor(loyalty.points).toLocaleString()} points
+                {loyalty.pointsValue > 0 && ` · ${formatMoney(loyalty.pointsValue)}`}
+                {loyalty.walletBalance > 0 && ` · ${formatMoney(loyalty.walletBalance)} on card`}
+              </span>
+            </div>
+
+            {loyalty.vouchers.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {loyalty.vouchers.map((voucher) => {
+                  const used = vouchers.includes(voucher.code)
+                  return (
+                    <Button
+                      key={voucher.code}
+                      variant={used ? 'ghost' : 'secondary'}
+                      size="sm"
+                      disabled={used || pending}
+                      onClick={() => {
+                        setVouchers((current) => [...current, voucher.code])
+                        setVoucherError(null)
+                      }}
+                      title={voucher.description}
+                    >
+                      <Icons.Ticket size={14} />
+                      {voucher.rewardLabel}
+                      {used && ' ✓'}
+                    </Button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Rewards applied to this sale */}
+        {vouchers.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            {vouchers.map((code) => {
+              const voucher = loyalty?.vouchers.find((v) => v.code === code)
+              return (
+                <div
+                  key={code}
+                  className="flex items-center justify-between rounded-control border border-border px-3 py-2 text-sm"
+                >
+                  <span className="text-ink">
+                    Reward <span className="numeric">{code}</span>
+                    {voucher?.description && (
+                      <span className="ml-2 text-xs text-muted">{voucher.description}</span>
+                    )}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="numeric text-success">
+                      −{formatMoney(voucher?.value ?? 0)}
+                    </span>
+                    <Button
+                      variant="bare"
+                      size="sm"
+                      iconOnly
+                      aria-label="Take this reward off the sale"
+                      onClick={() => setVouchers((c) => c.filter((v) => v !== code))}
+                    >
+                      <Icons.Close size={14} />
+                    </Button>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {/* What has been taken so far */}
         {taken.length > 0 && (
@@ -213,7 +363,16 @@ export default function TenderPad({
               </Button>
             </div>
 
-            <Field label="Amount" hint={active.allowsChange ? 'What the customer handed over.' : undefined}>
+            <Field
+              label="Amount"
+              hint={
+                loyaltyCeiling(active, loyalty) !== null
+                  ? `At most ${formatMoney(loyaltyCeiling(active, loyalty) ?? 0)} available.`
+                  : active.allowsChange
+                    ? 'What the customer handed over.'
+                    : undefined
+              }
+            >
               <CurrencyInput
                 value={amount}
                 autoFocus
@@ -237,7 +396,20 @@ export default function TenderPad({
               </Field>
             )}
 
-            <Button variant="primary" onClick={add} disabled={amount <= 0}>
+            {(() => {
+              const ceiling = loyaltyCeiling(active, loyalty)
+              return ceiling !== null && amount > ceiling ? (
+                <Callout tone="danger">
+                  Only {formatMoney(ceiling)} is available on this account.
+                </Callout>
+              ) : null
+            })()}
+
+            <Button
+              variant="primary"
+              onClick={add}
+              disabled={amount <= 0 || amount > (loyaltyCeiling(active, loyalty) ?? Infinity)}
+            >
               Add {formatMoney(amount)}
             </Button>
           </div>
@@ -247,7 +419,7 @@ export default function TenderPad({
              refusal. Layout only — the Button skin is untouched. */
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {tenders.map((tender) => {
-              const refusal = tenderRefusal(tender, customer, owedNow)
+              const refusal = tenderRefusal(tender, customer, owedNow, loyalty)
               return (
                 <Button
                   key={tender.id}
@@ -279,12 +451,35 @@ export default function TenderPad({
  * disagree. Better to grey it out with a reason than to let the cashier get all
  * the way to Finalise and be told no in front of the customer.
  */
+/**
+ * The most a loyalty tender may take, or null if it is not one.
+ *
+ * Points are capped by `maxRedeemable` (already through the redemption rate and
+ * the minimum), wallet rand by the balance. The server re-checks both under a
+ * lock; this only keeps the till from offering what will be refused.
+ */
+function loyaltyCeiling(tender: TenderType, loyalty: LoyaltyStanding | null): number | null {
+  if (tender.integrationKey !== 'loyalty') return null
+  if (!loyalty) return 0
+  if (tender.code === 'LOYALTY_POINTS') return loyalty.maxRedeemable
+  if (tender.code === 'LOYALTY_WALLET') return loyalty.walletBalance
+  return null
+}
+
 function tenderRefusal(
   tender: TenderType,
   customer: TillCustomer | null,
   amount: number,
+  loyalty: LoyaltyStanding | null,
 ): string | null {
   if (tender.requiresCustomer && !customer) return 'Needs a customer account.'
+
+  const ceiling = loyaltyCeiling(tender, loyalty)
+  if (ceiling !== null && ceiling <= 0) {
+    return tender.code === 'LOYALTY_WALLET'
+      ? 'Nothing loaded on this card.'
+      : 'Not enough points to spend.'
+  }
 
   if (tender.postsToDebtor && customer) {
     return headroomRefusal(
@@ -308,6 +503,8 @@ function shortReason(reason: string): string {
   if (reason.includes('no credit limit')) return 'No credit'
   if (reason.includes('over their')) return 'Over limit'
   if (reason.includes('Needs a customer')) return 'Needs account'
+  if (reason.includes('Nothing loaded')) return 'Card empty'
+  if (reason.includes('Not enough points')) return 'No points'
   return 'Unavailable'
 }
 

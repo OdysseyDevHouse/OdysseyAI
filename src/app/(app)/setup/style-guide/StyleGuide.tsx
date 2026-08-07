@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import {
   Badge,
+  CategoryTile,
+  ChoiceTile,
   BulkActionBar,
   Button,
   Callout,
@@ -41,6 +43,7 @@ import {
   SelectableCard,
   Select,
   RowTile,
+  PickerResults,
   SettingGroup,
   SettingRow,
   Sparkline,
@@ -100,6 +103,7 @@ export default function StyleGuidePage() {
         <StatsSection />
         <SummarySection />
         <IdentitySection />
+        <PickerResultsSection />
         <SettingRowSection />
         <SelectableCardSection />
         <TileSwatchSection />
@@ -114,6 +118,7 @@ export default function StyleGuidePage() {
         <ComboboxSection />
         <FilterBarSection />
         <DateRangeSection />
+        <CategoryTileSection />
         <PaginationSection />
         <EmptyStateSection />
         <SkeletonSection />
@@ -534,6 +539,31 @@ function IdentitySection() {
             <span>{p.name}</span>
           </div>
         ))}
+      </CardBody>
+    </Card>
+  )
+}
+
+function PickerResultsSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Picker results"
+        description="<PickerResults> — the matches under a type-ahead search box, where something is chosen by typing rather than from a dropdown. Renders nothing when there are no results; say “nothing matched” above the field instead."
+      />
+      <CardBody className="max-w-xl">
+        <Field label="Add a product">
+          <Input defaultValue="mon" placeholder="Search by code or description…" />
+        </Field>
+        <PickerResults
+          results={PRODUCTS.map((p) => ({
+            key: p.id,
+            label: p.name,
+            meta: p.sku,
+            trailing: formatMoney(p.price),
+          }))}
+          onPick={() => {}}
+        />
       </CardBody>
     </Card>
   )
@@ -1040,6 +1070,69 @@ function DateRangeSection() {
       <Row>
         <Spec name="<DateRangeField>" note="Reports, statement runs, document lists" />
         <DateRangeField value={range} onChange={setRange} />
+      </Row>
+    </Card>
+  )
+}
+
+function CategoryTileSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Category tiles and choice tiles"
+        description="<CategoryTile /> identifies a SUBJECT by colour — a report category, a dataset. Never a state: `danger` red means something is wrong, a rose tile just means Suppliers. <ChoiceTile /> is the clickable card it usually sits in."
+      />
+      <Row>
+        <Spec name="<CategoryTile tone icon>" note="Reports hub, builder source picker" />
+        <div className="flex flex-wrap items-center gap-2">
+          <CategoryTile icon={<Icons.BarChart size={18} />} tone="indigo" />
+          <CategoryTile icon={<Icons.Boxes size={18} />} tone="teal" />
+          <CategoryTile icon={<Icons.Contact size={18} />} tone="sky" />
+          <CategoryTile icon={<Icons.Truck size={18} />} tone="rose" />
+          <CategoryTile icon={<Icons.Coins size={18} />} tone="emerald" />
+          <CategoryTile icon={<Icons.Settings size={18} />} tone="amber" />
+          <CategoryTile icon={<Icons.Star size={18} />} tone="violet" />
+          <CategoryTile icon={<Icons.PackageOpen size={18} />} tone="orange" />
+          <CategoryTile icon={<Icons.FileText size={18} />} tone="slate" />
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<ChoiceTile layout='stacked'>" note="Picking a dataset — roomy, few options" />
+        <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+          <ChoiceTile
+            title="Sales lines"
+            description="One row per product sold — quantities, prices, discount and margin."
+            icon={<CategoryTile icon={<Icons.ListOrdered size={18} />} tone="violet" />}
+            footer={<Badge tone="neutral">Over a period</Badge>}
+            onClick={() => {}}
+          />
+          <ChoiceTile
+            title="Products"
+            description="The catalogue as it stands now — stock on hand, cost and margin."
+            icon={<CategoryTile icon={<Icons.Boxes size={18} />} tone="teal" />}
+            footer={<Badge tone="neutral">As it is now</Badge>}
+            onClick={() => {}}
+          />
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<ChoiceTile layout='inline'>" note="A long list — denser, names lead" />
+        <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+          <ChoiceTile
+            layout="inline"
+            title="Sales by product"
+            description="What sold, how much of it, and what it made."
+            icon={<CategoryTile icon={<Icons.ListOrdered size={16} />} tone="violet" size="sm" />}
+            onClick={() => {}}
+          />
+          <ChoiceTile
+            layout="inline"
+            title="Stock valuation"
+            description="What is on the shelf and what it cost."
+            icon={<CategoryTile icon={<Icons.Boxes size={16} />} tone="teal" size="sm" />}
+            onClick={() => {}}
+          />
+        </div>
       </Row>
     </Card>
   )

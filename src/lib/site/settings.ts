@@ -26,17 +26,45 @@ import { DEFAULT_MAX_CANCELLATION_FEE_PCT } from '../laybyRules'
 /** Every setting the app reads, with its default. One list, so nothing is invented at a call site. */
 export const SETTING_DEFAULTS = {
   cost_basis: 'average',
+  /**
+   * Which way a forced price ending moves — 'up', 'down' or 'nearest'.
+   *
+   * Not a detail: on a .99 ending, R14.32 becomes R14.99 rounding up and
+   * R13.99 rounding down, and stores genuinely differ. Up protects margin,
+   * down never charges above what the rule worked out, nearest stays closest.
+   */
+  price_ending_direction: 'up',
   /** Cash denomination the DRAWER rounds to. Never rounds the invoice. */
   sales_cash_rounding: '0.05',
   /** Nothing on or before this date may be voided, edited or backdated. */
   vat_period_locked_to: '',
   /** Whether a finalised invoice may be corrected. Off until reverse-and-repost exists. */
   sales_allow_finalised_edit: '0',
+
+  /* ── Auto-numbered master data ─────────────────────────────────────────
+     Whether a new customer, supplier or product gets its code suggested from
+     the matching sequence instead of being typed. Off by default so a store
+     with an existing coding scheme keeps it — see 062_master_data_codes.sql.
+     The suggestion stays editable; these switch the default, not the field. */
+  autocode_customer: '0',
+  autocode_supplier: '0',
+  autocode_product: '0',
   barcode_variable_prefix: '2',
   barcode_plu_length: '5',
   barcode_value_divisor: '100',
   /** How far a drawer may be out before an explanation is required at cash-up. */
   cashup_variance_tolerance: '5.00',
+  /**
+   * What a cash-up reconciles.
+   *
+   * 'terminal' — the drawer in a register, counted by whoever is on it. Retail.
+   * 'user'     — a person and their own float, across whatever tills they
+   *              worked. Hospitality, where twenty waiters share ten registers
+   *              and "which of the six people on till 4 is short" has no answer.
+   *
+   * Defaults to 'terminal' so an existing store keeps behaving as it did.
+   */
+  cashup_mode: 'terminal',
   /**
    * Lay-by cancellation fee, as a percentage of the FULL price.
    *
@@ -88,6 +116,47 @@ export const SETTING_DEFAULTS = {
    * that lapses was never a sale, and paying at take-on means clawing it back.
    */
   commission_layby_on_completion: '1',
+
+  /* ── Loyalty ───────────────────────────────────────────────────────────
+     The programme's rates and policy. Tiers, punch cards and vouchers are
+     rows in their own tables — only the scalars a store owner types into a
+     form live here. Defaults documented in lib/loyaltyRules.ts, which is
+     where the arithmetic that consumes them lives; these must agree with
+     LOYALTY_DEFAULTS. Off until a store opens its programme. */
+  loyalty_enabled: '0',
+  /** Rand of spend that earns one point. R1 = 1 point. */
+  loyalty_earn_rate: '1',
+  /** Points needed to fund R1 off a sale. 10 makes a point worth 10c. */
+  loyalty_redeem_rate: '10',
+  /** A floor on redemption, so the till is not asked to spend three points. */
+  loyalty_min_redeem_points: '0',
+  /** Whether an already-discounted line still earns. */
+  loyalty_earn_on_discounted: '1',
+  /** never | activity (idle balance lapses) | earn (each batch ages out). */
+  loyalty_expiry_mode: 'activity',
+  loyalty_expiry_months: '12',
+  /** rolling (a moving window) | lifetime (everything ever spent). */
+  loyalty_tier_basis: 'rolling',
+  loyalty_tier_window_months: '12',
+  /** Months an earned tier survives a fall in spend, so a quiet month does
+      not demote someone on a Tuesday. */
+  loyalty_tier_grace_months: '12',
+
+  /* ── Staff pay multipliers ─────────────────────────────────────────────
+     What an hour outside ordinary time costs, as a multiple of the ordinary
+     rate. The defaults are the BCEA figures and most stores will never touch
+     them — but a bargaining council agreement can set higher rates, and a
+     store bound by one needs to be able to say so. The arithmetic that
+     consumes these lives in staffCost.ts; the bands themselves are worked out
+     in timesheetModel.ts, which is rate-agnostic. */
+  /** Section 10 — overtime, above the ordinary week. */
+  staff_overtime_multiplier: '1.5',
+  /** Section 16(1) — Sunday work, for somebody who does not ordinarily work Sundays. */
+  staff_sunday_multiplier: '2',
+  /** Section 16(2) — Sunday work, for somebody who does. See user_employment.works_sundays. */
+  staff_sunday_ordinary_multiplier: '1.5',
+  /** Section 18(2)(a) — a public holiday that is not an ordinary working day. */
+  staff_holiday_multiplier: '2',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -172,6 +241,11 @@ export function validateSetting(key: SettingKey, value: string): string | null {
         ? null
         : "Cost basis must be 'average' or 'last'."
 
+    case 'price_ending_direction':
+      return value === 'up' || value === 'down' || value === 'nearest'
+        ? null
+        : "Price ending direction must be 'up', 'down' or 'nearest'."
+
     case 'sales_cash_rounding': {
       const amount = Number(value)
       if (!Number.isFinite(amount) || amount < 0) return 'Cash rounding must be zero or more.'
@@ -188,6 +262,9 @@ export function validateSetting(key: SettingKey, value: string): string | null {
         : 'Enter a date as yyyy-mm-dd, or leave it blank.'
 
     case 'sales_allow_finalised_edit':
+    case 'autocode_customer':
+    case 'autocode_supplier':
+    case 'autocode_product':
       return value === '0' || value === '1' ? null : 'That setting must be on or off.'
 
     case 'layby_cancellation_fee_pct': {
@@ -243,6 +320,66 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       if (!Number.isFinite(tolerance) || tolerance < 0) return 'Tolerance cannot be negative.'
       // A large tolerance quietly defeats the point of counting the drawer.
       if (tolerance > 500) return 'A tolerance above 500 would hide real shortages.'
+      return null
+    }
+
+    case 'cashup_mode':
+      return value === 'terminal' || value === 'user'
+        ? null
+        : "Cash-up mode must be 'terminal' or 'user'."
+
+    // The two rates are guarded here as well as in cleanSettings, because this
+    // is the only check a direct setSetting() call passes through. A zero or
+    // negative rate divides by zero in the earn arithmetic.
+    case 'loyalty_earn_rate': {
+      const rate = Number(value)
+      return Number.isFinite(rate) && rate > 0 ? null : 'Rand per point must be more than zero.'
+    }
+
+    case 'loyalty_redeem_rate': {
+      const rate = Number(value)
+      return Number.isFinite(rate) && rate > 0 ? null : 'Points per rand must be more than zero.'
+    }
+
+    case 'loyalty_min_redeem_points': {
+      const floor = Number(value)
+      return Number.isFinite(floor) && floor >= 0
+        ? null
+        : 'The minimum to redeem cannot be negative.'
+    }
+
+    case 'loyalty_expiry_mode':
+      return value === 'never' || value === 'activity' || value === 'earn'
+        ? null
+        : "Expiry mode must be 'never', 'activity' or 'earn'."
+
+    case 'loyalty_tier_basis':
+      return value === 'rolling' || value === 'lifetime'
+        ? null
+        : "Tier basis must be 'rolling' or 'lifetime'."
+
+    case 'loyalty_expiry_months':
+    case 'loyalty_tier_window_months':
+    case 'loyalty_tier_grace_months': {
+      const months = Number(value)
+      if (!Number.isFinite(months) || months < 0) return 'That must be zero or more months.'
+      // Beyond a decade the policy is indistinguishable from "never", and a
+      // typo of an extra digit is far more likely than a genuine 100-year rule.
+      if (months > 120) return 'Choose 120 months or fewer.'
+      return null
+    }
+
+    case 'staff_overtime_multiplier':
+    case 'staff_sunday_multiplier':
+    case 'staff_sunday_ordinary_multiplier':
+    case 'staff_holiday_multiplier': {
+      const multiplier = Number(value)
+      if (!Number.isFinite(multiplier)) return 'Enter a multiplier, such as 1.5.'
+      // Below 1 would pay an overtime hour LESS than an ordinary one, which no
+      // agreement may do — the BCEA rates are a floor, not a default to argue
+      // down from. Above 5 is a decimal point in the wrong place.
+      if (multiplier < 1) return 'A multiplier below 1 would pay overtime less than ordinary time.'
+      if (multiplier > 5) return 'That multiplier looks like a typo. Five times is the ceiling here.'
       return null
     }
 
