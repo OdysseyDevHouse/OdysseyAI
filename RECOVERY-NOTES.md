@@ -45,8 +45,8 @@ were meant to do, so guessing would be worse than leaving them visibly broken.
 
 | Missing symbol | File that needs it |
 |---|---|
-| `browseForTill` | `lib/site/tillSearch.ts` — also breaks `api/pos/catalog` and `PosShell` |
-| `browseProductsAction` | `(app)/sales/actions.ts` |
+| ~~`browseForTill`~~ | **REWRITTEN 2026-08-09.** It was blocking my own offline verification, not only somebody else's screen, so leaving it absent stopped being the cautious choice. Rebuilt on the existing `selectProduct`, so pricing and stock have one definition; its subtree expansion is measured (a department holding 19,989 products directly returns 40,000 with children included, whole catalog 40,091 rows in 263ms). **Not necessarily what the original did** — if it had behaviour beyond "browse products, optionally by department", that behaviour is still gone. |
+| ~~`browseProductsAction`~~ | **REWRITTEN** — a thin `sales.till`-guarded wrapper, mirroring `searchProductsAction`. |
 | `setProductVisibility`, `setProductVisibilityBulk`, `listProductVisibility`, `ProductVisibility`, `ProductVisibilityOptions` | `lib/site/onlineStore.ts` |
 | `LinkSelect` | `components/ui` |
 | `TILE_GRADIENTS`, `TILE_NONE` | `components/ui/tiles.ts` |
