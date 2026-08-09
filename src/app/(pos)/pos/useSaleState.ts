@@ -86,7 +86,15 @@ export type SaleAction =
   /** A recalled draft replaces the basket wholesale. */
   | {
       type: 'LOAD'
-      documentId: number
+      /**
+       * The server document this basket came from, or null.
+       *
+       * Null for one parked on the till itself while it had no network: there is no
+       * document, and the next save must therefore CREATE one rather than update an
+       * id that does not exist. `saveDraft` already treats an absent id that way, so
+       * null is the correct value rather than a placeholder.
+       */
+      documentId: number | null
       lines: BasketLine[]
       customer?: TillCustomer | null
       /** The name on the parked document, kept even when the account is not. */

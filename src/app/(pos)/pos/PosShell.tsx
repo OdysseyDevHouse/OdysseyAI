@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { useToast, ConfirmModal } from '@/components/ui'
 import { deviceId } from '@/lib/deviceId'
@@ -8,6 +8,12 @@ import { useOfflineShell } from '@/lib/posOffline/useOfflineShell'
 import { useOfflineTill } from '@/lib/posOffline/useOfflineTill'
 import { finaliseOffline, currentShiftId } from '@/lib/posOffline/finaliseOffline'
 import { findByCode, searchOffline, browseOffline } from '@/lib/posOffline/catalog'
+import {
+  parkOffline,
+  recallOffline,
+  discardParkedOffline,
+  listParkedOffline,
+} from '@/lib/posOffline/parkOffline'
 import { offlineBlockedProduct, offlineBlockedTender } from '@/lib/offlineCapability'
 import type { Special } from '@/lib/specialsEngine'
 import type { TillProduct } from '@/lib/site/tillSearch'
@@ -31,7 +37,7 @@ import { DeptRail } from './DeptRail'
 import { CatalogPane } from './CatalogPane'
 import { TenderPad } from './TenderPad'
 import { CustomerModal } from './CustomerModal'
-import { SavedSalesModal } from './SavedSalesModal'
+import { SavedSalesModal, type SavedEntry } from './SavedSalesModal'
 import { LineEditModal } from './LineEditModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
@@ -160,6 +166,36 @@ export default function PosShell({
      "offline" beside a queue count from before the line dropped would be worse than
      either fact alone. */
   const till = useOfflineTill(siteId)
+
+  /*
+   * Baskets parked on THIS machine, with no server involved.
+   *
+   * Kept in state rather than read inside the modal so the badge and the list agree —
+   * the same reason `savedTally` exists. Re-read after every park, recall and discard,
+   * because IndexedDB has no change notification and a stale list offers a basket
+   * that is not there.
+   */
+  const [localBaskets, setLocalBaskets] = useState<SavedEntry[]>([])
+
+  const reloadLocalBaskets = useCallback(async () => {
+    const rows = await listParkedOffline(siteId).catch(() => [])
+    setLocalBaskets(
+      rows.map((row) => ({
+        key: `l:${row.uid}`,
+        where: 'till' as const,
+        documentId: null,
+        uid: row.uid,
+        customerName: row.customerName,
+        totalIncl: row.totalIncl,
+        lineCount: row.itemCount,
+        at: row.parkedAt,
+      })),
+    )
+  }, [siteId])
+
+  useEffect(() => {
+    void reloadLocalBaskets()
+  }, [reloadLocalBaskets])
 
   const terminal = device ? terminals.find((t) => t.deviceId === device) : undefined
   // `device === null` only means "not resolved yet", so the warning waits for it
@@ -476,23 +512,80 @@ export default function PosShell({
    * lines (creating the draft if there is not one yet), then `saveForLaterAction`
    * flips it to `saved`. Flipping first would park an empty basket.
    */
-  function park() {
-    startTransition(async () => {
-      const saved = await saveSaleAction(state.documentId, {
+  /**
+   * Parking locally, because there is no server to park against.
+   *
+   * A parked basket is NOT a sale — nobody has paid and no number has been issued —
+   * so it does not go in the outbox, which is reserved for money that has already
+   * changed hands. See parkOffline.
+   */
+  async function parkLocally() {
+    try {
+      await parkOffline(siteId, {
         customerId: state.customer?.id ?? null,
         customerName: state.customer?.name || state.customerName.trim() || 'Walk-in',
         customerVatNo: state.customer?.vatNumber ?? null,
         customerPhone: state.customer?.phone ?? null,
-        terminalId: terminal?.id ?? null,
-        terminalCode: terminal?.code ?? null,
         priceStructureId,
         lines: salePayloadLines(state.lines, lineSpecials),
+        totalIncl: totals.doc.totalIncl,
       })
+    } catch {
+      // Nothing was stored, so the basket must STAY on screen. Clearing it here
+      // would throw away a basket the cashier believes is safe.
+      toast.error('This basket could not be set aside on the till. It is still here.')
+      return
+    }
+    toast.success('Sale saved on this till.')
+    dispatch({ type: 'CLEAR' })
+    setSavedTally((n) => n + 1)
+  }
+
+  function park() {
+    if (!till.online) {
+      startTransition(parkLocally)
+      return
+    }
+    startTransition(async () => {
+      /* Same fallback as finalise: a transport failure mid-park must not leave the
+         cashier with a basket they think is saved and is not. A REFUSAL still stands
+         — that is a real answer about this basket. */
+      let saved: Awaited<ReturnType<typeof saveSaleAction>>
+      try {
+        saved = await saveSaleAction(state.documentId, {
+          customerId: state.customer?.id ?? null,
+          customerName: state.customer?.name || state.customerName.trim() || 'Walk-in',
+          customerVatNo: state.customer?.vatNumber ?? null,
+          customerPhone: state.customer?.phone ?? null,
+          terminalId: terminal?.id ?? null,
+          terminalCode: terminal?.code ?? null,
+          priceStructureId,
+          lines: salePayloadLines(state.lines, lineSpecials),
+        })
+      } catch {
+        await parkLocally()
+        void till.refresh()
+        return
+      }
       if (!saved.ok) {
         toast.error(saved.error)
         return
       }
-      const parked = await saveForLaterAction(saved.documentId)
+      let parked: Awaited<ReturnType<typeof saveForLaterAction>>
+      try {
+        parked = await saveForLaterAction(saved.documentId)
+      } catch {
+        /*
+         * The draft IS written — the first call succeeded — it just never flipped to
+         * `saved`. Parking a second copy locally would duplicate the basket, so the
+         * honest answer is to say where it is: a draft on this terminal, which the
+         * saved-sales list picks up as soon as the connection returns.
+         */
+        toast.info('The connection dropped. This basket is on the server as a draft — it will show in Saved sales.')
+        dispatch({ type: 'CLEAR' })
+        void till.refresh()
+        return
+      }
       if (!parked.ok) {
         toast.error(parked.error)
         return
@@ -504,6 +597,32 @@ export default function PosShell({
       setSavedTally((n) => n + 1)
       router.refresh()
     })
+  }
+
+  /** Putting a basket parked on THIS till back on screen. */
+  async function recallLocally(uid: string) {
+    const row = await recallOffline(siteId, uid)
+    if (!row) {
+      // Already taken — the only way is a double tap, since a local basket is not
+      // visible from anywhere else.
+      toast.error('That basket is no longer here.')
+      setShowingSaved(false)
+      return
+    }
+    dispatch({
+      type: 'LOAD',
+      documentId: null,
+      lines: row.lines as BasketLine[],
+      /* Not restored as an ACCOUNT, for the same reason the online recall does not:
+         offering credit against a balance parked yesterday is what the tender pad's
+         headroom check exists to prevent — and offline there is no balance to read at
+         all. The NAME comes back so the basket is not anonymous. */
+      customer: null,
+      customerName: row.customerName ?? '',
+    })
+    setShowingSaved(false)
+    setSavedTally((n) => Math.max(0, n - 1))
+    toast.success('Sale recalled.')
   }
 
   /** Putting a parked basket back on screen. */
@@ -690,12 +809,30 @@ export default function PosShell({
            till's. An unclaimed machine has no basis to narrow, so it sees all. */
         terminalId={terminal?.id ?? null}
         busy={pending}
+        online={till.online}
+        localBaskets={localBaskets}
         onClose={() => setShowingSaved(false)}
-        onRecall={recall}
         onCount={setSavedTally}
-        onDiscard={(documentId) => {
+        onRecall={(entry) => {
           startTransition(async () => {
-            const result = await discardSaleAction(documentId)
+            if (entry.where === 'till' && entry.uid) {
+              await recallLocally(entry.uid)
+              return
+            }
+            if (entry.documentId != null) recall(entry.documentId)
+          })
+        }}
+        onDiscard={(entry) => {
+          startTransition(async () => {
+            if (entry.where === 'till' && entry.uid) {
+              await discardParkedOffline(siteId, entry.uid)
+              toast.success('Saved sale discarded.')
+              setSavedTally((n) => Math.max(0, n - 1))
+              setShowingSaved(false)
+              return
+            }
+            if (entry.documentId == null) return
+            const result = await discardSaleAction(entry.documentId)
             if (!result.ok) {
               toast.error(result.error)
               return

@@ -40,9 +40,37 @@ import type { TillProduct } from '../site/tillSearch'
 /** A singleton, keyed. Holds the catalog cursor, the operator, settings, terminal. */
 export type KvRow = { key: string; value: unknown }
 
+/**
+ * A basket parked while the till had no network.
+ *
+ * NOT an outbox row — it is not a sale. Nobody has paid, no number has been issued
+ * and nothing needs to reach the books; it is a shopping basket set aside so the
+ * next customer can be served. Which is also why it may safely be deleted once
+ * recalled, unlike a pending sale.
+ *
+ * It gets its own table rather than a `kv` document because a till parks several at
+ * once and each is recalled individually.
+ */
+export type LocalParkedSale = {
+  /** Client-generated. Never collides with a server document id, which is numeric. */
+  uid: string
+  parkedAt: string
+  customerId: number | null
+  customerName: string
+  customerVatNo: string | null
+  customerPhone: string | null
+  priceStructureId: number | null
+  /** The basket, in the same shape an offline sale's lines take. */
+  lines: unknown[]
+  /** For the list: "2 items · R40.50" without rehydrating the basket. */
+  itemCount: number
+  totalIncl: number
+}
+
 export class PosDatabase extends Dexie {
   products!: Table<TillProduct, number>
   outbox!: Table<OutboxSale, string>
+  parked!: Table<LocalParkedSale, string>
   kv!: Table<KvRow, string>
 
   constructor(siteId: number) {
@@ -67,6 +95,24 @@ export class PosDatabase extends Dexie {
       // Indexed on status so the sync engine can find pending rows without reading
       // the whole outbox, and on takenAt because it flushes OLDEST FIRST.
       outbox: 'saleUid, status, takenAt',
+      kv: 'key',
+    })
+
+    /*
+     * Version 2 — parked baskets.
+     *
+     * An additive version: it declares the new table and RESTATES the existing ones
+     * unchanged, which is how Dexie versions work. No `upgrade()` because nothing
+     * needs transforming — and note what this deliberately does not do: it does not
+     * touch `outbox`. Every future version must keep that property. A pending row is
+     * a sale that happened and the only record of it, so a version bump that dropped
+     * one would lose real money off the shop floor.
+     */
+    this.version(2).stores({
+      products: 'id, code, barcode, departmentId',
+      outbox: 'saleUid, status, takenAt',
+      // Ordered by when it was set aside, which is how the recall list reads.
+      parked: 'uid, parkedAt',
       kv: 'key',
     })
   }
