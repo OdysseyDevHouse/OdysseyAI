@@ -34,6 +34,7 @@ import {
   Monitor,
   Hash,
   Coins,
+  CloudOff,
   Check,
   Warehouse,
   Database,
@@ -102,6 +103,10 @@ export const NAV: NavSection[] = [
       { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note' },
       { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup' },
+      /* Sales rung up with no connection. Under Sales rather than Setup because
+         it is a daily trading question — "is yesterday's offline trading on the
+         books" — not a configuration one. */
+      { label: 'Offline sales', href: '/sales/offline', icon: CloudOff, built: true, capability: 'sales.view' },
     ],
   },
   {

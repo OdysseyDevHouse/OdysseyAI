@@ -122,8 +122,16 @@ async function main() {
   const numberFor = (n: number) =>
     formatNumber('INV', n, 6, null, { store: config.storeNumber, till: till! })
 
+  /* Every uid this run mints, so cleanup can delete exactly its own claims.
+     Deleting by terminal_id is NOT enough: a quarantined sale's document is
+     removed, and the claim that outlives it would then show on /sales/offline
+     as a refused sale with no document — a manager reading "one sale refused"
+     that no longer exists anywhere. Test litter that looks like a real
+     incident is worse than test litter that looks like nothing. */
+  const mintedUids = new Set<string>()
+
   /** A complete offline sale, as the till would have queued it. */
-  const saleAt = (n: number, over: Partial<OfflineSale> = {}): OfflineSale => ({
+  const buildSale = (n: number, over: Partial<OfflineSale> = {}): OfflineSale => ({
     saleUid: uuid(),
     documentNumber: numberFor(n),
     terminalId,
@@ -159,6 +167,14 @@ async function main() {
     claimedChange: 0,
     ...over,
   })
+
+  /* Wraps buildSale so the uid is recorded AFTER any override is applied — the
+     malformed-uid cases pass their own, and cleanup has to know about those too. */
+  const saleAt = (n: number, over: Partial<OfflineSale> = {}): OfflineSale => {
+    const sale = buildSale(n, over)
+    mintedUids.add(sale.saleUid)
+    return sale
+  }
 
   /* ── 1. The ordinary case: it posts, under the number already printed ──── */
 
@@ -403,6 +419,72 @@ async function main() {
     }
   }
 
+  /* ── 6b. THE SHIFT THAT TOOK THE CASH ───────────────────────────────────
+     An offline sale banks into the drawer the money physically went into, not
+     whichever shift happens to be open when it finally syncs. Getting this wrong
+     makes one drawer inexplicably over and another short by the same amount, and
+     no amount of counting afterwards can tell you which sale did it.
+
+     Simulated by opening a shift, ringing up against it, then opening a SECOND
+     shift before syncing — which is what happens to a sale queued at 17:00 and
+     delivered the next morning. */
+
+  /* There is no `status` column — open vs closed is `closed_at IS NULL`, and a
+     generated column makes ONE open shift per till a database rule. So shift A
+     must actually be closed before B can be opened, which is also exactly the
+     sequence a real overnight queue goes through. */
+  const shiftA = await siteExecute(
+    SITE,
+    `INSERT INTO shifts (terminal_id, terminal_code, user_id, user_name, opening_float, opened_at)
+     VALUES (?,?,1,'Offline sync test','100.0000', NOW())`,
+    [terminalId, `TSTSYNC${stamp}`],
+  )
+  const shiftAId = shiftA.insertId
+
+  const banked = await postOfflineSale(SITE, saleAt(60, { shiftId: shiftAId }))
+  ok('a sale carrying a shift posts', banked.ok, banked.ok ? '' : banked.error)
+
+  // That shift closes and another opens — the sale is already posted, so what is
+  // asserted below is which shift the stored row points at.
+  await siteExecute(SITE, 'UPDATE shifts SET closed_at = NOW() WHERE id = ?', [shiftAId])
+  const shiftB = await siteExecute(
+    SITE,
+    `INSERT INTO shifts (terminal_id, terminal_code, user_id, user_name, opening_float, opened_at)
+     VALUES (?,?,1,'Offline sync test','100.0000', NOW())`,
+    [terminalId, `TSTSYNC${stamp}`],
+  )
+  const shiftBId = shiftB.insertId
+
+  const bankedRow = await siteQueryOne<any>(
+    SITE,
+    'SELECT shift_id FROM sales_documents WHERE id = ?',
+    [banked.documentId],
+  )
+  ok(
+    'it banks into the shift that TOOK the cash',
+    Number(bankedRow?.shift_id) === shiftAId,
+    `shift_id = ${bankedRow?.shift_id}, took=${shiftAId}, now open=${shiftBId}`,
+  )
+
+  /* And a sale with NO shift stays unbanked rather than being adopted by whichever
+     drawer is open — an explicit null means "belongs to no shift", which
+     shiftToBankInto already treats as legitimate for a store that never cashes up. */
+  const unbanked = await postOfflineSale(SITE, saleAt(61, { shiftId: null }))
+  const unbankedRow = await siteQueryOne<any>(
+    SITE,
+    'SELECT shift_id FROM sales_documents WHERE id = ?',
+    [unbanked.documentId],
+  )
+  ok(
+    'a sale with no shift is NOT adopted by the open one',
+    unbankedRow?.shift_id === null,
+    `shift_id = ${unbankedRow?.shift_id} (open shift is ${shiftBId})`,
+  )
+
+  await siteExecute(SITE, 'DELETE FROM shifts WHERE id IN (?,?)', [shiftAId, shiftBId]).catch(
+    () => null,
+  )
+
   /* ── 7. Structural refusals — non-retryable, so the queue can drain ────── */
 
   const bad = (over: Partial<OfflineSale>) => validateOfflineSale(saleAt(9, over) as OfflineSale)
@@ -454,6 +536,17 @@ async function main() {
      Every document this test issued is removed along with its till, so the
      sequence cannot be left ahead of its documents — which is what makes
      test-sales-posting fail instead of this one. */
+  /* By uid, not by terminal: a quarantined sale's document is deleted above and
+     its claim carries no terminal, so a terminal-scoped delete would leave it
+     behind — and /sales/offline would then show a refused sale that exists
+     nowhere. */
+  if (mintedUids.size > 0) {
+    await siteExecute(
+      SITE,
+      `DELETE FROM offline_sync_claims WHERE sale_uid IN (${[...mintedUids].map(() => '?').join(',')})`,
+      [...mintedUids],
+    ).catch(() => null)
+  }
   await siteExecute(
     SITE,
     'DELETE FROM offline_sync_claims WHERE terminal_id = ?',
