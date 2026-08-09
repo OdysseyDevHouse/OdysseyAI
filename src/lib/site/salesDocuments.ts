@@ -360,6 +360,20 @@ export type DocumentInput = {
   terminalCode?: string | null
   reference?: string | null
   notes?: string | null
+  /**
+   * The till-generated uid of a sale rung up offline, and when the money actually
+   * changed hands.
+   *
+   * Set in the INSERT rather than by a follow-up UPDATE so the document is never
+   * momentarily on the books WITHOUT its uid: `uq_offline_uid` is what stops a
+   * retried batch posting the same sale twice, and a window where the column is
+   * still NULL is a window where that index cannot do its job.
+   *
+   * Both undefined for every online sale, which is what leaves the column NULL
+   * and every existing caller unchanged.
+   */
+  offlineSaleUid?: string | null
+  offlineTakenAt?: string | null
   lines: LineInput[]
 }
 
@@ -511,8 +525,9 @@ export async function saveDraft(
            (doc_type, status, document_date, customer_id, customer_name, customer_vat_no,
             customer_phone, customer_address, price_structure_id, user_id, user_name,
             terminal_id, terminal_code, reference, notes,
+            offline_sale_uid, offline_taken_at,
             subtotal_excl, vat_total, discount_total, total_incl)
-         VALUES (?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           input.docType,
           documentDate,
@@ -528,6 +543,8 @@ export async function saveDraft(
           input.terminalCode ?? null,
           input.reference?.trim() || null,
           input.notes?.trim() || null,
+          input.offlineSaleUid ?? null,
+          input.offlineTakenAt ?? null,
           totals.subtotalExcl.toFixed(4),
           totals.vatTotal.toFixed(4),
           totals.discountTotal.toFixed(4),
