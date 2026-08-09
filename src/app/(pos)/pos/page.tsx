@@ -67,8 +67,15 @@ export default async function PosPage() {
 
   return (
     <PosShell
+      /* The till's own IndexedDB is keyed by this, so a machine that switches shops
+         opens a different database rather than mixing two shops' outboxes. */
+      siteId={site.id}
       siteName={site.displayName}
       operatorName={till.name}
+      /* Carried on every offline sale for attribution. The server re-derives this
+         person's CAPABILITIES from their role at sync and never trusts the payload's
+         word for them — see postOfflineSale. */
+      operatorUserId={till.userId}
       terminals={terminals}
       tenders={tenders}
       /* Narrowed on the way out rather than passed whole: the till needs an id,

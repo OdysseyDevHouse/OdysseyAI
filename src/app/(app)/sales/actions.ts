@@ -17,7 +17,7 @@ import {
 } from '@/lib/site/salesDocuments'
 import { finaliseDocument, voidDocument, recordPrint } from '@/lib/site/salesPosting'
 import { setOrderDetails } from '@/lib/site/salesOrders'
-import { searchForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
+import { searchForTill, browseForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
 import {
   searchCustomersForTill,
   getTillCustomer,
@@ -45,6 +45,23 @@ export async function searchProductsAction(
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
   return searchForTill(siteId, term, priceStructureId)
+}
+
+/**
+ * Products for a tile grid — a department's whole subtree, or the top of the file.
+ *
+ * Guarded by `sales.till` like every other action here. The guard is the real
+ * boundary: a server action is a public endpoint, so hiding the till screen from
+ * somebody changes what is easy rather than what is possible.
+ */
+export async function browseProductsAction(options: {
+  departmentId?: number | null
+  priceStructureId?: number | null
+  limit?: number
+}): Promise<TillProduct[]> {
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
+  return browseForTill(siteId, options)
 }
 
 /** Resolves a scan, including weighed-goods barcodes. */

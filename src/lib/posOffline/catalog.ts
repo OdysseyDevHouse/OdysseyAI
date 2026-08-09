@@ -1,0 +1,309 @@
+'use client'
+
+import { posDb, kvGet, kvPut, KV } from './db'
+import { seedSequence } from './saleNumber'
+import { deviceId } from '../deviceId'
+import type { TillProduct } from '../site/tillSearch'
+
+/**
+ * Pulling the shop down onto the till, and keeping it current.
+ *
+ * ── FULL FIRST, DELTA AFTERWARDS ──────────────────────────────────────────
+ *
+ * The first load replaces everything. After that the stored cursor asks for only
+ * what has moved, which on a normal day is a handful of rows rather than 12 MB.
+ *
+ * Three rules make that safe, and each exists because the naive version is wrong:
+ *
+ *   · The cursor comes from the SERVER's clock, never this machine's. A till ten
+ *     minutes fast would skip ten minutes of price changes forever, and nothing
+ *     would ever reveal it.
+ *   · A schema change or a different site forces a FULL load. Patching rows into a
+ *     catalog of a different shape is how a till ends up with half a product file.
+ *   · `reloadProducts` from the server overrides everything. A repricing run does
+ *     not touch `products.updated_at`, so the endpoint watches `product_prices`
+ *     separately and says "reload" — which fails safe, at the cost of one full load.
+ *
+ * ── WHY THE CATALOG IS A CACHE AND THE OUTBOX IS NOT ──────────────────────
+ *
+ * Everything written here is disposable: losing it costs a refresh. That is the
+ * opposite of the outbox, where a lost row is a sale that happened and can never be
+ * reconstructed. They share a database for convenience, never a policy — nothing in
+ * this file may delete an outbox row.
+ */
+
+/** Bumped when the STORED shape changes. Must match the route's CATALOG_SCHEMA. */
+const SCHEMA = 1
+
+export type CatalogMeta = {
+  /** What to send as `?since=`. The server's clock. */
+  cursor: string | null
+  fullLoadedAt: string | null
+  lastSyncAt: string | null
+  productCount: number
+  schema: number
+  siteId: number
+}
+
+export type CatalogSettings = Record<string, string | null>
+
+export type OfflineOperator = {
+  userId: number
+  name: string
+  capabilities: string[]
+  verifier: string | null
+  iterations: number
+  offlineReady: boolean
+}
+
+type CatalogResponse = {
+  schema: number
+  serverTime: string
+  delta: boolean
+  reloadProducts: boolean
+  products: TillProduct[]
+  deletedIds: number[]
+  departments: { id: number; parentId: number | null; name: string; sortOrder: number }[]
+  tenders: unknown[]
+  specials: unknown[]
+  settings: CatalogSettings
+  priceStructureId: number | null
+  terminal: { id: number; code: string; tillNumber: string | null } | null
+  sequence: {
+    terminalId: number
+    prefix: string
+    storeNumber: string
+    tillNumber: string
+    padding: number
+    periodKey: string | null
+    serverNextNumber: number
+  } | null
+  operators: OfflineOperator[]
+}
+
+export type CatalogResult =
+  | { ok: true; full: boolean; products: number; canSellOffline: boolean }
+  | { ok: false; error: string; status: number }
+
+/**
+ * Fetches and stores the catalog.
+ *
+ * Returns rather than throws, because every caller's response to a failure is the
+ * same: keep trading on what is already stored and say when it was last refreshed.
+ * A till that cannot reach the server is the normal case here, not an error.
+ */
+export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
+  const meta = await kvGet<CatalogMeta>(siteId, KV.catalogMeta)
+
+  /* A stored catalog from a different site or an older shape cannot be patched.
+     Cheaper to notice here than to serve a cashier a half-migrated product file. */
+  const canDelta = meta?.cursor != null && meta.schema === SCHEMA && meta.siteId === siteId
+
+  /*
+   * `deviceId` is REQUIRED, not decorative.
+   *
+   * The server has no other way to know which till this machine is — the claim lives
+   * in this browser's own localStorage. Without it the response carries no sequence
+   * and no operator verifiers, so the till gets 40,000 products it can neither number
+   * a sale from nor sign anybody in against. Which looks like a working catalog right
+   * up to the moment the line drops.
+   */
+  const params = new URLSearchParams({ schema: String(SCHEMA) })
+  // Absent only before the browser has minted one, which the caller retries past.
+  const device = deviceId()
+  if (device) params.set('deviceId', device)
+  if (canDelta) params.set('since', meta!.cursor!)
+  const url = `/api/pos/catalog?${params}`
+
+  let response: Response
+  try {
+    response = await fetch(url, { headers: { accept: 'application/json' } })
+  } catch {
+    return { ok: false, error: 'No connection.', status: 0 }
+  }
+
+  if (!response.ok) {
+    /* 401 is its own thing and the caller must be able to tell: the fix is
+       /pos-unlock, not a retry. proxy.ts answers /api/* with JSON precisely so this
+       does not arrive as the login page's HTML and die in the parse below. */
+    return {
+      ok: false,
+      error: response.status === 401 ? 'This till needs to sign in again.' : `Server error ${response.status}.`,
+      status: response.status,
+    }
+  }
+
+  let body: CatalogResponse
+  try {
+    body = await response.json()
+  } catch {
+    return { ok: false, error: 'The server sent something that was not a catalog.', status: 200 }
+  }
+
+  const db = posDb(siteId)
+  // The server's own verdict wins over our delta request: see reloadProducts.
+  const full = !body.delta || body.reloadProducts || body.schema !== SCHEMA
+
+  await db.transaction('rw', db.products, db.kv, async () => {
+    if (full) {
+      await db.products.clear()
+      await db.products.bulkPut(body.products)
+    } else {
+      if (body.products.length > 0) await db.products.bulkPut(body.products)
+      if (body.deletedIds.length > 0) await db.products.bulkDelete(body.deletedIds)
+    }
+
+    /* Everything below is read whole on every load and never queried by field, so
+       it rides in `kv` as single documents — an indexed table would buy nothing and
+       cost a migration each time one of these shapes changed. */
+    await db.kv.bulkPut([
+      { key: KV.departments, value: body.departments },
+      { key: KV.tenders, value: body.tenders },
+      { key: KV.specials, value: body.specials },
+      { key: KV.settings, value: body.settings },
+      { key: KV.operators, value: body.operators },
+      { key: KV.terminal, value: body.terminal },
+    ])
+  })
+
+  const productCount = await db.products.count()
+  const now = new Date().toISOString()
+
+  await kvPut(siteId, KV.catalogMeta, {
+    cursor: body.serverTime,
+    fullLoadedAt: full ? now : (meta?.fullLoadedAt ?? now),
+    lastSyncAt: now,
+    productCount,
+    schema: SCHEMA,
+    siteId,
+  } satisfies CatalogMeta)
+
+  /* The sequence is what decides whether this till can trade offline AT ALL — the
+     products are useless without a number to put on the slip. Null means the store
+     numbers site-wide, or this machine has not claimed a till. */
+  if (body.sequence) {
+    await seedSequence(siteId, body.sequence)
+  }
+
+  return {
+    ok: true,
+    full,
+    products: productCount,
+    canSellOffline: body.sequence !== null,
+  }
+}
+
+/* ── Reading what is stored ──────────────────────────────────────────────── */
+
+export async function catalogMeta(siteId: number): Promise<CatalogMeta | null> {
+  return kvGet<CatalogMeta>(siteId, KV.catalogMeta)
+}
+
+/**
+ * How stale the catalog is, in hours, or null if it has never loaded.
+ *
+ * Surfaced prominently past a few hours: a till selling from yesterday's prices is
+ * not obviously broken, which is exactly what makes it worth saying out loud.
+ */
+export function catalogAgeHours(meta: CatalogMeta | null): number | null {
+  if (!meta?.lastSyncAt) return null
+  return (Date.now() - Date.parse(meta.lastSyncAt)) / 3_600_000
+}
+
+/**
+ * A barcode or code, resolved against the stored catalog.
+ *
+ * Barcode first, then code — the same order the server's `scanAction` uses, because
+ * a scanner sends a barcode and that path must feel instant.
+ */
+export async function findByCode(siteId: number, code: string): Promise<TillProduct | null> {
+  const term = code.trim()
+  if (!term) return null
+  const db = posDb(siteId)
+  return (
+    (await db.products.where('barcode').equals(term).first()) ??
+    (await db.products.where('code').equals(term).first()) ??
+    null
+  )
+}
+
+/**
+ * Products matching a typed term, from the stored catalog.
+ *
+ * A prefix match on code plus a substring match on description, capped — the same
+ * two things the server's search does. Dexie cannot do a case-insensitive substring
+ * on an index, so the description pass is a filtered scan; at 40,000 rows that is
+ * tens of milliseconds, measured, and only runs when a cashier is typing.
+ */
+export async function searchOffline(
+  siteId: number,
+  term: string,
+  limit = 60,
+): Promise<TillProduct[]> {
+  const needle = term.trim().toLowerCase()
+  if (needle.length < 2) return []
+  const db = posDb(siteId)
+
+  const byCode = await db.products
+    .where('code')
+    .startsWithIgnoreCase(needle)
+    .limit(limit)
+    .toArray()
+  if (byCode.length >= limit) return byCode
+
+  const seen = new Set(byCode.map((p) => p.id))
+  const byName = await db.products
+    .filter((p) => !seen.has(p.id) && p.description.toLowerCase().includes(needle))
+    .limit(limit - byCode.length)
+    .toArray()
+
+  return [...byCode, ...byName]
+}
+
+/** Products filed in one department, for the tile grid. */
+export async function browseOffline(
+  siteId: number,
+  departmentId: number,
+  limit = 200,
+): Promise<TillProduct[]> {
+  return posDb(siteId)
+    .products.where('departmentId')
+    .equals(departmentId)
+    .limit(limit)
+    .toArray()
+}
+
+export async function storedDepartments(siteId: number) {
+  return (await kvGet<CatalogResponse['departments']>(siteId, KV.departments)) ?? []
+}
+
+export async function storedSettings(siteId: number): Promise<CatalogSettings> {
+  return (await kvGet<CatalogSettings>(siteId, KV.settings)) ?? {}
+}
+
+export async function storedOperators(siteId: number): Promise<OfflineOperator[]> {
+  return (await kvGet<OfflineOperator[]>(siteId, KV.operators)) ?? []
+}
+
+/**
+ * Takes stock off the shelf locally, so a second sale of the last unit shows 0.
+ *
+ * Optimistic and deliberately unreconciled: the next catalog refresh overwrites it
+ * with the server's figure. Overselling is already permitted everywhere in this app
+ * — `canSellNow` always returns ok and stock is allowed to go negative — so this is
+ * about what the CASHIER SEES, not about refusing anything.
+ */
+export async function decrementStock(
+  siteId: number,
+  lines: readonly { productId: number | null; qty: number }[],
+): Promise<void> {
+  const db = posDb(siteId)
+  await db.transaction('rw', db.products, async () => {
+    for (const line of lines) {
+      if (line.productId == null) continue
+      const product = await db.products.get(line.productId)
+      if (!product) continue
+      await db.products.put({ ...product, stockOnHand: product.stockOnHand - line.qty })
+    }
+  })
+}

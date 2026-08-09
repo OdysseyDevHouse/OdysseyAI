@@ -20,6 +20,10 @@ export function TillStatusBar({
   terminalLabel,
   unclaimed,
   offlineReason,
+  online,
+  pendingSales,
+  failedSales,
+  catalogAgeHours,
   itemCount,
   onExit,
 }: {
@@ -44,9 +48,35 @@ export function TillStatusBar({
    * knows what to fix.
    */
   offlineReason: string | null
+  /**
+   * Whether the till can currently reach the server.
+   *
+   * Shown always, not only when it is false. A cashier who cannot tell the
+   * difference between "offline and queueing safely" and "offline and losing sales"
+   * will assume the worse one and stop trading, which is the failure this whole
+   * feature exists to prevent.
+   */
+  online: boolean
+  /**
+   * Sales rung up and not yet delivered to the server.
+   *
+   * THE figure that must be visible before somebody goes home. Forty sales still in
+   * a till at closing time is a discovery for that evening, not for month end — and
+   * a cash-up computed without them reports a drawer over by their whole value.
+   */
+  pendingSales: number
+  /** Queued sales a human has to deal with. Distinct from merely pending. */
+  failedSales: number
+  /** Hours since the catalog last refreshed, or null if it never has. */
+  catalogAgeHours: number | null
   itemCount: number
   onExit: () => void
 }) {
+  /* Past a few hours the prices on this till and the prices on the shelf edge may
+     genuinely differ, and nothing about the screen would otherwise say so. Four
+     hours because that is about the length of a shift's half — long enough that a
+     repricing run could have happened and been missed. */
+  const catalogStale = catalogAgeHours !== null && catalogAgeHours >= 4
   return (
     <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-surface px-4">
       <div className="min-w-0">
@@ -59,6 +89,62 @@ export function TillStatusBar({
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        {/*
+         * OFFLINE, and trading.
+         *
+         * Deliberately calm — brand, not danger. Being offline is a state this till
+         * is designed for, and a red alarm would tell a cashier to stop serving
+         * customers, which is precisely the wrong instruction and the exact thing the
+         * offline work exists to avoid. It says what is true: still selling, and the
+         * sales are being kept.
+         */}
+        {!online && (
+          <span
+            title="This till has no connection. Sales are being kept on the till and will send themselves when it comes back."
+            className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-brand/40 bg-brand-soft px-3.5 text-sm font-medium text-brand"
+          >
+            <Icons.Offline size={16} />
+            Offline
+          </span>
+        )}
+
+        {/*
+         * The queue.
+         *
+         * Shown whenever anything is waiting, online or off — a till that reconnected
+         * but has not finished flushing is exactly when somebody is most likely to
+         * cash up too early. Danger once something has failed, because that one needs
+         * a person rather than patience.
+         */}
+        {(pendingSales > 0 || failedSales > 0) && (
+          <span
+            title={
+              failedSales > 0
+                ? `${failedSales} sale${failedSales === 1 ? '' : 's'} could not be sent and need attention. Do not cash up yet.`
+                : `${pendingSales} sale${pendingSales === 1 ? '' : 's'} still to send. Do not cash up until these are through — the expected figure is wrong until then.`
+            }
+            className={
+              failedSales > 0
+                ? 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-danger/40 bg-danger-soft px-3.5 text-sm font-medium text-danger-ink'
+                : 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink'
+            }
+          >
+            <Icons.Syncing size={16} />
+            {failedSales > 0 ? `${failedSales} stuck` : `${pendingSales} to send`}
+          </span>
+        )}
+
+        {/* A catalog old enough that the shelf edge may disagree with it. */}
+        {catalogStale && (
+          <span
+            title={`Prices were last refreshed about ${Math.floor(catalogAgeHours!)} hour${Math.floor(catalogAgeHours!) === 1 ? '' : 's'} ago. They may not match the shelf.`}
+            className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink"
+          >
+            <Icons.Clock size={16} />
+            Prices {Math.floor(catalogAgeHours!)}h old
+          </span>
+        )}
+
         {/* Warning, not danger: the till works — it just will not survive the line
             dropping. `title` carries the specific reason without spending header
             width on a sentence. */}

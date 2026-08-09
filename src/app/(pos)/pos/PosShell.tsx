@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { useToast, ConfirmModal } from '@/components/ui'
 import { deviceId } from '@/lib/deviceId'
 import { useOfflineShell } from '@/lib/posOffline/useOfflineShell'
+import { useOfflineTill } from '@/lib/posOffline/useOfflineTill'
+import { finaliseOffline, currentShiftId } from '@/lib/posOffline/finaliseOffline'
+import { findByCode, searchOffline, browseOffline } from '@/lib/posOffline/catalog'
+import { offlineBlockedProduct, offlineBlockedTender } from '@/lib/offlineCapability'
 import type { Special } from '@/lib/specialsEngine'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TenderType } from '@/lib/site/tenderTypes'
@@ -60,8 +64,10 @@ import type { Department } from './types'
  * squeezed everything.
  */
 export default function PosShell({
+  siteId,
   siteName,
   operatorName,
+  operatorUserId,
   terminals,
   departments,
   priceStructureId,
@@ -73,8 +79,11 @@ export default function PosShell({
   savedCount,
   specials,
 }: {
+  /** Keys the till's own IndexedDB — one database per site, never one shared. */
+  siteId: number
   siteName: string
   operatorName: string
+  operatorUserId: number
   terminals: Terminal[]
   departments: Department[]
   priceStructureId: number | null
@@ -146,6 +155,12 @@ export default function PosShell({
      only once a till session exists — a worker installed by somebody who never
      got past the PIN pad caches a shell for a machine that is not a till. */
   const shell = useOfflineShell()
+
+  /* Connection, queue and catalog — one hook, because a header that reported
+     "offline" beside a queue count from before the line dropped would be worse than
+     either fact alone. */
+  const till = useOfflineTill(siteId)
+
   const terminal = device ? terminals.find((t) => t.deviceId === device) : undefined
   // `device === null` only means "not resolved yet", so the warning waits for it
   // rather than flashing on every load.
@@ -193,13 +208,19 @@ export default function PosShell({
     const timer = setTimeout(() => {
       setSearching(true)
       dispatch({ type: 'SHOW_SEARCH', term })
-      searchProductsAction(term, priceStructureId)
+      /* Offline: search what is stored. Falling back on a THROW as well as on the
+         known-offline flag, because a search that dies mid-keystroke must show the
+         stored catalog rather than an empty pane that reads as "no such product". */
+      const lookup = till.online
+        ? searchProductsAction(term, priceStructureId).catch(() => searchOffline(siteId, term))
+        : searchOffline(siteId, term)
+      lookup
         .then(setResults)
         .catch(() => setResults([]))
         .finally(() => setSearching(false))
     }, 180)
     return () => clearTimeout(timer)
-  }, [state.query, priceStructureId, dispatch])
+  }, [state.query, priceStructureId, dispatch, till.online, siteId])
 
   /* ── Department browse ────────────────────────────────────────────────
      Products directly in the open department. Fetched rather than shipped with
@@ -217,10 +238,21 @@ export default function PosShell({
     }
     let cancelled = false
     setBrowse({ loading: true, products: [] })
-    // departmentId, not a list: the action expands one id into its whole subtree
-    // server-side, which is what makes drilling into "Groceries" show everything
-    // beneath it rather than only what is filed directly there.
-    browseProductsAction({ departmentId: openDepartment, priceStructureId, limit: 200 })
+    /* departmentId, not a list: the action expands one id into its whole subtree
+       server-side, which is what makes drilling into "Groceries" show everything
+       beneath it rather than only what is filed directly there.
+
+       ⚠ The offline fallback CANNOT do that expansion — Dexie indexes a product's
+       own department and knows nothing of the tree — so drilling offline shows what
+       is filed directly in the department that was opened. A visible difference, and
+       the honest one: inventing a subtree walk here would be a second definition of
+       "what is in this department" that could disagree with the server's. */
+    const lookup = till.online
+      ? browseProductsAction({ departmentId: openDepartment, priceStructureId, limit: 200 }).catch(
+          () => browseOffline(siteId, openDepartment),
+        )
+      : browseOffline(siteId, openDepartment)
+    lookup
       .then((products) => {
         if (!cancelled) setBrowse({ loading: false, products })
       })
@@ -230,11 +262,26 @@ export default function PosShell({
     return () => {
       cancelled = true
     }
-  }, [openDepartment, priceStructureId])
+  }, [openDepartment, priceStructureId, till.online, siteId])
 
   /* ── Actions ──────────────────────────────────────────────────────────── */
 
   function add(product: TillProduct, qty = 1) {
+    /*
+     * Some products cannot be sold with the server gone, and it is kinder to refuse
+     * at the tile than at the tender pad with a queue waiting. A serial-tracked item
+     * needs the serial table to pick a unit and to mark it sold in the same
+     * transaction as the movement; a recipe or a refer item needs a live resolve.
+     * None of that has an offline equivalent, and posting a guess at it later would
+     * corrupt stock the shop cannot reconcile.
+     */
+    if (!till.online) {
+      const blocked = offlineBlockedProduct(product)
+      if (blocked) {
+        toast.error(blocked)
+        return
+      }
+    }
     dispatch({ type: 'ADD', product, qty })
   }
 
@@ -248,7 +295,11 @@ export default function PosShell({
    */
   function submitCode(code: string) {
     startTransition(async () => {
-      const product = await scanAction(code, priceStructureId)
+      /* Offline, a scan resolves against the stored catalog. Same order — barcode
+         then code — because that is what makes a scanner gun feel instant. */
+      const product = till.online
+        ? await scanAction(code, priceStructureId).catch(() => findByCode(siteId, code))
+        : await findByCode(siteId, code)
       if (product) {
         add(product, product.scannedQty ?? 1)
         return
@@ -269,28 +320,124 @@ export default function PosShell({
    * every total from the stored lines and re-checks the pricing, so what is sent
    * here is what was CHARGED rather than a claim about what is owed.
    */
+  /**
+   * Completing the sale on the till itself, because the server cannot be reached.
+   *
+   * Not a lesser path — it is the reason this whole feature exists. The basket's
+   * figures were computed by documentMath and specialsEngine, the same modules the
+   * server recomputes with at sync, so the slip this prints and the invoice that
+   * eventually posts agree by construction rather than by luck.
+   *
+   * Refuses only when the till genuinely cannot RECORD the sale (no local numbering,
+   * or IndexedDB unavailable). A sale it cannot record is a sale it must not take —
+   * that refusal happens before any slip prints, with the goods still on the counter.
+   */
+  async function finaliseLocally(
+    paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
+  ) {
+    const tendered = paid.reduce((sum, p) => sum + p.amount, 0)
+    const result = await finaliseOffline({
+      siteId,
+      terminal: terminal ? { id: terminal.id, code: terminal.code } : null,
+      operator: { userId: operatorUserId, name: operatorName },
+      shiftId: await currentShiftId(siteId),
+      customer: {
+        id: state.customer?.id ?? null,
+        // `||` not `??` — an untyped name trims to '', which is not nullish.
+        name: state.customer?.name || state.customerName.trim() || 'Walk-in',
+        vatNumber: state.customer?.vatNumber ?? null,
+        phone: state.customer?.phone ?? null,
+      },
+      priceStructureId,
+      lines: salePayloadLines(state.lines, lineSpecials),
+      tenders: paid.map((p) => ({
+        tenderTypeId: p.tenderTypeId,
+        tenderCode: tenders.find((t) => t.id === p.tenderTypeId)?.code ?? '',
+        amount: p.amount,
+        reference: p.reference ?? null,
+      })),
+      totalIncl: totals.doc.totalIncl,
+      tenderedTotal: tendered,
+      change: Math.max(0, tendered - totals.doc.totalIncl),
+    })
+
+    if (!result.ok) {
+      toast.error(result.error)
+      return
+    }
+
+    setTendering(false)
+    setEditing(null)
+    setConfirmClear(false)
+    setPickingCustomer(false)
+    setReceipt({
+      number: result.documentNumber,
+      change: result.change,
+      /* No document id — nothing has posted, so there is nothing to open or void
+         through the back office. The receipt hides both buttons on a zero id, and
+         cancelling an unsynced sale is the outbox screen's job. */
+      documentId: 0,
+      total: totals.doc.totalIncl,
+    })
+    dispatch({ type: 'CLEAR' })
+    // The badge must move immediately: this sale is now the till's responsibility
+    // and the cashier has to be able to see that it is waiting.
+    await till.recount()
+    toast.success(`${result.documentNumber} saved on this till — it will send itself.`)
+  }
+
   function finalise(paid: { tenderTypeId: number; amount: number; reference?: string | null }[]) {
+    /* Known to be offline: go straight to the local path rather than spending four
+       seconds on a doomed request with a customer waiting. */
+    if (!till.online) {
+      startTransition(() => finaliseLocally(paid))
+      return
+    }
+
     startTransition(async () => {
-      const result = await finaliseSaleAction(
-        state.documentId,
-        {
-          // The id is what makes it an ACCOUNT sale; a name alone is a walk-in
-          // snapshot on the document and creates no debtor record.
-          customerId: state.customer?.id ?? null,
-          /* `||`, NOT `??`, for the walk-in fallback.
-             An untyped name trims to '' — which is not nullish, so `??` let it
-             through and the document ended up with the literal string "null" as
-             its customer name. Verified against real rows before this was fixed. */
-          customerName: state.customer?.name || state.customerName.trim() || 'Walk-in',
-          customerVatNo: state.customer?.vatNumber ?? null,
-          customerPhone: state.customer?.phone ?? null,
-          terminalId: terminal?.id ?? null,
-          terminalCode: terminal?.code ?? null,
-          priceStructureId,
-          lines: salePayloadLines(state.lines, lineSpecials),
-        },
-        paid,
-      )
+      /*
+       * THE CASE THAT MATTERS MOST: the line drops between opening the tender pad
+       * and confirming it.
+       *
+       * `navigator.onLine` is still true, the request goes out, and it dies. A
+       * server action that throws would surface as an unhandled rejection and the
+       * cashier would be left holding a tendered basket with no slip and no
+       * explanation — the exact moment this whole feature is supposed to cover, and
+       * the one where failing would be least forgivable.
+       *
+       * So a TRANSPORT failure falls through to the local path. A refusal from the
+       * server does not: that is a real answer about this sale (an over-limit
+       * account, a locked period) and queueing it offline would smuggle past a rule
+       * the server had just correctly applied.
+       */
+      let result: Awaited<ReturnType<typeof finaliseSaleAction>>
+      try {
+        result = await finaliseSaleAction(
+          state.documentId,
+          {
+            // The id is what makes it an ACCOUNT sale; a name alone is a walk-in
+            // snapshot on the document and creates no debtor record.
+            customerId: state.customer?.id ?? null,
+            /* `||`, NOT `??`, for the walk-in fallback.
+               An untyped name trims to '' — which is not nullish, so `??` let it
+               through and the document ended up with the literal string "null" as
+               its customer name. Verified against real rows before this was fixed. */
+            customerName: state.customer?.name || state.customerName.trim() || 'Walk-in',
+            customerVatNo: state.customer?.vatNumber ?? null,
+            customerPhone: state.customer?.phone ?? null,
+            terminalId: terminal?.id ?? null,
+            terminalCode: terminal?.code ?? null,
+            priceStructureId,
+            lines: salePayloadLines(state.lines, lineSpecials),
+          },
+          paid,
+        )
+      } catch {
+        await finaliseLocally(paid)
+        // Re-check the connection so the header stops claiming to be online.
+        void till.refresh()
+        return
+      }
 
       if (!result.ok) {
         // The draft is left behind deliberately when a post is refused — there is
@@ -419,6 +566,25 @@ export default function PosShell({
 
   const customerLabel = state.customer?.name ?? (state.customerName.trim() || null)
 
+  /*
+   * Which payment methods this till can actually honour right now.
+   *
+   * Filtered HERE rather than inside TenderPad, so the pad stays ignorant of whether
+   * there is a network — it renders what it is given. Account and loyalty both
+   * depend on a balance only the server knows: a credit check against a stale
+   * balance is how a shop extends credit to somebody who has already exhausted it,
+   * and `redeemPointsForSale` THROWS rather than refuses, precisely so an
+   * unaffordable redemption rolls the whole sale back. There is no offline
+   * equivalent of that rollback.
+   *
+   * Cash, card and everything else work normally, which is the overwhelming majority
+   * of what a shop takes.
+   */
+  const availableTenders = useMemo(
+    () => (till.online ? tenders : tenders.filter((t) => offlineBlockedTender(t) === null)),
+    [tenders, till.online],
+  )
+
   return (
     <>
       <TillStatusBar
@@ -433,6 +599,10 @@ export default function PosShell({
         /* Only once the device has resolved AND the shell has had its say — before
            that, "offline unavailable" would flash on every load and mean nothing. */
         offlineReason={device !== null && !shell.ready ? shell.reason : null}
+        online={till.online}
+        pendingSales={till.pending}
+        failedSales={till.failed}
+        catalogAgeHours={till.catalogAgeHours}
         itemCount={state.lines.length}
         onExit={() => router.push('/dashboard')}
       />
@@ -505,7 +675,7 @@ export default function PosShell({
       <TenderPad
         open={tendering}
         onClose={() => setTendering(false)}
-        tenders={tenders}
+        tenders={availableTenders}
         totalIncl={totals.doc.totalIncl}
         cashRounding={cashRounding}
         customer={state.customer}
@@ -566,6 +736,7 @@ export default function PosShell({
         documentNumber={receipt?.number ?? ''}
         change={receipt?.change ?? 0}
         canVoid={canVoid}
+        posted={(receipt?.documentId ?? 0) > 0}
         onVoid={() => setVoiding(true)}
         onClose={() => setReceipt(null)}
         /*
