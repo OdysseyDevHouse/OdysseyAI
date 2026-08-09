@@ -178,6 +178,7 @@ const catalog = await evaluate(`
       sequence: body.sequence,
       terminal: body.terminal,
       tenders: body.tenders.map((t) => ({ id: t.id, code: t.code, postsToDebtor: t.postsToDebtor, integrationKey: t.integrationKey })),
+      operators: body.operators,
     }
   })()
 `)
@@ -190,6 +191,90 @@ if (!catalog.ok || !catalog.hasSequence) {
   console.log('\nCannot verify offline trading without a catalog and a sequence.')
   process.exit(1)
 }
+
+/* ── Offline PIN sign-in ─────────────────────────────────────────────────────
+ *
+ * The verifier the SERVER minted, checked in the BROWSER, with the network cut.
+ *
+ * This is the assertion the unit test cannot make: test-offline-signin derives both
+ * sides itself, so it proves the algorithm is self-consistent. What it cannot prove
+ * is that the browser's WebCrypto reproduces what Node's minting produced — a salt
+ * encoded differently, or an iteration count read from the wrong column, would pass
+ * every unit test and fail every real sign-in.
+ */
+await setOffline(true)
+console.log('\n--- network cut (PIN check) ---')
+
+const ops = catalog.operators ?? []
+const ready = ops.filter((o) => o.offlineReady)
+ok('the catalog ships operator verifiers', ops.length > 0, `${ops.length} operator(s)`)
+ok(
+  'at least one is ready to sign in offline',
+  ready.length > 0,
+  ready.map((o) => o.name).join(', ') || '(none)',
+)
+ok(
+  'and it ships the SALT, not only the verifier',
+  ready.every((o) => typeof o.saltB64 === 'string' && o.saltB64.length > 0),
+  'without it the till can derive nothing',
+)
+ok(
+  'the iteration count travels with each verifier',
+  ready.every((o) => o.iterations >= 2_400_000),
+  ready.map((o) => o.iterations).join(','),
+)
+
+/* Derive in the browser and compare against the stored verifier, using the SAME
+   WebCrypto call the app's offlinePin.ts makes. A wrong PIN must not match; the
+   right one cannot be tested without knowing it, so what is asserted is that the
+   derivation runs, is the right shape, and is stable. */
+const derived = await evaluate(`
+  (async () => {
+    const op = ${JSON.stringify(ready[0] ?? null)}
+    if (!op) return { ran: false }
+    const enc = new TextEncoder()
+    const salt = Uint8Array.from(atob(op.saltB64), (c) => c.charCodeAt(0))
+    const key = await crypto.subtle.importKey('raw', enc.encode('000000'), 'PBKDF2', false, ['deriveBits'])
+    const t0 = performance.now()
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: op.iterations },
+      key, 256,
+    )
+    const ms = performance.now() - t0
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(bits)))
+    // Again, to prove it is deterministic in this engine.
+    const key2 = await crypto.subtle.importKey('raw', enc.encode('000000'), 'PBKDF2', false, ['deriveBits'])
+    const bits2 = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: op.iterations }, key2, 256,
+    )
+    const b64again = btoa(String.fromCharCode(...new Uint8Array(bits2)))
+    return { ran: true, ms: Math.round(ms), b64, deterministic: b64 === b64again, matchesStored: b64 === op.verifier, storedLen: op.verifier.length }
+  })()
+`)
+
+ok('a verifier can be derived in the browser, offline', derived.ran === true)
+ok('the derivation is deterministic', derived.deterministic === true)
+ok(
+  'it produces the same 44-char shape the server stores',
+  derived.b64?.length === derived.storedLen,
+  `derived ${derived.b64?.length}, stored ${derived.storedLen}`,
+)
+ok(
+  'a WRONG pin does not match the stored verifier',
+  derived.matchesStored === false,
+  'derived from "000000"',
+)
+/* The cost, measured in the browser rather than assumed from the Node figure — this
+   is the number a cashier actually waits, and the whole 2.4M decision rests on it
+   being imperceptible. */
+console.log(`      (2.4M-iteration derivation took ${derived.ms}ms in this browser)`)
+ok(
+  'and it costs under a second, so a cashier does not notice',
+  derived.ms < 1000,
+  `${derived.ms}ms`,
+)
+
+await setOffline(false)
 
 /* ── Cut the line, and trade ─────────────────────────────────────────────────
  *

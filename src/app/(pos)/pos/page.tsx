@@ -10,8 +10,7 @@ import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
 import { liveSpecials } from '@/lib/site/specials'
 import { listDepartments } from '@/lib/site/departments'
-import PosShell from './PosShell'
-import PosGate from './PosGate'
+import PosEntry from './PosEntry'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,15 +27,26 @@ export default async function PosPage() {
   const { site, capabilities } = await requireSiteUser()
   if (!can(capabilities, 'sales.till')) redirect('/not-allowed')
 
-  // No PIN, no basket. Rendering the till first and asking afterwards is how a
-  // sale gets rung up against whoever opened the browser that morning.
+  /*
+   * Who is standing here, if the server can tell.
+   *
+   * No PIN, no basket — rendering the till first and asking afterwards is how a sale
+   * gets rung up against whoever opened the browser that morning. But the ANSWER is
+   * now handed to PosEntry rather than acted on here, because the till cookie lasts 8
+   * hours against the browser session's 12: it lapses first, and when it does with no
+   * network, only the client can say whether somebody signed in against this device's
+   * own verifiers. See PosEntry.
+   *
+   * The shop-level data below is loaded either way. Loading it only for an
+   * already-signed-in operator would mean an offline sign-in had nothing to render
+   * and would need a round trip it cannot make.
+   */
   const till = await getTillSession(site.id)
-  if (!till) return <PosGate siteName={site.displayName} />
 
   // The OPERATOR's permissions, not the browser session's. A manager signed in to
   // the back office who hands the till to a junior must not leave their own
   // discount and price-override rights behind on the screen.
-  const operator = await getUser(site.id, till.userId)
+  const operator = till ? await getUser(site.id, till.userId) : null
   const operatorCapabilities = operator
     ? await capabilitiesForRole(site.id, operator.roleId)
     : capabilities
@@ -66,16 +76,31 @@ export default async function PosPage() {
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
 
   return (
-    <PosShell
+    <PosEntry
       /* The till's own IndexedDB is keyed by this, so a machine that switches shops
          opens a different database rather than mixing two shops' outboxes. */
       siteId={site.id}
       siteName={site.displayName}
-      operatorName={till.name}
-      /* Carried on every offline sale for attribution. The server re-derives this
-         person's CAPABILITIES from their role at sync and never trusts the payload's
-         word for them — see postOfflineSale. */
-      operatorUserId={till.userId}
+      /* Null when the till cookie has lapsed. PosEntry then looks for an offline
+         session before deciding to show the PIN gate. */
+      serverOperator={
+        till
+          ? {
+              /* Carried on every offline sale for attribution. The server re-derives
+                 this person's CAPABILITIES from their role at sync and never trusts
+                 the payload's word for them — see postOfflineSale. */
+              userId: till.userId,
+              name: till.name,
+              canOverrideDiscount: can(operatorCapabilities, 'sales.discount_override'),
+              canOverridePrice: can(operatorCapabilities, 'sales.price_override'),
+              /* Whether the OPERATOR may void, not the browser session. This only
+                 decides whether the button is offered — voidSaleAction re-checks,
+                 because a server action is a public endpoint and hiding a button
+                 changes what is easy rather than what is possible. */
+              canVoid: can(operatorCapabilities, 'sales.void'),
+            }
+          : null
+      }
       terminals={terminals}
       tenders={tenders}
       /* Narrowed on the way out rather than passed whole: the till needs an id,
@@ -88,13 +113,6 @@ export default async function PosPage() {
       priceStructureId={priceStructure?.id ?? null}
       savedCount={saved.length}
       cashRounding={cashRounding}
-      canOverrideDiscount={can(operatorCapabilities, 'sales.discount_override')}
-      canOverridePrice={can(operatorCapabilities, 'sales.price_override')}
-      /* Whether the OPERATOR may void, not the browser session. This only decides
-         whether the button is offered — voidSaleAction re-checks it, because a
-         server action is a public endpoint and hiding a button changes what is
-         easy rather than what is possible. */
-      canVoid={can(operatorCapabilities, 'sales.void')}
       specials={specials}
     />
   )

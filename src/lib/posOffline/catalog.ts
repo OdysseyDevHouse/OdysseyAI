@@ -47,14 +47,17 @@ export type CatalogMeta = {
 
 export type CatalogSettings = Record<string, string | null>
 
-export type OfflineOperator = {
-  userId: number
-  name: string
-  capabilities: string[]
-  verifier: string | null
-  iterations: number
-  offlineReady: boolean
-}
+/*
+ * Re-exported rather than redeclared.
+ *
+ * A second copy of this shape here would be a second thing to keep in step with the
+ * endpoint, and the field it would most easily lose is `saltB64` — without which the
+ * till can derive nothing and every offline PIN silently fails. `offlineOperators.ts`
+ * is `server-only`, but a TYPE import is erased at compile time, so this costs the
+ * client bundle nothing.
+ */
+import type { OfflineOperator } from '../site/offlineOperators'
+export type { OfflineOperator }
 
 type CatalogResponse = {
   schema: number

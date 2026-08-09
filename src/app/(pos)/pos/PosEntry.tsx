@@ -1,0 +1,138 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { offlineSession, type OfflineSession } from '@/lib/posOffline/signInOffline'
+import PosGate from './PosGate'
+import PosShell from './PosShell'
+import type { Special } from '@/lib/specialsEngine'
+import type { TenderType } from '@/lib/site/tenderTypes'
+import type { Terminal } from '@/lib/site/terminals'
+import type { Department } from './types'
+
+/**
+ * Gate or till, decided on the CLIENT when the server could not decide it.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ *
+ * The server answers "who is standing at this till" from the till cookie, and that
+ * is the right answer whenever it can give one. But that cookie lasts 8 hours while
+ * the browser session lasts 12, so it is the FIRST to lapse: a till opened at 07:00
+ * has no operator by 15:00, and one left overnight has none at all. The server then
+ * renders the PIN gate — correctly — and if the network is also gone, nothing can
+ * mint a new cookie.
+ *
+ * So this component holds the one fact the server has no access to: somebody signed
+ * in against this device's own PBKDF2 verifiers, and the session is in IndexedDB.
+ *
+ * ── WHY THE SHELL IS RENDERED HERE RATHER THAN PASSED IN ──────────────────
+ *
+ * Because the operator's NAME and CAPABILITIES are part of it, and offline they come
+ * from the local session rather than from the server. Passing a pre-rendered shell
+ * down would mean the server had already chosen an operator — which is exactly what
+ * it cannot do. So the page hands over the shop-level data it CAN resolve (products,
+ * tenders, terminals, specials) and the operator is filled in from whichever session
+ * turns out to exist.
+ */
+export default function PosEntry({
+  siteId,
+  siteName,
+  serverOperator,
+  terminals,
+  departments,
+  priceStructureId,
+  tenders,
+  cashRounding,
+  savedCount,
+  specials,
+}: {
+  siteId: number
+  siteName: string
+  /**
+   * The operator the SERVER resolved, or null when the till cookie has lapsed.
+   *
+   * Carries the capability booleans as well as the name, because they are read from
+   * that person's ROLE — a manager who hands the till to a junior must not leave
+   * their own override rights on the screen.
+   */
+  serverOperator: {
+    userId: number
+    name: string
+    canOverrideDiscount: boolean
+    canOverridePrice: boolean
+    canVoid: boolean
+  } | null
+  terminals: Terminal[]
+  departments: Department[]
+  priceStructureId: number | null
+  tenders: TenderType[]
+  cashRounding: number
+  savedCount: number
+  specials: Special[]
+}) {
+  /*
+   * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
+   * in". Rendering the gate during that gap would flash a PIN pad at a cashier who
+   * is already signed in, on every load.
+   */
+  const [session, setSession] = useState<OfflineSession | null | undefined>(undefined)
+
+  useEffect(() => {
+    if (serverOperator) return
+    let cancelled = false
+    void offlineSession(siteId).then((found) => {
+      if (!cancelled) setSession(found)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [siteId, serverOperator])
+
+  /* The server's answer wins whenever it has one: it knows about a PIN changed five
+     minutes ago on another machine, where the local verifiers are only as fresh as
+     the last catalog refresh. */
+  const operator = serverOperator
+    ? serverOperator
+    : session
+      ? {
+          userId: session.userId,
+          name: session.name,
+          /*
+           * Capabilities from the stored session, resolved server-side from the
+           * operator's role when the catalog was built. These decide what the SCREEN
+           * offers; every server action re-checks for itself, and `postOfflineSale`
+           * re-derives them from the role again at sync. A till that decided its own
+           * permissions would be a till somebody could grant themselves a void on.
+           */
+          canOverrideDiscount: session.capabilities.includes('sales.discount_override'),
+          canOverridePrice: session.capabilities.includes('sales.price_override'),
+          canVoid: session.capabilities.includes('sales.void'),
+        }
+      : null
+
+  // Still reading IndexedDB. Blank rather than a spinner: it resolves in
+  // milliseconds, and a spinner that flashes on every load is worse than nothing.
+  if (!operator && session === undefined && !serverOperator) return null
+
+  if (!operator) {
+    return <PosGate siteId={siteId} siteName={siteName} onOfflineSignIn={setSession} />
+  }
+
+  return (
+    <PosShell
+      siteId={siteId}
+      siteName={siteName}
+      operatorName={operator.name}
+      operatorUserId={operator.userId}
+      terminals={terminals}
+      departments={departments}
+      priceStructureId={priceStructureId}
+      tenders={tenders}
+      cashRounding={cashRounding}
+      savedCount={savedCount}
+      canOverrideDiscount={operator.canOverrideDiscount}
+      canOverridePrice={operator.canOverridePrice}
+      canVoid={operator.canVoid}
+      specials={specials}
+    />
+  )
+}
