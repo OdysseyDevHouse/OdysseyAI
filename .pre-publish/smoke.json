@@ -1,0 +1,626 @@
+{
+  "base": "http://localhost:4100",
+  "site": 1,
+  "results": [
+    {
+      "route": "/accounting/accounts",
+      "url": "/accounting/accounts",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/accounts/[id]",
+      "url": "/accounting/accounts/52",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/assets",
+      "url": "/accounting/assets",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/assets/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/accounting/assets/[id]/edit",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/accounting/assets/depreciation",
+      "url": "/accounting/assets/depreciation",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/assets/new",
+      "url": "/accounting/assets/new",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/balance-sheet",
+      "url": "/accounting/balance-sheet",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/income-statement",
+      "url": "/accounting/income-statement",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/interest",
+      "url": "/accounting/interest",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/journals",
+      "url": "/accounting/journals",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/journals/[id]",
+      "url": "/accounting/journals/1044",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/periods",
+      "url": "/accounting/periods",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/trial-balance",
+      "url": "/accounting/trial-balance",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/unallocated",
+      "url": "/accounting/unallocated",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/vat",
+      "url": "/accounting/vat",
+      "state": "pass"
+    },
+    {
+      "route": "/accounting/write-offs",
+      "url": "/accounting/write-offs",
+      "state": "pass"
+    },
+    {
+      "route": "/cashbook",
+      "url": "/cashbook",
+      "state": "pass"
+    },
+    {
+      "route": "/cashbook/[id]",
+      "url": "/cashbook/18",
+      "state": "pass"
+    },
+    {
+      "route": "/cashbook/[id]/edit",
+      "url": "/cashbook/18/edit",
+      "state": "pass"
+    },
+    {
+      "route": "/cashbook/import",
+      "url": "/cashbook/import",
+      "state": "pass"
+    },
+    {
+      "route": "/cashbook/new",
+      "url": "/cashbook/new",
+      "state": "pass"
+    },
+    {
+      "route": "/commission",
+      "url": "/commission",
+      "state": "pass"
+    },
+    {
+      "route": "/commission/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/commission/rules",
+      "url": "/commission/rules",
+      "state": "pass"
+    },
+    {
+      "route": "/credit",
+      "url": "/credit",
+      "state": "pass"
+    },
+    {
+      "route": "/credit/levels",
+      "url": "/credit/levels",
+      "state": "pass"
+    },
+    {
+      "route": "/credit/promises",
+      "url": "/credit/promises",
+      "state": "pass"
+    },
+    {
+      "route": "/credit/runs",
+      "url": "/credit/runs",
+      "state": "pass"
+    },
+    {
+      "route": "/credit/runs/[id]",
+      "url": "/credit/runs/21",
+      "state": "pass"
+    },
+    {
+      "route": "/customers",
+      "url": "/customers",
+      "state": "pass"
+    },
+    {
+      "route": "/customers/[id]",
+      "url": "/customers/11887",
+      "state": "pass"
+    },
+    {
+      "route": "/customers/[id]/statement",
+      "url": "/customers/11887/statement",
+      "state": "pass"
+    },
+    {
+      "route": "/customers/age-analysis",
+      "url": "/customers/age-analysis",
+      "state": "pass"
+    },
+    {
+      "route": "/customers/new",
+      "url": "/customers/new",
+      "state": "pass"
+    },
+    {
+      "route": "/customers/statements",
+      "url": "/customers/statements",
+      "state": "pass"
+    },
+    {
+      "route": "/customers/statements/[runId]",
+      "url": "/customers/statements/5",
+      "state": "pass"
+    },
+    {
+      "route": "/dashboard",
+      "url": "/dashboard",
+      "state": "pass"
+    },
+    {
+      "route": "/departments",
+      "url": "/departments",
+      "state": "pass"
+    },
+    {
+      "route": "/departments/[id]",
+      "url": "/departments/10",
+      "state": "pass"
+    },
+    {
+      "route": "/departments/new",
+      "url": "/departments/new",
+      "state": "pass"
+    },
+    {
+      "route": "/expenses",
+      "url": "/expenses",
+      "state": "pass"
+    },
+    {
+      "route": "/expenses/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/expenses/[id]/edit",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/expenses/new",
+      "url": "/expenses/new",
+      "state": "pass"
+    },
+    {
+      "route": "/expenses/recurring",
+      "url": "/expenses/recurring",
+      "state": "pass"
+    },
+    {
+      "route": "/instructions",
+      "url": "/instructions",
+      "state": "pass"
+    },
+    {
+      "route": "/instructions/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/instructions/new",
+      "url": "/instructions/new",
+      "state": "pass"
+    },
+    {
+      "route": "/loyalty",
+      "url": "/loyalty",
+      "state": "pass"
+    },
+    {
+      "route": "/loyalty/cards",
+      "url": "/loyalty/cards",
+      "state": "pass"
+    },
+    {
+      "route": "/loyalty/programme",
+      "url": "/loyalty/programme",
+      "state": "pass"
+    },
+    {
+      "route": "/loyalty/tiers",
+      "url": "/loyalty/tiers",
+      "state": "pass"
+    },
+    {
+      "route": "/not-allowed",
+      "url": "/not-allowed",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/builder",
+      "url": "/online-store/builder",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/departments",
+      "url": "/online-store/departments",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/orders",
+      "url": "/online-store/orders",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/payments",
+      "url": "/online-store/payments",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/reviews",
+      "url": "/online-store/reviews",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/setup",
+      "url": "/online-store/setup",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/statuses",
+      "url": "/online-store/statuses",
+      "state": "pass"
+    },
+    {
+      "route": "/products",
+      "url": "/products",
+      "state": "pass"
+    },
+    {
+      "route": "/products/[id]",
+      "url": "/products/42685",
+      "state": "pass"
+    },
+    {
+      "route": "/products/new",
+      "url": "/products/new",
+      "state": "pass"
+    },
+    {
+      "route": "/purchasing",
+      "url": "/purchasing",
+      "state": "pass"
+    },
+    {
+      "route": "/purchasing/[id]",
+      "url": "/purchasing/5207",
+      "state": "pass"
+    },
+    {
+      "route": "/purchasing/[id]/return",
+      "url": "/purchasing/5207/return",
+      "state": "pass"
+    },
+    {
+      "route": "/purchasing/receive",
+      "url": "/purchasing/receive",
+      "state": "pass"
+    },
+    {
+      "route": "/reports",
+      "url": "/reports",
+      "state": "pass"
+    },
+    {
+      "route": "/reports/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/reports/ask",
+      "url": "/reports/ask",
+      "state": "pass"
+    },
+    {
+      "route": "/reports/builder",
+      "url": "/reports/builder",
+      "state": "pass"
+    },
+    {
+      "route": "/reports/schedules",
+      "url": "/reports/schedules",
+      "state": "pass"
+    },
+    {
+      "route": "/sales",
+      "url": "/sales",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/[id]",
+      "url": "/sales/107642",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/[id]/credit",
+      "url": "/sales/107642/credit",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/cashup",
+      "url": "/sales/cashup",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/contracts",
+      "url": "/sales/contracts",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/contracts/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/sales/contracts/[id]/edit",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/sales/contracts/new",
+      "url": "/sales/contracts/new",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/invoicing",
+      "url": "/sales/invoicing",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/invoicing/[id]",
+      "url": "/sales/invoicing/107642",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/laybys",
+      "url": "/sales/laybys",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/laybys/[id]",
+      "url": "/sales/laybys/43",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/laybys/[id]/print",
+      "url": "/sales/laybys/43/print",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/new",
+      "url": "/sales/new",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/orders",
+      "url": "/sales/orders",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/orders/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/sales/quotes",
+      "url": "/sales/quotes",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/quotes/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/sales/returns",
+      "url": "/sales/returns",
+      "state": "pass"
+    },
+    {
+      "route": "/setup",
+      "url": "/setup",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/databases",
+      "url": "/setup/databases",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/expense-categories",
+      "url": "/setup/expense-categories",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/laybys",
+      "url": "/setup/laybys",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/linked-stores",
+      "url": "/setup/linked-stores",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/locations",
+      "url": "/setup/locations",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/numbering",
+      "url": "/setup/numbering",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/opening-balances",
+      "url": "/setup/opening-balances",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/pricing",
+      "url": "/setup/pricing",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/reconciliation",
+      "url": "/setup/reconciliation",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/roles",
+      "url": "/setup/roles",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/style-guide",
+      "url": "/setup/style-guide",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/tender-types",
+      "url": "/setup/tender-types",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/terminals",
+      "url": "/setup/terminals",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/users",
+      "url": "/setup/users",
+      "state": "pass"
+    },
+    {
+      "route": "/specials",
+      "url": "/specials",
+      "state": "pass"
+    },
+    {
+      "route": "/staff",
+      "url": "/staff",
+      "state": "pass"
+    },
+    {
+      "route": "/staff/clock",
+      "url": "/staff/clock",
+      "state": "pass"
+    },
+    {
+      "route": "/staff/cost",
+      "url": "/staff/cost",
+      "state": "pass"
+    },
+    {
+      "route": "/staff/leave",
+      "url": "/staff/leave",
+      "state": "pass"
+    },
+    {
+      "route": "/staff/pay-rules",
+      "url": "/staff/pay-rules",
+      "state": "pass"
+    },
+    {
+      "route": "/staff/timesheets",
+      "url": "/staff/timesheets",
+      "state": "pass"
+    },
+    {
+      "route": "/suppliers",
+      "url": "/suppliers",
+      "state": "pass"
+    },
+    {
+      "route": "/suppliers/[id]",
+      "url": "/suppliers/913",
+      "state": "pass"
+    },
+    {
+      "route": "/suppliers/[id]/statement",
+      "url": "/suppliers/913/statement",
+      "state": "pass"
+    },
+    {
+      "route": "/suppliers/age-analysis",
+      "url": "/suppliers/age-analysis",
+      "state": "pass"
+    },
+    {
+      "route": "/suppliers/new",
+      "url": "/suppliers/new",
+      "state": "pass"
+    },
+    {
+      "route": "/suppliers/remittances",
+      "url": "/suppliers/remittances",
+      "state": "pass"
+    },
+    {
+      "route": "/suppliers/remittances/[runId]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/transfers",
+      "url": "/transfers",
+      "state": "pass"
+    },
+    {
+      "route": "/transfers/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/transfers/new",
+      "url": "/transfers/new",
+      "state": "pass"
+    }
+  ]
+}

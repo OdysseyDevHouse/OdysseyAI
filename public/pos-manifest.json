@@ -1,0 +1,15 @@
+{
+  "name": "Odyssey Till",
+  "short_name": "Till",
+  "description": "The point-of-sale till. Keeps trading when the network is down.",
+  "start_url": "/pos",
+  "scope": "/pos",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#f6f7f9",
+  "theme_color": "#2f6fed",
+  "icons": [
+    { "src": "/logo-icon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/logo-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

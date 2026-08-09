@@ -157,6 +157,39 @@ export const SETTING_DEFAULTS = {
   staff_sunday_ordinary_multiplier: '1.5',
   /** Section 18(2)(a) — a public holiday that is not an ordinary working day. */
   staff_holiday_multiplier: '2',
+
+  /* ── Document numbering ────────────────────────────────────────────────
+     See sql/site/064_pos_numbering.sql and lib/site/numbering.ts. */
+
+  /**
+   * 'terminal' or 'site'.
+   *
+   * 'terminal' gives every till its own invoice sequence, numbered
+   * INV_01_02_000097, so a till can trade offline indefinitely — it allocates
+   * locally with nothing reserved and nothing to run out of. Each till's own run
+   * is gapless, at the cost of there being no single company-wide run.
+   *
+   * 'site' is one shared sequence, which is how every store numbered before this
+   * existed. A till then cannot number a sale offline at all.
+   *
+   * Defaults to 'site' HERE, deliberately, even though the migration seeds
+   * 'terminal' for stores it touches: a default is what an unmigrated or
+   * hand-edited site falls back to, and falling back to the behaviour a store
+   * already had is the only safe direction.
+   */
+  sales_number_scope: 'site',
+
+  /**
+   * This store's number inside the group, as it appears in an invoice number.
+   *
+   * Twenty branches each number their first till 01, so without this every branch
+   * issues INV_01_000097 and a group report has twenty rows claiming one invoice
+   * number. uq_doc_number cannot catch it — each site has its own database and its
+   * own copy of that index.
+   *
+   * Frozen once the store has issued anything; see setStoreNumber().
+   */
+  store_number: '01',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -260,6 +293,19 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === '' || /^\d{4}-\d{2}-\d{2}$/.test(value)
         ? null
         : 'Enter a date as yyyy-mm-dd, or leave it blank.'
+
+    case 'sales_number_scope':
+      return value === 'terminal' || value === 'site'
+        ? null
+        : "Numbering scope must be 'terminal' or 'site'."
+
+    // Digits only, and never zero. This lands in a legal document number, so a
+    // stray letter here would print on an invoice — and 'store 0' reads as
+    // "no store" to anyone comparing group reports.
+    case 'store_number':
+      return /^\d{1,4}$/.test(value) && Number(value) >= 1
+        ? null
+        : 'The store number must be 1 to 4 digits, e.g. 01.'
 
     case 'sales_allow_finalised_edit':
     case 'autocode_customer':

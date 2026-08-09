@@ -1,0 +1,288 @@
+OdysseyAI — pre-publish check
+gates: static, migrations, domain, smoke
+database: localhost/odyssey_tickets  sites on: localhost
+
+========================================================================
+  GATE 1 / static — types, build, design system
+========================================================================
+
+> tsc --noEmit
+  clean (2.1s)
+
+> design system (scripts/check-ui-kit.mjs)
+  clean — 660 file(s) (0.1s)
+
+> next build
+  built (10.9s)
+
+  static: 3/3 ok
+
+========================================================================
+  GATE 2 / migrations — sql/site/*.sql on every active site
+========================================================================
+  2 active site(s): 1, 2
+
+> site 1
+  site 1 "master" -> root@localhost:3306/ody10000_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 2
+  site 2 "master" -> root@localhost:3306/ody10001_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+  migrations: 2/2 ok
+
+========================================================================
+  GATE 3 / domain — every scripts/test-*.ts
+========================================================================
+  65 test script(s): 41 in parallel (4 at a time),
+  then 24 one at a time — they assert site-wide reconciliation,
+  which cannot distinguish another test's in-flight rows from real drift.
+
+PASS  builder                   0.5s
+PASS  attachments               0.6s
+**FAIL**  cashup                    0.7s  1 assertion(s) failed
+PASS  contract-model            0.2s
+PASS  commission                0.6s
+PASS  credit-model              0.2s
+PASS  contracts                 1.0s
+PASS  cashup-modes              1.7s
+PASS  document-math             0.3s
+PASS  employment                0.6s
+PASS  holidays                  0.4s
+PASS  credit-control            2.3s
+PASS  customer-accounts         2.0s
+PASS  leave                     0.5s
+PASS  online-content            0.4s
+PASS  master-codes              0.6s
+PASS  online-orders             0.5s
+PASS  online-store              0.6s
+PASS  overtime                  0.4s
+PASS  order-statuses            0.8s
+PASS  loyalty                   2.0s
+PASS  party-records             0.4s
+PASS  period-locks              0.4s
+PASS  permissions               0.5s
+PASS  price-guard               0.3s
+PASS  product-images            0.4s
+PASS  payments                  1.3s
+PASS  pricing-setup             0.7s
+PASS  product-setup             0.5s
+PASS  repricing                 0.3s
+PASS  quotes                    0.6s
+PASS  sequences                 0.4s
+PASS  specials                  0.4s
+PASS  reprice-run               1.1s
+PASS  staff-cost                0.4s
+PASS  staff-time                1.0s
+PASS  timesheets                0.5s
+PASS  storefront                1.4s
+PASS  users-pins                1.4s
+PASS  dashboard                 8.6s
+PASS  statement-runs            4.4s
+
+  — site-wide reconciliation, one at a time —
+
+PASS  account-sales             1.6s  [solo]
+PASS  account-types             0.5s  [solo]
+PASS  accounting                0.6s  [solo]
+PASS  cashbook                  0.5s  [solo]
+PASS  composition               2.4s  [solo]
+PASS  credit-notes              1.6s  [solo]
+PASS  expenses                  0.5s  [solo]
+**FAIL**  fixed-assets              0.4s  [solo]  1 assertion(s) failed
+PASS  general-ledger            0.6s  [solo]
+PASS  grv-serials               1.3s  [solo]
+PASS  invoicing                 1.1s  [solo]
+PASS  laybys                    1.8s  [solo]
+PASS  locations                 1.3s  [solo]
+PASS  opening-balances          0.5s  [solo]
+PASS  payment-runs              0.5s  [solo]
+PASS  purchasing                1.0s  [solo]
+PASS  sales-edit                1.8s  [solo]
+PASS  sales-orders              3.0s  [solo]
+PASS  sales-posting             1.7s  [solo]
+PASS  serials                   2.5s  [solo]
+PASS  settlement-discount       0.5s  [solo]
+PASS  supplier-returns          0.9s  [solo]
+PASS  transfers                 1.3s  [solo]
+PASS  void                      1.7s  [solo]
+
+  domain: 63/65 ok
+
+========================================================================
+  GATE 4 / smoke — every back-office screen in a browser
+========================================================================
+  a server is already on http://localhost:4100; restarting it so the crawl is not
+  reading a degraded worker pool (pass --reuse-server to keep it)
+  starting a dev server on http://localhost:4100
+  server ready
+  warming up…
+signed in as tiaan@point-of-sale.co.za, landed on /dashboard
+
+smoking 123 route(s) as tiaan@point-of-sale.co.za against http://localhost:4100
+
+PASS  /accounting/accounts
+PASS  /accounting/accounts/52
+PASS  /accounting/assets
+SKIP  /accounting/assets/[id]  -- no rows in the source table
+SKIP  /accounting/assets/[id]/edit  -- no rows in the source table
+PASS  /accounting/assets/depreciation
+PASS  /accounting/assets/new
+PASS  /accounting/balance-sheet
+PASS  /accounting/income-statement
+PASS  /accounting/interest
+PASS  /accounting/journals
+PASS  /accounting/journals/1044
+PASS  /accounting/periods
+PASS  /accounting/trial-balance
+PASS  /accounting/unallocated
+PASS  /accounting/vat
+PASS  /accounting/write-offs
+PASS  /cashbook
+PASS  /cashbook/18
+PASS  /cashbook/18/edit
+PASS  /cashbook/import
+PASS  /cashbook/new
+PASS  /commission
+SKIP  /commission/[id]  -- no rows in the source table
+PASS  /commission/rules
+PASS  /credit
+PASS  /credit/levels
+PASS  /credit/promises
+PASS  /credit/runs
+PASS  /credit/runs/21
+PASS  /customers
+PASS  /customers/11887
+PASS  /customers/11887/statement
+PASS  /customers/age-analysis
+PASS  /customers/new
+PASS  /customers/statements
+PASS  /customers/statements/5
+PASS  /dashboard
+PASS  /departments
+PASS  /departments/10
+PASS  /departments/new
+PASS  /expenses
+SKIP  /expenses/[id]  -- no rows in the source table
+SKIP  /expenses/[id]/edit  -- no rows in the source table
+PASS  /expenses/new
+PASS  /expenses/recurring
+PASS  /instructions
+SKIP  /instructions/[id]  -- no rows in the source table
+PASS  /instructions/new
+PASS  /loyalty
+PASS  /loyalty/cards
+PASS  /loyalty/programme
+PASS  /loyalty/tiers
+PASS  /not-allowed
+PASS  /online-store/builder
+PASS  /online-store/departments
+PASS  /online-store/orders
+PASS  /online-store/payments
+PASS  /online-store/reviews
+PASS  /online-store/setup
+PASS  /online-store/statuses
+PASS  /products
+PASS  /products/42685
+PASS  /products/new
+PASS  /purchasing
+PASS  /purchasing/5207
+PASS  /purchasing/5207/return
+PASS  /purchasing/receive
+PASS  /reports
+SKIP  /reports/[id]  -- no rows in the source table
+PASS  /reports/ask
+PASS  /reports/builder
+PASS  /reports/schedules
+PASS  /sales
+PASS  /sales/107642
+PASS  /sales/107642/credit
+PASS  /sales/cashup
+PASS  /sales/contracts
+SKIP  /sales/contracts/[id]  -- no rows in the source table
+SKIP  /sales/contracts/[id]/edit  -- no rows in the source table
+PASS  /sales/contracts/new
+PASS  /sales/invoicing
+PASS  /sales/invoicing/107643
+PASS  /sales/laybys
+PASS  /sales/laybys/43
+PASS  /sales/laybys/43/print
+PASS  /sales/new
+PASS  /sales/orders
+SKIP  /sales/orders/[id]  -- no rows in the source table
+PASS  /sales/quotes
+SKIP  /sales/quotes/[id]  -- no rows in the source table
+PASS  /sales/returns
+PASS  /setup/databases
+PASS  /setup/expense-categories
+PASS  /setup/laybys
+PASS  /setup/linked-stores
+PASS  /setup/locations
+PASS  /setup/numbering
+PASS  /setup/opening-balances
+PASS  /setup/pricing
+PASS  /setup/reconciliation
+PASS  /setup/roles
+PASS  /setup/style-guide
+PASS  /setup/tender-types
+PASS  /setup/terminals
+PASS  /setup/users
+PASS  /specials
+PASS  /staff
+PASS  /staff/clock
+PASS  /staff/cost
+PASS  /staff/leave
+PASS  /staff/pay-rules
+PASS  /staff/timesheets
+PASS  /suppliers
+PASS  /suppliers/913
+PASS  /suppliers/913/statement
+PASS  /suppliers/age-analysis
+PASS  /suppliers/new
+PASS  /suppliers/remittances
+SKIP  /suppliers/remittances/[runId]  -- no rows in the source table
+PASS  /transfers
+SKIP  /transfers/[id]  -- no rows in the source table
+PASS  /transfers/new
+
+110 passed, 0 failed, 13 skipped (of 123 route(s))
+
+Skipped routes were NOT checked — they need data before they can be:
+  /accounting/assets/[id]  -- no rows in the source table
+  /accounting/assets/[id]/edit  -- no rows in the source table
+  /commission/[id]  -- no rows in the source table
+  /expenses/[id]  -- no rows in the source table
+  /expenses/[id]/edit  -- no rows in the source table
+  /instructions/[id]  -- no rows in the source table
+  /reports/[id]  -- no rows in the source table
+  /sales/contracts/[id]  -- no rows in the source table
+  /sales/contracts/[id]/edit  -- no rows in the source table
+  /sales/orders/[id]  -- no rows in the source table
+  /sales/quotes/[id]  -- no rows in the source table
+  /suppliers/remittances/[runId]  -- no rows in the source table
+  /transfers/[id]  -- no rows in the source table
+
+report -> C:\Users\tiaan\Documents\Github\OdysseyAI\.pre-publish\smoke.json
+
+ALL PASS
+
+  smoke: 1/1 ok
+
+========================================================================
+  SUMMARY
+========================================================================
+  static       PASS
+  migrations   PASS
+  domain       2 FAILED
+      - cashup (1 assertion(s))
+      - fixed-assets (1 assertion(s))
+  smoke        PASS
+
+  total 222.3s
+  report -> .pre-publish/report.json
+
+NOT READY — see the failures above.
+

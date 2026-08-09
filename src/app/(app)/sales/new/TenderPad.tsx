@@ -16,6 +16,7 @@ import { roundToCash } from '@/lib/documentMath'
 // Client Component importing it drags the database driver into the browser
 // bundle. Same reasoning as documentMath.
 import { checkTenders } from '@/lib/tenderMath'
+import { quickAmounts, loyaltyCeiling } from '@/lib/tenderOffers'
 import { headroomRefusal } from '@/lib/creditRules'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
@@ -458,13 +459,10 @@ export default function TenderPad({
  * the minimum), wallet rand by the balance. The server re-checks both under a
  * lock; this only keeps the till from offering what will be refused.
  */
-function loyaltyCeiling(tender: TenderType, loyalty: LoyaltyStanding | null): number | null {
-  if (tender.integrationKey !== 'loyalty') return null
-  if (!loyalty) return 0
-  if (tender.code === 'LOYALTY_POINTS') return loyalty.maxRedeemable
-  if (tender.code === 'LOYALTY_WALLET') return loyalty.walletBalance
-  return null
-}
+/* loyaltyCeiling and quickAmounts moved to @/lib/tenderOffers when the touch till
+   gained its own pad. Two copies of "how much may this tender take" and "which
+   notes would a cashier be handed" is two places for them to drift, and the shared
+   module is pure so a test exercises it with no database. */
 
 function tenderRefusal(
   tender: TenderType,
@@ -508,21 +506,5 @@ function shortReason(reason: string): string {
   return 'Unavailable'
 }
 
-/**
- * The notes a cashier is most likely to be handed.
- *
- * The exact amount first, then the next few round figures above it — which is
- * how someone pays R87.50 with a hundred.
- */
-function quickAmounts(owed: number): number[] {
-  if (owed <= 0) return []
-  const notes = [20, 50, 100, 200, 500]
-  const options = new Set<number>([round(owed, 2)])
-
-  for (const note of notes) {
-    const rounded = Math.ceil(owed / note) * note
-    if (rounded >= owed) options.add(rounded)
-  }
-
-  return [...options].sort((a, b) => a - b).slice(0, 5)
-}
+/* quickAmounts is now @/lib/tenderOffers — see the note where loyaltyCeiling used
+   to be. */

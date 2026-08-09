@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "name": "clock pad: confirms the action",
+      "ok": true,
+      "detail": "showed \"Clocked in\""
+    },
+    {
+      "name": "clock pad: one PIN, one entry",
+      "ok": true,
+      "detail": "1 open entry"
+    }
+  ]
+}

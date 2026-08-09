@@ -63,6 +63,12 @@ export {
   Info as StatusInfo,
   TriangleAlert as StatusWarning,
   LoaderCircle as Spinner,
+  /* Connection state, for the till. A shop's line drops several times a day and
+     the cashier needs to know at a glance whether the sale they are about to take
+     will reach the server now or sit in a queue. */
+  Cloud as Online,
+  CloudOff as Offline,
+  RefreshCw as Syncing,
   // domain
   LayoutDashboard,
   Package,

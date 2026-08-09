@@ -16,6 +16,7 @@ export {
   buttonClass,
   CONTROL,
   CONTROL_H,
+  CONTROL_H_TOUCH,
   CONTROL_INVALID,
   MODAL_PANEL,
   MODAL_SIZE,
@@ -43,6 +44,7 @@ export {
   Checkbox,
   Radio,
   ColourInput,
+  type ControlSize,
 } from './Field'
 export { FileInput } from './FileInput'
 
@@ -53,7 +55,12 @@ export { SectionTitle } from './SectionTitle'
 export { TILE_SWATCHES, tileClass, type TileSwatch } from './tiles'
 export { Badge, type BadgeTone } from './Badge'
 export { Callout, type CalloutTone } from './Callout'
-export { CategoryTile, type CategoryTone } from './CategoryTile'
+export {
+  CategoryTile,
+  CATEGORY_TONES,
+  toneForId,
+  type CategoryTone,
+} from './CategoryTile'
 export { ChoiceTile } from './ChoiceTile'
 export { EmptyState } from './EmptyState'
 export { FavoriteToggle } from './FavoriteToggle'
@@ -83,6 +90,14 @@ export { Menu, MenuItem, MenuSeparator } from './Menu'
 export { HtmlEditor, type InsertToken } from './HtmlEditor'
 export { Modal, ConfirmModal } from './Modal'
 export { PinPad } from './PinPad'
+
+/* Till surfaces. Touch-sized and meant for the POS — see --spacing-touch in
+   globals.css and the .till-surface rules at the foot of it. */
+export { TileGrid, SHORT_TILE_MAX, isShortTile } from './TileGrid'
+export { ProductTile } from './ProductTile'
+export { NumPad, NumPadDisplay, numPadValue } from './NumPad'
+export { TouchRow } from './TouchRow'
+export { ExpandingCard } from './ExpandingCard'
 export { Combobox, type ComboboxOption } from './Combobox'
 export { DateRangeField, type DateRange } from './DateRangeField'
 export { useChartColors, ChartTooltip, type ChartColors } from './charts'

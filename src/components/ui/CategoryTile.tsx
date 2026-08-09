@@ -41,6 +41,40 @@ const TONE: Record<CategoryTone, string> = {
 const SIZE = {
   sm: 'h-8 w-8 rounded-control',
   md: 'h-10 w-10 rounded-[10px]',
+  /* Round, and larger, for a touch tile — the till's department and quick-key
+     tiles carry this at 44px so the glyph still reads at arm's length. */
+  lg: 'h-11 w-11 rounded-pill',
+}
+
+/** Every tone, in the order toneForId walks them. */
+export const CATEGORY_TONES: readonly CategoryTone[] = [
+  'indigo',
+  'teal',
+  'amber',
+  'violet',
+  'rose',
+  'sky',
+  'emerald',
+  'orange',
+  'slate',
+]
+
+/**
+ * A stable tone for a record that has no colour of its own — a department, a
+ * quick-key group.
+ *
+ * Derived from the id rather than stored, so a catalogue of 40 departments is
+ * colour-coded with no migration and no colour picker. Derived rather than
+ * random because the same department must be the same colour on every screen and
+ * every reload: a tile that changes hue between visits is worse than a grid of
+ * grey ones, since the colour stops being a thing you can learn.
+ *
+ * The order above is not the declaration order: adjacent ids get well-separated
+ * hues, so two departments listed next to each other never land on neighbouring
+ * colours.
+ */
+export function toneForId(id: number): CategoryTone {
+  return CATEGORY_TONES[Math.abs(Math.trunc(id)) % CATEGORY_TONES.length]
 }
 
 export function CategoryTile({
@@ -50,7 +84,7 @@ export function CategoryTile({
 }: {
   icon: ReactNode
   tone?: CategoryTone
-  size?: 'sm' | 'md'
+  size?: 'sm' | 'md' | 'lg'
 }) {
   return (
     <span

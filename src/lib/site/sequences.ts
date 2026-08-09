@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { formatNumber, numberValueOf, type NumberSegments } from '../numberFormat'
 
 /**
  * Document numbering.
@@ -43,8 +44,19 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb
  * can produce the document for every number.
  */
 
+/**
+ * The site-wide sequence: the row every document has always numbered from.
+ *
+ * Zero rather than null because it is half of the primary key, and MySQL cannot
+ * have a nullable column in one. Every caller that is not a till sale passes
+ * this, which is twelve of the thirteen.
+ */
+export const SITE_SEQUENCE = 0
+
 export type DocSequence = {
   docType: string
+  /** 0 for the site-wide sequence, else the till that owns this one. */
+  terminalId: number
   prefix: string
   nextNumber: number
   lastIssuedNumber: number | null
@@ -54,11 +66,20 @@ export type DocSequence = {
   lastIssuedAt: Date | null
 }
 
+/**
+ * The store and till segments of a number, when it carries them.
+ *
+ * Defined in @/lib/numberFormat, beside the formatter that consumes it, so the
+ * offline till can use both without importing this server-only module.
+ */
+export type { NumberSegments } from '../numberFormat'
+
 type Row = RowDataPacket & Record<string, unknown>
 
 function mapSequence(r: Row): DocSequence {
   return {
     docType: String(r.doc_type),
+    terminalId: Number(r.terminal_id ?? SITE_SEQUENCE),
     prefix: String(r.prefix ?? ''),
     nextNumber: Number(r.next_number),
     lastIssuedNumber: r.last_issued_number === null ? null : Number(r.last_issued_number),
@@ -69,16 +90,46 @@ function mapSequence(r: Row): DocSequence {
   }
 }
 
+/**
+ * The site-wide sequences — one per document type.
+ *
+ * Deliberately excludes per-till rows: this feeds the numbering setup screen's
+ * main table, where a store with five tills would otherwise see six "Tax
+ * invoices" lines with no way to tell them apart.
+ */
 export async function listSequences(siteId: number): Promise<DocSequence[]> {
-  const rows = await siteQuery<Row>(siteId, 'SELECT * FROM document_sequences ORDER BY doc_type')
+  const rows = await siteQuery<Row>(
+    siteId,
+    'SELECT * FROM document_sequences WHERE terminal_id = ? ORDER BY doc_type',
+    [SITE_SEQUENCE],
+  )
   return rows.map(mapSequence)
 }
 
-export async function getSequence(siteId: number, docType: string): Promise<DocSequence | null> {
+/** Every per-till sequence for one document type, lowest till first. */
+export async function listTerminalSequences(
+  siteId: number,
+  docType = 'invoice',
+): Promise<DocSequence[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT * FROM document_sequences
+      WHERE doc_type = ? AND terminal_id <> ?
+      ORDER BY terminal_id`,
+    [docType, SITE_SEQUENCE],
+  )
+  return rows.map(mapSequence)
+}
+
+export async function getSequence(
+  siteId: number,
+  docType: string,
+  terminalId = SITE_SEQUENCE,
+): Promise<DocSequence | null> {
   const row = await siteQueryOne<Row>(
     siteId,
-    'SELECT * FROM document_sequences WHERE doc_type = ? LIMIT 1',
-    [docType],
+    'SELECT * FROM document_sequences WHERE doc_type = ? AND terminal_id = ? LIMIT 1',
+    [docType, terminalId],
   )
   return row ? mapSequence(row) : null
 }
@@ -95,6 +146,21 @@ export async function nextDocumentNumber(
   tx: PoolConnection,
   docType: string,
   now = new Date(),
+  /**
+   * Which till's sequence to draw from. SITE_SEQUENCE (0) — the default — for
+   * every document that is not rung up at a till, which is all but one caller.
+   *
+   * A till may own its own sequence so it can keep numbering while it cannot
+   * reach the database at all. The lock this statement takes is then on that
+   * till's row rather than the shared one, which additionally means two tills
+   * finalising at the same moment no longer block each other.
+   */
+  terminalId = SITE_SEQUENCE,
+  /**
+   * The store and till segments. Omitted for a site-wide number, whose shape is
+   * then byte-identical to what it has always been.
+   */
+  segments?: NumberSegments,
 ): Promise<string> {
   const periodKey = String(now.getFullYear())
 
@@ -122,22 +188,32 @@ export async function nextDocumentNumber(
             END,
             period_key = CASE WHEN reset_period = 'yearly' THEN ? ELSE period_key END,
             last_issued_at = NOW()
-      WHERE doc_type = ?`,
-    [periodKey, periodKey, periodKey, docType] as never,
+      WHERE doc_type = ? AND terminal_id = ?`,
+    [periodKey, periodKey, periodKey, docType, terminalId] as never,
   )
 
-  // No row means the doc type has no sequence. Throw rather than creating one
-  // on the fly: a sequence appearing from nowhere is exactly how a duplicate
-  // number gets issued after someone deletes a row by hand.
+  // No row means this doc type has no sequence for this till. Throw rather than
+  // creating one on the fly: a sequence appearing from nowhere is exactly how a
+  // duplicate number gets issued after someone deletes a row by hand.
+  //
+  // Naming the till matters more than it looks. Falling back to the site-wide
+  // sequence would be the "helpful" thing to do and is the wrong thing: it would
+  // drop an unregistered till's sale into the middle of the shared invoice run,
+  // silently, and nobody would find out until the numbers were reconciled.
   if ((result as { affectedRows: number }).affectedRows === 0) {
-    throw new Error(`No numbering sequence is configured for "${docType}".`)
+    throw new Error(
+      terminalId === SITE_SEQUENCE
+        ? `No numbering sequence is configured for "${docType}".`
+        : `No numbering sequence is configured for "${docType}" on till ${terminalId}.`,
+    )
   }
 
   // Read back on the SAME connection, inside the same transaction, so this sees
   // its own uncommitted write. The value is ours and nobody else's.
   const [rows] = await tx.execute(
-    'SELECT prefix, last_issued_number, padding, period_key FROM document_sequences WHERE doc_type = ?',
-    [docType] as never,
+    `SELECT prefix, last_issued_number, padding, period_key
+       FROM document_sequences WHERE doc_type = ? AND terminal_id = ?`,
+    [docType, terminalId] as never,
   )
   const row = (rows as Row[])[0]
   if (!row) throw new Error(`Numbering sequence for "${docType}" vanished mid-transaction.`)
@@ -147,29 +223,53 @@ export async function nextDocumentNumber(
     Number(row.last_issued_number),
     Number(row.padding),
     row.period_key === null ? null : String(row.period_key),
+    segments,
   )
 }
 
 /**
- * INV000041, or INV-2026-000041 when the sequence resets yearly.
+ * Adopts a number a till already printed, and moves its sequence past it.
  *
- * The year goes in the number when the counter restarts, because otherwise
- * invoice 41 of this year and invoice 41 of last year are the same string —
- * which breaks the unique index and, worse, breaks the customer's reference.
+ * An offline sale was handed to a customer on a slip bearing a specific number, so
+ * that number is not ours to choose. This does not allocate — it catches the
+ * sequence up.
+ *
+ * GREATEST is what makes it safe against out-of-order sync: sales arriving 97, 98,
+ * 99 and a retry of 97 all leave the sequence at 100, whatever order they land in.
+ * The number itself is protected by uq_doc_number, so a genuine duplicate is
+ * refused by the database rather than trusted from the client.
  */
-export function formatNumber(
-  prefix: string,
-  number: number,
-  padding: number,
-  periodKey: string | null,
-): string {
-  const digits = String(number).padStart(Math.max(padding, 1), '0')
-  if (periodKey) return `${prefix}-${periodKey}-${digits}`
-  return `${prefix}${digits}`
+export async function adoptDocumentNumber(
+  tx: PoolConnection,
+  docType: string,
+  terminalId: number,
+  numberValue: number,
+): Promise<void> {
+  const [result] = await tx.execute(
+    `UPDATE document_sequences
+        SET last_issued_number = GREATEST(COALESCE(last_issued_number, 0), ?),
+            next_number        = GREATEST(next_number, ? + 1),
+            last_issued_at     = NOW()
+      WHERE doc_type = ? AND terminal_id = ?`,
+    [numberValue, numberValue, docType, terminalId] as never,
+  )
+  if ((result as { affectedRows: number }).affectedRows === 0) {
+    throw new Error(`No numbering sequence is configured for "${docType}" on till ${terminalId}.`)
+  }
 }
 
+/* formatNumber and numberValueOf moved to @/lib/numberFormat so the OFFLINE till
+   can format its own numbers — this module is server-only, and a second
+   implementation in the browser is how two number SHAPES end up in one invoice
+   register. Re-exported so every existing import keeps working. */
+export { formatNumber, numberValueOf } from '../numberFormat'
+
 /** What the next number WOULD be, for the setup screen. Claims nothing. */
-export function previewNext(sequence: DocSequence, now = new Date()): string {
+export function previewNext(
+  sequence: DocSequence,
+  now = new Date(),
+  segments?: NumberSegments,
+): string {
   const periodKey = String(now.getFullYear())
   const resets = sequence.resetPeriod === 'yearly' && (sequence.periodKey ?? '') !== periodKey
   return formatNumber(
@@ -177,6 +277,7 @@ export function previewNext(sequence: DocSequence, now = new Date()): string {
     resets ? 1 : sequence.nextNumber,
     sequence.padding,
     sequence.resetPeriod === 'yearly' ? periodKey : null,
+    segments,
   )
 }
 
@@ -212,11 +313,12 @@ export async function updateSequence(
   siteId: number,
   docType: string,
   input: { prefix: string; nextNumber: number; padding: number; resetPeriod: 'none' | 'yearly' },
+  terminalId = SITE_SEQUENCE,
 ): Promise<SaveResult> {
   const invalid = validateSequence(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const existing = await getSequence(siteId, docType)
+  const existing = await getSequence(siteId, docType, terminalId)
   if (!existing) return { ok: false, error: 'That sequence does not exist.' }
 
   if (input.nextNumber < existing.nextNumber) {
@@ -226,12 +328,36 @@ export async function updateSequence(
     }
   }
 
+  /* Changing the prefix after numbers have been issued under the old one is
+     refused: the two runs then share a counter, so INV000041 and ABC000041 are
+     both "invoice 41" and the next reprint of either is ambiguous. Under per-till
+     numbering it is worse — the store and till segments are what make a number
+     unique across a group, and a prefix change can walk one till's run onto
+     another's. */
+  if (
+    input.prefix.trim() !== existing.prefix &&
+    existing.lastIssuedNumber !== null &&
+    existing.lastIssuedNumber > 0
+  ) {
+    return {
+      ok: false,
+      error: `The prefix cannot change — ${existing.lastIssuedNumber} document(s) have already been issued as "${existing.prefix}". Those numbers are on customers' invoices.`,
+    }
+  }
+
   await siteExecute(
     siteId,
     `UPDATE document_sequences
         SET prefix = ?, next_number = ?, padding = ?, reset_period = ?
-      WHERE doc_type = ?`,
-    [input.prefix.trim(), input.nextNumber, input.padding, input.resetPeriod, docType],
+      WHERE doc_type = ? AND terminal_id = ?`,
+    [
+      input.prefix.trim(),
+      input.nextNumber,
+      input.padding,
+      input.resetPeriod,
+      docType,
+      terminalId,
+    ],
   )
   return { ok: true }
 }
@@ -336,19 +462,24 @@ export async function nextMasterCode(
  */
 async function claimCode(siteId: number, docType: string): Promise<string | null> {
   return siteTransaction(siteId, async (tx) => {
+    // terminal_id is pinned to the site-wide row rather than left off. A
+    // master-data code is never per-till, and an unqualified WHERE on a table
+    // whose primary key now has two columns is the kind of statement that starts
+    // matching more rows than it meant to the moment someone adds one.
     const [result] = await tx.execute(
       `UPDATE document_sequences
           SET last_issued_number = next_number,
               next_number = next_number + 1,
               last_issued_at = NOW()
-        WHERE doc_type = ?`,
-      [docType] as never,
+        WHERE doc_type = ? AND terminal_id = ?`,
+      [docType, SITE_SEQUENCE] as never,
     )
     if ((result as { affectedRows: number }).affectedRows === 0) return null
 
     const [rows] = await tx.execute(
-      'SELECT prefix, last_issued_number, padding FROM document_sequences WHERE doc_type = ?',
-      [docType] as never,
+      `SELECT prefix, last_issued_number, padding
+         FROM document_sequences WHERE doc_type = ? AND terminal_id = ?`,
+      [docType, SITE_SEQUENCE] as never,
     )
     const row = (rows as Row[])[0]
     if (!row) return null
@@ -386,6 +517,8 @@ export async function previewMasterCode(
 
 export type SequenceCheck = {
   docType: string
+  /** 0 for the site-wide run, else the till whose own run this is. */
+  terminalId: number
   issued: number
   live: number
   voided: number
@@ -407,8 +540,20 @@ export type SequenceCheck = {
 /** Which table a document type lives in. Sales and purchasing are separate. */
 const PURCHASE_TYPES = new Set(['purchase_order', 'grv', 'supplier_return'])
 
-export async function verifySequence(siteId: number, docType: string): Promise<SequenceCheck> {
-  const sequence = await getSequence(siteId, docType)
+export async function verifySequence(
+  siteId: number,
+  docType: string,
+  terminalId = SITE_SEQUENCE,
+  /**
+   * The literal prefix this till's numbers begin with, e.g. 'INV_01_02_'.
+   *
+   * Required for a per-till check and meaningless for a site-wide one. Passed in
+   * because the store segment lives in `settings`, which this module has no
+   * business reading — see numberSegmentsFor() in numbering.ts.
+   */
+  numberPrefix?: string,
+): Promise<SequenceCheck> {
+  const sequence = await getSequence(siteId, docType, terminalId)
   const issued = sequence?.lastIssuedNumber ?? 0
 
   // Purchasing has its own documents table — the two sides of the trade face
@@ -416,27 +561,80 @@ export async function verifySequence(siteId: number, docType: string): Promise<S
   // would report every purchase number as missing.
   const table = PURCHASE_TYPES.has(docType) ? 'purchase_documents' : 'sales_documents'
 
+  /*
+   * Counting is scoped to the run being checked, and the discriminator is the
+   * NUMBER'S SHAPE rather than the document's terminal.
+   *
+   * That distinction is the whole correctness of this function. Every invoice ever
+   * rung up at a till carries a terminal_id — 97,013 of them on the first store
+   * this ran against — and every one was numbered from the shared sequence.
+   * Splitting on `terminal_id IS NULL` would move the entire trading history out of
+   * the site-wide run and report it as ~97,000 missing invoices.
+   *
+   * INSTR rather than `NOT LIKE '%\_%'`, and this is not a style preference: an
+   * underscore is a LIKE wildcard, the escape has to survive being a JavaScript
+   * string first, and a single backslash written here reaches SQL as a bare `_` —
+   * the pattern degrades to "any non-empty string" and the clause excludes
+   * EVERYTHING. Measured: it reported all 97,152 invoices as missing.
+   */
+  const perTill = table === 'sales_documents' && terminalId !== SITE_SEQUENCE
+  if (perTill && !numberPrefix) {
+    throw new Error(
+      "verifySequence needs the till's number prefix to know which numbers belong to it.",
+    )
+  }
+
+  const where =
+    `doc_type = ? AND document_number IS NOT NULL` +
+    (table === 'sales_documents'
+      ? perTill
+        ? ' AND LEFT(document_number, CHAR_LENGTH(?)) = ?'
+        : " AND INSTR(document_number, '_') = 0"
+      : '')
+  const params: (string | number)[] = perTill
+    ? [docType, numberPrefix!, numberPrefix!]
+    : [docType]
+
   const row = await siteQueryOne<Row>(
     siteId,
-    `SELECT COUNT(*)                                              AS total,
-            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END)      AS voided,
-            MIN(document_number)                                  AS first_number,
-            MAX(document_number)                                  AS last_number
+    `SELECT COUNT(*)                                            AS total,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS voided
        FROM ${table}
-      WHERE doc_type = ? AND document_number IS NOT NULL`,
-    [docType],
+      WHERE ${where}`,
+    params,
   )
+
+  /*
+   * FIRST and LAST come from the ends of the run BY ID, not from MIN/MAX on the
+   * number. MIN(document_number) is the lowest STRING, which stopped being the
+   * earliest invoice the moment numbers gained segments — 'INV_01_02_000097' sorts
+   * below 'INV_01_10_000001'. Two one-row queries rather than one over the whole
+   * run: this is read by a setup screen on a table with millions of rows.
+   */
+  const [first, last] = await Promise.all([
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT document_number FROM ${table} WHERE ${where} ORDER BY id LIMIT 1`,
+      params,
+    ),
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT document_number FROM ${table} WHERE ${where} ORDER BY id DESC LIMIT 1`,
+      params,
+    ),
+  ])
 
   const total = Number(row?.total ?? 0)
   const voided = Number(row?.voided ?? 0)
 
   return {
     docType,
+    terminalId,
     issued,
     live: total - voided,
     voided,
     missing: Math.max(issued - total, 0),
-    firstNumber: (row?.first_number as string | null) ?? null,
-    lastNumber: (row?.last_number as string | null) ?? null,
+    firstNumber: (first?.document_number as string | null) ?? null,
+    lastNumber: (last?.document_number as string | null) ?? null,
   }
 }

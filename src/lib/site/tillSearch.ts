@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
 import { toNum, round } from '../decimals'
 import { getSettings } from './settings'
+import { parseVariableBarcode } from '../barcodes'
 import type { ProductTypeId } from '../productTypes'
 
 /**
@@ -212,37 +213,11 @@ export async function resolveScan(
   return { ...product, scannedQty: variable.value, scannedPrice: variable.value }
 }
 
-export type VariableBarcode = { plu: string; value: number }
-
-/**
- * Pulls the PLU and embedded value out of a scale barcode.
- *
- * Pure, so it can be reasoned about without a database. Deliberately tolerant:
- * a barcode that does not fit the configured shape returns null rather than
- * throwing, because an ordinary EAN-13 hits this path on every scan that misses.
- */
-export function parseVariableBarcode(
-  code: string,
-  config: { prefix: string; pluLength: number; divisor: number },
-): VariableBarcode | null {
-  const digits = code.trim()
-  if (!/^\d{12,14}$/.test(digits)) return null
-  if (!config.prefix || !digits.startsWith(config.prefix)) return null
-
-  const pluLength = Number.isFinite(config.pluLength) ? config.pluLength : 5
-  const divisor = Number.isFinite(config.divisor) && config.divisor > 0 ? config.divisor : 100
-
-  const start = config.prefix.length
-  const plu = digits.slice(start, start + pluLength)
-  // Everything between the PLU and the check digit is the embedded value.
-  const raw = digits.slice(start + pluLength, digits.length - 1)
-  if (!plu || !raw) return null
-
-  const value = Number(raw) / divisor
-  if (!Number.isFinite(value) || value <= 0) return null
-
-  return { plu, value }
-}
+/* parseVariableBarcode moved to @/lib/barcodes so the OFFLINE till can call it —
+   this module is `server-only`, and a till with no network still has to read a
+   scale barcode or it cannot sell anything weighed. Re-exported here so every
+   existing import keeps working. */
+export { parseVariableBarcode, type VariableBarcode } from '../barcodes'
 
 /** One product by id, for re-pricing a recalled line. */
 export async function getTillProduct(

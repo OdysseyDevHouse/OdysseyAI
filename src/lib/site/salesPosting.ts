@@ -5,7 +5,13 @@ import { round, toNum } from '../decimals'
 import { assertBalanced, documentTotals, roundToCash } from '../documentMath'
 import { headroomRefusal } from '../creditRules'
 import { toAccountType } from '../accountTypes'
-import { nextDocumentNumber } from './sequences'
+import {
+  adoptDocumentNumber,
+  nextDocumentNumber,
+  numberValueOf,
+  SITE_SEQUENCE,
+} from './sequences'
+import { numberSegmentsFor } from './numbering'
 import { recordMovement, stockDirectionFor, canSellNow } from './stockMovements'
 import { getTenderType, getTenderByCode, checkTenders, type TenderType } from './tenderTypes'
 import { validateTerminalClaim } from './terminals'
@@ -83,6 +89,33 @@ export type FinaliseInput = {
    * earns no points — see `fundedAmount` below.
    */
   voucherCodes?: string[]
+  /**
+   * A number this sale was ALREADY printed under, for a sale rung up offline.
+   *
+   * Normally undefined and the number is allocated here, last, under the
+   * document_sequences row lock — which is right for an online sale and must not
+   * change. A sale rung up offline was already handed to a customer on a printed
+   * tax invoice bearing a specific number, so that number is not ours to choose:
+   * it is used as given and the till's sequence is advanced past it in this same
+   * transaction. uq_doc_number is what refuses a genuine duplicate, so the number
+   * is never simply trusted because a client sent it.
+   */
+  documentNumber?: string | null
+  /**
+   * The shift to bank into, when the caller already knows.
+   *
+   * For an online sale this is undefined and the shift is resolved here, because
+   * "the shift that banked it" is the one open right now. An OFFLINE sale is
+   * different: the cash went into a specific drawer at a specific moment, and by
+   * the time it syncs — possibly the next morning — that shift may be closed and
+   * another open. Banking it into whichever shift happens to be open at sync time
+   * makes one drawer inexplicably over and another short by the same amount, and
+   * no amount of counting afterwards can tell you which sale did it.
+   *
+   * `undefined` means "resolve it"; an explicit `null` means "belongs to no
+   * shift", which shiftToBankInto already treats as legitimate.
+   */
+  shiftId?: number | null
 }
 
 export type FinaliseResult =
@@ -261,7 +294,19 @@ export async function finaliseDocument(
   // The actor is the PIN operator, not the browser session (requireActor
   // resolves it that way), so in a restaurant this is the waiter who rang the
   // sale up rather than whoever opened the browser that morning.
-  const shiftId = await shiftToBankInto(siteId, document.terminalId ?? null, actor.userId ?? null)
+  // `undefined` means resolve it here; an explicit null from an offline sale means
+  // "belongs to no shift" and must not be resolved into whichever shift happens to
+  // be open at sync time. See FinaliseInput.shiftId.
+  const shiftId =
+    input.shiftId !== undefined
+      ? input.shiftId
+      : await shiftToBankInto(siteId, document.terminalId ?? null, actor.userId ?? null)
+
+  /* Which sequence numbers this document, resolved BEFORE the transaction opens.
+     It reads `settings` and `terminals`, and the numbering statement runs while
+     holding the most contended lock in the schema — two extra queries in there
+     would widen it for every till. Null for anything that is not a till invoice. */
+  const numbering = await numberSegmentsFor(siteId, document.docType, document.terminalId ?? null)
 
   // Rand of this basket paid for by a value voucher. Set inside the
   // transaction, read after it commits to keep that slice out of the earn
@@ -361,7 +406,39 @@ export async function finaliseDocument(
       }
 
       // 3. The number, LAST. See the module comment on lock ordering.
-      const documentNumber = await nextDocumentNumber(tx, document.docType)
+      /*
+       * Three paths, and only the first is the common one:
+       *
+       *   · a normal sale allocates from its sequence — the site-wide row, or this
+       *     till's own row when the store numbers per till;
+       *   · an offline sale arrives carrying the number already printed on the
+       *     customer's slip, so the sequence is advanced PAST it rather than
+       *     allocating a second one;
+       *   · everything that is not a till invoice keeps numbering site-wide,
+       *     because `numbering` is null for it.
+       */
+      let documentNumber: string
+      if (input.documentNumber) {
+        const value = numberValueOf(input.documentNumber)
+        if (value === null) {
+          throw new Error(`Cannot read a counter out of the number "${input.documentNumber}".`)
+        }
+        await adoptDocumentNumber(
+          tx,
+          document.docType,
+          numbering?.terminalId ?? SITE_SEQUENCE,
+          value,
+        )
+        documentNumber = input.documentNumber
+      } else {
+        documentNumber = await nextDocumentNumber(
+          tx,
+          document.docType,
+          new Date(),
+          numbering?.terminalId ?? SITE_SEQUENCE,
+          numbering?.segments,
+        )
+      }
 
       // 4. Loyalty SPEND — points, wallet and vouchers.
       //

@@ -1,0 +1,148 @@
+signed in as tiaan@point-of-sale.co.za, landed on /dashboard
+
+smoking 123 route(s) as tiaan@point-of-sale.co.za against http://localhost:4100
+
+PASS  /accounting/accounts
+PASS  /accounting/accounts/52
+PASS  /accounting/assets
+SKIP  /accounting/assets/[id]  -- no rows in the source table
+SKIP  /accounting/assets/[id]/edit  -- no rows in the source table
+PASS  /accounting/assets/depreciation
+PASS  /accounting/assets/new
+PASS  /accounting/balance-sheet
+PASS  /accounting/income-statement
+PASS  /accounting/interest
+PASS  /accounting/journals
+PASS  /accounting/journals/1044
+PASS  /accounting/periods
+PASS  /accounting/trial-balance
+PASS  /accounting/unallocated
+PASS  /accounting/vat
+PASS  /accounting/write-offs
+PASS  /cashbook
+PASS  /cashbook/18
+PASS  /cashbook/18/edit
+PASS  /cashbook/import
+PASS  /cashbook/new
+PASS  /commission
+SKIP  /commission/[id]  -- no rows in the source table
+PASS  /commission/rules
+PASS  /credit
+PASS  /credit/levels
+PASS  /credit/promises
+PASS  /credit/runs
+PASS  /credit/runs/21
+PASS  /customers
+PASS  /customers/11887
+PASS  /customers/11887/statement
+PASS  /customers/age-analysis
+PASS  /customers/new
+PASS  /customers/statements
+PASS  /customers/statements/5
+PASS  /dashboard
+PASS  /departments
+PASS  /departments/10
+PASS  /departments/new
+PASS  /expenses
+SKIP  /expenses/[id]  -- no rows in the source table
+SKIP  /expenses/[id]/edit  -- no rows in the source table
+PASS  /expenses/new
+PASS  /expenses/recurring
+PASS  /instructions
+SKIP  /instructions/[id]  -- no rows in the source table
+PASS  /instructions/new
+PASS  /loyalty
+PASS  /loyalty/cards
+PASS  /loyalty/programme
+PASS  /loyalty/tiers
+PASS  /not-allowed
+PASS  /online-store/builder
+PASS  /online-store/departments
+PASS  /online-store/orders
+PASS  /online-store/payments
+PASS  /online-store/reviews
+PASS  /online-store/setup
+PASS  /online-store/statuses
+PASS  /products
+PASS  /products/42685
+PASS  /products/new
+PASS  /purchasing
+PASS  /purchasing/5207
+PASS  /purchasing/5207/return
+PASS  /purchasing/receive
+PASS  /reports
+SKIP  /reports/[id]  -- no rows in the source table
+PASS  /reports/ask
+PASS  /reports/builder
+PASS  /reports/schedules
+PASS  /sales
+PASS  /sales/107642
+PASS  /sales/107642/credit
+PASS  /sales/cashup
+PASS  /sales/contracts
+SKIP  /sales/contracts/[id]  -- no rows in the source table
+SKIP  /sales/contracts/[id]/edit  -- no rows in the source table
+PASS  /sales/contracts/new
+PASS  /sales/invoicing
+PASS  /sales/invoicing/107643
+PASS  /sales/laybys
+PASS  /sales/laybys/43
+PASS  /sales/laybys/43/print
+PASS  /sales/new
+PASS  /sales/orders
+SKIP  /sales/orders/[id]  -- no rows in the source table
+PASS  /sales/quotes
+SKIP  /sales/quotes/[id]  -- no rows in the source table
+PASS  /sales/returns
+PASS  /setup/databases
+PASS  /setup/expense-categories
+PASS  /setup/laybys
+PASS  /setup/linked-stores
+PASS  /setup/locations
+PASS  /setup/numbering
+PASS  /setup/opening-balances
+PASS  /setup/pricing
+PASS  /setup/reconciliation
+PASS  /setup/roles
+PASS  /setup/style-guide
+PASS  /setup/tender-types
+PASS  /setup/terminals
+PASS  /setup/users
+PASS  /specials
+PASS  /staff
+PASS  /staff/clock
+PASS  /staff/cost
+PASS  /staff/leave
+PASS  /staff/pay-rules
+PASS  /staff/timesheets
+PASS  /suppliers
+PASS  /suppliers/913
+PASS  /suppliers/913/statement
+PASS  /suppliers/age-analysis
+PASS  /suppliers/new
+PASS  /suppliers/remittances
+SKIP  /suppliers/remittances/[runId]  -- no rows in the source table
+PASS  /transfers
+SKIP  /transfers/[id]  -- no rows in the source table
+PASS  /transfers/new
+
+110 passed, 0 failed, 13 skipped (of 123 route(s))
+
+Skipped routes were NOT checked — they need data before they can be:
+  /accounting/assets/[id]  -- no rows in the source table
+  /accounting/assets/[id]/edit  -- no rows in the source table
+  /commission/[id]  -- no rows in the source table
+  /expenses/[id]  -- no rows in the source table
+  /expenses/[id]/edit  -- no rows in the source table
+  /instructions/[id]  -- no rows in the source table
+  /reports/[id]  -- no rows in the source table
+  /sales/contracts/[id]  -- no rows in the source table
+  /sales/contracts/[id]/edit  -- no rows in the source table
+  /sales/orders/[id]  -- no rows in the source table
+  /sales/quotes/[id]  -- no rows in the source table
+  /suppliers/remittances/[runId]  -- no rows in the source table
+  /transfers/[id]  -- no rows in the source table
+
+report -> .pre-publish/smoke.json
+
+ALL PASS

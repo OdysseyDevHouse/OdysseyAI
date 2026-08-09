@@ -20,6 +20,15 @@ import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 export type Terminal = {
   id: number
   code: string
+  /**
+   * The till's number as it appears IN AN INVOICE NUMBER — '01', '02'.
+   *
+   * Null on a till that has not been given one, which is a real state rather than
+   * a missing value: such a till cannot ring up a sale under per-till numbering,
+   * and numberSegmentsFor() refuses rather than quietly numbering it from the
+   * shared run. See sql/site/064_pos_numbering.sql.
+   */
+  tillNumber: string | null
   name: string
   location: string | null
   deviceId: string | null
@@ -37,6 +46,7 @@ function mapTerminal(r: Row): Terminal {
   return {
     id: Number(r.id),
     code: String(r.code),
+    tillNumber: (r.till_number as string | null) ?? null,
     name: String(r.name),
     location: (r.location as string | null) ?? null,
     deviceId: (r.device_id as string | null) ?? null,
@@ -49,7 +59,7 @@ function mapTerminal(r: Row): Terminal {
 }
 
 const SELECT_TERMINAL = `
-  SELECT t.id, t.code, t.name, t.location, t.device_id, t.device_label,
+  SELECT t.id, t.code, t.till_number, t.name, t.location, t.device_id, t.device_label,
          t.is_active, t.claimed_at, t.last_seen_at,
          (SELECT COUNT(*) FROM sales_documents d WHERE d.terminal_id = t.id) AS document_count
     FROM terminals t

@@ -131,6 +131,19 @@
   /* One height for every interactive control so toolbars line up exactly. */
   --spacing-control: 2.5rem; /* 40px — buttons, inputs, search */
   --spacing-control-sm: 2rem; /* 32px — inline table actions */
+
+  /* Touch sizing — the till, and nothing else.
+     40px is right for a pointer and wrong for a finger: it is below the 44px
+     minimum every touch guideline agrees on, and a cashier hits these while
+     looking at a customer rather than at the screen. So the POS gets its own
+     two heights rather than screens overriding h-control at the call site.
+
+     touch-lg is deliberately much larger than touch, not slightly: it is worn
+     by the two keys that END a sale (Pay, Confirm), and being unmissable next
+     to every neighbour IS the hierarchy. A cashier should be able to find Pay
+     without reading. */
+  --spacing-touch: 3.5rem; /* 56px — every till control a finger hits */
+  --spacing-touch-lg: 4.5rem; /* 72px — Pay / Confirm */
 }
 
 /* ============================================================================
@@ -350,4 +363,72 @@ input[type='checkbox'],
 input[type='radio'],
 input[type='range'] {
   accent-color: var(--color-brand);
+}
+
+/* ============================================================================
+   The till surface.
+
+   Scoped to .till-surface rather than applied globally: these are the right
+   rules for a counter touchscreen running one screen all day, and the wrong
+   rules for the back office, where a manager selects text and scrolls a page.
+   ========================================================================= */
+
+.till-surface {
+  /* Removes the ~300ms delay a browser waits to see whether a tap is the first
+     half of a double-tap-to-zoom. On a till that delay is not a subtlety — it
+     reads as lag on EVERY key press, and it is the single biggest difference
+     between a screen that feels native and one that feels like a web page. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+
+  /* A swipe on a non-scrolling part of a till must never pull-to-refresh: the
+     basket is unsaved state and the page reload loses it mid-sale. */
+  overscroll-behavior: none;
+
+  /* Chrome is not selectable — dragging across a product tile should not paint
+     it blue. Data still is, via .selectable below. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The opt-out. A receipt number, an invoice number, a customer code — things a
+   manager legitimately copies. A blanket user-select:none on the whole till
+   (which is what the reference POS does) also blocks that, and the person who
+   needs it has no way to ask for it. */
+.till-surface .selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* A scrolling pane inside the till: the basket, the tile grid, the department
+   rail. Each pane scrolls itself and the document never does. */
+.till-pane {
+  /* Vertical only. A horizontal drag on the basket is a mis-swipe, not a
+     gesture, and `contain` stops a pane that hits its end from handing the
+     scroll to whatever is behind it. */
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+
+/* Fatter than the app's 8px default, and deliberately so: the back office is
+   read at desk distance by someone holding a mouse, a till is read at arm's
+   length on a bright counter screen by someone using a finger. An 8px hairline
+   is both invisible and unhittable there. Colour is border-strong rather than
+   a text token — a scrollbar is chrome, not content. */
+.till-pane::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.till-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+.till-pane::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 9999px;
+}
+.till-pane {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
 }

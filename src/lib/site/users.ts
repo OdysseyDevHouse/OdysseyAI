@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { hashPassword, verifyPassword } from '../password'
+import { mintVerifiersForAllDevices } from './offlineOperators'
 
 /**
  * People, per site.
@@ -205,6 +206,8 @@ export async function createUser(siteId: number, input: UserInput): Promise<User
       input.isActive ? 1 : 0,
     ],
   )
+  if (input.pin !== null) await mintVerifiersForAllDevices(siteId, res.insertId, input.pin)
+
   return { ok: true, id: res.insertId }
 }
 
@@ -251,6 +254,10 @@ export async function updateUser(
       userId,
     ],
   )
+  // The offline verifier, minted from the PLAINTEXT — the only moment it exists,
+  // since bcrypt does not give it back. Fail-soft inside; see the note there.
+  if (input.pin !== null) await mintVerifiersForAllDevices(siteId, userId, input.pin)
+
   return { ok: true, id: userId }
 }
 
@@ -262,6 +269,16 @@ export async function clearPin(siteId: number, userId: number): Promise<{ ok: bo
     return { ok: false, error: 'A point of sale user has no other way to sign in. Deactivate them instead.' }
   }
   await siteExecute(siteId, 'UPDATE users SET pin_hash = NULL WHERE id = ?', [userId])
+
+  /* The offline verifiers go too, and this is not tidying up.
+     A verifier left behind lets that person keep signing in at every offline till
+     that already has it cached — for as long as its catalog goes unrefreshed, which
+     is exactly the window in which somebody whose PIN was just revoked should NOT
+     be able to open a drawer. Deleting the row is what makes the next catalog
+     refresh drop them. */
+  await siteExecute(siteId, 'DELETE FROM user_offline_verifiers WHERE user_id = ?', [userId]).catch(
+    () => {},
+  )
   return { ok: true }
 }
 

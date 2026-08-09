@@ -19,7 +19,13 @@ export type ButtonVariant =
   | 'ghost' /* low emphasis, toolbars */
   | 'bare' /* chromeless icon affordance — editor toolbars, sidebar/topbar */
 
-export type ButtonSize = 'md' | 'sm'
+/**
+ * `touch` and `touch-lg` exist for the till and should not appear in the back
+ * office — a 56px button in a toolbar of 40px ones just looks broken. They are
+ * sizes rather than call-site overrides so that "how big is a finger target"
+ * stays one answer in one place; see --spacing-touch in globals.css.
+ */
+export type ButtonSize = 'md' | 'sm' | 'touch' | 'touch-lg'
 
 /* Layout, radius, type scale and motion — identical for every variant, so
    none of them can drift. Only colour changes below. */
@@ -53,6 +59,14 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
 const BUTTON_SIZE: Record<ButtonSize, { text: string; icon: string }> = {
   md: { text: 'h-control px-3.5', icon: 'h-control w-control' },
   sm: { text: 'h-control-sm px-3 text-[13px]', icon: 'h-control-sm w-control-sm' },
+  /* Type steps up with the box. A 56px button wearing 14px text reads as a
+     small button that has been stretched, which is exactly how the till's
+     buttons looked before these existed. */
+  touch: { text: 'h-touch px-5 text-base', icon: 'h-touch w-touch' },
+  'touch-lg': {
+    text: 'h-touch-lg px-6 text-lg font-semibold',
+    icon: 'h-touch-lg w-touch-lg',
+  },
 }
 
 export function buttonClass({
@@ -162,6 +176,15 @@ export const CONTROL =
   'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-faint'
 
 export const CONTROL_H = 'h-control'
+
+/**
+ * The same skin at till height.
+ *
+ * Type steps up with the box for the reason the touch buttons do: a scan field
+ * is read at arm's length while the cashier is looking at the customer, and
+ * 14px in a 56px box reads as a small field that has been stretched.
+ */
+export const CONTROL_H_TOUCH = 'h-touch text-base'
 
 /** Applied on top of CONTROL when a field is showing an error. */
 export const CONTROL_INVALID =

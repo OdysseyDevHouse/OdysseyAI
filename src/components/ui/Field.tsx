@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { ChevronDown } from './icons'
-import { CONTROL, CONTROL_H, CONTROL_INVALID as INVALID } from './styles'
+import { CONTROL, CONTROL_H, CONTROL_H_TOUCH, CONTROL_INVALID as INVALID } from './styles'
 
 /**
  * Form controls — inputs, selects, switches, checkboxes, radios.
@@ -84,23 +84,35 @@ export function Field({
 
 /* ── Text-like inputs ────────────────────────────────────────────────────── */
 
-type InputProps = Omit<ComponentProps<'input'>, 'className'> & {
+/**
+ * `touch` is for the till and nowhere else — see --spacing-touch in globals.css.
+ *
+ * It lives on Input rather than on each caller because NumberInput and
+ * CurrencyInput both render through here, so the till's quantity and price
+ * fields get it without either of them knowing about touch sizing.
+ */
+export type ControlSize = 'md' | 'touch'
+
+type InputProps = Omit<ComponentProps<'input'>, 'className' | 'size'> & {
   /** Leading glyph inside the control, e.g. <Search size={16} />. */
   icon?: ReactNode
   invalid?: boolean
+  size?: ControlSize
   className?: string
 }
 
-export function Input({ icon, invalid, className = '', id, ...rest }: InputProps) {
+export function Input({ icon, invalid, size = 'md', className = '', id, ...rest }: InputProps) {
   const wiring = useFieldWiring(id, invalid)
   const input = (
     <input
       id={wiring.id}
       aria-invalid={wiring.invalid || undefined}
       aria-describedby={wiring.describedBy}
-      className={`${CONTROL} ${CONTROL_H} ${icon ? 'pl-9' : ''} ${
-        wiring.invalid ? INVALID : ''
-      } ${className}`}
+      className={`${CONTROL} ${size === 'touch' ? CONTROL_H_TOUCH : CONTROL_H} ${
+        /* The glyph is inset further at till size so it clears the wider box
+           without crowding the text. */
+        icon ? (size === 'touch' ? 'pl-11' : 'pl-9') : ''
+      } ${wiring.invalid ? INVALID : ''} ${className}`}
       {...rest}
     />
   )
@@ -109,7 +121,11 @@ export function Input({ icon, invalid, className = '', id, ...rest }: InputProps
 
   return (
     <div className="relative">
-      <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-faint">
+      <span
+        className={`pointer-events-none absolute inset-y-0 flex items-center text-faint ${
+          size === 'touch' ? 'left-4' : 'left-3'
+        }`}
+      >
         {icon}
       </span>
       {input}

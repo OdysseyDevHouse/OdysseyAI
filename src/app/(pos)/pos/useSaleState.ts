@@ -1,0 +1,232 @@
+'use client'
+
+import { useReducer } from 'react'
+import {
+  addToBasket,
+  removeBasketLine,
+  stepQty,
+  updateBasketLine,
+  type BasketLine,
+} from '@/lib/basket'
+import type { TillProduct } from '@/lib/site/tillSearch'
+import type { TillCustomer } from '@/lib/site/tillCustomers'
+
+/**
+ * Everything the till knows about the sale in front of it, in one reducer.
+ *
+ * ── WHY A REDUCER AND NOT useState ────────────────────────────────────────
+ *
+ * The screen this replaces holds fourteen useState calls, and the POS it is
+ * modelled on holds hundreds inside a 10,569-line component. That is not a style
+ * problem, it is a correctness one: "clear the basket" has to reset the lines AND
+ * the customer AND the selected line AND the draft id, and any handler that
+ * forgets one leaves a customer attached to the next sale. Here that is a single
+ * `CLEAR` case and it cannot be half-done.
+ *
+ * ── PURE, AND SEPARATELY TESTABLE ─────────────────────────────────────────
+ *
+ * `saleReducer` is exported on its own and touches nothing but its arguments —
+ * no fetch, no Date.now beyond what basket.ts needs for keys, no toasts. A test
+ * drives it with no database and no browser.
+ *
+ * What is NOT here: money. Totals come from documentMath, discounts from
+ * specialsEngine, tender arithmetic from tenderMath — all already pure and
+ * already shared with the server, which is what makes an offline sale's figures
+ * match what the server recomputes at sync. Duplicating any of it here is how
+ * they would drift apart.
+ */
+
+/** Which pane of the catalogue is showing. */
+export type CatalogView =
+  /** The quick-key grid — the resting state. */
+  | { kind: 'keys' }
+  /** Drilled into the department tree. `path` is ids from the root down. */
+  | { kind: 'departments'; path: number[] }
+  /** Search results for a typed term. */
+  | { kind: 'search'; term: string }
+
+export type SaleState = {
+  lines: BasketLine[]
+  /** The line whose action row is open. One at a time — a till is not a form. */
+  selectedKey: string | null
+  /** The draft this basket was recalled from, if any. */
+  documentId: number | null
+  customer: TillCustomer | null
+  /** A walk-in's name, typed. Not a customer record and creates no debtor. */
+  customerName: string
+  catalog: CatalogView
+  /** The search box's live value, kept whether or not results are showing. */
+  query: string
+}
+
+export const initialSaleState: SaleState = {
+  lines: [],
+  selectedKey: null,
+  documentId: null,
+  customer: null,
+  customerName: '',
+  catalog: { kind: 'keys' },
+  query: '',
+}
+
+export type SaleAction =
+  | { type: 'ADD'; product: TillProduct; qty?: number }
+  | { type: 'SELECT'; key: string | null }
+  | { type: 'STEP'; key: string; delta: number }
+  | { type: 'UPDATE'; key: string; changes: Partial<BasketLine> }
+  | { type: 'REMOVE'; key: string }
+  | { type: 'CLEAR' }
+  | { type: 'SET_CUSTOMER'; customer: TillCustomer | null }
+  | { type: 'SET_CUSTOMER_NAME'; name: string }
+  | { type: 'SET_QUERY'; query: string }
+  | { type: 'SHOW_KEYS' }
+  | { type: 'DRILL'; departmentId: number }
+  | { type: 'DRILL_TO'; path: number[] }
+  | { type: 'SHOW_SEARCH'; term: string }
+  /** A recalled draft replaces the basket wholesale. */
+  | {
+      type: 'LOAD'
+      documentId: number
+      lines: BasketLine[]
+      customer?: TillCustomer | null
+      /** The name on the parked document, kept even when the account is not. */
+      customerName?: string
+    }
+
+export function saleReducer(state: SaleState, action: SaleAction): SaleState {
+  switch (action.type) {
+    case 'ADD': {
+      const lines = addToBasket(state.lines, action.product, action.qty ?? 1)
+      return {
+        ...state,
+        lines,
+        // Adding closes any open action row. Leaving it open means the next tap
+        // on + or − lands on the line the cashier stopped looking at.
+        selectedKey: null,
+        // The search BOX is cleared so the next scan starts clean — a scanner
+        // appends, and a barcode landing after "milk" resolves to nothing.
+        query: '',
+        /*
+         * But the RESULTS stay on screen.
+         *
+         * An earlier version reset the pane to the quick keys here, on the
+         * reasoning that the cashier had got what they came for. Watching it
+         * work showed the opposite: two of the same item, or two things found by
+         * one search, is ordinary, and dropping the results made the cashier
+         * retype the word they had just typed. The pane now holds its place and
+         * the cashier leaves it when they choose to.
+         */
+        catalog: state.catalog,
+      }
+    }
+
+    case 'SELECT':
+      // Tapping the open line closes it — the row is a toggle, not a radio.
+      return {
+        ...state,
+        selectedKey: state.selectedKey === action.key ? null : action.key,
+      }
+
+    case 'STEP': {
+      const lines = stepQty(state.lines, action.key, action.delta)
+      // stepQty removes a line at zero, so the selection has to let go of a key
+      // that no longer exists or the action row stays open over nothing.
+      const gone = !lines.some((l) => l.key === action.key)
+      return { ...state, lines, selectedKey: gone ? null : state.selectedKey }
+    }
+
+    case 'UPDATE':
+      return { ...state, lines: updateBasketLine(state.lines, action.key, action.changes) }
+
+    case 'REMOVE':
+      return {
+        ...state,
+        lines: removeBasketLine(state.lines, action.key),
+        selectedKey: state.selectedKey === action.key ? null : state.selectedKey,
+      }
+
+    case 'CLEAR':
+      // Everything about the sale, in one place. The customer especially: an
+      // attached account surviving into the next sale is how a walk-in's goods
+      // end up on somebody's statement.
+      return {
+        ...initialSaleState,
+        // The catalogue view is the cashier's place in the shop, not part of the
+        // sale, so it survives. Ringing up the next customer from the same
+        // department is the common case.
+        catalog: state.catalog.kind === 'search' ? { kind: 'keys' } : state.catalog,
+      }
+
+    case 'SET_CUSTOMER':
+      return {
+        ...state,
+        customer: action.customer,
+        // A real account's name replaces whatever was typed, so the slip and the
+        // ledger cannot disagree about who this is.
+        customerName: action.customer ? '' : state.customerName,
+      }
+
+    case 'SET_CUSTOMER_NAME':
+      return { ...state, customerName: action.name }
+
+    case 'SET_QUERY':
+      return { ...state, query: action.query }
+
+    case 'SHOW_KEYS':
+      return { ...state, catalog: { kind: 'keys' }, query: '' }
+
+    case 'DRILL': {
+      const path =
+        state.catalog.kind === 'departments'
+          ? [...state.catalog.path, action.departmentId]
+          : [action.departmentId]
+      return { ...state, catalog: { kind: 'departments', path }, query: '' }
+    }
+
+    case 'DRILL_TO':
+      // An empty path means the top of the tree, which is the department rail
+      // itself rather than a level of it.
+      return {
+        ...state,
+        catalog: action.path.length ? { kind: 'departments', path: action.path } : { kind: 'keys' },
+        query: '',
+      }
+
+    case 'SHOW_SEARCH':
+      // Idempotent: this fires on every debounced keystroke, and returning the
+      // same object for the same term is what stops React re-rendering the whole
+      // grid while somebody is still typing.
+      if (state.catalog.kind === 'search' && state.catalog.term === action.term) return state
+      return { ...state, catalog: { kind: 'search', term: action.term } }
+
+    case 'LOAD':
+      return {
+        ...state,
+        documentId: action.documentId,
+        lines: action.lines,
+        customer: action.customer ?? null,
+        /*
+         * The NAME survives even when the account does not.
+         *
+         * A basket parked for "Harbour Cafe" comes back showing Harbour Cafe on
+         * the slip, so the cashier knows whose it is — but not attached as a
+         * debtor account, because offering credit needs a live balance and the one
+         * parked yesterday is not it. Re-attaching re-reads it. Dropping the name
+         * too would make every recalled basket anonymous.
+         */
+        customerName: action.customer ? '' : (action.customerName ?? '').trim(),
+        selectedKey: null,
+      }
+
+    default: {
+      // Exhaustiveness: a new action added to the union without a case here is a
+      // compile error rather than a silent no-op at the till.
+      const never: never = action
+      return never
+    }
+  }
+}
+
+export function useSaleState() {
+  return useReducer(saleReducer, initialSaleState)
+}

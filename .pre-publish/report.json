@@ -1,0 +1,518 @@
+{
+  "startedAt": "2026-08-08T05:39:29.456Z",
+  "gates": [
+    {
+      "gate": "static",
+      "ok": true,
+      "checks": [
+        {
+          "name": "tsc --noEmit",
+          "ok": true,
+          "ms": 2051
+        },
+        {
+          "name": "design system",
+          "ok": true,
+          "ms": 137
+        },
+        {
+          "name": "next build",
+          "ok": true,
+          "ms": 10906
+        }
+      ]
+    },
+    {
+      "gate": "migrations",
+      "ok": true,
+      "checks": [
+        {
+          "name": "site 1",
+          "ok": true,
+          "ms": 149
+        },
+        {
+          "name": "site 2",
+          "ok": true,
+          "ms": 142
+        }
+      ]
+    },
+    {
+      "gate": "domain",
+      "ok": false,
+      "checks": [
+        {
+          "name": "account-sales",
+          "ok": true,
+          "ms": 1606,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "account-types",
+          "ok": true,
+          "ms": 454,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "accounting",
+          "ok": true,
+          "ms": 593,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "attachments",
+          "ok": true,
+          "ms": 574,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "builder",
+          "ok": true,
+          "ms": 537,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "cashbook",
+          "ok": true,
+          "ms": 457,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "cashup",
+          "ok": false,
+          "ms": 691,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "PASS  no shift open to start\nPASS  *** shift opened with a R500 float ***\nPASS  a second shift on the same till is refused\nPASS  negative float refused\nPASS  cash sale with change posted\nPASS  exact cash sale posted\nPASS  card sale posted\n**FAIL**  *** sale stamped with the shift ***  -- 136\nC:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-cashup.ts:83\r\n  ok('cash expected is NET of change (150 not 250)', cashLine.expected === 150, String(cashLine.expected))\r\n                                                              ^\r\n\r\nTypeError: Cannot read properties of undefined (reading 'expected')\r\n    at main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-cashup.ts:83:63)\r\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\r\n\r\nNode.js v24.16.0"
+        },
+        {
+          "name": "cashup-modes",
+          "ok": true,
+          "ms": 1742,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "commission",
+          "ok": true,
+          "ms": 590,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "composition",
+          "ok": true,
+          "ms": 2389,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "contract-model",
+          "ok": true,
+          "ms": 234,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "contracts",
+          "ok": true,
+          "ms": 964,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "credit-control",
+          "ok": true,
+          "ms": 2308,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "credit-model",
+          "ok": true,
+          "ms": 193,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "credit-notes",
+          "ok": true,
+          "ms": 1647,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "customer-accounts",
+          "ok": true,
+          "ms": 2001,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "dashboard",
+          "ok": true,
+          "ms": 8645,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "document-math",
+          "ok": true,
+          "ms": 265,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "employment",
+          "ok": true,
+          "ms": 573,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "expenses",
+          "ok": true,
+          "ms": 507,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "fixed-assets",
+          "ok": false,
+          "ms": 433,
+          "failedAssertions": 1,
+          "exclusive": true,
+          "output": "PASS    and reports the closing book value\nPASS  a month before the start charges nothing\nPASS    and says why\nPASS  *** the final month charges only what remains ***  -- 200\nPASS    and is flagged as the last one\nPASS  *** it lands exactly on zero, not below ***  -- 0\nPASS  *** a fully depreciated asset charges nothing ***\nPASS    and says so\nPASS  *** a month already charged is refused ***\nPASS    and the next month proceeds\nPASS  a disposed asset charges nothing\nPASS  a pending asset charges nothing\nPASS  *** THE SCHEDULE SUMS TO THE DEPRECIABLE AMOUNT ***  -- 24000 over 36 months\nPASS    ending at zero book value\nPASS  *** an awkward division still sums exactly ***  -- 10000 over 8 months\nPASS  *** a residual is never depreciated through ***  -- 60000\nPASS  a sale above book value is a profit  -- book 120000, result 30000\nPASS  scrapping mid-life is a loss  -- -16000\nPASS  a residual above cost is refused\nPASS  a zero life is refused\nPASS  *** depreciating before acquisition is refused ***\nPASS  a valid asset passes\n\n── The register ────────────────────────────────────────────\n\nPASS  categories are seeded  -- 4\nPASS  computers depreciate over 3 years\nPASS  *** vehicles carry a residual by default ***  -- 20%\nPASS    and are mapped to their own accounts\nPASS  an asset is created  -- FA00027\nPASS    with a generated code\nPASS    it carries at cost before depreciation\nPASS    and is not yet fully depreciated\nPASS    its schedule runs for the life  -- 3 months\n\n── A depreciation run ──────────────────────────────────────\n\nPASS  a run is proposed  -- 1 assets, 1000\nPASS    our asset is on it\nPASS    charging a third of the cost  -- 1000\nPASS    with the workings kept\nPASS  *** a draft run charges nothing ***\nPASS  the run posts  -- 1 assets, 1000\nPASS    the register moved  -- 1000\nPASS    the book value dropped\nPASS    and the month is recorded\nPASS  *** the ledger entry balances ***  -- 1000 / 1000\nPASS    debiting depreciation expense\nPASS    and crediting accumulated depreciation\nPASS  *** the same month cannot be charged twice ***  -- 2026-01 has already been charged.\nPASS  *** THE ASSET LANDS EXACTLY ON ZERO ***  -- book 0, accumulated 3000\nPASS    and is flagged fully depreciated\nPASS  *** a fully depreciated asset is skipped, not charged ***  -- Fully depreciated.\n\n── Editing guards ──────────────────────────────────────────\n\nPASS  *** the cost of a depreciated asset cannot change ***  -- FA00027 has already depreciated 3000.00. Its cost cannot change — dispose of it and record the correct asset, so both are on the trail.\nPASS    but it can still be renamed\n\n── Disposal ────────────────────────────────────────────────\n\nPASS  disposal needs a reason\nPASS  an asset can be disposed of  -- book 100000, result -10000\nPASS    its status changes\nPASS    the proceeds are recorded\nPASS  *** and the profit on sale is computed ***  -- -10000\nPASS    the disposal journal balances  -- 100000 / 100000\nPASS    removing the asset at cost\nPASS  disposing twice is refused\nPASS  *** a disposed asset leaves the register by default ***\n\n── Invariants ──────────────────────────────────────────────\n\nPASS  *** every asset agrees with the runs that depreciated it ***  -- []\n**FAIL**  *** every GL balance agrees with its journal lines ***  -- [{\"id\":1,\"accountCode\":\"1000\",\"name\":\"Bank and cash\",\"stored\":353200,\"computed\":352270,\"drift\":930},{\"id\":18,\"accountCode\":\"4000\",\"name\":\"Sales\",\"stored\":-441065.54,\"computed\":-440256.83,\"drift\":-808.71}]\nPASS  *** the trial balance still balances ***  -- out by 0\nPASS  the register summarises  -- 1 assets\nPASS    book value is cost less accumulated\n\n1 FAILURE(S)"
+        },
+        {
+          "name": "general-ledger",
+          "ok": true,
+          "ms": 584,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "grv-serials",
+          "ok": true,
+          "ms": 1325,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "holidays",
+          "ok": true,
+          "ms": 363,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "invoicing",
+          "ok": true,
+          "ms": 1075,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "laybys",
+          "ok": true,
+          "ms": 1827,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "leave",
+          "ok": true,
+          "ms": 462,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "locations",
+          "ok": true,
+          "ms": 1337,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "loyalty",
+          "ok": true,
+          "ms": 2005,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "master-codes",
+          "ok": true,
+          "ms": 612,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "online-content",
+          "ok": true,
+          "ms": 445,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "online-orders",
+          "ok": true,
+          "ms": 471,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "online-store",
+          "ok": true,
+          "ms": 580,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "opening-balances",
+          "ok": true,
+          "ms": 511,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "order-statuses",
+          "ok": true,
+          "ms": 762,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "overtime",
+          "ok": true,
+          "ms": 397,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "party-records",
+          "ok": true,
+          "ms": 403,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "payment-runs",
+          "ok": true,
+          "ms": 518,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "payments",
+          "ok": true,
+          "ms": 1339,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "period-locks",
+          "ok": true,
+          "ms": 373,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "permissions",
+          "ok": true,
+          "ms": 479,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "price-guard",
+          "ok": true,
+          "ms": 314,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pricing-setup",
+          "ok": true,
+          "ms": 702,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "product-images",
+          "ok": true,
+          "ms": 427,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "product-setup",
+          "ok": true,
+          "ms": 468,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "purchasing",
+          "ok": true,
+          "ms": 1049,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "quotes",
+          "ok": true,
+          "ms": 580,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "reprice-run",
+          "ok": true,
+          "ms": 1053,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "repricing",
+          "ok": true,
+          "ms": 259,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "sales-edit",
+          "ok": true,
+          "ms": 1750,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "sales-orders",
+          "ok": true,
+          "ms": 3025,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "sales-posting",
+          "ok": true,
+          "ms": 1678,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "sequences",
+          "ok": true,
+          "ms": 436,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "serials",
+          "ok": true,
+          "ms": 2531,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "settlement-discount",
+          "ok": true,
+          "ms": 510,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "specials",
+          "ok": true,
+          "ms": 400,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "staff-cost",
+          "ok": true,
+          "ms": 415,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "staff-time",
+          "ok": true,
+          "ms": 992,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "statement-runs",
+          "ok": true,
+          "ms": 4418,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "storefront",
+          "ok": true,
+          "ms": 1437,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "supplier-returns",
+          "ok": true,
+          "ms": 932,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "timesheets",
+          "ok": true,
+          "ms": 454,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "transfers",
+          "ok": true,
+          "ms": 1327,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "users-pins",
+          "ok": true,
+          "ms": 1351,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "void",
+          "ok": true,
+          "ms": 1734,
+          "failedAssertions": 0,
+          "exclusive": true
+        }
+      ]
+    },
+    {
+      "gate": "smoke",
+      "ok": true,
+      "checks": [
+        {
+          "name": "route crawl",
+          "ok": true,
+          "ms": 164516
+        }
+      ]
+    }
+  ],
+  "finishedAt": "2026-08-08T05:43:11.728Z",
+  "ms": 222272
+}

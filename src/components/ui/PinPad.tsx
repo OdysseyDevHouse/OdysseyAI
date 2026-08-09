@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './Button'
 import * as Icons from './icons'
 
@@ -33,6 +33,30 @@ export function PinPad({
 }) {
   const [pin, setPin] = useState('')
 
+  // The caller re-renders while the PIN is being checked — `busy` flips, a
+  // router.refresh() lands — and a plain arrow function passed as `onSubmit`
+  // is a new identity each time. Held in a ref so the effects below can call
+  // the latest one without listing it as a dependency and re-firing.
+  const onSubmitRef = useRef(onSubmit)
+  useEffect(() => {
+    onSubmitRef.current = onSubmit
+  })
+
+  // The keyboard handler needs the current pin to decide whether Enter is
+  // valid, but reading it from state would put `pin` in that effect's
+  // dependencies and rebind the listener on every keystroke.
+  const pinRef = useRef(pin)
+  pinRef.current = pin
+
+  // Submitting empties the pad. Without this the auto-submit effect below sees
+  // four digits still sitting there the moment `busy` goes false again and
+  // fires a second time — which on the clock screen means clocking straight
+  // back out, then in, then out, for as long as the page is open.
+  const send = useCallback((value: string) => {
+    setPin('')
+    onSubmitRef.current(value)
+  }, [])
+
   // Clearing on a failed attempt is what makes a second try possible without
   // the user having to work out how much of the old entry survived.
   useEffect(() => {
@@ -47,25 +71,23 @@ export function PinPad({
       } else if (event.key === 'Backspace') {
         setPin((current) => current.slice(0, -1))
       } else if (event.key === 'Enter') {
-        setPin((current) => {
-          if (current.length >= 4) onSubmit(current)
-          return current
-        })
+        if (pinRef.current.length >= 4) send(pinRef.current)
       } else if (event.key === 'Escape' && onCancel) {
         onCancel()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [busy, onSubmit, onCancel])
+  }, [busy, send, onCancel])
 
   // A four-digit PIN submits on the fourth digit; a six-digit one cannot, since
   // there is no way to tell "done" from "halfway" until Enter.
   useEffect(() => {
-    if (length === 4 && pin.length === 4 && !busy) onSubmit(pin)
-  }, [pin, length, busy, onSubmit])
+    if (length === 4 && pin.length === 4 && !busy) send(pin)
+  }, [pin, length, busy, send])
 
-  const press = (digit: string) => setPin((current) => (current.length >= 6 ? current : current + digit))
+  const press = (digit: string) =>
+    setPin((current) => (current.length >= 6 ? current : current + digit))
 
   return (
     <div className="flex w-full max-w-xs flex-col gap-5">
@@ -83,14 +105,18 @@ export function PinPad({
         {error && <p className="text-center text-sm text-danger">{error}</p>}
       </div>
 
+      {/* size="touch" rather than a className height on each key: this pad was
+          hand-writing h-14 five times before --spacing-touch existed, which is
+          what a missing token looks like from the inside. */}
       <div className="grid grid-cols-3 gap-2.5">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
           <Button
             key={digit}
             variant="secondary"
+            size="touch"
             onClick={() => press(digit)}
             disabled={busy}
-            className="h-14 text-lg font-medium"
+            className="font-medium"
           >
             {digit}
           </Button>
@@ -98,26 +124,27 @@ export function PinPad({
 
         <Button
           variant="ghost"
+          size="touch"
           onClick={() => setPin('')}
           disabled={busy || !pin}
-          className="h-14"
           aria-label="Clear"
         >
           Clear
         </Button>
         <Button
           variant="secondary"
+          size="touch"
           onClick={() => press('0')}
           disabled={busy}
-          className="h-14 text-lg font-medium"
+          className="font-medium"
         >
           0
         </Button>
         <Button
           variant="ghost"
+          size="touch"
           onClick={() => setPin((current) => current.slice(0, -1))}
           disabled={busy || !pin}
-          className="h-14"
           aria-label="Backspace"
         >
           <Icons.ChevronLeft size={20} />
@@ -130,7 +157,7 @@ export function PinPad({
             user the keypad is finished rather than stuck. */}
         <Button
           variant="primary"
-          onClick={() => onSubmit(pin)}
+          onClick={() => send(pin)}
           disabled={busy || pin.length < 4}
           className="h-control"
         >

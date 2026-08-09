@@ -1,0 +1,185 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import {
+  Button,
+  Callout,
+  Icons,
+  Modal,
+  NumPad,
+  NumPadDisplay,
+  SegmentedControl,
+  numPadValue,
+} from '@/components/ui'
+import { formatMoney, formatQty } from '@/lib/decimals'
+import { lineTotals } from '@/lib/documentMath'
+import { discountAllowed, type BasketLine } from '@/lib/basket'
+
+/**
+ * Changing one line: how many, what price, what discount.
+ *
+ * Three fields, one numeric pad, and a segmented control to say which of them is
+ * being typed. A form with three separate inputs would need three precise taps
+ * to move between them and would put the pad somewhere different for each; this
+ * way the pad never moves and the cashier's thumb stays where it was.
+ *
+ * ── WHAT THIS REFUSES, AND WHAT IT ONLY WARNS ABOUT ───────────────────────
+ *
+ * A discount above the product's own ceiling is REFUSED here unless the operator
+ * holds `sales.discount_override`, and a price off the shelf figure needs
+ * `sales.price_override`. Both are checked again server-side by `checkPricing` at
+ * save and at finalise — this is the courtesy of failing at the point of entry
+ * rather than at the moment the customer is handing over money.
+ */
+export function LineEditModal({
+  line,
+  canOverrideDiscount,
+  canOverridePrice,
+  onClose,
+  onSave,
+}: {
+  /** Null closes the dialog. */
+  line: BasketLine | null
+  canOverrideDiscount: boolean
+  canOverridePrice: boolean
+  onClose: () => void
+  onSave: (changes: Partial<BasketLine>) => void
+}) {
+  type FieldName = 'qty' | 'price' | 'discount'
+  const [field, setField] = useState<FieldName>('qty')
+  const [qty, setQty] = useState('')
+  const [price, setPrice] = useState('')
+  const [discount, setDiscount] = useState('')
+
+  // Seeded from the line each time it opens, so the pad starts on the current
+  // figures rather than empty — a cashier changing 1 to 2 should not have to
+  // establish what it is now.
+  useEffect(() => {
+    if (!line) return
+    setField('qty')
+    setQty(String(line.qty))
+    setPrice(line.unitPriceIncl.toFixed(2))
+    setDiscount(line.discountPct ? String(line.discountPct) : '')
+  }, [line])
+
+  if (!line) return null
+
+  const values = { qty, price, discount }
+  const setters: Record<FieldName, (v: string) => void> = {
+    qty: setQty,
+    price: setPrice,
+    discount: setDiscount,
+  }
+
+  const nextQty = numPadValue(qty)
+  const nextPrice = numPadValue(price)
+  const nextDiscount = numPadValue(discount)
+
+  const priceChanged = line.shelfPriceIncl !== null && nextPrice !== line.shelfPriceIncl
+  const overCeiling = !discountAllowed(line, nextDiscount)
+
+  // A refusal names the capability it needs, so a cashier knows to fetch a
+  // supervisor rather than assuming the till is broken.
+  const refusal =
+    nextQty === 0
+      ? 'Enter a quantity, or void the line instead.'
+      : !line.allowFractions && !Number.isInteger(nextQty)
+        ? `${line.description} is sold in whole units.`
+        : overCeiling && !canOverrideDiscount
+          ? `A discount above ${formatQty(line.maxDiscountPct)}% needs a supervisor.`
+          : priceChanged && !canOverridePrice
+            ? 'Changing the price needs a supervisor.'
+            : null
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={line.description}
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" size="touch" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="touch-lg"
+            className="flex-1 justify-center"
+            disabled={refusal !== null}
+            onClick={() =>
+              onSave({
+                qty: nextQty,
+                unitPriceIncl: nextPrice,
+                discountPct: nextDiscount,
+              })
+            }
+          >
+            <Icons.Check size={20} />
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <SegmentedControl
+          value={field}
+          onChange={(v) => setField(v as FieldName)}
+          options={[
+            { value: 'qty', label: 'Quantity' },
+            { value: 'price', label: 'Price' },
+            { value: 'discount', label: 'Discount %' },
+          ]}
+        />
+
+        <NumPadDisplay
+          label={
+            field === 'qty'
+              ? line.allowFractions
+                ? 'Quantity (fractions allowed)'
+                : 'Quantity'
+              : field === 'price'
+                ? line.shelfPriceIncl !== null
+                  ? `Unit price — shelf is ${formatMoney(line.shelfPriceIncl)}`
+                  : 'Unit price'
+                : `Discount % — up to ${formatQty(line.maxDiscountPct)}% without a supervisor`
+          }
+          value={values[field]}
+          tone={refusal ? 'danger' : 'default'}
+        />
+
+        <NumPad
+          value={values[field]}
+          onChange={setters[field]}
+          // Quantity of a whole-unit product takes no decimal point at all, which
+          // is a clearer refusal than accepting 1.5 and rejecting it on save.
+          maxDecimals={field === 'qty' && !line.allowFractions ? 0 : field === 'qty' ? 3 : 2}
+        />
+
+        {refusal ? (
+          <Callout tone="danger">{refusal}</Callout>
+        ) : (
+          <div className="rounded-card border border-border bg-surface-2 px-4 py-2.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted">Line total</span>
+              {/* lineTotals, not arithmetic written here. Its rounding is what
+                  the slip and the posted document both use, and a second
+                  expression that is right to the cent today drifts the first
+                  time that rounding changes. */}
+              <span className="numeric font-semibold text-ink">
+                {formatMoney(
+                  lineTotals({
+                    qty: nextQty,
+                    unitPriceIncl: nextPrice,
+                    discountPct: nextDiscount,
+                    vatRatePct: line.vatRatePct,
+                  }).lineTotalIncl,
+                )}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}

@@ -34,6 +34,7 @@ import {
   type Special,
 } from '@/lib/specialsEngine'
 import { deviceId, deviceLabel } from '@/lib/deviceId'
+import type { BasketLine } from '@/lib/basket'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
 import type { TenderType } from '@/lib/site/tenderTypes'
@@ -68,24 +69,12 @@ import OverridePrompt from './OverridePrompt'
  * with abandoned baskets, and nothing downstream needs them.
  */
 
-export type BasketLine = {
-  /** Stable within the basket only — the database line id does not exist yet. */
-  key: string
-  productId: number | null
-  productCode: string | null
-  description: string
-  productType: TillProduct['productType']
-  departmentId: number | null
-  qty: number
-  unitPriceIncl: number
-  discountPct: number
-  vatRatePct: number
-  unitCostExcl: number
-  maxDiscountPct: number
-  /** The structure price, so the modal can tell a change from the shelf figure. Null when the product is priced at the counter. */
-  shelfPriceIncl: number | null
-  allowFractions: boolean
-}
+/* The basket shape and its rules moved to @/lib/basket when the touch POS gained
+   its own screen. Two declarations of a line is how the two tills would quietly
+   disagree about when a scan merges or what a discount ceiling means — so there is
+   one, and it is pure so both a browser and a test can run it. Re-exported here
+   because this file's own sub-components import it from itself. */
+export type { BasketLine }
 
 /** Product types that carry no quantity, so stock never applies to them. */
 const UNSTOCKED: ReadonlySet<string> = new Set(['service', 'buyout'])
