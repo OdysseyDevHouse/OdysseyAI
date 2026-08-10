@@ -224,6 +224,14 @@ export const KV = {
   tenders: 'tenders',
   /** Live specials, windows UNevaluated — the till re-checks against its clock. */
   specials: 'specials',
+  /**
+   * Approved price changes that have not happened yet, moments UNevaluated.
+   *
+   * Same bargain as the specials above: the till compares the moment against its
+   * own clock, so a six o'clock price list takes effect at six even on a machine
+   * that has been off the network since yesterday.
+   */
+  pendingPrices: 'pendingPrices',
   /** Operators who may sign in here, with their verifiers. */
   operators: 'operators',
   /** The shift to bank into. */

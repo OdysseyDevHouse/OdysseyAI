@@ -4,6 +4,7 @@ import { posDb, kvGet, kvPut, KV } from './db'
 import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
 import type { TillProduct } from '../site/tillSearch'
+import type { PendingSchedule } from '../priceSchedules'
 
 /**
  * Pulling the shop down onto the till, and keeping it current.
@@ -32,8 +33,14 @@ import type { TillProduct } from '../site/tillSearch'
  * this file may delete an outbox row.
  */
 
-/** Bumped when the STORED shape changes. Must match the route's CATALOG_SCHEMA. */
-const SCHEMA = 2
+/**
+ * Bumped when the STORED shape changes. Must match the route's CATALOG_SCHEMA.
+ *
+ * 3 added the pending price changes. Bump only one of the two and this till asks
+ * for a delta the route will not give it — so it full-loads on every poll,
+ * forever, with nothing on screen to say why.
+ */
+const SCHEMA = 3
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -69,6 +76,8 @@ type CatalogResponse = {
   departments: { id: number; parentId: number | null; name: string; sortOrder: number }[]
   tenders: unknown[]
   specials: unknown[]
+  /** Optional: a server on schema 2 does not send it. See the default at the store. */
+  pendingPrices?: PendingSchedule[]
   settings: CatalogSettings
   priceStructureId: number | null
   terminal: { id: number; code: string; tillNumber: string | null } | null
@@ -183,6 +192,10 @@ export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
       { key: KV.departments, value: body.departments },
       { key: KV.tenders, value: body.tenders },
       { key: KV.specials, value: body.specials },
+      /* Defaulted rather than assumed: a till that just upgraded from schema 2
+         has no such field in the response it is replacing, and storing
+         `undefined` would leave the resolver with nothing to iterate. */
+      { key: KV.pendingPrices, value: body.pendingPrices ?? [] },
       { key: KV.settings, value: body.settings },
       { key: KV.operators, value: body.operators },
       { key: KV.terminal, value: body.terminal },
@@ -321,6 +334,21 @@ export async function storedSettings(siteId: number): Promise<CatalogSettings> {
 
 export async function storedOperators(siteId: number): Promise<OfflineOperator[]> {
   return (await kvGet<OfflineOperator[]>(siteId, KV.operators)) ?? []
+}
+
+/**
+ * The price changes this till is carrying, moments still unevaluated.
+ *
+ * Read from storage rather than from the page's props for the same reason the
+ * quick keys are: the props are right on a fresh load and gone after a reload
+ * with no network. A till that reloads at five to six and then loses its line
+ * must still change its prices at six.
+ *
+ * Empty is the normal case, and the resolver treats it as "charge what the
+ * catalogue says" — which is exactly right.
+ */
+export async function storedPendingPrices(siteId: number): Promise<PendingSchedule[]> {
+  return (await kvGet<PendingSchedule[]>(siteId, KV.pendingPrices)) ?? []
 }
 
 /**

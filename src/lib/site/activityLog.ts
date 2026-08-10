@@ -60,6 +60,12 @@ export type ActivityEntity =
      every till transaction into the audit trail would bury the thing this is
      for: "who gave that customer 5 000 points, and why". */
   | 'loyalty'
+  /* A scheduled price change: building one, approving it, the moment it fires,
+     and putting it back. The firing is logged by a CRON with no person behind
+     it, which is exactly why it must be recorded — "why did everything go up on
+     Monday" has no other answer, and product_prices keeps no history of its
+     own. entityId is the schedule. */
+  | 'price_schedule'
 
 export type ActivityEvent = {
   id: number

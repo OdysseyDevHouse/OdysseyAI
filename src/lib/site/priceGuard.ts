@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { can, type CapabilitySet } from './permissions'
+import { duePricesFor } from './priceSchedules'
 
 /**
  * Whether the prices and discounts on a document are ones this person may set.
@@ -31,6 +32,13 @@ import { can, type CapabilitySet } from './permissions'
  * cut flowers, fabric off a roll, a repair quoted at the counter. Typing its
  * price IS the normal path, so requiring a supervisor for one would stop the
  * till working. Same for a line with no product at all.
+ *
+ * Nor is a SCHEDULED price whose moment has passed. A till applies a six
+ * o'clock change on its own clock and the cron writes it to product_prices a
+ * few minutes later; in between, the till is right and the table is stale.
+ * Refusing those sales would stop the shop trading for exactly as long as that
+ * gap lasts, with customers standing there — and would flag every offline sale
+ * that syncs from the same window. See `duePricesFor` in site/priceSchedules.
  */
 
 export type PriceCheckLine = {
@@ -84,6 +92,15 @@ export async function checkPricing(
   )
   const byId = new Map(rows.map((r) => [r.id, r]))
 
+  /*
+   * Only asked when a price could actually be refused. A supervisor's sale
+   * never reaches the comparison below, and neither does a discount-only
+   * check — no reason to make either of them pay for the lookup.
+   */
+  const duePrices = mayOverridePrice
+    ? new Map<number, number>()
+    : await duePricesFor(siteId, priceStructureId, productIds)
+
   for (const [index, line] of lines.entries()) {
     if (!line.productId) continue
     const product = byId.get(line.productId)
@@ -106,12 +123,23 @@ export async function checkPricing(
     if (!mayOverridePrice) {
       // Nothing to depart from — see the note above on ask_price_at_sale.
       if (product.ask_price_at_sale) continue
-      if (product.selling_price_incl === null) continue
+      const due = duePrices.get(line.productId) ?? null
+      if (product.selling_price_incl === null && due === null) continue
 
-      const shelf = toNum(product.selling_price_incl)
-      if (Math.abs(round(line.unitPriceIncl, 2) - round(shelf, 2)) > TOLERANCE) {
-        return `${where}: the price is ${line.unitPriceIncl.toFixed(2)} but this product sells at ${shelf.toFixed(2)}. A supervisor can authorise a change.`
-      }
+      /*
+       * Either price is acceptable: what the table says, and what a change
+       * that is already due says. The till may legitimately be on either side
+       * of the cron that reconciles them.
+       */
+      const shelf = product.selling_price_incl === null ? null : toNum(product.selling_price_incl)
+      const asked = round(line.unitPriceIncl, 2)
+      const allowed = [shelf, due].filter((p): p is number => p !== null)
+      if (allowed.some((p) => Math.abs(asked - round(p, 2)) <= TOLERANCE)) continue
+
+      // Named as the price the customer is about to be charged from, which is
+      // the scheduled one if a change has landed and the shelf one otherwise.
+      const expected = due ?? (shelf as number)
+      return `${where}: the price is ${line.unitPriceIncl.toFixed(2)} but this product sells at ${expected.toFixed(2)}. A supervisor can authorise a change.`
     }
   }
 

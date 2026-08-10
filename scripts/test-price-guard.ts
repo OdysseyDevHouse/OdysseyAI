@@ -33,6 +33,7 @@ const CASHIER = holding('sales.till')
 
 let productId = 0
 let structureId: number | null = null
+let scheduleId = 0
 
 async function main() {
   const structure = await siteQueryOne<{ id: number }>(
@@ -158,10 +159,86 @@ async function main() {
     !!message?.includes('Price guard test') && !!message?.includes('100.00'),
     message ?? '',
   )
+
+  /* ── A scheduled price that has landed ─────────────────────────────── */
+  //
+  // THE CASE THAT WOULD STOP A SHOP TRADING.
+  //
+  // A till applies a six o'clock price change on its own clock; the cron writes
+  // it to product_prices a few minutes later. In between, the till is charging
+  // the new price and the table still holds the old one. If the guard only ever
+  // trusted the table, every sale in that window would be refused for an
+  // ordinary cashier — with customers standing there — and every offline sale
+  // syncing from it would be flagged as an override.
+  console.log('\na scheduled price that is due')
+
+  if (structureId) {
+    const made = await siteExecute(
+      SITE,
+      `INSERT INTO price_schedules (name, effective_at, status)
+       VALUES ('ZZ Guard test', ?, 'armed')`,
+      [momentIn(-5)],
+    )
+    scheduleId = made.insertId
+    await siteExecute(
+      SITE,
+      `INSERT INTO price_schedule_lines
+         (schedule_id, product_id, price_structure_id, new_price_incl, old_price_incl)
+       VALUES (?,?,?,120.0000,100.0000)`,
+      [scheduleId, productId, structureId],
+    )
+
+    check(
+      'the DUE scheduled price is accepted without the capability',
+      (await checkPricing(SITE, CASHIER, structureId, line({ unitPriceIncl: 120 }))) === null,
+    )
+
+    // The old price is still the price the table holds, and a customer who was
+    // quoted it before six is not an override either.
+    check(
+      'the price still on file is accepted as well',
+      (await checkPricing(SITE, CASHIER, structureId, line({ unitPriceIncl: 100 }))) === null,
+    )
+
+    const invented = await checkPricing(SITE, CASHIER, structureId, line({ unitPriceIncl: 140 }))
+    check('a price that is neither is still refused', invented !== null, invented ?? '')
+
+    /* ── And one that has NOT arrived yet ───────────────────────────── */
+    //
+    // Next week's cheaper price is not a price anybody may ring up today.
+    await siteExecute(SITE, 'UPDATE price_schedules SET effective_at = ? WHERE id = ?', [
+      momentIn(60 * 24 * 7),
+      scheduleId,
+    ])
+
+    const early = await checkPricing(SITE, CASHIER, structureId, line({ unitPriceIncl: 120 }))
+    check('a FUTURE scheduled price is refused', early !== null, early ?? '')
+
+    check(
+      'and the shelf price still works',
+      (await checkPricing(SITE, CASHIER, structureId, line({ unitPriceIncl: 100 }))) === null,
+    )
+  }
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+/** Wall-clock text N minutes from now, in the format the column stores. */
+function momentIn(minutes: number): string {
+  const d = new Date(Date.now() + minutes * 60_000)
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  )
 }
 
 async function cleanup() {
   console.log('\ncleaning up...')
+  /* The schedule first: its lines point at the product, and a leftover armed
+     row would be picked up by the next tick — which would then reprice a
+     product this test has already deleted. */
+  if (scheduleId) {
+    await siteExecute(SITE, 'DELETE FROM price_schedules WHERE id = ?', [scheduleId]).catch(() => {})
+  }
   if (productId) {
     await siteExecute(SITE, 'DELETE FROM products WHERE id = ?', [productId]).catch(() => {})
   }

@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
 import { toNum, round } from '../decimals'
 import { getSettings } from './settings'
+import { duePricesFor } from './priceSchedules'
 import { parseVariableBarcode } from '../barcodes'
 import type { ProductTypeId } from '../productTypes'
 
@@ -322,7 +323,14 @@ export async function resolveScan(
    existing import keeps working. */
 export { parseVariableBarcode, type VariableBarcode } from '../barcodes'
 
-/** One product by id, for re-pricing a recalled line. */
+/**
+ * One product by id, for re-pricing a recalled line.
+ *
+ * Priced through any scheduled change that is already due, not straight off
+ * `product_prices`. A basket parked at five to six and recalled at five past
+ * must come back at the new price — the till in front of it has been charging
+ * that price since six, and the cron may not have caught up yet.
+ */
 export async function getTillProduct(
   siteId: number,
   productId: number,
@@ -334,5 +342,10 @@ export async function getTillProduct(
     `${selectProduct(costBasis)} WHERE p.id = ? LIMIT 1`,
     [priceStructureId ?? 0, productId],
   )
-  return row ? mapProduct(row) : null
+  if (!row) return null
+
+  const product = mapProduct(row)
+  const due = await duePricesFor(siteId, priceStructureId, [productId])
+  const scheduled = due.get(productId)
+  return scheduled === undefined ? product : { ...product, priceIncl: scheduled }
 }

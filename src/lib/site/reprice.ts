@@ -1,5 +1,5 @@
 import 'server-only'
-import type { RowDataPacket } from 'mysql2/promise'
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import { effectiveCost } from '../pricing'
@@ -175,13 +175,44 @@ export async function planReprice(
 
 export type ApplyResult = { ok: true; written: number } | { ok: false; error: string }
 
+/** One price, going in. */
+export type PriceRow = { productId: number; priceStructureId: number; priceIncl: number }
+
+/**
+ * How a price is written. The one definition of it.
+ *
+ * Takes a transaction rather than opening one, because both callers have
+ * something else that must live or die with the write — the bulk reprice has
+ * the rest of its plan, and a scheduled change has its own status stamp and
+ * audit row. A helper that committed on its own could leave either half-done.
+ *
+ * Batched because a 40 000-row catalogue is one statement per product
+ * otherwise, and the MySQL round-trips are what turn seconds into minutes.
+ * Rows spanning several price types are fine: the structure is per row.
+ */
+export async function writePriceRows(tx: PoolConnection, rows: readonly PriceRow[]): Promise<void> {
+  const BATCH = 500
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const slice = rows.slice(i, i + BATCH)
+    const values = slice.map(() => '(?, ?, ?)').join(',')
+    const params: unknown[] = []
+    for (const r of slice) {
+      params.push(r.productId, r.priceStructureId, r.priceIncl.toFixed(4))
+    }
+    await tx.execute(
+      `INSERT INTO product_prices (product_id, price_structure_id, selling_price_incl)
+            VALUES ${values}
+       ON DUPLICATE KEY UPDATE selling_price_incl = VALUES(selling_price_incl)`,
+      params as never,
+    )
+  }
+}
+
 /**
  * Writes a plan.
  *
  * One transaction: a half-applied reprice is worse than none, because nothing
- * on the screen would tell you where it stopped. Batched because a 40 000-row
- * catalogue is one statement per product otherwise, and MySQL round-trips are
- * what make that take minutes instead of seconds.
+ * on the screen would tell you where it stopped.
  */
 export async function applyReprice(
   siteId: number,
@@ -191,24 +222,16 @@ export async function applyReprice(
   const toWrite = changes.filter((c) => c.changed)
   if (toWrite.length === 0) return { ok: true, written: 0 }
 
-  const BATCH = 500
-
   try {
     await siteTransaction(siteId, async (tx) => {
-      for (let i = 0; i < toWrite.length; i += BATCH) {
-        const slice = toWrite.slice(i, i + BATCH)
-        const values = slice.map(() => '(?, ?, ?)').join(',')
-        const params: unknown[] = []
-        for (const c of slice) {
-          params.push(c.productId, targetStructureId, c.newIncl.toFixed(4))
-        }
-        await tx.execute(
-          `INSERT INTO product_prices (product_id, price_structure_id, selling_price_incl)
-                VALUES ${values}
-           ON DUPLICATE KEY UPDATE selling_price_incl = VALUES(selling_price_incl)`,
-          params as never,
-        )
-      }
+      await writePriceRows(
+        tx,
+        toWrite.map((c) => ({
+          productId: c.productId,
+          priceStructureId: targetStructureId,
+          priceIncl: c.newIncl,
+        })),
+      )
     })
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'The reprice could not be saved.' }

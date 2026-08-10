@@ -60,6 +60,14 @@ const PUBLIC_PREFIXES = [
   // behind a cookie gate a shop's Black Friday page simply never goes live, and
   // the owner finds out from the trading figures.
   '/api/storefront/publish',
+  // Scheduled price changes. Same reasoning and the same protection once more:
+  // PRICING_CRON_SECRET, compared in constant time, refusing everything when it
+  // is not set. Behind a cookie gate the tills would still switch on time — they
+  // carry the change and apply it themselves — but the database never would, so
+  // the shop's screens, reports and online store would sit on the old prices
+  // while the terminals charged the new ones. Two answers to what a thing costs
+  // is the worst of the failure modes on this list.
+  '/api/pricing/schedules/tick',
   // The landing page for an emailed "pay this invoice" link. The payer is a
   // customer, not a user of the back office, and will never have a session.
   //

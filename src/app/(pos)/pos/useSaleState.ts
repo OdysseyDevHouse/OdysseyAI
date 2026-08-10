@@ -90,7 +90,13 @@ export const initialSaleState: SaleState = {
 }
 
 export type SaleAction =
-  | { type: 'ADD'; product: TillProduct; qty?: number }
+  /**
+   * `resolvedIncl` is the price after any scheduled change that is due — see
+   * lib/priceSchedules. Resolved by the caller, which holds the clock and the
+   * pending list, rather than here: a reducer that read the time would not be
+   * a pure function of its arguments.
+   */
+  | { type: 'ADD'; product: TillProduct; qty?: number; resolvedIncl?: number }
   | { type: 'SELECT'; key: string | null }
   | { type: 'STEP'; key: string; delta: number }
   | { type: 'UPDATE'; key: string; changes: Partial<BasketLine> }
@@ -147,7 +153,12 @@ export type SaleAction =
 export function saleReducer(state: SaleState, action: SaleAction): SaleState {
   switch (action.type) {
     case 'ADD': {
-      const lines = addToBasket(state.lines, action.product, action.qty ?? 1)
+      const lines = addToBasket(
+        state.lines,
+        action.product,
+        action.qty ?? 1,
+        action.resolvedIncl ?? action.product.priceIncl,
+      )
       return {
         ...state,
         lines,

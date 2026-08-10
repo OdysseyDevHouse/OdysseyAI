@@ -60,8 +60,25 @@ export function basketKey(productId: number | null, index: number): string {
   return `${productId ?? 'x'}-${Date.now()}-${index}`
 }
 
-/** A fresh line from a product, at the price the catalogue gave. */
-export function lineFromProduct(product: TillProduct, qty: number, index: number): BasketLine {
+/**
+ * A fresh line from a product, at the price the catalogue gave.
+ *
+ * `resolvedIncl` is that price AFTER any scheduled change whose moment has
+ * come — see lib/priceSchedules. It defaults to the catalogue's own figure, so
+ * every existing caller is unchanged and one that has not been taught about
+ * scheduled prices is merely old-fashioned rather than wrong.
+ *
+ * It feeds the shelf price as well as the charged one, deliberately: they are
+ * the same fact, and letting them disagree would make every scheduled line look
+ * like a cashier had overridden it — which the line modal would flag and the
+ * price guard would refuse.
+ */
+export function lineFromProduct(
+  product: TillProduct,
+  qty: number,
+  index: number,
+  resolvedIncl: number = product.priceIncl,
+): BasketLine {
   return {
     key: basketKey(product.id, index),
     productId: product.id,
@@ -71,12 +88,12 @@ export function lineFromProduct(product: TillProduct, qty: number, index: number
     departmentId: product.departmentId,
     qty,
     // A scanned price wins: a variable-weight barcode carries the money in it.
-    unitPriceIncl: product.scannedPrice ?? product.priceIncl,
+    unitPriceIncl: product.scannedPrice ?? resolvedIncl,
     discountPct: 0,
     vatRatePct: product.vatRatePct,
     unitCostExcl: product.costExcl,
     maxDiscountPct: product.maxDiscountPct,
-    shelfPriceIncl: product.askPriceAtSale ? null : product.priceIncl,
+    shelfPriceIncl: product.askPriceAtSale ? null : resolvedIncl,
     allowFractions: product.allowFractions,
   }
 }
@@ -100,6 +117,8 @@ export function addToBasket(
   lines: BasketLine[],
   product: TillProduct,
   qty = 1,
+  /** The price after any scheduled change that is due. See `lineFromProduct`. */
+  resolvedIncl: number = product.priceIncl,
 ): BasketLine[] {
   const mergeable = lines.findIndex(
     (l) =>
@@ -117,7 +136,7 @@ export function addToBasket(
     return next
   }
 
-  return [...lines, lineFromProduct(product, qty, lines.length)]
+  return [...lines, lineFromProduct(product, qty, lines.length, resolvedIncl)]
 }
 
 /** Replaces fields on one line. Unknown keys are ignored, not created. */

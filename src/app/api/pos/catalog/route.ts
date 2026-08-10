@@ -4,6 +4,7 @@ import { browseForTill } from '@/lib/site/tillSearch'
 import { listDepartments } from '@/lib/site/departments'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { liveSpecials } from '@/lib/site/specials'
+import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { getSettings } from '@/lib/site/settings'
 import { terminalForDevice } from '@/lib/site/terminals'
@@ -41,8 +42,16 @@ export const dynamic = 'force-dynamic'
  *
  * 2 added the quick keys. A till on 1 holds no key grid at all, and patching products
  * into it would leave it believing it was current while its default pane stayed empty.
+ *
+ * 3 added the pending price changes. A till on 2 carries none, so it would go on
+ * charging the old price straight through a change it has no way to know about —
+ * and would keep doing it until the cron caught up minutes later.
+ *
+ * ⚠ MUST match `SCHEMA` in lib/posOffline/catalog.ts. The till sends its own
+ * number and this route decides whether a delta is safe; bump only one and every
+ * till in the shop full-loads on every poll, forever, with no error to show for it.
  */
-const CATALOG_SCHEMA = 2
+const CATALOG_SCHEMA = 3
 
 /**
  * Ceiling on one response.
@@ -123,8 +132,17 @@ export async function GET(req: NextRequest) {
   const structures = await listPriceStructures(siteId)
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
 
-  const [products, deletedIds, pricesChanged, departments, tenders, specials, settings, operators] =
-    await Promise.all([
+  const [
+    products,
+    deletedIds,
+    pricesChanged,
+    departments,
+    tenders,
+    specials,
+    pendingPrices,
+    settings,
+    operators,
+  ] = await Promise.all([
       productsSince(siteId, cutoff, priceStructure?.id ?? null),
     wantsDelta ? removedSince(siteId, cutoff!) : Promise.resolve<number[]>([]),
     wantsDelta ? pricesChangedSince(siteId, cutoff!) : Promise.resolve(false),
@@ -134,6 +152,18 @@ export async function GET(req: NextRequest) {
     // clock, so a happy hour starting at five begins on time even on a catalog
     // fetched at ten to.
       liveSpecials(siteId),
+    /*
+     * Scheduled price changes, sent the same way and for the same reason: the
+     * till compares the moment against its OWN clock, so a six o'clock price
+     * list takes effect at six on a catalogue fetched at ten to — and on a till
+     * that has been off the network since yesterday.
+     *
+     * This is what makes the feature work without a reload. The cron writes the
+     * same numbers minutes later; because a pending line carries an ABSOLUTE
+     * price rather than a delta, both sides of that write resolve identically
+     * and nothing moves on screen.
+     */
+      pendingSchedulesForTill(siteId),
       getSettings(siteId, [
       'sales_cash_rounding',
       'cost_basis',
@@ -220,6 +250,12 @@ export async function GET(req: NextRequest) {
         .map((d) => ({ id: d.id, parentId: d.parentId, name: d.name, sortOrder: d.sortOrder })),
       tenders,
       specials,
+      /**
+       * Price changes that have been approved but not yet written. Each carries
+       * its moment and its own absolute prices; the till decides on its clock.
+       * Empty is the normal case.
+       */
+      pendingPrices,
       settings,
       priceStructureId: priceStructure?.id ?? null,
       terminal: terminal

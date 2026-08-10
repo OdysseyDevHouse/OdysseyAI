@@ -50,6 +50,7 @@ export function CatalogPane({
   onDrillTo,
   onShowKeys,
   onPick,
+  priceFor,
   browse,
   quickKeys,
 }: {
@@ -65,6 +66,8 @@ export function CatalogPane({
   onDrillTo: (path: number[]) => void
   onShowKeys: () => void
   onPick: (product: TillProduct) => void
+  /** What a product costs right now, scheduled changes included. See the tile. */
+  priceFor: (product: TillProduct) => number
   /** Products directly in a department. Resolved by the shell. */
   browse: { loading: boolean; products: TillProduct[] }
   /**
@@ -151,11 +154,12 @@ export function CatalogPane({
             browse={browse}
             onDrill={onDrill}
             onPick={onPick}
+            priceFor={priceFor}
           />
         )}
 
         {view.kind === 'search' && (
-          <Results products={results} searching={searching} onPick={onPick} />
+          <Results products={results} searching={searching} onPick={onPick} priceFor={priceFor} />
         )}
       </div>
     </section>
@@ -205,12 +209,14 @@ function DepartmentLevel({
   browse,
   onDrill,
   onPick,
+  priceFor,
 }: {
   departments: Department[]
   path: number[]
   browse: { loading: boolean; products: TillProduct[] }
   onDrill: (id: number) => void
   onPick: (product: TillProduct) => void
+  priceFor: (product: TillProduct) => number
 }) {
   const current = path[path.length - 1] ?? null
   const tiles = useTileSizeValue()
@@ -255,7 +261,7 @@ function DepartmentLevel({
       ))}
       {showProducts &&
         browse.products.map((p) => (
-          <ProductTileFor key={`p${p.id}`} product={p} onPick={onPick} />
+          <ProductTileFor key={`p${p.id}`} product={p} onPick={onPick} priceFor={priceFor} />
         ))}
     </TileGrid>
   )
@@ -267,10 +273,12 @@ function Results({
   products,
   searching,
   onPick,
+  priceFor,
 }: {
   products: TillProduct[]
   searching: boolean
   onPick: (product: TillProduct) => void
+  priceFor: (product: TillProduct) => number
 }) {
   const tiles = useTileSizeValue()
   if (searching && products.length === 0) return <TileSkeleton />
@@ -286,7 +294,7 @@ function Results({
   return (
     <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
       {products.map((p) => (
-        <ProductTileFor key={p.id} product={p} onPick={onPick} />
+        <ProductTileFor key={p.id} product={p} onPick={onPick} priceFor={priceFor} />
       ))}
     </TileGrid>
   )
@@ -304,16 +312,26 @@ function Results({
 function ProductTileFor({
   product,
   onPick,
+  priceFor,
 }: {
   product: TillProduct
   onPick: (product: TillProduct) => void
+  /**
+   * The price after any scheduled change that is due.
+   *
+   * The tile must go through the same resolver the basket line does. Reading
+   * product.priceIncl straight would show a tile at R10 that adds a line at
+   * R12 the moment it is tapped, and the cashier has no way to tell which is
+   * the real one.
+   */
+  priceFor: (product: TillProduct) => number
 }) {
   const note = stockNote(product).replace(/^ · /, '')
   return (
     <ProductTile
       title={product.description}
       subtitle={note || product.code}
-      price={formatMoney(product.priceIncl)}
+      price={formatMoney(priceFor(product))}
       icon={<Icons.Package size={20} />}
       tone={toneForId(product.departmentId ?? product.id)}
       onClick={() => onPick(product)}
