@@ -39,10 +39,22 @@ export const SECTION_KINDS = [
   'hero',
   'banner',
   'carousel',
+  'split',
   'categories',
   'products',
+  'reviews',
+  'countdown',
+  'recent',
   'cards',
   'text',
+  'richtext',
+  'signup',
+  'testimonial',
+  'logos',
+  'video',
+  'map',
+  'divider',
+  'spacer',
 ] as const
 export type SectionKind = (typeof SECTION_KINDS)[number]
 
@@ -58,8 +70,32 @@ export type SectionKind = (typeof SECTION_KINDS)[number]
  * Hand-picking that row means re-picking it every time a special starts or
  * ends, which is how a front page ends up advertising last month's prices.
  */
-export const PRODUCT_SOURCES = ['manual', 'department', 'newest', 'special', 'popular'] as const
+export const PRODUCT_SOURCES = [
+  'manual',
+  'department',
+  'newest',
+  'special',
+  'popular',
+  'together',
+  'sameDepartment',
+] as const
 export type ProductSource = (typeof PRODUCT_SOURCES)[number]
+
+/**
+ * The two rules that only mean anything on a PRODUCT page.
+ *
+ * Both are relative to "the product being looked at", which no other page has.
+ * Offered on a front page they would resolve to nothing and the owner would
+ * have no way to know why — so the builder hides them everywhere else, the
+ * same way `kindsFor` hides the welcome banner off the home page.
+ */
+export const PRODUCT_PAGE_SOURCES: readonly ProductSource[] = ['together', 'sameDepartment']
+
+export function sourcesFor(pageKind: PageKind): readonly ProductSource[] {
+  return pageKind === 'product'
+    ? PRODUCT_SOURCES
+    : PRODUCT_SOURCES.filter((s) => !PRODUCT_PAGE_SOURCES.includes(s))
+}
 
 /**
  * A section's background treatment.
@@ -74,6 +110,96 @@ export const SECTION_TONES = ['plain', 'tinted'] as const
 export type SectionTone = (typeof SECTION_TONES)[number]
 
 export type InfoCard = { icon: string; heading: string; text: string }
+
+/**
+ * Rich text, as a TREE rather than as HTML.
+ *
+ * ── WHY NOT JUST STORE HTML ──────────────────────────────────────────────
+ *
+ * The plain `text` kind renders with `whitespace-pre-line` precisely because a
+ * rich editor means pasted markup on a page that takes payments — that
+ * reasoning is right and this does not abandon it. What it does is remove the
+ * need for the choice.
+ *
+ * Nothing here is HTML. A block names one of four shapes and a span carries
+ * plain text plus three booleans; the renderer is a switch that can only emit
+ * <p>, <h3>, <ul>/<li> and <strong>/<em>/<a>. There is no branch that renders
+ * a tag name from data, so there is no input — however hostile — that can
+ * produce one. Sanitising HTML is a thing you can get wrong; not having HTML
+ * is not.
+ *
+ * `href` still goes through `safeLinkTarget`, because a link is the one span
+ * property that reaches an attribute.
+ */
+export const RICH_BLOCK_TYPES = ['p', 'h3', 'ul', 'ol'] as const
+export type RichBlockType = (typeof RICH_BLOCK_TYPES)[number]
+
+export type RichSpan = {
+  text: string
+  bold?: boolean
+  italic?: boolean
+  /** Validated by safeLinkTarget. Empty means this span is not a link. */
+  href?: string
+}
+
+export type RichBlock = {
+  type: RichBlockType
+  /**
+   * For 'p' and 'h3', the spans of one paragraph. For 'ul' and 'ol', each
+   * ITEM is its own block — a list is consecutive blocks of the same type,
+   * not a block holding items.
+   *
+   * Flat rather than nested because the alternative is a tree with two depths
+   * to normalise and two ways to be malformed, to express something the
+   * renderer can reconstruct by grouping. See `groupRichBlocks`.
+   */
+  spans: RichSpan[]
+}
+
+/**
+ * What the tick box says when the owner has not written their own.
+ *
+ * A default rather than an empty field, because a sign-up form with no consent
+ * line is the one thing this section must never be — see 071. It is plain, it
+ * says who is emailing and why, and it says the way out.
+ */
+export const DEFAULT_CONSENT_TEXT =
+  'Yes, email me news and offers from this shop. I can unsubscribe at any time.'
+
+/** One quote from a customer, written by the shop. */
+export type Testimonial = {
+  id: string
+  quote: string
+  author: string
+  /** Where they are from, or what they bought. Optional. */
+  detail: string
+}
+
+/**
+ * Where a video comes from.
+ *
+ * An id and a provider, never an embed snippet. A shop pasting YouTube's
+ * "copy embed code" hands over an <iframe> with attributes we would then have
+ * to parse and vet — and the whole reason the rich-text kind stores a tree is
+ * that vetting markup is a thing you can get wrong. The renderer builds the
+ * iframe itself from a known-good URL template.
+ */
+export const VIDEO_PROVIDERS = ['youtube', 'vimeo'] as const
+export type VideoProvider = (typeof VIDEO_PROVIDERS)[number]
+
+/**
+ * How tall a spacer is.
+ *
+ * Three named steps, not a pixel field. A number box invites 7px, which does
+ * nothing anybody can see, and 400px, which is a broken-looking page. The
+ * names map to the same spacing scale the rest of the shop uses.
+ */
+export const SPACE_SIZES = ['small', 'medium', 'large'] as const
+export type SpaceSize = (typeof SPACE_SIZES)[number]
+
+/** Which side the picture sits on in a split section. */
+export const SPLIT_SIDES = ['left', 'right'] as const
+export type SplitSide = (typeof SPLIT_SIDES)[number]
 
 /**
  * One picture in a rotating banner.
@@ -178,6 +304,54 @@ export type HomeSection = {
   text?: string
   /** text: how the paragraph is aligned. */
   align?: 'left' | 'center'
+  /** richtext: the blocks. Never HTML — see RichBlock. */
+  blocks?: RichBlock[]
+  /**
+   * reviews: the lowest star rating worth putting on a page.
+   *
+   * A floor rather than "show everything approved". Approving a review means
+   * "this is real", not "this is an advertisement" — see
+   * `recentApprovedReviews` on why conflating the two would push shops to
+   * reject honest criticism.
+   */
+  minRating?: number
+  /**
+   * countdown: the special this counts down to, or null for a typed date.
+   *
+   * Bound to a special by preference because a special has a real end and the
+   * row disappears with it. A typed date is offered for shops not using
+   * specials, and it is the version that can outlive the thing it advertises.
+   */
+  specialId?: number | null
+  /** countdown: the moment it counts to, as local wall-clock text. */
+  endsAt?: string
+  /** countdown: what to say once it has passed. Empty hides the section. */
+  finishedText?: string
+  /** testimonial: the quotes. */
+  quotes?: Testimonial[]
+  /** logos: the pictures, from the same library banners use. */
+  logoImageIds?: number[]
+  /** video: where it comes from and which one. */
+  videoProvider?: VideoProvider
+  videoId?: string
+  /** map: what to show, and where "directions" goes. */
+  addressText?: string
+  mapUrl?: string
+  /** spacer: how much room. */
+  size?: SpaceSize
+  /**
+   * signup: the wording beside the tick box.
+   *
+   * Stored ON THE SECTION and copied onto every subscriber row at the moment
+   * they agree — see 071. An owner who reworders this changes what FUTURE
+   * subscribers consented to, and the rows already written keep the words that
+   * were actually on screen when each of them ticked it.
+   */
+  consentText?: string
+  /** signup: what it says once they have signed up. */
+  thanksText?: string
+  /** split: the picture beside the words, and which side it sits on. */
+  side?: SplitSide
   /**
    * Show this section from / until this date, as plain YYYY-MM-DD text.
    *
@@ -230,25 +404,56 @@ export const MAX_SLIDES = 8
 export const MIN_AUTOPLAY_SECONDS = 4
 export const MAX_AUTOPLAY_SECONDS = 30
 export const DEFAULT_AUTOPLAY_SECONDS = 6
+/** Blocks in one piece of formatted writing, and characters in one span. */
+export const MAX_RICH_BLOCKS = 60
+export const MAX_RICH_SPANS = 20
+export const MAX_SPAN_TEXT = 600
+/** Quotes in one testimonial section, and logos in one strip. */
+export const MAX_QUOTES = 12
+export const MAX_LOGOS = 16
 
 export const SECTION_LABEL: Record<SectionKind, string> = {
   hero: 'Welcome banner',
   banner: 'Picture banner',
   carousel: 'Rotating banners',
+  split: 'Picture beside words',
   categories: 'Shop by department',
   products: 'A row of products',
+  recent: 'Recently viewed',
+  reviews: 'What customers say',
+  countdown: 'Countdown to a deadline',
   cards: 'Info cards',
   text: 'A paragraph',
+  richtext: 'Formatted writing',
+  signup: 'Email sign-up',
+  testimonial: 'Quotes',
+  logos: 'A row of logos',
+  video: 'A video',
+  map: 'Where to find us',
+  divider: 'A dividing line',
+  spacer: 'A gap',
 }
 
 export const SECTION_HINT: Record<SectionKind, string> = {
   hero: 'Your headline and a line under it.',
   banner: 'A photograph across the page, with words over it.',
   carousel: 'Several pictures in the same spot, one after another.',
+  split: 'A picture on one side, your words on the other.',
   categories: 'Tiles linking to each department you publish.',
   products: 'Pick the products yourself, or let a rule fill the row.',
+  recent: 'The last few things this shopper looked at. Nothing to set.',
+  reviews: 'Real reviews you have approved. Fills itself.',
+  countdown: 'A ticking clock — “sale ends in…”.',
   cards: 'Your own tiles — delivery info, opening hours, anything.',
   text: 'A note to shoppers — delivery days, a holiday message.',
+  richtext: 'Headings, bold, lists and links. For a longer page.',
+  signup: 'Collect email addresses, with permission on the record.',
+  testimonial: 'Quotes you write yourself, not from the review queue.',
+  logos: 'Brands you stock, or badges you have earned.',
+  video: 'A YouTube or Vimeo video.',
+  map: 'Your address, and a link to directions.',
+  divider: 'A line between two parts of the page.',
+  spacer: 'Empty room, to let a page breathe.',
 }
 
 export const SOURCE_LABEL: Record<ProductSource, string> = {
@@ -257,6 +462,8 @@ export const SOURCE_LABEL: Record<ProductSource, string> = {
   newest: 'Newest products',
   special: 'Whatever is on special',
   popular: 'Best sellers',
+  together: 'Often bought with this',
+  sameDepartment: 'More from the same department',
 }
 
 /** What each rule does, spelled out where the owner chooses it. */
@@ -266,6 +473,9 @@ export const SOURCE_HINT: Record<ProductSource, string> = {
   newest: 'The products you added most recently.',
   special: 'Fills itself from your live specials, and empties when they end.',
   popular: 'What has sold most over the last 90 days.',
+  together:
+    'Worked out from real baskets over the last 90 days. Empty until this product has sold alongside something.',
+  sameDepartment: 'Other products from whichever department this one is in.',
 }
 
 /**
@@ -411,6 +621,40 @@ export const PAGE_PRESETS: PagePreset[] = [
     ],
   },
   {
+    key: 'trust',
+    name: 'Win them over',
+    hint: 'Proof first — real reviews, then who you are. For a shop nobody knows yet.',
+    sections: [
+      { kind: 'hero', title: '', enabled: true, tone: 'tinted' },
+      { kind: 'products', title: 'New in', enabled: true, source: 'newest', maxItems: 8 },
+      /*
+       * The reviews row is deliberately in a preset even though it starts
+       * empty for a new shop — which is exactly the shop that picks this one.
+       * It fills itself as reviews are approved, and having the slot already
+       * on the page is how an owner discovers the feature exists.
+       */
+      { kind: 'reviews', title: 'What customers say', enabled: true, maxItems: 6, minRating: 4 },
+      {
+        kind: 'split',
+        title: 'Our story',
+        enabled: true,
+        side: 'left',
+        bodyText: 'Say a little about your shop here — how long you have been going, what you are known for.',
+        buttonLabel: '',
+        linkUrl: '',
+      },
+      {
+        kind: 'signup',
+        title: 'Keep in touch',
+        enabled: true,
+        tone: 'tinted',
+        bodyText: 'News, offers and what is fresh — straight to your inbox.',
+        buttonLabel: 'Sign up',
+        consentText: DEFAULT_CONSENT_TEXT,
+      },
+    ],
+  },
+  {
     key: 'story',
     name: 'Tell them who you are',
     hint: 'A picture and a few words before the products.',
@@ -486,6 +730,75 @@ export function isScheduledNow(
   return true
 }
 
+/* ── Rich text ────────────────────────────────────────────────────────────── */
+
+/**
+ * Consecutive list items folded into one list, everything else left alone.
+ *
+ * The model stores each `ul`/`ol` item as its own block — see RichBlock on why
+ * flat beats nested — so the renderer needs the runs back to wrap them in a
+ * single <ul>. Doing it here rather than in the markup means the builder's
+ * preview and the shop group identically, which is the whole bargain.
+ */
+export function groupRichBlocks(
+  blocks: RichBlock[],
+): { type: RichBlockType; items: RichBlock[] }[] {
+  const out: { type: RichBlockType; items: RichBlock[] }[] = []
+  for (const block of blocks) {
+    const last = out[out.length - 1]
+    const isList = block.type === 'ul' || block.type === 'ol'
+    if (isList && last && last.type === block.type) {
+      last.items.push(block)
+      continue
+    }
+    out.push({ type: block.type, items: [block] })
+  }
+  return out
+}
+
+/** Does this rich block carry any words at all? */
+export function richBlockHasText(block: RichBlock): boolean {
+  return block.spans.some((s) => s.text.trim() !== '')
+}
+
+/** The plain words of a rich block — for a summary row, never for rendering. */
+export function richBlockText(block: RichBlock): string {
+  return block.spans.map((s) => s.text).join('')
+}
+
+/* ── Countdown ────────────────────────────────────────────────────────────── */
+
+/**
+ * Now, as the same local wall-clock text a countdown's deadline is stored in.
+ *
+ * 'YYYY-MM-DDTHH:mm' compares correctly as a string, which is how the specials
+ * engine already decides whether a special is running — see 057's note on why
+ * these are not DATETIME columns. Comparing text keeps the shop on ITS OWN
+ * clock: a sale ending at 5pm ends at 5pm where the shop is, not at some UTC
+ * boundary a timezone away.
+ */
+export function wallClockNow(): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+    `T${pad(now.getHours())}:${pad(now.getMinutes())}`
+  )
+}
+
+/**
+ * A deadline we are willing to store: 'YYYY-MM-DDTHH:mm', or ''.
+ *
+ * Shape-checked and existence-checked, exactly as `safeDate` is, and for the
+ * same reason — '2026-02-31T10:00' matches the pattern and is not a moment.
+ */
+export function safeDateTime(value: unknown): string {
+  const raw = String(value ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) return ''
+  const parsed = new Date(`${raw}:00Z`)
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 16) !== raw ? '' : raw
+}
+
 /* ── Would a section draw anything? ───────────────────────────────────────── */
 
 /**
@@ -510,6 +823,16 @@ export type SectionFill = {
    * entry is dropped.
    */
   slideImages?: Map<number, unknown>
+  /** reviews: the approved reviews the server resolved for this section. */
+  reviews?: unknown[]
+  /**
+   * logos: the pictures that still resolve, keyed by id.
+   *
+   * A map for the same reason a carousel's is: a logo whose picture was
+   * deleted has to vanish without shifting the ones after it, which is exactly
+   * what a positional array does when one entry drops.
+   */
+  logoImages?: Map<number, unknown>
 }
 
 /**
@@ -562,12 +885,61 @@ export function liveSlides<T>(
  * it without dragging next/link into a react-server script.
  */
 export function sectionIsEmpty(fill: SectionFill, theme: StorefrontTheme): boolean {
-  const { section, products, departments, image, slideImages } = fill
+  const { section, products, departments, image, slideImages, reviews } = fill
   switch (section.kind) {
     case 'hero':
       return !theme.heroHeadline && !theme.heroSubtext
     case 'banner':
       return !image
+    case 'split':
+      // Words alone are the `text` kind and a picture alone is a banner. This
+      // section is the PAIRING, so it needs both — with one missing it would
+      // silently render as a worse version of a section that already exists.
+      return !image || !(section.bodyText?.trim() || section.title)
+    case 'reviews':
+      // Correctly empty for a shop nobody has reviewed yet, which is every new
+      // shop. The builder says so rather than calling it a fault.
+      return !reviews || reviews.length === 0
+    case 'countdown': {
+      // A countdown with nothing left to count is over. It keeps drawing only
+      // if the owner wrote something for it to say afterwards — otherwise a
+      // finished sale would sit on the front page advertising 00:00:00.
+      const ends = section.endsAt?.trim() ?? ''
+      if (!ends) return true
+      return ends <= wallClockNow() && !(section.finishedText?.trim() ?? '')
+    }
+    case 'richtext':
+      return !(section.blocks ?? []).some(richBlockHasText)
+    case 'testimonial':
+      return (section.quotes ?? []).filter((q) => q.quote.trim()).length === 0
+    case 'logos':
+      // Counted against what actually RESOLVED, not against the stored ids: a
+      // strip whose pictures were all deleted is as empty as one with none.
+      return (fill.logoImages?.size ?? 0) === 0
+    // Never empty: the form IS the content, and a heading is optional. An
+    // owner who added one meant to collect addresses.
+    case 'signup':
+      return false
+    /*
+     * Never empty HERE, because the server cannot know.
+     *
+     * What this holds lives in the shopper's own browser, so at render time it
+     * is genuinely unknown — and answering "empty" would make the builder draw
+     * a placeholder for a section that is fine, while answering it on the shop
+     * would drop a section that has content. The component itself renders
+     * nothing when the list turns out to be short; see RecentlyViewed.
+     */
+    case 'recent':
+      return false
+    case 'video':
+      return !(section.videoId ?? '').trim()
+    case 'map':
+      return !(section.addressText?.trim() ?? '')
+    // Both draw exactly themselves and are never empty — that IS their
+    // content. Returning true here would make them impossible to add.
+    case 'divider':
+    case 'spacer':
+      return false
     case 'carousel':
       // Same rule as a banner, applied per slide: no picture, nothing to show.
       // A carousel of slides that have all lost their pictures is as empty as
@@ -808,6 +1180,16 @@ function changedFields(was: HomeSection, now: HomeSection): string {
   if (differs('slides')) names.push('pictures')
   if (differs('autoplaySeconds')) names.push('how fast it turns')
   if (differs('align')) names.push('alignment')
+  if (differs('blocks')) names.push('the writing')
+  if (differs('minRating')) names.push('which reviews')
+  if (differs('specialId') || differs('endsAt')) names.push('the deadline')
+  if (differs('finishedText')) names.push('what it says when it ends')
+  if (differs('quotes')) names.push('quotes')
+  if (differs('logoImageIds')) names.push('logos')
+  if (differs('videoProvider') || differs('videoId')) names.push('the video')
+  if (differs('addressText') || differs('mapUrl')) names.push('the address')
+  if (differs('size')) names.push('the gap')
+  if (differs('side')) names.push('which side')
   if (differs('showFrom') || differs('showUntil')) names.push('when it shows')
 
   return names.join(', ')
@@ -959,6 +1341,147 @@ export function normaliseSections(input: unknown): HomeSection[] {
       section.align = s.align === 'center' ? 'center' : 'left'
     }
 
+    if (kind === 'richtext') {
+      /*
+       * Every block's type is checked against the known list and every span is
+       * reduced to text plus three flags. Nothing here can carry a tag name,
+       * so nothing downstream can render one — see RichBlock.
+       */
+      section.blocks = (Array.isArray(s.blocks) ? s.blocks : [])
+        .slice(0, MAX_RICH_BLOCKS)
+        .map((raw) => {
+          const block = (raw ?? {}) as Record<string, unknown>
+          const type = String(block.type ?? 'p')
+          return {
+            type: (RICH_BLOCK_TYPES as readonly string[]).includes(type)
+              ? (type as RichBlockType)
+              : 'p',
+            spans: (Array.isArray(block.spans) ? block.spans : [])
+              .slice(0, MAX_RICH_SPANS)
+              .map((rawSpan) => {
+                const span = (rawSpan ?? {}) as Record<string, unknown>
+                const href = safeLinkTarget(span.href).slice(0, 300)
+                return {
+                  text: String(span.text ?? '').slice(0, MAX_SPAN_TEXT),
+                  bold: span.bold === true,
+                  italic: span.italic === true,
+                  // Written unconditionally so the key order is stable — see
+                  // this function's header on why that matters.
+                  href,
+                }
+              }),
+          }
+        })
+    }
+
+    if (kind === 'reviews') {
+      section.maxItems = clampInt(s.maxItems, 1, MAX_SECTION_ITEMS, 6)
+      section.minRating = clampInt(s.minRating, 1, 5, 4)
+      const dept = typeof s.departmentId === 'number' ? s.departmentId : Number(s.departmentId)
+      section.departmentId = Number.isInteger(dept) && dept > 0 ? dept : null
+    }
+
+    if (kind === 'countdown') {
+      const special = typeof s.specialId === 'number' ? s.specialId : Number(s.specialId)
+      section.specialId = Number.isInteger(special) && special > 0 ? special : null
+      // A junk deadline becomes '' — no deadline — which `sectionIsEmpty`
+      // reads as "draws nothing". Failing that way round is right: a
+      // half-parsed date would put a wrong clock on a public page, and a
+      // countdown to the wrong moment is worse than no countdown.
+      section.endsAt = safeDateTime(s.endsAt)
+      section.finishedText = String(s.finishedText ?? '').slice(0, 120)
+    }
+
+    if (kind === 'testimonial') {
+      const seenQuoteIds = new Set<string>()
+      section.quotes = (Array.isArray(s.quotes) ? s.quotes : [])
+        .slice(0, MAX_QUOTES)
+        .map((raw, index) => {
+          const quote = (raw ?? {}) as Record<string, unknown>
+          // Same identity reasoning as a slide: this is the React key and the
+          // reorder key, and two sharing one would move the wrong quote.
+          let id = String(quote.id ?? '').slice(0, 40) || `q-${index}`
+          while (seenQuoteIds.has(id)) id = `${id}-${index}`
+          seenQuoteIds.add(id)
+          return {
+            id,
+            quote: String(quote.quote ?? '').slice(0, 400),
+            author: String(quote.author ?? '').slice(0, 80),
+            detail: String(quote.detail ?? '').slice(0, 80),
+          }
+        })
+    }
+
+    if (kind === 'logos') {
+      // Same rule as productIds: junk is DISCARDED rather than clamped, since
+      // clamping would invent a reference to picture 1 that nobody chose.
+      section.logoImageIds = Array.isArray(s.logoImageIds)
+        ? [
+            ...new Set(
+              s.logoImageIds
+                .map((v) => (typeof v === 'number' ? v : Number(v)))
+                .filter((v) => Number.isInteger(v) && v > 0),
+            ),
+          ].slice(0, MAX_LOGOS)
+        : []
+    }
+
+    if (kind === 'video') {
+      const provider = String(s.videoProvider ?? 'youtube')
+      section.videoProvider = (VIDEO_PROVIDERS as readonly string[]).includes(provider)
+        ? (provider as VideoProvider)
+        : 'youtube'
+      /*
+       * An ID, and only the characters an id can contain.
+       *
+       * This lands inside a URL the renderer builds, so the narrow character
+       * class IS the validation — it makes "../", a query string and a second
+       * host unrepresentable rather than something to strip. A pasted full URL
+       * is reduced to its id by the inspector before it reaches here; anything
+       * still carrying a slash at this point is not an id.
+       */
+      section.videoId = String(s.videoId ?? '')
+        .trim()
+        .replace(/[^A-Za-z0-9_-]/g, '')
+        .slice(0, 40)
+    }
+
+    if (kind === 'map') {
+      section.addressText = String(s.addressText ?? '').slice(0, 300)
+      // Through safeUrl rather than safeLinkTarget: directions go to a mapping
+      // service, which is by definition off-site, so a relative path here
+      // would be a link to a page of the shop that does not exist.
+      section.mapUrl = safeUrl(s.mapUrl).slice(0, 500)
+    }
+
+    if (kind === 'signup') {
+      section.bodyText = String(s.bodyText ?? '').slice(0, 300)
+      section.buttonLabel = String(s.buttonLabel ?? '').slice(0, 40)
+      // Falls back to a default rather than to '', because an empty consent
+      // line is a form collecting addresses with nothing on the record about
+      // what was agreed to — which is the one state 071 exists to prevent.
+      section.consentText =
+        String(s.consentText ?? '').slice(0, 300) || DEFAULT_CONSENT_TEXT
+      section.thanksText = String(s.thanksText ?? '').slice(0, 200)
+    }
+
+    if (kind === 'spacer') {
+      const size = String(s.size ?? 'medium')
+      section.size = (SPACE_SIZES as readonly string[]).includes(size)
+        ? (size as SpaceSize)
+        : 'medium'
+    }
+
+    if (kind === 'split') {
+      const image = typeof s.imageId === 'number' ? s.imageId : Number(s.imageId)
+      section.imageId = Number.isInteger(image) && image > 0 ? image : null
+      section.imageAlt = String(s.imageAlt ?? '').slice(0, 190)
+      section.bodyText = String(s.bodyText ?? '').slice(0, MAX_SECTION_TEXT)
+      section.buttonLabel = String(s.buttonLabel ?? '').slice(0, 40)
+      section.linkUrl = safeLinkTarget(s.linkUrl).slice(0, 300)
+      section.side = s.side === 'right' ? 'right' : 'left'
+    }
+
     if (kind === 'cards') {
       section.cards = (Array.isArray(s.cards) ? s.cards : [])
         .slice(0, MAX_SECTION_CARDS)
@@ -978,11 +1501,274 @@ export function normaliseSections(input: unknown): HomeSection[] {
   return out
 }
 
+/* ── What is wrong with this page ─────────────────────────────────────────── */
+
+/**
+ * A problem worth mentioning before a page goes live.
+ *
+ * ── WHY THESE ARE WARNINGS AND NEVER REFUSALS ────────────────────────────
+ *
+ * A publish that can be blocked is a publish somebody will be blocked BY at
+ * the worst moment — correcting a wrong price at nine on a Saturday, with a
+ * checker insisting a decorative picture needs a description first. The owner
+ * knows things this cannot: that the banner is purely decorative, that the
+ * heading duplicates one above it on purpose.
+ *
+ * So this counts and says. The publish button stays enabled either way.
+ */
+export type PageWarning = {
+  /** What is wrong, in the owner's words. */
+  label: string
+  /** How many sections have it. Rolled up so ten banners are one line. */
+  count: number
+}
+
+/**
+ * Everything worth saying about a page before it is published.
+ *
+ * ── ALT TEXT LEADS, BECAUSE IT IS THE ONE NOBODY CATCHES ─────────────────
+ *
+ * The builder already warns per banner, but only while that banner is
+ * selected — so a page built over an afternoon can easily reach Publish with
+ * three undescribed pictures nobody has looked at since. This is the moment it
+ * matters, and it is the only accessibility failure on a shop page that is
+ * both common and completely invisible to the person who caused it.
+ */
+export function pageWarnings(sections: HomeSection[]): PageWarning[] {
+  let missingAlt = 0
+  let emptyLinks = 0
+
+  for (const section of sections) {
+    // Hidden sections are not a problem yet. Warning about a section nobody
+    // will see turns the check into noise, and noise is what stops it being
+    // read on the day it matters.
+    if (!section.enabled) continue
+
+    if ((section.kind === 'banner' || section.kind === 'split') && section.imageId) {
+      if (!(section.imageAlt ?? '').trim()) missingAlt++
+    }
+    for (const slide of section.slides ?? []) {
+      if (slide.imageId && !slide.imageAlt.trim()) missingAlt++
+    }
+
+    // A button with a label and nowhere to go. Not accessibility, but the same
+    // kind of mistake: invisible in the builder, obvious to a shopper who taps
+    // it. Cheap to check while we are already walking the page.
+    if ((section.buttonLabel ?? '').trim() && !(section.linkUrl ?? '').trim()) emptyLinks++
+    for (const slide of section.slides ?? []) {
+      if (slide.buttonLabel.trim() && !slide.linkUrl.trim()) emptyLinks++
+    }
+  }
+
+  const out: PageWarning[] = []
+  if (missingAlt > 0) {
+    out.push({
+      label:
+        missingAlt === 1
+          ? '1 picture has no description'
+          : `${missingAlt} pictures have no description`,
+      count: missingAlt,
+    })
+  }
+  if (emptyLinks > 0) {
+    out.push({
+      label:
+        emptyLinks === 1
+          ? '1 button has nowhere to go'
+          : `${emptyLinks} buttons have nowhere to go`,
+      count: emptyLinks,
+    })
+  }
+  return out
+}
+
+/* ── Pages ────────────────────────────────────────────────────────────────── */
+
+/**
+ * The three kinds of page a shop can have.
+ *
+ * They differ in what they are ATTACHED to, not in what they are: all three
+ * hold an ordered list of sections and all three have a draft. See
+ * 070_storefront_pages.sql.
+ */
+export const PAGE_KINDS = ['home', 'standard', 'department', 'product'] as const
+export type PageKind = (typeof PAGE_KINDS)[number]
+
+/**
+ * The section kinds worth offering on a given page.
+ *
+ * ── WHY 'hero' IS FRONT-PAGE ONLY ────────────────────────────────────────
+ *
+ * The welcome banner has no words of its own: it renders `heroHeadline` and
+ * `heroSubtext` from the THEME, which is the shop's one front-page greeting.
+ * Added to a Delivery page it draws that same greeting a second time, or —
+ * for a shop that never wrote one — draws nothing at all and reports itself
+ * empty. Neither is a section anybody meant to add.
+ *
+ * Everything else works anywhere, deliberately. A product row on a Returns
+ * page is odd but it is not broken, and a builder that second-guesses which
+ * blocks "belong" on which page is one that gets in the way.
+ *
+ * One definition because three menus ask — the canvas toolbar, the
+ * between-sections insert point, and the empty-state menu in the inspector.
+ */
+export function kindsFor(pageKind: PageKind): readonly SectionKind[] {
+  return SECTION_KINDS.filter((kind) => {
+    // See above: the welcome banner draws the theme's hero text, which only
+    // the front page has.
+    if (kind === 'hero' && pageKind !== 'home') return false
+    /*
+     * A PRODUCT page's sections sit BELOW the product itself, in the space for
+     * "what else" — so the blocks that make sense there are the ones that
+     * relate to it: more products, trust cards, a note. A carousel or a
+     * department grid under one product is a second front page, and the shop
+     * already has one of those.
+     *
+     * A restriction rather than a warning because the alternative is a page
+     * that looks fine in the builder and reads as a mistake on the shop.
+     */
+    if (pageKind === 'product') {
+      return (
+        kind === 'products' ||
+        kind === 'recent' ||
+        kind === 'cards' ||
+        kind === 'text' ||
+        kind === 'richtext' ||
+        kind === 'reviews' ||
+        kind === 'testimonial' ||
+        kind === 'divider' ||
+        kind === 'spacer'
+      )
+    }
+    return true
+  })
+}
+
+/**
+ * Slugs the shop's own routes already answer to.
+ *
+ * A page at /page/checkout would be unreachable — the real checkout wins — so
+ * an owner who names one that is owed an explanation rather than a page that
+ * silently never appears. 'home' is reserved because the front page owns it.
+ *
+ * Only the FIRST path segment matters: these pages live under /page/<slug>,
+ * so the collision is with a sibling of that prefix, not with every route in
+ * the app.
+ */
+export const RESERVED_SLUGS = [
+  'home',
+  'page',
+  'c',
+  'p',
+  'cart',
+  'checkout',
+  'done',
+  'account',
+  'wishlist',
+  'search',
+  'api',
+] as const
+
+/**
+ * A slug we are willing to put in a URL.
+ *
+ * Lowercase letters, digits and single hyphens. Deliberately narrow: this
+ * lands in a path segment, and anything needing encoding produces a link that
+ * looks broken when pasted into WhatsApp — which is how most of these are
+ * shared.
+ *
+ * Returns '' for anything unusable, which the caller treats as "ask again"
+ * rather than storing. Unlike a colour or a date, there is no safe default to
+ * fall back to: inventing a slug would give the owner a page at an address
+ * they never chose and cannot guess.
+ */
+export function safeSlug(value: unknown): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    // A trailing hyphen can survive the slice above when the 60th character
+    // lands mid-separator.
+    .replace(/-+$/, '')
+}
+
+/**
+ * Why this slug cannot be used, or '' when it can.
+ *
+ * A sentence rather than a boolean, because every caller of this needs to SAY
+ * something — and three screens inventing their own wording for "that one is
+ * taken" is how the same rule ends up explained three different ways.
+ */
+export function slugProblem(slug: string, taken: readonly string[] = []): string {
+  if (!slug) return 'Give the page a web address — letters and numbers.'
+  if ((RESERVED_SLUGS as readonly string[]).includes(slug)) {
+    return `“${slug}” is used by the shop itself. Try something else.`
+  }
+  if (taken.includes(slug)) return 'Another page already uses that address.'
+  return ''
+}
+
 /* ── Theme ────────────────────────────────────────────────────────────────── */
+
+/**
+ * The typefaces a shop may choose from.
+ *
+ * ── A KEY, NOT A FONT NAME ───────────────────────────────────────────────
+ *
+ * Each entry names a font loaded by `next/font/google`, which downloads the
+ * files AT BUILD TIME and serves them from this origin — so a shopper's
+ * browser never contacts a third party, and the shop's own font choice cannot
+ * become a privacy leak or a CSP exception. Storing the family name instead
+ * would put an arbitrary string into a stylesheet and invite exactly that.
+ *
+ * ── AND WHY THE LIST IS SHORT ────────────────────────────────────────────
+ *
+ * Every extra face is a font file on the shop's slowest page. Five is enough
+ * to make two shops look genuinely different — which is the whole point — and
+ * each has been picked for the property that actually matters at body size: a
+ * real bold, a full Latin subset, and legible numerals for prices.
+ *
+ * 'system' is the default and costs nothing: it is the font the device already
+ * has, so it paints instantly and is what every existing shop uses.
+ */
+export const FONT_KEYS = ['system', 'inter', 'lora', 'poppins', 'source-serif'] as const
+export type FontKey = (typeof FONT_KEYS)[number]
+
+export const FONT_LABEL: Record<FontKey, string> = {
+  system: 'Your device’s own',
+  inter: 'Inter — clean and modern',
+  lora: 'Lora — warm and traditional',
+  poppins: 'Poppins — friendly and round',
+  'source-serif': 'Source Serif — editorial',
+}
+
+export function safeFontKey(value: unknown): FontKey {
+  const raw = String(value ?? '')
+  return (FONT_KEYS as readonly string[]).includes(raw) ? (raw as FontKey) : 'system'
+}
 
 export type StorefrontTheme = {
   brandColour: string
   productLayout: 'grid' | 'list'
+  /** Which curated typeface the shop uses. See FONT_KEYS. */
+  fontKey: FontKey
+  /**
+   * The picture a shared link shows, as an id into `storefront_images`.
+   *
+   * The shop-wide fallback beneath each page's own. Null means no image at
+   * all, which is what every shop has today — and is exactly the gap that
+   * makes a storefront link look broken when pasted into WhatsApp.
+   */
+  shareImageId: number | null
+  /** Whether search engines may index the shop. Off by default — see 077. */
+  allowIndexing: boolean
+  /** The strip above the masthead. Empty hides it. */
+  announceText: string
+  announceLink: string
+  announceFrom: string
+  announceUntil: string
   /**
    * The shop's logo, from the same picture library the banners use.
    *
@@ -1087,11 +1873,34 @@ export function safeLinkTarget(value: unknown): string {
 
 type Row = Record<string, unknown>
 
+/**
+ * Is the announcement strip showing today?
+ *
+ * The same inclusive-both-ends rule `isScheduledNow` applies to a section, and
+ * shared with it deliberately — two ways of deciding "is this in season" would
+ * eventually disagree, and the one that governs a promotional strip is the one
+ * an owner would notice being wrong.
+ *
+ * Text with no dates is always on. No text is never on, whatever the dates say.
+ */
+export function announcementShowing(theme: StorefrontTheme, asAt: string = shopToday()): boolean {
+  if (!theme.announceText.trim()) return false
+  return isScheduledNow({ showFrom: theme.announceFrom, showUntil: theme.announceUntil }, asAt)
+}
+
 export function readTheme(row: Row): StorefrontTheme {
   const logo = Number(row.logo_image_id)
+  const share = Number(row.share_image_id)
   return {
     brandColour: safeColour(row.brand_colour),
     productLayout: String(row.product_layout) === 'list' ? 'list' : 'grid',
+    fontKey: safeFontKey(row.font_key),
+    shareImageId: Number.isInteger(share) && share > 0 ? share : null,
+    allowIndexing: !!row.allow_indexing,
+    announceText: String(row.announce_text ?? ''),
+    announceLink: safeLinkTarget(row.announce_link),
+    announceFrom: safeDate(row.announce_from),
+    announceUntil: safeDate(row.announce_until),
     logoImageId: Number.isInteger(logo) && logo > 0 ? logo : null,
     heroHeadline: String(row.hero_headline ?? ''),
     heroSubtext: String(row.hero_subtext ?? ''),

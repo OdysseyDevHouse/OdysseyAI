@@ -24,6 +24,7 @@ export default function CategoryBrowser({
   showStock,
   showPhotos,
   showBrands,
+  initialQuery = '',
 }: {
   token: string
   departmentName: string
@@ -32,8 +33,17 @@ export default function CategoryBrowser({
   showStock: boolean
   showPhotos: boolean
   showBrands: boolean
+  /**
+   * A search term from the URL, if the shopper arrived with one.
+   *
+   * The old `?department=&q=` form redirects here carrying its term, and a
+   * redirect that silently drops what the shopper typed is worse than not
+   * redirecting at all. Seeded rather than controlled — once they are on the
+   * page, the box is theirs.
+   */
+  initialQuery?: string
 }) {
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery)
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()

@@ -5,9 +5,12 @@ import {
   axisLabelsFor,
   publishedProduct,
   publishedProducts,
+  resolveSectionContent,
   siblingsOf,
   storefrontContext,
 } from '@/lib/site/storefront'
+import { getPublishedPageLayout, productPage } from '@/lib/site/storefrontPages'
+import { getTheme } from '@/lib/site/storefrontLayout'
 import { catalogueRobots, productJsonLd, storefrontUrl } from '@/lib/site/storefrontSeo'
 import { approvedReviewsFor } from '@/lib/site/productReviews'
 import { listImages } from '@/lib/site/productImages'
@@ -17,6 +20,7 @@ import ProductGrid from '../../ProductGrid'
 import TrackEvent from '../../TrackEvent'
 import RememberView from '../../RememberView'
 import RecentlyViewed from '../../RecentlyViewed'
+import HomeSections, { type SectionContent } from '../../HomeSections'
 import ProductDetail from './ProductDetail'
 import ReviewForm from './ReviewForm'
 
@@ -99,6 +103,34 @@ export default async function ProductPage({
 
   // Never suggest the thing already being looked at.
   const alsoLike = related.filter((p) => p.id !== product.id).slice(0, 5)
+
+  /*
+   * The layout the shop arranged for its product pages, if it made one.
+   *
+   * ── IT REPLACES THE BUILT-IN SUGGESTIONS, NOT ADDS TO THEM ────────────
+   *
+   * The hardcoded "you may also like" row below is the DEFAULT — what every
+   * shop gets without doing anything. An owner who has arranged their own
+   * product page has said what belongs there, and appending our row underneath
+   * would be second-guessing them with a duplicate of something they may have
+   * placed deliberately (a cross-sell row of their own, differently ordered).
+   *
+   * One arrangement for every product — see 079 — with the sections resolving
+   * against THIS product via the anchor.
+   */
+  const [arranged, theme] = await Promise.all([productPage(siteId), getTheme(siteId)])
+  const arrangedSections =
+    arranged?.isPublished ? await getPublishedPageLayout(siteId, arranged.id) : []
+  const arrangedResolved = arrangedSections.length
+    ? await resolveSectionContent(context, arrangedSections, {
+        id: product.id,
+        departmentId: product.departmentId,
+      })
+    : []
+  const arrangedContent: SectionContent[] = arrangedSections.map((section, i) => ({
+    section,
+    ...arrangedResolved[i],
+  }))
 
   /*
    * The other sizes/colours of this thing, and what those axes are called.
@@ -194,37 +226,64 @@ export default async function ProductPage({
         </section>
       )}
 
-      {alsoLike.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-base font-semibold text-ink">You may also like</h2>
-          {/* Forced to grid regardless of the shop's list/grid preference: a
-              suggestion strip is browsed by eye, and a row of names is not. */}
-          <ProductGrid
-            token={token}
-            products={alsoLike}
-            layout="grid"
-            showStock={settings.showStock}
-            showPhotos={settings.showPhotos}
-            showBrands={settings.showBrands}
-          />
-        </section>
-      )}
+      {/*
+        The shop's OWN arrangement, when it has made one — see `arranged`
+        above on why it replaces the two default blocks rather than joining
+        them. Its sections resolve against this product, so "often bought with
+        this" is a different row on every page while being one saved layout.
+      */}
+      {arrangedContent.length > 0 ? (
+        <HomeSections
+          token={token}
+          content={arrangedContent}
+          theme={theme}
+          display={{
+            layout: theme.productLayout,
+            showStock: settings.showStock,
+            showPhotos: settings.showPhotos,
+            showBrands: settings.showBrands,
+            showDepartmentImages: settings.showDepartmentImages,
+          }}
+          imageSrc={(imageId) => `/api/store-images/${token}/shop/${imageId}`}
+          // So a "recently viewed" row here leaves out the product the shopper
+          // is currently looking at.
+          anchorProductId={product.id}
+        />
+      ) : (
+        <>
+          {alsoLike.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-base font-semibold text-ink">You may also like</h2>
+              {/* Forced to grid regardless of the shop's list/grid preference: a
+                  suggestion strip is browsed by eye, and a row of names is not. */}
+              <ProductGrid
+                token={token}
+                products={alsoLike}
+                layout="grid"
+                showStock={settings.showStock}
+                showPhotos={settings.showPhotos}
+                showBrands={settings.showBrands}
+              />
+            </section>
+          )}
 
-      {/* LAST on the page, and below the suggestions.
-          "You may also like" is the shop making a case for something new;
-          this is the shopper's own trail back to something they had already
-          decided was interesting. The new thing gets the better position. */}
-      <RecentlyViewed
-        token={token}
-        title="Recently viewed"
-        exclude={product.id}
-        display={{
-          layout: 'grid',
-          showStock: settings.showStock,
-          showPhotos: settings.showPhotos,
-          showBrands: settings.showBrands,
-        }}
-      />
+          {/* LAST on the page, and below the suggestions.
+              "You may also like" is the shop making a case for something new;
+              this is the shopper's own trail back to something they had already
+              decided was interesting. The new thing gets the better position. */}
+          <RecentlyViewed
+            token={token}
+            title="Recently viewed"
+            exclude={product.id}
+            display={{
+              layout: 'grid',
+              showStock: settings.showStock,
+              showPhotos: settings.showPhotos,
+              showBrands: settings.showBrands,
+            }}
+          />
+        </>
+      )}
     </div>
   )
 }

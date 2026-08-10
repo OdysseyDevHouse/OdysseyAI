@@ -24,14 +24,20 @@ export default function StoreSearch({
   const router = useRouter()
   const [term, setTerm] = useState(initial)
 
+  /*
+   * Where a search lands.
+   *
+   * Inside a department the answer is that department's own route, with the
+   * term as the only query — `?department=` is a redirect now (see page.tsx),
+   * and pushing a URL that immediately bounces makes the back button take two
+   * presses to leave a search.
+   */
+  const base = department ? `/store/${token}/c/${department}` : `/store/${token}`
+
   function submit(event: React.FormEvent) {
     event.preventDefault()
-    const params = new URLSearchParams()
-    if (term.trim()) params.set('q', term.trim())
-    // Keep the department, so searching inside one stays inside it.
-    if (department) params.set('department', department)
-    const query = params.toString()
-    router.push(`/store/${token}${query ? `?${query}` : ''}`)
+    const term_ = term.trim()
+    router.push(`${base}${term_ ? `?q=${encodeURIComponent(term_)}` : ''}`)
   }
 
   return (
@@ -52,7 +58,7 @@ export default function StoreSearch({
           type="button"
           onClick={() => {
             setTerm('')
-            router.push(`/store/${token}${department ? `?department=${department}` : ''}`)
+            router.push(base)
           }}
         >
           Clear

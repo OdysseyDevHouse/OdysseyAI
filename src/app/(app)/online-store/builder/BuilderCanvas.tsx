@@ -24,14 +24,15 @@ import { CSS } from '@dnd-kit/utilities'
 import { Button, Icons, Menu, MenuItem, SegmentedControl, Switch } from '@/components/ui'
 import {
   MAX_SECTIONS,
-  SECTION_KINDS,
   SECTION_LABEL,
   isScheduledNow,
+  kindsFor,
   // One definition, shared with the publish summary — two copies of "what do
   // we call this section" would drift the moment either changed.
   sectionName,
   shopToday,
   type HomeSection,
+  type PageKind,
   type SectionKind,
   type StorefrontTheme,
 } from '@/lib/storefrontModel'
@@ -88,7 +89,14 @@ const PREVIEW_TOKEN = '__odyssey_builder_preview__'
  * That was the one thing about this preview that used to be a guess. It is the
  * reason the grids were converted.
  */
-const WIDTHS = { phone: 'max-w-[390px]', desktop: 'max-w-none' } as const
+const WIDTHS = {
+  phone: 'max-w-[390px]',
+  // 768px, where the storefront's grids go from two columns to three — so this
+  // is the width that shows the layout most likely to surprise somebody who has
+  // only checked the other two.
+  tablet: 'max-w-[768px]',
+  desktop: 'max-w-none',
+} as const
 type PreviewWidth = keyof typeof WIDTHS
 
 export function BuilderCanvas({
@@ -101,6 +109,7 @@ export function BuilderCanvas({
   departments,
   selected,
   width,
+  pageKind,
   onWidthChange,
   onSelect,
   onReorder,
@@ -121,6 +130,8 @@ export function BuilderCanvas({
   departments: StorefrontDepartment[]
   selected: string | null
   width: PreviewWidth
+  /** Which kinds the add menus offer — see `kindsFor`. */
+  pageKind: PageKind
   onWidthChange: (width: PreviewWidth) => void
   onSelect: (id: string) => void
   onReorder: (from: string, to: string) => void
@@ -152,6 +163,8 @@ export function BuilderCanvas({
 
   const sectionIds = sections.map((s) => s.id)
   const atLimit = sections.length >= MAX_SECTIONS
+  // What the three add menus offer. One rule, in the model — see `kindsFor`.
+  const kinds = kindsFor(pageKind)
 
   const nameOf = (id: unknown) => {
     const found = sections.find((s) => s.id === String(id))
@@ -233,7 +246,13 @@ export function BuilderCanvas({
         },
       }}
     >
-      <CanvasToolbar atLimit={atLimit} width={width} onWidthChange={onWidthChange} onAdd={onAdd} />
+      <CanvasToolbar
+        atLimit={atLimit}
+        width={width}
+        kinds={kinds}
+        onWidthChange={onWidthChange}
+        onAdd={onAdd}
+      />
 
       {/* The shop's own colour, scoped to the preview so `text-brand` inside
           follows the store's theme rather than the app's. */}
@@ -284,7 +303,7 @@ export function BuilderCanvas({
             {/* The first insert point, above everything. Without it there is
                 no way to put a new section at the very top except by adding it
                 at the bottom and dragging it the length of the page. */}
-            <InsertPoint index={0} atLimit={atLimit} onInsert={onInsert} />
+            <InsertPoint index={0} atLimit={atLimit} kinds={kinds} onInsert={onInsert} />
 
             <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
               {/*
@@ -331,6 +350,7 @@ export function BuilderCanvas({
                       onDuplicate={() => onDuplicate(section.id)}
                       onRemove={() => onRemove(section.id)}
                       onInsert={onInsert}
+                      kinds={kinds}
                     >
                       {node}
                     </EditableSection>
@@ -405,6 +425,7 @@ function EditableSection({
   onDuplicate,
   onRemove,
   onInsert,
+  kinds,
   children,
 }: {
   section: HomeSection
@@ -413,6 +434,7 @@ function EditableSection({
   emptyReason: string
   selected: boolean
   atLimit: boolean
+  kinds: readonly SectionKind[]
   /** Where the drop line goes while something is hovering here, if at all. */
   dropEdge: 'top' | 'bottom' | null
   onSelect: () => void
@@ -567,7 +589,7 @@ function EditableSection({
       </div>
 
       {/* Add a section directly BELOW this one. */}
-      <InsertPoint index={index + 1} atLimit={atLimit} onInsert={onInsert} />
+      <InsertPoint index={index + 1} atLimit={atLimit} kinds={kinds} onInsert={onInsert} />
     </>
   )
 }
@@ -590,10 +612,12 @@ function EditableSection({
 function InsertPoint({
   index,
   atLimit,
+  kinds,
   onInsert,
 }: {
   index: number
   atLimit: boolean
+  kinds: readonly SectionKind[]
   onInsert: (kind: SectionKind, index: number) => void
 }) {
   if (atLimit) return null
@@ -615,7 +639,7 @@ function InsertPoint({
             </>
           }
         >
-          {SECTION_KINDS.map((kind) => (
+          {kinds.map((kind) => (
             <MenuItem key={kind} onClick={() => onInsert(kind, index)}>
               {SECTION_LABEL[kind]}
             </MenuItem>
@@ -646,11 +670,13 @@ function EmptySection({ section, reason }: { section: HomeSection; reason: strin
 function CanvasToolbar({
   atLimit,
   width,
+  kinds,
   onWidthChange,
   onAdd,
 }: {
   atLimit: boolean
   width: PreviewWidth
+  kinds: readonly SectionKind[]
   onWidthChange: (width: PreviewWidth) => void
   onAdd: (kind: SectionKind) => void
 }) {
@@ -670,7 +696,7 @@ function CanvasToolbar({
             </>
           }
         >
-          {SECTION_KINDS.map((kind) => (
+          {kinds.map((kind) => (
             <MenuItem key={kind} onClick={() => onAdd(kind)}>
               {SECTION_LABEL[kind]}
             </MenuItem>
@@ -686,6 +712,7 @@ function CanvasToolbar({
           aria-label="How wide to draw the preview"
           options={[
             { value: 'desktop', label: 'Computer' },
+            { value: 'tablet', label: 'Tablet' },
             { value: 'phone', label: 'Phone' },
           ]}
         />
@@ -733,6 +760,49 @@ function emptyReason(
 
     case 'text':
       return 'Nothing written yet. Type something in the panel on the right.'
+
+    case 'split':
+      // Two halves, two different things missing, two different fixes.
+      if (!section.imageId) return 'Choose a picture in the panel on the right.'
+      if (!(section.bodyText?.trim() || section.title)) {
+        return 'Add a heading or some words beside the picture.'
+      }
+      return 'That picture has been deleted. Choose another in the panel on the right.'
+
+    case 'reviews':
+      /*
+       * Not a fault, and saying so matters.
+       *
+       * This row fills itself from the review queue, so an owner who "fixes"
+       * it is fixing something that is working. The likely cause is simply
+       * that nothing has been approved yet — which for a new shop is normal.
+       */
+      return 'No approved reviews match yet. This fills itself as reviews come in and you approve them.'
+
+    case 'countdown':
+      if (!(section.endsAt?.trim() ?? '') && !section.specialId) {
+        return 'Choose a special, or type the date and time it ends.'
+      }
+      return 'The time is up. Write something for it to say afterwards, or remove it.'
+
+    case 'richtext':
+      return 'Nothing written yet. Add a line in the panel on the right.'
+
+    case 'testimonial':
+      return 'No quotes yet. Add one in the panel on the right.'
+
+    case 'logos':
+      // Same two problems a banner has: never chose any, or chose ones that
+      // have since been deleted from the library.
+      return (section.logoImageIds?.length ?? 0) > 0
+        ? 'Those pictures have been deleted. Choose others in the panel on the right.'
+        : 'No logos yet. Add one in the panel on the right.'
+
+    case 'video':
+      return 'Paste the video’s link in the panel on the right.'
+
+    case 'map':
+      return 'Type your address in the panel on the right.'
 
     case 'categories':
       return departments.length

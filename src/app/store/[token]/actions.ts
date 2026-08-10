@@ -7,6 +7,8 @@ import {
   type StorefrontProduct,
 } from '@/lib/site/storefront'
 import { submitReview, type SaveResult } from '@/lib/site/productReviews'
+import { subscribe, type SubscribeResult } from '@/lib/site/storefrontSubscribers'
+import { DEFAULT_CONSENT_TEXT } from '@/lib/storefrontModel'
 import { MAX_WISHLIST } from '@/lib/wishlist'
 
 /**
@@ -93,5 +95,44 @@ export async function submitReviewAction(
     body: String(input.body ?? ''),
     authorName: String(input.authorName ?? ''),
     orderNumber: String(input.orderNumber ?? ''),
+  })
+}
+
+/**
+ * Put somebody on the shop's mailing list.
+ *
+ * The token is re-verified here for the reason in this file's header: a server
+ * action is a public endpoint, and the page's own check protects the page.
+ *
+ * ── THE CONSENT WORDING COMES FROM THE CALLER ────────────────────────────
+ *
+ * Deliberately, and it is the one input here that is not re-derived
+ * server-side. What has to be recorded is what this person actually READ — and
+ * the section could have been edited between the page loading and the form
+ * being submitted, so reading the current wording out of the layout would
+ * record words they were never shown.
+ *
+ * It is stored, never rendered as markup, and capped by `subscribe`, so a
+ * forged value is a wrong line in the shop's own record rather than a risk to
+ * anybody. A blank one falls back to the default (see DEFAULT_CONSENT_TEXT):
+ * a row with no consent line is the one outcome 071 exists to prevent.
+ */
+export async function subscribeAction(
+  token: string,
+  input: { email: string; name?: string; consentText?: string; sourcePage?: string },
+): Promise<SubscribeResult> {
+  const siteId = await verifyPublicStoreToken(token)
+  if (siteId === null) return { ok: false, error: 'This shop is not available.' }
+
+  // An OPEN shop only. A closed one serves nothing else, and a form kept open
+  // across the moment it closed must not keep writing rows.
+  const context = await storefrontContext(siteId)
+  if (!context) return { ok: false, error: 'This shop is not available.' }
+
+  return subscribe(siteId, {
+    email: input.email,
+    name: input.name ?? '',
+    consentText: String(input.consentText ?? '').trim() || DEFAULT_CONSENT_TEXT,
+    sourcePage: input.sourcePage ?? '',
   })
 }

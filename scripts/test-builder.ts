@@ -35,6 +35,7 @@ import {
   discardDraft,
   getLayout,
   getPublishedLayout,
+  getTheme,
   normaliseSections,
   publishDraft,
   safeColour,
@@ -46,6 +47,48 @@ import {
   sectionIsEmpty,
   DEFAULT_BRAND_COLOUR,
 } from '../src/lib/site/storefrontLayout'
+import {
+  MAX_VERSIONS,
+  createPage,
+  deletePage,
+  deleteSavedSection,
+  departmentPage,
+  discardPageDraft,
+  getPage,
+  listSavedSections,
+  listVersions,
+  productPage,
+  publishDuePages,
+  restoreVersion,
+  saveSection,
+  schedulePublish,
+  getPageLayout,
+  getPageSectionsFor,
+  getPublishedPageLayout,
+  homePage,
+  listPages,
+  navPages,
+  publishPageDraft,
+  publishedPageBySlug,
+  savePageDraft,
+  savePageSettings,
+} from '../src/lib/site/storefrontPages'
+import { createPreviewToken, verifyPreviewToken } from '../src/lib/previewToken'
+import { createPublicStoreToken } from '../src/lib/publicStoreToken'
+import {
+  MAX_QUOTES,
+  MAX_RICH_BLOCKS,
+  SECTION_KINDS,
+  announcementShowing,
+  groupRichBlocks,
+  kindsFor,
+  pageWarnings,
+  safeDateTime,
+  safeFontKey,
+  safeSlug,
+  slugProblem,
+  sourcesFor,
+} from '../src/lib/storefrontModel'
 
 const SITE = 1
 let fails = 0
@@ -58,10 +101,22 @@ async function main() {
   // Snapshot everything this test touches, so it can be put back exactly.
   const before = await siteQueryOne<Record<string, unknown>>(
     SITE,
+    // Every column saveTheme writes. Anything missing here is a value this
+    // test leaves rewritten on a real shop — which is exactly what happened
+    // when the font and announcement columns arrived and this list did not
+    // grow with them.
     `SELECT brand_colour, product_layout, hero_headline, hero_subtext, footer_about,
             footer_hours, social_facebook, social_instagram, social_whatsapp,
-            home_layout, home_layout_draft
+            font_key, share_image_id, announce_text, announce_link,
+            announce_from, announce_until
        FROM online_store_settings WHERE id = 1`,
+  )
+  // The front page lives in its own row since 070. Snapshotted separately
+  // because it is a different table, and restored the same way — a test that
+  // leaves a shop's real front page rewritten is worse than one that fails.
+  const beforePage = await siteQueryOne<Record<string, unknown>>(
+    SITE,
+    `SELECT layout, layout_draft FROM storefront_pages WHERE kind = 'home'`,
   )
 
   console.log('\n— Normalising an untrusted draft —')
@@ -452,10 +507,13 @@ async function main() {
   ok('an https link is kept', safeUrl('https://facebook.com/shop').startsWith('https://'))
 
   console.log('\n— A draft is not live —')
-  // Start from a known published page.
-  await siteExecute(SITE, `UPDATE online_store_settings SET home_layout = ?, home_layout_draft = NULL WHERE id = 1`, [
-    JSON.stringify(defaultSections()),
-  ])
+  // Start from a known published page. On the PAGE row since 070 — the old
+  // settings columns are still there and no longer read.
+  await siteExecute(
+    SITE,
+    `UPDATE storefront_pages SET layout = ?, layout_draft = NULL WHERE kind = 'home'`,
+    [JSON.stringify(defaultSections())],
+  )
   const livePage = (await getPublishedLayout(SITE)).sections
   ok('the shop has a published page', livePage.length > 0, `${livePage.length} sections`)
 
@@ -493,23 +551,33 @@ async function main() {
   ok('the live page is untouched', afterDiscard.published[0].title === 'DRAFT ONLY')
 
   console.log('\n— Hidden sections and starter pages —')
-  await siteExecute(SITE, `UPDATE online_store_settings SET home_layout = ?, home_layout_draft = NULL WHERE id = 1`, [
+  /*
+   * Written straight to the PAGE row, not to online_store_settings.
+   *
+   * 070 moved the layout off the settings row into `storefront_pages`, and the
+   * old columns are deliberately still there but no longer read. Writing to
+   * them here passed for exactly as long as it took to notice the assertions
+   * were checking a column nothing loads.
+   */
+  const homeId = (await homePage(SITE))!.id
+  await siteExecute(SITE, `UPDATE storefront_pages SET layout = ?, layout_draft = NULL WHERE id = ?`, [
     JSON.stringify([
       { id: 'a', kind: 'hero', title: 'Shown', enabled: true },
       { id: 'b', kind: 'hero', title: 'Hidden', enabled: false },
     ]),
+    homeId,
   ])
   const visible = await getPublishedLayout(SITE)
   ok('a disabled section is not served', visible.sections.length === 1 && visible.sections[0].title === 'Shown')
 
-  await siteExecute(SITE, `UPDATE online_store_settings SET home_layout = NULL WHERE id = 1`)
+  await siteExecute(SITE, `UPDATE storefront_pages SET layout = NULL WHERE id = ?`, [homeId])
   ok('never published → the starter page', (await getLayout(SITE)).published.length === defaultSections().length)
 
-  await siteExecute(SITE, `UPDATE online_store_settings SET home_layout = '[]' WHERE id = 1`)
+  await siteExecute(SITE, `UPDATE storefront_pages SET layout = '[]' WHERE id = ?`, [homeId])
   // Distinct from NULL: the owner deliberately removed everything.
   ok('an empty page is respected, not replaced', (await getLayout(SITE)).published.length === 0)
 
-  await siteExecute(SITE, `UPDATE online_store_settings SET home_layout = 'not json' WHERE id = 1`)
+  await siteExecute(SITE, `UPDATE storefront_pages SET layout = 'not json' WHERE id = ?`, [homeId])
   ok('a corrupted layout falls back instead of throwing', (await getLayout(SITE)).published.length > 0)
 
   console.log('\n— Theme —')
@@ -529,13 +597,520 @@ async function main() {
   ok('the layout choice is kept', theme.productLayout === 'list')
   ok('the headline is kept', theme.heroHeadline === 'Fresh every morning')
 
+  console.log('\n— The new section kinds —')
+
+  /*
+   * Rich text stores a TREE, and the point of that is that no input can
+   * produce a tag. These assert the two ways someone would try.
+   */
+  const richHostile = normaliseSections([
+    {
+      kind: 'richtext',
+      id: 'r',
+      blocks: [
+        { type: 'script', spans: [{ text: 'x' }] },
+        { type: 'p', spans: [{ text: 'ok', href: 'javascript:alert(1)' }] },
+      ],
+    },
+  ])[0].blocks!
+  ok('an unknown block type becomes a paragraph', richHostile[0].type === 'p', richHostile[0].type)
+  ok('a javascript: link in a span never persists', richHostile[1].spans[0].href === '')
+  ok('a real link in a span does', normaliseSections([
+    { kind: 'richtext', id: 'r', blocks: [{ type: 'p', spans: [{ text: 'x', href: '/store' }] }] },
+  ])[0].blocks![0].spans[0].href === '/store')
+
+  const richCapped = normaliseSections([
+    {
+      kind: 'richtext',
+      id: 'r',
+      blocks: Array.from({ length: 500 }, () => ({ type: 'p', spans: [{ text: 'x' }] })),
+    },
+  ])[0].blocks!
+  ok('the rich-block cap holds', richCapped.length === MAX_RICH_BLOCKS, `${richCapped.length}`)
+
+  // Grouping: consecutive list items fold into one list, everything else does
+  // not. The shop and the builder both render through this.
+  const grouped = groupRichBlocks([
+    { type: 'p', spans: [{ text: 'a' }] },
+    { type: 'ul', spans: [{ text: 'one' }] },
+    { type: 'ul', spans: [{ text: 'two' }] },
+    { type: 'p', spans: [{ text: 'b' }] },
+    { type: 'ul', spans: [{ text: 'three' }] },
+  ])
+  ok('consecutive list items fold into one list', grouped.length === 4, `${grouped.length} groups`)
+  ok('and the folded list keeps both items', grouped[1].items.length === 2)
+  ok('a list after a paragraph starts a new list', grouped[3].items.length === 1)
+
+  /*
+   * A video id lands inside a URL the renderer builds, so the character filter
+   * IS the validation — it must make a second host unrepresentable.
+   */
+  const hostileVideo = normaliseSections([
+    { kind: 'video', id: 'v', videoId: '../../evil.example/x?a=b', videoProvider: 'nope' },
+  ])[0]
+  ok('a video id cannot carry a path or a host', hostileVideo.videoId === 'evilexamplexab', hostileVideo.videoId)
+  ok('an unknown provider falls back to youtube', hostileVideo.videoProvider === 'youtube')
+
+  // A map link goes off-site by definition, so it is safeUrl and NOT
+  // safeLinkTarget — a relative path here would point at a page of the shop.
+  ok(
+    'a javascript: map link never persists',
+    normaliseSections([{ kind: 'map', id: 'm', mapUrl: 'javascript:alert(1)' }])[0].mapUrl === '',
+  )
+
+  // Logos take the same treatment as picked products: junk DISCARDED, never
+  // clamped into a reference to picture 1 that nobody chose.
+  const logoIds = normaliseSections([
+    { kind: 'logos', id: 'l', logoImageIds: [3, -1, 'abc', 2.5, 7, 7] },
+  ])[0].logoImageIds!
+  ok('junk logo ids are discarded, not clamped', JSON.stringify(logoIds) === '[3,7]', JSON.stringify(logoIds))
+
+  // A countdown to a moment that does not exist must fail to "no deadline",
+  // which reads as empty — never to a wrong clock on a public page.
+  ok('an impossible deadline becomes no deadline', safeDateTime('2026-02-31T10:00') === '')
+  ok('a real deadline survives', safeDateTime('2026-12-25T17:30') === '2026-12-25T17:30')
+  ok('a date with no time is not a deadline', safeDateTime('2026-12-25') === '')
+
+  const quoteCapped = normaliseSections([
+    { kind: 'testimonial', id: 't', quotes: Array.from({ length: 99 }, () => ({ quote: 'x' })) },
+  ])[0].quotes!
+  ok('the quote cap holds', quoteCapped.length === MAX_QUOTES)
+  ok('quotes get distinct ids', new Set(quoteCapped.map((q) => q.id)).size === quoteCapped.length)
+
+  /*
+   * `sectionIsEmpty` is the rule the shop, the builder placeholder, the
+   * publish summary AND the catalogue fallback all read. A new kind missing
+   * from it renders an empty heading on a live shop.
+   */
+  // `blankTheme` is declared with the carousel checks above and reused here —
+  // an empty theme is an empty theme.
+  ok(
+    'a reviews section with no reviews is empty',
+    sectionIsEmpty({ section: normaliseSections([{ kind: 'reviews', id: 'x' }])[0], reviews: [] }, blankTheme),
+  )
+  ok(
+    'a reviews section with one is not',
+    !sectionIsEmpty({ section: normaliseSections([{ kind: 'reviews', id: 'x' }])[0], reviews: [{}] }, blankTheme),
+  )
+  ok(
+    'a split with a picture but no words is empty',
+    sectionIsEmpty(
+      { section: normaliseSections([{ kind: 'split', id: 'x', imageId: 1 }])[0], image: {} },
+      blankTheme,
+    ),
+  )
+  ok(
+    'a split with both is not',
+    !sectionIsEmpty(
+      {
+        section: normaliseSections([{ kind: 'split', id: 'x', imageId: 1, bodyText: 'hi' }])[0],
+        image: {},
+      },
+      blankTheme,
+    ),
+  )
+  ok(
+    'a finished countdown with nothing to say is empty',
+    sectionIsEmpty(
+      { section: normaliseSections([{ kind: 'countdown', id: 'x', endsAt: '2020-01-01T00:00' }])[0] },
+      blankTheme,
+    ),
+  )
+  ok(
+    'a finished countdown WITH something to say is not',
+    !sectionIsEmpty(
+      {
+        section: normaliseSections([
+          { kind: 'countdown', id: 'x', endsAt: '2020-01-01T00:00', finishedText: 'Sale over' },
+        ])[0],
+      },
+      blankTheme,
+    ),
+  )
+  // Both draw themselves and are never empty — returning true would make them
+  // impossible to add to a page.
+  ok(
+    'a divider is never empty',
+    !sectionIsEmpty({ section: normaliseSections([{ kind: 'divider', id: 'x' }])[0] }, blankTheme),
+  )
+  ok(
+    'a spacer is never empty',
+    !sectionIsEmpty({ section: normaliseSections([{ kind: 'spacer', id: 'x' }])[0] }, blankTheme),
+  )
+
+  /*
+   * Every kind must survive a round trip through normalisation, or the
+   * builder's dirty check compares two different shapes and shows a permanent
+   * "unsaved changes" that no amount of saving clears.
+   */
+  const allKinds = SECTION_KINDS.map((kind, i) => ({ kind, id: `k${i}` }))
+  const once = normaliseSections(allKinds)
+  const twice = normaliseSections(once)
+  ok('every kind survives normalisation', once.length === SECTION_KINDS.length, `${once.length}/${SECTION_KINDS.length}`)
+  ok('normalising twice changes nothing', JSON.stringify(once) === JSON.stringify(twice))
+
+  console.log('\n— Earlier versions —')
+  {
+    const home = (await homePage(SITE))!
+
+    // A known live page, then two publishes over it. Each should archive what
+    // WAS live — not what replaced it.
+    await siteExecute(
+      SITE,
+      `UPDATE storefront_pages SET layout = ?, layout_draft = NULL WHERE id = ?`,
+      [JSON.stringify([{ id: 'v1', kind: 'text', title: 'VERSION ONE', enabled: true }]), home.id],
+    )
+    const startingVersions = (await listVersions(SITE, home.id)).length
+
+    await savePageDraft(SITE, home.id, [
+      { kind: 'text', id: 'v2', title: 'VERSION TWO', enabled: true },
+    ])
+    await publishPageDraft(SITE, home.id, 'Tester')
+
+    const after = await listVersions(SITE, home.id)
+    ok('publishing keeps what was live', after.length === startingVersions + 1)
+    ok('and records who replaced it', after[0]?.replacedBy === 'Tester', after[0]?.replacedBy)
+    ok('the live page is the new one', (await getPageLayout(SITE, home.id)).published[0].title === 'VERSION TWO')
+
+    // Restoring loads the OLD one back as a draft, and must not touch live.
+    const restored = await restoreVersion(SITE, home.id, after[0].id)
+    ok('restoring succeeds', restored.ok)
+    const afterRestore = await getPageLayout(SITE, home.id)
+    ok('the old version is now the draft', afterRestore.draft?.[0].title === 'VERSION ONE')
+    ok(
+      'and restoring did NOT change what is live',
+      afterRestore.published[0].title === 'VERSION TWO',
+    )
+
+    // A version belongs to one page — restoring another page's onto this one
+    // would be a silent mix-up.
+    ok(
+      'a version id from nowhere is refused',
+      !(await restoreVersion(SITE, home.id, 999999)).ok,
+    )
+
+    // The cap is applied on WRITE, so a shop republishing forever cannot grow
+    // the table without bound.
+    for (let i = 0; i < MAX_VERSIONS + 4; i++) {
+      await savePageDraft(SITE, home.id, [
+        { kind: 'text', id: `x${i}`, title: `PUB ${i}`, enabled: true },
+      ])
+      await publishPageDraft(SITE, home.id, 'Tester')
+    }
+    const capped = await listVersions(SITE, home.id)
+    ok('the version cap holds', capped.length === MAX_VERSIONS, `${capped.length}`)
+    ok('and the newest is kept', capped[0].sectionCount === 1)
+
+    await discardPageDraft(SITE, home.id)
+  }
+
+  console.log('\n— Publishing later —')
+  {
+    const home = (await homePage(SITE))!
+    await savePageDraft(SITE, home.id, [
+      { kind: 'text', id: 'sched', title: 'SCHEDULED', text: 'x', enabled: true },
+    ])
+
+    ok('a time in the past is refused', !(await schedulePublish(SITE, home.id, '2020-01-01T00:00')).ok)
+    ok('a junk time clears rather than storing', (await schedulePublish(SITE, home.id, 'nonsense')).ok)
+    ok('and nothing is scheduled', (await getPage(SITE, home.id))?.publishAt === '')
+
+    ok('a future time is accepted', (await schedulePublish(SITE, home.id, '2030-06-01T06:00')).ok)
+    ok('and is stored', (await getPage(SITE, home.id))?.publishAt === '2030-06-01T06:00')
+
+    // Early must publish NOTHING — the asymmetry the tick is built around.
+    const early = await publishDuePages(SITE)
+    ok('nothing publishes before its time', early.published === 0)
+    ok('and it stays scheduled', (await getPage(SITE, home.id))?.publishAt === '2030-06-01T06:00')
+
+    // Due now: a moment already past fires on the next sweep.
+    await siteExecute(
+      SITE,
+      `UPDATE storefront_pages SET publish_at = '2020-01-01T00:00' WHERE id = ?`,
+      [home.id],
+    )
+    const fired = await publishDuePages(SITE)
+    ok('a due page publishes', fired.published === 1, JSON.stringify(fired))
+    ok(
+      'the draft is now live',
+      (await getPageLayout(SITE, home.id)).published[0].title === 'SCHEDULED',
+    )
+    ok('the schedule is cleared', (await getPage(SITE, home.id))?.publishAt === '')
+    // Cleared even on failure, so a page that cannot publish is not retried
+    // forever on every tick.
+    ok('and it does not fire again', (await publishDuePages(SITE)).published === 0)
+
+    await discardPageDraft(SITE, home.id)
+  }
+
+  console.log('\n— Saved sections —')
+  {
+    const made = await saveSection(SITE, 'ZZ Test cards', {
+      kind: 'cards',
+      id: 'c',
+      title: 'Why us',
+      cards: [{ icon: '🚚', heading: 'Delivery', text: 'Tuesdays.' }],
+    })
+    ok('a section can be saved', made.ok, made.ok ? '' : made.error)
+
+    const dupe = await saveSection(SITE, 'ZZ Test cards', { kind: 'text', id: 't' })
+    ok('a duplicate name is refused', !dupe.ok)
+    ok('an unnamed one is refused', !(await saveSection(SITE, '   ', { kind: 'text', id: 't' })).ok)
+    // Normalised on the way in, so nothing can be stored in a shape the
+    // builder could not have produced.
+    ok('an unknown kind cannot be saved', !(await saveSection(SITE, 'ZZ Test junk', { kind: 'evil' })).ok)
+
+    const saved = (await listSavedSections(SITE)).find((s) => s.name === 'ZZ Test cards')
+    ok('it comes back', saved !== undefined)
+    ok('with its kind', saved?.kind === 'cards', saved?.kind)
+    ok('and its content', saved?.section.cards?.[0].heading === 'Delivery')
+
+    ok('it can be forgotten', (await deleteSavedSection(SITE, saved!.id)).ok)
+    ok(
+      'and is then gone',
+      !(await listSavedSections(SITE)).some((s) => s.name === 'ZZ Test cards'),
+    )
+  }
+
+  console.log('\n— Previewing a draft —')
+  {
+    /*
+     * A preview pass shows work the owner has deliberately NOT published, so
+     * the three ways it could leak are each asserted: a pass for another site,
+     * a pass for another page, and a token minted for something else entirely.
+     */
+    const home = (await homePage(SITE))!
+    const pass = await createPreviewToken(SITE, home.id)
+    const claim = await verifyPreviewToken(pass)
+    ok('a pass round-trips', claim?.siteId === SITE && claim?.pageId === home.id)
+    ok('a junk pass is refused', (await verifyPreviewToken('not-a-token')) === null)
+    // Different audience — the signature verifies and the audience check still
+    // rejects it, which is the point of giving each token its own.
+    ok(
+      'a storefront token cannot be replayed as a preview pass',
+      (await verifyPreviewToken(await createPublicStoreToken(SITE))) === null,
+    )
+
+    await savePageDraft(SITE, home.id, [
+      { kind: 'text', id: 'draftonly', title: 'DRAFT ONLY', text: 'x', enabled: true },
+    ])
+
+    const anonymous = await getPageSectionsFor(SITE, home.id, null)
+    ok('without a pass the published page is served', !anonymous.isPreview)
+    ok(
+      'and the draft is not visible',
+      !anonymous.sections.some((s) => s.title === 'DRAFT ONLY'),
+    )
+
+    const previewing = await getPageSectionsFor(SITE, home.id, claim)
+    ok('with a pass the draft is served', previewing.isPreview)
+    ok('and the draft content is there', previewing.sections.some((s) => s.title === 'DRAFT ONLY'))
+
+    ok(
+      'a pass for another page does not unlock this one',
+      !(await getPageSectionsFor(SITE, home.id, { siteId: SITE, pageId: home.id + 9999 }))
+        .isPreview,
+    )
+    // The load-bearing one: it is what stops one shop previewing another's.
+    ok(
+      'a pass for another site is ignored',
+      !(await getPageSectionsFor(SITE, home.id, { siteId: 9999, pageId: home.id })).isPreview,
+    )
+
+    await discardPageDraft(SITE, home.id)
+  }
+
+  console.log('\n— Presentation —')
+  {
+    // A font is a KEY into a curated list, never a name — see FONT_KEYS. A
+    // stored name would end up in a stylesheet and could become a request to
+    // somewhere unexpected.
+    ok('a known font key survives', safeFontKey('lora') === 'lora')
+    ok('an unknown font falls back to the device', safeFontKey('Comic Sans') === 'system')
+    ok('a missing font falls back too', safeFontKey(undefined) === 'system')
+
+    // The strip's link lands in an href on a page that takes payments.
+    await saveTheme(SITE, {
+      brandColour: '#2f6fed',
+      productLayout: 'grid',
+      fontKey: 'lora',
+      announceText: 'Free delivery over R500',
+      announceLink: 'javascript:alert(1)',
+      announceFrom: '2026-01-01',
+      announceUntil: 'not-a-date',
+    })
+    const t = await getTheme(SITE)
+    ok('the font choice is kept', t.fontKey === 'lora')
+    ok('the strip text is kept', t.announceText === 'Free delivery over R500')
+    ok('a hostile strip link never persists', t.announceLink === '')
+    ok('a real strip date is kept', t.announceFrom === '2026-01-01')
+    ok('a junk strip date becomes no bound', t.announceUntil === '')
+
+    // Showing is text AND schedule — either can switch it off.
+    ok('a dated strip in season shows', announcementShowing(t, '2026-06-01'))
+    ok('and out of season does not', !announcementShowing(t, '2025-06-01'))
+    ok(
+      'no text means no strip whatever the dates',
+      !announcementShowing({ ...t, announceText: '   ' }, '2026-06-01'),
+    )
+  }
+
+  console.log('\n— Warnings before publishing —')
+  {
+    const clean = pageWarnings(
+      normaliseSections([{ kind: 'banner', id: 'b', imageId: 3, imageAlt: 'Bread' }]),
+    )
+    ok('a described picture is not a warning', clean.length === 0)
+
+    const undescribed = pageWarnings(
+      normaliseSections([{ kind: 'banner', id: 'b', imageId: 3, imageAlt: '  ' }]),
+    )
+    ok('an undescribed picture is', undescribed[0]?.count === 1, JSON.stringify(undescribed))
+
+    // Rolled up, so ten banners are one line rather than ten.
+    const many = pageWarnings(
+      normaliseSections([
+        { kind: 'banner', id: 'a', imageId: 1 },
+        { kind: 'split', id: 'b', imageId: 2, bodyText: 'x' },
+        { kind: 'carousel', id: 'c', slides: [{ id: 's', imageId: 3 }] },
+      ]),
+    )
+    ok('every kind of picture is counted', many[0]?.count === 3, JSON.stringify(many))
+
+    // A hidden section is not a problem yet — warning about one nobody will
+    // see is the noise that stops the check being read at all.
+    const hidden = pageWarnings(
+      normaliseSections([{ kind: 'banner', id: 'b', imageId: 3, enabled: false }]),
+    )
+    ok('a hidden section is not warned about', hidden.length === 0)
+
+    const deadButton = pageWarnings(
+      normaliseSections([{ kind: 'banner', id: 'b', imageId: 1, imageAlt: 'x', buttonLabel: 'Shop' }]),
+    )
+    ok('a button with nowhere to go is flagged', deadButton.some((w) => w.label.includes('button')))
+  }
+
+  console.log('\n— Product pages —')
+  {
+    // The two rules that only mean anything with a product to be relative to.
+    ok('a front page is not offered the cross-sell rules', !sourcesFor('home').includes('together'))
+    ok('nor the same-department one', !sourcesFor('standard').includes('sameDepartment'))
+    ok('a product page is offered both', sourcesFor('product').includes('together') && sourcesFor('product').includes('sameDepartment'))
+    ok('and still has the ordinary ones', sourcesFor('product').includes('manual'))
+
+    // A product page's sections sit BELOW one product, so the blocks that
+    // would turn it into a second front page are not offered.
+    const productKinds = kindsFor('product')
+    ok('a product page cannot hold a carousel', !productKinds.includes('carousel'))
+    ok('nor a department grid', !productKinds.includes('categories'))
+    ok('nor the welcome banner', !productKinds.includes('hero'))
+    ok('but it can hold a product row', productKinds.includes('products'))
+    ok('and recently viewed', productKinds.includes('recent'))
+
+    // 'recent' lives in the browser, so the server cannot answer for it — it
+    // must never be judged empty or the shop would drop a section that has
+    // content. The component decides for itself.
+    ok(
+      'a recently-viewed section is never judged empty',
+      !sectionIsEmpty({ section: normaliseSections([{ kind: 'recent', id: 'r' }])[0] }, blankTheme),
+    )
+
+    // One arrangement per shop — the same mechanism that guarantees one home
+    // page, since department_id is NULL for this kind.
+    const first = await createPage(SITE, { kind: 'product', title: 'ZZ Test product page' })
+    ok('a product page can be created', first.ok, first.ok ? '' : first.error)
+    const second = await createPage(SITE, { kind: 'product', title: 'Another' })
+    ok('a second one is refused', !second.ok)
+    ok('and it is found by kind', (await productPage(SITE)) !== null)
+
+    if (first.ok) {
+      // It has no slug and no department — it is not addressable, it decorates.
+      const row = await getPage(SITE, first.id)
+      ok('a product page has no slug', row?.slug === '')
+      ok('and no department', row?.departmentId === null)
+      ok('it can be deleted', (await deletePage(SITE, first.id)).ok)
+      ok('and then another can be made', (await createPage(SITE, { kind: 'product', title: 'ZZ Test again' })).ok)
+    }
+  }
+
+  console.log('\n— Slugs —')
+  ok('a title becomes a slug', safeSlug('Delivery & Returns!') === 'delivery-returns', safeSlug('Delivery & Returns!'))
+  ok('runs of junk collapse to one hyphen', safeSlug('a  ///  b') === 'a-b', safeSlug('a  ///  b'))
+  ok('leading and trailing hyphens go', safeSlug('--about--') === 'about')
+  ok('an empty slug is refused', slugProblem('') !== '')
+  ok('a reserved slug is refused', slugProblem('checkout') !== '')
+  ok('a taken slug is refused', slugProblem('about', ['about']) !== '')
+  ok('a good slug passes', slugProblem('about', ['delivery']) === '')
+
+  console.log('\n— Pages —')
+  const home = await homePage(SITE)
+  ok('every shop has exactly one front page', home !== null && home.kind === 'home')
+  ok('the front page cannot be deleted', !(await deletePage(SITE, home!.id)).ok)
+
+  const made = await createPage(SITE, { kind: 'standard', title: 'ZZ Test Delivery', slug: 'zz-test-delivery' })
+  ok('a standard page is created', made.ok, made.ok ? '' : made.error)
+  const pageId = made.ok ? made.id : 0
+
+  const dupe = await createPage(SITE, { kind: 'standard', title: 'Another', slug: 'zz-test-delivery' })
+  ok('a duplicate slug is refused', !dupe.ok)
+  const reserved = await createPage(SITE, { kind: 'standard', title: 'Nope', slug: 'checkout' })
+  ok('a reserved slug is refused at creation', !reserved.ok)
+
+  /*
+   * The property the whole table exists for: a new page is NOT live.
+   *
+   * Creating a page and having it instantly appear, empty, on the public shop
+   * is the opposite of what the draft mechanism is for.
+   */
+  ok('a new page starts unpublished', (await publishedPageBySlug(SITE, 'zz-test-delivery')) === null)
+  ok('an unpublished page has no starter sections', (await getPageLayout(SITE, pageId)).published.length === 0)
+
+  await savePageDraft(SITE, pageId, [{ kind: 'text', id: 't', title: 'Delivery', text: 'Tuesdays.', enabled: true }])
+  ok('the draft is saved', (await getPageLayout(SITE, pageId)).draft?.length === 1)
+  ok('and the page is still not live', (await getPageLayout(SITE, pageId)).published.length === 0)
+
+  await publishPageDraft(SITE, pageId)
+  const publishedPage = await getPageLayout(SITE, pageId)
+  ok(
+    'publishing moves the draft across',
+    publishedPage.published.length === 1 && publishedPage.draft === null,
+  )
+
+  // Still 404s: a published LAYOUT and a published PAGE are different questions.
+  ok('a page with a layout is still hidden until published', (await publishedPageBySlug(SITE, 'zz-test-delivery')) === null)
+  await savePageSettings(SITE, pageId, { isPublished: true, showInNav: true })
+  ok('once published it resolves by slug', (await publishedPageBySlug(SITE, 'zz-test-delivery')) !== null)
+  ok('and it appears in the nav', (await navPages(SITE)).some((p) => p.id === pageId))
+
+  /*
+   * Draft isolation between pages — the reason draft-and-publish moved off the
+   * settings row at all. An owner rewriting one page must not be blocked from
+   * publishing another.
+   */
+  await savePageDraft(SITE, pageId, [{ kind: 'text', id: 't', title: 'Edited', text: 'x', enabled: true }])
+  ok('one page having a draft leaves the front page alone', (await getLayout(SITE)).draft === null)
+
+  const homeSections = (await getPageLayout(SITE, home!.id)).published
+  ok('and the front page still has its own sections', Array.isArray(homeSections))
+
+  ok('the front page is excluded from the nav', !(await navPages(SITE)).some((p) => p.kind === 'home'))
+  ok('the pages list puts home first', (await listPages(SITE))[0].kind === 'home')
+
+  // A department with no page returns nothing rather than an empty page — the
+  // difference between "renders as it always did" and "renders blank".
+  ok('a department with no page has none', (await departmentPage(SITE, 999999)) === null)
+
+  ok('a page can be deleted', (await deletePage(SITE, pageId)).ok)
+  ok('and is then unreachable', (await publishedPageBySlug(SITE, 'zz-test-delivery')) === null)
+
   console.log('\n— Cleanup —')
   await siteExecute(
     SITE,
     `UPDATE online_store_settings
         SET brand_colour = ?, product_layout = ?, hero_headline = ?, hero_subtext = ?,
             footer_about = ?, footer_hours = ?, social_facebook = ?, social_instagram = ?,
-            social_whatsapp = ?, home_layout = ?, home_layout_draft = ?
+            social_whatsapp = ?, font_key = ?, share_image_id = ?,
+            announce_text = ?, announce_link = ?, announce_from = ?, announce_until = ?
       WHERE id = 1`,
     [
       before?.brand_colour ?? DEFAULT_BRAND_COLOUR,
@@ -547,13 +1122,35 @@ async function main() {
       before?.social_facebook ?? '',
       before?.social_instagram ?? '',
       before?.social_whatsapp ?? '',
-      before?.home_layout ?? null,
-      before?.home_layout_draft ?? null,
+      before?.font_key ?? 'system',
+      before?.share_image_id ?? null,
+      before?.announce_text ?? '',
+      before?.announce_link ?? '',
+      before?.announce_from ?? '',
+      before?.announce_until ?? '',
     ],
   )
+  await siteExecute(
+    SITE,
+    `UPDATE storefront_pages SET layout = ?, layout_draft = ? WHERE kind = 'home'`,
+    [beforePage?.layout ?? null, beforePage?.layout_draft ?? null],
+  )
+  // Any page this test created along the way. Scoped to the test's own slug
+  // prefix so a real page an owner made is never swept up.
+  await siteExecute(SITE, `DELETE FROM storefront_pages WHERE slug LIKE 'zz-test-%'`)
+  // Product pages have no slug — see 079 — so the filter above cannot reach
+  // them, and one left behind makes the next run's "can be created" fail
+  // against its own leftovers. Scoped to this test's own titles.
+  await siteExecute(SITE, `DELETE FROM storefront_pages WHERE kind = 'product' AND title LIKE 'ZZ Test%'`)
+  // The version rows the publish tests wrote. Scoped to this test's own
+  // marker so a shop's real history is never swept up — and worth doing,
+  // because otherwise a run leaves the front page's history full of "PUB 7".
+  await siteExecute(SITE, `DELETE FROM storefront_page_versions WHERE replaced_by = 'Tester'`)
+  await siteExecute(SITE, `DELETE FROM storefront_saved_sections WHERE name LIKE 'ZZ Test%'`)
+
   const restored = await getLayout(SITE)
   ok('settings restored', restored.theme.heroHeadline === String(before?.hero_headline ?? ''))
-  ok('no draft left behind', restored.draft === (before?.home_layout_draft ? restored.draft : null))
+  ok('no draft left behind', restored.draft === (beforePage?.layout_draft ? restored.draft : null))
 
   console.log(`\n${fails === 0 ? 'All builder checks passed.' : `${fails} FAILED.`}`)
   process.exit(fails === 0 ? 0 : 1)

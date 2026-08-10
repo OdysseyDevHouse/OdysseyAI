@@ -1,6 +1,16 @@
 import { requireCapability } from '@/lib/auth'
-import { getLayout } from '@/lib/site/storefrontLayout'
+import { getTheme } from '@/lib/site/storefrontLayout'
+import {
+  getPageLayout,
+  homePage,
+  listPages,
+  listSavedSections,
+  listVersions,
+  type StorefrontPage,
+} from '@/lib/site/storefrontPages'
 import { getOnlineSettings, listDepartmentVisibility } from '@/lib/site/onlineStore'
+import { liveSpecials } from '@/lib/site/specials'
+import { subscriberCount } from '@/lib/site/storefrontSubscribers'
 import {
   publishedDepartments,
   resolveSectionContent,
@@ -27,17 +37,64 @@ import Builder from './Builder'
 
 export const dynamic = 'force-dynamic'
 
-export default async function BuilderPage() {
+export default async function BuilderPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>
+}) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('online.edit')
+  const { page: wanted } = await searchParams
 
-  const [layout, settings, departments, token, storeName] = await Promise.all([
-    getLayout(siteId),
+  const [theme, settings, departments, token, storeName, pages, specials, subscribers] =
+    await Promise.all([
+    getTheme(siteId),
     getOnlineSettings(siteId),
     listDepartmentVisibility(siteId),
     createPublicStoreToken(siteId),
     publicSiteName(siteId),
+    listPages(siteId),
+    // The ones a countdown could sensibly point at: switched on and not
+    // finished. `liveSpecials` already answers exactly that question.
+    liveSpecials(siteId),
+    subscriberCount(siteId),
   ])
+
+  /*
+   * Which page is being edited.
+   *
+   * The id comes from the URL so the switcher is a link and the browser's back
+   * button works — but it is still a claim from outside, so it is matched
+   * against the site's OWN pages rather than trusted. Anything unrecognised
+   * falls back to the front page rather than erroring: a stale bookmark to a
+   * deleted page should land somewhere useful.
+   */
+  const current: StorefrontPage | null =
+    pages.find((p) => String(p.id) === String(wanted)) ??
+    pages.find((p) => p.kind === 'home') ??
+    (await homePage(siteId))
+
+  // No page row at all means 070 has not run here. Nothing to build.
+  if (!current) {
+    return (
+      <>
+        <PageHeader title="Page builder" subtitle="What customers see when they open your shop" />
+        <PageBody>
+          <p className="text-sm text-muted">This shop has no pages yet.</p>
+        </PageBody>
+      </>
+    )
+  }
+
+  const [layoutState, versions, savedSections] = await Promise.all([
+    getPageLayout(siteId, current.id),
+    // Per PAGE — a version belongs to the page it replaced.
+    listVersions(siteId, current.id),
+    // Shop-wide, deliberately: the whole point is to use one page's section on
+    // another, so scoping these per page would defeat them.
+    listSavedSections(siteId),
+  ])
+  const layout = { theme, published: layoutState.published, draft: layoutState.draft }
 
   // What the owner is editing: the draft when there is one, else what is live.
   const editing = layout.draft ?? layout.published
@@ -65,9 +122,14 @@ export default async function BuilderPage() {
   const resolved = context ? await resolveSectionContent(context, editing) : editing.map(() => ({}))
   const bannerImages = await storefrontImagesByIds(siteId, [
     ...editing
-      // A carousel's slides carry their own ids, and they need resolving here
-      // for exactly the same reason a banner's does.
-      .flatMap((s) => [s.imageId, ...(s.slides ?? []).map((slide) => slide.imageId)])
+      // A carousel's slides and a logo strip's pictures carry their own ids,
+      // and they need resolving here for exactly the same reason a banner's
+      // does — a closed shop must still show them while the page is built.
+      .flatMap((s) => [
+        s.imageId,
+        ...(s.slides ?? []).map((slide) => slide.imageId),
+        ...(s.logoImageIds ?? []),
+      ])
       .filter((id): id is number => typeof id === 'number' && id > 0),
     // The logo travels with them: it comes from the same library, and the
     // picker in Appearance needs it to draw a thumbnail before the dialog has
@@ -79,13 +141,20 @@ export default async function BuilderPage() {
     <>
       <PageHeader
         title="Page builder"
-        subtitle="What customers see when they open your shop"
+        subtitle={
+          current.kind === 'home'
+            ? 'What customers see when they open your shop'
+            : `Editing “${current.title}”`
+        }
         action={
           layout.draft !== null ? <Badge tone="warning">Unpublished changes</Badge> : undefined
         }
       />
       <PageBody>
         <Builder
+          key={current.id}
+          page={current}
+          pages={pages}
           theme={layout.theme}
           published={layout.published}
           draft={layout.draft}
@@ -94,8 +163,20 @@ export default async function BuilderPage() {
             ...resolved[i],
             // After the spread, so a closed shop — whose resolver returned {} —
             // still shows its banners.
-            ...(section.kind === 'banner'
+            ...(section.kind === 'banner' || section.kind === 'split'
               ? { image: section.imageId ? bannerImages.get(section.imageId) ?? null : null }
+              : {}),
+            // Same reasoning, and the same map: a strip's pictures must show
+            // while the shop is closed and the page is still being built.
+            ...(section.kind === 'logos'
+              ? {
+                  logoImages: new Map(
+                    (section.logoImageIds ?? []).flatMap((id) => {
+                      const found = bannerImages.get(id)
+                      return found ? [[id, found] as const] : []
+                    }),
+                  ),
+                }
               : {}),
             ...(section.kind === 'carousel'
               ? {
@@ -113,6 +194,12 @@ export default async function BuilderPage() {
             .filter((d) => d.showOnline || d.publishedByParent)
             .map((d) => ({ id: d.id, name: d.name }))}
           publishedDepartments={publishedDepts}
+          // Id and name only — see the prop's note on why whole specials do
+          // not cross into the browser bundle.
+          specials={specials.map((s) => ({ id: s.id, name: s.name }))}
+          subscriberCount={subscribers}
+          versions={versions}
+          savedSections={savedSections}
           storeName={storeName ?? 'Your shop'}
           blurb={settings.blurb}
           storeOpen={settings.isEnabled}

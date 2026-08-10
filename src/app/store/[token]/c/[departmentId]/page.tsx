@@ -4,10 +4,19 @@ import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import {
   publishedDepartments,
   publishedProducts,
+  resolveSectionContent,
   storefrontContext,
 } from '@/lib/site/storefront'
 import { getPublishedLayout } from '@/lib/site/storefrontLayout'
+import {
+  departmentPage,
+  getPageSectionsFor,
+  getPublishedPageLayout,
+} from '@/lib/site/storefrontPages'
+import { verifyPreviewToken } from '@/lib/previewToken'
 import { Icons } from '@/components/ui'
+import HomeSections, { type SectionContent } from '../../HomeSections'
+import PreviewBar from '../../PreviewBar'
 import CategoryBrowser from './CategoryBrowser'
 
 /**
@@ -64,10 +73,13 @@ export async function generateMetadata({
 
 export default async function DepartmentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string; departmentId: string }>
+  searchParams: Promise<{ q?: string; preview?: string }>
 }) {
   const { token, departmentId } = await params
+  const { q, preview: previewToken } = await searchParams
   const found = await resolve(token, departmentId)
 
   /*
@@ -95,13 +107,49 @@ export default async function DepartmentPage({
   const { context, department } = found
   // The grid/list choice lives on the THEME, with the rest of the shop's
   // appearance — it is a look, not a rule about what may be sold.
-  const [products, layout] = await Promise.all([
+  const [products, layout, page] = await Promise.all([
     publishedProducts(context, { departmentId: department.id, limit: MAX_PRODUCTS }),
     getPublishedLayout(context.siteId),
+    departmentPage(context.siteId, department.id),
   ])
+
+  /*
+   * The department's OWN sections, if the owner built any.
+   *
+   * ── ABSENT MEANS UNCHANGED ───────────────────────────────────────────────
+   *
+   * Almost no department has a page, and the ones that do not must render
+   * exactly as they always have. So this resolves to an empty array and draws
+   * nothing rather than to some default arrangement — a department that grew
+   * three sections nobody asked for is a worse outcome than one with none.
+   *
+   * Above the products, not below: a banner explaining the aisle is a thing
+   * you read before choosing, and a shopper who has already started scrolling
+   * the grid has made their choice.
+   */
+  const preview = previewToken ? await verifyPreviewToken(previewToken) : null
+  /*
+   * A preview pass can see this department's draft even when the page is
+   * switched off — that is the case it exists for. Without one, an unpublished
+   * department page renders nothing, exactly as before.
+   */
+  const shown = page
+    ? preview
+      ? await getPageSectionsFor(context.siteId, page.id, preview)
+      : page.isPublished
+        ? { sections: await getPublishedPageLayout(context.siteId, page.id), isPreview: false }
+        : { sections: [], isPreview: false }
+    : { sections: [], isPreview: false }
+
+  const sections = shown.sections
+  const resolved = sections.length ? await resolveSectionContent(context, sections) : []
+  const content: SectionContent[] = sections.map((section, i) => ({ section, ...resolved[i] }))
 
   return (
     <div>
+      {shown.isPreview && page && (
+        <PreviewBar builderHref={`/online-store/builder?page=${page.id}`} />
+      )}
       <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 text-sm">
         <Link href={`/store/${token}`} className="font-medium text-brand hover:underline">
           All products
@@ -114,6 +162,24 @@ export default async function DepartmentPage({
 
       <h1 className="mt-2 text-xl font-semibold text-ink">{department.name}</h1>
 
+      {content.length > 0 && (
+        <div className="mt-4">
+          <HomeSections
+            token={token}
+            content={content}
+            theme={layout.theme}
+            display={{
+              layout: layout.theme.productLayout,
+              showStock: context.settings.showStock,
+              showPhotos: context.settings.showPhotos,
+              showBrands: context.settings.showBrands,
+              showDepartmentImages: context.settings.showDepartmentImages,
+            }}
+            imageSrc={(imageId) => `/api/store-images/${token}/shop/${imageId}`}
+          />
+        </div>
+      )}
+
       <CategoryBrowser
         token={token}
         departmentName={department.name}
@@ -122,6 +188,7 @@ export default async function DepartmentPage({
         showStock={context.settings.showStock}
         showPhotos={context.settings.showPhotos}
         showBrands={context.settings.showBrands}
+        initialQuery={q ?? ''}
       />
 
       {/* Said only when the cap actually bit, so a small department never sees

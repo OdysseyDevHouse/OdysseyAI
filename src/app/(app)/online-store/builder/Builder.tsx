@@ -13,6 +13,7 @@ import {
   CardHeader,
   ChoiceTile,
   ColourInput,
+  ConfirmModal,
   EmptyState,
   Field,
   FieldGroup,
@@ -31,39 +32,65 @@ import {
 import {
   BRAND_SWATCHES,
   DEFAULT_AUTOPLAY_SECONDS,
+  DEFAULT_CONSENT_TEXT,
+  FONT_KEYS,
+  FONT_LABEL,
+  announcementShowing,
   MAX_AUTOPLAY_SECONDS,
+  MAX_LOGOS,
+  MAX_QUOTES,
+  MAX_RICH_BLOCKS,
   MAX_SECTIONS,
   MAX_SECTION_CARDS,
   MAX_SECTION_TEXT,
   MAX_SLIDES,
+  MAX_SPAN_TEXT,
   MIN_AUTOPLAY_SECONDS,
   PAGE_PRESETS,
   SECTION_HINT,
-  SECTION_KINDS,
   SECTION_LABEL,
+  kindsFor,
   SOURCE_HINT,
   SOURCE_LABEL,
-  PRODUCT_SOURCES,
   describeLayoutChanges,
   isScheduledNow,
   normaliseSections,
+  pageWarnings,
+  sectionName,
+  sourcesFor,
   shopToday,
   type BannerSlide,
   type HomeSection,
   type LayoutChange,
   type PagePreset,
+  type RichBlock,
+  type RichBlockType,
+  type RichSpan,
   type SectionKind,
   type StorefrontTheme,
+  type Testimonial,
   // The pure model, NOT lib/site/storefrontLayout — importing the server
   // module here would pull the database layer into the browser bundle.
 } from '@/lib/storefrontModel'
 import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefront'
 import type { StorefrontImage } from '@/lib/site/storefrontImages'
+import type { PageVersion, SavedSection, StorefrontPage } from '@/lib/site/storefrontPages'
 import type { ProductDisplay, SectionContent } from '@/app/store/[token]/HomeSections'
 import { BuilderCanvas, type PreviewWidth } from './BuilderCanvas'
 import ProductPicker from './ProductPicker'
+import Outline from './Outline'
 import PicturePicker from '@/components/PicturePicker'
-import { discardDraftAction, publishDraftAction, saveDraftAction, saveThemeAction } from './actions'
+import {
+  deleteSavedSectionAction,
+  discardDraftAction,
+  previewLinkAction,
+  restoreVersionAction,
+  saveSectionAction,
+  schedulePublishAction,
+  publishDraftAction,
+  saveDraftAction,
+  saveThemeAction,
+} from './actions'
 
 /**
  * The page builder: the real shop on the left, the settings for whatever is
@@ -96,6 +123,14 @@ const AUTOSAVE_MS = 1200
  * without keeping an unbounded copy of the page for a session that runs all
  * afternoon.
  */
+/**
+ * How many sections a page needs before the outline is offered.
+ *
+ * Below this the canvas IS the outline — everything fits on a screen and a
+ * second list of the same names is noise in a panel that is already busy.
+ */
+const OUTLINE_FROM = 5
+
 const HISTORY_LIMIT = 50
 
 let idCounter = 0
@@ -135,7 +170,67 @@ function newSection(kind: SectionKind): HomeSection {
     }
   }
   if (kind === 'text') return { ...base, title: '', text: '', align: 'left' }
+  if (kind === 'split') {
+    return {
+      ...base,
+      title: 'A word about us',
+      imageId: null,
+      imageAlt: '',
+      bodyText: '',
+      buttonLabel: '',
+      linkUrl: '',
+      side: 'left',
+    }
+  }
+  if (kind === 'reviews') {
+    return { ...base, title: 'What customers say', maxItems: 6, minRating: 4, departmentId: null }
+  }
+  if (kind === 'countdown') {
+    return {
+      ...base,
+      title: 'Sale ends soon',
+      specialId: null,
+      endsAt: '',
+      bodyText: '',
+      finishedText: '',
+    }
+  }
+  if (kind === 'richtext') {
+    // One empty paragraph, not zero: an editor with no rows shows the owner
+    // nothing to type into, and "add a paragraph" before you can write a word
+    // is a step nobody should need.
+    return { ...base, title: '', blocks: [{ type: 'p', spans: [{ text: '' }] }] }
+  }
+  if (kind === 'testimonial') {
+    return { ...base, title: 'In their words', quotes: [newQuote()] }
+  }
+  if (kind === 'signup') {
+    return {
+      ...base,
+      title: 'Keep in touch',
+      bodyText: 'News, offers and what is fresh — straight to your inbox.',
+      buttonLabel: 'Sign up',
+      // The default wording, not blank — a form collecting addresses with no
+      // consent line is the one thing this section must never be.
+      consentText: DEFAULT_CONSENT_TEXT,
+      thanksText: '',
+    }
+  }
+  if (kind === 'logos') return { ...base, title: 'Brands we stock', logoImageIds: [] }
+  if (kind === 'video') return { ...base, title: '', videoProvider: 'youtube', videoId: '' }
+  if (kind === 'map') return { ...base, title: 'Where to find us', addressText: '', mapUrl: '' }
+  if (kind === 'spacer') return { ...base, title: '', size: 'medium' }
   return { ...base, title: '' }
+}
+
+/** A blank quote. Same id reasoning as `newSlide` — date-free. */
+function newQuote(): Testimonial {
+  return {
+    id: `q-${++idCounter}-${Math.random().toString(36).slice(2, 7)}`,
+    quote: '',
+    author: '',
+    detail: '',
+  }
 }
 
 /** A blank slide. Same id reasoning as `newId` — date-free, so two in one
@@ -206,6 +301,8 @@ const CHANGE_TONE: Record<LayoutChange['kind'], 'brand' | 'success' | 'danger' |
 const CARD_ICONS = ['🚚', '🕘', '💳', '📦', '🎁', '⭐', '✅', '📞', '📍', '🔒', '♻️', '🛠️']
 
 export default function Builder({
+  page,
+  pages,
   theme: initialTheme,
   published,
   draft,
@@ -218,7 +315,22 @@ export default function Builder({
   storePath,
   display,
   images,
+  specials,
+  subscriberCount,
+  versions,
+  savedSections,
 }: {
+  /**
+   * The page being edited.
+   *
+   * The builder is otherwise page-agnostic: every section, every drag and the
+   * whole inspector work on an array, and always did. This is the id that
+   * array gets saved against, plus enough about the page to say which one the
+   * owner is looking at.
+   */
+  page: StorefrontPage
+  /** Every page, for the switcher. */
+  pages: StorefrontPage[]
   theme: StorefrontTheme
   published: HomeSection[]
   draft: HomeSection[] | null
@@ -235,6 +347,20 @@ export default function Builder({
   storePath: string
   /** Passed straight to the canvas so the preview matches the shop. */
   display: ProductDisplay
+  /**
+   * Specials a countdown can be bound to.
+   *
+   * Name and id only: the inspector draws a picker, and handing the browser
+   * whole specials would put every shop's pricing rules in the bundle of a
+   * screen that needs two fields.
+   */
+  specials: { id: number; name: string }[]
+  /** How many people are on the mailing list — shown beside the sign-up form. */
+  subscriberCount: number
+  /** What this page used to be, newest first. */
+  versions: PageVersion[]
+  /** Sections kept from anywhere in the shop. */
+  savedSections: SavedSection[]
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -273,6 +399,15 @@ export default function Builder({
   /** Collapsing the panel gives the preview the whole width. */
   const [inspectorOpen, setInspectorOpen] = useState(true)
   const [presetsOpen, setPresetsOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduleAt, setScheduleAt] = useState(page.publishAt)
+  const [outlineOpen, setOutlineOpen] = useState(true)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  /** The version awaiting confirmation, because restoring replaces the draft. */
+  const [restoring, setRestoring] = useState<PageVersion | null>(null)
+  /** The section being given a name to save, if any. */
+  const [savingSection, setSavingSection] = useState<HomeSection | null>(null)
+  const [saveName, setSaveName] = useState('')
   /** The "here is what will change" dialog, shown before anything goes live. */
   const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -429,7 +564,7 @@ export default function Builder({
     if (currentJson === savedJson.current) return
     setSaveState('saving')
     const timer = setTimeout(async () => {
-      const result = await saveDraftAction(sections)
+      const result = await saveDraftAction(page.id, sections)
       if (result.ok) {
         savedJson.current = currentJson
         setSaveState('saved')
@@ -439,7 +574,7 @@ export default function Builder({
       }
     }, AUTOSAVE_MS)
     return () => clearTimeout(timer)
-  }, [currentJson, sections, toast])
+  }, [currentJson, sections, toast, page.id])
 
   // Flash "Saved" briefly once an autosave lands, then fall back to idle.
   // Without this the 'saved' state was computed but never shown, so the bar
@@ -526,6 +661,53 @@ export default function Builder({
   }
 
   /**
+   * Drop a saved section onto this page, at the end.
+   *
+   * A COPY with a fresh id, and fresh ids for anything inside it that has one.
+   * Adding the same saved section twice would otherwise put two sections with
+   * the same key on one page — and the nested ids matter for the same reason
+   * they do in `duplicate`: a shared slide id makes dragging one carousel's
+   * slide reorder the other's.
+   */
+  /**
+   * Move the section at `index` one place, for the outline's arrows.
+   *
+   * By INDEX rather than by the two ids `reorder` takes: the outline knows
+   * where a row sits and wants "one place up", and translating that back into
+   * a pair of ids at the call site would just be this function inlined.
+   */
+  function moveByIndex(index: number, by: number) {
+    const to = index + by
+    if (to < 0 || to >= sections.length) return
+    commit((prev) => {
+      const next = [...prev]
+      const [moved] = next.splice(index, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
+  }
+
+  function insertSaved(saved: HomeSection) {
+    if (sections.length >= MAX_SECTIONS) {
+      toast.error(`A page can hold ${MAX_SECTIONS} sections.`)
+      return
+    }
+    const copy: HomeSection = {
+      ...saved,
+      id: newId(saved.kind),
+      productIds: saved.productIds ? [...saved.productIds] : undefined,
+      logoImageIds: saved.logoImageIds ? [...saved.logoImageIds] : undefined,
+      cards: saved.cards?.map((c) => ({ ...c })),
+      slides: saved.slides?.map((s) => ({ ...s, id: newSlide().id })),
+      quotes: saved.quotes?.map((q) => ({ ...q, id: newQuote().id })),
+      blocks: saved.blocks?.map((b) => ({ ...b, spans: b.spans.map((s) => ({ ...s })) })),
+    }
+    commit((prev) => [...prev, copy])
+    setSelectedId(copy.id)
+    toast.success('Added at the bottom of the page.')
+  }
+
+  /**
    * Copy a section, and put the copy directly beneath the original.
    *
    * Beneath rather than at the end, because the reason to duplicate is almost
@@ -554,6 +736,13 @@ export default function Builder({
       // slide editor, and two carousels sharing them would make dragging a
       // slide in one reorder the other.
       slides: source.slides?.map((s) => ({ ...s, id: newSlide().id })),
+      // Fresh quote ids for the same reason as slides: an id is the reorder
+      // key, and two sections sharing them would move the wrong quote.
+      quotes: source.quotes?.map((q) => ({ ...q, id: newQuote().id })),
+      // Copied rather than shared — same reasoning as productIds. A shared
+      // array would make editing one section silently edit the other.
+      logoImageIds: source.logoImageIds ? [...source.logoImageIds] : undefined,
+      blocks: source.blocks?.map((b) => ({ ...b, spans: b.spans.map((s) => ({ ...s })) })),
     }
     commit((prev) => {
       const index = prev.findIndex((s) => s.id === id)
@@ -598,27 +787,69 @@ export default function Builder({
     [published, sections],
   )
 
+  /*
+   * Problems worth mentioning before this goes live. Computed in the browser
+   * from the sections it already holds, for the same reason the change list is:
+   * it has to be ready the instant the owner reaches for Publish.
+   */
+  const warnings = useMemo(() => pageWarnings(sections), [sections])
+
   function publish() {
     setConfirmOpen(false)
     startAction(async () => {
       // Flush the draft first: publishing copies the SERVER's draft, so an
       // unsaved keystroke would otherwise be silently left behind.
-      await saveDraftAction(sections)
+      await saveDraftAction(page.id, sections)
       savedJson.current = currentJson
 
-      const result = await publishDraftAction()
+      const result = await publishDraftAction(page.id)
       if (!result.ok) {
         toast.error(result.error)
         return
       }
-      toast.success('Your shop front page is live.')
+      toast.success(
+        page.kind === 'home' ? 'Your shop front page is live.' : `“${page.title}” is live.`,
+      )
       router.refresh()
+    })
+  }
+
+  /**
+   * Open this page's draft on the real shop, in a new tab.
+   *
+   * ── THE TAB IS OPENED BEFORE THE AWAIT, NOT AFTER ────────────────────
+   *
+   * A browser only allows `window.open` while it can still attribute the call
+   * to a click. Minting the link first and opening the tab afterwards puts an
+   * await in between, by which point the gesture has expired and every popup
+   * blocker silently swallows it — which looks exactly like a broken button.
+   *
+   * So the tab is opened empty and immediately, and its location is set once
+   * the link comes back. If the action fails the tab is closed again, so a
+   * failure does not leave a blank window sitting there.
+   */
+  function openPreview() {
+    const tab = window.open('', '_blank')
+    startAction(async () => {
+      const result = await previewLinkAction(page.id, sections)
+      if (!result.ok) {
+        tab?.close()
+        toast.error(result.error)
+        return
+      }
+      // The draft was flushed server-side to mint this, so the local copy is
+      // now what is saved — recording that stops the autosave writing it again.
+      savedJson.current = currentJson
+      if (tab) tab.location.href = result.url
+      // Blocked despite the synchronous open. Better to say so than to leave
+      // the owner clicking a button that appears to do nothing.
+      else toast.error('Your browser blocked the new tab. Allow pop-ups for this site.')
     })
   }
 
   function discard() {
     startAction(async () => {
-      await discardDraftAction()
+      await discardDraftAction(page.id)
       // Through commit, so discarding is itself undoable: it is the most
       // destructive button on the screen, and the one most easily hit by
       // someone who meant "undo my last change".
@@ -647,6 +878,44 @@ export default function Builder({
     <>
       <Card>
         <CardBody className="flex flex-wrap items-center gap-3">
+          {/*
+            Which page is being edited, and how to reach the others.
+
+            A menu rather than tabs: a shop can have thirty pages, and thirty
+            tabs is a scrollbar. It sits FIRST in the bar because it answers
+            "what am I looking at" — a question the rest of the bar assumes you
+            already know the answer to.
+          */}
+          {pages.length > 1 && (
+            <Menu
+              variant="secondary"
+              align="left"
+              label={
+                <>
+                  <Icons.LayoutGrid size={15} />
+                  <span className="max-w-40 truncate">{page.title || 'Front page'}</span>
+                  <Icons.ChevronDown size={14} />
+                </>
+              }
+            >
+              {pages.map((p) => (
+                <MenuItem
+                  key={p.id}
+                  onClick={() => router.push(`/online-store/builder?page=${p.id}`)}
+                >
+                  {p.title || 'Untitled'}
+                  {/* Said here, because the reason to switch pages is often
+                      "which one did I leave half-finished". */}
+                  {p.hasDraft && <span className="ml-2 text-xs text-warning-ink">Draft</span>}
+                </MenuItem>
+              ))}
+              <MenuSeparator />
+              <MenuItem onClick={() => router.push('/online-store/pages')}>
+                Manage pages…
+              </MenuItem>
+            </Menu>
+          )}
+
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-ink">
               {hasUnpublished ? 'You have changes customers cannot see yet' : 'Your page is live'}
@@ -656,9 +925,14 @@ export default function Builder({
                 ? 'Saving your draft…'
                 : saveState === 'saved'
                   ? 'Draft saved.'
-                  : hasUnpublished
-                    ? 'Publish when you are happy with it.'
-                    : 'Everything here is what shoppers see.'}
+                  : /* A pending schedule outranks the usual nudge: "publish
+                       when you are happy with it" is misleading advice for a
+                       page that is going to publish itself tonight. */
+                    page.publishAt
+                    ? `Going live by itself at ${page.publishAt.replace('T', ', ')}.`
+                    : hasUnpublished
+                      ? 'Publish when you are happy with it.'
+                      : 'Everything here is what shoppers see.'}
             </p>
           </div>
 
@@ -688,8 +962,36 @@ export default function Builder({
             </Button>
           </div>
 
+          {/* Straight to THIS page on the real shop, not the shop's front
+              door: on a policy page, "View shop" landing on the home page
+              means finding it again by hand.
+
+              Only when it is actually reachable — an unpublished page would
+              open the shop's own "we couldn't find that", which looks like a
+              fault rather than the state it is. */}
+          {/*
+            Walk the draft on the real shop.
+
+            Offered whatever the page's published state, unlike "View shop":
+            previewing something not yet live is the entire point, and an
+            unpublished page is exactly the one an owner most wants to check.
+            A closed shop is the one case it cannot work — the storefront
+            serves nothing at all — so it is hidden there rather than handing
+            over a link that 404s.
+          */}
           {storeOpen && (
-            <a href={storePath} target="_blank" rel="noreferrer">
+            <Button variant="ghost" onClick={openPreview} disabled={busy}>
+              <Icons.Eye size={15} />
+              Preview
+            </Button>
+          )}
+
+          {storeOpen && (page.kind === 'home' || page.isPublished) && (
+            <a
+              href={page.kind === 'standard' ? `${storePath}/page/${page.slug}` : storePath}
+              target="_blank"
+              rel="noreferrer"
+            >
               <Button variant="ghost">
                 <Icons.ExternalLink size={15} />
                 View shop
@@ -701,6 +1003,15 @@ export default function Builder({
               Discard changes
             </Button>
           )}
+          {/* Publishing later. Beside Publish rather than buried in a panel,
+              because it is the same decision with a different moment attached
+              — and an owner who has decided to go live tonight should not have
+              to hunt for where to say so. */}
+          <Button variant="ghost" onClick={() => setScheduleOpen(true)} disabled={busy}>
+            <Icons.Clock size={15} />
+            {page.publishAt ? 'Scheduled' : 'Later'}
+          </Button>
+
           {/* Opens the summary rather than publishing outright. This is the
               one button on the screen that changes what the public sees, and
               it was the only one with nothing between the click and the
@@ -731,6 +1042,32 @@ export default function Builder({
           </>
         }
       >
+        {/*
+          What is wrong with the page, above the change list.
+
+          Above, because it is the thing that might change the decision — a
+          summary read after the fact is a summary nobody acts on. Never a
+          blocker: see `pageWarnings` on why a publish that can be refused is
+          one that refuses somebody at the worst possible moment.
+        */}
+        {warnings.length > 0 && (
+          <div className="mb-4">
+            <Callout tone="warning" title="Worth a look first">
+              <ul className="mt-1 flex flex-col gap-0.5">
+                {warnings.map((w) => (
+                  <li key={w.label} className="text-sm">
+                    {w.label}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-sm">
+                You can publish anyway — a description is what a shopper using a screen reader
+                hears where the picture is.
+              </p>
+            </Callout>
+          </div>
+        )}
+
         {changes.length === 0 ? (
           /*
             Reachable: the theme is saved separately and is live already, so an
@@ -756,6 +1093,164 @@ export default function Builder({
         )}
       </Modal>
 
+      <Modal
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        title="Publish this page later"
+        description="It goes live by itself, with whatever is in the draft at that moment."
+        footer={
+          <>
+            {/* Cancelling a schedule is a distinct action from closing the
+                dialog, so it is its own button rather than "set it to blank". */}
+            {page.publishAt && (
+              <Button
+                variant="danger-ghost"
+                disabled={busy}
+                onClick={() =>
+                  startAction(async () => {
+                    const result = await schedulePublishAction(page.id, '', sections)
+                    if (!result.ok) {
+                      toast.error(result.error)
+                      return
+                    }
+                    setScheduleOpen(false)
+                    toast.success('It will not publish by itself now.')
+                    router.refresh()
+                  })
+                }
+              >
+                Cancel the schedule
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => setScheduleOpen(false)}>
+              Close
+            </Button>
+            <Button
+              variant="primary"
+              disabled={busy || !scheduleAt.trim()}
+              onClick={() =>
+                startAction(async () => {
+                  const result = await schedulePublishAction(page.id, scheduleAt, sections)
+                  if (!result.ok) {
+                    toast.error(result.error)
+                    return
+                  }
+                  savedJson.current = currentJson
+                  setScheduleOpen(false)
+                  toast.success('Set. It will go live by itself.')
+                  router.refresh()
+                })
+              }
+            >
+              Schedule it
+            </Button>
+          </>
+        }
+      >
+        <Field
+          label="Go live at"
+          hint="Your own clock, not the shopper’s. It can be a few minutes late, never early."
+        >
+          <Input
+            type="datetime-local"
+            value={scheduleAt}
+            onChange={(e) => setScheduleAt(e.target.value)}
+          />
+        </Field>
+
+        {/*
+          Said before they commit. Scheduling captures the draft as it is now
+          and the page keeps taking edits afterwards — so what goes live is
+          whatever the draft holds at the moment it fires, not a frozen copy.
+          That is the useful behaviour and the surprising one.
+        */}
+        <p className="mt-3 text-sm text-muted">
+          Whatever is in your draft when the time comes is what goes live. Carry on editing until
+          then and those changes go too.
+        </p>
+      </Modal>
+
+      {/*
+        Restoring replaces whatever is in the draft, so it asks first — unlike
+        every other control here, this one destroys work that undo cannot reach
+        (the draft on the SERVER, not the session's history).
+      */}
+      <ConfirmModal
+        open={restoring !== null}
+        onClose={() => setRestoring(null)}
+        title="Put this version back?"
+        message="Your current unpublished changes to this page will be replaced. Nothing goes live until you publish."
+        confirmLabel="Put it back"
+        tone="primary"
+        onConfirm={() => {
+          const version = restoring
+          if (!version) return
+          setRestoring(null)
+          startAction(async () => {
+            const result = await restoreVersionAction(page.id, version.id)
+            if (!result.ok) {
+              toast.error(result.error)
+              return
+            }
+            toast.success('Loaded. Publish when you are happy with it.')
+            router.refresh()
+          })
+        }}
+      />
+
+      {/* Naming a section to reuse. A dialog rather than an inline field
+          because the name is the only input and it wants a moment's thought —
+          it is what the owner will scan for on another page. */}
+      <Modal
+        open={savingSection !== null}
+        onClose={() => setSavingSection(null)}
+        title="Save this section"
+        description="Keep it to drop onto another page later."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setSavingSection(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={busy || !saveName.trim()}
+              onClick={() => {
+                const section = savingSection
+                if (!section) return
+                startAction(async () => {
+                  const result = await saveSectionAction(saveName, section)
+                  if (!result.ok) {
+                    toast.error(result.error)
+                    return
+                  }
+                  setSavingSection(null)
+                  toast.success('Saved. You will find it under “Add a saved section”.')
+                  router.refresh()
+                })
+              }}
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <Field label="Call it" hint="Something you will recognise on another page.">
+          <Input
+            value={saveName}
+            maxLength={80}
+            autoFocus
+            placeholder="e.g. Delivery cards"
+            onChange={(e) => setSaveName(e.target.value)}
+          />
+        </Field>
+        {/* Said plainly, because "template" is the word owners will expect and
+            this is deliberately not one — see 074. */}
+        <p className="mt-3 text-sm text-muted">
+          This takes a copy. Editing it here later will not change the saved one, and using the
+          saved one will not change this page.
+        </p>
+      </Modal>
+
       {/* The inspector collapses, because the canvas is drawing a whole shop
           in whatever is left over — and at 360px of panel on a laptop that is
           not much. */}
@@ -777,6 +1272,7 @@ export default function Builder({
             departments={publishedDepartments}
             selected={selectedId}
             width={width}
+            pageKind={page.kind}
             onWidthChange={setWidth}
             onSelect={(id) => {
               setSelectedId(id)
@@ -818,16 +1314,34 @@ export default function Builder({
                 title={SECTION_LABEL[selected.kind]}
                 description={SECTION_HINT[selected.kind]}
                 action={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    aria-label="Hide the settings panel"
-                    title="Hide the settings panel"
-                    onClick={() => setInspectorOpen(false)}
-                  >
-                    <Icons.Close size={15} />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {/* Keeping a section is a property of the section, so it
+                        lives on the section's own panel rather than in a
+                        toolbar that would have to say which one it meant. */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label="Save this section to use again"
+                      title="Save to use again"
+                      onClick={() => {
+                        setSaveName(sectionName(selected))
+                        setSavingSection(selected)
+                      }}
+                    >
+                      <Icons.Star size={15} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label="Hide the settings panel"
+                      title="Hide the settings panel"
+                      onClick={() => setInspectorOpen(false)}
+                    >
+                      <Icons.Close size={15} />
+                    </Button>
+                  </div>
                 }
               />
               <CardBody className="flex flex-col gap-4">
@@ -867,7 +1381,7 @@ export default function Builder({
                           patch(selected.id, { source: e.target.value as HomeSection['source'] })
                         }
                       >
-                        {PRODUCT_SOURCES.map((source) => (
+                        {sourcesFor(page.kind).map((source) => (
                           <option key={source} value={source}>
                             {SOURCE_LABEL[source]}
                           </option>
@@ -1015,7 +1529,7 @@ export default function Builder({
 
                     <Field
                       label="Where it goes when clicked"
-                      hint="A page in your shop like /store, or a full https:// link. Blank means it is not a link."
+                      hint="A full https:// link, or a page of your own shop. Blank means it is not a link."
                     >
                       <Input
                         value={selected.linkUrl ?? ''}
@@ -1024,6 +1538,10 @@ export default function Builder({
                         onChange={(e) => patch(selected.id, { linkUrl: e.target.value })}
                       />
                     </Field>
+
+                    {/* See isBareShopPath: "/store" passes validation and 404s
+                        on the live shop, which the owner cannot tell from here. */}
+                    {isBareShopPath(selected.linkUrl ?? '') && <BareShopPathWarning />}
 
                     {/* Only offered once there is somewhere to go — a button
                         that does nothing is worse than no button. */}
@@ -1080,6 +1598,407 @@ export default function Builder({
                       </Select>
                     </Field>
                   </>
+                )}
+
+                {selected.kind === 'split' && (
+                  <>
+                    <Field label="Picture">
+                      <PicturePicker
+                        value={selected.imageId ?? null}
+                        current={
+                          selected.imageId ? knownImages.get(selected.imageId) ?? null : null
+                        }
+                        onChange={(image) => {
+                          rememberImage(image)
+                          patch(selected.id, {
+                            imageId: image?.id ?? null,
+                            imageAlt: selected.imageAlt || image?.altText || '',
+                          })
+                        }}
+                      />
+                    </Field>
+
+                    <Field
+                      label="Describe the picture"
+                      hint="Read aloud to shoppers who cannot see it."
+                    >
+                      <Input
+                        value={selected.imageAlt ?? ''}
+                        maxLength={190}
+                        placeholder="e.g. Our bakers at 5am"
+                        onChange={(e) => patch(selected.id, { imageAlt: e.target.value })}
+                      />
+                    </Field>
+
+                    {/* Same rule as a banner: only once there is a picture to
+                        describe. Nagging before then is noise. */}
+                    {selected.imageId && !(selected.imageAlt ?? '').trim() && (
+                      <Callout tone="warning" title="No description yet">
+                        Shoppers using a screen reader will hear nothing where this picture is.
+                      </Callout>
+                    )}
+
+                    <Field label="Which side the picture sits on">
+                      <Select
+                        value={selected.side ?? 'left'}
+                        onChange={(e) =>
+                          patch(selected.id, { side: e.target.value as 'left' | 'right' })
+                        }
+                      >
+                        <option value="left">Picture on the left</option>
+                        <option value="right">Picture on the right</option>
+                      </Select>
+                    </Field>
+
+                    <Field label="Your words" hint="Line breaks are kept.">
+                      <Textarea
+                        value={selected.bodyText ?? ''}
+                        rows={5}
+                        maxLength={MAX_SECTION_TEXT}
+                        placeholder="We have been baking on this corner since 1974."
+                        onChange={(e) => patch(selected.id, { bodyText: e.target.value })}
+                      />
+                    </Field>
+
+                    <Field
+                      label="Where the button goes"
+                      hint="A full https:// link, or a page of your own shop."
+                    >
+                      <Input
+                        value={selected.linkUrl ?? ''}
+                        maxLength={300}
+                        placeholder="https://…"
+                        onChange={(e) => patch(selected.id, { linkUrl: e.target.value })}
+                      />
+                    </Field>
+
+                    {isBareShopPath(selected.linkUrl ?? '') && <BareShopPathWarning />}
+
+                    {(selected.linkUrl ?? '').trim() !== '' && (
+                      <Field label="Button" hint="Leave blank to show no button.">
+                        <Input
+                          value={selected.buttonLabel ?? ''}
+                          maxLength={40}
+                          placeholder="Read our story"
+                          onChange={(e) => patch(selected.id, { buttonLabel: e.target.value })}
+                        />
+                      </Field>
+                    )}
+                  </>
+                )}
+
+                {selected.kind === 'reviews' && (
+                  <>
+                    {/*
+                      Said first, because it is the thing an owner needs to
+                      know before touching anything else: this row fills itself
+                      from the review queue and cannot be hand-picked.
+                    */}
+                    <Callout tone="neutral" title="These come from your review queue">
+                      Only reviews you have approved appear here, newest first. Nothing you write
+                      goes in this section — use “Quotes” for that.
+                    </Callout>
+
+                    <Field label="How many to show">
+                      <NumberInput
+                        value={selected.maxItems ?? 6}
+                        min={1}
+                        max={24}
+                        onChange={(e) =>
+                          patch(selected.id, { maxItems: Number(e.target.value) || 6 })
+                        }
+                        className="w-24"
+                      />
+                    </Field>
+
+                    <Field
+                      label="Only show reviews of at least"
+                      hint="Approving a review means it is real, not that it is an advertisement. This keeps the honest low ones on the product page without leading your front page with them."
+                    >
+                      <Select
+                        value={String(selected.minRating ?? 4)}
+                        onChange={(e) =>
+                          patch(selected.id, { minRating: Number(e.target.value) })
+                        }
+                      >
+                        <option value="5">5 stars only</option>
+                        <option value="4">4 stars and up</option>
+                        <option value="3">3 stars and up</option>
+                        <option value="1">Every approved review</option>
+                      </Select>
+                    </Field>
+
+                    <Field label="From one department" hint="Or leave it on all of them.">
+                      <Select
+                        value={String(selected.departmentId ?? '')}
+                        onChange={(e) =>
+                          patch(selected.id, {
+                            departmentId: e.target.value ? Number(e.target.value) : null,
+                          })
+                        }
+                      >
+                        <option value="">Every department</option>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </>
+                )}
+
+                {selected.kind === 'countdown' && (
+                  <>
+                    <Field
+                      label="Counting down to"
+                      hint={
+                        specials.length === 0
+                          ? 'You have no specials running. Type a date and time instead.'
+                          : 'A special keeps itself right — extend the sale and the clock follows.'
+                      }
+                    >
+                      <Select
+                        value={String(selected.specialId ?? '')}
+                        onChange={(e) =>
+                          patch(selected.id, {
+                            specialId: e.target.value ? Number(e.target.value) : null,
+                          })
+                        }
+                      >
+                        <option value="">A date I type myself</option>
+                        {specials.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+
+                    {/*
+                      Only when it is NOT bound to a special. Showing both
+                      would invite an owner to set a date the special overrides
+                      — a field whose value is silently ignored.
+                    */}
+                    {!selected.specialId && (
+                      <Field label="Ends at" hint="Your own clock, not the shopper’s.">
+                        <Input
+                          type="datetime-local"
+                          value={selected.endsAt ?? ''}
+                          onChange={(e) => patch(selected.id, { endsAt: e.target.value })}
+                        />
+                      </Field>
+                    )}
+
+                    {selected.specialId !== null && selected.specialId !== undefined && (
+                      <Callout tone="neutral" title="Following that special">
+                        The clock reads the special’s own end time every time somebody loads the
+                        page, so changing the sale changes the clock.
+                      </Callout>
+                    )}
+
+                    <Field label="Under the heading" hint="Optional.">
+                      <Input
+                        value={selected.bodyText ?? ''}
+                        maxLength={300}
+                        placeholder="Everything in store, while stocks last"
+                        onChange={(e) => patch(selected.id, { bodyText: e.target.value })}
+                      />
+                    </Field>
+
+                    <Field
+                      label="What it says afterwards"
+                      hint="Leave blank and the whole section disappears when the time is up."
+                    >
+                      <Input
+                        value={selected.finishedText ?? ''}
+                        maxLength={120}
+                        placeholder="This sale has ended."
+                        onChange={(e) => patch(selected.id, { finishedText: e.target.value })}
+                      />
+                    </Field>
+                  </>
+                )}
+
+                {selected.kind === 'richtext' && (
+                  <RichTextEditor
+                    blocks={selected.blocks ?? []}
+                    onChange={(blocks) => patch(selected.id, { blocks })}
+                  />
+                )}
+
+                {selected.kind === 'testimonial' && (
+                  <QuoteEditor
+                    quotes={selected.quotes ?? []}
+                    onChange={(quotes) => patch(selected.id, { quotes })}
+                  />
+                )}
+
+                {selected.kind === 'logos' && (
+                  <LogoEditor
+                    imageIds={selected.logoImageIds ?? []}
+                    knownImages={knownImages}
+                    onRememberImage={rememberImage}
+                    onChange={(logoImageIds) => patch(selected.id, { logoImageIds })}
+                  />
+                )}
+
+                {selected.kind === 'signup' && (
+                  <>
+                    <Field label="Under the heading" hint="Why they should sign up.">
+                      <Textarea
+                        value={selected.bodyText ?? ''}
+                        rows={2}
+                        maxLength={300}
+                        onChange={(e) => patch(selected.id, { bodyText: e.target.value })}
+                      />
+                    </Field>
+
+                    <Field label="Button">
+                      <Input
+                        value={selected.buttonLabel ?? ''}
+                        maxLength={40}
+                        placeholder="Sign up"
+                        onChange={(e) => patch(selected.id, { buttonLabel: e.target.value })}
+                      />
+                    </Field>
+
+                    <Field
+                      label="What they are agreeing to"
+                      hint="Kept with every sign-up, exactly as worded when they ticked it."
+                    >
+                      <Textarea
+                        value={selected.consentText ?? ''}
+                        rows={3}
+                        maxLength={300}
+                        onChange={(e) => patch(selected.id, { consentText: e.target.value })}
+                      />
+                    </Field>
+
+                    {/*
+                      Blank is not allowed to pass quietly. Normalisation puts
+                      the default back, so the shop is never left collecting
+                      addresses with nothing on the record — but an owner who
+                      cleared the box deliberately should be told why it filled
+                      itself in again.
+                    */}
+                    {!(selected.consentText ?? '').trim() && (
+                      <Callout tone="warning" title="This cannot be blank">
+                        A sign-up form has to say what somebody is agreeing to, and your record
+                        has to show it. Leaving this empty puts the standard wording back.
+                      </Callout>
+                    )}
+
+                    <Field label="What it says afterwards" hint="Once they have signed up.">
+                      <Input
+                        value={selected.thanksText ?? ''}
+                        maxLength={200}
+                        placeholder="Thank you — you are on the list."
+                        onChange={(e) => patch(selected.id, { thanksText: e.target.value })}
+                      />
+                    </Field>
+
+                    <Callout tone="neutral" title={`${subscriberCount} on your list`}>
+                      Sign-ups are kept with the date and the exact wording they agreed to, so you
+                      can show permission was given.
+                    </Callout>
+                  </>
+                )}
+
+                {selected.kind === 'video' && (
+                  <>
+                    <Field label="Where it is">
+                      <Select
+                        value={selected.videoProvider ?? 'youtube'}
+                        onChange={(e) =>
+                          patch(selected.id, {
+                            videoProvider: e.target.value as 'youtube' | 'vimeo',
+                          })
+                        }
+                      >
+                        <option value="youtube">YouTube</option>
+                        <option value="vimeo">Vimeo</option>
+                      </Select>
+                    </Field>
+
+                    <Field
+                      label="Paste the link"
+                      hint="The whole address from your browser is fine — we take the bit we need."
+                    >
+                      <Input
+                        value={selected.videoId ?? ''}
+                        placeholder="https://www.youtube.com/watch?v=…"
+                        /*
+                          Reduced to an id on the way IN, so what is stored is
+                          always an id and never a URL. Doing it here rather
+                          than only in normalisation means the owner sees
+                          immediately that we understood their paste.
+                        */
+                        onChange={(e) =>
+                          patch(selected.id, {
+                            videoId: videoIdFrom(
+                              e.target.value,
+                              selected.videoProvider ?? 'youtube',
+                            ),
+                          })
+                        }
+                      />
+                    </Field>
+
+                    {(selected.videoId ?? '').trim() !== '' && (
+                      <p className="text-sm text-muted">
+                        Using video <span className="font-medium text-ink">{selected.videoId}</span>.
+                      </p>
+                    )}
+                  </>
+                )}
+
+                {selected.kind === 'map' && (
+                  <>
+                    <Field label="Your address" hint="Line breaks are kept.">
+                      <Textarea
+                        value={selected.addressText ?? ''}
+                        rows={4}
+                        maxLength={300}
+                        placeholder={'12 Main Road\nGreen Point\nCape Town 8005'}
+                        onChange={(e) => patch(selected.id, { addressText: e.target.value })}
+                      />
+                    </Field>
+
+                    <Field
+                      label="Link to directions"
+                      hint="Open your shop in Google Maps and paste the address bar here."
+                    >
+                      <Input
+                        value={selected.mapUrl ?? ''}
+                        maxLength={500}
+                        placeholder="https://maps.google.com/…"
+                        onChange={(e) => patch(selected.id, { mapUrl: e.target.value })}
+                      />
+                    </Field>
+                  </>
+                )}
+
+                {selected.kind === 'spacer' && (
+                  <Field label="How much room">
+                    <Select
+                      value={selected.size ?? 'medium'}
+                      onChange={(e) =>
+                        patch(selected.id, { size: e.target.value as 'small' | 'medium' | 'large' })
+                      }
+                    >
+                      <option value="small">A little</option>
+                      <option value="medium">Some</option>
+                      <option value="large">A lot</option>
+                    </Select>
+                  </Field>
+                )}
+
+                {selected.kind === 'divider' && (
+                  <p className="text-sm text-muted">
+                    A line, and nothing to set. Use the background below if you want the parts
+                    either side to look different too.
+                  </p>
                 )}
 
                 {selected.kind === 'categories' && (
@@ -1188,7 +2107,7 @@ export default function Builder({
                       </>
                     }
                   >
-                    {SECTION_KINDS.map((kind) => (
+                    {kindsFor(page.kind).map((kind) => (
                       <MenuItem key={kind} onClick={() => add(kind)}>
                         {SECTION_LABEL[kind]}
                       </MenuItem>
@@ -1202,7 +2121,13 @@ export default function Builder({
           {/* Ready-made pages. Below the inspector rather than above it: this
               is where somebody looks when they do not know what to do next,
               and it must not be the first thing offered to somebody who
-              already has a page they like. */}
+              already has a page they like.
+
+              Front page only: every preset is a SHOP WINDOW — a welcome, some
+              departments, a row of products. Applying one to a Returns policy
+              would replace it with a storefront, which is not a starting point
+              for the thing being edited. */}
+          {page.kind === 'home' && (
           <Card>
             <CardHeader
               title="Start from a ready-made page"
@@ -1230,6 +2155,152 @@ export default function Builder({
               </CardBody>
             )}
           </Card>
+          )}
+
+          {/*
+            The page as a list.
+
+            Above the presets and the saved sections because it is about the
+            page being edited right now, and below the inspector because the
+            inspector is what the owner is actually working in. Only once a
+            page is long enough to be hard to scan — on four sections the
+            canvas IS the outline, and a second copy of it is noise.
+          */}
+          {sections.length > OUTLINE_FROM && (
+            <Card>
+              <CardHeader
+                title="Everything on this page"
+                description={`${sections.length} sections. Click one to edit it.`}
+                action={
+                  <Button variant="ghost" size="sm" onClick={() => setOutlineOpen((o) => !o)}>
+                    {outlineOpen ? 'Hide' : 'Show'}
+                  </Button>
+                }
+              />
+              {outlineOpen && (
+                <CardBody>
+                  <Outline
+                    sections={sections}
+                    selected={selectedId}
+                    onSelect={setSelectedId}
+                    onMove={moveByIndex}
+                    onToggle={(id, enabled) => patch(id, { enabled })}
+                  />
+                </CardBody>
+              )}
+            </Card>
+          )}
+
+          {/*
+            Sections kept from anywhere in the shop.
+
+            This is also how a section gets from one page to another: save it
+            there, add it here. A dedicated "copy to page" control would need a
+            page picker, a destination-position picker, and would drop the
+            section somewhere the owner is not looking — this puts it where
+            they are, on the page they are already editing.
+          */}
+          {savedSections.length > 0 && (
+            <Card>
+              <CardHeader
+                title="Saved sections"
+                description="Add a copy to this page. Editing it here leaves the saved one alone."
+              />
+              <CardBody className="flex flex-col gap-2">
+                {savedSections.map((saved) => (
+                  <div
+                    key={saved.id}
+                    className="flex items-center gap-2 rounded-control bg-surface-2 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-ink">{saved.name}</p>
+                      <p className="text-sm text-muted">
+                        {SECTION_LABEL[saved.section.kind] ?? saved.kind}
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy || sections.length >= MAX_SECTIONS}
+                      onClick={() => insertSaved(saved.section)}
+                    >
+                      Add
+                    </Button>
+                    <Button
+                      variant="danger-ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label={`Forget “${saved.name}”`}
+                      title="Forget this"
+                      disabled={busy}
+                      onClick={() =>
+                        startAction(async () => {
+                          await deleteSavedSectionAction(saved.id)
+                          router.refresh()
+                        })
+                      }
+                    >
+                      <Icons.Trash size={14} />
+                    </Button>
+                  </div>
+                ))}
+              </CardBody>
+            </Card>
+          )}
+
+          {/*
+            What this page used to be.
+
+            Below the presets, because it is a recovery tool rather than a
+            building one — nobody opens the builder looking for it, and it must
+            not compete with the controls somebody uses every time.
+          */}
+          {versions.length > 0 && (
+            <Card>
+              <CardHeader
+                title="Earlier versions"
+                description="Loads it back as a draft. Nothing goes live until you publish."
+                action={
+                  <Button variant="ghost" size="sm" onClick={() => setHistoryOpen((o) => !o)}>
+                    {historyOpen ? 'Hide' : 'Show'}
+                  </Button>
+                }
+              />
+              {historyOpen && (
+                <CardBody className="flex flex-col gap-2">
+                  {versions.map((v) => (
+                    <div
+                      key={v.id}
+                      className="flex items-center gap-3 rounded-control bg-surface-2 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-ink">
+                          {v.replacedAt.toLocaleString('en-ZA', {
+                            day: 'numeric',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </p>
+                        <p className="text-sm text-muted">
+                          {v.sectionCount} section{v.sectionCount === 1 ? '' : 's'}
+                          {v.replacedBy && ` · replaced by ${v.replacedBy}`}
+                        </p>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => setRestoring(v)}
+                      >
+                        Put back
+                      </Button>
+                    </div>
+                  ))}
+                </CardBody>
+              )}
+            </Card>
+          )}
 
           {/* Appearance is NOT part of the draft — see saveThemeChanges. */}
           <Card>
@@ -1270,6 +2341,24 @@ export default function Builder({
                   </div>
                 </Field>
 
+                <Field
+                  label="Your typeface"
+                  hint="Loaded from your own shop, so nothing is requested from anywhere else."
+                >
+                  <Select
+                    value={theme.fontKey}
+                    onChange={(e) =>
+                      setTheme({ ...theme, fontKey: e.target.value as StorefrontTheme['fontKey'] })
+                    }
+                  >
+                    {FONT_KEYS.map((key) => (
+                      <option key={key} value={key}>
+                        {FONT_LABEL[key]}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+
                 <Field label="Product layout">
                   <Select
                     value={theme.productLayout}
@@ -1283,25 +2372,147 @@ export default function Builder({
                 </Field>
               </FieldGroup>
 
-              <FieldGroup title="Front page">
-                <Field label="Welcome headline" hint="The big line on your front page.">
-                  <Input
-                    value={theme.heroHeadline}
-                    maxLength={120}
-                    placeholder="e.g. Fresh every morning"
-                    onChange={(e) => setTheme({ ...theme, heroHeadline: e.target.value })}
+              {/*
+                What a shared link looks like.
+
+                Its own group because it is the one part of Appearance nobody
+                sees on the shop itself — it only shows up in somebody else's
+                chat window, which is exactly why it goes unnoticed until a
+                customer mentions the link "looks broken".
+              */}
+              <FieldGroup
+                title="When someone shares your link"
+                hint="Shown on WhatsApp and Facebook."
+              >
+                <Field
+                  label="The picture"
+                  hint="Wide works best — about twice as wide as it is tall."
+                >
+                  <PicturePicker
+                    value={theme.shareImageId}
+                    current={
+                      theme.shareImageId ? knownImages.get(theme.shareImageId) ?? null : null
+                    }
+                    onChange={(image) => {
+                      rememberImage(image)
+                      setTheme({ ...theme, shareImageId: image?.id ?? null })
+                    }}
                   />
                 </Field>
 
-                <Field label="Under the headline">
-                  <Textarea
-                    value={theme.heroSubtext}
-                    rows={2}
-                    maxLength={300}
-                    onChange={(e) => setTheme({ ...theme, heroSubtext: e.target.value })}
+                {/* Only when there is nothing set, and worded as what happens
+                    rather than as a fault — plenty of shops will never notice
+                    or care, and a permanent warning about an optional field is
+                    one nobody reads by the time it matters. */}
+                {!theme.shareImageId && (
+                  <Callout tone="neutral" title="No picture yet">
+                    Your link shows a plain card with just your shop’s name. A picture is what
+                    makes somebody tap it.
+                  </Callout>
+                )}
+              </FieldGroup>
+
+              <FieldGroup
+                title="Announcement strip"
+                hint="A band above everything, on every page of your shop."
+              >
+                <Field label="What it says" hint="Leave blank for no strip at all.">
+                  <Input
+                    value={theme.announceText}
+                    maxLength={200}
+                    placeholder="Free delivery on orders over R500"
+                    onChange={(e) => setTheme({ ...theme, announceText: e.target.value })}
                   />
                 </Field>
+
+                {/* Only once there is something to click on. A link field on an
+                    empty strip is a setting for a thing that does not exist. */}
+                {theme.announceText.trim() !== '' && (
+                  <>
+                    <Field
+                      label="Where it goes when clicked"
+                      hint="Optional. A full https:// link, or a page of your own shop."
+                    >
+                      <Input
+                        value={theme.announceLink}
+                        maxLength={300}
+                        placeholder="https://…"
+                        onChange={(e) => setTheme({ ...theme, announceLink: e.target.value })}
+                      />
+                    </Field>
+
+                    {isBareShopPath(theme.announceLink) && <BareShopPathWarning />}
+
+                    <div className="flex gap-3">
+                      <Field label="From">
+                        <Input
+                          type="date"
+                          value={theme.announceFrom}
+                          onChange={(e) => setTheme({ ...theme, announceFrom: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Until">
+                        <Input
+                          type="date"
+                          value={theme.announceUntil}
+                          onChange={(e) => setTheme({ ...theme, announceUntil: e.target.value })}
+                        />
+                      </Field>
+                    </div>
+
+                    {/*
+                      Dates matter more here than on a section, because an
+                      announcement is almost always an offer — and a strip still
+                      promising free delivery a week after the promotion ended
+                      is worse than no strip at all. Said as a sentence for the
+                      same reason a section's schedule is: two date boxes are a
+                      specification, a sentence is something you can check.
+                    */}
+                    <p className="text-sm text-muted">{announceSentence(theme)}</p>
+
+                    {theme.announceFrom &&
+                      theme.announceUntil &&
+                      theme.announceUntil < theme.announceFrom && (
+                        <Callout tone="warning" title="Those dates are back to front">
+                          The end is before the start, so the strip will never show. Swap them.
+                        </Callout>
+                      )}
+                  </>
+                )}
               </FieldGroup>
+
+              {/*
+                The welcome words belong to the FRONT page's hero section, and
+                nowhere else renders them. Offering them while editing a
+                Delivery page is a control that appears to do something and
+                does not — the owner types a headline, saves, and nothing on
+                the page they are looking at changes.
+
+                Hidden rather than disabled: a greyed-out field still says
+                "this is a setting of the thing you are editing", which is the
+                bit that is untrue.
+              */}
+              {page.kind === 'home' && (
+                <FieldGroup title="Front page">
+                  <Field label="Welcome headline" hint="The big line on your front page.">
+                    <Input
+                      value={theme.heroHeadline}
+                      maxLength={120}
+                      placeholder="e.g. Fresh every morning"
+                      onChange={(e) => setTheme({ ...theme, heroHeadline: e.target.value })}
+                    />
+                  </Field>
+
+                  <Field label="Under the headline">
+                    <Textarea
+                      value={theme.heroSubtext}
+                      rows={2}
+                      maxLength={300}
+                      onChange={(e) => setTheme({ ...theme, heroSubtext: e.target.value })}
+                    />
+                  </Field>
+                </FieldGroup>
+              )}
 
               <FieldGroup title="Footer" hint="Shown at the bottom of every shop page.">
                 <Field label="Opening hours">
@@ -1374,6 +2585,31 @@ export default function Builder({
                     className="font-medium text-brand hover:underline"
                   >
                     Open it in setup
+                  </Link>
+                </p>
+              </div>
+            </Card>
+          )}
+
+          {/*
+            Publishing a LAYOUT and publishing a PAGE are two different things,
+            and this is the one place that distinction bites: an owner can
+            arrange a Delivery page, hit Publish, see "it's live" — and still
+            have a page no shopper can reach, because the page itself was never
+            switched on. Nothing else on this screen would say so.
+
+            Not shown for the front page, which is always reachable when the
+            shop is open.
+          */}
+          {page.kind !== 'home' && !page.isPublished && (
+            <Card>
+              <div className="flex items-start gap-3 px-5 py-4">
+                <Icons.StatusWarning size={18} className="mt-0.5 shrink-0 text-warning" />
+                <p className="text-sm text-muted">
+                  This page is not switched on, so it is not on your shop yet — publishing here
+                  only saves the arrangement.{' '}
+                  <Link href="/online-store/pages" className="font-medium text-brand hover:underline">
+                    Switch it on under Pages
                   </Link>
                 </p>
               </div>
@@ -1640,7 +2876,7 @@ function SlideEditor({
 
                 <Field
                   label="Where it goes when clicked"
-                  hint="A page in your shop like /store, or a full https:// link."
+                  hint="A full https:// link, or a page of your own shop."
                 >
                   <Input
                     value={slide.linkUrl}
@@ -1649,6 +2885,10 @@ function SlideEditor({
                     onChange={(e) => edit(slide.id, { linkUrl: e.target.value })}
                   />
                 </Field>
+
+                {/* A slide is a banner, so it gets the banner's warning too —
+                    see isBareShopPath. */}
+                {isBareShopPath(slide.linkUrl) && <BareShopPathWarning />}
 
                 {/* Only once there is somewhere to go — a button that does
                     nothing is worse than no button. */}
@@ -1748,6 +2988,456 @@ function SlideEditor({
           </p>
         )}
       </FieldGroup>
+    </div>
+  )
+}
+
+/**
+ * Does this look like an in-shop path that is missing the shop's token?
+ *
+ * A storefront lives at /store/<token>/…, so "/store", "/page/delivery" and
+ * "/c/4" are all paths that pass `safeLinkTarget` — they are same-origin and
+ * harmless — and all 404 on the live shop. The owner cannot tell from the box
+ * they typed it into, so the builder says so.
+ *
+ * Deliberately narrow: it flags only the prefixes the shop itself owns, so a
+ * relative link to something outside the storefront is left alone.
+ */
+/**
+ * The announcement strip's schedule, said back in a sentence.
+ *
+ * The same job `scheduleSentence` does for a section, and worth repeating for
+ * the strip because this one is almost always an OFFER — the case where "is it
+ * running right now" is the question the owner actually has, and two date
+ * boxes cannot answer it.
+ */
+function announceSentence(theme: StorefrontTheme): string {
+  const from = theme.announceFrom.trim()
+  const until = theme.announceUntil.trim()
+  if (!from && !until) return 'Showing all the time.'
+
+  const window = from && until
+    ? `Shows from ${from} to ${until}, both days included.`
+    : from
+      ? `Shows from ${from} onwards.`
+      : `Shows until the end of ${until}.`
+
+  if (announcementShowing(theme)) return `${window} It is showing now.`
+  const today = shopToday()
+  return from && today < from
+    ? `${window} It is not showing yet.`
+    : `${window} It has finished showing.`
+}
+
+/** Said the same way wherever a link can be typed. */
+function BareShopPathWarning() {
+  return (
+    <Callout tone="warning" title="That link will not work">
+      Your shop’s pages all sit under your own web address. Open your shop, copy the link from
+      the address bar, and paste the whole thing here.
+    </Callout>
+  )
+}
+
+function isBareShopPath(href: string): boolean {
+  const raw = href.trim()
+  if (!raw.startsWith('/')) return false
+  // Already carries a token — /store/<something>/… — so it is fine.
+  if (/^\/store\/[^/]+\//.test(raw)) return false
+  return /^\/(store|page|c|p)(\/|$)/.test(raw)
+}
+
+/**
+ * The id inside a pasted video link.
+ *
+ * Owners paste what is in their address bar; asking them to find "the id" is
+ * asking them to know how YouTube URLs are built. Every recognised shape is
+ * reduced here, and anything unrecognised falls through to the same character
+ * filter normalisation applies — so a bare id typed by hand still works.
+ */
+function videoIdFrom(input: string, provider: 'youtube' | 'vimeo'): string {
+  const raw = input.trim()
+  if (!raw) return ''
+
+  // Not a URL at all — treat it as an id already.
+  if (!/^https?:\/\//i.test(raw)) return raw.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40)
+
+  try {
+    const url = new URL(raw)
+    if (provider === 'vimeo') {
+      // vimeo.com/76979871 — the last all-digits path segment.
+      const digits = url.pathname.split('/').filter((p) => /^\d+$/.test(p))
+      return digits[digits.length - 1] ?? ''
+    }
+    // youtube.com/watch?v=ID
+    const v = url.searchParams.get('v')
+    if (v) return v.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40)
+    // youtu.be/ID and youtube.com/embed/ID both put it last.
+    const last = url.pathname.split('/').filter(Boolean).pop() ?? ''
+    return last.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40)
+  } catch {
+    return raw.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40)
+  }
+}
+
+/**
+ * The formatted-writing editor.
+ *
+ * ── A LIST OF BLOCKS, NOT A CONTENTEDITABLE ──────────────────────────────
+ *
+ * A WYSIWYG surface would be a better typing experience and a much worse
+ * bargain: contentEditable produces HTML, and the whole reason this kind
+ * stores a tree is that we never want HTML from a browser reaching a page that
+ * takes payments. Parsing it back into blocks means writing the sanitiser we
+ * were avoiding.
+ *
+ * So each block is a textarea with a type beside it. Bold, italic and links
+ * apply to a WHOLE block rather than to a selection — which is the honest
+ * limitation of this shape, and covers what a shop page actually needs: a
+ * heading, some paragraphs, a bulleted list, the odd link.
+ */
+function RichTextEditor({
+  blocks,
+  onChange,
+}: {
+  blocks: RichBlock[]
+  onChange: (blocks: RichBlock[]) => void
+}) {
+  /** One span per block — see the header on why formatting is per block. */
+  const spanOf = (block: RichBlock): RichSpan => block.spans[0] ?? { text: '' }
+
+  const edit = (index: number, changes: Partial<RichSpan>) =>
+    onChange(
+      blocks.map((b, i) =>
+        i === index ? { ...b, spans: [{ ...spanOf(b), ...changes }] } : b,
+      ),
+    )
+
+  const setType = (index: number, type: RichBlockType) =>
+    onChange(blocks.map((b, i) => (i === index ? { ...b, type } : b)))
+
+  const move = (index: number, by: number) => {
+    const to = index + by
+    if (to < 0 || to >= blocks.length) return
+    const next = [...blocks]
+    const [moved] = next.splice(index, 1)
+    next.splice(to, 0, moved)
+    onChange(next)
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {blocks.map((block, index) => {
+        const span = spanOf(block)
+        return (
+          <div key={index} className="flex flex-col gap-2 rounded-control bg-surface-2 p-3">
+            <div className="flex items-center gap-2">
+              <Select
+                value={block.type}
+                aria-label="What kind of line"
+                className="w-36"
+                onChange={(e) => setType(index, e.target.value as RichBlockType)}
+              >
+                <option value="p">Paragraph</option>
+                <option value="h3">Heading</option>
+                <option value="ul">Bullet</option>
+                <option value="ol">Numbered</option>
+              </Select>
+
+              <div className="ml-auto flex items-center">
+                <Button
+                  variant={span.bold ? 'secondary' : 'ghost'}
+                  size="sm"
+                  iconOnly
+                  aria-label="Bold"
+                  aria-pressed={Boolean(span.bold)}
+                  title="Bold"
+                  onClick={() => edit(index, { bold: !span.bold })}
+                >
+                  <span className="text-sm font-bold">B</span>
+                </Button>
+                <Button
+                  variant={span.italic ? 'secondary' : 'ghost'}
+                  size="sm"
+                  iconOnly
+                  aria-label="Italic"
+                  aria-pressed={Boolean(span.italic)}
+                  title="Italic"
+                  onClick={() => edit(index, { italic: !span.italic })}
+                >
+                  <span className="text-sm italic">I</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={`Move line ${index + 1} up`}
+                  title="Move up"
+                  disabled={index === 0}
+                  onClick={() => move(index, -1)}
+                >
+                  <Icons.ChevronUp size={14} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={`Move line ${index + 1} down`}
+                  title="Move down"
+                  disabled={index === blocks.length - 1}
+                  onClick={() => move(index, 1)}
+                >
+                  <Icons.ChevronDown size={14} />
+                </Button>
+                <Button
+                  variant="danger-ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={`Remove line ${index + 1}`}
+                  onClick={() => onChange(blocks.filter((_, i) => i !== index))}
+                >
+                  <Icons.Trash size={14} />
+                </Button>
+              </div>
+            </div>
+
+            <Textarea
+              value={span.text}
+              rows={block.type === 'h3' ? 1 : 3}
+              maxLength={MAX_SPAN_TEXT}
+              aria-label="What it says"
+              placeholder={block.type === 'h3' ? 'A heading' : 'Write here'}
+              onChange={(e) => edit(index, { text: e.target.value })}
+            />
+
+            <Field
+              label="Link this line to"
+              hint="Optional. A full https:// link, or a page of your own shop."
+            >
+              <Input
+                value={span.href ?? ''}
+                maxLength={300}
+                placeholder="https://…"
+                onChange={(e) => edit(index, { href: e.target.value })}
+              />
+            </Field>
+
+            {/*
+              ── WHY THIS WARNING EXISTS ───────────────────────────────────
+              A shop lives at /store/<its own token>/…, so a link typed as
+              "/store" or "/page/delivery" lands on a path with no token and
+              404s. It looks perfectly reasonable in this box and is broken on
+              the live shop, which is the worst combination — so it is caught
+              here rather than discovered by a customer.
+            */}
+            {isBareShopPath(span.href ?? '') && <BareShopPathWarning />}
+          </div>
+        )
+      })}
+
+      {blocks.length < MAX_RICH_BLOCKS ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() =>
+            onChange([
+              ...blocks,
+              // Matching the LAST block's type, because writing is usually a
+              // run of the same thing — three bullets, then a paragraph — and
+              // resetting to Paragraph every time means re-choosing on each.
+              { type: blocks[blocks.length - 1]?.type ?? 'p', spans: [{ text: '' }] },
+            ])
+          }
+        >
+          <Icons.Plus size={15} />
+          Add a line
+        </Button>
+      ) : (
+        <p className="text-sm text-muted">
+          {MAX_RICH_BLOCKS} lines is the most one of these can hold.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** The repeating editor for a quotes section. */
+function QuoteEditor({
+  quotes,
+  onChange,
+}: {
+  quotes: Testimonial[]
+  onChange: (quotes: Testimonial[]) => void
+}) {
+  const edit = (id: string, changes: Partial<Testimonial>) =>
+    onChange(quotes.map((q) => (q.id === id ? { ...q, ...changes } : q)))
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Said once, where the confusion lives: this section and the reviews
+          section look similar on the page and come from opposite places. */}
+      <Callout tone="neutral" title="You write these yourself">
+        For real reviews shoppers submitted, add a “What customers say” section instead.
+      </Callout>
+
+      {quotes.map((quote, index) => (
+        <div key={quote.id} className="flex flex-col gap-2 rounded-control bg-surface-2 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-ink">Quote {index + 1}</p>
+            <Button
+              variant="danger-ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Remove quote ${index + 1}`}
+              onClick={() => onChange(quotes.filter((q) => q.id !== quote.id))}
+            >
+              <Icons.Trash size={14} />
+            </Button>
+          </div>
+
+          <Textarea
+            value={quote.quote}
+            rows={3}
+            maxLength={400}
+            aria-label="What they said"
+            placeholder="Best bread in the city."
+            onChange={(e) => edit(quote.id, { quote: e.target.value })}
+          />
+          <div className="flex gap-2">
+            <Input
+              value={quote.author}
+              maxLength={80}
+              aria-label="Who said it"
+              placeholder="Sarah M."
+              onChange={(e) => edit(quote.id, { author: e.target.value })}
+            />
+            <Input
+              value={quote.detail}
+              maxLength={80}
+              aria-label="A detail about them"
+              placeholder="Regular since 2019"
+              onChange={(e) => edit(quote.id, { detail: e.target.value })}
+            />
+          </div>
+        </div>
+      ))}
+
+      {quotes.length < MAX_QUOTES && (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => onChange([...quotes, newQuote()])}
+        >
+          <Icons.Plus size={15} />
+          Add a quote
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/** The picker for a logo strip. */
+function LogoEditor({
+  imageIds,
+  knownImages,
+  onRememberImage,
+  onChange,
+}: {
+  imageIds: number[]
+  knownImages: Map<number, StorefrontImage>
+  onRememberImage: (image: StorefrontImage | null) => void
+  onChange: (imageIds: number[]) => void
+}) {
+  const move = (index: number, by: number) => {
+    const to = index + by
+    if (to < 0 || to >= imageIds.length) return
+    const next = [...imageIds]
+    const [moved] = next.splice(index, 1)
+    next.splice(to, 0, moved)
+    onChange(next)
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {imageIds.length === 0 && (
+        <p className="text-sm text-muted">No logos yet. Add one below.</p>
+      )}
+
+      {imageIds.map((id, index) => {
+        const picture = knownImages.get(id) ?? null
+        return (
+          <div key={id} className="flex items-center gap-2 rounded-control bg-surface-2 p-2">
+            {picture ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/api/storefront-images/${picture.id}`}
+                alt=""
+                className="size-9 shrink-0 rounded-control border border-border object-contain"
+              />
+            ) : (
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-control border border-dashed border-border-strong text-muted">
+                <Icons.Picture size={14} />
+              </span>
+            )}
+            <span className="min-w-0 flex-1 truncate text-sm text-ink">
+              {/* A deleted picture is not an error — see storefrontImages —
+                  but the owner has to be told, or the strip silently shortens. */}
+              {picture?.filename ?? 'This picture has been deleted'}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Move logo ${index + 1} up`}
+              title="Move up"
+              disabled={index === 0}
+              onClick={() => move(index, -1)}
+            >
+              <Icons.ChevronUp size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Move logo ${index + 1} down`}
+              title="Move down"
+              disabled={index === imageIds.length - 1}
+              onClick={() => move(index, 1)}
+            >
+              <Icons.ChevronDown size={14} />
+            </Button>
+            <Button
+              variant="danger-ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Remove logo ${index + 1}`}
+              onClick={() => onChange(imageIds.filter((x) => x !== id))}
+            >
+              <Icons.Trash size={14} />
+            </Button>
+          </div>
+        )
+      })}
+
+      {imageIds.length < MAX_LOGOS ? (
+        <Field label="Add a logo">
+          <PicturePicker
+            // Always empty: this picker ADDS rather than replaces, so showing
+            // the last-added one as "current" would suggest picking again
+            // would swap it.
+            value={null}
+            current={null}
+            onChange={(image) => {
+              if (!image) return
+              onRememberImage(image)
+              if (imageIds.includes(image.id)) return
+              onChange([...imageIds, image.id])
+            }}
+          />
+        </Field>
+      ) : (
+        <p className="text-sm text-muted">{MAX_LOGOS} logos is the most one strip can hold.</p>
+      )}
     </div>
   )
 }

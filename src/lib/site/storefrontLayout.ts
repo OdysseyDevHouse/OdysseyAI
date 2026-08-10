@@ -2,23 +2,47 @@ import 'server-only'
 import { siteExecute, siteQueryOne } from '../siteDb'
 import {
   defaultSections,
-  isScheduledNow,
-  normaliseSections,
   readTheme,
   safeColour,
+  safeDate,
+  safeFontKey,
+  safeLinkTarget,
   safeUrl,
-  shopToday,
   type HomeSection,
   type StorefrontTheme,
 } from '../storefrontModel'
+import {
+  discardPageDraft,
+  getPageLayout,
+  getPublishedPageLayout,
+  homePage,
+  publishPageDraft,
+  savePageDraft,
+} from './storefrontPages'
 
 /**
- * Reading and writing the storefront's front page.
+ * The storefront's THEME, and the front page as a convenience.
  *
  * The MODEL — section kinds, caps, normalisation, colour and URL validation —
  * lives in lib/storefrontModel.ts, which carries no `server-only` marker so the
  * builder in the browser can apply the identical rules. This file is only the
  * database half, and re-exports the model so callers have one import.
+ *
+ * ── PAGES MOVED OUT ──────────────────────────────────────────────────────
+ *
+ * This file used to own `home_layout` and `home_layout_draft` on the settings
+ * row. 070 replaced them with a row per page in `storefront_pages`, and
+ * storefrontPages.ts owns that table.
+ *
+ * What is left here is the THEME — a fixed, small set of scalars that apply to
+ * the whole shop, which is why 040 made them columns rather than JSON in the
+ * first place. That decision has not changed and a per-page palette is
+ * deliberately not offered: one shop, one look.
+ *
+ * The front-page helpers below remain because the shop's own root route and
+ * the builder both want "the theme and the front page" in one call, and
+ * threading a page id through every caller to always pass the same one buys
+ * nothing. They delegate; they do not read the old columns.
  */
 
 export * from '../storefrontModel'
@@ -26,17 +50,6 @@ export * from '../storefrontModel'
 /* ── Reading and writing ──────────────────────────────────────────────────── */
 
 type Row = Record<string, unknown>
-
-function parseLayout(value: unknown): HomeSection[] | null {
-  if (value === null || value === undefined || value === '') return null
-  try {
-    return normaliseSections(JSON.parse(String(value)))
-  } catch {
-    // Unparseable JSON means a corrupted row. Treated as "never published"
-    // rather than throwing, so a bad value cannot take the shop down.
-    return null
-  }
-}
 
 export type LayoutState = {
   theme: StorefrontTheme
@@ -46,64 +59,52 @@ export type LayoutState = {
   draft: HomeSection[] | null
 }
 
-export async function getLayout(siteId: number): Promise<LayoutState> {
-  const row = await siteQueryOne<Row & { home_layout?: unknown }>(
+/** Just the theme. Every page needs it; only the front page needs the rest. */
+export async function getTheme(siteId: number): Promise<StorefrontTheme> {
+  const row = await siteQueryOne<Row>(
     siteId,
     `SELECT brand_colour, product_layout, logo_image_id, hero_headline, hero_subtext,
             footer_about, footer_hours, social_facebook, social_instagram,
-            social_whatsapp, home_layout, home_layout_draft
+            social_whatsapp, font_key, share_image_id, allow_indexing,
+            announce_text, announce_link, announce_from, announce_until
        FROM online_store_settings WHERE id = 1`,
   )
+  return readTheme(row ?? {})
+}
 
-  if (!row) {
-    return {
-      theme: readTheme({}),
-      published: defaultSections(),
-      draft: null,
-    }
-  }
+export async function getLayout(siteId: number): Promise<LayoutState> {
+  const [theme, home] = await Promise.all([getTheme(siteId), homePage(siteId)])
 
-  return {
-    theme: readTheme(row),
-    // NULL means "never published" → the starter page. An empty ARRAY means
-    // the owner deliberately removed everything, and is respected.
-    published: parseLayout(row.home_layout) ?? defaultSections(),
-    draft: parseLayout(row.home_layout_draft),
-  }
+  // No home row at all means 070 has not run on this site. The starter page is
+  // the same answer the old code gave for a NULL layout, so a site mid-migration
+  // renders rather than throwing.
+  if (!home) return { theme, published: defaultSections(), draft: null }
+
+  const layout = await getPageLayout(siteId, home.id)
+  return { theme, published: layout.published, draft: layout.draft }
 }
 
 /**
- * What the SHOP renders: published sections only, never a draft.
+ * What the SHOP renders on its front page: published sections only, never a
+ * draft, and only those in season.
  *
- * Two gates, deliberately separate. `enabled` is the owner saying "not this";
- * the schedule is them saying "not yet" or "not any more". A section fails if
- * either says so, and the builder shows both states differently — off looks
- * off, out-of-season looks dated.
- *
- * Evaluated on every READ rather than by a nightly job that flips flags: a
- * date passing is not an event anybody triggers, so a stored answer would be
- * wrong between the moment the date turned and the moment the job ran. This is
- * the same argument `quoteState` makes about expiry.
+ * The two gates live in `getPublishedPageLayout` now — see it for why they are
+ * evaluated on every read rather than by a nightly job.
  */
 export async function getPublishedLayout(
   siteId: number,
 ): Promise<{ theme: StorefrontTheme; sections: HomeSection[] }> {
-  const state = await getLayout(siteId)
-  const today = shopToday()
-  return {
-    theme: state.theme,
-    sections: state.published.filter((s) => s.enabled && isScheduledNow(s, today)),
-  }
+  const [theme, home] = await Promise.all([getTheme(siteId), homePage(siteId)])
+  if (!home) return { theme, sections: defaultSections().filter((s) => s.enabled) }
+  return { theme, sections: await getPublishedPageLayout(siteId, home.id) }
 }
 
 export type SaveResult = { ok: true } | { ok: false; error: string }
 
 export async function saveDraft(siteId: number, sections: unknown): Promise<SaveResult> {
-  const clean = normaliseSections(sections)
-  await siteExecute(siteId, `UPDATE online_store_settings SET home_layout_draft = ? WHERE id = 1`, [
-    JSON.stringify(clean),
-  ])
-  return { ok: true }
+  const home = await homePage(siteId)
+  if (!home) return { ok: false, error: 'This shop has no front page yet.' }
+  return savePageDraft(siteId, home.id, sections)
 }
 
 export async function saveTheme(siteId: number, theme: Partial<StorefrontTheme>): Promise<SaveResult> {
@@ -113,7 +114,10 @@ export async function saveTheme(siteId: number, theme: Partial<StorefrontTheme>)
         SET brand_colour = ?, product_layout = ?, logo_image_id = ?,
             hero_headline = ?, hero_subtext = ?,
             footer_about = ?, footer_hours = ?, social_facebook = ?,
-            social_instagram = ?, social_whatsapp = ?
+            social_instagram = ?, social_whatsapp = ?,
+            font_key = ?, share_image_id = ?,
+            announce_text = ?, announce_link = ?,
+            announce_from = ?, announce_until = ?
       WHERE id = 1`,
     [
       safeColour(theme.brandColour),
@@ -130,26 +134,45 @@ export async function saveTheme(siteId: number, theme: Partial<StorefrontTheme>)
       safeUrl(theme.socialFacebook).slice(0, 200),
       safeUrl(theme.socialInstagram).slice(0, 200),
       (theme.socialWhatsapp ?? '').replace(/[^\d+]/g, '').slice(0, 30),
+      // A key from the curated list, never a font NAME — see FONT_KEYS.
+      safeFontKey(theme.fontKey),
+      Number.isInteger(theme.shareImageId) && (theme.shareImageId ?? 0) > 0
+        ? theme.shareImageId
+        : null,
+      /*
+       * `allow_indexing` is deliberately NOT written here.
+       *
+       * 077 added the column and this file READS it (see readTheme), because
+       * the storefront's robots tag is the thing that consumes it. But the
+       * Setup screen owns writing it — `saveOnlineSettings` in onlineStore.ts
+       * — since that is where a shop decides whether it wants search traffic,
+       * alongside the public domain a canonical link needs.
+       *
+       * Two writers on one column is a silent bug: whichever screen saved last
+       * would win, and an owner switching indexing on in Setup would find it
+       * off again after touching a colour in the builder.
+       */
+      (theme.announceText ?? '').slice(0, 200),
+      // safeLinkTarget, not safeUrl: the strip commonly points at a department
+      // inside the shop, and those are relative paths. Same rule a banner uses.
+      safeLinkTarget(theme.announceLink).slice(0, 300),
+      safeDate(theme.announceFrom),
+      safeDate(theme.announceUntil),
     ],
   )
   return { ok: true }
 }
 
-/** Make the draft live, and clear it. */
+/** Make the front page's draft live, and clear it. */
 export async function publishDraft(siteId: number): Promise<SaveResult> {
-  const state = await getLayout(siteId)
-  if (state.draft === null) return { ok: false, error: 'There are no changes to publish.' }
-
-  await siteExecute(
-    siteId,
-    `UPDATE online_store_settings SET home_layout = ?, home_layout_draft = NULL WHERE id = 1`,
-    [JSON.stringify(state.draft)],
-  )
-  return { ok: true }
+  const home = await homePage(siteId)
+  if (!home) return { ok: false, error: 'This shop has no front page yet.' }
+  return publishPageDraft(siteId, home.id)
 }
 
-/** Throw the draft away and go back to what is live. */
+/** Throw the front page's draft away and go back to what is live. */
 export async function discardDraft(siteId: number): Promise<SaveResult> {
-  await siteExecute(siteId, `UPDATE online_store_settings SET home_layout_draft = NULL WHERE id = 1`)
-  return { ok: true }
+  const home = await homePage(siteId)
+  if (!home) return { ok: true }
+  return discardPageDraft(siteId, home.id)
 }

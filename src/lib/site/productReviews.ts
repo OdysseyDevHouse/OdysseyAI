@@ -213,6 +213,52 @@ export async function submitReview(
 }
 
 /**
+ * Approved reviews across the whole shop, newest first — the front page's
+ * reviews section.
+ *
+ * ── WHY THIS IS NOT `approvedReviewsFor` WITH THE PRODUCT DROPPED ────────
+ *
+ * That one answers "what do people say about THIS product" and is indexed on
+ * (product_id, status). This answers "what do people say about the shop",
+ * which is a different question with a different shape: it needs the product
+ * NAME on every row, because a quote with no idea what it is about is not
+ * social proof.
+ *
+ * A rating floor rather than every approved review. A shop that approves a
+ * two-star "arrived late" is right to keep it on the product page — a shopper
+ * comparing options deserves it — and equally right not to lead the front page
+ * with it. Approval means "this is real", not "this is an advertisement", and
+ * conflating the two would push shops to reject honest reviews.
+ *
+ * `departmentId` narrows it to one aisle, so a bakery's page can quote bakery
+ * customers. Null means the whole shop.
+ */
+export async function recentApprovedReviews(
+  siteId: number,
+  options: { limit?: number; minRating?: number; departmentId?: number | null } = {},
+): Promise<ProductReview[]> {
+  const limit = Math.min(Math.max(Math.round(options.limit ?? 6), 1), 24)
+  const minRating = Math.min(Math.max(Math.round(options.minRating ?? 4), 1), 5)
+
+  const where = [`r.status = 'approved'`, `r.rating >= ?`]
+  const params: unknown[] = [minRating]
+
+  if (options.departmentId) {
+    where.push(`p.department_id = ?`)
+    params.push(options.departmentId)
+  }
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_REVIEW} WHERE ${where.join(' AND ')}
+      ORDER BY r.submitted_at DESC, r.id DESC
+      LIMIT ${limit}`,
+    params,
+  )
+  return rows.map(mapReview)
+}
+
+/**
  * What the storefront shows on a product page: approved reviews only, plus the
  * average. Unused until the storefront exists, but it is the reason the table
  * is indexed on (product_id, status) and belongs with the rest.

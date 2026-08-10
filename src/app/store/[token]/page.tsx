@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import {
   publishedProducts,
@@ -6,6 +6,10 @@ import {
   storefrontContext,
 } from '@/lib/site/storefront'
 import { getPublishedLayout } from '@/lib/site/storefrontLayout'
+import { getPageSectionsFor, homePage } from '@/lib/site/storefrontPages'
+import { verifyPreviewToken } from '@/lib/previewToken'
+import { sectionIsEmpty } from '@/lib/storefrontModel'
+import PreviewBar from './PreviewBar'
 import HomeSections, { type SectionContent } from './HomeSections'
 import Catalogue from './Catalogue'
 
@@ -25,7 +29,7 @@ export default async function StorePage({
   searchParams,
 }: {
   params: Promise<{ token: string }>
-  searchParams: Promise<{ department?: string; q?: string }>
+  searchParams: Promise<{ department?: string; q?: string; preview?: string }>
 }) {
   const { token } = await params
   const query = await searchParams
@@ -38,16 +42,36 @@ export default async function StorePage({
   const { settings } = context
   const departmentId = Number(query.department)
   const searching = Boolean(query.q?.trim())
-  const browsing =
-    searching || (Number.isInteger(departmentId) && departmentId > 0)
+
+  /*
+   * ── ONE DEPARTMENT ROUTE, NOT TWO ────────────────────────────────────────
+   *
+   * A department used to be reachable two ways: `?department=` here, and the
+   * dedicated /c/<id> page. Both worked, they rendered DIFFERENT components,
+   * and the front page's own category tiles linked to the query one while the
+   * department rail linked to the other — so which experience a shopper got
+   * depended on where they clicked.
+   *
+   * /c/<id> wins because it is the only one that can carry its own <title>,
+   * description and share image: a query parameter has no page of its own to
+   * hang metadata on, which makes it a dead end the moment a department wants
+   * a decent WhatsApp preview.
+   *
+   * The old form REDIRECTS rather than 404s. These links are on posters, in
+   * WhatsApp messages and in customers' bookmarks, and breaking them to tidy
+   * up routing would be a self-inflicted wound. A search inside a department
+   * keeps its term across the hop.
+   */
+  if (Number.isInteger(departmentId) && departmentId > 0) {
+    const term = query.q?.trim()
+    redirect(`/store/${token}/c/${departmentId}${term ? `?q=${encodeURIComponent(term)}` : ''}`)
+  }
 
   const layout = await getPublishedLayout(siteId)
 
-  // Searching or browsing — the catalogue, with its filters.
-  if (browsing) {
+  // Searching with no department — the catalogue, with its filters.
+  if (searching) {
     const products = await publishedProducts(context, {
-      departmentId:
-        Number.isInteger(departmentId) && departmentId > 0 ? departmentId : undefined,
       search: query.q,
       limit: 120,
     })
@@ -74,22 +98,42 @@ export default async function StorePage({
 
   // The front page the owner built. The SAME resolver the builder uses, so
   // the preview cannot drift from the shop.
-  const resolved = await resolveSectionContent(context, layout.sections)
-  const content: SectionContent[] = layout.sections.map((section, i) => ({
+  //
+  // A preview pass swaps the published sections for the draft — see
+  // getPageSectionsFor. Resolved AFTER that, so a draft's contents come from
+  // the same resolver a shopper's request uses.
+  const home = await homePage(siteId)
+  const preview = query.preview ? await verifyPreviewToken(query.preview) : null
+  const shown = home
+    ? await getPageSectionsFor(siteId, home.id, preview)
+    : { sections: layout.sections, isPreview: false }
+
+  const resolved = await resolveSectionContent(context, shown.sections)
+  const content: SectionContent[] = shown.sections.map((section, i) => ({
     section,
     ...resolved[i],
   }))
+  /*
+   * Would this page draw anything at all?
+   *
+   * ── ASKED THROUGH `sectionIsEmpty`, NOT RE-STATED HERE ────────────────
+   *
+   * This used to hand-enumerate six kinds, which is precisely the mirror
+   * `sectionIsEmpty` was extracted to prevent: it was already silently wrong
+   * for a carousel, and adding a kind meant remembering to come back here.
+   * Nobody would — the failure is invisible, and it is a bad one. A page of
+   * only new sections would be judged "empty" and replaced by the catalogue,
+   * throwing away the page the owner built.
+   *
+   * A spacer and a divider are excluded deliberately. Both are never "empty" —
+   * drawing themselves IS their content — but a page holding nothing else is
+   * a page with nothing on it, and should still fall back to the catalogue.
+   */
   const anythingToShow = content.some(
-    ({ section, products, departments, image }) =>
-      (section.kind === 'products' && (products?.length ?? 0) > 0) ||
-      (section.kind === 'categories' && (departments?.length ?? 0) > 0) ||
-      (section.kind === 'cards' && (section.cards ?? []).some((c) => c.heading || c.text)) ||
-      (section.kind === 'hero' && (layout.theme.heroHeadline || layout.theme.heroSubtext)) ||
-      // Mirrors sectionBody: a banner with no picture and a paragraph with no
-      // words both render nothing, and a page of only those must still fall
-      // back to the catalogue rather than showing a blank shop.
-      (section.kind === 'banner' && Boolean(image)) ||
-      (section.kind === 'text' && Boolean(section.text?.trim() || section.title)),
+    (fill) =>
+      fill.section.kind !== 'spacer' &&
+      fill.section.kind !== 'divider' &&
+      !sectionIsEmpty(fill, layout.theme),
   )
 
   // A front page that would render nothing is worse than no front page: fall
@@ -97,19 +141,27 @@ export default async function StorePage({
   if (!anythingToShow) {
     const products = await publishedProducts(context, { limit: 120 })
     return (
-      <Catalogue
-        token={token}
-        products={products}
-        layout={layout.theme.productLayout}
-        showStock={settings.showStock}
-        showPhotos={settings.showPhotos}
-        showBrands={settings.showBrands}
-        query=""
-      />
+      <>
+        {/* Kept even here. An owner previewing a draft they have emptied is
+            looking at the catalogue and would otherwise conclude the preview
+            is broken — the bar is what tells them the fallback is deliberate. */}
+        {shown.isPreview && <PreviewBar builderHref="/online-store/builder" />}
+        <Catalogue
+          token={token}
+          products={products}
+          layout={layout.theme.productLayout}
+          showStock={settings.showStock}
+          showPhotos={settings.showPhotos}
+          showBrands={settings.showBrands}
+          query=""
+        />
+      </>
     )
   }
 
   return (
+    <>
+    {shown.isPreview && <PreviewBar builderHref="/online-store/builder" />}
     <HomeSections
       token={token}
       content={content}
@@ -126,5 +178,6 @@ export default async function StorePage({
       // ImageSrc on why that difference lives in the callers.
       imageSrc={(imageId) => `/api/store-images/${token}/shop/${imageId}`}
     />
+    </>
   )
 }

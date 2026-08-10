@@ -725,6 +725,84 @@ function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProdu
  * One pass, in parallel: a page with four product rows costs four queries at
  * once rather than four in sequence.
  */
+/**
+ * What else people bought when they bought this.
+ *
+ * ── REAL BASKETS, NOT A GUESS ────────────────────────────────────────────
+ *
+ * Every pair here comes from an actual finalised sale: two lines on one
+ * document. That is worth more than "other things in the same department",
+ * because it is the shop's own customers saying what goes together — bread and
+ * jam sit in different aisles.
+ *
+ * ── THE SELF-JOIN, AND WHY IT IS BOUNDED ─────────────────────────────────
+ *
+ * `a` finds every document containing the anchor product; `b` is everything
+ * else on those documents. That is a self-join on the busiest table in the
+ * database, so three things keep it cheap: the 90-day window (the same one
+ * `popularProducts` uses, and the same reasoning — what sold together two years
+ * ago is not a recommendation), the anchor-product filter which is an indexed
+ * lookup rather than a scan, and the LIMIT.
+ *
+ * ── AND WHY IT CAN LEGITIMATELY RETURN NOTHING ───────────────────────────
+ *
+ * A new product, a shop that has just opened, or a line nobody buys alongside
+ * anything. That is the normal case at first and it is not a fault — the
+ * section renders nothing and the builder says why.
+ */
+export async function boughtTogether(
+  context: StorefrontContext,
+  productId: number,
+  limit: number,
+): Promise<StorefrontProduct[]> {
+  if (!Number.isInteger(productId) || productId <= 0) return []
+  const capped = Math.min(Math.max(limit, 1), 24)
+
+  const rows = await siteQuery<Row>(
+    context.siteId,
+    `SELECT b.product_id, COUNT(DISTINCT d.id) AS baskets
+       FROM sales_document_lines a
+       JOIN sales_documents d ON d.id = a.document_id
+       JOIN sales_document_lines b
+         ON b.document_id = a.document_id
+        -- Everything on the basket EXCEPT the anchor itself, which would
+        -- otherwise always be the top result and recommend the product the
+        -- shopper is already looking at.
+        AND b.product_id <> a.product_id
+       JOIN products p ON p.id = b.product_id
+       JOIN product_prices pp
+         ON pp.product_id = p.id
+        AND pp.price_structure_id = COALESCE(?, (
+              SELECT id FROM price_structures WHERE is_default = 1 ORDER BY id LIMIT 1
+            ))
+      WHERE a.product_id = ?
+        AND d.status = 'finalised'
+        -- Invoices only. A credit note is a RETURN, and counting one as
+        -- evidence that two things go together recommends the thing somebody
+        -- brought back.
+        AND d.doc_type = 'invoice'
+        AND d.document_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+        AND b.product_id IS NOT NULL
+        AND ${SELLABLE}
+        AND ${publishFilter(context.settings.publishMode)}
+      GROUP BY b.product_id
+      -- COUNT(DISTINCT d.id), not SUM(qty): a customer buying twelve of
+      -- something once is one person's opinion, and quantity would let a
+      -- single bulk order decide the whole row.
+      ORDER BY baskets DESC, b.product_id
+      LIMIT ${capped}`,
+    [context.settings.priceStructureId, productId],
+  )
+
+  const ids = rows.map((r) => Number(r.product_id)).filter((id) => Number.isInteger(id) && id > 0)
+  if (ids.length === 0) return []
+
+  // Through the ordinary published query, exactly as popularProducts does —
+  // that is the one place a storefront product is built, and it is what
+  // applies specials to the prices.
+  return publishedProducts(context, { ids, limit: ids.length })
+}
+
 export async function resolveSectionContent(
   context: StorefrontContext,
   sections: readonly {
@@ -739,6 +817,15 @@ export async function resolveSectionContent(
     minRating?: number
     specialId?: number | null
   }[],
+  /**
+   * The product a PRODUCT page is about, when this is one.
+   *
+   * Passed in rather than looked up: the product page already fetched it to
+   * render the thing itself, and a second query for the same row on every
+   * request would be pure waste. Absent everywhere else, and the two rules
+   * that need it resolve to nothing without it.
+   */
+  anchor?: { id: number; departmentId: number | null },
 ): Promise<{
   products?: StorefrontProduct[]
   departments?: StorefrontDepartment[]
@@ -856,6 +943,29 @@ export async function resolveSectionContent(
         }
         if (section.source === 'popular') {
           return { products: await popularProducts(context, limit) }
+        }
+        /*
+         * The two PRODUCT-PAGE rules. Both need an anchor, and both correctly
+         * resolve to nothing without one — a cross-sell row on a page with no
+         * product is not an error, it is a rule that does not apply. The
+         * builder hides these sources off a product page (see `sourcesFor`),
+         * so reaching here without an anchor means a layout saved before the
+         * page kind changed.
+         */
+        if (section.source === 'together') {
+          if (!anchor) return { products: [] }
+          return { products: await boughtTogether(context, anchor.id, limit) }
+        }
+        if (section.source === 'sameDepartment') {
+          if (!anchor?.departmentId) return { products: [] }
+          const siblings = await publishedProducts(context, {
+            departmentId: anchor.departmentId,
+            // One extra, because the anchor itself is almost certainly in its
+            // own department and is filtered out below — without the spare, a
+            // row of eight would quietly show seven.
+            limit: limit + 1,
+          })
+          return { products: siblings.filter((p) => p.id !== anchor.id).slice(0, limit) }
         }
         if (section.source === 'department' && section.departmentId) {
           return {

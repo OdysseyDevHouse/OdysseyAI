@@ -54,6 +54,12 @@ const PUBLIC_PREFIXES = [
   // failure with no symptom, because the feature's success state is also
   // silence.
   '/api/store/baskets/tick',
+  // Scheduled page publishing. Same reasoning and the same protection again:
+  // STOREFRONT_CRON_SECRET, compared in constant time, refusing everything when
+  // it is not set. This one's failure mode is the most visible of the four —
+  // behind a cookie gate a shop's Black Friday page simply never goes live, and
+  // the owner finds out from the trading figures.
+  '/api/storefront/publish',
   // The landing page for an emailed "pay this invoice" link. The payer is a
   // customer, not a user of the back office, and will never have a session.
   //
