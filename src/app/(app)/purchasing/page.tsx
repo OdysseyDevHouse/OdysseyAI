@@ -83,6 +83,10 @@ export default async function PurchasingPage({
           // take them in. Receiving stays primary — a GRV can be raised with or
           // without an order, so it is the one that always applies.
           <div className="flex items-center gap-2">
+            <ButtonLink href="/purchasing/suggest" variant="ghost">
+              <Icons.Sparkles size={15} />
+              What to order
+            </ButtonLink>
             <ButtonLink href="/purchasing/new" variant="secondary">
               <Icons.Truck size={15} />
               New order

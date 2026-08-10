@@ -12,6 +12,12 @@ import {
 } from '@/lib/site/purchaseDocuments'
 import { receiveGoods, voidReceipt, type ReceiveInput } from '@/lib/site/purchasePosting'
 import { createSupplierReturn, type SupplierReturnInput } from '@/lib/site/purchaseReversal'
+import {
+  reorderBySupplier,
+  type ReorderBasis,
+  type SupplierGroup,
+} from '@/lib/site/reorderSuggestions'
+import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { availableSerials } from '@/lib/site/serials'
 import { searchForTill } from '@/lib/site/tillSearch'
 import { listSuppliers } from '@/lib/site/suppliers'
@@ -131,6 +137,90 @@ export async function productPositionsAction(productIds: number[]) {
   if (ids.length === 0) return []
 
   return productPositions(siteId, ids)
+}
+
+/* ── Suggested ordering ──────────────────────────────────────────────────── */
+
+export type SuggestResult =
+  | { ok: true; groups: SupplierGroup[] }
+  | { ok: false; error: string }
+
+/**
+ * What to order. Reads only — nothing is written until a draft is raised.
+ */
+export async function suggestOrdersAction(input: {
+  locationId: number
+  basis: ReorderBasis
+  supplierId?: number
+  windowDays?: number
+  coverDays?: number
+}): Promise<SuggestResult> {
+  const ctx = await actorFor('purchasing.view')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  if (!Number.isInteger(input.locationId) || input.locationId <= 0) {
+    return { ok: false, error: 'Choose a location.' }
+  }
+
+  const groups = await reorderBySupplier(siteId, {
+    locationId: input.locationId,
+    basis: input.basis,
+    supplierId: input.supplierId,
+    windowDays: input.windowDays,
+    coverDays: input.coverDays,
+  })
+  return { ok: true, groups }
+}
+
+/**
+ * Turns a reviewed suggestion into a draft order.
+ *
+ * A DRAFT, deliberately, and never an issued one: the buyer has corrected
+ * quantities on a screen, not checked an order against a supplier's price list.
+ * Landing on the edit screen is the last look before it goes out.
+ */
+export async function createOrdersFromSuggestionAction(input: {
+  supplierId: number
+  lines: {
+    productId: number
+    productCode: string | null
+    supplierCode: string | null
+    description: string
+    productType: string
+    qtyOrdered: number
+    unitCostExcl: number
+  }[]
+}): Promise<PurchaseResult> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const lines = input.lines.filter((l) => l.qtyOrdered > 0)
+  if (lines.length === 0) return { ok: false, error: 'Every quantity is zero.' }
+
+  // Purchase VAT, resolved here rather than trusted from the client: the rate a
+  // document is taxed at is not the browser's to decide.
+  const vatRates = await listVatRates(siteId)
+  const purchaseVat = defaultVat(vatRates, 'purchase') ?? defaultVat(vatRates, 'sales')
+
+  const result = await saveOrder(siteId, actor, {
+    supplierId: input.supplierId,
+    lines: lines.map((l) => ({
+      productId: l.productId,
+      productCode: l.productCode,
+      supplierCode: l.supplierCode,
+      description: l.description,
+      productType: l.productType,
+      qtyOrdered: l.qtyOrdered,
+      unitCostExcl: l.unitCostExcl,
+      vatRatePct: purchaseVat?.rate ?? 0,
+    })),
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/purchasing')
+  return { ok: true, id: result.id, message: 'Draft order raised.' }
 }
 
 /* ── Supplier returns ────────────────────────────────────────────────────── */

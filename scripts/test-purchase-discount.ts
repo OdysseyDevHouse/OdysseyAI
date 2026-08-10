@@ -155,6 +155,7 @@ async function main() {
     ],
   })
   ok('it posts', amt.ok)
+  if (!amt.ok) process.exit(1)
   doc = await getPurchaseDocument(SITE, amt.documentId)
   ok(
     '*** 250 came off, not 500 ***',
@@ -239,6 +240,7 @@ async function main() {
     ],
   })
   ok('it posts', ordered.ok, ordered.ok ? '' : (ordered as any).error)
+  if (!ordered.ok) process.exit(1)
   doc = await getPurchaseDocument(SITE, ordered.documentId)
   ok(
     '*** line discount first: 1000 -> 900 ***',
@@ -280,6 +282,7 @@ async function main() {
     })),
   })
   ok('it posts', thirds.ok, thirds.ok ? '' : (thirds as any).error)
+  if (!thirds.ok) process.exit(1)
   doc = await getPurchaseDocument(SITE, thirds.documentId)
   const sumLines = doc!.lines.reduce((s, l) => round(s + toNum(l.lineTotalExcl), 2), 0)
   ok(
