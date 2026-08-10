@@ -200,11 +200,19 @@ export default function PurchaseLineGrid({
             <th scope="col" className={`${TABLE_TH} min-w-56`}>
               Item
             </th>
+            {/* whitespace-nowrap: these captions are two and three words —
+                "Unit cost (excl.)", "Average cost after" — and a column sized
+                to its INPUT is narrower than its own heading. Left to wrap,
+                every header became two or three lines and the row of boxes
+                underneath sat at the bottom of a tall band of text. The table
+                already scrolls horizontally, so the width goes there instead. */}
             {shown.map((id) => (
               <th
                 key={id}
                 scope="col"
-                className={`${TABLE_TH} ${HEAD_ALIGN[id] ?? ''} ${HEAD_WIDTH[id] ?? ''}`}
+                className={`${TABLE_TH} whitespace-nowrap ${HEAD_ALIGN[id] ?? ''} ${
+                  HEAD_WIDTH[id] ?? ''
+                }`}
               >
                 {id === qtyId ? qtyLabel : LABELS[id]}
               </th>
@@ -568,28 +576,38 @@ const HEAD_ALIGN: Partial<Record<GridColumnId, string>> = {
   lineTotalIncl: 'text-right',
 }
 
+/**
+ * Column widths, sized to the HEADING rather than to the input.
+ *
+ * A currency box needs about 7rem; "Average cost after" needs 10. Sizing to the
+ * control and letting the caption wrap put a two-line heading above every
+ * money column — so these are the wider of the two, and the boxes simply fill
+ * them. The table scrolls horizontally when the chosen set is wide, which is
+ * the right trade: a buyer who turned on twelve columns wants to scroll, not to
+ * read headings stacked three lines deep.
+ */
 const HEAD_WIDTH: Partial<Record<GridColumnId, string>> = {
   ordered: 'w-24',
   received: 'w-24',
-  bonus: 'w-20',
-  costExcl: 'w-32',
-  costIncl: 'w-32',
-  discountPct: 'w-24',
-  discountValue: 'w-28',
-  netCost: 'w-28',
-  landed: 'w-28',
-  avgNow: 'w-28',
-  avgAfter: 'w-28',
+  bonus: 'w-24',
+  costExcl: 'w-36',
+  costIncl: 'w-36',
+  discountPct: 'w-28',
+  discountValue: 'w-32',
+  netCost: 'w-32',
+  landed: 'w-36',
+  avgNow: 'w-36',
+  avgAfter: 'w-36',
   sellIncl: 'w-32',
   sellExcl: 'w-32',
   markup: 'w-24',
-  gp: 'w-24',
-  vat: 'w-20',
-  supplierCode: 'w-28',
-  location: 'w-24',
-  onHand: 'w-20',
-  lineTotalExcl: 'w-32',
-  lineTotalIncl: 'w-32',
+  gp: 'w-20',
+  vat: 'w-24',
+  supplierCode: 'w-32',
+  location: 'w-28',
+  onHand: 'w-24',
+  lineTotalExcl: 'w-36',
+  lineTotalIncl: 'w-36',
 }
 
 /** A decimal comma is what a South African keyboard produces. */

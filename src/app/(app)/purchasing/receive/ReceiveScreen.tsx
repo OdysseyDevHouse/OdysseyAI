@@ -15,8 +15,10 @@ import {
   Field,
   Icons,
   Input,
+  Modal,
   NumberInput,
   PageBody,
+  PickerResults,
   Select,
   TableToolbar,
   useToast,
@@ -35,11 +37,22 @@ import PurchaseLineGrid, {
 import { purchaseDocumentFigures } from '../purchaseLine'
 import {
   searchProductsForPurchaseAction,
+  browseProductsForPurchaseAction,
+  purchaseDepartmentsAction,
   receiveGoodsAction,
   saveDraftReceiptAction,
   loadOrderAction,
   productPositionsAction,
 } from '../actions'
+
+/**
+ * How many products the browse dialog will show at once.
+ *
+ * A ceiling rather than paging: a receiver narrows by department or types a
+ * few characters, and 500 rows is already more than anyone scrolls. The dialog
+ * says when the list was cut short, so it never looks like the whole catalogue.
+ */
+const PICKER_LIMIT = 500
 
 /**
  * Receiving goods.
@@ -131,6 +144,17 @@ export default function ReceiveScreen({
   const [searching, setSearching] = useState(false)
   const [pending, startTransition] = useTransition()
 
+  /* The browse dialog. Distinct from the Combobox above it, which answers
+     keystrokes: this one answers "show me what is in Groceries" with no term at
+     all, which is how a receiver works through a delivery note full of things
+     they cannot spell. */
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerTerm, setPickerTerm] = useState('')
+  const [pickerDept, setPickerDept] = useState<number | null>(null)
+  const [pickerResults, setPickerResults] = useState<TillProduct[]>([])
+  const [pickerBusy, setPickerBusy] = useState(false)
+  const [depts, setDepts] = useState<{ id: number; name: string; depth: number }[]>([])
+
   const columns = useColumnPrefs(
     'odyssey.purchasing.receive.columns',
     RECEIVE_DEFAULT_COLUMNS,
@@ -162,6 +186,32 @@ export default function ReceiveScreen({
     }, 180)
     return () => clearTimeout(timer)
   }, [query])
+
+  // The department filter, fetched once the dialog is first opened rather than
+  // on page load: most receipts are keyed from the search box and never open
+  // it at all.
+  useEffect(() => {
+    if (!pickerOpen || depts.length > 0) return
+    purchaseDepartmentsAction().then(setDepts).catch(() => setDepts([]))
+  }, [pickerOpen, depts.length])
+
+  // Results follow the term and the department. Debounced like the Combobox,
+  // and it runs with an EMPTY term too — that is the whole point of browsing.
+  useEffect(() => {
+    if (!pickerOpen) return
+    setPickerBusy(true)
+    const timer = setTimeout(() => {
+      browseProductsForPurchaseAction({
+        term: pickerTerm.trim() || undefined,
+        departmentId: pickerDept,
+        limit: PICKER_LIMIT,
+      })
+        .then(setPickerResults)
+        .catch(() => setPickerResults([]))
+        .finally(() => setPickerBusy(false))
+    }, 180)
+    return () => clearTimeout(timer)
+  }, [pickerOpen, pickerTerm, pickerDept])
 
   /** Pulls an order's outstanding lines onto the receipt. */
   function loadOrder(id: string) {
@@ -406,11 +456,19 @@ export default function ReceiveScreen({
 
   return (
     <PageBody>
-      <div className="grid gap-4 lg:grid-cols-3">
-      <div className="flex flex-col gap-4 lg:col-span-2">
+      {/* The header cards share a row and the LINE GRID GETS THE FULL WIDTH
+          below them. It carries up to twenty columns — cost, markup, GP,
+          selling price — and squeezing that into two thirds of the page made
+          the buyer scroll sideways to see figures that only mean anything
+          beside each other. The delivery header is read once; the grid is
+          worked in. */}
+      {/* Three across on a wide screen: delivery, discount and charges are each
+          read once and set aside, so they sit side by side rather than
+          stacking down the left and leaving the right half of the page empty. */}
+      <div className="grid items-start gap-4 xl:grid-cols-3">
         <Card>
           <CardHeader title="Delivery" description="Who it came from, and what it came with." />
-          <CardBody className="grid gap-4 sm:grid-cols-2">
+          <CardBody className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
             <Field
               label="Supplier"
               // Marked here, not in a footnote by the button — the fix is this box.
@@ -470,7 +528,7 @@ export default function ReceiveScreen({
             title="Discount on the invoice"
             description="Settlement terms or a rebate on the whole delivery, spread across the lines."
           />
-          <CardBody className="grid gap-4 sm:grid-cols-2">
+          <CardBody className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
             <Field
               label="Percent off"
               hint={docDiscountAmount > 0 ? 'Ignored — an amount is set.' : 'Of the goods total.'}
@@ -515,96 +573,113 @@ export default function ReceiveScreen({
             />
           </CardBody>
         </Card>
-
-        <Card>
-          <CardHeader
-            title="What arrived"
-            description="Costs are exclusive of VAT — how a supplier invoice is written."
-            action={
-              <ColumnPicker
-                columns={PURCHASE_COLUMNS}
-                visible={columns.visible}
-                onChange={columns.setVisible}
-                onReset={columns.reset}
-              />
-            }
-          />
-          <CardBody className="flex flex-col gap-3">
-            <Combobox
-              options={comboOptions}
-              query={query}
-              onQueryChange={setQuery}
-              onSelect={(option) => option.data && addProduct(option.data)}
-              placeholder="Search a product to add a line…"
-              loading={searching}
-              clearOnSelect
-              emptyText={query.trim().length >= 2 ? 'No product matches.' : 'Keep typing…'}
-            />
-
-            {/* Most deliveries go to one place. Setting each line separately is
-                what the per-line control is for; this is the common case. */}
-            {multiLocation && lines.length > 1 && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted">Send every line to</span>
-                <Select
-                  value=""
-                  className="w-auto"
-                  onChange={(e) => {
-                    const id = Number(e.target.value)
-                    if (!id) return
-                    setLines((c) => c.map((l) => ({ ...l, locationId: id })))
-                  }}
-                >
-                  <option value="">— Choose —</option>
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.code} — {loc.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            )}
-          </CardBody>
-
-          {lines.length === 0 ? (
-            <EmptyState
-              title="Nothing on this delivery yet"
-              hint="Pick an order above, or search for a product."
-              icon={<Icons.PackageOpen size={22} />}
-            />
-          ) : (
-            <PurchaseLineGrid
-              lines={lines}
-              visible={columns.visible}
-              mode="receive"
-              locations={locations}
-              documentDiscounts={totals.lines.map((l) => l.documentDiscountExcl)}
-              charges={totals.lines.map((l) => l.chargeExcl)}
-              sellingVatPct={sellingVatRate}
-              onPatch={patchLine}
-              onRemove={(key) => setLines((c) => c.filter((l) => l.key !== key))}
-              /* Serial capture, for the lines that need it. Rendered inline
-                 rather than behind a dialog: the delivery note is in the
-                 receiver's hand now, and a modal per line would make a
-                 ten-line delivery ten interruptions. */
-              renderAfterRow={(line) => {
-                const l = lines.find((x) => x.key === line.key)
-                if (!l || l.productType !== 'serial') return null
-                return (
-                  <SerialCapture
-                    serials={l.serials}
-                    warrantyUntil={l.warrantyUntil}
-                    qtyReceived={l.qty + l.qtyBonus}
-                    onChange={(patch) => patchLine(l.key, patch as Partial<GridLine>)}
-                  />
-                )
-              }}
-            />
-          )}
-        </Card>
       </div>
 
-      <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader
+          title="What arrived"
+          description="Costs are exclusive of VAT — how a supplier invoice is written."
+          action={
+            <ColumnPicker
+              columns={PURCHASE_COLUMNS}
+              visible={columns.visible}
+              onChange={columns.setVisible}
+              onReset={columns.reset}
+            />
+          }
+        />
+        <CardBody className="flex flex-col gap-3">
+          {/* Two ways in, because a delivery is checked two ways. The box is
+              for something whose code you know; the button is for working down
+              a note of things you do not. */}
+          <div className="flex items-start gap-2">
+            <div className="flex-1">
+          <Combobox
+            options={comboOptions}
+            query={query}
+            onQueryChange={setQuery}
+            onSelect={(option) => option.data && addProduct(option.data)}
+            placeholder="Search a product to add a line…"
+            loading={searching}
+            clearOnSelect
+            emptyText={query.trim().length >= 2 ? 'No product matches.' : 'Keep typing…'}
+          />
+            </div>
+            <Button variant="secondary" onClick={() => setPickerOpen(true)}>
+              <Icons.Plus size={16} />
+              Add stock
+            </Button>
+          </div>
+
+          {/* Most deliveries go to one place. Setting each line separately is
+              what the per-line control is for; this is the common case. */}
+          {multiLocation && lines.length > 1 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">Send every line to</span>
+              <Select
+                value=""
+                className="w-auto"
+                onChange={(e) => {
+                  const id = Number(e.target.value)
+                  if (!id) return
+                  setLines((c) => c.map((l) => ({ ...l, locationId: id })))
+                }}
+              >
+                <option value="">— Choose —</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.code} — {loc.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+        </CardBody>
+
+        {lines.length === 0 ? (
+          <EmptyState
+            title="Nothing on this delivery yet"
+            hint="Pick an order above, or search for a product."
+            icon={<Icons.PackageOpen size={22} />}
+          />
+        ) : (
+          <PurchaseLineGrid
+            lines={lines}
+            visible={columns.visible}
+            mode="receive"
+            locations={locations}
+            documentDiscounts={totals.lines.map((l) => l.documentDiscountExcl)}
+            charges={totals.lines.map((l) => l.chargeExcl)}
+            sellingVatPct={sellingVatRate}
+            onPatch={patchLine}
+            onRemove={(key) => setLines((c) => c.filter((l) => l.key !== key))}
+            /* Serial capture, for the lines that need it. Rendered inline
+               rather than behind a dialog: the delivery note is in the
+               receiver's hand now, and a modal per line would make a
+               ten-line delivery ten interruptions. */
+            renderAfterRow={(line) => {
+              const l = lines.find((x) => x.key === line.key)
+              if (!l || l.productType !== 'serial') return null
+              return (
+                <SerialCapture
+                  serials={l.serials}
+                  warrantyUntil={l.warrantyUntil}
+                  qtyReceived={l.qty + l.qtyBonus}
+                  onChange={(patch) => patchLine(l.key, patch as Partial<GridLine>)}
+                />
+              )
+            }}
+          />
+        )}
+      </Card>
+
+      {/* The totals and the two buttons, kept to the right-hand third under the
+          grid. Full width would put a lone "Receive the goods" across a
+          2,000px screen, which reads as a page footer rather than the one act
+          this screen exists for. */}
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="xl:col-start-3">
+        <div className="flex flex-col gap-4">
         <Card className="p-4">
           <dl className="flex flex-col gap-1.5 text-sm">
             <Row label="Goods (excl.)" value={formatMoney(totals.subtotalExcl)} />
@@ -679,8 +754,109 @@ export default function ReceiveScreen({
             average cost.
           </p>
         </Card>
+        </div>
       </div>
       </div>
+      {/* Stays OPEN after each pick, so a delivery of fifteen lines is fifteen
+          clicks rather than fifteen round trips through a button. Each pick
+          shows a toast, which is the only feedback that the row landed on a
+          grid the dialog is covering. */}
+      <Modal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Add stock"
+        description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the delivery."
+        size="lg"
+        footer={
+          <Button variant="secondary" onClick={() => setPickerOpen(false)}>
+            Done
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Search" className="min-w-64 flex-1">
+              <Input
+                autoFocus
+                value={pickerTerm}
+                placeholder="Code, barcode or description…"
+                aria-label="Search products to add to this delivery"
+                icon={<Icons.Search size={15} />}
+                onChange={(e) => setPickerTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter takes the first match, so a search that has already
+                  // narrowed to one thing needs no reach for the mouse.
+                  if (e.key === 'Enter' && pickerResults[0]) {
+                    e.preventDefault()
+                    addProduct(pickerResults[0])
+                    toast.success(`${pickerResults[0].description} added.`)
+                  }
+                }}
+              />
+            </Field>
+
+            <Field label="Department" className="w-60">
+              <Select
+                value={pickerDept ?? ''}
+                aria-label="Filter products by department"
+                onChange={(e) => setPickerDept(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">All departments</option>
+                {depts.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {/* Non-breaking spaces: a plain one is collapsed inside an
+                        <option>, so a nested list would render flat. */}
+                    {'  '.repeat(d.depth)}
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          {/* A fixed height, so the dialog does not jump as results arrive and
+              a pick never lands on a row that moved under the cursor. */}
+          <div className="min-h-[18rem]">
+            {pickerBusy && pickerResults.length === 0 ? (
+              <p className="px-1 py-3 text-sm text-muted">Loading products…</p>
+            ) : pickerResults.length === 0 ? (
+              <p className="px-1 py-3 text-sm text-muted">
+                {pickerTerm.trim()
+                  ? `Nothing matches “${pickerTerm.trim()}”${pickerDept !== null ? ' in this department' : ''}.`
+                  : 'No products in this department.'}
+              </p>
+            ) : (
+              <PickerResults
+                results={pickerResults.map((p) => ({
+                  key: p.id,
+                  label: p.description,
+                  // On hand and the cost, because those are the two figures a
+                  // receiver checks a delivery note against.
+                  meta: `${p.code} · ${formatQty(p.stockOnHand)} on hand`,
+                  trailing: formatMoney(p.costExcl),
+                }))}
+                onPick={(key) => {
+                  const product = pickerResults.find((p) => p.id === Number(key))
+                  if (!product) return
+                  addProduct(product)
+                  toast.success(`${product.description} added.`)
+                }}
+              />
+            )}
+          </div>
+
+          {/* Say so when the list is cut short. A picker that silently shows
+              the first 500 of 40,000 looks like a complete catalogue, and the
+              product someone cannot find is the one they conclude the shop
+              does not stock. */}
+          {pickerResults.length >= PICKER_LIMIT && (
+            <p className="px-1 text-xs text-muted">
+              Showing the first <span className="numeric">{PICKER_LIMIT}</span> products. Narrow by
+              department or search to see the rest.
+            </p>
+          )}
+        </div>
+      </Modal>
     </PageBody>
   )
 }

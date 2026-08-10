@@ -25,7 +25,8 @@ import {
 } from '@/lib/site/reorderSuggestions'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { availableSerials } from '@/lib/site/serials'
-import { searchForTill } from '@/lib/site/tillSearch'
+import { searchForTill, browseForTill } from '@/lib/site/tillSearch'
+import { listDepartments, flattenTree } from '@/lib/site/departments'
 import { listSuppliers } from '@/lib/site/suppliers'
 
 export type PurchaseResult = { ok: true; id: number; message: string } | { ok: false; error: string }
@@ -143,6 +144,42 @@ export async function searchProductsForPurchaseAction(term: string) {
   const ctx = await actorForOrThrow('purchasing.view')
   const { siteId } = ctx
   return searchForTill(siteId, term, null)
+}
+
+/**
+ * Products for the "Add stock" picker — browse, not type-ahead.
+ *
+ * Distinct from searchProductsForPurchaseAction, which answers keystrokes in a
+ * Combobox and needs two characters before it says anything. This one answers
+ * "show me what is in Groceries" with no term at all, which is how a receiver
+ * works through a delivery note of things they cannot spell.
+ *
+ * Guarded by purchasing.view rather than reusing the sales action: the same
+ * question asked from a different screen is a different boundary, and a buyer
+ * who cannot sell should still be able to receive.
+ */
+export async function browseProductsForPurchaseAction(options: {
+  term?: string
+  departmentId?: number | null
+  limit?: number
+}) {
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
+  return browseForTill(siteId, { ...options, priceStructureId: null })
+}
+
+/** The department list for that picker's filter, flattened for a <select>. */
+export async function purchaseDepartmentsAction(): Promise<
+  { id: number; name: string; depth: number }[]
+> {
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
+  const all = await listDepartments(siteId)
+  return flattenTree(all).map(({ department, depth }) => ({
+    id: department.id,
+    name: department.name,
+    depth,
+  }))
 }
 
 export async function listActiveSuppliersAction() {
