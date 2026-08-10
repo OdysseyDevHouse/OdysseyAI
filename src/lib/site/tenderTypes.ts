@@ -28,6 +28,25 @@ export type TenderType = {
   allowsChange: boolean
   allowsSplit: boolean
   allowsRefund: boolean
+  /**
+   * An over-tender on this method becomes a TIP, with no prompt.
+   *
+   * Only meaningful where `allowsChange` is false: cash gives change back, so its excess
+   * is declared at the pad instead. OFF by default — a shop that has not asked for this
+   * should not start keeping change, and a mis-keyed R20 kept silently is theft by typo.
+   * A no-change tender with this off REFUSES an over-tender rather than pocketing it.
+   */
+  tipOnOverTender: boolean
+  /**
+   * Whether a tip on this method lands in the DRAWER.
+   *
+   * What keeps a cash-up balancing. A cash tip is physically in the till and must be
+   * expected there; a card tip arrives via the card machine and an account tip is charged
+   * to a debtor, so both are recorded and paid out through payroll. Counting all tips
+   * leaves every card-tipping shift over; counting none leaves every cash-tipping shift
+   * over — same bug, opposite directions, which is why it is per tender.
+   */
+  tipInDrawer: boolean
   requiresReference: boolean
   referenceLabel: string | null
   roundsToCashDenomination: boolean
@@ -57,6 +76,8 @@ function mapTender(r: Row): TenderType {
     allowsChange: !!r.allows_change,
     allowsSplit: !!r.allows_split,
     allowsRefund: !!r.allows_refund,
+    tipOnOverTender: !!r.tip_on_over_tender,
+    tipInDrawer: !!r.tip_in_drawer,
     requiresReference: !!r.requires_reference,
     referenceLabel: (r.reference_label as string | null) ?? null,
     roundsToCashDenomination: !!r.rounds_to_cash_denomination,
@@ -77,6 +98,7 @@ function mapTender(r: Row): TenderType {
 const SELECT_TENDER = `
   SELECT id, code, name, posts_to_debtor, requires_customer, counts_as_drawer_cash,
          opens_cash_drawer, allows_change, allows_split, allows_refund,
+                     tip_on_over_tender, tip_in_drawer,
          requires_reference, reference_label, rounds_to_cash_denomination,
          min_amount, max_amount, surcharge_pct, integration_key,
          icon, color, position, is_active, is_system
@@ -194,6 +216,7 @@ function columns(input: TenderInput): unknown[] {
 
 const COLUMN_LIST = `code, name, posts_to_debtor, requires_customer, counts_as_drawer_cash,
                      opens_cash_drawer, allows_change, allows_split, allows_refund,
+                     tip_on_over_tender, tip_in_drawer,
                      requires_reference, reference_label, rounds_to_cash_denomination,
                      min_amount, max_amount, surcharge_pct, integration_key,
                      icon, color, position, is_active`

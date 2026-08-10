@@ -18,6 +18,9 @@ import { roundToCash } from '@/lib/documentMath'
 // client component importing it drags the database driver into the browser
 // bundle. Same reasoning as documentMath.
 import { checkTenders } from '@/lib/tenderMath'
+/* The SAME planner the server runs at finalise. A second implementation here is how the
+   slip a customer is handed comes to disagree with the books about a tip. */
+import { planTips } from '@/lib/tipMath'
 import { quickAmounts, loyaltyCeiling, prefillAmount } from '@/lib/tenderOffers'
 import { headroomRefusal } from '@/lib/creditRules'
 import type { TenderType } from '@/lib/site/tenderTypes'
@@ -47,6 +50,22 @@ import type { TillStanding } from '@/app/(app)/loyalty/actions'
 
 type Taken = { tenderTypeId: number; amount: number; reference?: string | null }
 
+/**
+ * Whole-rand tip amounts to offer, off an excess.
+ *
+ * The common answers to "is any of this a tip" are "the small change" and "all of it", so
+ * both are one tap. Rounded DOWN to whole rand because nobody declares a R7.43 tip, and
+ * the excess itself is always offered last so "keep the change" needs no arithmetic.
+ */
+function tipSuggestions(excess: number): number[] {
+  const whole = Math.floor(excess)
+  if (whole <= 0) return []
+  const candidates = [5, 10, 20, 50].filter((n) => n < whole)
+  /* De-duplicated: on a R10 excess the 5 and the 10 are the whole list, and offering
+     "R10" twice reads as a bug. */
+  return [...new Set([...candidates, round(excess, 2)])].slice(-4)
+}
+
 export function TenderPad({
   open,
   onClose,
@@ -56,6 +75,8 @@ export function TenderPad({
   customer,
   loyalty = null,
   pending,
+  serviceCharge: serviceChargeProp = 0,
+  canRemoveServiceCharge = false,
   onFinalise,
 }: {
   open: boolean
@@ -78,7 +99,29 @@ export function TenderPad({
    */
   loyalty?: TillStanding | null
   pending: boolean
-  onFinalise: (taken: Taken[], voucherCodes: string[]) => void
+  /**
+   * The forced service charge on this bill, already worked out by the shell.
+   *
+   * Zero for a counter sale, for a shop with no tiers, and for any bill under the lowest
+   * band. Passed in rather than computed here because the tiers live in the database and
+   * `tips_tables_only` needs to know whether a table is attached — neither of which this
+   * component has any business knowing about.
+   */
+  serviceCharge?: number
+  /**
+   * Whether this operator may REMOVE a forced service charge.
+   *
+   * `sales.discount_override`. A waiter cannot take one off — that is the policy — but
+   * somebody must be able to, or a customer who refuses it leaves a bill nobody in the
+   * building can correct. Every removal is recorded with the name of whoever did it.
+   */
+  canRemoveServiceCharge?: boolean
+  onFinalise: (
+    taken: Taken[],
+    voucherCodes: string[],
+    /** Declared tips per tender type, and whether the service charge was waived. */
+    tipInfo: { declared: Record<number, number>; serviceChargeWaived: boolean },
+  ) => void
 }) {
   const hasCustomer = customer !== null
   const [taken, setTaken] = useState<Taken[]>([])
@@ -88,6 +131,24 @@ export function TenderPad({
   const [reference, setReference] = useState('')
   /** Voucher codes tapped onto this sale. Spent server-side, inside the transaction. */
   const [vouchers, setVouchers] = useState<string[]>([])
+  /**
+   * Tips a cashier has DECLARED, per tender type.
+   *
+   * Only cash needs this: R100 on a R50 bill might be R50 change or R10 tip and R40
+   * change, and nothing can tell which. A no-change tender's over-tender is decided by
+   * its own `tipOnOverTender` flag with no prompt at all.
+   */
+  const [declared, setDeclared] = useState<Record<number, number>>({})
+  /**
+   * Whether a manager has waived the forced service charge on this bill.
+   *
+   * Local until finalise, like everything else on this pad, and the shell records the
+   * removal server-side with the manager's name against it.
+   */
+  const [serviceWaived, setServiceWaived] = useState(false)
+
+  /* The charge as it stands. A waiver zeroes it; nothing else can. */
+  const serviceCharge = serviceWaived ? 0 : round(Math.max(0, serviceChargeProp), 2)
 
   // Reset between sales, so the next customer never inherits the last one's
   // half-entered payment.
@@ -98,6 +159,10 @@ export function TenderPad({
     setEntry('')
     setReference('')
     setVouchers([])
+    /* Especially this. A declared tip carried into the next customer's sale would keep
+       money they never offered — the worst thing on this screen to leave behind. */
+    setDeclared({})
+    setServiceWaived(false)
   }, [open])
 
   const amount = numPadValue(entry)
@@ -165,7 +230,63 @@ export function TenderPad({
   }, [taken, tenders, payable, hasCustomer])
 
   const owed = round(payable - taken.reduce((sum, t) => sum + t.amount, 0), 2)
-  const settled = taken.length > 0 && check.outstanding === 0 && check.errors.length === 0
+
+  /*
+   * ── TIPS ──────────────────────────────────────────────────────────────────
+   *
+   * A tip and change are two claims on ONE excess, so the pad has to decide between them
+   * before it can show either. `planTips` is the same function the server runs at finalise
+   * — the plan here and the rows written there come from one implementation, so the slip a
+   * customer is handed cannot disagree with the books.
+   *
+   * The declared amount is per TENDER TYPE, because that is all a tip row records: a
+   * basket with two cash payments has one cash tip, not two.
+   */
+  const plan = useMemo(
+    () =>
+      planTips({
+        totalExcess: check.change,
+        tenders: taken.flatMap((t) => {
+          const type = tenders.find((x) => x.id === t.tenderTypeId)
+          return type
+            ? [
+                {
+                  tenderTypeId: type.id,
+                  amount: t.amount,
+                  allowsChange: type.allowsChange,
+                  tipOnOverTender: type.tipOnOverTender,
+                  tenderName: type.name,
+                },
+              ]
+            : []
+        }),
+        declared,
+        serviceCharge:
+          serviceCharge > 0.005 && taken[0]
+            ? { tenderTypeId: taken[0].tenderTypeId, amount: serviceCharge }
+            : null,
+      }),
+    [check.change, taken, tenders, declared, serviceCharge],
+  )
+
+  const tipTotal = plan.ok ? round(plan.tips.reduce((s, t) => s + t.amount, 0), 2) : 0
+  /* What the drawer actually hands back, AFTER tips. Showing `check.change` here would
+     promise a customer money the till has just kept as a gratuity. */
+  const changeBack = plan.ok ? plan.changeRemaining : check.change
+
+  /*
+   * Which tenders on this sale can take a DECLARED tip.
+   *
+   * Only ones that give change — a card over-tender is handled automatically by its own
+   * flag, so offering a declare box for it as well would be two ways to say one thing.
+   */
+  const declarable = taken.flatMap((t) => {
+    const type = tenders.find((x) => x.id === t.tenderTypeId)
+    return type && type.allowsChange ? [type] : []
+  })
+
+  const settled =
+    taken.length > 0 && check.outstanding === 0 && check.errors.length === 0 && plan.ok
 
   function pick(tender: TenderType) {
     setActive(tender)
@@ -245,7 +366,12 @@ export function TenderPad({
               size="touch-lg"
               className="flex-1 justify-center"
               disabled={!settled || pending}
-              onClick={() => onFinalise(taken, vouchers)}
+              onClick={() =>
+                onFinalise(taken, vouchers, {
+                  declared,
+                  serviceChargeWaived: serviceWaived,
+                })
+              }
             >
               <Icons.Check size={20} />
               {pending ? 'Posting…' : 'Complete sale'}
@@ -349,21 +475,21 @@ export function TenderPad({
           className={`rounded-card border px-4 py-3 ${
             check.outstanding > 0
               ? 'border-border bg-surface-2'
-              : check.change > 0
+              : changeBack > 0
                 ? 'border-success/40 bg-success-soft'
                 : 'border-success/40 bg-success-soft'
           }`}
         >
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              {check.outstanding > 0 ? 'Still to pay' : check.change > 0 ? 'Change' : 'Settled'}
+              {check.outstanding > 0 ? 'Still to pay' : changeBack > 0 ? 'Change' : 'Settled'}
             </span>
             <span
               className={`numeric text-4xl font-extrabold ${
                 check.outstanding > 0 ? 'text-ink' : 'text-success-ink'
               }`}
             >
-              {formatMoney(check.outstanding > 0 ? check.outstanding : check.change)}
+              {formatMoney(check.outstanding > 0 ? check.outstanding : changeBack)}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-muted">
@@ -375,8 +501,101 @@ export function TenderPad({
                 {formatMoney(adjustment)}); the invoice stays {formatMoney(totalIncl)}
               </>
             )}
+            {/* Named right under the change figure, because the two come out of one
+                excess and a cashier handing back money needs to see both at once. */}
+            {tipTotal > 0.005 && (
+              <>
+                {' · '}
+                <span className="text-warning-ink">
+                  {formatMoney(tipTotal)} kept as a tip
+                </span>
+              </>
+            )}
           </p>
         </div>
+
+        {/* ── The service charge, and the only way out of it ────────────────
+            Shown whenever one applies, waived or not: a charge a customer is going to
+            query must be visible on the screen the cashier is reading from. */}
+        {serviceChargeProp > 0.005 && (
+          <div className="flex items-center justify-between gap-3 rounded-card border border-warning/40 bg-warning-soft px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-warning-ink">
+                Service charge {serviceWaived && '— removed'}
+              </p>
+              <p className="text-xs text-warning-ink/80">
+                {serviceWaived
+                  ? 'Removed from this bill. The removal is recorded.'
+                  : `${formatMoney(serviceChargeProp)} on ${formatMoney(totalIncl)}`}
+              </p>
+            </div>
+            {/*
+              A waiter cannot remove it — that is the policy. Somebody holding
+              sales.discount_override can, because the alternative is a bill nobody in the
+              building can correct in front of a customer who has refused it. The button is
+              absent rather than disabled for a waiter: a greyed control they can never use
+              is a question they will keep asking.
+            */}
+            {canRemoveServiceCharge && !serviceWaived && (
+              <Button variant="ghost" size="sm" onClick={() => setServiceWaived(true)}>
+                Remove
+              </Button>
+            )}
+            {serviceWaived && canRemoveServiceCharge && (
+              <Button variant="ghost" size="sm" onClick={() => setServiceWaived(false)}>
+                Put back
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* ── Declaring a cash tip ──────────────────────────────────────────
+            Only for tenders that give change, and only once there is an excess to split.
+            A no-change tender's over-tender is decided by its own flag with no prompt, so
+            offering a box for it as well would be two ways to say one thing. */}
+        {check.change > 0.005 &&
+          declarable.map((type) => (
+            <div
+              key={type.id}
+              className="flex items-center justify-between gap-3 rounded-card border border-border bg-surface-2 px-4 py-3"
+            >
+              <div>
+                <p className="text-sm font-medium text-ink">
+                  Is any of the {type.name.toLowerCase()} change a tip?
+                </p>
+                <p className="text-xs text-muted">
+                  {formatMoney(check.change)} over. Tap an amount, or leave it as change.
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                {/* Whole-rand steps off the excess itself, so the common answers
+                    ("keep the R5", "keep it all") are one tap rather than six keys. */}
+                {tipSuggestions(check.change).map((suggestion) => {
+                  const chosen = round(declared[type.id] ?? 0, 2) === suggestion
+                  return (
+                    <Button
+                      key={suggestion}
+                      variant={chosen ? 'primary' : 'secondary'}
+                      size="sm"
+                      onClick={() =>
+                        setDeclared((current) => ({
+                          ...current,
+                          [type.id]: chosen ? 0 : suggestion,
+                        }))
+                      }
+                    >
+                      {formatMoney(suggestion)}
+                    </Button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+
+        {/* A refused over-tender. `planTips` returns the reason, which names the tender
+            and says how to fix it — a pad that just refused to complete would leave a
+            cashier guessing at a screen with no error on it. */}
+        {!plan.ok && <Callout tone="danger">{plan.error}</Callout>}
 
         {check.errors.length > 0 && (
           <Callout tone="danger">{check.errors.join(' ')}</Callout>
