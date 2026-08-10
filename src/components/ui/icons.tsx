@@ -82,6 +82,11 @@ export {
   Truck,
   FileText,
   Settings,
+  // Per-DEVICE display choices, as distinct from Settings (which is the shop's).
+  // The till's "Customize" opens tile options that belong to this screen only.
+  SlidersHorizontal,
+  // Fast, no ceremony — the till's quick sale, a walk-in that needs no table.
+  Zap,
   Palette,
   ChartColumn as BarChart,
   ChartLine as LineChart,

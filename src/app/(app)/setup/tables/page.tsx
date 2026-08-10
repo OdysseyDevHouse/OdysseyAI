@@ -3,8 +3,10 @@ import { listTables } from '@/lib/site/posTables'
 import { getSetting } from '@/lib/site/settings'
 import { PageHeader, PageBody } from '@/components/ui'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
+import { listVisitTypes } from '@/lib/site/visitTypes'
 import TablesClient from './TablesClient'
 import FloorDesigner from './FloorDesigner'
+import VisitTypesCard from './VisitTypesCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,11 +22,14 @@ export default async function TablesPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('setup.edit')
 
-  const [tables, mode, rooms, features] = await Promise.all([
+  const [tables, mode, rooms, features, visitTypes] = await Promise.all([
     listTables(siteId),
     getSetting(siteId, 'pos_mode'),
     listRooms(siteId),
     listFeatures(siteId),
+    /* Everything, not just the active ones — a hidden type has to be visible here in
+       order to be brought back, the same rule the quick-key designer follows. */
+    listVisitTypes(siteId),
   ])
   const hospitality = mode === 'hospitality'
 
@@ -35,7 +40,7 @@ export default async function TablesPage() {
         subtitle="The floor a waiter sees, and whether the till shows it at all"
       />
       <PageBody>
-        <TablesClient tables={tables} hospitality={hospitality} />
+        <TablesClient tables={tables} hospitality={hospitality} visitTypes={visitTypes} />
         {/*
           The designer, BELOW the list and only in hospitality mode.
           Below because the list is what has to exist first — somebody must be able to add
@@ -43,6 +48,10 @@ export default async function TablesPage() {
           that order the screen reads as "these are the tables, and here is where they
           stand", which is the order a manager builds them in.
         */}
+        {/* Only in hospitality mode, and above the designer: how service is filed is a
+            decision about the FLOOR, so it belongs with the tables rather than after the
+            drawing of them. A counter shop has no visits to type. */}
+        {hospitality && <VisitTypesCard types={visitTypes} />}
         {hospitality && (
           <FloorDesigner tables={tables} rooms={rooms} features={features} />
         )}

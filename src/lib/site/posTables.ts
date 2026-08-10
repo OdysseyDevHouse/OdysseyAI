@@ -35,6 +35,13 @@ export type PosTable = {
   name: string
   section: string
   seats: number
+  /**
+   * How this table is being served — sit down, takeaway, delivery, or whatever the
+   * shop calls it. Null when nobody has said, which is most of them.
+   */
+  visitTypeId: number | null
+  /** The type's name, joined for the gate. Null when unlabelled or the type retired. */
+  visitTypeName: string | null
   sortOrder: number
   isActive: boolean
   /** The open bill, or null when the table is free. */
@@ -96,6 +103,18 @@ function mapTable(r: Row): PosTable {
     name: String(r.name ?? ''),
     section: String(r.section ?? ''),
     seats: Number(r.seats ?? 0),
+    /* Null is the normal state — nothing back-filled the column, so most tables have
+       never been labelled. The gate files those under the DEFAULT type rather than
+       showing a fourth "untyped" segment nobody chose. */
+    visitTypeId: r.visit_type_id === null || r.visit_type_id === undefined
+      ? null
+      : Number(r.visit_type_id),
+    /* Joined rather than looked up per table: the gate renders the name on every card
+       and a second query per row is how a floor of forty tables becomes forty round
+       trips. Null when unlabelled OR when the named type was retired. */
+    visitTypeName: r.visit_type_name === null || r.visit_type_name === undefined
+      ? null
+      : String(r.visit_type_name),
     sortOrder: Number(r.sort_order ?? 0),
     isActive: !!r.is_active,
     /*
@@ -145,8 +164,9 @@ export async function listTables(siteId: number): Promise<PosTable[]> {
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT t.id, t.code, t.name, t.section, t.seats, t.sort_order, t.is_active,
-            t.document_id, t.bill_asked_at,
+            t.document_id, t.bill_asked_at, t.visit_type_id,
             t.room_id, t.pos_x, t.pos_y, t.width, t.height, t.rotation, t.shape,
+            vt.name AS visit_type_name,
             d.total_incl,
             d.created_at AS opened_at,
             (SELECT COUNT(*) FROM sales_document_lines l WHERE l.document_id = d.id) AS line_count
@@ -156,6 +176,10 @@ export async function listTables(siteId: number): Promise<PosTable[]> {
           show a table as occupied by a sale that is already on the books. */
        LEFT JOIN sales_documents d
               ON d.id = t.document_id AND d.status = 'saved'
+       /* LEFT, and with no is_active filter: a table pointing at a RETIRED type must
+          still come back — dropping the row would take the table off the floor, and a
+          bill would go uncollected because somebody tidied a setup screen. */
+       LEFT JOIN pos_visit_types vt ON vt.id = t.visit_type_id
       WHERE t.is_active = 1
       ORDER BY t.section, t.sort_order, t.code`,
   )
@@ -166,12 +190,14 @@ export async function getTable(siteId: number, id: number): Promise<PosTable | n
   const row = await siteQueryOne<Row>(
     siteId,
     `SELECT t.id, t.code, t.name, t.section, t.seats, t.sort_order, t.is_active,
-            t.document_id, t.bill_asked_at,
+            t.document_id, t.bill_asked_at, t.visit_type_id,
             t.room_id, t.pos_x, t.pos_y, t.width, t.height, t.rotation, t.shape,
+            vt.name AS visit_type_name,
             d.total_incl, d.created_at AS opened_at,
             (SELECT COUNT(*) FROM sales_document_lines l WHERE l.document_id = d.id) AS line_count
        FROM pos_tables t
        LEFT JOIN sales_documents d ON d.id = t.document_id AND d.status = 'saved'
+       LEFT JOIN pos_visit_types vt ON vt.id = t.visit_type_id
       WHERE t.id = ? LIMIT 1`,
     [id],
   )
@@ -308,6 +334,15 @@ export type TableInput = {
   name?: string
   section?: string
   seats?: number
+  /**
+   * How this table is served. Undefined leaves it alone; null clears it back to
+   * "nobody has said", which the gate reads as the default type.
+   *
+   * Not validated against the type list here — the FK does that, and a check in
+   * application code would be a second answer to the same question that can drift
+   * from the first.
+   */
+  visitTypeId?: number | null
 }
 
 export function validateTable(input: TableInput): string | null {
@@ -343,9 +378,15 @@ export async function createTable(
      would then order lexically and put table 10 before table 2. */
   const result = await siteExecute(
     siteId,
-    `INSERT INTO pos_tables (code, name, section, seats, sort_order)
-     VALUES (?,?,?,?, (SELECT COALESCE(MAX(t.sort_order), -1) + 1 FROM pos_tables t))`,
-    [code, (input.name ?? '').trim(), (input.section ?? '').trim(), input.seats ?? 0],
+    `INSERT INTO pos_tables (code, name, section, seats, visit_type_id, sort_order)
+     VALUES (?,?,?,?,?, (SELECT COALESCE(MAX(t.sort_order), -1) + 1 FROM pos_tables t))`,
+    [
+      code,
+      (input.name ?? '').trim(),
+      (input.section ?? '').trim(),
+      input.seats ?? 0,
+      input.visitTypeId ?? null,
+    ],
   )
   return { ok: true, id: result.insertId }
 }
@@ -366,10 +407,23 @@ export async function updateTable(
   )
   if (clash) return { ok: false, error: `There is already a table "${code}".` }
 
+  /* The visit type is only written when the caller SAID something about it.
+     `undefined` means "leave it alone" — the floor designer saves position and size
+     without touching how a table is served, and a blanket write would clear it. */
+  const setsVisit = input.visitTypeId !== undefined
   const result = await siteExecute(
     siteId,
-    `UPDATE pos_tables SET code = ?, name = ?, section = ?, seats = ? WHERE id = ?`,
-    [code, (input.name ?? '').trim(), (input.section ?? '').trim(), input.seats ?? 0, id],
+    `UPDATE pos_tables SET code = ?, name = ?, section = ?, seats = ?${
+      setsVisit ? ', visit_type_id = ?' : ''
+    } WHERE id = ?`,
+    [
+      code,
+      (input.name ?? '').trim(),
+      (input.section ?? '').trim(),
+      input.seats ?? 0,
+      ...(setsVisit ? [input.visitTypeId] : []),
+      id,
+    ],
   )
   if (result.affectedRows === 0) return { ok: false, error: 'That table no longer exists.' }
   return { ok: true }

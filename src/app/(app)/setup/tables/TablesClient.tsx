@@ -12,11 +12,13 @@ import {
   Icons,
   Input,
   NumberInput,
+  Select,
   Switch,
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { PosTable } from '@/lib/site/posTables'
+import type { VisitType } from '@/lib/site/visitTypes'
 import {
   createTableAction,
   retireTableAction,
@@ -44,9 +46,12 @@ import {
 export default function TablesClient({
   tables: initial,
   hospitality: initialHospitality,
+  visitTypes = [],
 }: {
   tables: PosTable[]
   hospitality: boolean
+  /** Active types only — a hidden one must not be offered on a NEW table. */
+  visitTypes?: VisitType[]
 }) {
   const [tables, setTables] = useState(initial)
   const [hospitality, setHospitality] = useState(initialHospitality)
@@ -75,6 +80,11 @@ export default function TablesClient({
   }
 
   const occupied = tables.filter((t) => t.documentId !== null).length
+
+  /* Only the types still in use are offered on a table. A hidden one stays readable on
+     the table that already carries it — the list above shows it — but must not be
+     something new work can be filed under. */
+  const activeVisitTypes = visitTypes.filter((v) => v.isActive)
 
   return (
     <div className="flex flex-col gap-4">
@@ -159,6 +169,7 @@ export default function TablesClient({
           <div className="border-b border-border bg-surface-2 p-4">
             <TableForm
               busy={pending}
+              visitTypes={activeVisitTypes}
               onCancel={() => setAdding(false)}
               onSave={(input) =>
                 startAction(async () => {
@@ -199,6 +210,7 @@ export default function TablesClient({
                       <TableForm
                         table={table}
                         busy={pending}
+                        visitTypes={activeVisitTypes}
                         onCancel={() => setEditing(null)}
                         onSave={(input) =>
                           startAction(async () => {
@@ -289,18 +301,32 @@ export default function TablesClient({
 function TableForm({
   table,
   busy,
+  visitTypes,
   onCancel,
   onSave,
 }: {
   table?: PosTable
   busy: boolean
+  visitTypes: VisitType[]
   onCancel: () => void
-  onSave: (input: { code: string; name: string; section: string; seats: number }) => void
+  onSave: (input: {
+    code: string
+    name: string
+    section: string
+    seats: number
+    visitTypeId: number | null
+  }) => void
 }) {
   const [code, setCode] = useState(table?.code ?? '')
   const [name, setName] = useState(table?.name ?? '')
   const [section, setSection] = useState(table?.section ?? '')
   const [seats, setSeats] = useState(table?.seats ?? 0)
+  /* Held as a STRING because a <select> value is one. Empty means "not set", which is
+     a real choice here rather than a missing answer — the till files an unlabelled
+     table under whichever type is the default. */
+  const [visitTypeId, setVisitTypeId] = useState(
+    table?.visitTypeId == null ? '' : String(table.visitTypeId),
+  )
 
   return (
     <div className="flex flex-col gap-3">
@@ -343,6 +369,24 @@ function TableForm({
             onChange={(e) => setName(e.target.value)}
           />
         </Field>
+        {/* Only where there are types to pick from. A select whose only option is
+            "Not set" is a control that can never do anything. */}
+        {visitTypes.length > 0 && (
+          <Field label="Visit type" hint="Optional. Blank counts as the default.">
+            <Select
+              value={visitTypeId}
+              disabled={busy}
+              onChange={(e) => setVisitTypeId(e.target.value)}
+            >
+              <option value="">Not set</option>
+              {visitTypes.map((v) => (
+                <option key={v.id} value={String(v.id)}>
+                  {v.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
       </div>
 
       <div className="flex gap-2">
@@ -350,7 +394,15 @@ function TableForm({
           variant="primary"
           size="sm"
           disabled={busy || !code.trim()}
-          onClick={() => onSave({ code, name, section, seats })}
+          onClick={() =>
+            onSave({
+              code,
+              name,
+              section,
+              seats,
+              visitTypeId: visitTypeId ? Number(visitTypeId) : null,
+            })
+          }
         >
           {table ? 'Save' : 'Add it'}
         </Button>

@@ -14,6 +14,7 @@ import { listDepartments } from '@/lib/site/departments'
 import { listQuickKeys } from '@/lib/site/quickKeys'
 import { listTables } from '@/lib/site/posTables'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
+import { listVisitTypes } from '@/lib/site/visitTypes'
 import { siteQuery } from '@/lib/siteDb'
 import PosEntry from './PosEntry'
 
@@ -70,6 +71,7 @@ export default async function PosPage() {
     tables,
     floorRooms,
     floorFeatures,
+    visitTypes,
   ] = await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
@@ -115,6 +117,10 @@ export default async function PosPage() {
          reason the tables are: one query beats a branch repeated per consumer. */
       listRooms(site.id),
       listFeatures(site.id),
+      /* ACTIVE only: the gate offers one filter segment per type, and a retired one is
+         a segment nobody can file a table under. The setup screen asks for all of them,
+         because hiding a type is undone from there. */
+      listVisitTypes(site.id, true),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
@@ -188,6 +194,7 @@ export default async function PosPage() {
       hospitality={posMode === 'hospitality'}
       initialTables={tables}
       floorRooms={floorRooms}
+      visitTypes={visitTypes}
       floorFeatures={floorFeatures}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
     />

@@ -11,6 +11,7 @@ import type { Terminal } from '@/lib/site/terminals'
 import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { PosTable } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
+import type { VisitType } from '@/lib/site/visitTypes'
 import type { Department } from './types'
 
 /**
@@ -56,6 +57,7 @@ export default function PosEntry({
   initialTables,
   floorRooms,
   floorFeatures,
+  visitTypes = [],
 }: {
   siteId: number
   siteName: string
@@ -90,6 +92,8 @@ export default function PosEntry({
   /** The drawn floor. Relayed unchanged — this component owns sign-in, not the floor. */
   floorRooms: FloorRoom[]
   floorFeatures: FloorFeature[]
+  /** Active visit types, for the table gate's filter. */
+  visitTypes?: VisitType[]
 }) {
   /*
    * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
@@ -163,6 +167,7 @@ export default function PosEntry({
       initialTables={initialTables}
       floorRooms={floorRooms}
       floorFeatures={floorFeatures}
+      visitTypes={visitTypes}
     />
   )
 }

@@ -73,6 +73,7 @@ import {
   splitTableAction,
 } from './tableActions'
 import type { PosTable } from '@/lib/site/posTables'
+import type { VisitType } from '@/lib/site/visitTypes'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import { SplitBillModal, type SplitLine } from './SplitBillModal'
 import { QuickKeyPanel } from './QuickKeyPanel'
@@ -147,6 +148,7 @@ export default function PosShell({
   initialTables,
   floorRooms,
   floorFeatures,
+  visitTypes = [],
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
   siteId: number
@@ -185,6 +187,8 @@ export default function PosShell({
   /** The DRAWN floor, if a manager built one. Empty means the gate uses the grid. */
   floorRooms: FloorRoom[]
   floorFeatures: FloorFeature[]
+  /** Active visit types, for the gate's filter. Empty hides it. */
+  visitTypes?: VisitType[]
 }) {
   const [state, dispatch] = useSaleState()
   const [pending, startTransition] = useTransition()
@@ -1134,18 +1138,21 @@ export default function PosShell({
      waiter sees another waiter's table go from open to bill-asked without reloading. A
      restaurant floor is a SHARED screen; a retail till is not, which is why nothing
      equivalent polls in retail. */
+  /* Hoisted out of the effect so the gate's Refresh button runs the SAME read the
+     timer does. Two paths to "re-read the floor" is two places for it to drift. */
+  const refreshTables = useCallback(() => {
+    void listTablesAction()
+      .then((r) => {
+        if (r.ok) setTables(r.tables)
+      })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     if (!hospitality) return
-    const refresh = () => {
-      void listTablesAction()
-        .then((r) => {
-          if (r.ok) setTables(r.tables)
-        })
-        .catch(() => {})
-    }
-    const timer = setInterval(refresh, 20_000)
+    const timer = setInterval(refreshTables, 20_000)
     return () => clearInterval(timer)
-  }, [hospitality])
+  }, [hospitality, refreshTables])
 
   /**
    * Writes the basket to the table's bill.
@@ -1413,6 +1420,8 @@ export default function PosShell({
         <TableGate
           tables={tables}
           rooms={floorRooms}
+          visitTypes={visitTypes}
+          onRefresh={refreshTables}
           features={floorFeatures}
           busy={pending}
           onWalkIn={() => {

@@ -12,6 +12,13 @@ import {
   type TableInput,
 } from '@/lib/site/posTables'
 import {
+  listVisitTypes,
+  createVisitType,
+  updateVisitType,
+  deleteVisitType,
+  type VisitType,
+} from '@/lib/site/visitTypes'
+import {
   listRooms,
   listFeatures,
   createRoom,
@@ -244,3 +251,78 @@ export async function setPosModeAction(hospitality: boolean): Promise<ModeResult
  * from the session, never from an argument. The page reads `getSetting` directly, which is
  * server code and already knows whose site it is.
  */
+
+/* ── Visit types ─────────────────────────────────────────────────────────── */
+
+/**
+ * Every mutation returns the whole fresh list, like the table actions above.
+ *
+ * The server owns sort order and the "exactly one default" rule, so a client applying
+ * its own guess would drift from what the till reads — and the default in particular
+ * changes a row the caller did not touch, which no optimistic update can predict.
+ */
+export type VisitTypesResult =
+  | { ok: true; types: VisitType[]; outcome?: 'deleted' | 'hidden' }
+  | { ok: false; error: string }
+
+export async function createVisitTypeAction(input: {
+  name: string
+}): Promise<VisitTypesResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  try {
+    await createVisitType(siteId, input)
+  } catch (e) {
+    /* The module raises a sentence a manager can act on — a duplicate name is the one
+       failure a setup screen actually hits, and "ER_DUP_ENTRY" in a toast is not an
+       answer to anything. */
+    return { ok: false, error: e instanceof Error ? e.message : 'That could not be saved.' }
+  }
+
+  revalidatePath('/setup/tables')
+  revalidatePath('/pos')
+  return { ok: true, types: await listVisitTypes(siteId) }
+}
+
+export async function updateVisitTypeAction(
+  id: number,
+  patch: { name?: string; isDefault?: boolean; isActive?: boolean },
+): Promise<VisitTypesResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  try {
+    await updateVisitType(siteId, id, patch)
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'That could not be saved.' }
+  }
+
+  revalidatePath('/setup/tables')
+  revalidatePath('/pos')
+  return { ok: true, types: await listVisitTypes(siteId) }
+}
+
+/**
+ * Remove a type — or hide it, when a table still names it.
+ *
+ * The outcome travels back so the screen can say which happened. A manager who meant
+ * "stop offering this" and is silently given "and re-filed the eleven tables using it"
+ * has been surprised by their own click.
+ */
+export async function deleteVisitTypeAction(id: number): Promise<VisitTypesResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  try {
+    const outcome = await deleteVisitType(siteId, id)
+    revalidatePath('/setup/tables')
+    revalidatePath('/pos')
+    return { ok: true, types: await listVisitTypes(siteId), outcome }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'That could not be removed.' }
+  }
+}
