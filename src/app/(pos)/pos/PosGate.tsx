@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, PinPad, Button, Icons } from '@/components/ui'
-import { tillSignInAction } from '@/app/(app)/sales/new/pinActions'
+import { tillSignInAction } from './pinActions'
 import {
   signInOffline,
   startOfflineSession,

@@ -1,79 +1,37 @@
 import { redirect } from 'next/navigation'
-import { requireSiteUser } from '@/lib/auth'
-import { listTerminals } from '@/lib/site/terminals'
-import { listTenderTypes } from '@/lib/site/tenderTypes'
-import { listSaved } from '@/lib/site/salesDocuments'
-import { listPriceStructures } from '@/lib/site/lookups'
-import { getNumericSetting } from '@/lib/site/settings'
-import { can, capabilitiesForRole } from '@/lib/site/permissions'
-import { getUser } from '@/lib/site/users'
-import { getTillSession } from '@/lib/tillSession'
-import { liveSpecials } from '@/lib/site/specials'
-import { PageHeader } from '@/components/ui'
-import TillScreen from './TillScreen'
-import TillGate from './TillGate'
 
-export const dynamic = 'force-dynamic'
-
-export default async function NewSalePage() {
-  const { site, capabilities } = await requireSiteUser()
-  if (!can(capabilities, 'sales.till')) redirect('/not-allowed')
-
-  // Who is at the keyboard, which is a different question from whose browser
-  // session this is — see lib/tillSession.ts. Until somebody enters a PIN the
-  // basket is not shown at all, so no sale can be rung up unattributed.
-  const till = await getTillSession(site.id)
-  if (!till) {
-    return (
-      <div className="flex h-full flex-col">
-        <PageHeader title="New sale" subtitle={site.displayName} />
-        <TillGate siteName={site.displayName} />
-      </div>
-    )
-  }
-
-  // The OPERATOR's permissions, not the browser session's. A manager signed in
-  // to the back office who hands the till to a junior must not leave their own
-  // discount rights behind on the screen.
-  const operator = await getUser(site.id, till.userId)
-  const operatorCapabilities = operator
-    ? await capabilitiesForRole(site.id, operator.roleId)
-    : capabilities
-
-  const [terminals, tenders, saved, structures, cashRounding, specials] = await Promise.all([
-    listTerminals(site.id, false),
-    listTenderTypes(site.id),
-    listSaved(site.id),
-    listPriceStructures(site.id),
-    getNumericSetting(site.id, 'sales_cash_rounding'),
-    /*
-     * Sent WHOLE, with their windows unevaluated.
-     *
-     * The till re-checks them against its own clock on every basket change,
-     * so a happy hour starting at five begins on time even though this page
-     * was loaded at ten to.
-     */
-    liveSpecials(site.id),
-  ])
-
-  // The default structure is the shelf price; fall back to the first if none is
-  // flagged, which is what listProducts already assumes.
-  const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
-
-  return (
-    <div className="flex h-full flex-col">
-      <PageHeader title="New sale" subtitle={`${site.displayName} · ${till.name}`} />
-      <TillScreen
-        terminals={terminals}
-        tenders={tenders}
-        priceStructureId={priceStructure?.id ?? null}
-        savedCount={saved.length}
-        cashRounding={cashRounding}
-        canOverrideDiscount={can(operatorCapabilities, 'sales.discount_override')}
-        canOverridePrice={can(operatorCapabilities, 'sales.price_override')}
-        specials={specials}
-        operatorName={till.name}
-      />
-    </div>
-  )
+/**
+ * The old desk till. Now a redirect to `/pos`.
+ *
+ * ── WHY A REDIRECT AND NOT A DELETED ROUTE ────────────────────────────────
+ *
+ * `/sales/new` was the busiest screen in the product for years. It is bookmarked, it is
+ * in browser histories, it is written on training notes, and six screens still link to
+ * it. Deleting the route would answer all of that with a 404 — so it answers with the
+ * till instead, and every one of those paths keeps working.
+ *
+ * The links themselves are updated in the same commit. This exists for the ones nobody
+ * can edit: a bookmark, a pinned tab, somebody's muscle memory.
+ *
+ * ── WHAT REPLACED IT ──────────────────────────────────────────────────────
+ *
+ * `(pos)/pos` — the same sale, the same posting engine, a screen built for a finger
+ * instead of a mouse. What made this deletion safe rather than brave is that the ENGINE
+ * was always shared: `saveDraft`, `finaliseDocument`, `documentMath`, `specialsEngine`
+ * and `tenderMath` were never duplicated, so retiring this screen removed a screen and
+ * nothing else.
+ *
+ * The touch till also does everything this one did — including loyalty, which was the
+ * last gap and was closed deliberately BEFORE this file was emptied. Deleting the only
+ * screen that could redeem points would have been a regression dressed as cleanup.
+ *
+ * ── WHEN THIS FILE CAN GO ─────────────────────────────────────────────────
+ *
+ * Once the redirect has been live long enough that the bookmarks are gone — a release or
+ * two. Until then a 79-line screen has become a 3-line redirect, which is the whole
+ * point: there is no second till to keep in step, and no 1,040-line component for
+ * somebody to edit by mistake.
+ */
+export default function NewSaleRedirect() {
+  redirect('/pos')
 }

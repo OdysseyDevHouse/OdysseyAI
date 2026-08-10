@@ -58,7 +58,7 @@ import {
   saveInvoiceAction,
   type InvoicePayload,
 } from '../actions'
-import TenderPad from '@/app/(app)/sales/new/TenderPad'
+import TenderPad from './TenderPad'
 import { issueQuoteAction } from '@/app/(app)/sales/quotes/actions'
 import CustomerBar from './CustomerBar'
 

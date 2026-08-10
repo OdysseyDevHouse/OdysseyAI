@@ -94,7 +94,7 @@ export default async function OrdersPage({
         title="Sales orders"
         subtitle={`${total} order${total === 1 ? '' : 's'}`}
         action={
-          <PrimaryLink href="/sales/new">
+          <PrimaryLink href="/pos">
             <Icons.Plus size={15} />
             New order at the till
           </PrimaryLink>
@@ -195,7 +195,7 @@ export default async function OrdersPage({
                       title: 'No sales orders',
                       hint: 'Raise one when a customer commits to buy something you will deliver later.',
                       action: (
-                        <PrimaryLink href="/sales/new">
+                        <PrimaryLink href="/pos">
                           <Icons.Plus size={15} />
                           New order at the till
                         </PrimaryLink>

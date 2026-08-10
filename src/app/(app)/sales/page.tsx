@@ -92,7 +92,7 @@ export default async function SalesPage({
         title="Sales"
         subtitle={`${total} document${total === 1 ? '' : 's'}`}
         action={
-          <PrimaryLink href="/sales/new">
+          <PrimaryLink href="/pos">
             <Icons.Plus size={15} />
             New sale
           </PrimaryLink>
@@ -190,7 +190,7 @@ export default async function SalesPage({
                       hint: 'Ring one up from the till to see it here.',
                       icon: <Icons.Receipt size={22} />,
                       action: (
-                        <ButtonLink variant="secondary" href="/sales/new">
+                        <ButtonLink variant="secondary" href="/pos">
                           <Icons.Banknote size={15} />
                           Open the till
                         </ButtonLink>

@@ -77,6 +77,17 @@ export type OnlineOrder = {
   deliveryNotes: string
   deliveryFeeIncl: number
   zoneId: number | null
+  /**
+   * What a discount code took off, as MONEY, and which code it was.
+   *
+   * Stored on the order rather than re-derived, for the same reason totalIncl
+   * is: this is a record of what was agreed, and a code edited or withdrawn
+   * afterwards must not restate a placed order. `discountCode` survives even
+   * the code row being deleted, so staff can still see why it was cheaper.
+   */
+  discountCodeId: number | null
+  discountCode: string
+  discountIncl: number
   totalIncl: number
   requestedFor: Date | null
   customerNote: string
@@ -132,6 +143,12 @@ function mapOrder(r: Row): OnlineOrder {
     deliveryPostcode: String(r.delivery_postcode ?? ''),
     deliveryNotes: String(r.delivery_notes ?? ''),
     deliveryFeeIncl: toNum(r.delivery_fee_incl),
+    discountCodeId:
+      r.discount_code_id === null || r.discount_code_id === undefined
+        ? null
+        : Number(r.discount_code_id),
+    discountCode: String(r.discount_code ?? ''),
+    discountIncl: toNum(r.discount_incl),
     zoneId: r.zone_id === null ? null : Number(r.zone_id),
     totalIncl: toNum(r.total_incl),
     requestedFor: r.requested_for instanceof Date ? r.requested_for : null,
@@ -466,9 +483,53 @@ export async function acceptOrder(
     }
   }
 
+  /*
+   * ── The discount, spread across the goods lines ─────────────────────────
+   *
+   * Applied as a per-line discount rather than a negative line, because that
+   * is what a sales document already models (015: discount_pct, discount_incl)
+   * and what every report, VAT calculation and credit note downstream already
+   * understands. A synthetic "Discount" line with a negative price would post
+   * against no department, carry no VAT rate anyone chose, and turn up in
+   * stock reports as a product.
+   *
+   * Spread PROPORTIONALLY, so a mixed-VAT basket stays correct: taking the
+   * whole discount off one line would move the VAT between rates and mis-state
+   * what is owed to SARS.
+   *
+   * The figure comes from the ORDER, not from re-running the code. The shopper
+   * agreed a total; a code edited or expired since must not restate it — the
+   * same reasoning that keeps `total_incl` on the order in the first place.
+   */
+  if (order.discountIncl > 0 && saleLines.length > 0) {
+    const goods = saleLines.reduce((sum, l) => sum + l.unitPriceIncl * l.qty, 0)
+    if (goods > 0) {
+      // Capped at the goods actually on the sale: lines may have been dropped
+      // above as withdrawn, and a discount larger than what remains would make
+      // the invoice negative.
+      const toSpread = Math.min(order.discountIncl, goods)
+      let spread = 0
+      saleLines.forEach((line, index) => {
+        const lineTotal = line.unitPriceIncl * line.qty
+        // The last line takes the remainder, so rounding cannot lose or invent
+        // a cent against the total the shopper agreed.
+        const share =
+          index === saleLines.length - 1
+            ? round(toSpread - spread, 2)
+            : round((toSpread * lineTotal) / goods, 2)
+        spread = round(spread + share, 2)
+        line.discountIncl = share
+        line.discountCodeId = order.discountCodeId
+      })
+    }
+  }
+
   // The delivery fee rides on the sale as its own line, so the customer is
   // charged it and the takings include it. Zero-rated is wrong for most
   // stores, so it follows the same VAT rate as the order's goods.
+  //
+  // Added AFTER the discount spread on purpose: a discount code reduces goods,
+  // never the driver's time.
   if (order.fulfilment === 'deliver' && order.deliveryFeeIncl > 0) {
     saleLines.push({
       productId: null,

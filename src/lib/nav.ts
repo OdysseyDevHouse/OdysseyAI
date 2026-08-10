@@ -94,7 +94,7 @@ export const NAV: NavSection[] = [
     label: 'Sales',
     icon: LineChart,
     items: [
-      { label: 'New sale', href: '/sales/new', icon: Plus, built: true, capability: 'sales.till' },
+      { label: 'New sale', href: '/pos', icon: Plus, built: true, capability: 'sales.till' },
       { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.edit' },
       { label: 'Documents', href: '/sales', icon: Receipt, built: true, capability: 'sales.view' },
       { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view' },

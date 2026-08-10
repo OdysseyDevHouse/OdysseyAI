@@ -74,7 +74,7 @@ export default async function LaybysPage({
         action={
           <>
             <ExpireButton />
-            <PrimaryLink href="/sales/new">
+            <PrimaryLink href="/pos">
               <Icons.Plus size={15} />
               New lay-by at the till
             </PrimaryLink>
@@ -172,7 +172,7 @@ export default async function LaybysPage({
                       title: 'No lay-bys',
                       hint: 'Start one from the till: ring up the goods, attach a customer, then Save as lay-by.',
                       action: (
-                        <PrimaryLink href="/sales/new">
+                        <PrimaryLink href="/pos">
                           <Icons.Plus size={15} />
                           New lay-by at the till
                         </PrimaryLink>

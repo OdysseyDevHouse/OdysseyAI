@@ -345,6 +345,14 @@ export type LineInput = {
    * line or a discount a cashier gave by hand.
    */
   specialId?: number | null
+  /**
+   * The discount code that caused this line's reduction, when one did.
+   *
+   * Alongside `specialId` rather than reusing it: a line can be reduced by a
+   * special AND carry a code, and one column cannot record both. Without this
+   * "what did that campaign cost us" is unanswerable from the sales data.
+   */
+  discountCodeId?: number | null
 }
 
 export type DocumentInput = {
@@ -562,8 +570,8 @@ export async function saveDraft(
             department_id, sales_rep_id, source_line_id, sales_rep_user_id,
             qty, unit_price_incl, discount_pct, discount_incl,
             vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,
-            special_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            special_id, discount_code_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -585,6 +593,7 @@ export async function saveDraft(
           computed.lineVat.toFixed(4),
           (line.unitCostExcl ?? 0).toFixed(4),
           line.specialId ?? null,
+          line.discountCodeId ?? null,
         ] as never,
       )
     }

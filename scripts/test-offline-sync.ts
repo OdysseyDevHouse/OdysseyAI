@@ -49,6 +49,31 @@ const stockOf = async (id: number) =>
       ?.stock_on_hand,
   )
 
+/**
+ * A till number no terminal is currently using.
+ *
+ * QUERIED, never hardcoded, and the reason is a real failure this file had: it used to
+ * ask for '97', which is inside the range `test-cashup.ts` picks from. That suite exits
+ * early on a few paths without reaching its cleanup, so its scratch till sat in the table
+ * still holding 97 — and every later run of THIS file died on
+ * `Duplicate entry '97' for key 'uq_terminal_till_number'` before reaching a single
+ * assertion. Which reads as a broken schema, and is really just two tests reaching for the
+ * same number.
+ *
+ * Counting DOWN from 99 keeps scratch tills clear of the low numbers a real shop uses.
+ */
+async function freeTillNumber(): Promise<string> {
+  const rows = await siteQuery<{ till_number: string }>(
+    SITE,
+    'SELECT till_number FROM terminals WHERE till_number IS NOT NULL',
+  )
+  const taken = new Set(rows.map((r) => String(r.till_number)))
+  for (let n = 99; n >= 50; n--) {
+    if (!taken.has(String(n))) return String(n)
+  }
+  throw new Error('No free till number in 50..99 — sweep the scratch terminals.')
+}
+
 async function main() {
   const stamp = Date.now().toString().slice(-8)
 
@@ -104,7 +129,7 @@ async function main() {
   const tillIns = await siteExecute(
     SITE,
     'INSERT INTO terminals (code, till_number, name, is_active) VALUES (?,?,?,1)',
-    [`TSTSYNC${stamp}`, '97', `Offline sync till ${stamp}`],
+    [`TSTSYNC${stamp}`, await freeTillNumber(), `Offline sync till ${stamp}`],
   )
   const terminalId = tillIns.insertId
   await siteExecute(

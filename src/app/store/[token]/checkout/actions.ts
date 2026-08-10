@@ -9,8 +9,10 @@ import { buildCheckoutForm } from '@/lib/payfast/checkout'
 import { createIntent, getGateway } from '@/lib/site/payments'
 import { markOrderPayment } from '@/lib/site/paidOrders'
 import { markOrdered } from '@/lib/site/savedBaskets'
+import { validateCode } from '@/lib/site/discountCodes'
 import {
   placePublicOrder,
+  publishedProducts,
   quoteDeliveryFor,
   storefrontContext,
   type BasketLine,
@@ -96,6 +98,87 @@ async function stopChasing(siteId: number, email: string): Promise<void> {
     if (email.trim()) await markOrdered(siteId, email)
   } catch {
     /* deliberately ignored — see above */
+  }
+}
+
+export type DiscountPreview =
+  | { ok: true; discountIncl: number; freeDelivery: boolean; reason: string; code: string }
+  | { ok: false; error: string }
+
+/**
+ * Preview a discount code against the basket.
+ *
+ * INDICATIVE ONLY, like the delivery quote beside it. The order is re-validated
+ * and re-priced from the catalogue when it is placed, by the same validateCode
+ * this calls — so a code that expires between the preview and the button, or
+ * runs out of uses, is caught there and the order is refused rather than
+ * silently charged full price.
+ *
+ * Prices come from the CATALOGUE, not the basket the browser posted: the lines
+ * only supply ids and quantities, exactly as checkout does.
+ */
+export async function previewDiscountAction(
+  token: string,
+  code: string,
+  lines: { productId: number; qty: number }[],
+  deliveryFeeIncl: number,
+): Promise<DiscountPreview> {
+  const siteId = await verifyPublicStoreToken(token)
+  if (siteId === null) return { ok: false, error: 'This shop is no longer available.' }
+
+  const context = await storefrontContext(siteId)
+  if (!context) return { ok: false, error: 'This shop is closed at the moment.' }
+
+  const wanted = (Array.isArray(lines) ? lines : [])
+    .map((l) => ({ productId: Number(l.productId), qty: Number(l.qty) }))
+    .filter((l) => Number.isInteger(l.productId) && l.productId > 0 && l.qty > 0)
+    .slice(0, 200)
+  if (wanted.length === 0) return { ok: false, error: 'Your basket is empty.' }
+
+  const live = await publishedProducts(context, {
+    ids: wanted.map((l) => l.productId),
+    limit: 200,
+  })
+  const byId = new Map(live.map((p) => [p.id, p]))
+
+  const basketLines = wanted
+    .filter((l) => byId.has(l.productId))
+    .map((l) => {
+      const product = byId.get(l.productId)!
+      return {
+        productId: product.id,
+        qty: l.qty,
+        unitPriceIncl: product.priceIncl,
+        onSpecial: product.wasPriceIncl !== null,
+        departmentId: product.departmentId,
+      }
+    })
+  if (basketLines.length === 0) return { ok: false, error: 'Your basket is empty.' }
+
+  /*
+   * The signed-in shopper, read from the cookie — never from the payload, so a
+   * per-customer limit cannot be dodged by naming somebody else.
+   *
+   * No email is passed for a GUEST preview, deliberately. The address they are
+   * about to type is not known yet, and taking one from the request body would
+   * let anyone check whether a stranger had already used a code. The guest's
+   * limit is enforced when the order is placed, where the address is real.
+   */
+  const session = await getCustomerSession(siteId)
+
+  const result = await validateCode(siteId, code, {
+    lines: basketLines,
+    deliveryFeeIncl: Math.max(0, Number(deliveryFeeIncl) || 0),
+    customerId: session?.customerId ?? null,
+  })
+
+  if (!result.ok) return { ok: false, error: result.error }
+  return {
+    ok: true,
+    discountIncl: result.application.discountIncl,
+    freeDelivery: result.application.freeDelivery,
+    reason: result.application.reason,
+    code: result.application.code.code,
   }
 }
 

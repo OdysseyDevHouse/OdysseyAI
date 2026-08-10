@@ -47,8 +47,18 @@ const GUARD =
  *
  * /not-allowed is where every refused guard redirects TO — guarding it would
  * bounce a user between two pages forever.
+ *
+ * /sales/new is the retired desk till, now a bare `redirect('/pos')`. It reads
+ * nothing and renders nothing, so there is no data for a capability to protect;
+ * the guard that matters is the one on `/pos`, which is where the visitor lands
+ * and which checks `sales.till` for itself. Duplicating it here would be worse
+ * than absent: a second gate on the way to a gated screen is a second place for
+ * the two to disagree about who may sell.
  */
-const OPEN_PAGES = new Set(['src/app/(app)/not-allowed/page.tsx'])
+const OPEN_PAGES = new Set([
+  'src/app/(app)/not-allowed/page.tsx',
+  'src/app/(app)/sales/new/page.tsx',
+])
 
 /**
  * API routes that are deliberately unauthenticated, each for a documented

@@ -16,7 +16,7 @@ import {
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { useCart } from '../CartContext'
-import { placeOrderAction, quoteDeliveryAction } from './actions'
+import { placeOrderAction, previewDiscountAction, quoteDeliveryAction } from './actions'
 
 /**
  * Checkout.
@@ -104,9 +104,78 @@ export default function Checkout({
     null,
   )
 
+  /*
+   * ── The discount, previewed ─────────────────────────────────────────────
+   *
+   * Indicative, exactly like the delivery quote: the server re-validates the
+   * code and re-prices the basket when the order is placed. A code that
+   * expires or runs out between here and the button is caught there, and the
+   * order is refused rather than quietly charged full price.
+   */
+  const [codeInput, setCodeInput] = useState('')
+  const [discount, setDiscount] = useState<{
+    code: string
+    discountIncl: number
+    freeDelivery: boolean
+    reason: string
+  } | null>(null)
+  const [codeError, setCodeError] = useState('')
+  const [checkingCode, startCheckingCode] = useTransition()
+
   const belowMinimum = minOrderIncl > 0 && cart.subtotal < minOrderIncl
-  const deliveryFee = fulfilment === 'deliver' && quote?.deliverable ? quote.fee : 0
-  const total = cart.subtotal + deliveryFee
+  const discountIncl = discount?.discountIncl ?? 0
+  const discountedGoods = Math.max(0, cart.subtotal - discountIncl)
+  const quotedFee = fulfilment === 'deliver' && quote?.deliverable ? quote.fee : 0
+  // A free-delivery code waives the fee entirely; every other kind leaves it
+  // alone. Same split the server makes.
+  const deliveryFee = discount?.freeDelivery ? 0 : quotedFee
+  const total = discountedGoods + deliveryFee
+
+  function applyCode() {
+    setCodeError('')
+    startCheckingCode(async () => {
+      const result = await previewDiscountAction(
+        token,
+        codeInput,
+        cart.lines.map((l) => ({ productId: l.productId, qty: l.qty })),
+        quotedFee,
+      )
+      if (!result.ok) {
+        setDiscount(null)
+        setCodeError(result.error)
+        return
+      }
+      setDiscount({
+        code: result.code,
+        discountIncl: result.discountIncl,
+        freeDelivery: result.freeDelivery,
+        reason: result.reason,
+      })
+      setCodeInput(result.code)
+    })
+  }
+
+  /*
+   * The basket changing invalidates the preview.
+   *
+   * A code checked against three items may not apply to two — a minimum may no
+   * longer be met, or the only eligible line may have been removed. Rather than
+   * silently re-checking (and possibly changing the total under the shopper's
+   * cursor), the discount is dropped and they re-apply. The server would refuse
+   * a stale one anyway; this makes the screen agree with it.
+   */
+  const basketSignature = cart.lines
+    .map((l) => `${l.productId}x${l.qty}`)
+    .join('|')
+  const appliedAgainst = useRef(basketSignature)
+  useEffect(() => {
+    if (appliedAgainst.current === basketSignature) return
+    appliedAgainst.current = basketSignature
+    if (discount) {
+      setDiscount(null)
+      setCodeError('Your basket changed — apply your code again.')
+    }
+  }, [basketSignature, discount])
 
   /*
    * ── Whether this order is actually going on the account ────────────────
@@ -189,6 +258,9 @@ export default function Checkout({
         customerNote,
         lines: cart.lines.map((l) => ({ productId: l.productId, qty: l.qty })),
         payOnAccount: chargingAccount,
+        // Only a request, like payOnAccount: the server re-validates it and
+        // decides what it is worth.
+        discountCode: discount?.code ?? '',
       })
 
       if (!result.ok) {
@@ -433,14 +505,92 @@ export default function Checkout({
               ))}
             </ul>
 
-            <div className="mt-4 flex flex-col gap-1.5 border-t border-border pt-3">
+            {/* ── Discount code ────────────────────────────────────────────
+                Above the totals, because it CHANGES them — a field below the
+                figures it alters reads as an afterthought and gets missed. */}
+            <div className="mt-4 border-t border-border pt-3">
+              {discount ? (
+                <div className="flex items-center gap-2 rounded-control bg-success-soft px-3 py-2">
+                  <Icons.Check size={16} className="shrink-0 text-success" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-success">
+                      {discount.code} applied
+                    </span>
+                    <span className="block text-xs text-ink-2">{discount.reason}</span>
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove code ${discount.code}`}
+                    onClick={() => {
+                      setDiscount(null)
+                      setCodeInput('')
+                      setCodeError('')
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-end gap-2">
+                  <span className="min-w-0 flex-1">
+                    <Field label="Discount code">
+                      <Input
+                        value={codeInput}
+                        placeholder="e.g. SAVE10"
+                        autoCapitalize="characters"
+                        aria-label="Discount code"
+                        onChange={(e) => {
+                          setCodeInput(e.target.value)
+                          setCodeError('')
+                        }}
+                        onKeyDown={(e) => {
+                          // Enter applies the code rather than submitting the
+                          // page — a shopper typing a code and pressing return
+                          // means "check this", not "order now".
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            if (codeInput.trim()) applyCode()
+                          }
+                        }}
+                      />
+                    </Field>
+                  </span>
+                  <span className="mb-0.5">
+                    <Button
+                      variant="secondary"
+                      disabled={checkingCode || !codeInput.trim()}
+                      onClick={applyCode}
+                    >
+                      {checkingCode ? 'Checking…' : 'Apply'}
+                    </Button>
+                  </span>
+                </div>
+              )}
+
+              {codeError && (
+                <p role="alert" className="mt-2 text-sm text-danger">
+                  {codeError}
+                </p>
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3">
               <Row label="Subtotal" value={formatMoney(cart.subtotal)} />
+              {discountIncl > 0 && (
+                <Row
+                  label={`Discount (${discount?.code})`}
+                  value={`−${formatMoney(discountIncl)}`}
+                  tone="success"
+                />
+              )}
               {/* Only once a quote exists. Showing "Delivery R0.00" before the
                   address is typed would read as free delivery. */}
               {fulfilment === 'deliver' && quote && (
                 <Row
                   label="Delivery"
                   value={deliveryFee > 0 ? formatMoney(deliveryFee) : 'Free'}
+                  tone={discount?.freeDelivery && quotedFee > 0 ? 'success' : undefined}
                 />
               )}
             </div>
@@ -553,11 +703,22 @@ export default function Checkout({
   )
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  /** 'success' marks money coming OFF, so a reduction reads as one at a glance. */
+  tone?: 'success'
+}) {
   return (
     <div className="flex items-baseline justify-between text-sm">
-      <span className="text-muted">{label}</span>
-      <span className="numeric text-ink">{value}</span>
+      <span className={tone === 'success' ? 'text-success' : 'text-muted'}>{label}</span>
+      <span className={`numeric ${tone === 'success' ? 'text-success' : 'text-ink'}`}>
+        {value}
+      </span>
     </div>
   )
 }
