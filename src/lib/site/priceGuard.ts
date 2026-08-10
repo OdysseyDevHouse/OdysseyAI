@@ -39,6 +39,18 @@ import { duePricesFor } from './priceSchedules'
  * Refusing those sales would stop the shop trading for exactly as long as that
  * gap lasts, with customers standing there — and would flag every offline sale
  * that syncs from the same window. See `duePricesFor` in site/priceSchedules.
+ *
+ * Nor is an INSTRUCTION. A burger with extra bacon costs more than the shelf
+ * figure by design: the answers' price is folded into the line so that specials,
+ * discounts and VAT all see the item at the price actually charged. Without
+ * backing that out here, every modified line on every ordinary cashier's till
+ * would be refused — which is not a stricter guard, it is a feature nobody can
+ * use.
+ *
+ * That adjustment is RE-DERIVED from `instruction_options` rather than taken
+ * from the payload, for exactly the reason the shelf price is re-read above: a
+ * client that could name its own exemption could name any figure it liked, and
+ * the guard would once again be comparing a number against itself.
  */
 
 export type PriceCheckLine = {
@@ -46,6 +58,14 @@ export type PriceCheckLine = {
   description?: string
   unitPriceIncl: number
   discountPct?: number
+  /**
+   * The answers chosen on this line.
+   *
+   * Only the id and the count are READ — a caller may hand over the whole
+   * snapshot it is about to save, and any price on it is ignored in favour of
+   * what `instruction_options` says. See the note above on why.
+   */
+  instructions?: readonly { optionId: number | null; qty: number }[]
 }
 
 /** A rounding tolerance, not a policy: a cent of drift is not an override. */
@@ -101,6 +121,49 @@ export async function checkPricing(
     ? new Map<number, number>()
     : await duePricesFor(siteId, priceStructureId, productIds)
 
+  /*
+   * What each chosen answer adds, READ FROM THE DATABASE.
+   *
+   * An id the client sent that does not resolve — deleted, or invented —
+   * contributes nothing, so a line claiming an exemption it cannot justify is
+   * refused exactly as an unexplained price would be. Same reason as re-reading
+   * the shelf price: the payload cannot be allowed to certify itself.
+   *
+   * Skipped entirely for a supervisor, and for a sale with no answers on it.
+   */
+  const optionIds = mayOverridePrice
+    ? []
+    : [
+        ...new Set(
+          lines
+            .flatMap((l) => (l.instructions ?? []).map((i) => i.optionId))
+            .filter((id): id is number => typeof id === 'number' && id > 0),
+        ),
+      ]
+  const optionPrices = optionIds.length
+    ? new Map(
+        (
+          await siteQuery<RowDataPacket & { id: number; price_adjust: string | number }>(
+            siteId,
+            `SELECT id, price_adjust FROM instruction_options
+              WHERE id IN (${optionIds.map(() => '?').join(',')})`,
+            optionIds,
+          ).catch(() => [])
+        ).map((r) => [Number(r.id), toNum(r.price_adjust)]),
+      )
+    : new Map<number, number>()
+
+  /** What this line's answers add to ONE of it, by the server's own figures. */
+  const adjustFor = (line: PriceCheckLine): number =>
+    round(
+      (line.instructions ?? []).reduce(
+        (sum, i) =>
+          sum + (i.optionId ? (optionPrices.get(i.optionId) ?? 0) : 0) * (Number(i.qty) || 0),
+        0,
+      ),
+      4,
+    )
+
   for (const [index, line] of lines.entries()) {
     if (!line.productId) continue
     const product = byId.get(line.productId)
@@ -132,14 +195,25 @@ export async function checkPricing(
        * of the cron that reconciles them.
        */
       const shelf = product.selling_price_incl === null ? null : toNum(product.selling_price_incl)
-      const asked = round(line.unitPriceIncl, 2)
+
+      /*
+       * The answers' own price is taken back off before comparing. It was folded
+       * IN so the rest of the document prices the item correctly; here we are
+       * asking a different question — "did somebody type a price?" — and the
+       * bacon is not somebody typing a price.
+       */
+      const adjust = adjustFor(line)
+      const asked = round(line.unitPriceIncl - adjust, 2)
       const allowed = [shelf, due].filter((p): p is number => p !== null)
       if (allowed.some((p) => Math.abs(asked - round(p, 2)) <= TOLERANCE)) continue
 
       // Named as the price the customer is about to be charged from, which is
       // the scheduled one if a change has landed and the shelf one otherwise.
+      // Both sides are quoted WITHOUT the answers, so the two figures in the
+      // message are comparable — quoting a built price against a shelf price
+      // would read as a discrepancy that is not there.
       const expected = due ?? (shelf as number)
-      return `${where}: the price is ${line.unitPriceIncl.toFixed(2)} but this product sells at ${expected.toFixed(2)}. A supervisor can authorise a change.`
+      return `${where}: the price is ${asked.toFixed(2)} but this product sells at ${expected.toFixed(2)}. A supervisor can authorise a change.`
     }
   }
 

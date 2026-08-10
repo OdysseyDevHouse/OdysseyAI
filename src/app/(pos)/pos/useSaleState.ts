@@ -3,11 +3,14 @@
 import { useReducer } from 'react'
 import {
   addToBasket,
+  lineFromProduct,
   removeBasketLine,
   stepQty,
   updateBasketLine,
+  withInstructions,
   type BasketLine,
 } from '@/lib/basket'
+import type { ChosenOption } from '@/lib/instructionRules'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
 
@@ -97,6 +100,22 @@ export type SaleAction =
    * a pure function of its arguments.
    */
   | { type: 'ADD'; product: TillProduct; qty?: number; resolvedIncl?: number }
+  /**
+   * The same, but with the product's questions already answered.
+   *
+   * Its own action rather than ADD-then-UPDATE so the line is never on screen at
+   * the unanswered price, even for one frame — a burger flashing at R60 before
+   * becoming R64.50 is a thing a cashier will report, and with a customer
+   * watching the screen it is worse than a bug that only developers notice.
+   */
+  | {
+      type: 'ADD_WITH_INSTRUCTIONS'
+      product: TillProduct
+      qty: number
+      resolvedIncl?: number
+      instructions: ChosenOption[]
+      note: string
+    }
   | { type: 'SELECT'; key: string | null }
   | { type: 'STEP'; key: string; delta: number }
   | { type: 'UPDATE'; key: string; changes: Partial<BasketLine> }
@@ -178,6 +197,31 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
          * retype the word they had just typed. The pane now holds its place and
          * the cashier leaves it when they choose to.
          */
+        catalog: state.catalog,
+      }
+    }
+
+    case 'ADD_WITH_INSTRUCTIONS': {
+      /*
+       * Built rather than merged: `lineFromProduct` straight to a line, with no
+       * trip through `addToBasket`.
+       *
+       * A line carrying answers never merges with another anyway (see the fourth
+       * rule in basket.ts), so going through the merge path would only look for
+       * a match that cannot exist. Building it here also means the answers and
+       * their folded price arrive together, in one state update.
+       */
+      const base = lineFromProduct(
+        action.product,
+        action.qty,
+        state.lines.length,
+        action.resolvedIncl ?? action.product.priceIncl,
+      )
+      return {
+        ...state,
+        lines: [...state.lines, withInstructions(base, action.instructions, action.note)],
+        selectedKey: null,
+        query: '',
         catalog: state.catalog,
       }
     }

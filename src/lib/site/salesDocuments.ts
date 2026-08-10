@@ -83,6 +83,35 @@ export type SalesLine = {
    * guessed at. Null for an ordinary line, or a discount given by hand.
    */
   specialId: number | null
+  /**
+   * The answers given when the till asked this product's questions.
+   *
+   * Read back for the same reason they are stored: a recalled table bill has to
+   * come back to the till carrying what the customer ordered, and a document
+   * screen has to be able to show it. Empty on every line that was never asked
+   * anything, which is most of them.
+   */
+  instructions: SalesLineInstruction[]
+  /** The free-text note on this line. Empty string when there is none. */
+  note: string
+}
+
+/** One answer as recorded against a sale line. All of it snapshotted. */
+export type SalesLineInstruction = {
+  id: number
+  groupId: number | null
+  groupName: string
+  optionId: number | null
+  optionName: string
+  /** How many of it ONE ITEM on the line carries. */
+  qty: number
+  priceAdjustIncl: number
+  /** What it contributed across the whole line. Already inside the line total. */
+  lineAdjustIncl: number
+  productId: number | null
+  stockQtyPer: number
+  printsOnKitchen: boolean
+  printsOnReceipt: boolean
 }
 
 export type SalesDocument = {
@@ -127,7 +156,56 @@ export type SalesDocument = {
 
 type Row = RowDataPacket & Record<string, unknown>
 
-function mapLine(r: Row): SalesLine {
+function mapLineInstruction(r: Row): SalesLineInstruction {
+  return {
+    id: Number(r.id),
+    groupId: r.group_id === null || r.group_id === undefined ? null : Number(r.group_id),
+    groupName: String(r.group_name ?? ''),
+    optionId: r.option_id === null || r.option_id === undefined ? null : Number(r.option_id),
+    optionName: String(r.option_name ?? ''),
+    qty: toNum(r.qty),
+    priceAdjustIncl: toNum(r.price_adjust_incl),
+    lineAdjustIncl: toNum(r.line_adjust_incl),
+    productId: r.product_id === null || r.product_id === undefined ? null : Number(r.product_id),
+    stockQtyPer: toNum(r.stock_qty_per),
+    printsOnKitchen: !!r.prints_on_kitchen,
+    printsOnReceipt: !!r.prints_on_receipt,
+  }
+}
+
+/**
+ * The answers on each of these lines, keyed by line id.
+ *
+ * One query for the whole document rather than one per line, and tolerant of the
+ * table being absent so a site that has not run 082 yet still reads its own
+ * invoices.
+ */
+async function instructionsForLines(
+  siteId: number,
+  lineIds: number[],
+): Promise<Map<number, SalesLineInstruction[]>> {
+  const map = new Map<number, SalesLineInstruction[]>()
+  if (lineIds.length === 0) return map
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT * FROM sales_document_line_instructions
+      WHERE line_id IN (${lineIds.map(() => '?').join(',')})
+      ORDER BY line_id ASC, sort_order ASC, id ASC`,
+    lineIds,
+  ).catch(() => [] as Row[])
+
+  for (const row of rows) {
+    const lineId = Number(row.line_id)
+    const chosen = mapLineInstruction(row)
+    const list = map.get(lineId)
+    if (list) list.push(chosen)
+    else map.set(lineId, [chosen])
+  }
+  return map
+}
+
+function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
   return {
     id: Number(r.id),
     documentId: Number(r.document_id),
@@ -154,6 +232,8 @@ function mapLine(r: Row): SalesLine {
     lineVat: toNum(r.line_vat),
     unitCostExcl: toNum(r.unit_cost_excl),
     specialId: r.special_id === null || r.special_id === undefined ? null : Number(r.special_id),
+    instructions,
+    note: String(r.line_note ?? ''),
   }
 }
 
@@ -219,7 +299,28 @@ export async function getDocument(siteId: number, id: number): Promise<SalesDocu
       [id],
     ),
   ])
-  return docRow ? mapDocument(docRow, lineRows.map(mapLine)) : null
+  if (!docRow) return null
+
+  /*
+   * The answers, in a second query rather than a join.
+   *
+   * A join would multiply each line by its answers, and a burger with three
+   * toppings would come back as three burgers — which any caller summing the
+   * lines would then charge for. Read separately and attached by line id.
+   *
+   * This is also what makes RECALL safe: a table bill is rebuilt from these
+   * lines, and without the answers coming back with them, recalling a bill would
+   * silently strip every modifier off it and reprice the line.
+   */
+  const instructions = await instructionsForLines(
+    siteId,
+    lineRows.map((r) => Number(r.id)),
+  )
+
+  return mapDocument(
+    docRow,
+    lineRows.map((r) => mapLine(r, instructions.get(Number(r.id)) ?? [])),
+  )
 }
 
 export type DocumentListOptions = {
@@ -353,6 +454,36 @@ export type LineInput = {
    * "what did that campaign cost us" is unanswerable from the sales data.
    */
   discountCodeId?: number | null
+  /**
+   * The answers given when the till asked this product's questions.
+   *
+   * Optional because most callers have none — a quote, a credit note, an
+   * online-order conversion — and requiring an empty array of each of them would
+   * be noise.
+   *
+   * ⚠ Their price is ALREADY INSIDE `unitPriceIncl`. These rows are the
+   * breakdown of a figure that has been charged, not a further charge; adding
+   * them to the totals would bill the customer twice for the same bacon.
+   */
+  instructions?: LineInstructionInput[]
+  /** A free-text note for this line — "no ice", "allergy: nuts". */
+  note?: string | null
+}
+
+/** One chosen answer, on its way into `sales_document_line_instructions`. */
+export type LineInstructionInput = {
+  groupId: number | null
+  groupName: string
+  optionId: number | null
+  optionName: string
+  /** How many of it ONE ITEM on the line carries. The line's qty multiplies. */
+  qty: number
+  /** What one adds, VAT-inclusive and signed. Snapshotted at sale time. */
+  priceAdjustIncl: number
+  productId?: number | null
+  stockQtyPer?: number
+  printsOnKitchen?: boolean
+  printsOnReceipt?: boolean
 }
 
 export type DocumentInput = {
@@ -564,14 +695,14 @@ export async function saveDraft(
 
     for (const [index, line] of input.lines.entries()) {
       const computed = lines[index]
-      await tx.execute(
+      const [lineRes] = await tx.execute(
         `INSERT INTO sales_document_lines
            (document_id, line_number, product_id, product_code, description, product_type,
             department_id, sales_rep_id, source_line_id, sales_rep_user_id,
             qty, unit_price_incl, discount_pct, discount_incl,
             vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,
-            special_id, discount_code_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            special_id, discount_code_id, line_note)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -594,8 +725,52 @@ export async function saveDraft(
           (line.unitCostExcl ?? 0).toFixed(4),
           line.specialId ?? null,
           line.discountCodeId ?? null,
+          (line.note ?? '').trim().slice(0, 190),
         ] as never,
       )
+
+      /*
+       * The answers, as their own rows under this line.
+       *
+       * ⚠ NOTHING HERE TOUCHES THE TOTALS. `unit_price_incl` above already has
+       * the adjustment folded in — that is what makes specials, discounts and
+       * VAT price the item as it was actually sold — so these rows record WHAT
+       * was chosen and what each part of the price was for. Summing
+       * line_adjust_incl alongside line_total_incl double-counts.
+       *
+       * No delete pass is needed on a re-save: the wholesale
+       * `DELETE FROM sales_document_lines` above takes them with it by cascade.
+       */
+      if (line.instructions?.length) {
+        const lineId = (lineRes as { insertId: number }).insertId
+        for (const [i, chosen] of line.instructions.entries()) {
+          const per = round(chosen.qty, 3)
+          await tx.execute(
+            `INSERT INTO sales_document_line_instructions
+               (line_id, document_id, sort_order, group_id, group_name, option_id, option_name,
+                qty, price_adjust_incl, line_adjust_incl,
+                product_id, stock_qty_per, prints_on_kitchen, prints_on_receipt)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [
+              lineId,
+              id,
+              i,
+              chosen.groupId ?? null,
+              (chosen.groupName ?? '').slice(0, 120),
+              chosen.optionId ?? null,
+              (chosen.optionName ?? '').slice(0, 120),
+              per.toFixed(3),
+              round(chosen.priceAdjustIncl ?? 0, 4).toFixed(4),
+              // What it contributed across the whole line, for reporting.
+              round((chosen.priceAdjustIncl ?? 0) * per * line.qty, 4).toFixed(4),
+              chosen.productId ?? null,
+              round(chosen.stockQtyPer ?? 0, 3).toFixed(3),
+              chosen.printsOnKitchen === false ? 0 : 1,
+              chosen.printsOnReceipt === false ? 0 : 1,
+            ] as never,
+          )
+        }
+      }
     }
 
     return { ok: true as const, id: id! }

@@ -151,6 +151,31 @@ export default async function SalesDocumentPage({
                           )}
                           {line.vatRatePct === 0 && <span className="ml-2">zero-rated</span>}
                         </div>
+
+                        {/* What the customer asked for.
+                            Every answer is shown, including the ones flagged not
+                            to print on a receipt: this is the office copy, and
+                            somebody looking up a disputed order needs to see
+                            what the kitchen was told, not what the slip said.
+                            The price is already inside the line total — these
+                            are the breakdown of it, not extra charges. */}
+                        {(line.instructions.length > 0 || line.note) && (
+                          <div className="mt-1 flex flex-col gap-0.5 text-xs text-muted">
+                            {line.instructions.map((c) => (
+                              <span key={c.id}>
+                                · {c.optionName}
+                                {c.qty > 1 && ` ×${formatQty(c.qty)}`}
+                                {c.lineAdjustIncl !== 0 && (
+                                  <span className="ml-1 numeric">
+                                    ({c.lineAdjustIncl > 0 ? '+' : '−'}
+                                    {formatMoney(Math.abs(c.lineAdjustIncl))})
+                                  </span>
+                                )}
+                              </span>
+                            ))}
+                            {line.note && <span className="italic">“{line.note}”</span>}
+                          </div>
+                        )}
                       </td>
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatQty(line.qty)}</td>
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>

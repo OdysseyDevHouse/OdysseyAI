@@ -1,4 +1,5 @@
 import type { ProductTypeId } from '../productTypes'
+import type { ChosenOption } from '../instructionRules'
 
 /**
  * The shapes the till and the server both speak.
@@ -25,6 +26,19 @@ export type OfflineSaleLine = {
   specialId: number | null
   vatRatePct: number
   unitCostExcl: number
+  /**
+   * The answers given to this product's questions, and any note.
+   *
+   * OPTIONAL, and that is load-bearing: a sale queued in the outbox before this
+   * shipped has neither field, and it must still post. The outbox is the one
+   * store in this app whose rows cannot be recreated — a till that refused them
+   * would be losing sales that already happened. See `linesFor`.
+   *
+   * The answers' price is already inside `unitPriceIncl`; these travel so the
+   * invoice can record WHAT was chosen, not to be charged again.
+   */
+  instructions?: ChosenOption[]
+  note?: string
 }
 
 export type OfflineTender = {

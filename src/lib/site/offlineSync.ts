@@ -594,6 +594,28 @@ function linesFor(sale: OfflineSale): LineInput[] {
     vatRatePct: line.vatRatePct,
     unitCostExcl: line.unitCostExcl,
     specialId: line.specialId ?? null,
+    /*
+     * The answers and the note, defaulted.
+     *
+     * The `??` is load-bearing, not defensive habit. A sale sitting in a till's
+     * outbox from before this shipped has neither field, and it MUST still post:
+     * the outbox is the one store in this app whose rows cannot be recreated,
+     * because the money already changed hands. Refusing them, or letting
+     * `undefined` reach the insert, would lose sales that really happened.
+     */
+    instructions: (line.instructions ?? []).map((c) => ({
+      groupId: c.groupId ?? null,
+      groupName: c.groupName ?? '',
+      optionId: c.optionId ?? null,
+      optionName: c.optionName ?? '',
+      qty: c.qty,
+      priceAdjustIncl: c.priceAdjustIncl,
+      productId: c.productId ?? null,
+      stockQtyPer: c.stockQtyPer,
+      printsOnKitchen: c.printsOnKitchen,
+      printsOnReceipt: c.printsOnReceipt,
+    })),
+    note: line.note ?? '',
   }))
 }
 

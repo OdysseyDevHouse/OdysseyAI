@@ -1,4 +1,5 @@
 import { round } from './decimals'
+import { adjustPerUnit, type ChosenOption } from './instructionRules'
 import type { TillProduct } from './site/tillSearch'
 
 /**
@@ -47,6 +48,21 @@ export type BasketLine = {
    */
   shelfPriceIncl: number | null
   allowFractions: boolean
+  /**
+   * The answers the cashier gave to this product's questions.
+   *
+   * Their price is FOLDED INTO `unitPriceIncl` above rather than kept apart, so
+   * specials, discounts and VAT all see the item at the price it was actually
+   * sold at. These rows are the breakdown of a figure that has already been
+   * charged — adding them to the line total again would double-charge.
+   *
+   * Required rather than optional so every place that builds a line has to say
+   * what it means, and forgetting is a compile error rather than a modifier that
+   * silently vanishes between the till and the invoice.
+   */
+  instructions: ChosenOption[]
+  /** A free-text note for this line — "no ice", "allergy: nuts". */
+  note: string
 }
 
 /**
@@ -95,6 +111,33 @@ export function lineFromProduct(
     maxDiscountPct: product.maxDiscountPct,
     shelfPriceIncl: product.askPriceAtSale ? null : resolvedIncl,
     allowFractions: product.allowFractions,
+    instructions: [],
+    note: '',
+  }
+}
+
+/** What this line's answers add to ONE of it, VAT-inclusive and signed. */
+export function instructionAdjust(line: BasketLine): number {
+  return adjustPerUnit(line.instructions)
+}
+
+/**
+ * A line with its answers' price folded in.
+ *
+ * The one place that arithmetic happens, so the modal, the reducer and the
+ * recall path cannot each fold it in slightly differently — or, worse, twice.
+ */
+export function withInstructions(
+  line: BasketLine,
+  instructions: ChosenOption[],
+  note = line.note,
+): BasketLine {
+  const base = line.shelfPriceIncl ?? line.unitPriceIncl - instructionAdjust(line)
+  return {
+    ...line,
+    instructions,
+    note,
+    unitPriceIncl: round(base + adjustPerUnit(instructions), 4),
   }
 }
 
@@ -102,7 +145,7 @@ export function lineFromProduct(
  * Adds a product, merging with an existing line where that is what a cashier
  * would expect.
  *
- * Three products never merge, and each rule is one somebody will otherwise
+ * Four products never merge, and each rule is one somebody will otherwise
  * "simplify" away:
  *
  *   · a line carrying a DISCOUNT, because merging would silently apply that
@@ -111,7 +154,12 @@ export function lineFromProduct(
  *     price and merging would charge the first one's;
  *   · a line whose price was OVERRIDDEN off the shelf figure, for the same
  *     reason — the override was a decision about those units, not about the
- *     product.
+ *     product;
+ *   · a line carrying ANSWERS OR A NOTE. Two burgers are only the same line if
+ *     they are the same burger, and a second one rung up without being asked
+ *     the questions is not. Deep-comparing the answer sets would let identical
+ *     ones merge, but a wrong match there is a wrong plate leaving the kitchen,
+ *     and the cost of not merging is one extra row on screen.
  */
 export function addToBasket(
   lines: BasketLine[],
@@ -125,7 +173,13 @@ export function addToBasket(
       l.productId === product.id &&
       l.discountPct === 0 &&
       l.shelfPriceIncl !== null &&
-      l.unitPriceIncl === l.shelfPriceIncl,
+      l.unitPriceIncl === l.shelfPriceIncl &&
+      // Stated rather than left to the price test above. A folded answer moves
+      // `unitPriceIncl` off the shelf figure and so would fail that test anyway
+      // — but only for answers that cost something, and "no onions" costs
+      // nothing while still meaning this is a different burger.
+      l.instructions.length === 0 &&
+      l.note === '',
   )
 
   if (mergeable !== -1 && !product.askPriceAtSale && product.scannedPrice == null) {
@@ -183,9 +237,18 @@ export function discountAllowed(line: BasketLine, pct: number): boolean {
   return pct > 0 && pct <= line.maxDiscountPct
 }
 
-/** Whether this price differs from what the shelf says. */
+/**
+ * Whether this price differs from what the shelf says.
+ *
+ * The answers' price is backed out before comparing. It was FOLDED INTO
+ * `unitPriceIncl` on purpose, so without this every burger with bacon on it
+ * would wear a "price changed" badge and read as though a cashier had overridden
+ * it — which is exactly what this flag exists to make visible, and would then
+ * mean nothing.
+ */
 export function isPriceOverridden(line: BasketLine): boolean {
-  return line.shelfPriceIncl !== null && line.unitPriceIncl !== line.shelfPriceIncl
+  if (line.shelfPriceIncl === null) return false
+  return round(line.unitPriceIncl - instructionAdjust(line), 4) !== round(line.shelfPriceIncl, 4)
 }
 
 /** How many individual items are in the basket — the count on the header chip. */

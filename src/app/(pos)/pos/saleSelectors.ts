@@ -90,6 +90,11 @@ export function salePayloadLines(
     specialId: lineSpecials[index]?.specialId ?? null,
     vatRatePct: line.vatRatePct,
     unitCostExcl: line.unitCostExcl,
+    /* The answers, and the note. This whitelist is the ONLY thing that reaches
+       the server from a basket line, online and offline alike — a field left out
+       here is one that vanishes silently at finalise. */
+    instructions: line.instructions,
+    note: line.note,
   }))
 }
 

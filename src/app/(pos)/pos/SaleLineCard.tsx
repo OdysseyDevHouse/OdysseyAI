@@ -2,6 +2,7 @@
 
 import { Button, Badge, Icons, ExpandingCard } from '@/components/ui'
 import { formatMoney, formatQty } from '@/lib/decimals'
+import { describeSelection } from '@/lib/instructionRules'
 import { isPriceOverridden, type BasketLine } from '@/lib/basket'
 
 /**
@@ -80,6 +81,22 @@ export function SaleLineCard({
               )}
               {isPriceOverridden(line) && <Badge tone="brand">Price changed</Badge>}
             </span>
+
+            {/* What was chosen, and anything typed.
+                This is the ONLY place a cashier sees the answers again before
+                paying — the modal is gone by then — so a wrong tap has to be
+                visible here or it reaches the kitchen unnoticed. The 'receipt'
+                filter is deliberately not used: the cashier should see
+                everything on the line, including the answers that will only
+                print for the cook. */}
+            {(line.instructions.length > 0 || line.note) && (
+              <span className="flex flex-col gap-0.5 text-[13px] text-muted">
+                {describeSelection(line.instructions).map((text, i) => (
+                  <span key={i}>· {text}</span>
+                ))}
+                {line.note && <span className="italic">“{line.note}”</span>}
+              </span>
+            )}
           </>
         }
         /* Four buttons on every line would put sixty targets on screen and make
