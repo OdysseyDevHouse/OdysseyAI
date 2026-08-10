@@ -26,6 +26,19 @@ const PUBLIC_PREFIXES = [
   '/forgot-password',
   '/reset-password',
   '/store/',
+  // The public "book a table" page. A guest booking a table is not a user of
+  // the back office and will never have a session — behind a cookie gate the
+  // restaurant's own "Book a table" button would send every guest to a login
+  // screen for a system they have no account on.
+  //
+  // It is not unguarded: the URL carries a signed token scoped to one site with
+  // its own audience, the page shows nothing but the shop's name and the times
+  // it is offering, and the booking action re-derives those times server-side
+  // before writing. The shop's reservation settings fail closed.
+  //
+  // The trailing slash matters, as it does for '/store/' above: a bare
+  // '/reserve' would also make any future '/reservations…' route public.
+  '/reserve/',
   '/api/payments/payfast/',
   // Product photographs for the public shop. Guarded the same way the shop
   // itself is: the URL carries the signed store token, and the route refuses
