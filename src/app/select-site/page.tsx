@@ -13,13 +13,18 @@ const ROLE_LABEL: Record<string, string> = {
   staff: 'Staff',
 }
 
-export default async function SelectSitePage() {
+export default async function SelectSitePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>
+}) {
   const session = await requireSession()
 
   // This page is outside the (app) layout, so it carries the same guard —
   // otherwise picking a site would be a way around the forced change.
   if (session.mustChangePassword) redirect('/change-password')
 
+  const { next } = await searchParams
   const sites = await listSitesForUser(session.userId)
 
   return (
@@ -27,7 +32,11 @@ export default async function SelectSitePage() {
       <div className="flex flex-col gap-4">
         <div className="text-center">
           <h2 className="text-sm font-semibold text-ink">Choose a store</h2>
-          <p className="mt-0.5 text-xs text-muted">Signed in as {session.email}</p>
+          <p className="mt-0.5 text-xs text-muted">
+            {sites.length > 1
+              ? 'Your account has access to more than one store. Select which one to open.'
+              : `Signed in as ${session.email}`}
+          </p>
         </div>
 
         {sites.length === 0 ? (
@@ -45,6 +54,7 @@ export default async function SelectSitePage() {
               <li key={site.id}>
                 <form action={selectSiteAction}>
                   <input type="hidden" name="siteId" value={site.id} />
+                  {next && <input type="hidden" name="next" value={next} />}
                   {/* Not <Button>: a two-line site row with a trailing chevron,
                       closer to a list item than a labelled action. */}
                   <button
