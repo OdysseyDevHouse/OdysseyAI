@@ -121,14 +121,15 @@ export function TouchRow({
       {/* aria-hidden: the colour repeats what the title already says, and a screen
           reader announcing it would be noise.
 
-          Inset by the border width on three sides rather than pinned to the row's
-          outer edge. Flush, the bar paints OVER the left border and the row reads as
-          a card with one side missing — the hairline has to close all the way round
-          for the colour to look applied to the row rather than leaked out of it. */}
+          Flush to the leading edge, not inset. It was inset by a pixel back when the
+          hairline was grey and needed to stay visible beside the bar; now that the
+          border carries the SAME hue, that pixel is just the row's white background
+          showing through as a seam between two pieces of one colour. Painting over
+          the border here loses nothing — it is the same colour underneath. */}
       {edge && (
         <span
           aria-hidden
-          className={`absolute inset-y-px left-px w-1.5 rounded-l-[11px] ${EDGE[edge]}`}
+          className={`absolute -left-px inset-y-[-1px] w-2 rounded-l-card ${EDGE[edge]}`}
         />
       )}
 
