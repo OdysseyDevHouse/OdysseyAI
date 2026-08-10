@@ -5,10 +5,12 @@ import { offlineSession, type OfflineSession } from '@/lib/posOffline/signInOffl
 import PosGate from './PosGate'
 import PosShell from './PosShell'
 import type { Special } from '@/lib/specialsEngine'
+import type { PendingSchedule } from '@/lib/priceSchedules'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { Terminal } from '@/lib/site/terminals'
 import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { PosTable } from '@/lib/site/posTables'
+import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import type { Department } from './types'
 
 /**
@@ -46,11 +48,14 @@ export default function PosEntry({
   cashRounding,
   savedCount,
   specials,
+  pendingPrices,
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
   hospitality,
   initialTables,
+  floorRooms,
+  floorFeatures,
 }: {
   siteId: number
   siteName: string
@@ -75,11 +80,16 @@ export default function PosEntry({
   cashRounding: number
   savedCount: number
   specials: Special[]
+  /** Approved price changes, moments unevaluated — the till decides on its clock. */
+  pendingPrices: PendingSchedule[]
   quickKeys: QuickKeyRow[]
   quickKeyProductNames: Record<number, string>
   quickKeyDepartmentNames: Record<number, string>
   hospitality: boolean
   initialTables: PosTable[]
+  /** The drawn floor. Relayed unchanged — this component owns sign-in, not the floor. */
+  floorRooms: FloorRoom[]
+  floorFeatures: FloorFeature[]
 }) {
   /*
    * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
@@ -145,11 +155,14 @@ export default function PosEntry({
       canOverridePrice={operator.canOverridePrice}
       canVoid={operator.canVoid}
       specials={specials}
+      pendingPrices={pendingPrices}
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
       hospitality={hospitality}
       initialTables={initialTables}
+      floorRooms={floorRooms}
+      floorFeatures={floorFeatures}
     />
   )
 }

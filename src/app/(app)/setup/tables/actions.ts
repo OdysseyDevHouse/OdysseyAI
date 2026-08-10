@@ -11,6 +11,19 @@ import {
   type PosTable,
   type TableInput,
 } from '@/lib/site/posTables'
+import {
+  listRooms,
+  listFeatures,
+  createRoom,
+  updateRoom,
+  retireRoom,
+  savePlacements,
+  saveFeature,
+  deleteFeature,
+  type FloorRoom,
+  type FloorFeature,
+  type PlacementInput,
+} from '@/lib/site/posFloor'
 
 /**
  * Building the floor.
@@ -25,6 +38,130 @@ import {
  */
 
 export type TablesResult = { ok: true; tables: PosTable[] } | { ok: false; error: string }
+
+/* ── The floor plan ──────────────────────────────────────────────────────── */
+
+/**
+ * Everything the designer draws, in one payload.
+ *
+ * Returned whole after every mutation, same as `TablesResult`: the server clamps
+ * positions to the room and normalises rotation, so a client that trusted its own
+ * numbers would drift from what the till renders — and the drift would be invisible
+ * until a table appeared half off the edge on the floor screen.
+ */
+export type FloorResult =
+  | { ok: true; rooms: FloorRoom[]; tables: PosTable[]; features: FloorFeature[] }
+  | { ok: false; error: string }
+
+async function floorState(siteId: number): Promise<FloorResult> {
+  const [rooms, tables, features] = await Promise.all([
+    listRooms(siteId),
+    listTables(siteId),
+    listFeatures(siteId),
+  ])
+  return { ok: true, rooms, tables, features }
+}
+
+export async function loadFloorAction(): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  return floorState(ctx.siteId)
+}
+
+export async function createRoomAction(input: {
+  name: string
+  width?: number
+  height?: number
+}): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await createRoom(ctx.siteId, input)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/tables')
+  return floorState(ctx.siteId)
+}
+
+export async function updateRoomAction(
+  id: number,
+  input: { name: string; width: number; height: number },
+): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await updateRoom(ctx.siteId, id, input)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/tables')
+  return floorState(ctx.siteId)
+}
+
+/**
+ * Retires a room. Its TABLES survive, unplaced.
+ *
+ * The FK is ON DELETE SET NULL for exactly this: a table may have a bill open on it, and
+ * a manager reorganising rooms must not be able to destroy live documents by tidying the
+ * plan. Unplaced tables fall back to the sectioned grid, so none of them vanish from the
+ * waiter's screen either.
+ */
+export async function retireRoomAction(id: number): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await retireRoom(ctx.siteId, id)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/tables')
+  return floorState(ctx.siteId)
+}
+
+/**
+ * Saves the whole arrangement.
+ *
+ * One call for every table the designer moved, because `savePlacements` writes them in a
+ * single transaction — a floor plan that saved table by table could leave half a room
+ * moved, and a waiter cannot tell which half.
+ */
+export async function savePlacementsAction(
+  placements: PlacementInput[],
+): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await savePlacements(ctx.siteId, placements)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/tables')
+  /* The TILL reads this too, and its page is cached — without this a waiter keeps
+     seeing yesterday's arrangement until something else happens to revalidate. */
+  revalidatePath('/pos')
+  return floorState(ctx.siteId)
+}
+
+export async function saveFeatureAction(
+  input: Omit<FloorFeature, 'id'> & { id?: number },
+): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveFeature(ctx.siteId, input)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/tables')
+  revalidatePath('/pos')
+  return floorState(ctx.siteId)
+}
+
+export async function deleteFeatureAction(id: number): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  await deleteFeature(ctx.siteId, id)
+  revalidatePath('/setup/tables')
+  revalidatePath('/pos')
+  return floorState(ctx.siteId)
+}
 
 export async function createTableAction(input: TableInput): Promise<TablesResult> {
   const ctx = await actorFor('setup.edit')

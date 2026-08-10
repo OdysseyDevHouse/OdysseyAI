@@ -109,6 +109,8 @@ export {
   LayoutGrid,
   Coins,
   Banknote,
+  // the bank itself, as opposed to the money in it — the cashbook's own glyph
+  Landmark,
   Warehouse,
   Shapes,
   // trading — sales documents, debtors and creditors
@@ -118,12 +120,19 @@ export {
   CalendarRange,
   // a recurring billing agreement — the same thing, every month
   Repeat,
+  /* Turning a thing on the spot, not looping it. Added for the floor plan's rotate
+     control, where `Repeat` would have read as "do it again" on a button that turns a
+     table 15°. */
+  RotateCw,
   Contact,
   CreditCard,
   Receipt,
   ReceiptText as TaxInvoice,
   History,
   Sheet as Spreadsheet,
+  // A count sheet. Same glyph the nav already uses for Stock Takes, so the menu
+  // rail and the screen it opens agree with each other.
+  ClipboardList,
   Wallet,
   HandCoins,
   // loyalty — the programme itself, a punch card's stamp, and a reward voucher.
@@ -131,6 +140,8 @@ export {
   Gem,
   Stamp,
   Ticket,
+  // the online store — the shop as a shopper sees it, not the till
+  ShoppingBag,
   Undo2 as Reverse,
   CircleDollarSign as Money,
   Monitor as Terminal,
@@ -138,6 +149,8 @@ export {
   // purchasing
   PackageOpen,
   PackagePlus,
+  // making things — a build turns ingredients into stock of the made item
+  Factory,
   // product properties
   Eye,
   Tag,
@@ -146,6 +159,9 @@ export {
   Ban,
   Scale,
   Clock,
+  // A moment on a calendar rather than a duration — a price change that happens
+  // at 06:00 on the 14th. Clock alone reads as "how long", which is not this.
+  CalendarClock,
   Archive,
   ArchiveRestore,
   Play,

@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { Badge, Button, EmptyState, Icons, TileGrid } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { PosTable, TableState } from '@/lib/site/posTables'
+import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 
 /**
  * The floor, before a waiter starts a sale.
@@ -34,6 +35,8 @@ import type { PosTable, TableState } from '@/lib/site/posTables'
  */
 export function TableGate({
   tables,
+  rooms = [],
+  features = [],
   busy,
   onWalkIn,
   splitting = false,
@@ -42,6 +45,9 @@ export function TableGate({
   onPickTable,
 }: {
   tables: readonly PosTable[]
+  /** Rooms with a drawn plan. Empty on a shop that never opened the designer. */
+  rooms?: readonly FloorRoom[]
+  features?: readonly FloorFeature[]
   busy: boolean
   /** Start a sale with no table — the counter, or a takeaway. */
   onWalkIn: () => void
@@ -53,12 +59,19 @@ export function TableGate({
   /** Seat a free table, or resume an open one. The shell decides which by state. */
   onPickTable: (table: PosTable) => void
 }) {
-  /* Grouped by section, preserving the order the server sorted them in. A Map keeps
-     insertion order, so "Patio" stays where the floor put it rather than sorting
-     alphabetically — a waiter finds a section by position. */
+  /*
+   * Grouped by section, preserving the order the server sorted them in. A Map keeps
+   * insertion order, so "Patio" stays where the floor put it rather than sorting
+   * alphabetically — a waiter finds a section by position.
+   *
+   * UNPLACED tables only, once a plan exists. A table drawn on the canvas AND listed in
+   * the grid below it would appear twice on one screen, and a waiter tapping the wrong
+   * copy of the same table is a bug that looks like a duplicate table.
+   */
   const sections = useMemo(() => {
     const bySection = new Map<string, PosTable[]>()
     for (const table of tables) {
+      if (table.roomId !== null && table.x !== null) continue
       const key = table.section || ''
       const list = bySection.get(key)
       if (list) list.push(table)
@@ -122,6 +135,36 @@ export function TableGate({
         </Button>
       )}
 
+      {/*
+        ── THE PLAN, WHEN THERE IS ONE ───────────────────────────────────────
+        Rendered per room, above the sectioned grid rather than instead of it: a shop that
+        has placed half its tables gets the canvas for what it built and the list for the
+        rest, and nothing disappears from a waiter's screen mid-reorganisation.
+
+        A room with no placed tables draws nothing — an empty rectangle labelled "Patio"
+        tells a waiter less than not showing it at all.
+      */}
+      {rooms.map((room) => {
+        const placed = tables.filter((t) => t.roomId === room.id && t.x !== null)
+        if (placed.length === 0) return null
+        return (
+          <div key={room.id} className="flex flex-col gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+              {room.name}
+            </h2>
+            <FloorView
+              room={room}
+              tables={placed}
+              features={features.filter((f) => f.roomId === room.id)}
+              busy={busy}
+              splitting={splitting}
+              onPick={onPickTable}
+              onSplit={onSplitTable}
+            />
+          </div>
+        )
+      })}
+
       {tables.length === 0 ? (
         <EmptyState
           icon={<Icons.LayoutGrid size={26} />}
@@ -162,6 +205,132 @@ export function TableGate({
       )}
     </div>
   )
+}
+
+/* ── The plan ─────────────────────────────────────────────────────────────── */
+
+/**
+ * One room, drawn to scale.
+ *
+ * READ-ONLY. Nothing here drags: a waiter mid-service must not be able to rearrange the
+ * furniture by fumbling a tap, and the designer is a back-office screen behind
+ * `setup.edit` for exactly that reason. So this is plain absolute positioning with no
+ * dnd-kit at all — the same percentages the designer renders, without the sensors.
+ *
+ * The tables wear the SAME `TILE` skins as the grid below, so a shop that has placed
+ * half its floor sees one visual language rather than two. Free, open and waiting-to-pay
+ * mean the same colour whichever way they are drawn.
+ */
+function FloorView({
+  room,
+  tables,
+  features,
+  busy,
+  splitting,
+  onPick,
+  onSplit,
+}: {
+  room: FloorRoom
+  tables: readonly PosTable[]
+  features: readonly FloorFeature[]
+  busy: boolean
+  splitting: boolean
+  onPick: (table: PosTable) => void
+  onSplit?: (table: PosTable) => void
+}) {
+  return (
+    <div
+      className="relative overflow-hidden rounded-card border border-border bg-surface-2"
+      /*
+       * The room's own aspect ratio, so a long verandah is long — letterboxed rather than
+       * distorted, because a plan whose proportions are wrong looks authoritative and is
+       * misleading in a way a list cannot be.
+       *
+       * CAPPED IN HEIGHT, and that cap is the point. The first version was `w-full` with
+       * only an aspect ratio, so a 100×70 room filled the page width and stood ~1100px
+       * tall: one table visible and the rest below the fold. A waiter scrolling a floor
+       * plan has lost the only thing a plan is for — seeing the whole room at once — so the
+       * height is bounded and the width follows from it. `max-w-full` keeps a very wide
+       * room inside the pane instead of the other way round.
+       */
+      style={{
+        aspectRatio: `${room.width} / ${room.height}`,
+        /* HEIGHT drives it, width follows from the ratio — an aspect ratio with only a
+           maxHeight has nothing to compute from and collapses. 58vh leaves the walk-in
+           button, the split control and a section heading on screen above it. */
+        height: '58vh',
+        maxWidth: '100%',
+      }}
+    >
+      {features.map((f) => (
+        <div
+          key={f.id}
+          aria-hidden
+          className={`absolute flex items-center justify-center text-[10px] text-muted ${
+            FEATURE_SKIN[f.kind]
+          }`}
+          style={{
+            left: `${(f.x / room.width) * 100}%`,
+            top: `${(f.y / room.height) * 100}%`,
+            width: `${(f.width / room.width) * 100}%`,
+            height: `${(f.height / room.height) * 100}%`,
+            transform: `rotate(${f.rotation}deg)`,
+          }}
+        >
+          {f.label}
+        </div>
+      ))}
+
+      {tables.map((table) => (
+        <button
+          key={table.id}
+          type="button"
+          data-kit-ok
+          data-table-code={table.code}
+          disabled={busy}
+          onClick={() =>
+            splitting
+              ? table.documentId !== null && table.state !== 'free'
+                ? onSplit?.(table)
+                : undefined
+              : onPick(table)
+          }
+          className={`absolute flex flex-col items-center justify-center border-2 text-center transition active:scale-[0.97] ${
+            table.shape === 'round' ? 'rounded-full' : 'rounded-card'
+          } ${TILE[table.state]}`}
+          style={{
+            left: `${((table.x ?? 0) / room.width) * 100}%`,
+            top: `${((table.y ?? 0) / room.height) * 100}%`,
+            width: `${(table.width / room.width) * 100}%`,
+            height: `${(table.height / room.height) * 100}%`,
+            /* The BOX rotates but the label does not — a table turned 90° on a diagonal
+               wall should still have a code you can read without tilting your head. */
+            transform: `rotate(${table.rotation}deg)`,
+          }}
+        >
+          <span
+            className="flex flex-col items-center leading-none"
+            style={{ transform: `rotate(${-table.rotation}deg)` }}
+          >
+            <span className="text-sm font-bold">{table.code}</span>
+            {table.state !== 'free' && (
+              <span className="mt-0.5 text-[10px]">{formatMoney(table.totalIncl)}</span>
+            )}
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** How each fixed feature draws. Tokens only, same rule as TILE below. */
+const FEATURE_SKIN: Record<FloorFeature['kind'], string> = {
+  wall: 'bg-ink-2/60',
+  bar: 'bg-warning-soft border border-warning/50',
+  pass: 'bg-success-soft border border-success/50',
+  door: 'border-2 border-dashed border-border-strong',
+  plant: 'bg-success-soft rounded-full',
+  text: '',
 }
 
 /** Per-state surface. Tokens only — a restaurant floor on a bright screen still has

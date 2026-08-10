@@ -50,6 +50,24 @@ export type PosTable = {
   lineCount: number
   /** When the basket was opened, so the gate can show how long they have been sat. */
   openedAt: Date | null
+  /* ── Where it stands, when somebody has placed it (086) ──────────────── */
+  /**
+   * The room, or null for a table nobody has placed yet.
+   *
+   * Null is the normal state, not a broken one: the sectioned grid is what renders an
+   * unplaced table, so a shop that never opens the floor designer has every table here
+   * with `roomId: null` and notices nothing. It is also what a retired room leaves
+   * behind — the FK is ON DELETE SET NULL so tidying the plan cannot destroy a table
+   * with a live bill on it.
+   */
+  roomId: number | null
+  /** Room units, not pixels — see posFloor.ts. Null when unplaced. */
+  x: number | null
+  y: number | null
+  width: number
+  height: number
+  rotation: number
+  shape: 'rect' | 'round'
 }
 
 export type TableState = 'free' | 'open' | 'bill'
@@ -103,6 +121,16 @@ function mapTable(r: Row): PosTable {
     totalIncl: toNum(r.total_incl),
     lineCount: Number(r.line_count ?? 0),
     openedAt: (r.opened_at as Date | null) ?? null,
+    /* Placement (086). NULL room means unplaced, which the sectioned grid renders — the
+       columns are read here rather than in a second query so the till's floor screen
+       needs one round trip whether it draws a plan or a list. */
+    roomId: r.room_id === null || r.room_id === undefined ? null : Number(r.room_id),
+    x: r.pos_x === null || r.pos_x === undefined ? null : toNum(r.pos_x),
+    y: r.pos_y === null || r.pos_y === undefined ? null : toNum(r.pos_y),
+    width: toNum(r.width, 8),
+    height: toNum(r.height, 8),
+    rotation: Number(r.rotation ?? 0),
+    shape: r.shape === 'round' ? 'round' : 'rect',
   }
 }
 
@@ -118,6 +146,7 @@ export async function listTables(siteId: number): Promise<PosTable[]> {
     siteId,
     `SELECT t.id, t.code, t.name, t.section, t.seats, t.sort_order, t.is_active,
             t.document_id, t.bill_asked_at,
+            t.room_id, t.pos_x, t.pos_y, t.width, t.height, t.rotation, t.shape,
             d.total_incl,
             d.created_at AS opened_at,
             (SELECT COUNT(*) FROM sales_document_lines l WHERE l.document_id = d.id) AS line_count
@@ -138,6 +167,7 @@ export async function getTable(siteId: number, id: number): Promise<PosTable | n
     siteId,
     `SELECT t.id, t.code, t.name, t.section, t.seats, t.sort_order, t.is_active,
             t.document_id, t.bill_asked_at,
+            t.room_id, t.pos_x, t.pos_y, t.width, t.height, t.rotation, t.shape,
             d.total_incl, d.created_at AS opened_at,
             (SELECT COUNT(*) FROM sales_document_lines l WHERE l.document_id = d.id) AS line_count
        FROM pos_tables t
