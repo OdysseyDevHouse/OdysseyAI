@@ -8,11 +8,13 @@ import {
   siblingsOf,
   storefrontContext,
 } from '@/lib/site/storefront'
+import { catalogueRobots, productJsonLd, storefrontUrl } from '@/lib/site/storefrontSeo'
 import { approvedReviewsFor } from '@/lib/site/productReviews'
 import { listImages } from '@/lib/site/productImages'
 import { formatMoney } from '@/lib/decimals'
 import { Stars } from '../../ShopBits'
 import ProductGrid from '../../ProductGrid'
+import TrackEvent from '../../TrackEvent'
 import ProductDetail from './ProductDetail'
 import ReviewForm from './ReviewForm'
 
@@ -48,10 +50,25 @@ export async function generateMetadata({
   if (!found) return { title: 'Not found', robots: { index: false, follow: false } }
 
   const { context, product } = found
+
+  /*
+   * The canonical points at the variant's OWN page, not the group's.
+   *
+   * Each size is a real product with its own price and stock, so each page is
+   * genuinely distinct — pointing them all at one representative would ask
+   * search engines to drop the pages a shopper searching "large" should land
+   * on. The sitemap lists one url per group for discovery; this says each page
+   * is itself.
+   */
+  const canonical = storefrontUrl(context.settings, `/store/${token}/p/${product.id}`)
+
   return {
     title: `${product.description} · ${context.storeName}`,
     description: `${product.description} — ${formatMoney(product.priceIncl)} at ${context.storeName}.`,
-    robots: { index: false, follow: false },
+    // The shop's own choice, decided in one place so this page and the front
+    // page can never disagree — see storefrontSeo.ts.
+    robots: catalogueRobots(context.settings),
+    ...(canonical ? { alternates: { canonical } } : {}),
   }
 }
 
@@ -94,8 +111,41 @@ export default async function ProductPage({
       ? await axisLabelsFor(siteId, product.variantOf.parentId)
       : []
 
+  /*
+   * Structured data, only for a shop that has opted into being indexed.
+   *
+   * Null otherwise — and that matters beyond tidiness: price and availability
+   * are exactly the figures a shop declining to be listed was declining to
+   * publish, and a script tag would publish them to anyone viewing source.
+   */
+  const jsonLd = productJsonLd(settings, product, {
+    url: storefrontUrl(settings, `/store/${token}/p/${product.id}`),
+    storeName: context.storeName,
+    imageUrl: product.imageId
+      ? storefrontUrl(settings, `/api/store-images/${token}/${product.imageId}?p=${product.id}`)
+      : null,
+  })
+
   return (
     <div className="flex flex-col gap-10">
+      {jsonLd && (
+        /* JSON.stringify escapes nothing dangerous for a script context except
+           `</script>` inside a string value — a product called "</script>" is
+           the one input that could break out, so the closing tag is neutralised
+           rather than trusted. */
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(jsonLd).replace(/</g, '\\u003c'),
+          }}
+        />
+      )}
+
+      {/* The top of the funnel. Client-side rather than counted here, so a
+          crawler, a link preview or a prefetch does not register as a shopper
+          looking at something. */}
+      <TrackEvent token={token} kind="view" productId={product.id} />
+
       <ProductDetail
         token={token}
         product={product}

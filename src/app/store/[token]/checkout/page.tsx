@@ -3,6 +3,7 @@ import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext } from '@/lib/site/storefront'
 import { customerAccount } from '@/lib/site/customerAuth'
 import { getCustomerSession } from '@/lib/customerSession'
+import TrackEvent from '../TrackEvent'
 import Checkout from './Checkout'
 
 export const dynamic = 'force-dynamic'
@@ -31,24 +32,31 @@ export default async function CheckoutPage({
   const account = session ? await customerAccount(siteId, session.customerId) : null
 
   return (
-    <Checkout
-      token={token}
-      collectEnabled={settings.collectEnabled}
-      deliverEnabled={settings.deliverEnabled}
-      minOrderIncl={settings.minOrderIncl}
-      leadTimeMinutes={settings.leadTimeMinutes}
-      payOnline={settings.paymentMode === 'online'}
-      allowAccount={settings.allowAccount}
-      storeName={context.storeName}
-      account={
-        account && {
-          name: account.name,
-          phone: account.phone,
-          email: account.email,
-          availableCredit: account.availableCredit,
-          accountOpen: account.accountOpen,
+    <>
+      {/* Reaching checkout is a funnel stage in its own right: the gap between
+          this and "Ordered" is where a shop finds out its delivery fee or its
+          minimum is losing baskets. */}
+      <TrackEvent token={token} kind="begin_checkout" />
+
+      <Checkout
+        token={token}
+        collectEnabled={settings.collectEnabled}
+        deliverEnabled={settings.deliverEnabled}
+        minOrderIncl={settings.minOrderIncl}
+        leadTimeMinutes={settings.leadTimeMinutes}
+        payOnline={settings.paymentMode === 'online'}
+        allowAccount={settings.allowAccount}
+        storeName={context.storeName}
+        account={
+          account && {
+            name: account.name,
+            phone: account.phone,
+            email: account.email,
+            availableCredit: account.availableCredit,
+            accountOpen: account.accountOpen,
+          }
         }
-      }
-    />
+      />
+    </>
   )
 }

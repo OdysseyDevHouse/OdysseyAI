@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { recordEventAction } from './eventActions'
 
 /**
  * The shopper's basket.
@@ -87,17 +88,31 @@ export function CartProvider({ token, children }: { token: string; children: Rea
     }
   }, [lines, ready, storageKey])
 
-  const add = useCallback((line: Omit<CartLine, 'qty'>, qty = 1) => {
-    setLines((prev) => {
-      const existing = prev.find((l) => l.productId === line.productId)
-      if (existing) {
-        return prev.map((l) =>
-          l.productId === line.productId ? { ...l, qty: Math.min(l.qty + qty, 9999) } : l,
-        )
-      }
-      return [...prev, { ...line, qty: Math.min(qty, 9999) }]
-    })
-  }, [])
+  const add = useCallback(
+    (line: Omit<CartLine, 'qty'>, qty = 1) => {
+      setLines((prev) => {
+        const existing = prev.find((l) => l.productId === line.productId)
+        if (existing) {
+          return prev.map((l) =>
+            l.productId === line.productId ? { ...l, qty: Math.min(l.qty + qty, 9999) } : l,
+          )
+        }
+        return [...prev, { ...line, qty: Math.min(qty, 9999) }]
+      })
+
+      /*
+       * The middle of the funnel, recorded HERE because every route into a
+       * basket comes through this function — a tile, a product page, a
+       * restored saved basket. Recording it at each call site instead would
+       * mean the next one added quietly does not count.
+       *
+       * Fire and forget: adding to a basket must never wait on, or fail
+       * because of, a measurement.
+       */
+      void recordEventAction(token, 'add_to_cart', line.productId).catch(() => {})
+    },
+    [token],
+  )
 
   const setQty = useCallback((productId: number, qty: number) => {
     setLines((prev) =>

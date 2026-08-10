@@ -1,6 +1,8 @@
 'use server'
 
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
+import { SHOP_SESSION_COOKIE } from '@/lib/shopSession'
+import { recordEvent } from '@/lib/site/storefrontEvents'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { createOrderTrackToken } from '@/lib/orderTrackToken'
 import { getCustomerSession } from '@/lib/customerSession'
@@ -93,6 +95,26 @@ async function trackTokenFor(siteId: number, orderId: number): Promise<string> {
  * unrelated table failed. The worst case is one reminder about a basket that
  * was ordered — mildly embarrassing, where losing the order would not be.
  */
+/**
+ * Close the funnel, from the server's own figure.
+ *
+ * Reads the session key from the cookie rather than the payload, like every
+ * other event: a key the caller supplies could be anyone's, and joining a
+ * stranger's browsing to your purchase is worse than not joining it.
+ *
+ * Swallows everything. An order that succeeded must never be reported as
+ * failed because a measurement row could not be written.
+ */
+async function recordPurchase(siteId: number, totalIncl: number): Promise<void> {
+  try {
+    const key = (await cookies()).get(SHOP_SESSION_COOKIE)?.value ?? ''
+    if (!key) return
+    await recordEvent(siteId, { kind: 'purchase', sessionKey: key, valueIncl: totalIncl })
+  } catch {
+    /* deliberately ignored — see above */
+  }
+}
+
 async function stopChasing(siteId: number, email: string): Promise<void> {
   try {
     if (email.trim()) await markOrdered(siteId, email)
@@ -260,6 +282,16 @@ export async function placeOrderAction(
   // Placed here rather than inside placePublicOrder's transaction so it can
   // never be the reason an order rolls back.
   await stopChasing(siteId, input.contactEmail)
+
+  /*
+   * The bottom of the funnel, recorded with the total the SERVER computed.
+   *
+   * Not from the browser: a basket value a shopper could set would make the
+   * revenue figure worthless, and it is the one number in the report a shop
+   * would actually act on. recordEvent swallows its own failures, so this
+   * cannot turn a placed order into an error.
+   */
+  await recordPurchase(siteId, result.total)
 
   if (result.onAccount || context?.settings.paymentMode !== 'online') {
     return {

@@ -94,6 +94,24 @@ export type OnlineSettings = {
    */
   holdMinutes: number
   /**
+   * Whether search engines may index the storefront.
+   *
+   * READ-ONLY here. The column belongs to the presentation settings added in
+   * 077 and is written from the page builder's theme, so this exposes it for
+   * anything that needs to ASK — the sitemap, the structured data — without
+   * creating a second place to set it. Two write paths for one switch is how a
+   * shop turns indexing off in one screen and finds it still on.
+   */
+  readonly allowIndexing: boolean
+  /**
+   * The shop's own public address, e.g. "shop.example.co.za".
+   *
+   * The storefront lives behind an opaque signed token, so a canonical link and
+   * a sitemap need to be told which domain actually points here. Empty falls
+   * back to APP_URL.
+   */
+  publicDomain: string
+  /**
    * Whether departments show their picture — on the rail under the search and
    * on the "Shop by department" tiles.
    *
@@ -176,6 +194,8 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       basketReminderHours: 4,
       basketReminderNote: '',
       holdMinutes: 60,
+      allowIndexing: false,
+      publicDomain: '',
       updatedAt: null,
       updatedBy: '',
     }
@@ -208,6 +228,11 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
     // Defaulted rather than trusted: a store that has not run 076 yet returns
     // undefined here, and NaN would silently switch holding off.
     holdMinutes: Number.isFinite(Number(row.hold_minutes)) ? Number(row.hold_minutes) : 60,
+    // Both default to "not indexed" when the column is absent, so a store that
+    // has not run 078 keeps the pre-078 behaviour rather than being published
+    // by a missing value.
+    allowIndexing: !!row.allow_indexing,
+    publicDomain: String(row.public_domain ?? ''),
     updatedAt: row.updated_at instanceof Date ? row.updated_at : null,
     updatedBy: String(row.updated_by ?? ''),
   }
@@ -216,7 +241,18 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
 export type SaveResult = { ok: true } | { ok: false; error: string }
 
 /** What the Setup screen may change. Everything else on the row is derived. */
-export type OnlineSettingsInput = Omit<OnlineSettings, 'updatedAt' | 'updatedBy'>
+/**
+ * What the Setup screen may write.
+ *
+ * `allowIndexing` is omitted alongside the audit columns because it is not this
+ * screen's to set — it belongs to the page builder's presentation settings
+ * (077). Leaving it in the input type would let a save from here silently
+ * overwrite what the builder had chosen.
+ */
+export type OnlineSettingsInput = Omit<
+  OnlineSettings,
+  'updatedAt' | 'updatedBy' | 'allowIndexing'
+>
 
 /**
  * The checks that run before a storefront may go live.
@@ -304,6 +340,7 @@ export async function saveOnlineSettings(
             show_department_images = ?,
             basket_reminders = ?, basket_reminder_hours = ?, basket_reminder_note = ?,
             hold_minutes = ?,
+            public_domain = ?,
             updated_by = ?
       WHERE id = 1`,
     [
@@ -332,11 +369,38 @@ export async function saveOnlineSettings(
       // Clamped to a week. 0 is meaningful — it switches holding off — so the
       // floor is 0 rather than 1, unlike the reminder delay above.
       Math.min(Math.max(Math.round(input.holdMinutes) || 0, 0), 60 * 24 * 7),
+      // allow_indexing is deliberately absent: it is written from the page
+      // builder's presentation settings (077), and writing it here too would
+      // give one switch two owners.
+      //
+      // Normalised to a bare host: a shopkeeper types whatever is in their
+      // address bar, and "https://shop.example.co.za/" with a scheme and a
+      // trailing slash would produce "https://https://shop…/" in a canonical.
+      normaliseDomain(input.publicDomain),
       updatedBy.slice(0, 120),
     ],
   )
 
   return { ok: true }
+}
+
+/**
+ * A bare host, from whatever a shopkeeper pasted in.
+ *
+ * They type what is in their address bar, which is usually a whole URL. Stored
+ * raw, "https://shop.example.co.za/" becomes "https://https://shop…/" the
+ * moment a canonical link is built from it — a broken tag on every page, and
+ * one nobody would notice without viewing source.
+ */
+export function normaliseDomain(raw: string): string {
+  const trimmed = raw.trim().toLowerCase()
+  if (!trimmed) return ''
+  const withoutScheme = trimmed.replace(/^https?:\/\//, '')
+  const host = withoutScheme.split('/')[0]?.split('?')[0] ?? ''
+  // A host has a dot and no spaces. Anything else is a typo, and storing it
+  // would put a broken canonical on every page rather than none.
+  if (!host.includes('.') || /\s/.test(host)) return ''
+  return host.slice(0, 190)
 }
 
 /* ── Publish counts ───────────────────────────────────────────────────────── */

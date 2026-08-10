@@ -80,6 +80,7 @@ export default function SetupForm({
     basketReminderHours: settings.basketReminderHours,
     basketReminderNote: settings.basketReminderNote,
     holdMinutes: settings.holdMinutes,
+    publicDomain: settings.publicDomain,
   })
 
   function patch(next: Partial<OnlineSettingsInput>) {
@@ -561,6 +562,24 @@ export default function SetupForm({
       <SettingGroup
         title="How your store introduces itself"
         description="Shown when your link is shared and in search results."
+      >
+        <div className="px-6 py-4">
+          <Field
+            label="Your shop's web address"
+            hint="Only needed if you have your own domain pointing at this shop, e.g. shop.example.co.za. It tells search engines which address to list — paste the whole URL if it is easier, we'll tidy it."
+          >
+            <Input
+              value={form.publicDomain}
+              placeholder="shop.example.co.za"
+              onChange={(e) => patch({ publicDomain: e.target.value })}
+            />
+          </Field>
+        </div>
+      </SettingGroup>
+
+      <SettingGroup
+        title="Your welcome message"
+        description="One line describing the shop, used when your link is shared."
       >
         <div className="px-6 py-4">
           <Field
