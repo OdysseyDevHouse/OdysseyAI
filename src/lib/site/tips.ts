@@ -141,11 +141,24 @@ export async function tipsForShift(siteId: number, shiftId: number): Promise<Shi
 }
 
 /**
- * How much of a shift's tips the drawer should contain.
+ * How much of a shift's tips are sitting in the drawer.
  *
- * The one number `closeShift` needs. A cash tip is in the till and must be expected; a
- * card or account tip is not. See tipMath.tipsInDrawer for why this is per tender rather
- * than a global setting.
+ * ── NOT AN ADDEND FOR CASH-UP. READ THIS BEFORE USING IT. ─────────────────
+ *
+ * I built this expecting `closeShift` to add it to the expected drawer, and that would
+ * have been a DOUBLE COUNT. Its query is already right:
+ *
+ *     SUM(t.amount - t.change_given)
+ *
+ * `amount` is what was handed over and `change_given` is what went back. A R120 cash
+ * tender with a R20 tip records amount=120, change_given=0 — so the expectation is R120,
+ * the drawer holds R120, and it balances with no help. A card tip never enters that sum in
+ * the first place, because its tender is not `counts_as_drawer_cash`.
+ *
+ * So this is a REPORTING figure: "how much of tonight's takings is gratuity", for the
+ * cash-up screen to show beside the count and for a manager paying staff out. Adding it to
+ * `expectedCash` would leave every tipping shift reading over by exactly its tips — the
+ * very bug the flag exists to prevent, arrived at from the other direction.
  */
 export async function expectedTipsInDrawer(siteId: number, shiftId: number): Promise<number> {
   return tipsInDrawer(await tipsForShift(siteId, shiftId))

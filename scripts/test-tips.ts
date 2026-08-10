@@ -29,6 +29,8 @@ import {
 import { siteTransaction } from '../src/lib/siteDb'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { saveDraft } from '../src/lib/site/salesDocuments'
+import { finaliseDocument } from '../src/lib/site/salesPosting'
+import { shiftPosition } from '../src/lib/site/shifts'
 import { setSetting, getSetting } from '../src/lib/site/settings'
 import { toNum, round } from '../src/lib/decimals'
 
@@ -363,6 +365,115 @@ async function main() {
     toNum(removal?.amount) === 60 && removal?.user_name === 'Manager Mo',
     JSON.stringify(removal),
   )
+
+  /* ── 8. A REAL tipped sale, and a drawer that balances ─────────────────────
+     Everything above tests the parts. This posts a sale through finaliseDocument with a
+     declared tip and then asks closeShift's own arithmetic what the drawer should hold —
+     which is the only assertion that catches the two halves disagreeing. */
+
+  {
+    const SCRATCH_USER = 99_124
+    await siteExecute(SITE, 'DELETE FROM shifts WHERE user_id = ?', [SCRATCH_USER])
+    const shift = await siteExecute(
+      SITE,
+      `INSERT INTO shifts (mode, terminal_id, terminal_code, user_id, user_name, opening_float)
+       VALUES ('user', NULL, NULL, ?, 'Tips finalise test', '100.0000')`,
+      [SCRATCH_USER],
+    )
+
+    const sale = await saveDraft(SITE, ACTOR, {
+      docType: 'invoice',
+      documentDate: new Date().toISOString().slice(0, 10),
+      customerName: `Tips test finalise ${stamp}`,
+      lines: [
+        { productId: null, description: 'Dinner', qty: 1, unitPriceIncl: 50, vatRatePct: 15, unitCostExcl: 10 },
+      ],
+    } as never)
+    if (!sale.ok) throw new Error(sale.error)
+
+    /* R100 handed over on a R50 bill, R10 declared as a tip. So: R10 tip, R40 change. */
+    const posted = await finaliseDocument(SITE, ACTOR, {
+      documentId: sale.id,
+      shiftId: shift.insertId,
+      tenders: [{ tenderTypeId: cash.id, amount: 100 }],
+      declaredTips: { [cash.id]: 10 },
+    } as never)
+    ok('a tipped sale finalises', posted.ok === true, posted.ok ? '' : posted.error)
+
+    if (posted.ok) {
+      ok('*** and hands back R40, not R50 ***', posted.change === 40, String(posted.change))
+
+      const tip = await siteQueryOne<any>(
+        SITE,
+        'SELECT amount, source, shift_id FROM sales_tips WHERE document_id = ?',
+        [sale.id],
+      )
+      ok('the tip row is written by the finalise', toNum(tip?.amount) === 10, String(tip?.amount))
+      ok('  as declared', tip?.source === 'declared')
+      ok('  banked into the shift that took it', Number(tip?.shift_id) === shift.insertId)
+
+      const tender = await siteQueryOne<any>(
+        SITE,
+        'SELECT amount, change_given FROM sales_tenders WHERE document_id = ?',
+        [sale.id],
+      )
+      ok(
+        'the tender records what was HANDED OVER',
+        toNum(tender?.amount) === 100,
+        String(tender?.amount),
+      )
+      ok(
+        '*** and change_given is R40 — the tip is NOT given back ***',
+        toNum(tender?.change_given) === 40,
+        String(tender?.change_given),
+      )
+
+      const invoice = await siteQueryOne<any>(
+        SITE,
+        'SELECT total_incl, subtotal_excl, vat_total FROM sales_documents WHERE id = ?',
+        [sale.id],
+      )
+      /* The whole reason a tip is not a line: the invoice is the goods, and it still
+         balances. A tip line would have made this 60 with VAT on a gratuity. */
+      ok(
+        '*** the INVOICE is still R50 — no VAT on the tip ***',
+        toNum(invoice?.total_incl) === 50,
+        String(invoice?.total_incl),
+      )
+      ok(
+        '  and it still balances',
+        round(toNum(invoice?.subtotal_excl) + toNum(invoice?.vat_total), 2) === 50,
+        `${invoice?.subtotal_excl} + ${invoice?.vat_total}`,
+      )
+
+      /*
+       * THE ONE THAT MATTERS. closeShift's own arithmetic, unmodified.
+       *
+       * R100 opening float + (R100 handed over − R40 change) = R160. The R10 tip is inside
+       * that already, because `amount - change_given` counts it — which is why closeShift
+       * needed NO change for tips, and why adding expectedTipsInDrawer to it would have
+       * double-counted every one.
+       */
+      const position = await shiftPosition(SITE, shift.insertId)
+      ok(
+        '*** the expected drawer is R160 — the tip counted exactly once ***',
+        position !== null && position.expectedCash === 160,
+        `${position?.expectedCash} (float 100 + 100 taken − 40 change)`,
+      )
+      /* And the reporting figure agrees about how much of it is gratuity. */
+      const gratuity = await expectedTipsInDrawer(SITE, shift.insertId)
+      ok('  of which R10 is a tip', gratuity === 10, String(gratuity))
+
+      await siteExecute(SITE, 'DELETE FROM sales_tips WHERE document_id = ?', [sale.id])
+      await siteExecute(SITE, 'DELETE FROM sales_tenders WHERE document_id = ?', [sale.id])
+      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [sale.id])
+      await siteExecute(SITE, 'DELETE FROM stock_movements WHERE document_id = ?', [sale.id]).catch(
+        () => null,
+      )
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [sale.id])
+    }
+    await siteExecute(SITE, 'DELETE FROM shifts WHERE id = ?', [shift.insertId])
+  }
 
   /* ── Clean up ───────────────────────────────────────────────────────────── */
 

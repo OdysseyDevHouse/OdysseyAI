@@ -16,6 +16,11 @@ import { recordMovement, stockDirectionFor, canSellNow } from './stockMovements'
 import { getTenderType, getTenderByCode, checkTenders, type TenderType } from './tenderTypes'
 import { validateTerminalClaim } from './terminals'
 import { shiftToBankInto } from './shifts'
+import { writeTips } from './tips'
+/* The PURE planner, not the server module's re-export — same function either way, but
+   importing it from here keeps the dependency pointing at the shared arithmetic that the
+   tender pad also runs. */
+import { planTips } from '../tipMath'
 import { getNumericSetting, isPeriodLocked } from './settings'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
 import { resolveComponents, explodingProducts, type ResolvedComponent } from './productComposition'
@@ -116,6 +121,32 @@ export type FinaliseInput = {
    * shift", which shiftToBankInto already treats as legitimate.
    */
   shiftId?: number | null
+  /**
+   * Tips a cashier DECLARED at the pad, keyed by tender type id.
+   *
+   * Only cash needs this: R100 handed over on a R50 bill might be R50 change or R10 tip and
+   * R40 change, and nothing can infer which. A no-change tender's over-tender is decided by
+   * `tender_types.tip_on_over_tender` with no prompt at all.
+   *
+   * Keyed by TENDER TYPE rather than positional, because a basket may hold two payments on
+   * one method and a tip row records the method, not the payment.
+   *
+   * Absent on every existing caller, which leaves the behaviour exactly as it was.
+   */
+  declaredTips?: Record<number, number>
+  /**
+   * A forced service charge, already worked out from the tier table.
+   *
+   * Passed in rather than computed here: the tiers live in the database and
+   * `tips_tables_only` needs to know whether a table is attached, and this function runs
+   * inside a transaction holding the most contended lock in the schema — two more queries
+   * in there would widen it for every till.
+   *
+   * NOT added to the document total. It was added to what the customer owed before they
+   * paid, so it is already inside the bill they settled; recorded as a tip because that is
+   * what it is.
+   */
+  serviceCharge?: number
 }
 
 export type FinaliseResult =
@@ -196,6 +227,15 @@ export async function finaliseDocument(
   // 5c rounding applies to what the DRAWER takes, never to the invoice. The
   // invoice keeps its exact total so the VAT declared stays exact; the
   // difference is recorded as rounding_adj.
+  /**
+   * What the cashier actually hands back, after tips.
+   *
+   * Declared out here and set inside the transaction, the same way `roundingAdj` crosses
+   * that boundary. Seeded from the raw excess so a sale with no tips is unchanged: the
+   * whole excess is change, exactly as before.
+   */
+  let changeToHandBack: number | null = null
+
   const denomination = await getNumericSetting(siteId, 'sales_cash_rounding')
   const anyCash = tenders.some((t) => t.type.roundsToCashDenomination)
   const { rounded: payable, adjustment: roundingAdj } =
@@ -466,9 +506,67 @@ export async function finaliseDocument(
         }
       }
 
-      // 2. Tenders, as handed over. Change is recorded against the tender that
-      //    gave it, so the drawer reconciles.
-      let remainingChange = check.change
+      /*
+       * 2. TIPS FIRST, then tenders.
+       *
+       * A tip and change are two claims on ONE excess. `check.change` is that excess, and
+       * the loop below divides it as change — so tips have to be taken out of it BEFORE
+       * that runs, or the same rand is recorded twice: once as change handed back and once
+       * as a gratuity kept. The drawer would then be expected to hold it twice and every
+       * cash-up with a tip in it would read short by exactly the tip.
+       *
+       * `planTips` is the SAME function the tender pad runs, so what the slip said and what
+       * posts here cannot disagree. It returns the change that remains, which is what the
+       * loop below consumes.
+       */
+      const tipPlan = planTips({
+        totalExcess: check.change,
+        tenders: tenders.map(({ input, type }) => ({
+          tenderTypeId: type.id,
+          amount: input.amount,
+          allowsChange: type.allowsChange,
+          tipOnOverTender: type.tipOnOverTender,
+          tenderName: type.name,
+        })),
+        declared: input.declaredTips,
+        serviceCharge:
+          input.serviceCharge && input.serviceCharge > 0.005 && tenders[0]
+            ? { tenderTypeId: tenders[0].type.id, amount: input.serviceCharge }
+            : null,
+      })
+      /*
+       * A refusal here is a real one and must abort the finalise.
+       *
+       * It means a no-change tender was paid over on a method that neither gives change nor
+       * accepts tips — so there is no honest place for the money. Posting anyway would
+       * either keep it silently or leave the document unbalanced against its tenders.
+       */
+      if (!tipPlan.ok) throw new Error(tipPlan.error)
+
+      /*
+       * Carried OUT of the transaction, because the caller is told what to hand back and
+       * that figure must be the post-tip one.
+       *
+       * The bug this fixes was measured: the tip row, `change_given` and the drawer were
+       * all correct at R40, while the RETURN value still said R50 — so the receipt screen
+       * would have told a cashier to hand back money the till had just kept as a gratuity.
+       * Right in the database, wrong on the screen, which is the worse half to get wrong.
+       */
+      changeToHandBack = tipPlan.changeRemaining
+
+      await writeTips(tx, {
+        documentId: document.id,
+        shiftId,
+        /* Whoever the SALE is attributed to — the waiter who served the table. Not
+           `actor`, which on a back-office finalise is whoever pressed the button. */
+        userId: document.userId ?? actor.userId ?? null,
+        userName: document.userName || actor.userName,
+        tips: tipPlan.tips,
+      })
+
+      // 3. Tenders, as handed over. Change is recorded against the tender that
+      //    gave it, so the drawer reconciles — and it divides what is left AFTER tips.
+      let remainingChange = tipPlan.changeRemaining
       for (const { input: tender, type } of tenders) {
         const changeHere =
           type.allowsChange && remainingChange > 0 ? Math.min(remainingChange, tender.amount) : 0
@@ -801,7 +899,10 @@ export async function finaliseDocument(
       ok: true,
       documentId: document.id,
       documentNumber: posted.documentNumber,
-      change: check.change,
+      /* Post-tip. `?? check.change` keeps every existing caller identical: with no tips
+         planned the two are the same number, and a sale that never reached the tip step
+         still reports the full excess. */
+      change: changeToHandBack ?? check.change,
       roundingAdj,
     }
   } catch (error) {
