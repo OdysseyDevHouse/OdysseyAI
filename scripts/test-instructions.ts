@@ -380,7 +380,25 @@ async function main() {
     moves[0]?.note ?? '',
   )
 
-  ok('*** reconcileStock returns ZERO drift ***', (await reconcileStock(SITE)).length === 0)
+  /*
+   * Stock reconciliation, scoped to the products THIS run created.
+   *
+   * reconcileStock answers for the whole site, and another suite running at the
+   * same moment — or one that left a fixture behind — puts its drift in this
+   * result too. An unscoped assertion here fails for reasons that have nothing
+   * to do with instructions, and the failure looks identical to a real one, so
+   * the next person spends their time on the wrong bug.
+   *
+   * The drift is printed either way: a bare pass/fail on a ledger check is not
+   * enough to act on.
+   */
+  const drift = await reconcileStock(SITE)
+  const mine = drift.filter((d) => [burgerId, baconId, serialId].includes(d.productId))
+  ok(
+    '*** reconcileStock returns ZERO drift for this run ***',
+    mine.length === 0,
+    mine.length ? JSON.stringify(mine) : `${drift.length} unrelated row(s) elsewhere on the site`,
+  )
 
   /* ── 8. Ordering ─────────────────────────────────────────────────────── */
 
