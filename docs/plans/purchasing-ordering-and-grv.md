@@ -334,6 +334,26 @@ file silently does nothing.
 Migration numbering currently collides in this repo (two 064s, two 070s, two
 071s). 078+ is clear of the storefront branch's 074-077.
 
+## Built after the six phases
+
+All six phases landed. Four more followed, each because using the module made
+the gap obvious:
+
+- **Draft goods receipts.** Receiving was all-or-nothing, and a sixty-line
+  delivery is an hour of work standing on one interruption. A draft moves
+  nothing and takes no number; finalising reuses its row so its id survives.
+- **Invoice-total matching.** Type what their invoice says and the receipt is
+  refused if the lines do not tie. The single best guard in the module —
+  catches a transposed quantity, a line keyed twice, a case cost keyed as a
+  unit cost. Compared against what the GOODS supplier is owed, so a carrier's
+  separate invoice does not break the tie.
+- **Cost-change warnings.** Per line, against the LAST cost paid rather than
+  the average. A warning, never a refusal.
+- **Supplier price lists.** Agreed costs with effective dates, so a list can be
+  captured before it starts. Ordering reprices on both paths that change the
+  answer — adding a product, and changing the supplier — and `priceVariances`
+  shows where a receipt disagreed with what was promised.
+
 ## What this does not do
 
 - **Multi-currency purchasing.** Real for importers, and a much larger change:
@@ -341,8 +361,10 @@ Migration numbering currently collides in this repo (two 064s, two 070s, two
 - **Landed-cost apportionment by weight or volume.** By value is right for most
   freight; by weight is better for heavy goods. `product_dimensions` exists, so
   this is reachable later.
-- **Supplier price lists** with agreed costs and effective dates. Ordering pulls
-  `product_suppliers.last_cost` for now.
+- **A price-list screen.** The library, the actions and the ordering hook are
+  built and tested; there is no page for maintaining lists by hand yet, and no
+  CSV import. `saveSupplierPriceList` takes a whole list and reports its
+  failures per line, so an importer is a thin wrapper over what exists.
 - **Container / consignment tracking.** A shipment spanning several POs.
 
 Each is a sensible successor. None is needed for the module to be complete.
