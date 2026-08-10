@@ -8,6 +8,7 @@ import type { StorefrontDepartment } from '@/lib/site/storefront'
 import type { StorefrontTheme } from '@/lib/storefrontModel'
 import { useCart } from './CartContext'
 import { useWishlist } from './WishlistContext'
+import AnnounceBar from './AnnounceBar'
 import CartBar from './CartBar'
 import { DepartmentImage } from './ShopBits'
 
@@ -37,6 +38,10 @@ export default function StoreChrome({
   theme,
   allowAccount,
   customerName,
+  offerSaveBasket = false,
+  pages,
+  fontClassName,
+  announce,
 
   children,
 }: {
@@ -49,8 +54,33 @@ export default function StoreChrome({
   theme: StorefrontTheme
   /** Whether this shop offers account ordering at all. */
   allowAccount: boolean
+  /** Whether this shop offers to save a basket and remind about it. */
+  offerSaveBasket?: boolean
   /** The signed-in customer, or null. Name only — never the account itself. */
   customerName: string | null
+  /**
+   * The shop's own pages that asked to be in the navigation.
+   *
+   * Only slug and title: this is a link list, and handing the chrome whole
+   * page rows would put a page's draft state and SEO fields in the browser
+   * bundle of every shopper who loads the shop.
+   */
+  pages: { slug: string; title: string }[]
+  /**
+   * The class applying the shop's chosen typeface, or '' for the device's own.
+   *
+   * A CLASS rather than the key itself, because `next/font` is a build-time
+   * transform that cannot run in a client component — see fonts.ts. The server
+   * resolves the key; this only wears the result.
+   */
+  fontClassName: string
+  /**
+   * The announcement strip, or null when there is none showing today.
+   *
+   * Resolved server-side, so the schedule is evaluated with the shop's own
+   * clock and an out-of-season strip never reaches the browser at all.
+   */
+  announce: { text: string; href: string } | null
 
   children: ReactNode
 }) {
@@ -63,11 +93,21 @@ export default function StoreChrome({
       {/* The shop's own colour, applied by overriding the brand token for this
           subtree only. Every `text-brand` and `bg-brand` inside then follows
           it, so a store re-colours its whole shop without a single component
-          knowing the theme exists. The value is hex-validated before storage. */}
+          knowing the theme exists. The value is hex-validated before storage.
+
+          The font arrives as a CLASS from the server — see fonts.ts on why
+          next/font cannot be called from a client component, and why the shop
+          picks between pre-declared faces rather than naming one. */}
       <div
-        className="flex min-h-screen flex-col bg-canvas"
+        className={`flex min-h-screen flex-col bg-canvas ${fontClassName}`}
         style={{ '--color-brand': theme.brandColour } as React.CSSProperties}
       >
+        {/* ABOVE the sticky header, and outside it: the strip is an
+            announcement, not navigation, and one that followed the page down
+            would be taking permanent space from a phone screen to say
+            something that only needs reading once. */}
+        {announce && <AnnounceBar text={announce.text} href={announce.href} />}
+
         <header className="sticky top-0 z-20 bg-surface">
           <div className="border-b border-border">
             <div className="mx-auto flex w-full max-w-6xl items-center gap-4 px-4 py-4">
@@ -180,6 +220,54 @@ export default function StoreChrome({
                   {d.name}
                 </Link>
               ))}
+
+              {/*
+                The shop's own pages, at the END of the department rail and
+                behind a divider.
+
+                Together rather than in a second bar, because a phone has one
+                row of horizontal space to spare and two rails would eat the
+                page. After the departments because those are what a shopper
+                came for — Delivery and Returns are read once, aisles are read
+                every visit.
+              */}
+              {pages.length > 0 && (
+                <>
+                  <span
+                    aria-hidden
+                    className="mx-1 w-px shrink-0 self-stretch bg-border"
+                  />
+                  {pages.map((p) => (
+                    <Link
+                      key={p.slug}
+                      href={`${base}/page/${p.slug}`}
+                      className="shrink-0 whitespace-nowrap rounded-pill px-3 py-1.5 text-sm text-ink-2 transition hover:bg-surface-2"
+                    >
+                      {p.title}
+                    </Link>
+                  ))}
+                </>
+              )}
+            </nav>
+          )}
+
+          {/* No departments to hang them off. A shop that publishes pages but
+              no departments would otherwise have them nowhere in the masthead
+              at all — the rail above only renders when there are departments. */}
+          {departments.length === 0 && pages.length > 0 && (
+            <nav
+              aria-label="Pages"
+              className="mx-auto flex w-full max-w-6xl gap-1 overflow-x-auto border-b border-border px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {pages.map((p) => (
+                <Link
+                  key={p.slug}
+                  href={`${base}/page/${p.slug}`}
+                  className="shrink-0 whitespace-nowrap rounded-pill px-3 py-1.5 text-sm text-ink-2 transition hover:bg-surface-2"
+                >
+                  {p.title}
+                </Link>
+              ))}
             </nav>
           )}
         </header>
@@ -188,8 +276,8 @@ export default function StoreChrome({
             would otherwise sit on top of the last row of the page. */}
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 pb-28 md:pb-5">{children}</main>
 
-        <Footer storeName={storeName} theme={theme} />
-        <CartBar token={token} />
+        <Footer storeName={storeName} theme={theme} token={token} pages={pages} />
+        <CartBar token={token} offerSave={offerSaveBasket} />
       </div>
     </ToastProvider>
   )
@@ -278,7 +366,17 @@ function BasketAction({ token }: { token: string }) {
   )
 }
 
-function Footer({ storeName, theme }: { storeName: string; theme: StorefrontTheme }) {
+function Footer({
+  storeName,
+  theme,
+  token,
+  pages,
+}: {
+  storeName: string
+  theme: StorefrontTheme
+  token: string
+  pages: { slug: string; title: string }[]
+}) {
   return (
     <footer className="border-t border-border bg-surface">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6 text-sm text-muted sm:flex-row sm:justify-between">
@@ -288,6 +386,28 @@ function Footer({ storeName, theme }: { storeName: string; theme: StorefrontThem
           <p className="mt-1">
             Orders placed here are confirmed by the shop before they are prepared.
           </p>
+
+          {/*
+            The pages again, down here as well as in the masthead.
+
+            Deliberate duplication: the footer is where a shopper looks for a
+            returns policy, and it is the one place on the page they reach
+            after reading rather than before. The rail is for getting
+            somewhere; this is for finding the small print.
+          */}
+          {pages.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+              {pages.map((p) => (
+                <Link
+                  key={p.slug}
+                  href={`/store/${token}/page/${p.slug}`}
+                  className="text-brand hover:underline"
+                >
+                  {p.title}
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="shrink-0">
