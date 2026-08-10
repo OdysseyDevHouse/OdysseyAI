@@ -137,6 +137,7 @@ export default async function OnlineProductsPage({
             aria-label="Filter by department"
             icon={<Icons.LayoutGrid size={16} />}
             value={department ?? ''}
+            className="w-64"
             options={[
               { value: '', label: 'All departments', href: filterHref({ department: null }) },
               ...departments.map((d) => ({

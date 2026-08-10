@@ -113,6 +113,27 @@ async function evaluate(expression) {
   return r.result?.value
 }
 
+// SHOT_THEME=light|dark captures a screen in a specific theme rather than
+// whatever the headless profile inherits from the OS — which is how a light-mode
+// styling bug goes unseen in a dark-mode screenshot. The choice is stored the
+// same way the avatar menu stores it, so the inline script in layout.tsx applies
+// it during parsing and the first paint is already correct.
+const THEME = process.env.SHOT_THEME
+if (THEME && THEME !== 'light' && THEME !== 'dark') {
+  console.error(`SHOT_THEME must be "light" or "dark", got "${THEME}"`)
+  process.exit(1)
+}
+
+async function applyTheme() {
+  if (!THEME) return
+  await evaluate(
+    `(() => {
+       try { window.localStorage.setItem('odyssey.theme', ${JSON.stringify(THEME)}) } catch {}
+       document.documentElement.dataset.theme = ${JSON.stringify(THEME)}
+     })()`,
+  )
+}
+
 async function goto(p) {
   await send('Page.navigate', { url: `${BASE}${p}` }, sessionId)
   // A fixed wait under-shoots when the dev server is compiling the route for
@@ -197,8 +218,19 @@ console.log('signed in, landed on', landed)
 // checking once something has been pressed.
 const CLICK = process.env.SHOT_CLICK
 
+// localStorage needs an origin, so this can only be written once a page from
+// the app has loaded — hence after sign-in rather than before the first goto.
+await applyTheme()
+
 for (const p of paths) {
-  const landedOn = await goto(p)
+  let landedOn = await goto(p)
+  // The stored choice is picked up during parsing, so a page navigated to
+  // BEFORE it was written is still showing the inherited theme. Reload once so
+  // the capture matches what SHOT_THEME asked for.
+  if (THEME) {
+    await applyTheme()
+    landedOn = await goto(p)
+  }
 
   // Split on '>>' so a control that only appears after another was pressed can
   // still be reached — SHOT_CLICK="New in >> Add products". A single label has

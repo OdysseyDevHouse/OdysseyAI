@@ -29,6 +29,7 @@ import {
   Input,
   MiniStat,
   LinkSegmentedControl,
+  LinkSelect,
   Menu,
   MenuItem,
   MenuSeparator,
@@ -720,6 +721,26 @@ function TableControlsSection() {
                 { value: 'all', label: 'All', href: '/setup/style-guide' },
                 { value: 'finalised', label: 'Finalised', href: '/setup/style-guide' },
                 { value: 'saved', label: 'Saved', href: '/setup/style-guide' },
+              ]}
+            />
+          </div>
+        </div>
+
+        <div>
+          <Spec
+            name="<LinkSelect />"
+            note="A navigating <select> for a filter with too many values to be segments — departments, suppliers, locations. Options carry their own href, so a Server Component can render it."
+          />
+          <div className="mt-2">
+            <LinkSelect
+              aria-label="Filter by department"
+              icon={<Icons.LayoutGrid size={16} />}
+              value=""
+              className="w-64"
+              options={[
+                { value: '', label: 'All departments', href: '/setup/style-guide' },
+                { value: '1', label: 'Groceries', href: '/setup/style-guide' },
+                { value: '2', label: 'Groceries › Dry goods', href: '/setup/style-guide' },
               ]}
             />
           </div>

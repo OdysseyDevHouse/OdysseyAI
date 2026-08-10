@@ -22,6 +22,8 @@ import {
   Pagination,
   TableToolbar,
   LinkSegmentedControl,
+  LinkSelect,
+  Icons,
   DataTable,
   type Column,
 } from '@/components/ui'
@@ -95,6 +97,21 @@ export default async function ProductsPage({
      rarely a page of the new one, and landing on an empty list reads as "no
      matches" when there are plenty. */
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
+
+  /* The picker lists every department by full path, sorted by that path so a
+     sub-department sits under its parent rather than wherever sort_order left
+     it. Picking one filters to it AND everything beneath it, which is why the
+     child entries are still worth listing separately. */
+  const departmentOptions = [
+    { value: '', label: 'All departments', href: filterHref({ department: null }) },
+    ...departments
+      .map((d) => ({
+        value: String(d.id),
+        label: departmentPaths[d.id],
+        href: filterHref({ department: String(d.id) }),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  ]
 
   /* Which slice the segmented control shows. The two flags are mutually
      exclusive here: a segmented control is one choice, and "archived products
@@ -177,6 +194,17 @@ export default async function ProductsPage({
                 href: filterHref({ archived: '1', low: null }),
               },
             ]}
+          />
+
+          {/* Options carry their own href, built here on the server: a function
+              prop cannot cross into a client component, and this keeps the URL
+              helpers out of the browser bundle. */}
+          <LinkSelect
+            aria-label="Filter by department"
+            icon={<Icons.LayoutGrid size={16} />}
+            value={filterIds ? String(departmentId) : ''}
+            options={departmentOptions}
+            className="w-64"
           />
 
           {filterLabel && (

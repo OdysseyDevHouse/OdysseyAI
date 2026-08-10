@@ -82,3 +82,681 @@
   └─ ƒ listProductDepartmentsAction() in 14ms src/app/(app)/sales/actions.ts
  POST /sales/invoicing/3 200 in 55ms (next.js: 8ms, proxy.ts: 2ms, application-code: 45ms)
   └─ ƒ browseProductsAction({"departmentId":null,"limit":500,"priceStructureId":null,"...":"1 item not stringified"}) in 39ms src/app/(app)/sales/actions.ts
+✓ Compiled in 3.3s
+ GET /sales/invoicing/3 200 in 44ms (next.js: 20ms, proxy.ts: 2ms, application-code: 22ms)
+ GET /sales/invoicing/3 200 in 52ms (next.js: 24ms, proxy.ts: 4ms, application-code: 24ms)
+ GET /sales/invoicing/3 200 in 34ms (next.js: 11ms, proxy.ts: 2ms, application-code: 21ms)
+ GET /sales/invoicing/3 200 in 33ms (next.js: 10ms, proxy.ts: 2ms, application-code: 21ms)
+ GET /sales/invoicing/3 200 in 40ms (next.js: 12ms, proxy.ts: 3ms, application-code: 25ms)
+ GET /sales/invoicing/3 200 in 35ms (next.js: 9ms, proxy.ts: 2ms, application-code: 23ms)
+ GET /sales/invoicing/3 200 in 38ms (next.js: 9ms, proxy.ts: 2ms, application-code: 27ms)
+ GET /sales/invoicing/3 200 in 34ms (next.js: 9ms, proxy.ts: 2.0ms, application-code: 23ms)
+ GET /sales/invoicing/3 200 in 37ms (next.js: 10ms, proxy.ts: 2ms, application-code: 25ms)
+ GET /sales/invoicing/3 200 in 41ms (next.js: 14ms, proxy.ts: 3ms, application-code: 24ms)
+ GET /sales/invoicing/3 200 in 33ms (next.js: 9ms, proxy.ts: 1.9ms, application-code: 21ms)
+ GET /sales/invoicing/3 200 in 33ms (next.js: 9ms, proxy.ts: 2.0ms, application-code: 23ms)
+ GET /sales/invoicing/3 200 in 35ms (next.js: 9ms, proxy.ts: 2ms, application-code: 24ms)
+ GET /sales/invoicing/3 200 in 35ms (next.js: 9ms, proxy.ts: 2ms, application-code: 25ms)
+ GET /sales/invoicing/3 200 in 35ms (next.js: 9ms, proxy.ts: 1.9ms, application-code: 24ms)
+ GET /sales/invoicing/3 200 in 36ms (next.js: 11ms, proxy.ts: 2ms, application-code: 22ms)
+ GET /sales/invoicing/3 200 in 41ms (next.js: 10ms, proxy.ts: 3ms, application-code: 29ms)
+ GET / 200 in 39ms (next.js: 15ms, proxy.ts: 3ms, application-code: 20ms)
+○ Compiling /dashboard ...
+ GET /dashboard 200 in 3.4s (next.js: 3.4s, proxy.ts: 3ms, application-code: 40ms)
+ POST / 200 in 3.5s (next.js: 5ms, proxy.ts: 4ms, application-code: 3.5s)
+  └─ ƒ loginAction({"error":null}, {}) in 77ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 64ms (next.js: 4ms, proxy.ts: 4ms, application-code: 56ms)
+✓ Compiled in 4.6s
+ GET /dashboard 200 in 101ms (next.js: 10ms, proxy.ts: 5ms, application-code: 86ms)
+ GET /sales/invoicing/3 200 in 100ms (next.js: 36ms, proxy.ts: 22ms, application-code: 41ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 76ms (next.js: 9ms, proxy.ts: 8ms, application-code: 58ms)
+ GET /setup/style-guide 200 in 153ms (next.js: 21ms, proxy.ts: 2ms, application-code: 129ms)
+ GET /sales/invoicing/3 200 in 179ms (next.js: 144ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /sales/invoicing/3 200 in 29ms (next.js: 6ms, proxy.ts: 1.9ms, application-code: 22ms)
+✓ Compiled in 886ms
+ GET /sales/invoicing/3 200 in 41ms (next.js: 13ms, proxy.ts: 3ms, application-code: 26ms)
+✓ Compiled in 618ms
+ GET /sales/invoicing/3 200 in 34ms (next.js: 10ms, proxy.ts: 1.9ms, application-code: 22ms)
+ GET /sales/invoicing/3 200 in 36ms (next.js: 11ms, proxy.ts: 3ms, application-code: 22ms)
+ GET /sales/invoicing/3 200 in 37ms (next.js: 13ms, proxy.ts: 2ms, application-code: 22ms)
+✓ Compiled in 422ms
+ GET /sales/invoicing/3 200 in 33ms (next.js: 9ms, proxy.ts: 1.9ms, application-code: 22ms)
+✓ Compiled in 288ms
+ GET /sales/invoicing/3 200 in 41ms (next.js: 14ms, proxy.ts: 3ms, application-code: 24ms)
+✓ Compiled in 219ms
+ GET /sales/invoicing/3 200 in 39ms (next.js: 11ms, proxy.ts: 2ms, application-code: 26ms)
+✓ Compiled in 191ms
+ GET /api/health 200 in 77ms (next.js: 68ms, application-code: 9ms)
+ GET /sales/invoicing/3 200 in 38ms (next.js: 14ms, proxy.ts: 3ms, application-code: 21ms)
+✓ Compiled in 859ms
+ GET / 200 in 22ms (next.js: 4ms, proxy.ts: 2ms, application-code: 16ms)
+ GET /dashboard 200 in 28ms (next.js: 6ms, proxy.ts: 1.7ms, application-code: 21ms)
+ POST / 200 in 101ms (next.js: 3ms, proxy.ts: 2ms, application-code: 96ms)
+  └─ ƒ loginAction({"error":null}, {}) in 56ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 35ms (next.js: 3ms, proxy.ts: 2ms, application-code: 29ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 43ms (next.js: 3ms, proxy.ts: 3ms, application-code: 36ms)
+✓ Compiled in 218ms
+ GET /dashboard 200 in 72ms (next.js: 7ms, proxy.ts: 4ms, application-code: 62ms)
+ GET /sales/invoicing/3 200 in 74ms (next.js: 35ms, proxy.ts: 4ms, application-code: 35ms)
+ GET /reports/builder?source=saleLines 200 in 200ms (next.js: 37ms, proxy.ts: 2ms, application-code: 161ms)
+ POST /reports/builder?source=saleLines 200 in 18ms (next.js: 4ms, proxy.ts: 3ms, application-code: 11ms)
+  └─ ƒ previewReportAction({"columns":["[Object]","[Object]","[Object]","... 1 item not stringified"],"filters":["[Object]"],"groupFields":[],"...":"6 items not stringified"}) in 5ms src/app/(app)/reports/builder/actions.ts
+ GET /sales/invoicing/3 200 in 41ms (next.js: 13ms, proxy.ts: 3ms, application-code: 25ms)
+✓ Compiled in 555ms
+ GET / 200 in 31ms (next.js: 5ms, proxy.ts: 2ms, application-code: 24ms)
+ GET /dashboard 200 in 29ms (next.js: 6ms, proxy.ts: 2ms, application-code: 21ms)
+ POST / 200 in 100ms (next.js: 4ms, proxy.ts: 2ms, application-code: 94ms)
+  └─ ƒ loginAction({"error":null}, {}) in 56ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 39ms (next.js: 3ms, proxy.ts: 2ms, application-code: 33ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 28ms (next.js: 2ms, proxy.ts: 2ms, application-code: 23ms)
+ GET /setup/style-guide 200 in 113ms (next.js: 7ms, proxy.ts: 3ms, application-code: 103ms)
+ GET / 200 in 23ms (next.js: 4ms, proxy.ts: 2ms, application-code: 17ms)
+ GET /dashboard 200 in 44ms (next.js: 5ms, proxy.ts: 3ms, application-code: 36ms)
+ POST / 200 in 111ms (next.js: 4ms, proxy.ts: 3ms, application-code: 104ms)
+  └─ ƒ loginAction({"error":null}, {}) in 50ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 25ms (next.js: 3ms, proxy.ts: 3ms, application-code: 20ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 28ms (next.js: 2ms, proxy.ts: 3ms, application-code: 22ms)
+ GET /dashboard 200 in 128ms (next.js: 4ms, proxy.ts: 2ms, application-code: 122ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 26ms (next.js: 3ms, proxy.ts: 3ms, application-code: 21ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 38ms (next.js: 10ms, proxy.ts: 2ms, application-code: 26ms)
+ GET /reports/builder?source=saleLines 200 in 70ms (next.js: 6ms, proxy.ts: 2.0ms, application-code: 62ms)
+ GET /dashboard 200 in 64ms (next.js: 4ms, proxy.ts: 2ms, application-code: 57ms)
+ POST /reports/builder?source=saleLines 200 in 24ms (next.js: 4ms, proxy.ts: 4ms, application-code: 16ms)
+  └─ ƒ previewReportAction({"columns":["[Object]","[Object]","[Object]","... 1 item not stringified"],"filters":["[Object]"],"groupFields":[],"...":"6 items not stringified"}) in 7ms src/app/(app)/reports/builder/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 32ms (next.js: 3ms, proxy.ts: 3ms, application-code: 27ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 24ms (next.js: 3ms, proxy.ts: 2ms, application-code: 19ms)
+ GET /products?department=9 200 in 79ms (next.js: 30ms, proxy.ts: 2ms, application-code: 46ms)
+ GET /sales/invoicing/3 200 in 36ms (next.js: 11ms, proxy.ts: 2ms, application-code: 23ms)
+ GET /sales/invoicing/3 200 in 36ms (next.js: 10ms, proxy.ts: 2ms, application-code: 24ms)
+ GET /reports/builder 200 in 31ms (next.js: 4ms, proxy.ts: 3ms, application-code: 24ms)
+ POST /reports/builder 200 in 27ms (next.js: 4ms, proxy.ts: 3ms, application-code: 20ms)
+  └─ ƒ previewReportAction({"chartType":"line","columns":["[Object]","[Object]","[Object]","... 1 item not stringified"],"filters":["[Object]"],"...":"8 items not stringified"}) in 14ms src/app/(app)/reports/builder/actions.ts
+ GET /reports/builder 200 in 31ms (next.js: 4ms, proxy.ts: 2ms, application-code: 25ms)
+ GET /reports/builder 200 in 31ms (next.js: 6ms, proxy.ts: 3ms, application-code: 22ms)
+ GET /reports/builder 200 in 28ms (next.js: 4ms, proxy.ts: 2.0ms, application-code: 22ms)
+ GET /reports/builder 200 in 29ms (next.js: 4ms, proxy.ts: 1.8ms, application-code: 23ms)
+ GET /reports/builder 200 in 33ms (next.js: 5ms, proxy.ts: 2ms, application-code: 26ms)
+ GET /reports/builder 200 in 28ms (next.js: 4ms, proxy.ts: 2ms, application-code: 23ms)
+ GET /reports/builder 200 in 36ms (next.js: 7ms, proxy.ts: 3ms, application-code: 25ms)
+ GET /reports/builder 200 in 28ms (next.js: 4ms, proxy.ts: 2ms, application-code: 22ms)
+ GET /reports/builder 200 in 46ms (next.js: 5ms, proxy.ts: 2ms, application-code: 38ms)
+ GET /reports/builder 200 in 29ms (next.js: 4ms, proxy.ts: 2ms, application-code: 23ms)
+ GET /reports/builder 200 in 28ms (next.js: 4ms, proxy.ts: 2ms, application-code: 22ms)
+ GET / 200 in 35ms (next.js: 14ms, proxy.ts: 1.8ms, application-code: 19ms)
+ GET /reports/builder 200 in 34ms (next.js: 8ms, proxy.ts: 3ms, application-code: 24ms)
+ GET /reports/builder 200 in 27ms (next.js: 3ms, proxy.ts: 2ms, application-code: 22ms)
+ GET /reports/builder 200 in 29ms (next.js: 4ms, proxy.ts: 1.9ms, application-code: 23ms)
+ GET /reports/builder 200 in 34ms (next.js: 8ms, proxy.ts: 3ms, application-code: 23ms)
+ GET /reports/builder 200 in 33ms (next.js: 7ms, proxy.ts: 3ms, application-code: 24ms)
+✓ Compiled in 570ms
+ GET / 200 in 36ms (next.js: 16ms, proxy.ts: 3ms, application-code: 18ms)
+ GET /dashboard 200 in 53ms (next.js: 14ms, proxy.ts: 4ms, application-code: 35ms)
+ POST / 200 in 128ms (next.js: 4ms, proxy.ts: 2ms, application-code: 122ms)
+  └─ ƒ loginAction({"error":null}, {}) in 59ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 38ms (next.js: 7ms, proxy.ts: 3ms, application-code: 28ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 42ms (next.js: 4ms, proxy.ts: 4ms, application-code: 35ms)
+ GET /setup/terminals 200 in 90ms (next.js: 26ms, proxy.ts: 2ms, application-code: 62ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 387ms (proxy.ts: 3ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 234ms (next.js: 11ms, proxy.ts: 3ms, application-code: 220ms)
+[browser] Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <div>. See https://react.dev/link/warning-keys for more information. 
+ GET /reports/builder 200 in 251ms (next.js: 69ms, proxy.ts: 45ms, application-code: 138ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 176ms (next.js: 58ms, proxy.ts: 10ms, application-code: 107ms)
+ GET /departments 200 in 55ms (next.js: 28ms, proxy.ts: 3ms, application-code: 24ms)
+ GET / 200 in 30ms (next.js: 4ms, proxy.ts: 3ms, application-code: 23ms)
+ GET /dashboard 200 in 42ms (next.js: 4ms, proxy.ts: 3ms, application-code: 35ms)
+ POST / 200 in 131ms (next.js: 5ms, proxy.ts: 3ms, application-code: 123ms)
+  └─ ƒ loginAction({"error":null}, {}) in 69ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 37ms (next.js: 4ms, proxy.ts: 3ms, application-code: 30ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 45ms (next.js: 3ms, proxy.ts: 3ms, application-code: 40ms)
+ GET /products?department=9 200 in 181ms (next.js: 12ms, proxy.ts: 3ms, application-code: 166ms)
+ GET /departments/11 200 in 435ms (next.js: 405ms, proxy.ts: 3ms, application-code: 28ms)
+ GET /departments/11 200 in 95ms (next.js: 15ms, proxy.ts: 3ms, application-code: 77ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 96ms (next.js: 41ms, proxy.ts: 7ms, application-code: 49ms)
+✓ Compiled in 3.3s
+ GET /departments/11 200 in 85ms (next.js: 48ms, proxy.ts: 4ms, application-code: 33ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 93ms (next.js: 19ms, proxy.ts: 4ms, application-code: 70ms)
+ GET /departments/11 200 in 84ms (next.js: 21ms, proxy.ts: 5ms, application-code: 58ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 84ms (next.js: 44ms, proxy.ts: 5ms, application-code: 35ms)
+ GET /setup 200 in 53ms (next.js: 32ms, proxy.ts: 2ms, application-code: 18ms)
+ GET /setup 200 in 61ms (next.js: 5ms, proxy.ts: 4ms, application-code: 52ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 64ms (next.js: 28ms, proxy.ts: 4ms, application-code: 31ms)
+ GET /online-store/products 200 in 64ms (next.js: 34ms, proxy.ts: 2ms, application-code: 28ms)
+ GET /products 200 in 41ms (next.js: 14ms, proxy.ts: 2ms, application-code: 25ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 29ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 67ms (next.js: 5ms, proxy.ts: 3ms, application-code: 59ms)
+ GET /products 200 in 75ms (next.js: 9ms, proxy.ts: 3ms, application-code: 64ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 71ms (next.js: 18ms, proxy.ts: 22ms, application-code: 31ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 35ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /products 200 in 71ms (next.js: 4ms, proxy.ts: 3ms, application-code: 63ms)
+ GET /products 200 in 83ms (next.js: 8ms, proxy.ts: 4ms, application-code: 72ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 80ms (next.js: 38ms, proxy.ts: 3ms, application-code: 39ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 75ms (next.js: 31ms, proxy.ts: 3ms, application-code: 41ms)
+ GET /products 200 in 75ms (next.js: 5ms, proxy.ts: 3ms, application-code: 67ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 29ms, proxy.ts: 4ms, application-code: 36ms)
+ GET /products 200 in 68ms (next.js: 5ms, proxy.ts: 4ms, application-code: 60ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 82ms (next.js: 36ms, proxy.ts: 3ms, application-code: 43ms)
+ GET /products 200 in 83ms (next.js: 5ms, proxy.ts: 3ms, application-code: 75ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 30ms, proxy.ts: 3ms, application-code: 34ms)
+ GET /products 200 in 68ms (next.js: 5ms, proxy.ts: 4ms, application-code: 59ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 34ms, proxy.ts: 3ms, application-code: 37ms)
+ GET /products 200 in 74ms (next.js: 4ms, proxy.ts: 3ms, application-code: 67ms)
+ GET /products 200 in 73ms (next.js: 5ms, proxy.ts: 3ms, application-code: 65ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 36ms, proxy.ts: 3ms, application-code: 34ms)
+ GET /products 200 in 71ms (next.js: 5ms, proxy.ts: 3ms, application-code: 63ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 71ms (next.js: 31ms, proxy.ts: 2ms, application-code: 37ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 30ms, proxy.ts: 4ms, application-code: 35ms)
+ GET /products 200 in 71ms (next.js: 6ms, proxy.ts: 4ms, application-code: 61ms)
+ GET /products 200 in 82ms (next.js: 5ms, proxy.ts: 3ms, application-code: 75ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 82ms (next.js: 33ms, proxy.ts: 3ms, application-code: 46ms)
+ GET / 200 in 39ms (next.js: 17ms, proxy.ts: 3ms, application-code: 19ms)
+ GET / 200 in 127ms (next.js: 9ms, proxy.ts: 6ms, application-code: 112ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 127ms (next.js: 64ms, proxy.ts: 6ms, application-code: 58ms)
+ GET /products 200 in 129ms (next.js: 23ms, proxy.ts: 6ms, application-code: 101ms)
+ GET /dashboard 200 in 45ms (next.js: 14ms, proxy.ts: 2ms, application-code: 29ms)
+ POST / 200 in 118ms (next.js: 5ms, proxy.ts: 2ms, application-code: 111ms)
+  └─ ƒ loginAction({"error":null}, {}) in 54ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 36ms (next.js: 4ms, proxy.ts: 2ms, application-code: 30ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 26ms (next.js: 3ms, proxy.ts: 2ms, application-code: 21ms)
+ GET /products/2 200 in 550ms (next.js: 398ms, proxy.ts: 2ms, application-code: 150ms)
+ POST /products/2 200 in 27ms (next.js: 10ms, proxy.ts: 2ms, application-code: 15ms)
+  └─ ƒ saveProductAction({"error":null}, {}) in 8ms src/app/(app)/products/actions.ts
+ GET /products/2 200 in 97ms (next.js: 10ms, proxy.ts: 2ms, application-code: 85ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 103ms (next.js: 51ms, proxy.ts: 3ms, application-code: 49ms)
+ GET /products 200 in 105ms (next.js: 5ms, proxy.ts: 3ms, application-code: 96ms)
+ GET /products/2 200 in 115ms (next.js: 28ms, proxy.ts: 4ms, application-code: 83ms)
+ GET /online-store/products 200 in 94ms (next.js: 4ms, proxy.ts: 1.9ms, application-code: 88ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 102ms (next.js: 55ms, proxy.ts: 6ms, application-code: 41ms)
+ GET /products 200 in 107ms (next.js: 10ms, proxy.ts: 6ms, application-code: 92ms)
+ GET /online-store/products 200 in 106ms (next.js: 22ms, proxy.ts: 6ms, application-code: 79ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 24ms, proxy.ts: 4ms, application-code: 45ms)
+ GET /products 200 in 73ms (next.js: 7ms, proxy.ts: 4ms, application-code: 62ms)
+ GET /products 200 in 72ms (next.js: 5ms, proxy.ts: 4ms, application-code: 63ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 31ms, proxy.ts: 5ms, application-code: 38ms)
+✓ Compiled in 274ms
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 32ms, proxy.ts: 3ms, application-code: 37ms)
+ GET /products 200 in 72ms (next.js: 7ms, proxy.ts: 3ms, application-code: 62ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 31ms, proxy.ts: 3ms, application-code: 33ms)
+ GET /products 200 in 68ms (next.js: 8ms, proxy.ts: 3ms, application-code: 57ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 29ms, proxy.ts: 3ms, application-code: 40ms)
+ GET /products 200 in 71ms (next.js: 5ms, proxy.ts: 3ms, application-code: 64ms)
+ GET /products 200 in 63ms (next.js: 4ms, proxy.ts: 3ms, application-code: 56ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 63ms (next.js: 29ms, proxy.ts: 3ms, application-code: 31ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 30ms, proxy.ts: 3ms, application-code: 39ms)
+ GET /products 200 in 72ms (next.js: 5ms, proxy.ts: 2ms, application-code: 64ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 77ms (next.js: 18ms, proxy.ts: 4ms, application-code: 55ms)
+ GET /products 200 in 76ms (next.js: 32ms, proxy.ts: 4ms, application-code: 40ms)
+ GET /products 200 in 77ms (next.js: 5ms, proxy.ts: 4ms, application-code: 69ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 77ms (next.js: 36ms, proxy.ts: 3ms, application-code: 38ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 88ms (next.js: 32ms, proxy.ts: 3ms, application-code: 53ms)
+ GET /products 200 in 90ms (next.js: 9ms, proxy.ts: 3ms, application-code: 77ms)
+ GET /products 200 in 64ms (next.js: 5ms, proxy.ts: 3ms, application-code: 56ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 64ms (next.js: 28ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /products 200 in 90ms (next.js: 9ms, proxy.ts: 4ms, application-code: 77ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 89ms (next.js: 38ms, proxy.ts: 4ms, application-code: 47ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 121ms (next.js: 34ms, proxy.ts: 3ms, application-code: 84ms)
+ GET /products 200 in 121ms (next.js: 8ms, proxy.ts: 3ms, application-code: 110ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 30ms, proxy.ts: 4ms, application-code: 38ms)
+ GET /products 200 in 71ms (next.js: 4ms, proxy.ts: 4ms, application-code: 63ms)
+⨯ ReferenceError: entry is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:260:40)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  258 |      * in the rotation.
+  259 |      */
+> 260 |     const slides = liveSlides(section, entry.slideImages)
+      |                                        ^
+  261 |     if (slides.length === 0) return null
+  262 |
+  263 |     return ( {
+  digest: '3077345560'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 80ms (next.js: 36ms, proxy.ts: 3ms, application-code: 41ms)
+ GET /products 200 in 81ms (next.js: 4ms, proxy.ts: 3ms, application-code: 73ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⨯ ReferenceError: entry is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:260:40)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  258 |      * in the rotation.
+  259 |      */
+> 260 |     const slides = liveSlides(section, entry.slideImages)
+      |                                        ^
+  261 |     if (slides.length === 0) return null
+  262 |
+  263 |     return ( {
+  digest: '3077345560'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 123ms (next.js: 12ms, proxy.ts: 3ms, application-code: 108ms)
+✓ Compiled in 488ms
+ GET /products 200 in 85ms (next.js: 14ms, proxy.ts: 42ms, application-code: 30ms)
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:251:12)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  249 |       <section key={section.id}>
+  250 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+> 251 |           <BannerFace
+      |            ^
+  252 |             src={imageSrc(image.id)}
+  253 |             alt={section.imageAlt || image.altText || ''}
+  254 |             heading={section.title} {
+  digest: '2112673883'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 106ms (next.js: 31ms, proxy.ts: 3ms, application-code: 71ms)
+ GET /products 200 in 106ms (next.js: 5ms, proxy.ts: 3ms, application-code: 98ms)
+ GET / 200 in 28ms (next.js: 5ms, proxy.ts: 2ms, application-code: 21ms)
+ GET /dashboard 200 in 48ms (next.js: 14ms, proxy.ts: 1.7ms, application-code: 32ms)
+ POST / 200 in 137ms (next.js: 19ms, proxy.ts: 3ms, application-code: 116ms)
+  └─ ƒ loginAction({"error":null}, {}) in 56ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 39ms (next.js: 9ms, proxy.ts: 3ms, application-code: 28ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 31ms (next.js: 3ms, proxy.ts: 2ms, application-code: 26ms)
+ GET /products/2 200 in 128ms (next.js: 17ms, proxy.ts: 2ms, application-code: 109ms)
+ GET /products/2?saved=1 200 in 54ms (next.js: 5ms, proxy.ts: 1.9ms, application-code: 48ms)
+ POST /products/2 200 in 93ms (next.js: 11ms, proxy.ts: 3ms, application-code: 79ms)
+  └─ ƒ saveProductAction({"error":null}, {}) in 15ms src/app/(app)/products/actions.ts
+ GET /products/2 200 in 98ms (next.js: 9ms, proxy.ts: 2ms, application-code: 86ms)
+ GET /online-store/products 200 in 80ms (next.js: 10ms, proxy.ts: 3ms, application-code: 67ms)
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:251:12)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  249 |       <section key={section.id}>
+  250 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+> 251 |           <BannerFace
+      |            ^
+  252 |             src={imageSrc(image.id)}
+  253 |             alt={section.imageAlt || image.altText || ''}
+  254 |             heading={section.title} {
+  digest: '2112673883'
+}
+ GET /online-store/products 200 in 145ms (next.js: 10ms, proxy.ts: 4ms, application-code: 131ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 140ms (next.js: 52ms, proxy.ts: 8ms, application-code: 80ms)
+ GET /products 200 in 140ms (next.js: 12ms, proxy.ts: 22ms, application-code: 106ms)
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:255:12)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  253 |       <section key={section.id}>
+  254 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+> 255 |           <BannerFace
+      |            ^
+  256 |             src={imageSrc(image.id)}
+  257 |             alt={section.imageAlt || image.altText || ''}
+  258 |             heading={section.title} {
+  digest: '3002072720'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 123ms (next.js: 33ms, proxy.ts: 3ms, application-code: 88ms)
+ GET /products 200 in 125ms (next.js: 5ms, proxy.ts: 3ms, application-code: 117ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+✓ Compiled in 314ms
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:255:12)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  253 |       <section key={section.id}>
+  254 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+> 255 |           <BannerFace
+      |            ^
+  256 |             src={imageSrc(image.id)}
+  257 |             alt={section.imageAlt || image.altText || ''}
+  258 |             heading={section.title} {
+  digest: '3002072720'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 111ms (next.js: 10ms, proxy.ts: 2ms, application-code: 99ms)
+ GET /products 200 in 66ms (next.js: 21ms, proxy.ts: 12ms, application-code: 33ms)
+ GET / 200 in 38ms (next.js: 17ms, proxy.ts: 3ms, application-code: 18ms)
+ GET /dashboard 200 in 38ms (next.js: 11ms, proxy.ts: 1.7ms, application-code: 25ms)
+ POST / 200 in 107ms (next.js: 4ms, proxy.ts: 2ms, application-code: 101ms)
+  └─ ƒ loginAction({"error":null}, {}) in 54ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 45ms (next.js: 8ms, proxy.ts: 3ms, application-code: 33ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 45ms (next.js: 5ms, proxy.ts: 2ms, application-code: 38ms)
+ GET /products/2 200 in 113ms (next.js: 16ms, proxy.ts: 2ms, application-code: 94ms)
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:255:12)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  253 |       <section key={section.id}>
+  254 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+> 255 |           <BannerFace
+      |            ^
+  256 |             src={imageSrc(image.id)}
+  257 |             alt={section.imageAlt || image.altText || ''}
+  258 |             heading={section.title} {
+  digest: '3002072720'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 100ms (next.js: 14ms, proxy.ts: 4ms, application-code: 82ms)
+ GET /products 200 in 100ms (next.js: 17ms, proxy.ts: 4ms, application-code: 79ms)
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:255:12)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  253 |       <section key={section.id}>
+  254 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+> 255 |           <BannerFace
+      |            ^
+  256 |             src={imageSrc(image.id)}
+  257 |             alt={section.imageAlt || image.altText || ''}
+  258 |             heading={section.title} {
+  digest: '3002072720'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 94ms (next.js: 28ms, proxy.ts: 3ms, application-code: 64ms)
+ GET /products 200 in 94ms (next.js: 5ms, proxy.ts: 3ms, application-code: 87ms)
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:255:12)
+    at eval (src\app\store\[token]\HomeSections.tsx:111:43)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:110:16)
+  253 |       <section key={section.id}>
+  254 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+> 255 |           <BannerFace
+      |            ^
+  256 |             src={imageSrc(image.id)}
+  257 |             alt={section.imageAlt || image.altText || ''}
+  258 |             heading={section.title} {
+  digest: '3002072720'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 88ms (next.js: 27ms, proxy.ts: 4ms, application-code: 57ms)
+ GET /products 200 in 87ms (next.js: 4ms, proxy.ts: 4ms, application-code: 79ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⨯ ReferenceError: BannerFace is not defined
+    at sectionBody (src\app\store\[token]\HomeSections.tsx:254:10)
+    at eval (src\app\store\[token]\HomeSections.tsx:109:20)
+    at Array.map (<anonymous>)
+    at HomeSections (src\app\store\[token]\HomeSections.tsx:109:5)
+  252 |     return (
+  253 |       <section key={section.id}>
+> 254 |         <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+      |          ^
+  255 |           <BannerFace
+  256 |             src={imageSrc(image.id)}
+  257 |             alt={section.imageAlt || image.altText || ''} {
+  digest: '3002072720'
+}
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 500 in 96ms (next.js: 17ms, proxy.ts: 3ms, application-code: 77ms)
+ GET /products 200 in 48ms (next.js: 6ms, proxy.ts: 6ms, application-code: 36ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 125ms (next.js: 29ms, proxy.ts: 3ms, application-code: 93ms)
+ GET /products 200 in 125ms (next.js: 4ms, proxy.ts: 3ms, application-code: 117ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 34ms, proxy.ts: 3ms, application-code: 33ms)
+ GET /products 200 in 70ms (next.js: 4ms, proxy.ts: 3ms, application-code: 63ms)
+ GET /products 200 in 70ms (next.js: 5ms, proxy.ts: 3ms, application-code: 62ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 33ms, proxy.ts: 3ms, application-code: 34ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 28ms, proxy.ts: 4ms, application-code: 36ms)
+ GET /products 200 in 68ms (next.js: 9ms, proxy.ts: 4ms, application-code: 55ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 32ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 70ms (next.js: 5ms, proxy.ts: 3ms, application-code: 62ms)
+ GET /products 200 in 67ms (next.js: 4ms, proxy.ts: 3ms, application-code: 59ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 31ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 107ms (next.js: 33ms, proxy.ts: 3ms, application-code: 71ms)
+ GET /products 200 in 108ms (next.js: 7ms, proxy.ts: 3ms, application-code: 98ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 28ms, proxy.ts: 3ms, application-code: 36ms)
+ GET /products 200 in 67ms (next.js: 4ms, proxy.ts: 3ms, application-code: 59ms)
+ GET /products 200 in 73ms (next.js: 5ms, proxy.ts: 3ms, application-code: 65ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 74ms (next.js: 35ms, proxy.ts: 3ms, application-code: 37ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 29ms, proxy.ts: 3ms, application-code: 41ms)
+ GET /products 200 in 73ms (next.js: 5ms, proxy.ts: 3ms, application-code: 64ms)
+ GET /products 200 in 63ms (next.js: 4ms, proxy.ts: 3ms, application-code: 56ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 63ms (next.js: 29ms, proxy.ts: 3ms, application-code: 30ms)
+ GET /products 200 in 95ms (next.js: 8ms, proxy.ts: 3ms, application-code: 84ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 95ms (next.js: 34ms, proxy.ts: 3ms, application-code: 57ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 66ms (next.js: 26ms, proxy.ts: 3ms, application-code: 36ms)
+ GET /products 200 in 66ms (next.js: 9ms, proxy.ts: 3ms, application-code: 54ms)
+ GET /products 200 in 72ms (next.js: 5ms, proxy.ts: 3ms, application-code: 64ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 34ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 68ms (next.js: 30ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 67ms (next.js: 5ms, proxy.ts: 3ms, application-code: 59ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 32ms, proxy.ts: 3ms, application-code: 39ms)
+ GET /products 200 in 74ms (next.js: 5ms, proxy.ts: 3ms, application-code: 67ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 28ms, proxy.ts: 3ms, application-code: 36ms)
+ GET /products 200 in 67ms (next.js: 4ms, proxy.ts: 3ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 30ms, proxy.ts: 2ms, application-code: 36ms)
+ GET /products 200 in 70ms (next.js: 5ms, proxy.ts: 3ms, application-code: 62ms)
+ GET /products 200 in 67ms (next.js: 4ms, proxy.ts: 3ms, application-code: 60ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 29ms, proxy.ts: 3ms, application-code: 36ms)
+ GET /products 200 in 69ms (next.js: 4ms, proxy.ts: 3ms, application-code: 62ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 30ms, proxy.ts: 3ms, application-code: 36ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 76ms (next.js: 35ms, proxy.ts: 4ms, application-code: 37ms)
+ GET /products 200 in 77ms (next.js: 11ms, proxy.ts: 4ms, application-code: 62ms)
+ GET /products 200 in 68ms (next.js: 4ms, proxy.ts: 3ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 68ms (next.js: 32ms, proxy.ts: 2ms, application-code: 34ms)
+ GET /products 200 in 65ms (next.js: 5ms, proxy.ts: 3ms, application-code: 57ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 65ms (next.js: 29ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 71ms (next.js: 33ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 71ms (next.js: 7ms, proxy.ts: 3ms, application-code: 61ms)
+ GET /products 200 in 73ms (next.js: 9ms, proxy.ts: 4ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 38ms, proxy.ts: 4ms, application-code: 32ms)
+ GET /products 200 in 66ms (next.js: 5ms, proxy.ts: 4ms, application-code: 57ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 65ms (next.js: 30ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 66ms (next.js: 29ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 66ms (next.js: 5ms, proxy.ts: 3ms, application-code: 58ms)
+ GET /products 200 in 68ms (next.js: 4ms, proxy.ts: 3ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 68ms (next.js: 31ms, proxy.ts: 3ms, application-code: 34ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 64ms (next.js: 29ms, proxy.ts: 4ms, application-code: 31ms)
+ GET /products 200 in 64ms (next.js: 4ms, proxy.ts: 4ms, application-code: 56ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 68ms (next.js: 29ms, proxy.ts: 4ms, application-code: 35ms)
+ GET /products 200 in 70ms (next.js: 11ms, proxy.ts: 4ms, application-code: 54ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 65ms (next.js: 28ms, proxy.ts: 2ms, application-code: 34ms)
+ GET /products 200 in 66ms (next.js: 4ms, proxy.ts: 3ms, application-code: 59ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 62ms (next.js: 30ms, proxy.ts: 2ms, application-code: 29ms)
+ GET /products 200 in 63ms (next.js: 5ms, proxy.ts: 2ms, application-code: 56ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 62ms (next.js: 27ms, proxy.ts: 2ms, application-code: 33ms)
+ GET /products 200 in 62ms (next.js: 4ms, proxy.ts: 2ms, application-code: 56ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 64ms (next.js: 28ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /products 200 in 63ms (next.js: 4ms, proxy.ts: 3ms, application-code: 57ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 30ms, proxy.ts: 4ms, application-code: 37ms)
+ GET /products 200 in 71ms (next.js: 6ms, proxy.ts: 4ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 62ms (next.js: 28ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /products 200 in 62ms (next.js: 5ms, proxy.ts: 3ms, application-code: 54ms)
+ GET /products 200 in 73ms (next.js: 4ms, proxy.ts: 3ms, application-code: 66ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 33ms, proxy.ts: 2ms, application-code: 37ms)
+ GET /products 200 in 64ms (next.js: 4ms, proxy.ts: 3ms, application-code: 57ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 64ms (next.js: 30ms, proxy.ts: 3ms, application-code: 31ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 71ms (next.js: 26ms, proxy.ts: 3ms, application-code: 42ms)
+ GET /products 200 in 71ms (next.js: 10ms, proxy.ts: 3ms, application-code: 59ms)
+ GET /api/store-images/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA/shop/9 200 in 613ms (next.js: 590ms, proxy.ts: 4ms, application-code: 19ms)
+ GET /api/store-images/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA/shop/8 200 in 614ms (next.js: 589ms, proxy.ts: 4ms, application-code: 21ms)
+ GET /api/store-images/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA/shop/7 200 in 616ms (next.js: 590ms, proxy.ts: 4ms, application-code: 22ms)
+ GET /api/store-images/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA/shop/10 200 in 18ms (next.js: 8ms, proxy.ts: 2.0ms, application-code: 8ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 32ms, proxy.ts: 3ms, application-code: 38ms)
+ GET /products 200 in 74ms (next.js: 8ms, proxy.ts: 3ms, application-code: 63ms)
+ GET / 200 in 26ms (next.js: 5ms, proxy.ts: 2ms, application-code: 19ms)
+ GET /products 200 in 69ms (next.js: 6ms, proxy.ts: 3ms, application-code: 60ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 32ms, proxy.ts: 3ms, application-code: 34ms)
+ GET / 200 in 26ms (next.js: 4ms, proxy.ts: 2ms, application-code: 20ms)
+ GET /dashboard 200 in 44ms (next.js: 5ms, proxy.ts: 1.8ms, application-code: 37ms)
+ POST / 200 in 118ms (next.js: 4ms, proxy.ts: 3ms, application-code: 112ms)
+  └─ ƒ loginAction({"error":null}, {}) in 54ms src/app/login/actions.ts
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 39ms (next.js: 4ms, proxy.ts: 3ms, application-code: 32ms)
+ GET /api/dashboard/sales?from=2026-08-01&to=2026-08-10 200 in 28ms (next.js: 4ms, proxy.ts: 3ms, application-code: 22ms)
+ GET /customers/6377/statement?format=activity 200 in 147ms (next.js: 29ms, proxy.ts: 2.0ms, application-code: 116ms)
+ GET /customers/4038/statement?format=activity&period=2026-06-01:2026-06-30 200 in 94ms (next.js: 10ms, proxy.ts: 2ms, application-code: 82ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 110ms (next.js: 34ms, proxy.ts: 4ms, application-code: 72ms)
+ GET /products 200 in 110ms (next.js: 9ms, proxy.ts: 4ms, application-code: 97ms)
+ GET /customers/4038/statement?format=activity&period=2026-06-01%3A2026-06-30 200 in 111ms (next.js: 53ms, proxy.ts: 5ms, application-code: 53ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 71ms (next.js: 33ms, proxy.ts: 2ms, application-code: 36ms)
+ GET /products 200 in 71ms (next.js: 8ms, proxy.ts: 2ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 86ms (next.js: 35ms, proxy.ts: 4ms, application-code: 46ms)
+ GET /products 200 in 86ms (next.js: 8ms, proxy.ts: 5ms, application-code: 73ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 93ms (next.js: 37ms, proxy.ts: 4ms, application-code: 52ms)
+ GET /products 200 in 94ms (next.js: 6ms, proxy.ts: 4ms, application-code: 84ms)
+ GET /products 200 in 74ms (next.js: 4ms, proxy.ts: 3ms, application-code: 67ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 74ms (next.js: 34ms, proxy.ts: 3ms, application-code: 38ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 31ms, proxy.ts: 2ms, application-code: 39ms)
+ GET /products 200 in 73ms (next.js: 4ms, proxy.ts: 3ms, application-code: 66ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 28ms, proxy.ts: 3ms, application-code: 39ms)
+ GET /products 200 in 70ms (next.js: 9ms, proxy.ts: 3ms, application-code: 58ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 75ms (next.js: 33ms, proxy.ts: 4ms, application-code: 39ms)
+ GET /products 200 in 76ms (next.js: 5ms, proxy.ts: 4ms, application-code: 68ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 31ms, proxy.ts: 3ms, application-code: 38ms)
+ GET /products 200 in 71ms (next.js: 5ms, proxy.ts: 3ms, application-code: 64ms)
+✓ Compiled in 482ms
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 68ms (next.js: 30ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 68ms (next.js: 11ms, proxy.ts: 3ms, application-code: 54ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 32ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 69ms (next.js: 6ms, proxy.ts: 3ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 71ms (next.js: 30ms, proxy.ts: 3ms, application-code: 38ms)
+ GET /products 200 in 72ms (next.js: 5ms, proxy.ts: 3ms, application-code: 65ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 37ms, proxy.ts: 4ms, application-code: 32ms)
+ GET /products 200 in 72ms (next.js: 5ms, proxy.ts: 3ms, application-code: 64ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 70ms (next.js: 15ms, proxy.ts: 3ms, application-code: 51ms)
+✓ Compiled in 455ms
+ GET /products 200 in 71ms (next.js: 31ms, proxy.ts: 4ms, application-code: 36ms)
+ GET /products 200 in 68ms (next.js: 5ms, proxy.ts: 3ms, application-code: 60ms)
+✓ Compiled in 150ms
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 68ms (next.js: 33ms, proxy.ts: 3ms, application-code: 32ms)
+✓ Compiled in 374ms
+ GET /products 200 in 74ms (next.js: 6ms, proxy.ts: 3ms, application-code: 65ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 37ms, proxy.ts: 3ms, application-code: 34ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 72ms (next.js: 32ms, proxy.ts: 4ms, application-code: 35ms)
+ GET /products 200 in 73ms (next.js: 8ms, proxy.ts: 4ms, application-code: 61ms)
+ GET /products 200 in 69ms (next.js: 5ms, proxy.ts: 2ms, application-code: 62ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 34ms, proxy.ts: 2ms, application-code: 33ms)
+ GET /products 200 in 67ms (next.js: 4ms, proxy.ts: 3ms, application-code: 60ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 67ms (next.js: 32ms, proxy.ts: 2ms, application-code: 33ms)
+ GET /products 200 in 66ms (next.js: 6ms, proxy.ts: 3ms, application-code: 58ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 66ms (next.js: 30ms, proxy.ts: 3ms, application-code: 33ms)
+ GET /products 200 in 68ms (next.js: 4ms, proxy.ts: 3ms, application-code: 61ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 68ms (next.js: 30ms, proxy.ts: 2ms, application-code: 36ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 66ms (next.js: 28ms, proxy.ts: 3ms, application-code: 35ms)
+ GET /products 200 in 67ms (next.js: 5ms, proxy.ts: 3ms, application-code: 59ms)
+ GET /products 200 in 74ms (next.js: 5ms, proxy.ts: 2ms, application-code: 67ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 75ms (next.js: 29ms, proxy.ts: 2ms, application-code: 43ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 90ms (next.js: 42ms, proxy.ts: 5ms, application-code: 43ms)
+ GET /products 200 in 88ms (next.js: 7ms, proxy.ts: 4ms, application-code: 77ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 95ms (next.js: 32ms, proxy.ts: 3ms, application-code: 60ms)
+ GET /products 200 in 95ms (next.js: 5ms, proxy.ts: 3ms, application-code: 88ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 73ms (next.js: 30ms, proxy.ts: 4ms, application-code: 39ms)
+ GET /products 200 in 73ms (next.js: 10ms, proxy.ts: 4ms, application-code: 59ms)
+ GET /products 200 in 69ms (next.js: 4ms, proxy.ts: 3ms, application-code: 63ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 32ms, proxy.ts: 2ms, application-code: 34ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 96ms (next.js: 40ms, proxy.ts: 4ms, application-code: 52ms)
+ GET /products 200 in 95ms (next.js: 7ms, proxy.ts: 4ms, application-code: 85ms)
+ GET /products 200 in 69ms (next.js: 4ms, proxy.ts: 3ms, application-code: 62ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjIsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.I213Cr6x406cb3709KoM8fePJTi7yd03ih4fOeRkmKA 200 in 69ms (next.js: 32ms, proxy.ts: 2ms, application-code: 34ms)
+ GET /api/health 200 in 13ms (next.js: 7ms, application-code: 6ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 93ms (next.js: 12ms, proxy.ts: 1.9ms, application-code: 79ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 58ms (next.js: 10ms, proxy.ts: 1.9ms, application-code: 46ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 45ms (next.js: 5ms, proxy.ts: 2ms, application-code: 38ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 55ms (next.js: 10ms, proxy.ts: 3ms, application-code: 42ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 45ms (next.js: 5ms, proxy.ts: 1.9ms, application-code: 38ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 54ms (next.js: 10ms, proxy.ts: 2ms, application-code: 42ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 53ms (next.js: 10ms, proxy.ts: 3ms, application-code: 40ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 48ms (next.js: 5ms, proxy.ts: 3ms, application-code: 41ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 51ms (next.js: 10ms, proxy.ts: 2ms, application-code: 39ms)
+ GET /api/store-images/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4/shop/1 200 in 50ms (next.js: 28ms, proxy.ts: 2ms, application-code: 19ms)
+[browser] Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <div>. See https://react.dev/link/warning-keys for more information. 
+[browser] ./src/lib/site/customerLedger.ts:255:2
+Error: Expression expected
+  253 |  * different answer.
+  254 |  */
+> 255 |  * ── WHY THIS DELEGATES RATHER THAN RECONSTRUCTING ─────────────────────────
+      |  ^
+  256 |  *
+  257 |  * aging.ts already owns that reconstruction for the whole book, and scoping it to one
+  258 |  * customer is a WHERE clause. A second implementation here would be a second thing to
+
+Parsing ecmascript source code failed
+
+Import trace:
+  Server Component:
+    ./src/lib/site/customerLedger.ts
+    ./src/lib/site/salesReversal.ts
+    ./src/app/(app)/sales/actions.ts 
+[browser] ./src/lib/site/customerLedger.ts:255:7
+Error: Unexpected character '─'
+  253 |  * different answer.
+  254 |  */
+> 255 |  * ── WHY THIS DELEGATES RATHER THAN RECONSTRUCTING ─────────────────────────
+      |     ^
+  256 |  *
+  257 |  * aging.ts already owns that reconstruction for the whole book, and scoping it to one
+  258 |  * customer is a WHERE clause. A second implementation here would be a second thing to
+
+Parsing ecmascript source code failed
+
+Import trace:
+  Server Component:
+    ./src/lib/site/customerLedger.ts
+    ./src/lib/site/salesReversal.ts
+    ./src/app/(app)/sales/actions.ts 
+[browser] ./src/lib/site/customerLedger.ts:255:2
+Error: Expression expected
+  253 |  * different answer.
+  254 |  */
+> 255 |  * ── WHY THIS DELEGATES RATHER THAN RECONSTRUCTING ─────────────────────────
+      |  ^
+  256 |  *
+  257 |  * aging.ts already owns that reconstruction for the whole book, and scoping it to one
+  258 |  * customer is a WHERE clause. A second implementation here would be a second thing to
+
+Parsing ecmascript source code failed
+
+Import trace:
+  Server Component:
+    ./src/lib/site/customerLedger.ts
+    ./src/lib/site/salesReversal.ts
+    ./src/app/(app)/sales/actions.ts 
+[browser] ./src/lib/site/customerLedger.ts:255:7
+Error: Unexpected character '─'
+  253 |  * different answer.
+  254 |  */
+> 255 |  * ── WHY THIS DELEGATES RATHER THAN RECONSTRUCTING ─────────────────────────
+      |     ^
+  256 |  *
+  257 |  * aging.ts already owns that reconstruction for the whole book, and scoping it to one
+  258 |  * customer is a WHERE clause. A second implementation here would be a second thing to
+
+Parsing ecmascript source code failed
+
+Import trace:
+  Server Component:
+    ./src/lib/site/customerLedger.ts
+    ./src/lib/site/salesReversal.ts
+    ./src/app/(app)/sales/actions.ts 
+ GET /customers 200 in 91ms (next.js: 54ms, proxy.ts: 3ms, application-code: 34ms)
+ GET /customers/1 200 in 492ms (next.js: 437ms, proxy.ts: 4ms, application-code: 51ms)
+ GET /customers/1/statement 200 in 57ms (next.js: 20ms, proxy.ts: 3ms, application-code: 34ms)
+ GET /store/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4 200 in 146ms (next.js: 10ms, proxy.ts: 3ms, application-code: 133ms)
+ GET /api/store-images/eyJhbGciOiJIUzI1NiJ9.eyJzaXRlSWQiOjEsImF1ZCI6Im9keS1wdWJsaWMtc3RvcmUifQ.W8aBGbwzYH1xRarMhfG_3AyRCwMRvT5FlwlyYgf-8M4/shop/1 200 in 25ms (next.js: 11ms, proxy.ts: 2ms, application-code: 12ms)
+[browser] Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <div>. See https://react.dev/link/warning-keys for more information. 
+ GET /online-store/builder 200 in 69ms (next.js: 38ms, proxy.ts: 2ms, application-code: 28ms)
+[browser] Received an empty string for a boolean attribute `inert`. This will treat the attribute as if it were false. Either pass `false` to silence this warning, or pass `true` if you used an empty string in earlier versions of React to indicate this attribute is true. 
+ GET /api/storefront-images/3 200 in 663ms (next.js: 627ms, proxy.ts: 4ms, application-code: 32ms)
+ GET /api/storefront-images/9 200 in 665ms (next.js: 626ms, proxy.ts: 5ms, application-code: 34ms)
+ GET /api/storefront-images/8 200 in 659ms (next.js: 617ms, proxy.ts: 5ms, application-code: 37ms)
+ GET /api/store-images/__odyssey_builder_preview__/60?p=7 404 in 619ms (next.js: 599ms, proxy.ts: 2ms, application-code: 17ms)
+ GET /api/storefront-images/10 200 in 680ms (next.js: 616ms, proxy.ts: 5ms, application-code: 59ms)
+ GET /api/storefront-images/7 200 in 694ms (next.js: 625ms, proxy.ts: 5ms, application-code: 64ms)
+ GET /api/store-images/__odyssey_builder_preview__/61?p=8 404 in 43ms (next.js: 27ms, proxy.ts: 9ms, application-code: 6ms)
+ GET /api/store-images/__odyssey_builder_preview__/79?p=28 404 in 85ms (next.js: 70ms, proxy.ts: 10ms, application-code: 5ms)
+ GET /api/store-images/__odyssey_builder_preview__/68?p=15 404 in 87ms (next.js: 75ms, proxy.ts: 9ms, application-code: 4ms)
+ GET /api/store-images/__odyssey_builder_preview__/73?p=20 404 in 92ms (next.js: 79ms, proxy.ts: 9ms, application-code: 4ms)
+ GET /api/store-images/__odyssey_builder_preview__/82?p=31 404 in 98ms (next.js: 84ms, proxy.ts: 9ms, application-code: 5ms)
+ GET /api/storefront-images/2 200 in 116ms (next.js: 42ms, proxy.ts: 9ms, application-code: 65ms)
+ GET /api/store-images/__odyssey_builder_preview__/89?p=38 404 in 42ms (next.js: 25ms, proxy.ts: 12ms, application-code: 4ms)
+ GET /api/store-images/__odyssey_builder_preview__/104?p=53 404 in 36ms (next.js: 12ms, proxy.ts: 21ms, application-code: 4ms)
+ GET /online-store/products 200 in 34ms (next.js: 10ms, proxy.ts: 2ms, application-code: 22ms)
+ GET /online-store/builder 200 in 30ms (next.js: 4ms, proxy.ts: 2ms, application-code: 23ms)
+ GET /api/store-images/__odyssey_builder_preview__/60?p=7 404 in 20ms (next.js: 12ms, proxy.ts: 3ms, application-code: 5ms)
+ GET /api/store-images/__odyssey_builder_preview__/61?p=8 404 in 26ms (next.js: 18ms, proxy.ts: 3ms, application-code: 4ms)
+ GET /api/store-images/__odyssey_builder_preview__/79?p=28 404 in 25ms (next.js: 13ms, proxy.ts: 7ms, application-code: 5ms)
+ GET /api/store-images/__odyssey_builder_preview__/68?p=15 404 in 31ms (next.js: 19ms, proxy.ts: 7ms, application-code: 4ms)
+ GET /api/store-images/__odyssey_builder_preview__/82?p=31 404 in 36ms (next.js: 25ms, proxy.ts: 7ms, application-code: 4ms)
+ GET /api/store-images/__odyssey_builder_preview__/73?p=20 404 in 41ms (next.js: 30ms, proxy.ts: 7ms, application-code: 4ms)
+ GET /api/store-images/__odyssey_builder_preview__/104?p=53 404 in 45ms (next.js: 35ms, proxy.ts: 7ms, application-code: 3ms)
+ GET /api/store-images/__odyssey_builder_preview__/89?p=38 404 in 50ms (next.js: 40ms, proxy.ts: 7ms, application-code: 3ms)
+ GET /departments 200 in 28ms (next.js: 11ms, proxy.ts: 3ms, application-code: 15ms)
+ GET /departments/9 200 in 59ms (next.js: 33ms, proxy.ts: 3ms, application-code: 23ms)

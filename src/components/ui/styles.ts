@@ -173,7 +173,28 @@ export const CONTROL =
      top of the border rather than outside it, so it reads as a single 2px edge
      — see the :focus-visible opt-out in globals.css. */
   'hover:border-brand/50 focus:border-brand focus:shadow-[inset_0_0_0_1px_var(--color-brand)] ' +
-  'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-faint'
+  'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-faint ' +
+  /* A read-only field looks the same as a disabled one, because to the person
+     using it the two mean the same thing: "you cannot change this". They are
+     NOT the same to the browser — a disabled input is left out of the form
+     entirely, which silently drops the value from every save. So a field that
+     must be submitted but not edited uses readOnly, and needs to look the part.
+     The hover cue is cancelled too; there is nothing to invite.
+
+     Every rule here is narrowed to input/textarea, because :read-only does NOT
+     mean what it looks like: the spec defines :read-write for text-entry elements
+     only, so a <select> matches :read-only ALWAYS — readonly is not even a valid
+     attribute on one. Unqualified, these rules painted EVERY dropdown in the app
+     with the disabled grey and cancelled its hover, while the inputs beside them
+     stayed white. Deleting them instead fixes the dropdowns but leaves a readOnly
+     field looking fully editable, so they are scoped rather than dropped.
+
+     The `[&:is(...)]` arbitrary variant is deliberate: `read-only:where(...)` is
+     not valid Tailwind and compiles to nothing at all, silently dropping the
+     read-only skin rather than scoping it. Verified against the emitted CSS. */
+  'read-only:[&:is(input,textarea)]:cursor-default read-only:[&:is(input,textarea)]:bg-surface-2 ' +
+  'read-only:[&:is(input,textarea)]:text-muted read-only:[&:is(input,textarea)]:hover:border-border-strong ' +
+  'read-only:[&:is(input,textarea)]:focus:border-border-strong read-only:[&:is(input,textarea)]:focus:shadow-none'
 
 export const CONTROL_H = 'h-control'
 

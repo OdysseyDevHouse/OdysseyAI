@@ -166,6 +166,7 @@ export {
   ListOrdered,
   Link2,
   Eraser,
+  Code,
   Bell,
   LogOut,
   CircleQuestionMark as HelpCircle,

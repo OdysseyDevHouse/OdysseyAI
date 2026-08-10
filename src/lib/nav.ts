@@ -214,33 +214,26 @@ export const NAV: NavSection[] = [
       { label: 'Rules', href: '/commission/rules', icon: Settings, built: true, capability: 'commission.edit' },
     ],
   },
-  {
-    label: 'Setup',
-    icon: Settings,
-    items: [
-      { label: 'Users', href: '/setup/users', icon: Users, built: true, capability: 'setup.users' },
-      { label: 'Roles & permissions', href: '/setup/roles', icon: KeyRound, built: true, capability: 'setup.users' },
-      { label: 'Linked stores', href: '/setup/linked-stores', icon: Store, built: true, capability: 'setup.edit' },
-      { label: 'Stock locations', href: '/setup/locations', icon: Warehouse, built: true, capability: 'setup.edit' },
-      { label: 'Price types & VAT', href: '/setup/pricing', icon: Percent, built: true, capability: 'setup.edit' },
-      { label: 'Tender types', href: '/setup/tender-types', icon: CreditCard, built: true, capability: 'setup.edit' },
-      { label: 'Terminals', href: '/setup/terminals', icon: Monitor, built: true, capability: 'setup.edit' },
-      { label: 'Numbering', href: '/setup/numbering', icon: Hash, built: true, capability: 'setup.edit' },
-      { label: 'Reconciliation', href: '/setup/reconciliation', icon: Check, built: true, capability: 'setup.edit' },
-      { label: 'Opening balances', href: '/setup/opening-balances', icon: FileText, built: true, capability: 'setup.edit' },
-      { label: 'Lay-bys', href: '/setup/laybys', icon: Package, built: true, capability: 'setup.edit' },
-      // The seed of the chart of accounts — see the note on the screen itself.
-      { label: 'Expense categories', href: '/setup/expense-categories', icon: Scale, built: true, capability: 'setup.edit' },
-      { label: 'Site & databases', href: '/setup/databases', icon: Database, built: true, capability: 'setup.edit' },
-      { label: 'Style Guide', href: '/setup/style-guide', icon: Palette, built: true, capability: 'setup.view' },
-    ],
-  },
+  /*
+   * One link, not a group of fourteen.
+   *
+   * The hub at /setup lists every setting grouped by the job it does, with a
+   * line on each saying what it decides — which a menu could never do. Naming
+   * all fourteen here as well made the sidebar's longest section a flat list
+   * that answered nothing, and gave every setting two front doors that could
+   * disagree. `SUBPAGE_LABELS` below is now the only list of them.
+   *
+   * `setup.view` gates it: the weakest capability any tile requires, so anyone
+   * with a single setting still gets in and the hub drops the rest.
+   */
+  { label: 'Setup', icon: Settings, href: '/setup', built: true, capability: 'setup.view' },
   { label: 'Job Cards', icon: Wrench, items: [] },
   {
     label: 'Online Store',
     icon: ShoppingBag,
     items: [
       { label: 'Orders', href: '/online-store/orders', icon: Receipt, built: true, capability: 'online.view' },
+      { label: 'Products', href: '/online-store/products', icon: Package, built: true, capability: 'online.edit' },
       { label: 'Departments', href: '/online-store/departments', icon: LayoutGrid, built: true, capability: 'online.edit' },
       { label: 'Reviews', href: '/online-store/reviews', icon: MessageSquare, built: true, capability: 'online.view' },
       { label: 'Order statuses', href: '/online-store/statuses', icon: ListOrdered, built: true, capability: 'online.edit' },
@@ -292,20 +285,15 @@ export type Crumb = { label: string; href?: string }
 /**
  * The name of each setup screen, keyed by its route.
  *
- * The Setup hub's tiles carry no label of their own — they read it from here, so
- * renaming a screen is one edit and the tile, the sidebar and the breadcrumb all follow
- * rather than drifting into three names for one page.
+ * These screens are NOT in `NAV`: Setup is a single link to a hub, and the hub is where
+ * they are listed. So this is the only place they are named, and everything that needs a
+ * name reads it from here — the hub's tiles, the breadcrumb below, and the sidebar
+ * search. Renaming a screen is one edit and the three follow together.
  *
- * ── WHY THIS IS WRITTEN OUT AND NOT DERIVED FROM `NAV` ────────────────────
- *
- * Deriving it (`Object.fromEntries(setupSection.items.map(...))`) would type the keys as
- * plain `string`, and the hub leans on the opposite: `SetupHref = keyof typeof
- * SUBPAGE_LABELS` is what makes a tile pointing at a screen nothing else knows about a
- * COMPILE ERROR rather than a page that renders with no name. A literal map keeps that
- * check; a derived one silently accepts a typo.
- *
- * The cost is that this and `NAV` must agree, so `assertSetupLabels()` below checks
- * exactly that and `test-navigation` calls it.
+ * Written as a literal rather than derived from anything, because the hub leans on the
+ * key type: `SetupHref = keyof typeof SUBPAGE_LABELS` makes a tile pointing at a screen
+ * that does not exist a COMPILE ERROR rather than a page that renders with no name. A
+ * `Record<string, string>` would widen the keys and silently accept a typo.
  */
 export const SUBPAGE_LABELS = {
   '/setup/users': 'Users',
@@ -314,44 +302,32 @@ export const SUBPAGE_LABELS = {
   '/setup/locations': 'Stock locations',
   '/setup/pricing': 'Price types & VAT',
   '/setup/tender-types': 'Tender types',
-  '/setup/terminals': 'Terminals',
+  // "Tills", not "Terminals" — it is what the screen's own heading says, and
+  // what somebody in a shop calls the thing. The keyword search still has
+  // "terminals" on the tile, so looking for either finds it.
+  '/setup/terminals': 'Tills',
   '/setup/numbering': 'Numbering',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
   '/setup/laybys': 'Lay-bys',
   '/setup/expense-categories': 'Expense categories',
   '/setup/databases': 'Site & databases',
-  '/setup/style-guide': 'Style Guide',
+  '/setup/style-guide': 'Style guide',
 } as const
 
 /**
- * Where `SUBPAGE_LABELS` and `NAV` disagree, if anywhere.
+ * Does a screen below `href` — one the menu does not itself list — match?
  *
- * Returns the mismatches rather than throwing, so a test can name all of them at once
- * instead of failing on the first. Two duplicated lists is the price of keeping the
- * hub's compile-time href check (see above), and this is what stops that price being
- * paid in silent drift: a screen renamed in the sidebar but not here would show one
- * name in the menu and another on its tile.
+ * Only Setup has such screens today. Exported because the sidebar needs the same answer
+ * twice: once to keep the row while searching, and once to decide whether to hand the
+ * term on to the hub.
  */
-export function setupLabelMismatches(): string[] {
-  const section = NAV.find((s) => s.label === 'Setup')
-  const items = section?.items ?? []
-  const problems: string[] = []
-
-  for (const item of items) {
-    const declared = (SUBPAGE_LABELS as Record<string, string>)[item.href]
-    if (declared === undefined) {
-      problems.push(`${item.href} is in the Setup menu but has no SUBPAGE_LABELS entry`)
-    } else if (declared !== item.label) {
-      problems.push(`${item.href} is "${item.label}" in the menu but "${declared}" in SUBPAGE_LABELS`)
-    }
-  }
-  for (const href of Object.keys(SUBPAGE_LABELS)) {
-    if (!items.some((item) => item.href === href)) {
-      problems.push(`${href} has a SUBPAGE_LABELS entry but is not in the Setup menu`)
-    }
-  }
-  return problems
+export function subpageMatches(href: string, needle: string): boolean {
+  const q = needle.trim().toLowerCase()
+  if (!q) return false
+  return Object.entries(SUBPAGE_LABELS).some(
+    ([path, label]) => path.startsWith(`${href}/`) && label.toLowerCase().includes(q),
+  )
 }
 
 /** Trailing crumb for a detail route, by section base path. */
@@ -384,6 +360,20 @@ export function breadcrumbFor(pathname: string): { icon: LucideIcon; crumbs: Cru
     // A section that is itself a link, e.g. Dashboard.
     if (section.href && pathname === section.href) {
       return { icon: section.icon, crumbs: [{ label: section.label }] }
+    }
+
+    /* A linked section can still have screens BELOW it that the menu does not
+       list — Setup is the case: one entry, fourteen screens, all reached from
+       the hub. Without this they render with no trail at all and no way back
+       to the hub but the browser's own button. The leaf is named from
+       SUBPAGE_LABELS, which the hub's tiles read too, so the crumb and the
+       tile can never disagree. */
+    if (section.href && pathname.startsWith(`${section.href}/`)) {
+      const label = (SUBPAGE_LABELS as Record<string, string>)[pathname]
+      return {
+        icon: section.icon,
+        crumbs: [{ label: section.label, href: section.href }, ...(label ? [{ label }] : [])],
+      }
     }
 
     /* Longest href wins, not first declared. A section can hold both /customers
@@ -426,6 +416,16 @@ export function filterNav(term: string, sections: NavSection[] = NAV): NavSectio
 
   return sections.flatMap((section) => {
     if (section.label.toLowerCase().includes(needle)) return [section]
+
+    /* A linked section keeps its place if one of the screens BELOW it matches.
+       Setup is the case: the menu no longer names "Tender types", so without
+       this the box that promises to search settings would find none of them.
+       The href stays clean — the sidebar appends the term itself when it
+       renders the row, so the hub opens already filtered without the highlight
+       having to reason about query strings. */
+    if (section.href && !section.items?.length && subpageMatches(section.href, needle)) {
+      return [section]
+    }
 
     const items = (section.items ?? []).filter((i) => i.label.toLowerCase().includes(needle))
     return items.length ? [{ ...section, items }] : []

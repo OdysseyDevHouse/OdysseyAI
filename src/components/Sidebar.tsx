@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { PanelLeft, Search, ChevronDown, HelpCircle as CircleHelp, ArrowRight } from '@/components/ui/icons'
 import { Button, ButtonLink, Input } from '@/components/ui'
-import { NAV, filterNav, navFor, type NavSection } from '@/lib/nav'
+import { NAV, filterNav, navFor, subpageMatches, type NavSection } from '@/lib/nav'
 
 const STORAGE_KEY = 'odyssey.sidebar.collapsed'
 
@@ -167,6 +167,7 @@ export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwn
             expanded={searching || open.has(section.label)}
             onToggle={() => toggleSection(section.label)}
             isActive={isActive}
+            term={term}
           />
         ))}
       </nav>
@@ -208,12 +209,15 @@ function SectionRow({
   expanded,
   onToggle,
   isActive,
+  term,
 }: {
   section: NavSection
   collapsed: boolean
   expanded: boolean
   onToggle: () => void
   isActive: (href: string) => boolean
+  /** The live search term, so a hub row can carry it through. */
+  term: string
 }) {
   const Icon = section.icon
   const hasChildren = (section.items?.length ?? 0) > 0
@@ -227,9 +231,17 @@ function SectionRow({
 
   // A section that is itself a destination, e.g. Dashboard.
   if (section.href) {
+    /* This row survived the search only because a screen BELOW it matched —
+       Setup, whose settings the menu no longer lists. Hand the term to the hub
+       so it opens filtered to what was actually being looked for, rather than
+       showing all fourteen and making them type it a second time. The href the
+       highlight compares against is untouched. */
+    const carry = term.trim() && !section.items?.length && subpageMatches(section.href, term)
+    const href = carry ? `${section.href}?q=${encodeURIComponent(term.trim())}` : section.href
+
     return (
       <Link
-        href={section.href}
+        href={href}
         title={collapsed ? section.label : undefined}
         aria-current={selfActive ? 'page' : undefined}
         className={`${rowClass} ${collapsed ? 'justify-center px-0' : ''}`}
