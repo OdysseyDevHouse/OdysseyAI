@@ -163,8 +163,35 @@ const NOT_WIRED: Record<string, string> = {
   'loyalty-payment': 'Paying with points is not on this till yet — use the desk till.',
 }
 
-/** The hospitality five, all waiting on the same thing. */
-const HOSPITALITY_MESSAGE = 'This needs the restaurant screens, which are not built yet.'
+/**
+ * The hospitality five, on a RETAIL till.
+ *
+ * Not "not built" — a counter has no tables, so a key to move one between them is
+ * meaningless here rather than missing. Saying "turn tables on" points at the actual
+ * remedy; saying "not built yet" would send somebody looking for a release note.
+ */
+const HOSPITALITY_MESSAGE =
+  'This only works on a till that serves tables. Turn that on in Setup → Tables.'
+
+/**
+ * The hospitality keys that have no behaviour YET, even with tables on.
+ *
+ * Separate from NOT_WIRED because the reason differs: those are things this app does
+ * elsewhere, while these are genuinely unbuilt. Split bills and tips in particular are
+ * substantial features, deliberately deferred — see the plan.
+ *
+ * Send-to-kitchen is here by a decision rather than an omission: whether "send" means a
+ * physical ESC-POS ticket or a mark-and-display stamp is a question about the shop's
+ * hardware, and building the wrong one would be worse than building neither.
+ */
+const HOSPITALITY_UNBUILT: Record<string, string> = {
+  'send-to-kitchen':
+    'Sending to the kitchen is not set up on this system yet — it needs a kitchen printer or a kitchen screen.',
+  'bill-print': 'Printing a bill before it is paid is not built yet.',
+  'table-transfer': 'Moving a bill between tables is not built yet.',
+  'split-table': 'Splitting a bill is not built yet.',
+  'add-tip': 'Adding a tip is not built yet.',
+}
 
 /**
  * Presses a key.
@@ -214,9 +241,19 @@ export function runQuickKey(key: QuickKeyRow, ctx: RunContext): void {
     return
   }
 
-  if (action.hospitalityOnly && !ctx.hospitality) {
-    handlers.say(HOSPITALITY_MESSAGE, 'info')
-    return
+  if (action.hospitalityOnly) {
+    /* Two different messages, and the order matters: on a retail till the key is
+       meaningless, so say that first. Telling somebody a feature is unbuilt when really
+       their shop is not set up for it sends them to the wrong place. */
+    if (!ctx.hospitality) {
+      handlers.say(HOSPITALITY_MESSAGE, 'info')
+      return
+    }
+    const unbuilt = HOSPITALITY_UNBUILT[key.actionSlug]
+    if (unbuilt) {
+      handlers.say(unbuilt, 'info')
+      return
+    }
   }
 
   const notWired = NOT_WIRED[key.actionSlug]

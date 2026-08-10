@@ -194,6 +194,14 @@ const DECLARED: DeclaredGroup[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/tables',
+        description: 'The floor a waiter sees — and whether the till shows it at all.',
+        keywords: 'tables restaurant hospitality floor sections covers waiter bills',
+        icon: 'LayoutGrid',
+        tone: 'amber',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/linked-stores',
         description: 'Branches that share products, customers or loyalty with this one.',
         keywords: 'multi store group branches sharing',
