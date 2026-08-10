@@ -75,6 +75,7 @@ export default function ReceiveScreen({
   openOrders,
   defaultVatRate,
   sellingVatRate,
+  initialOrderId,
   locations,
 }: {
   suppliers: { id: number; code: string; name: string; terms: number }[]
@@ -89,6 +90,8 @@ export default function ReceiveScreen({
   /** Sales VAT, for the margin columns — a product can carry a different rate
       on the way out from the one it carries on the way in. */
   sellingVatRate: number
+  /** An order to open against, from "Receive" on an issued order. */
+  initialOrderId?: number | null
   /** Active stock locations. Always at least one — the main location. */
   locations: StockLocationOption[]
 }) {
@@ -189,6 +192,14 @@ export default function ReceiveScreen({
       )
     })
   }
+
+  // Opened from "Receive" on an issued order: pull its lines in straight away
+  // rather than making the user pick the order they just came from. Runs once
+  // — reloading the same order would discard quantities already corrected.
+  useEffect(() => {
+    if (initialOrderId) loadOrder(String(initialOrderId))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOrderId])
 
   function addProduct(product: TillProduct) {
     setLines((current) => [

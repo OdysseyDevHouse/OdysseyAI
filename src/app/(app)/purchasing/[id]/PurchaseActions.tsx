@@ -59,6 +59,17 @@ export default function PurchaseActions({
 
   return (
     <div className="flex items-center gap-2">
+      {/* A draft has been sent to nobody, so it is still fully editable.
+          Deliberately not offered once issued: the supplier has our order and
+          a number for it, and rewriting it here would leave the two copies
+          disagreeing with nothing to say which is right. */}
+      {isOrder && status === 'draft' && (
+        <ButtonLink href={`/purchasing/${documentId}/edit`} variant="ghost">
+          <Icons.Pencil size={15} />
+          Edit
+        </ButtonLink>
+      )}
+
       {isOrder && status === 'draft' && (
         <Button variant="primary" onClick={() => run(() => issueOrderAction(documentId))} disabled={pending}>
           <Icons.Send size={15} />
@@ -66,8 +77,11 @@ export default function PurchaseActions({
         </Button>
       )}
 
+      {/* Carries the order across, so receiving opens with these lines already
+          pulled in. Landing on an empty receipt and asking the user to find
+          the order again in a dropdown is the same click twice. */}
       {isOrder && status === 'issued' && (
-        <ButtonLink href="/purchasing/receive" variant="primary">
+        <ButtonLink href={`/purchasing/receive?order=${documentId}`} variant="primary">
           <Icons.PackageOpen size={15} />
           Receive
         </ButtonLink>

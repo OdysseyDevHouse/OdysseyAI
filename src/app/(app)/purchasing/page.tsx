@@ -7,6 +7,7 @@ import {
   PageHeader,
   PageBody,
   PrimaryLink,
+  ButtonLink,
   Card,
   SearchBar,
   StatStrip,
@@ -78,14 +79,19 @@ export default async function PurchasingPage({
         title="Purchasing"
         subtitle={`${total} document${total === 1 ? '' : 's'}`}
         action={
-          // Receiving IS how purchases enter the system — a GRV can be raised
-          // with or without an order, so it is the one primary act here. (The
-          // old "New order" link pointed at /purchasing/new, which never
-          // existed as a screen.)
-          <PrimaryLink href="/purchasing/receive">
-            <Icons.PackageOpen size={15} />
-            Receive goods
-          </PrimaryLink>
+          // Two acts, because purchasing genuinely has two: ask for goods, and
+          // take them in. Receiving stays primary — a GRV can be raised with or
+          // without an order, so it is the one that always applies.
+          <div className="flex items-center gap-2">
+            <ButtonLink href="/purchasing/new" variant="secondary">
+              <Icons.Truck size={15} />
+              New order
+            </ButtonLink>
+            <PrimaryLink href="/purchasing/receive">
+              <Icons.PackageOpen size={15} />
+              Receive goods
+            </PrimaryLink>
+          </div>
         }
       />
 

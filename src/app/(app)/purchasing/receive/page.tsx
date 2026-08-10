@@ -8,9 +8,14 @@ import ReceiveScreen from './ReceiveScreen'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ReceivePage() {
+export default async function ReceivePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ order?: string }>
+}) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('purchasing.edit')
+  const params = await searchParams
 
   const [suppliers, orders, vatRates, locations] = await Promise.all([
     listSuppliers(siteId, { statuses: ['active'], limit: 200 }),
@@ -53,6 +58,12 @@ export default async function ReceivePage() {
         }))}
         defaultVatRate={purchaseVat?.rate ?? 0}
         sellingVatRate={salesVat?.rate ?? 0}
+        // Arrives from "Receive" on an issued order. Validated against the
+        // open list rather than trusted: the id comes from a URL, and one that
+        // names a closed or foreign order must simply be ignored.
+        initialOrderId={
+          orders.some((o) => o.id === Number(params.order)) ? Number(params.order) : null
+        }
         locations={locations.map((l) => ({
           id: l.id,
           code: l.code,

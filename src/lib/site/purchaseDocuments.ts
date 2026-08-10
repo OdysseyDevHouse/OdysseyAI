@@ -1,5 +1,5 @@
 import 'server-only'
-import type { RowDataPacket } from 'mysql2/promise'
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
@@ -41,6 +41,8 @@ export type PurchaseLine = {
   qtyOutstanding: number
   unitCostExcl: number
   discountPct: number
+  /** Absolute discount, which wins over the percentage. Zero on older lines. */
+  discountAmount: number
   vatRatePct: number
   lineTotalExcl: number
   lineVat: number
@@ -78,6 +80,8 @@ export type PurchaseDocument = {
   createdAt: Date
   fulfilmentStatus: string | null
   expectedDate: string | null
+  /** Their reference for our order. Order-only; null on a GRV or a return. */
+  supplierOrderNo: string | null
   lines: PurchaseLine[]
 }
 
@@ -101,6 +105,9 @@ function mapLine(r: Row): PurchaseLine {
     qtyOutstanding: round(Math.max(ordered - received, 0), 3),
     unitCostExcl: toNum(r.unit_cost_excl),
     discountPct: toNum(r.discount_pct),
+    // Absent until 086 reaches this site — toNum(undefined) is 0, which is
+    // exactly right: no absolute discount, so the percentage governs.
+    discountAmount: toNum(r.discount_amount),
     vatRatePct: toNum(r.vat_rate_pct),
     lineTotalExcl: toNum(r.line_total_excl),
     lineVat: toNum(r.line_vat),
@@ -140,6 +147,7 @@ function mapDocument(r: Row, lines: PurchaseLine[]): PurchaseDocument {
     createdAt: r.created_at as Date,
     fulfilmentStatus: (r.fulfilment_status as string | null) ?? null,
     expectedDate: r.expected_date === null || r.expected_date === undefined ? null : String(r.expected_date),
+    supplierOrderNo: (r.supplier_order_no as string | null) ?? null,
     lines,
   }
 }
@@ -317,6 +325,8 @@ export type OrderLineInput = {
   qtyOrdered: number
   unitCostExcl: number
   discountPct?: number
+  /** An absolute discount, which wins over the percentage — see 086. */
+  discountAmount?: number
   vatRatePct: number
 }
 
@@ -326,6 +336,8 @@ export type OrderInput = {
   expectedDate?: string | null
   reference?: string | null
   notes?: string | null
+  /** Their reference for our order, quoted when chasing a late delivery. */
+  supplierOrderNo?: string | null
   lines: OrderLineInput[]
 }
 
@@ -381,10 +393,17 @@ export async function saveOrder(
 
   const computed = input.lines.map((line) => {
     const gross = round(line.qtyOrdered * line.unitCostExcl, 2)
-    const discount = round(gross * ((line.discountPct ?? 0) / 100), 2)
+    // The absolute amount wins over the percentage, and is capped at the line
+    // — the same rule lineTotals() applies on the sales side. Capping matters
+    // here rather than only in the UI: this function is the boundary, and a
+    // discount larger than the line would post a negative order.
+    const discount =
+      (line.discountAmount ?? 0) > 0
+        ? round(Math.min(line.discountAmount ?? 0, gross), 2)
+        : round(gross * ((line.discountPct ?? 0) / 100), 2)
     const excl = round(gross - discount, 2)
     const vat = round(excl * (line.vatRatePct / 100), 2)
-    return { excl, vat, incl: round(excl + vat, 2) }
+    return { excl, vat, incl: round(excl + vat, 2), discount }
   })
 
   const subtotalExcl = computed.reduce((sum, c) => round(sum + c.excl, 2), 0)
@@ -437,14 +456,20 @@ export async function saveOrder(
       id = (res as { insertId: number }).insertId
     }
 
+    // 086 adds discount_amount. A site that has not had it applied yet must
+    // still be able to save an order — the percentage is written either way,
+    // and the amount is what the two disagree about by at most a cent.
+    const hasDiscountAmount = await columnExistsTx(tx, 'purchase_document_lines', 'discount_amount')
+
     for (const [index, line] of input.lines.entries()) {
       const c = computed[index]
       await tx.execute(
         `INSERT INTO purchase_document_lines
            (document_id, line_number, product_id, product_code, supplier_code, description,
             product_type, department_id, qty_ordered, qty_received, unit_cost_excl,
-            discount_pct, vat_rate_pct, line_total_excl, line_vat, line_total_incl)
-         VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?)`,
+            discount_pct, ${hasDiscountAmount ? 'discount_amount, ' : ''}vat_rate_pct,
+            line_total_excl, line_vat, line_total_incl)
+         VALUES (?,?,?,?,?,?,?,?,?,0,?,?,${hasDiscountAmount ? '?,' : ''}?,?,?,?)`,
         [
           id,
           index + 1,
@@ -457,6 +482,7 @@ export async function saveOrder(
           round(line.qtyOrdered, 3).toFixed(3),
           round(line.unitCostExcl, 4).toFixed(4),
           (line.discountPct ?? 0).toFixed(3),
+          ...(hasDiscountAmount ? [round(line.discountAmount ?? 0, 4).toFixed(4)] : []),
           line.vatRatePct.toFixed(3),
           c.excl.toFixed(4),
           c.vat.toFixed(4),
@@ -466,9 +492,12 @@ export async function saveOrder(
     }
 
     await tx.execute(
-      `INSERT INTO purchase_order_details (document_id, expected_date) VALUES (?, ?)
-       ON DUPLICATE KEY UPDATE expected_date = VALUES(expected_date)`,
-      [id, input.expectedDate ?? null] as never,
+      `INSERT INTO purchase_order_details (document_id, expected_date, supplier_order_no)
+            VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         expected_date     = VALUES(expected_date),
+         supplier_order_no = VALUES(supplier_order_no)`,
+      [id, input.expectedDate ?? null, input.supplierOrderNo?.trim() || null] as never,
     )
 
     return { ok: true as const, id: id! }
@@ -522,6 +551,32 @@ export async function cancelOrder(siteId: number, id: number, reason: string): P
     [id],
   )
   return { ok: true }
+}
+
+/**
+ * Whether a column has actually reached this site's database.
+ *
+ * Schema drifts between sites: a file in sql/site/ is only real once the
+ * runner has applied it there, and a concurrent migration can block the queue
+ * for days. Writing to a column that is not there yet throws mid-transaction
+ * and loses the whole save; probing lets the write degrade to what the site
+ * does have instead.
+ *
+ * information_schema rather than SHOW COLUMNS: SHOW cannot be parameterised on
+ * the table name, and this takes both names from callers.
+ */
+async function columnExistsTx(
+  tx: PoolConnection,
+  table: string,
+  column: string,
+): Promise<boolean> {
+  const [rows] = await tx.execute(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+      LIMIT 1`,
+    [table, column] as never,
+  )
+  return (rows as RowDataPacket[]).length > 0
 }
 
 export function todayIso(): string {
