@@ -8,11 +8,15 @@ import {
   updateGroup,
   deleteGroup,
   replaceOptions,
+  setGroupOrder,
   type GroupInput,
   type OptionInput,
 } from '@/lib/site/instructions'
 
 export type InstructionFormState = { error: string | null }
+
+/** What an inline action on the list reports back, without leaving the page. */
+export type InlineResult = { ok: boolean; error?: string; message?: string }
 
 function num(form: FormData, key: string): number {
   const raw = String(form.get(key) ?? '').trim()
@@ -144,6 +148,25 @@ export async function saveInstructionAction(
 
   revalidatePath('/instructions')
   redirect(`/instructions/${result.id}?saved=1`)
+}
+
+/**
+ * Reorders the library from the list screen, without a form or a redirect.
+ *
+ * The order matters because it is the order a till offers the questions in when
+ * a product asks several — until now every group's sort_order was left at 0 and
+ * the list fell back to alphabetical, so "choice of bread" came before "how
+ * would you like your eggs" for no reason anybody chose.
+ */
+export async function reorderInstructionsAction(orderedIds: number[]): Promise<InlineResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await setGroupOrder(ctx.siteId, orderedIds)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/instructions')
+  return { ok: true, message: 'Order saved.' }
 }
 
 export async function deleteInstructionAction(form: FormData): Promise<void> {

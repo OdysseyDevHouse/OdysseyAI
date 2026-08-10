@@ -1,5 +1,6 @@
 import { Plus } from '@/components/ui/icons'
 import { requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { listGroups } from '@/lib/site/instructions'
 import {
   PageHeader,
@@ -18,7 +19,10 @@ export default async function InstructionsPage({
   searchParams: Promise<{ saved?: string; deleted?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('products.view')
+  const { siteId, capabilities } = await requireCapability('products.view')
+  // Viewing and reordering are different rights: the drag handles are offered
+  // only to someone whose save would actually be accepted.
+  const canEdit = can(capabilities, 'products.edit')
   const { saved, deleted } = await searchParams
 
   // Inactive groups are listed too: one switched off still applies to the
@@ -44,7 +48,7 @@ export default async function InstructionsPage({
         )}
 
         <Card>
-          <InstructionsTable rows={groups} />
+          <InstructionsTable rows={groups} canEdit={canEdit} />
         </Card>
       </PageBody>
     </>

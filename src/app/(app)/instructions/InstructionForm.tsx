@@ -1,8 +1,8 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useRef, useState } from 'react'
 import { useFormStatus } from 'react-dom'
-import { Save, Plus, Trash, ChevronDown, ChevronRight } from '@/components/ui/icons'
+import { Save, Plus, Trash, ChevronDown, ChevronRight, DragHandle } from '@/components/ui/icons'
 import {
   Badge,
   Button,
@@ -209,6 +209,41 @@ export default function InstructionForm({
 
   const removeRow = (key: string) => setRows((prev) => prev.filter((r) => r.key !== key))
 
+  /**
+   * Dragging an answer into a new position.
+   *
+   * Nothing is saved here — the rows submit in the order they are rendered and
+   * `sortOrder: i` in the action follows the array, so reordering is entirely a
+   * question of this array's order. That is also why the drag state is keyed by
+   * the local `key` rather than a database id: a row added a moment ago has no
+   * id and must still be draggable.
+   */
+  const dragKeyRef = useRef<string | null>(null)
+  const [dragKey, setDragKey] = useState<string | null>(null)
+  const [overKey, setOverKey] = useState<string | null>(null)
+
+  const moveRow = (targetKey: string) => {
+    const from = dragKeyRef.current
+    setDragKey(null)
+    setOverKey(null)
+    dragKeyRef.current = null
+    if (from === null || from === targetKey) return
+
+    setRows((prev) => {
+      const fromIndex = prev.findIndex((r) => r.key === from)
+      const toIndex = prev.findIndex((r) => r.key === targetKey)
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return prev
+
+      // Spliced out first, so the destination is found again in the shortened
+      // array — otherwise a downward drag lands one slot short.
+      const next = [...prev]
+      const [moved] = next.splice(fromIndex, 1)
+      const insertAt = next.findIndex((r) => r.key === targetKey)
+      next.splice(fromIndex < toIndex ? insertAt + 1 : insertAt, 0, moved)
+      return next
+    })
+  }
+
   const setRow = <K extends keyof Row>(key: string, field: K, value: Row[K]) =>
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, [field]: value } : r)))
 
@@ -356,6 +391,32 @@ export default function InstructionForm({
                 onDefault={setDefault}
                 onRemove={() => removeRow(row.key)}
                 canRemove={rows.length > 1}
+                draggable={rows.length > 1}
+                isDragging={dragKey === row.key}
+                isDragOver={overKey === row.key && dragKey !== row.key}
+                onDragStart={(e) => {
+                  dragKeyRef.current = row.key
+                  setDragKey(row.key)
+                  // Firefox will not start a drag without data on the transfer.
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('text/plain', row.key)
+                }}
+                onDragOver={(e) => {
+                  if (dragKeyRef.current === null) return
+                  // Must preventDefault on EVERY dragover or the drop is refused.
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (overKey !== row.key) setOverKey(row.key)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  moveRow(row.key)
+                }}
+                onDragEnd={() => {
+                  dragKeyRef.current = null
+                  setDragKey(null)
+                  setOverKey(null)
+                }}
               />
             ))}
 
@@ -407,6 +468,13 @@ function OptionRow({
   onDefault,
   onRemove,
   canRemove,
+  draggable,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: {
   row: Row
   index: number
@@ -418,12 +486,26 @@ function OptionRow({
   onDefault: (key: string, next: boolean) => void
   onRemove: () => void
   canRemove: boolean
+  draggable: boolean
+  isDragging: boolean
+  isDragOver: boolean
+  onDragStart: (e: React.DragEvent) => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent) => void
+  onDragEnd: () => void
 }) {
   const rule = countRule(row.minQty, row.maxQty)
   const reveals = groups.filter((g) => row.revealsGroupIds.includes(g.id))
 
   return (
-    <div className="rounded-card border border-border">
+    <div
+      className={`rounded-card border transition ${
+        isDragOver ? 'border-brand' : 'border-border'
+      } ${isDragging ? 'opacity-40' : ''}`}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+    >
       {/* Carries the id so an edited row keeps its identity rather than being
           deleted and recreated. Outside the flex row below: a hidden input is
           still a flex child and would be laid out as an empty gap. */}
@@ -431,6 +513,20 @@ function OptionRow({
 
       {/* ── The summary line ────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 p-2">
+        {/* Only the handle starts a drag, not the whole row: every control on
+            this line is one a user drags a cursor across to select text in, and
+            a draggable parent turns that into a row move. */}
+        {draggable && (
+          <span
+            data-kit-ok
+            draggable
+            onDragStart={onDragStart}
+            aria-hidden
+            className="cursor-grab px-1 text-faint transition hover:text-muted"
+          >
+            <DragHandle size={15} />
+          </span>
+        )}
         <Button
           type="button"
           variant="ghost"

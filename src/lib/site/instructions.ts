@@ -662,6 +662,48 @@ export async function replaceOptions(
   }).catch((err) => ({ ok: false as const, error: (err as Error).message }))
 }
 
+/**
+ * Sets the order the library itself is listed in.
+ *
+ * Positions are rewritten 1..n rather than patched, so a library whose
+ * sort_order values were all left at the default 0 — which is every library
+ * until somebody drags something — comes out consistent rather than keeping a
+ * tie that the name-based fallback then breaks arbitrarily.
+ *
+ * The ids are checked against what exists before anything is written: this
+ * arrives from a browser, and a payload naming a group on another site must not
+ * renumber it.
+ */
+export async function setGroupOrder(
+  siteId: number,
+  orderedIds: number[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (orderedIds.length === 0) return { ok: true }
+  if (new Set(orderedIds).size !== orderedIds.length) {
+    return { ok: false, error: 'That order lists the same instruction twice.' }
+  }
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT id FROM instruction_groups WHERE id IN (${orderedIds.map(() => '?').join(',')})`,
+    orderedIds,
+  )
+  if (rows.length !== orderedIds.length) {
+    return { ok: false, error: 'One of those instructions no longer exists.' }
+  }
+
+  await siteTransaction(siteId, async (tx) => {
+    for (const [index, id] of orderedIds.entries()) {
+      await tx.execute('UPDATE instruction_groups SET sort_order = ? WHERE id = ?', [
+        index + 1,
+        id,
+      ] as never)
+    }
+  })
+
+  return { ok: true }
+}
+
 /* ── Product links ───────────────────────────────────────────────────────── */
 
 /** The groups a product asks, in the order it asks them. */
