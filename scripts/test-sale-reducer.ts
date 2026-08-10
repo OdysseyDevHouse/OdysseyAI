@@ -157,6 +157,60 @@ function main() {
     ok('CLEAR keeps you where you were in the catalogue', s.catalog.kind === 'departments')
   }
 
+  /* ── Return mode: the direction the goods are going ──────────────────────
+     A mode on the one basket rather than a second basket, because a return is items,
+     quantities and prices — structurally a sale. What must never happen is lines
+     crossing between the two, in EITHER direction. */
+
+  {
+    let s = run({ type: 'SET_RETURNING', returning: true })
+    ok('SET_RETURNING turns the mode on', s.returning === true)
+
+    s = saleReducer(s, { type: 'ADD', product: product() })
+    ok('a return basket takes lines like any other', s.lines.length === 1)
+    /* POSITIVE in the basket. The sign is flipped by createCreditNote, which is the only
+       thing that should know the storage convention — a negative here would double-negate
+       into a sale. */
+    ok('and the qty stays POSITIVE in the basket', s.lines[0].qty > 0, String(s.lines[0].qty))
+  }
+
+  {
+    /* The bug this pins: leaving a return's lines behind when somebody taps back to Sale
+       would ring up the goods just handed in AS A SALE. Same items, same prices, opposite
+       direction, and nothing on screen would look wrong. */
+    let s = run({ type: 'SET_RETURNING', returning: true }, { type: 'ADD', product: product() })
+    s = saleReducer(s, { type: 'SET_RETURNING', returning: false })
+    ok('*** leaving return mode CLEARS the basket ***', s.lines.length === 0)
+    ok('  and the mode really is off', s.returning === false)
+  }
+
+  {
+    // And the same on the way in, for the same reason with the sign reversed.
+    let s = run({ type: 'ADD', product: product() })
+    s = saleReducer(s, { type: 'SET_RETURNING', returning: true })
+    ok('entering return mode clears a sale basket too', s.lines.length === 0)
+  }
+
+  {
+    /*
+     * CLEAR must NOT leave return mode.
+     *
+     * initialSaleState has returning: false, so spreading it — which CLEAR does — would
+     * silently drop a cashier back into sale mode when they cleared a mis-keyed return.
+     * The next item scanned would be SOLD rather than credited. "Start this basket again"
+     * is not "I changed my mind about which way the goods are going".
+     */
+    let s = run({ type: 'SET_RETURNING', returning: true }, { type: 'ADD', product: product() })
+    s = saleReducer(s, { type: 'CLEAR' })
+    ok('CLEAR drops the lines but KEEPS return mode', s.lines.length === 0 && s.returning === true)
+  }
+
+  {
+    // A sale basket is not accidentally in return mode.
+    const s = run({ type: 'ADD', product: product() })
+    ok('an ordinary basket is not a return', s.returning === false)
+  }
+
   /* ── Customer ────────────────────────────────────────────────────────── */
 
   {

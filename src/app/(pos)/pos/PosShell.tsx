@@ -6,7 +6,7 @@ import { useToast, ConfirmModal } from '@/components/ui'
 import { deviceId } from '@/lib/deviceId'
 import { useOfflineShell } from '@/lib/posOffline/useOfflineShell'
 import { useOfflineTill } from '@/lib/posOffline/useOfflineTill'
-import { finaliseOffline, currentShiftId } from '@/lib/posOffline/finaliseOffline'
+import { finaliseOffline, returnOffline, currentShiftId } from '@/lib/posOffline/finaliseOffline'
 import {
   findByCode,
   searchOffline,
@@ -31,6 +31,7 @@ import {
   browseProductsAction,
   scanAction,
   finaliseSaleAction,
+  createCreditNoteAction,
   saveSaleAction,
   saveForLaterAction,
   discardSaleAction,
@@ -50,7 +51,8 @@ import { LineEditModal } from './LineEditModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
 import { useSaleState } from './useSaleState'
-import { specialsFor, totalsFor, salePayloadLines } from './saleSelectors'
+import { specialsFor, totalsFor, salePayloadLines, returnPayloadLines } from './saleSelectors'
+import { RefundPad } from './RefundPad'
 import { TableGate } from './TableGate'
 import { listTablesAction, openTableAction, updateTableBillAction, askForBillAction, tablePaidAction } from './tableActions'
 import type { PosTable } from '@/lib/site/posTables'
@@ -165,6 +167,8 @@ export default function PosShell({
   const [showingSaved, setShowingSaved] = useState(false)
   const [showingOutbox, setShowingOutbox] = useState(false)
   const [sizingTiles, setSizingTiles] = useState(false)
+  /** The refund pad is open. Distinct from `state.returning`, which is the MODE. */
+  const [returning, setReturning] = useState(false)
   /* Per-machine, from localStorage, applied after mount — a counter screen's useful
      tile size is a property of that screen, not of the shop. See useTileSize. */
   const tileSize = useTileSize()
@@ -266,9 +270,23 @@ export default function PosShell({
     return () => clearInterval(timer)
   }, [specials.length])
 
+  /*
+   * SPECIALS DO NOT APPLY TO A RETURN.
+   *
+   * An empty list in return mode rather than filtering the result afterwards, because
+   * the engine's job is "what promotion does this basket earn" and a basket of goods
+   * coming BACK earns none. A "buy 2 get 1 free" that triggered here would credit a
+   * customer for a promotion they are handing in — and a mix-and-match one would price
+   * the return at the promotional rate rather than at what was actually paid.
+   *
+   * The honest limitation, stated: without a receipt the till credits the CURRENT shelf
+   * price, which is not necessarily what the customer paid. That is inherent to a
+   * no-receipt return rather than a consequence of this line — the alternative is
+   * refusing returns with no receipt, which shops do not do.
+   */
   const lineSpecials = useMemo(
-    () => specialsFor(state.lines, specials, new Date(clock)),
-    [state.lines, specials, clock],
+    () => specialsFor(state.lines, state.returning ? [] : specials, new Date(clock)),
+    [state.lines, specials, clock, state.returning],
   )
   const totals = useMemo(() => totalsFor(state.lines, lineSpecials), [state.lines, lineSpecials])
 
@@ -579,6 +597,139 @@ export default function PosShell({
       // The saved-sale count and any stock figures on screen are now stale.
       router.refresh()
     })
+  }
+
+  /**
+   * Takes a return.
+   *
+   * The same shape as `finalise`, and deliberately so — online first, falling through to
+   * the local queue on a TRANSPORT failure but never on a refusal. A server that refuses
+   * a credit note has said something true about it (a locked VAT period, a tender that
+   * cannot be refunded here), and queueing it offline would smuggle past a rule the
+   * server had just correctly applied.
+   *
+   * ── NO RECEIPT, EVEN ONLINE ──────────────────────────────────────────────
+   *
+   * `invoiceId: null` on both paths. The till has no way to ask "which invoice was this?"
+   * — it has no receipt scanner and no invoice search — so every return taken here is a
+   * no-receipt return, and the over-credit guard has nothing to guard. A RECEIPTED return
+   * stays a back-office job, where `creditableLines` can show what is left to credit
+   * against the actual sale. Making that work here needs the invoice on screen first, and
+   * pretending otherwise would credit the same invoice twice.
+   */
+  async function confirmReturn(
+    given: { tenderTypeId: number; amount: number; reference?: string | null }[],
+    reason: string,
+  ) {
+    const lines = returnPayloadLines(state.lines)
+    const total = totals.doc.totalIncl
+
+    if (!till.online) {
+      startTransition(() => returnLocally(given, reason, lines, total))
+      return
+    }
+
+    startTransition(async () => {
+      let result: Awaited<ReturnType<typeof createCreditNoteAction>>
+      try {
+        result = await createCreditNoteAction({
+          invoiceId: null,
+          customerId: state.customer?.id ?? null,
+          customerName: state.customer?.name || state.customerName.trim() || null,
+          reason,
+          terminalId: terminal?.id ?? null,
+          terminalCode: terminal?.code ?? null,
+          lines: lines.map((l) => ({
+            sourceLineId: null,
+            productId: l.productId,
+            productCode: l.productCode,
+            description: l.description,
+            productType: l.productType,
+            departmentId: l.departmentId,
+            qty: l.qty,
+            unitPriceIncl: l.unitPriceIncl,
+            vatRatePct: l.vatRatePct,
+            unitCostExcl: l.unitCostExcl,
+          })),
+          refunds: given,
+        })
+      } catch {
+        // The line dropped mid-refund. Queue it locally rather than losing the record.
+        await returnLocally(given, reason, lines, total)
+        void till.refresh()
+        return
+      }
+
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+
+      setReturning(false)
+      setEditing(null)
+      setPickingCustomer(false)
+      setReceipt({
+        number: result.documentNumber,
+        /* No change on a refund — the cashier hands back a stated amount, there is
+           nothing to give back on top of it. */
+        change: 0,
+        documentId: result.documentId,
+        total,
+      })
+      dispatch({ type: 'CLEAR' })
+      router.refresh()
+    })
+  }
+
+  /** The offline half of the above. */
+  async function returnLocally(
+    given: { tenderTypeId: number; amount: number; reference?: string | null }[],
+    reason: string,
+    lines: ReturnType<typeof returnPayloadLines>,
+    total: number,
+  ) {
+    const result = await returnOffline({
+      siteId,
+      terminal: terminal ? { id: terminal.id, code: terminal.code } : null,
+      operator: { userId: operatorUserId, name: operatorName },
+      /* Null: the operator is the authoriser on this path. A supervisor override would
+         set this, and the server re-derives whoever it names rather than trusting it. */
+      authorisedBy: null,
+      shiftId: await currentShiftId(siteId),
+      customer: state.customer
+        ? { id: state.customer.id, name: state.customer.name }
+        : state.customerName.trim()
+          ? { id: null, name: state.customerName.trim() }
+          : null,
+      reason,
+      lines,
+      refunds: given.map((g) => ({
+        tenderTypeId: g.tenderTypeId,
+        tenderCode: tenders.find((t) => t.id === g.tenderTypeId)?.code ?? '',
+        amount: g.amount,
+        reference: g.reference ?? null,
+      })),
+      totalIncl: total,
+      refundTotal: given.reduce((sum, g) => sum + g.amount, 0),
+    })
+
+    if (!result.ok) {
+      toast.error(result.error)
+      return
+    }
+
+    setReturning(false)
+    setEditing(null)
+    setPickingCustomer(false)
+    setReceipt({
+      number: result.documentNumber,
+      change: 0,
+      /* Zero — nothing has posted, so there is nothing to open or void through the back
+         office. The receipt hides both buttons on a zero id. */
+      documentId: 0,
+      total,
+    })
+    dispatch({ type: 'CLEAR' })
   }
 
   /**
@@ -1101,7 +1252,13 @@ export default function PosShell({
           onRemove={(key) => dispatch({ type: 'REMOVE', key })}
           onCustomer={() => setPickingCustomer(true)}
           onClear={() => setConfirmClear(true)}
-          onPay={() => setTendering(true)}
+          /* One button, two destinations. A separate "Refund" button beside Pay would sit
+             unused all day next to the one key a cashier presses hundreds of times, and
+             the mode is already stated on the pane — so the primary action follows the
+             mode rather than competing with it. */
+          onPay={() => (state.returning ? setReturning(true) : setTendering(true))}
+          returning={state.returning}
+          onToggleReturning={(next) => dispatch({ type: 'SET_RETURNING', returning: next })}
           onPark={park}
           onShowSaved={() => setShowingSaved(true)}
           savedCount={savedTally}
@@ -1175,6 +1332,22 @@ export default function PosShell({
         loyalty={loyalty}
         pending={pending}
         onFinalise={finalise}
+      />
+
+      {/* Paying a customer back. Its own pad rather than the tender pad with a flag —
+          a refund has no change, no vouchers, no loyalty and no cash rounding, which is
+          most of what makes that component hard. See RefundPad's docblock. */}
+      <RefundPad
+        open={returning}
+        onClose={() => setReturning(false)}
+        /* The FULL tender list, not `availableTenders`: that one withholds account and
+           loyalty tenders offline, which is right for taking money in. Paying money out
+           is filtered by `allowsRefund` instead, which the pad does itself. */
+        tenders={tenders}
+        totalIncl={totals.doc.totalIncl}
+        hasCustomer={state.customer !== null}
+        pending={pending}
+        onConfirm={confirmReturn}
       />
 
       <OutboxModal

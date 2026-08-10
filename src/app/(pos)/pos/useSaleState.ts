@@ -57,6 +57,25 @@ export type SaleState = {
   catalog: CatalogView
   /** The search box's live value, kept whether or not results are showing. */
   query: string
+  /**
+   * Whether this basket is a RETURN rather than a sale.
+   *
+   * A mode on the one basket rather than a second basket, because a return is
+   * structurally the same thing: items, quantities, prices. The tiles, the reducer, the
+   * line cards and the qty stepper all behave identically, and duplicating them to flip
+   * one sign is how two baskets drift apart on discount ceilings and rounding.
+   *
+   * What the mode DOES change, and both matter:
+   *
+   *   · SPECIALS DO NOT APPLY. A "buy 2 get 1 free" that triggered on a return would
+   *     credit a customer for a promotion they are handing back. See PosShell, which
+   *     passes an empty specials list in this mode rather than filtering afterwards.
+   *   · The sign is flipped at POSTING, not here. Lines stay positive in the basket
+   *     because that is what a cashier types and what the screen shows; `createCreditNote`
+   *     is what stores them negative, and it is the only thing that should know the
+   *     convention.
+   */
+  returning: boolean
 }
 
 export const initialSaleState: SaleState = {
@@ -67,6 +86,7 @@ export const initialSaleState: SaleState = {
   customerName: '',
   catalog: { kind: 'keys' },
   query: '',
+  returning: false,
 }
 
 export type SaleAction =
@@ -83,6 +103,20 @@ export type SaleAction =
   | { type: 'DRILL'; departmentId: number }
   | { type: 'DRILL_TO'; path: number[] }
   | { type: 'SHOW_SEARCH'; term: string }
+  /**
+   * Switch between ringing up a sale and taking a return.
+   *
+   * CLEARS THE BASKET, always, in both directions. A sale and a return are separate
+   * documents — `sales_documents.doc_type` is one value per row — so a basket holding
+   * both could not post as either. Silently keeping the lines would let a cashier build
+   * a mixed basket and only discover at Pay that half of it cannot go anywhere.
+   *
+   * Clearing on the way OUT as well is the less obvious half, and it is deliberate:
+   * leaving a return's lines behind when someone taps back to Sale would ring them up as
+   * a SALE of the goods just handed in. Same items, same prices, opposite direction, and
+   * nothing on the screen would look wrong.
+   */
+  | { type: 'SET_RETURNING'; returning: boolean }
   /**
    * The basket now has a server document, without changing anything in it.
    *
@@ -172,6 +206,29 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
         // sale, so it survives. Ringing up the next customer from the same
         // department is the common case.
         catalog: state.catalog.kind === 'search' ? { kind: 'keys' } : state.catalog,
+        /*
+         * Return mode survives a CLEAR, and this is not the obvious choice.
+         *
+         * Spreading initialSaleState resets it to false, which would drop a cashier back
+         * into SALE mode the moment they cleared a mis-keyed return — and the next item
+         * they scanned would be rung up rather than credited, with nothing on screen
+         * saying so. Clearing a basket means "start this one again", not "I have changed
+         * my mind about which direction the goods are going".
+         *
+         * Leaving the mode is an explicit SET_RETURNING, which is also the only thing
+         * that should do it.
+         */
+        returning: state.returning,
+      }
+
+    case 'SET_RETURNING':
+      /* Clears in BOTH directions — see the action's docblock. The lines cannot follow
+         the mode across, because a sale and a return are different documents and the
+         same lines mean the opposite thing in each. */
+      return {
+        ...initialSaleState,
+        catalog: state.catalog.kind === 'search' ? { kind: 'keys' } : state.catalog,
+        returning: action.returning,
       }
 
     case 'SET_CUSTOMER':

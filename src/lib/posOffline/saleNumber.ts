@@ -49,14 +49,32 @@ export type LocalSequence = {
  * `serverNextNumber` is what the server would issue NEXT, so the last one it
  * knows about is one less.
  */
+/**
+ * Which of this till's sequences a call means.
+ *
+ * Two, not one: a credit note that consumed an invoice number would leave a gap in the
+ * invoice register that nothing explains, and `verifySequence` would report it as a
+ * missing sale. Every function below takes this rather than being duplicated per
+ * sequence — the seed-if-higher rule, the burn-on-crash rule and the release rule are
+ * identical for both, and a second copy is a second place for them to drift.
+ */
+export type SequenceKind = 'sale' | 'return'
+
+const KEY_FOR: Record<SequenceKind, string> = {
+  sale: KV.numberSeq,
+  return: KV.creditNumberSeq,
+}
+
 export async function seedSequence(
   siteId: number,
   seed: Omit<LocalSequence, 'counter'> & { serverNextNumber: number },
+  kind: SequenceKind = 'sale',
 ): Promise<void> {
-  const existing = await kvGet<LocalSequence>(siteId, KV.numberSeq)
+  const key = KEY_FOR[kind]
+  const existing = await kvGet<LocalSequence>(siteId, key)
   const serverLast = Math.max(0, Math.trunc(seed.serverNextNumber) - 1)
 
-  await kvPut(siteId, KV.numberSeq, {
+  await kvPut(siteId, key, {
     terminalId: seed.terminalId,
     prefix: seed.prefix,
     storeNumber: seed.storeNumber,
@@ -68,9 +86,12 @@ export async function seedSequence(
   } satisfies LocalSequence)
 }
 
-/** Whether this till can number a sale offline at all. */
-export async function hasSequence(siteId: number): Promise<boolean> {
-  return (await kvGet<LocalSequence>(siteId, KV.numberSeq)) !== null
+/** Whether this till can number a sale — or a return — offline at all. */
+export async function hasSequence(
+  siteId: number,
+  kind: SequenceKind = 'sale',
+): Promise<boolean> {
+  return (await kvGet<LocalSequence>(siteId, KEY_FOR[kind])) !== null
 }
 
 /**
@@ -86,12 +107,14 @@ export async function hasSequence(siteId: number): Promise<boolean> {
  */
 export async function nextLocalNumber(
   siteId: number,
+  kind: SequenceKind = 'sale',
 ): Promise<{ documentNumber: string; counter: number } | null> {
-  const seq = await kvGet<LocalSequence>(siteId, KV.numberSeq)
+  const key = KEY_FOR[kind]
+  const seq = await kvGet<LocalSequence>(siteId, key)
   if (!seq) return null
 
   const counter = seq.counter + 1
-  await kvPut(siteId, KV.numberSeq, { ...seq, counter } satisfies LocalSequence)
+  await kvPut(siteId, key, { ...seq, counter } satisfies LocalSequence)
 
   return {
     // The SAME formatter the server uses, so an offline number and an online one
@@ -113,9 +136,14 @@ export async function nextLocalNumber(
  * otherwise. A cancelled sale whose slip already printed must BURN its number: the
  * customer may be holding it, and reissuing it would put two sales under one.
  */
-export async function releaseLocalNumber(siteId: number, counter: number): Promise<boolean> {
-  const seq = await kvGet<LocalSequence>(siteId, KV.numberSeq)
+export async function releaseLocalNumber(
+  siteId: number,
+  counter: number,
+  kind: SequenceKind = 'sale',
+): Promise<boolean> {
+  const key = KEY_FOR[kind]
+  const seq = await kvGet<LocalSequence>(siteId, key)
   if (!seq || seq.counter !== counter) return false
-  await kvPut(siteId, KV.numberSeq, { ...seq, counter: counter - 1 } satisfies LocalSequence)
+  await kvPut(siteId, key, { ...seq, counter: counter - 1 } satisfies LocalSequence)
   return true
 }

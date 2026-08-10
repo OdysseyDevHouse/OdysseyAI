@@ -1,6 +1,14 @@
 'use client'
 
-import { Badge, Button, Icons, EmptyState, TouchRow, CategoryTile } from '@/components/ui'
+import {
+  Badge,
+  Button,
+  Icons,
+  EmptyState,
+  TouchRow,
+  CategoryTile,
+  SegmentedControl,
+} from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { effectiveDiscountPct } from '@/lib/specialsEngine'
 import type { BasketLine } from '@/lib/basket'
@@ -30,6 +38,8 @@ export function SalePane({
   onCustomer,
   onClear,
   onPay,
+  returning,
+  onToggleReturning,
   onPark,
   onShowSaved,
   savedCount,
@@ -48,6 +58,10 @@ export function SalePane({
   onCustomer: () => void
   onClear: () => void
   onPay: () => void
+  /** True when this basket is a return rather than a sale. */
+  returning: boolean
+  /** Switches the mode. CLEARS the basket — see the reducer's SET_RETURNING. */
+  onToggleReturning: (next: boolean) => void
   onPark: () => void
   onShowSaved: () => void
   /** How many baskets are parked, for the badge. */
@@ -58,6 +72,38 @@ export function SalePane({
 
   return (
     <section className="flex w-[440px] shrink-0 flex-col border-r border-border bg-surface">
+      {/*
+        ── SALE OR RETURN ────────────────────────────────────────────────────
+        At the TOP of the pane, above everything, because it changes the meaning of every
+        figure below it. A cashier who thinks they are selling while taking a return hands
+        over goods AND money, and the only thing standing in the way is this being
+        impossible to miss.
+
+        A SegmentedControl rather than a toggle or a checkbox: two named states, both
+        visible, with the active one filled — so the answer to "which am I doing" is
+        readable at a glance from arm's length rather than inferred from a switch position.
+      */}
+      <div className="border-b border-border p-3 pb-2">
+        <SegmentedControl
+          value={returning ? 'return' : 'sale'}
+          onChange={(next) => onToggleReturning(next === 'return')}
+          options={[
+            { value: 'sale', label: 'Sale' },
+            { value: 'return', label: 'Return' },
+          ]}
+        />
+        {/* Said only in return mode, and it says the thing a cashier needs to know rather
+            than the thing the code is doing: no receipt is checked, so the credit is at
+            today's shelf price. That is inherent to a till return, not a defect — but a
+            manager reviewing it later should not be the first to discover it. */}
+        {returning && (
+          <p className="mt-2 text-xs text-muted">
+            No receipt is checked here — the credit is at today’s price. For a specific
+            invoice, use Returns in the back office.
+          </p>
+        )}
+      </div>
+
       {/* ── Customer ─────────────────────────────────────────────────────── */}
       <div className="border-b border-border p-3">
         <TouchRow
@@ -74,8 +120,12 @@ export function SalePane({
         <div className="flex flex-1 items-center justify-center p-6">
           <EmptyState
             icon={<Icons.ShoppingCart size={28} />}
-            title="No items yet"
-            hint="Scan a barcode, or tap a product to start the sale."
+            title={returning ? 'Nothing to return yet' : 'No items yet'}
+            hint={
+              returning
+                ? 'Scan or tap what the customer is bringing back.'
+                : 'Scan a barcode, or tap a product to start the sale.'
+            }
           />
         </div>
       ) : (
@@ -145,14 +195,20 @@ export function SalePane({
           <Icons.Close size={20} />
           Close
         </Button>
+        {/* `warning` on a return, not `success`.
+            Green means "money coming in" everywhere else on this screen, and a green
+            button that pays a customer OUT is the one piece of colour on the till that
+            could actively mislead. Not `danger` either — a return is a normal, correct
+            thing to do, and painting it as a destructive act would make cashiers
+            hesitate over something they are supposed to do cheerfully. */}
         <Button
-          variant="success"
+          variant={returning ? 'warning' : 'success'}
           size="touch-lg"
           className="flex-1 justify-between"
           disabled={empty || busy}
           onClick={onPay}
         >
-          <span>{busy ? 'Working…' : 'Pay'}</span>
+          <span>{busy ? 'Working…' : returning ? 'Refund' : 'Pay'}</span>
           <span className="numeric">{formatMoney(totals.doc.totalIncl)}</span>
         </Button>
       </div>

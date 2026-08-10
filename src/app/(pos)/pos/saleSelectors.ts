@@ -93,6 +93,45 @@ export function salePayloadLines(
   }))
 }
 
+/**
+ * The same basket, as RETURN lines.
+ *
+ * Three deliberate differences from `salePayloadLines`, and each one is a decision:
+ *
+ *   · NO discountPct and NO specialId. A credit note reverses what a customer paid, and
+ *     a discount is already baked into the price they paid — `unitPriceIncl` carries it.
+ *     Sending a discount as well would credit it twice. `CreditLineInput` has no
+ *     discount field at all, which is the same conclusion reached server-side.
+ *   · NO specials engine argument. A basket of goods coming back earns no promotion —
+ *     see PosShell, which passes an empty specials list in return mode, so there would be
+ *     nothing to read here anyway. Not taking the parameter makes that structural rather
+ *     than conventional.
+ *   · qty stays POSITIVE. `createCreditNote` stores it negative and is the only thing
+ *     that should know the convention; a negative here would double-negate into a sale.
+ */
+export function returnPayloadLines(lines: BasketLine[]) {
+  return lines.map((line) => ({
+    productId: line.productId,
+    productCode: line.productCode,
+    description: line.description,
+    productType: line.productType,
+    departmentId: line.departmentId,
+    qty: Math.abs(line.qty),
+    unitPriceIncl: line.unitPriceIncl,
+    vatRatePct: line.vatRatePct,
+    /*
+     * The cost as the TILL knows it.
+     *
+     * The online credit note copies this from the original invoice line, because
+     * re-reading the product would value a return at today's cost and manufacture margin
+     * never earned. With no receipt there is no original line to copy from, so the
+     * catalog's cost is the closest honest answer available — and it is recorded as what
+     * was used rather than silently re-derived later.
+     */
+    unitCostExcl: line.unitCostExcl,
+  }))
+}
+
 /* ── The department tree ─────────────────────────────────────────────────── */
 
 /**

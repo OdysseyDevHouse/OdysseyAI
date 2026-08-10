@@ -208,6 +208,14 @@ export const KV = {
   terminal: 'terminal',
   /** This till's own invoice counter: { prefix, storeNumber, tillNumber, padding, counter } */
   numberSeq: 'numberSeq',
+  /**
+   * The same, for CREDIT NOTES — a return taken offline.
+   *
+   * Its own counter rather than sharing the invoice one: a credit note that consumed an
+   * invoice number would leave a gap in the invoice register that nothing explains, and
+   * `verifySequence` would report it as a missing sale.
+   */
+  creditNumberSeq: 'creditNumberSeq',
   /** Store settings the till needs offline — VAT rounding, barcode config. */
   settings: 'settings',
   /** Departments, flat with parent ids. */

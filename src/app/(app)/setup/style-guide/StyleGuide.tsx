@@ -155,6 +155,12 @@ function ButtonsSection() {
     { variant: 'primary', note: 'Main confirm / save action', label: 'Save', icon: true },
     { variant: 'secondary', note: 'Back / secondary actions', label: 'Back', icon: false },
     { variant: 'success', note: 'Positive go / confirm (POS)', label: 'Save', icon: false },
+    {
+      variant: 'warning',
+      note: 'Consequential but NOT destructive — money out, not a mistake (the till’s Refund)',
+      label: 'Refund',
+      icon: false,
+    },
     { variant: 'danger', note: 'Destructive confirm', label: 'Delete', icon: false },
     { variant: 'danger-ghost', note: 'Inline destructive (tables)', label: 'Delete', icon: false },
     { variant: 'ghost', note: 'Low-emphasis / toolbar', label: 'Cancel', icon: false },

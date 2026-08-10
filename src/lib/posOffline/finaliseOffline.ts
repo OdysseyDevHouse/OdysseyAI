@@ -1,10 +1,16 @@
 'use client'
 
 import { nextLocalNumber, releaseLocalNumber } from './saleNumber'
-import { queueSale } from './sync'
+import { queueReturn, queueSale } from './sync'
 import { decrementStock } from './catalog'
 import { kvGet, KV } from './db'
-import type { OfflineSale, OfflineSaleLine, OfflineTender } from './types'
+import type {
+  OfflineReturn,
+  OfflineReturnLine,
+  OfflineSale,
+  OfflineSaleLine,
+  OfflineTender,
+} from './types'
 
 /**
  * Completing a sale with no server.
@@ -156,6 +162,124 @@ export async function finaliseOffline(
   await decrementStock(siteId, input.lines).catch(() => {})
 
   return { ok: true, documentNumber: sale.documentNumber, saleUid: sale.saleUid, change: input.change }
+}
+
+/* ── A return, taken with no server ──────────────────────────────────────── */
+
+export type OfflineReturnInput = {
+  siteId: number
+  terminal: { id: number; code: string } | null
+  operator: { userId: number; name: string }
+  /** Who authorised it, when the operator does not hold `sales.credit_note`. */
+  authorisedBy: { userId: number; name: string } | null
+  shiftId: number | null
+  customer: { id: number | null; name: string } | null
+  reason: string
+  lines: OfflineReturnLine[]
+  /** What went back out of the drawer. Empty leaves the credit on the account. */
+  refunds: OfflineTender[]
+  totalIncl: number
+  refundTotal: number
+}
+
+export type OfflineReturnResult =
+  | { ok: true; documentNumber: string; returnUid: string; refundTotal: number }
+  | { ok: false; error: string }
+
+/**
+ * Takes a return with no server.
+ *
+ * The same four steps in the same order as a sale, for the same reasons — number, QUEUE,
+ * stock, then let the caller print. Two differences, both in the same direction:
+ *
+ *   · The number comes from the CREDIT-NOTE sequence, not the invoice one. A credit note
+ *     that consumed an invoice number would leave a gap in the invoice register that
+ *     nothing explains, and verifySequence would report it as a missing sale.
+ *   · Stock goes UP. The goods are back on the shelf, so the optimistic adjustment is the
+ *     mirror of a sale's — and a till that showed 0 on hand after taking three back would
+ *     have a cashier refusing to sell what is sitting in front of them.
+ *
+ * The queue-before-print rule matters MORE here than for a sale. A crash between printing
+ * and queueing leaves a customer holding a credit note for a refund no system knows about
+ * — and unlike a sale, the money has already come out of the drawer, so that record is
+ * the only thing standing between the shop and an unexplained shortage at cash-up.
+ */
+export async function returnOffline(
+  input: OfflineReturnInput,
+): Promise<OfflineReturnResult> {
+  const { siteId } = input
+
+  /* Refused rather than defaulted, and before a number is taken: createCreditNote
+     refuses a blank reason server-side, so inventing one here would queue a return that
+     is certain to be rejected at sync — after the cash is gone. */
+  if (!input.reason.trim()) {
+    return { ok: false, error: 'Give a reason for the return.' }
+  }
+  if (input.lines.length === 0) {
+    return { ok: false, error: 'Add what is being returned.' }
+  }
+
+  /* 1. The number, from this till's own CRN sequence. Null means the till has no credit
+        sequence — registered before migration 079, or a store on site-wide numbering —
+        and inventing one could collide with the back office's run. */
+  const numbered = await nextLocalNumber(siteId, 'return')
+  if (!numbered) {
+    return {
+      ok: false,
+      error:
+        'This till cannot number a return offline yet. Connect once so it can pick up its own credit-note numbering, then try again.',
+    }
+  }
+
+  const ret: OfflineReturn = {
+    returnUid: saleUid(),
+    documentNumber: numbered.documentNumber,
+    terminalId: input.terminal?.id ?? null,
+    terminalCode: input.terminal?.code ?? null,
+    operatorUserId: input.operator.userId,
+    operatorName: input.operator.name,
+    authorisedByUserId: input.authorisedBy?.userId ?? null,
+    authorisedByName: input.authorisedBy?.name ?? null,
+    shiftId: input.shiftId,
+    takenAt: new Date().toISOString(),
+    documentDate: todayIso(),
+    customerId: input.customer?.id ?? null,
+    customerName: input.customer?.name ?? null,
+    reason: input.reason.trim(),
+    lines: input.lines,
+    refunds: input.refunds,
+    claimedTotalIncl: input.totalIncl,
+    claimedRefundTotal: input.refundTotal,
+  }
+
+  /* 2. The queue. THE durable record that money left the drawer. */
+  try {
+    await queueReturn(siteId, ret)
+  } catch (error) {
+    // Nothing recorded and nothing printed, so the number goes back safely.
+    await releaseLocalNumber(siteId, numbered.counter, 'return')
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? `This return could not be saved on the till: ${error.message}`
+          : 'This return could not be saved on the till.',
+    }
+  }
+
+  /* 3. Stock back on, optimistically — negated quantities through the same helper a
+        sale uses, so there is one implementation of "adjust the local pile". */
+  await decrementStock(
+    siteId,
+    input.lines.map((l) => ({ productId: l.productId, qty: -Math.abs(l.qty) })),
+  ).catch(() => {})
+
+  return {
+    ok: true,
+    documentNumber: ret.documentNumber,
+    returnUid: ret.returnUid,
+    refundTotal: input.refundTotal,
+  }
 }
 
 /**

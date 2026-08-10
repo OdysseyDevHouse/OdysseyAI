@@ -14,6 +14,17 @@ export type ButtonVariant =
   | 'primary' /* main confirm / save action — one per screen */
   | 'secondary' /* back / secondary actions */
   | 'success' /* positive go / confirm, mostly POS-side */
+  /*
+   * A confirm that needs a second look, but is NOT destructive.
+   *
+   * Added for the till's Refund key, which sits exactly where Pay does. Green there would
+   * be the one piece of colour on that screen that could actively mislead — it means
+   * "money coming in" on every other control — and `danger` would paint a normal,
+   * correct act as a destructive one and make cashiers hesitate over something they are
+   * supposed to do cheerfully. Also fits a "release the stock hold" or "overwrite the
+   * draft" confirm: consequential, reversible, not a mistake.
+   */
+  | 'warning'
   | 'danger' /* destructive confirm */
   | 'danger-ghost' /* inline destructive, e.g. delete in a table row */
   | 'ghost' /* low emphasis, toolbars */
@@ -39,6 +50,10 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
     'border-brand/35 bg-surface text-brand hover:border-brand hover:bg-brand-soft ' +
     'disabled:border-border disabled:bg-surface disabled:text-faint',
   success: 'border-transparent bg-success text-white hover:bg-success-ink disabled:bg-success/40',
+  /* Same recipe as success and danger — only the token changes, which is the point of
+     having tokens. White text: --color-warning is a mid amber in light mode and a
+     brighter one in dark, and both carry white at the weight a touch button uses. */
+  warning: 'border-transparent bg-warning text-white hover:bg-warning-ink disabled:bg-warning/40',
   danger: 'border-transparent bg-danger text-white hover:bg-danger-ink disabled:bg-danger/40',
   'danger-ghost':
     'border-danger/30 bg-surface text-danger hover:border-danger hover:bg-danger-soft ' +

@@ -81,6 +81,16 @@ type CatalogResponse = {
     periodKey: string | null
     serverNextNumber: number
   } | null
+  /** The credit-note sequence, for a return taken offline. Same shape. */
+  creditSequence: {
+    terminalId: number
+    prefix: string
+    storeNumber: string
+    tillNumber: string
+    padding: number
+    periodKey: string | null
+    serverNextNumber: number
+  } | null
   operators: OfflineOperator[]
   quickKeys: unknown[]
   quickKeyProductNames: Record<number, string>
@@ -88,7 +98,14 @@ type CatalogResponse = {
 }
 
 export type CatalogResult =
-  | { ok: true; full: boolean; products: number; canSellOffline: boolean }
+  | {
+      ok: true
+      full: boolean
+      products: number
+      canSellOffline: boolean
+      /** Whether this till also holds a credit-note sequence — see refreshCatalog. */
+      canReturnOffline: boolean
+    }
   | { ok: false; error: string; status: number }
 
 /**
@@ -198,12 +215,19 @@ export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
   if (body.sequence) {
     await seedSequence(siteId, body.sequence)
   }
+  /* The credit-note sequence, separately and independently: a till may be able to sell
+     offline but not take a return, if it was registered before migration 079 created its
+     CRN row. Seeding what we have is better than refusing both. */
+  if (body.creditSequence) {
+    await seedSequence(siteId, body.creditSequence, 'return')
+  }
 
   return {
     ok: true,
     full,
     products: productCount,
     canSellOffline: body.sequence !== null,
+    canReturnOffline: body.creditSequence !== null,
   }
 }
 

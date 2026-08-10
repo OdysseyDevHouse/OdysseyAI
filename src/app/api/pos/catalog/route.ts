@@ -157,6 +157,22 @@ export async function GET(req: NextRequest) {
     terminal && config.scope === 'terminal'
       ? await getSequence(siteId, 'invoice', terminal.id)
       : null
+  /*
+   * And its CREDIT-NOTE sequence, so it can number a RETURN with no server.
+   *
+   * A separate row rather than sharing the invoice counter: a credit note that consumed
+   * an invoice number would put a gap in the invoice register that nothing explains, and
+   * `verifySequence` would report it as a missing sale. Migration 079 creates one of
+   * these per numbered terminal.
+   *
+   * Null is a legitimate answer — a till registered before 079, or a store on site-wide
+   * numbering — and the till then refuses to take a return offline rather than inventing
+   * a number that could collide with the back office's run.
+   */
+  const creditSequence =
+    terminal && config.scope === 'terminal'
+      ? await getSequence(siteId, 'credit_sale', terminal.id)
+      : null
   const till = terminal ? await tillNumber(siteId, terminal.id) : null
 
   /* The quick keys, plus the names their captions fall back to. Only the products and
@@ -220,6 +236,26 @@ export async function GET(req: NextRequest) {
               padding: sequence.padding,
               periodKey: sequence.resetPeriod === 'yearly' ? String(new Date().getFullYear()) : null,
               serverNextNumber: sequence.nextNumber,
+            }
+          : null,
+      /**
+       * The credit-note sequence, for a return taken offline.
+       *
+       * Same shape as `sequence` so the till stores both through one code path. Null
+       * means this till cannot number a return offline — see the comment where it is
+       * resolved — and the return screen says so rather than failing at the last tap.
+       */
+      creditSequence:
+        creditSequence && till
+          ? {
+              terminalId: creditSequence.terminalId,
+              prefix: creditSequence.prefix,
+              storeNumber: config.storeNumber,
+              tillNumber: till,
+              padding: creditSequence.padding,
+              periodKey:
+                creditSequence.resetPeriod === 'yearly' ? String(new Date().getFullYear()) : null,
+              serverNextNumber: creditSequence.nextNumber,
             }
           : null,
       operators,
