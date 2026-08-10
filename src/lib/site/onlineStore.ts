@@ -397,6 +397,173 @@ export async function setDepartmentVisibility(
   return { ok: true }
 }
 
+/* ── Individual product visibility ──────────────────────────────────────────
+ *
+ * The per-product counterpart to the department tree above. Same idea, one level
+ * lower: a tick per product rather than per department.
+ */
+
+export type ProductVisibility = {
+  id: number
+  code: string
+  description: string
+  departmentId: number | null
+  /** The tile token, so a row shows the same colour the till does. */
+  imageColor: string | null
+  showOnline: boolean
+  /**
+   * True when this product's DEPARTMENT publishes it, tick or no tick.
+   *
+   * The same reasoning as `DepartmentVisibility.publishedByParent`: under
+   * `departments` publish mode a product with an unticked switch may still be in the
+   * shop, and a switch whose position contradicts the storefront is a control an owner
+   * fights rather than trusts. The screen says "shown via its department" instead.
+   */
+  publishedByDepartment: boolean
+}
+
+export type ProductVisibilityOptions = {
+  search?: string
+  /**
+   * Departments to narrow to — a subtree, expanded by the CALLER.
+   *
+   * Passed as a resolved list rather than one id because the page already holds the
+   * whole department tree for its filter dropdown, so expanding there costs nothing
+   * while a recursive CTE here would be a second definition of "beneath".
+   */
+  departmentIds?: number[] | null
+  /** `shown` and `hidden` filter on the product's OWN tick, not on the effective one. */
+  only?: 'shown' | 'hidden' | null
+  limit?: number
+  offset?: number
+}
+
+/**
+ * The product file with its publish flags, filtered and paged.
+ *
+ * Returns `total` for the whole filter rather than the page, because the screen's bulk
+ * actions act on the filter — "Show all 4,312" has to be able to say 4,312 while
+ * showing 50.
+ */
+export async function listProductVisibility(
+  siteId: number,
+  options: ProductVisibilityOptions = {},
+): Promise<{ items: ProductVisibility[]; total: number }> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 500)
+  const offset = Math.max(options.offset ?? 0, 0)
+
+  const where: string[] = [SELLABLE]
+  const params: unknown[] = []
+
+  const search = options.search?.trim()
+  if (search) {
+    where.push('(p.code LIKE ? OR p.description LIKE ? OR p.barcode = ?)')
+    params.push(`%${search}%`, `%${search}%`, search)
+  }
+  if (options.departmentIds && options.departmentIds.length > 0) {
+    where.push(`p.department_id IN (${options.departmentIds.map(() => '?').join(',')})`)
+    params.push(...options.departmentIds)
+  }
+  if (options.only === 'shown') where.push('p.show_online = 1')
+  if (options.only === 'hidden') where.push('p.show_online = 0')
+
+  const clause = where.join(' AND ')
+
+  const countRow = await siteQueryOne<Row>(
+    siteId,
+    `SELECT COUNT(*) AS n FROM products p WHERE ${clause}`,
+    params,
+  )
+
+  /* `published` is the same recursive expansion getPublishCounts uses: ticking a parent
+     department publishes everything beneath it. Shared shape rather than shared code
+     because that one aggregates and this one joins per row — but if either changes, the
+     other has to, and a mismatch would show as a badge that disagrees with the shop. */
+  const rows = await siteQuery<Row>(
+    siteId,
+    `WITH RECURSIVE published (id) AS (
+       SELECT id FROM departments WHERE show_online = 1 AND is_active = 1
+       UNION ALL
+       SELECT d.id FROM departments d JOIN published pub ON d.parent_id = pub.id
+     )
+     SELECT p.id, p.code, p.description, p.department_id, p.image_color, p.show_online,
+            (p.department_id IN (SELECT id FROM published)) AS published_by_department
+       FROM products p
+      WHERE ${clause}
+      ORDER BY p.description
+      LIMIT ${limit} OFFSET ${offset}`,
+    params,
+  )
+
+  return {
+    items: rows.map((r) => ({
+      id: Number(r.id),
+      code: String(r.code ?? ''),
+      description: String(r.description ?? ''),
+      departmentId: r.department_id === null ? null : Number(r.department_id),
+      imageColor: r.image_color ? String(r.image_color) : null,
+      showOnline: !!r.show_online,
+      publishedByDepartment: !!r.published_by_department,
+    })),
+    total: Number(countRow?.n ?? 0),
+  }
+}
+
+/** Ticks or unticks one product. */
+export async function setProductVisibility(
+  siteId: number,
+  productId: number,
+  showOnline: boolean,
+): Promise<SaveResult> {
+  const result = await siteExecute(siteId, `UPDATE products SET show_online = ? WHERE id = ?`, [
+    showOnline ? 1 : 0,
+    productId,
+  ])
+  if (result.affectedRows === 0) {
+    return { ok: false, error: 'That product no longer exists.' }
+  }
+  return { ok: true }
+}
+
+/**
+ * Ticks or unticks everything the filter matches — not just the page.
+ *
+ * One UPDATE against the same predicate `listProductVisibility` selects on, rather than
+ * a loop over ids the client sent. Two reasons, and the second is the important one:
+ * 40,000 individual updates would be slow, and a client-supplied id list is a client
+ * deciding which rows to change. "Show all 4,312" must mean the 4,312 the filter
+ * describes, which is what the button says.
+ *
+ * `only` is deliberately IGNORED here. Bulk-applying to a filter that includes "only
+ * the hidden ones" would make the set shrink as the update ran, so the button acts on
+ * the search and department filter and leaves the tick state out of its own condition.
+ */
+export async function setProductVisibilityBulk(
+  siteId: number,
+  options: ProductVisibilityOptions,
+  showOnline: boolean,
+): Promise<{ ok: true; changed: number } | { ok: false; error: string }> {
+  const where: string[] = [SELLABLE]
+  const params: unknown[] = [showOnline ? 1 : 0]
+
+  const search = options.search?.trim()
+  if (search) {
+    where.push('(p.code LIKE ? OR p.description LIKE ? OR p.barcode = ?)')
+    params.push(`%${search}%`, `%${search}%`, search)
+  }
+  if (options.departmentIds && options.departmentIds.length > 0) {
+    where.push(`p.department_id IN (${options.departmentIds.map(() => '?').join(',')})`)
+    params.push(...options.departmentIds)
+  }
+
+  const result = await siteExecute(
+    siteId,
+    `UPDATE products p SET p.show_online = ? WHERE ${where.join(' AND ')}`,
+    params,
+  )
+  return { ok: true, changed: result.affectedRows }
+}
+
 /* ── Delivery zones ───────────────────────────────────────────────────────── */
 
 export async function listDeliveryZones(

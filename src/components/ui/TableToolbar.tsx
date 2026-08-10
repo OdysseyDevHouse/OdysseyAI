@@ -1,8 +1,10 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { Search } from './icons'
+import { Select } from './Field'
 import { CONTROL, CONTROL_H } from './styles'
 
 /**
@@ -106,6 +108,61 @@ export function LinkSegmentedControl<T extends string>({
         </Link>
       ))}
     </SegmentedBar>
+  )
+}
+
+/**
+ * A URL filter with too many options to be a segmented bar.
+ *
+ * `LinkSegmentedControl` above is right for three or four choices a person picks by
+ * position. It is wrong for forty departments — the bar wraps to four lines and the
+ * screen loses its shape. This is the same "each option is a route" idea in a dropdown.
+ *
+ * ── WHY IT IS A `<select>` THAT NAVIGATES, AND NOT A LIST OF LINKS ────────
+ *
+ * A menu of forty `<Link>`s would need its own open/close state, its own keyboard
+ * handling and its own focus trapping. A native select already has all three, in a form
+ * every OS renders the way its users expect — including the touch pickers on the
+ * tablets some of these screens run on.
+ *
+ * The cost is that navigation happens in `onChange`, which needs a router, which is why
+ * this sits in a `'use client'` file. Each option still carries its own `href` rather
+ * than the control taking an `hrefFor` function — same reason as its sibling: a Server
+ * Component cannot pass a function across the boundary, and every screen using this is
+ * server-rendered.
+ */
+export function LinkSelect({
+  options,
+  value,
+  icon,
+  className = '',
+  'aria-label': ariaLabel,
+}: {
+  options: readonly { value: string; label: string; href: string }[]
+  value: string
+  icon?: ReactNode
+  className?: string
+  'aria-label'?: string
+}) {
+  const router = useRouter()
+  return (
+    <Select
+      aria-label={ariaLabel}
+      icon={icon}
+      value={value}
+      className={className}
+      onChange={(event) => {
+        const chosen = options.find((o) => o.value === event.target.value)
+        // `push`, not `replace`: a filter is a place someone can go Back from.
+        if (chosen) router.push(chosen.href)
+      }}
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </Select>
   )
 }
 

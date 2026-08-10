@@ -248,6 +248,98 @@ export async function updateDepartment(
   return { ok: true, id }
 }
 
+/**
+ * A narrow update for the inline controls on the list — the colour swatch and
+ * the active switch.
+ *
+ * Deliberately NOT `updateDepartment` with a partial input: that helper reads
+ * every field off the form and would rewrite `parent_id`, `code` and
+ * `sort_order` from whatever the caller happened to pass. Flipping a switch
+ * must not be able to re-parent a branch, so this touches only the named
+ * column and leaves the rest of the row alone.
+ */
+export async function patchDepartment(
+  siteId: number,
+  id: number,
+  patch: { color?: string | null; isActive?: boolean },
+): Promise<SaveResult> {
+  const existing = await getDepartment(siteId, id)
+  if (!existing) return { ok: false, error: 'Department not found.' }
+
+  const sets: string[] = []
+  const params: (string | number | null)[] = []
+
+  if ('color' in patch) {
+    const color = patch.color?.trim() || null
+    // The list stores a swatch TOKEN (tile-1…tile-7), but rows written before
+    // the palette became tokens still hold a hex string, so both are allowed
+    // through — validateDepartment's hex rule would reject the tokens.
+    if (color && !/^(tile-[1-7]|#[0-9a-fA-F]{6})$/.test(color)) {
+      return { ok: false, error: 'That is not a colour this app can store.' }
+    }
+    sets.push('color = ?')
+    params.push(color)
+  }
+
+  if ('isActive' in patch) {
+    sets.push('is_active = ?')
+    params.push(patch.isActive ? 1 : 0)
+  }
+
+  if (sets.length === 0) return { ok: true, id }
+
+  await siteExecute(siteId, `UPDATE departments SET ${sets.join(', ')} WHERE id = ?`, [
+    ...params,
+    id,
+  ])
+  return { ok: true, id }
+}
+
+export type ReorderResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Rewrites `sort_order` across one set of SIBLINGS, in the order given.
+ *
+ * Reordering is sibling-only by design: dragging a row onto a different parent
+ * would be a move, which has cycle rules of its own (see updateDepartment) and
+ * is a different gesture. Rows are verified to share `ids`' parent before
+ * anything is written, so a tampered payload cannot silently re-parent a
+ * branch or renumber a department on another site.
+ */
+export async function reorderDepartments(
+  siteId: number,
+  orderedIds: number[],
+): Promise<ReorderResult> {
+  if (orderedIds.length === 0) return { ok: true }
+  if (new Set(orderedIds).size !== orderedIds.length) {
+    return { ok: false, error: 'That order lists the same department twice.' }
+  }
+
+  const all = await listDepartments(siteId, true)
+  const byId = new Map(all.map((d) => [d.id, d]))
+
+  const rows = orderedIds.map((id) => byId.get(id))
+  if (rows.some((r) => r === undefined)) {
+    return { ok: false, error: 'One of those departments no longer exists.' }
+  }
+
+  // Every row must share one parent, or this is a move dressed up as a sort.
+  const parents = new Set(rows.map((r) => r!.parentId))
+  if (parents.size > 1) {
+    return { ok: false, error: 'Only departments under the same parent can be reordered.' }
+  }
+
+  // Positions are rewritten 1..n rather than patched, so a list that had
+  // duplicate or missing sort_order values comes out consistent.
+  for (const [index, id] of orderedIds.entries()) {
+    await siteExecute(siteId, 'UPDATE departments SET sort_order = ? WHERE id = ?', [
+      index + 1,
+      id,
+    ])
+  }
+  return { ok: true }
+}
+
 export type DeleteResult = { ok: true } | { ok: false; error: string }
 
 /**

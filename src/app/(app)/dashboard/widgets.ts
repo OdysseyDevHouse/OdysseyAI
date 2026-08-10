@@ -6,16 +6,24 @@ import type { LayoutItem } from 'react-grid-layout'
  *
  * Each KPI is its OWN widget rather than one "KPI strip" widget, so a store
  * that never looks at average items per sale can hide that one tile and give
- * the room to something it does look at. The grid is 12 columns.
+ * the room to something it does look at.
  */
+
+/**
+ * The grid is SIXTY columns, not twelve.
+ *
+ * Twelve cannot be divided into fifths, and the five KPI tiles have to share
+ * one row. Sixty is the smallest count that divides cleanly by 2, 3, 4, 5 and
+ * 6, so a half (30), a third (20), a quarter (15) and a fifth (12) are all
+ * whole numbers and every existing arrangement still lands on exact columns.
+ */
+export const GRID_COLS = 60
 
 export type WidgetId =
   | 'turnoverIncl'
-  | 'turnoverExcl'
   | 'grossProfit'
   | 'saleCount'
   | 'avgSaleValue'
-  | 'avgItemsPerSale'
   | 'perHour'
   | 'perDay'
   | 'tenderTypes'
@@ -34,39 +42,34 @@ export type WidgetDef = {
 /** The KPI ids, in the order they appear across the top row. */
 export const KPI_IDS = [
   'turnoverIncl',
-  'turnoverExcl',
   'grossProfit',
   'saleCount',
   'avgSaleValue',
-  'avgItemsPerSale',
 ] as const
 
 export type KpiId = (typeof KPI_IDS)[number]
 
+/* Two of these carry a second figure below the headline — turnover its excl
+   reading, sales its items-per-sale. See the defs in KpiTile. */
 const KPI_TITLES: Record<KpiId, string> = {
-  turnoverIncl: 'Turnover (incl)',
-  turnoverExcl: 'Turnover (excl)',
+  turnoverIncl: 'Turnover',
   grossProfit: 'Gross profit',
   saleCount: 'Sales',
   avgSaleValue: 'Average sale',
-  avgItemsPerSale: 'Items per sale',
 }
 
-// THREE columns per tile, not two.
+// All four KPIs on ONE row — a quarter of the grid each.
 //
-// Six 2-column tiles fit the 12-column grid exactly and looked tidy in the
-// abstract — but South African money is long ("R2 658 421.55" is 13
-// characters) and at that width every headline figure truncated to "R2 658 …".
-// A dashboard whose whole job is showing numbers must not hide them.
-//
-// At w:3 the twelve columns take FOUR tiles per row, so the six wrap 4 + 2.
-// The two on the second row sit beside the tender chart rather than leaving a
-// gap — see the layout below, which starts that chart on the second KPI row.
-const KPI_W = 3
+// The history matters here. Six tiles at a twelfth each truncated every money
+// figure to "R2 658 …", so they were widened to a quarter and wrapped 4 + 2.
+// Pairing turnover incl/excl took that to five on one row at a fifth each,
+// which fitted but left the tiles tight (~246px at 1600, ~200px at 1366).
+// Pairing sales with items-per-sale takes it to four, and a quarter of sixty
+// columns puts them back to roughly 310px at 1600 — comfortably clear of the
+// width that caused the original truncation.
+const KPI_PER_ROW = 4
+const KPI_W = GRID_COLS / KPI_PER_ROW
 const KPI_H = 3
-
-/** How many fit across the 12-column grid. */
-const KPI_PER_ROW = Math.floor(12 / KPI_W)
 
 const KPI_WIDGETS: WidgetDef[] = KPI_IDS.map((id, i) => ({
   id,
@@ -90,12 +93,17 @@ const KPI_ROWS_H = Math.ceil(KPI_IDS.length / KPI_PER_ROW) * KPI_H
 /**
  * Where the rest of the dashboard starts.
  *
- * The tender chart sits alongside the second KPI row but is taller than it, so
- * this clears whichever of the two reaches further down — otherwise the next
- * widget overlaps the chart.
+ * The tiles fill their row exactly, so nothing sits beside them and this is
+ * simply the bottom of that one row.
  */
-const TENDER_BOTTOM = KPI_H + 6
-const KPI_BLOCK_H = Math.max(KPI_ROWS_H, TENDER_BOTTOM)
+const KPI_BLOCK_H = KPI_ROWS_H
+
+/* Named fractions of the grid, so a layout reads as "half" rather than as a
+   number whose meaning depends on GRID_COLS. All exact at sixty columns. */
+const HALF = GRID_COLS / 2
+const THIRD = GRID_COLS / 3
+const TWO_THIRDS = THIRD * 2
+const QUARTER = GRID_COLS / 4
 
 /**
  * The curated default layout — what a new user sees and what "Reset layout"
@@ -104,41 +112,40 @@ const KPI_BLOCK_H = Math.max(KPI_ROWS_H, TENDER_BOTTOM)
 export const WIDGETS: WidgetDef[] = [
   ...KPI_WIDGETS,
   {
-    // Sits in the gap the second KPI row leaves — six tiles across four
-    // columns fill 4 + 2, so the last six columns of that row are free.
-    //
-    // SIX rows tall, not three. At three (the KPI height) the card is ~140px,
-    // and after its header and padding the donut had ~60px to draw in — so it
-    // rendered nothing at all while its legend and total showed fine. A donut
-    // squeezed into 60px would be unreadable anyway; minH enforces the floor.
-    id: 'tenderTypes',
-    title: 'Tender mix',
-    default: { x: 6, y: KPI_H, w: 6, h: 6, minW: 4, minH: 6 },
-  },
-  {
     id: 'perDay',
     title: 'Turnover per day',
-    default: { x: 0, y: KPI_BLOCK_H, w: 12, h: 7, minW: 4, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H, w: TWO_THIRDS, h: 7, minW: QUARTER, minH: 5 },
+  },
+  {
+    // Shares the row with the turnover chart, taking the last third.
+    //
+    // SEVEN rows tall to match it. Its old height was six, and three (the KPI
+    // height) is the cautionary tale: the card was ~140px, leaving the donut
+    // ~60px to draw in, so it rendered nothing at all while its legend and
+    // total showed fine. minH keeps that floor.
+    id: 'tenderTypes',
+    title: 'Tender mix',
+    default: { x: TWO_THIRDS, y: KPI_BLOCK_H, w: THIRD, h: 7, minW: QUARTER, minH: 6 },
   },
   {
     id: 'perHour',
     title: 'Sales per hour',
-    default: { x: 0, y: KPI_BLOCK_H + 7, w: 12, h: 6, minW: 4, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 7, w: GRID_COLS, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     id: 'topProducts',
     title: 'Top products',
-    default: { x: 0, y: KPI_BLOCK_H + 13, w: 6, h: 8, minW: 4, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 13, w: HALF, h: 8, minW: QUARTER, minH: 5 },
   },
   {
     id: 'topDepartments',
     title: 'Top departments',
-    default: { x: 6, y: KPI_BLOCK_H + 13, w: 6, h: 8, minW: 4, minH: 5 },
+    default: { x: HALF, y: KPI_BLOCK_H + 13, w: HALF, h: 8, minW: QUARTER, minH: 5 },
   },
   {
     id: 'topCashiers',
     title: 'Top cashiers',
-    default: { x: 0, y: KPI_BLOCK_H + 21, w: 12, h: 7, minW: 4, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 21, w: GRID_COLS, h: 7, minW: QUARTER, minH: 5 },
   },
 ]
 
@@ -151,8 +158,14 @@ export const ALL_WIDGET_IDS: WidgetId[] = WIDGETS.map((w) => w.id)
  */
 /* v2: KPI tiles went from 2 columns to 3, because at 2 every money figure
    truncated. A saved v1 layout would pin an existing user to the broken
-   width for ever. */
-export const STORAGE_KEY = 'odyssey-sales-dashboard-v2'
+   width for ever.
+   v3: figures paired onto shared tiles — turnover carries its excl reading,
+   sales carries items-per-sale — leaving four KPIs on one row, and the grid
+   went from 12 columns to 60 so halves, thirds, quarters and fifths are all
+   whole numbers. Every saved x/w is in the OLD twelfths, so a v2 layout read
+   against a 60-column grid would squeeze the whole dashboard into its left
+   fifth. */
+export const STORAGE_KEY = 'odyssey-sales-dashboard-v3'
 
 export type DashboardPrefs = {
   layout: LayoutItem[]

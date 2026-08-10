@@ -28,6 +28,7 @@ export function DateRangeField({
   /** ISO yyyy-mm-dd strings, matching what <input type="date"> reads and writes. */
   value: DateRange
   onChange: (next: DateRange) => void
+  /** Pass '' where the surrounding toolbar already says what the range is for. */
   label?: string
   className?: string
 }) {
@@ -37,8 +38,11 @@ export function DateRangeField({
   return (
     <div className={`flex items-end gap-2 ${className}`}>
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={fromId} className="text-[13px] text-muted">
-          {label}
+        <label
+          htmlFor={fromId}
+          className={label ? 'text-[13px] text-muted' : 'sr-only'}
+        >
+          {label || 'Date from'}
         </label>
         <input
           id={fromId}
@@ -54,7 +58,7 @@ export function DateRangeField({
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor={toId} className="sr-only">
-          {label} end
+          {label ? `${label} end` : 'Date to'}
         </label>
         <input
           id={toId}

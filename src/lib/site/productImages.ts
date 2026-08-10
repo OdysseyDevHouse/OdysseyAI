@@ -279,7 +279,89 @@ export async function storedNamesFor(siteId: number, productId: number): Promise
     `SELECT stored_name FROM product_images WHERE product_id = ?`,
     [productId],
   )
-  return rows.map((r) => String(r.stored_name))
+  const names = rows.map((r) => String(r.stored_name))
+
+  /* The till icon too. It is NOT a product_images row — see the icon section below —
+     so a caller unlinking a deleted product's files would leave it on disk forever
+     with nothing left in the database to name it. */
+  const icon = await currentIcon(siteId, productId)
+  if (icon && !names.includes(icon)) names.push(icon)
+
+  return names
+}
+
+/* ── The till icon ───────────────────────────────────────────────────────────
+ *
+ * One picture on one button, stored as a name on the product itself
+ * (`products.image_icon`) rather than as a `product_images` row.
+ *
+ * That is not an inconsistency. A photograph is merchandising: several per product,
+ * ordered, with alt text, shown to shoppers. The icon is a single styled glyph on a
+ * till key — there is exactly one, it has no order and no alt text, and it must not
+ * appear in the online store as though it were a product photo. Modelling it as a row
+ * in the photographs table would put it in every gallery that reads them.
+ */
+
+/** The stored file name of a product's till icon, or null. */
+export async function currentIcon(siteId: number, productId: number): Promise<string | null> {
+  const row = await siteQueryOne<Row>(siteId, `SELECT image_icon FROM products WHERE id = ?`, [
+    productId,
+  ])
+  const name = row?.image_icon
+  return name ? String(name) : null
+}
+
+/**
+ * Replaces a product's till icon.
+ *
+ * The previous file is unlinked only AFTER the new name is committed. The other order
+ * loses the old icon if the update fails, leaving a product pointing at a file that is
+ * no longer there — and a broken till button is worse than a stale one.
+ *
+ * The bytes go through `storeImageUpload`, so magic-byte verification happens before
+ * anything reaches the column. That is what lets the serving route derive its
+ * Content-Type from the bytes in hand and never disagree with what is stored.
+ */
+export async function setIcon(
+  siteId: number,
+  productId: number,
+  file: File,
+): Promise<{ ok: true; storedName: string } | { ok: false; error: string }> {
+  const previous = await currentIcon(siteId, productId)
+
+  const stored = await storeImageUpload(file)
+  if (!stored.ok) return stored
+
+  try {
+    await siteExecute(siteId, `UPDATE products SET image_icon = ? WHERE id = ?`, [
+      stored.file.storedName,
+      productId,
+    ])
+  } catch (error) {
+    // Nothing was committed, so the new file is litter. Remove it rather than
+    // leaving an orphan nothing will ever reference.
+    await deleteStoredFile(stored.file.storedName)
+    throw error
+  }
+
+  // Committed. Now the old one is safe to unlink — and a failure here costs an
+  // orphaned file rather than a broken button, so it must not fail the save.
+  if (previous && previous !== stored.file.storedName) {
+    await deleteStoredFile(previous).catch(() => {})
+  }
+
+  return { ok: true, storedName: stored.file.storedName }
+}
+
+/** Removes a product's till icon, and its file. */
+export async function clearIcon(siteId: number, productId: number): Promise<SaveResult> {
+  const previous = await currentIcon(siteId, productId)
+  if (!previous) return { ok: true }
+
+  await siteExecute(siteId, `UPDATE products SET image_icon = NULL WHERE id = ?`, [productId])
+  // Same order as above: the row first, the file second.
+  await deleteStoredFile(previous).catch(() => {})
+  return { ok: true }
 }
 
 /**

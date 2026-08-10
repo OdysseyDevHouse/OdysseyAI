@@ -174,7 +174,10 @@ export interface CatalogSource {
  * 2026-06-10T22:00Z). Formatting server-side keeps the label exactly what the
  * database grouped by.
  */
-function timeBuckets(dateCol: string, opts: { hours?: boolean } = {}): CatalogField[] {
+function timeBuckets(
+  dateCol: string,
+  opts: { hours?: boolean; hourColumn?: string } = {},
+): CatalogField[] {
   const d = `t.\`${dateCol}\``
   const g = FIELD_GROUPS.TIME
   const out: CatalogField[] = [
@@ -192,12 +195,18 @@ function timeBuckets(dateCol: string, opts: { hours?: boolean } = {}): CatalogFi
     { key: 'year', label: 'Year', type: 'text', expr: `DATE_FORMAT(${d}, '%Y')`, group: g },
     { key: 'weekday', label: 'Day of week', type: 'text', expr: `DAYNAME(${d})`, group: g },
   ]
-  if (opts.hours) {
+  // The hour has to come from a DATETIME, and the column a source is dated by
+  // is often a plain DATE — a sales document is filed against a trading day,
+  // not a timestamp. `hourCol` lets such a source still offer a real hour by
+  // naming the timestamp that carries one.
+  const hourCol = opts.hourColumn ?? (opts.hours ? dateCol : null)
+  if (hourCol) {
+    const h = `t.\`${hourCol}\``
     out.push({
       key: 'hour',
       label: 'Hour of day',
       type: 'text',
-      expr: `LPAD(HOUR(${d}), 2, '0')`,
+      expr: `LPAD(HOUR(${h}), 2, '0')`,
       group: g,
       hint: 'The hour the transaction was captured, 00–23.',
     })
@@ -260,6 +269,13 @@ const PRODUCT_BRAND_JOIN: JoinUnit = {
   name: 'productBrand',
   sql: 'LEFT JOIN brands pb ON pb.id = pm.brand_id',
 }
+/** Reorder levels for the looked-up product — see the `levels` join on products. */
+const PRODUCT_LEVELS_JOIN: JoinUnit = {
+  name: 'productLevels',
+  sql:
+    'LEFT JOIN product_location_stock plm ON plm.product_id = pm.id ' +
+    'AND plm.location_id = (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1)',
+}
 /** The department recorded ON the line — the snapshot, not today's filing. */
 const LINE_DEPT_JOIN: JoinUnit = {
   name: 'lineDept',
@@ -287,20 +303,20 @@ const PRODUCT_LOOKUP_FIELDS: CatalogField[] = [
     key: 'currentMinStock',
     label: 'Minimum level now',
     type: 'number',
-    expr: 'pm.min_stock',
+    expr: 'plm.min_stock',
     numeric: true,
     noTotal: true,
-    needs: ['product'],
+    needs: ['product', 'productLevels'],
     group: FIELD_GROUPS.PRODUCT,
   },
   {
     key: 'currentShortfall',
     label: 'Short of minimum now',
     type: 'number',
-    expr: '(pm.min_stock - pm.stock_on_hand)',
+    expr: '(COALESCE(plm.min_stock, 0) - pm.stock_on_hand)',
     numeric: true,
     noTotal: true,
-    needs: ['product'],
+    needs: ['product', 'productLevels'],
     group: FIELD_GROUPS.PRODUCT,
     hint: 'Positive means the product is below its minimum level right now.',
   },
@@ -570,9 +586,12 @@ const SALES_SOURCE: CatalogSource = {
     },
     {
       key: 'voidReason',
-      label: 'Void reason',
+      // 029 renamed the column to cancel_reason and 022 the status value to
+      // cancelled. The field KEY is left alone: it is stored in saved reports
+      // and schedules, and renaming it would break them for a label change.
+      label: 'Cancel reason',
       type: 'text',
-      expr: 't.void_reason',
+      expr: 't.cancel_reason',
       group: FIELD_GROUPS.OTHER,
     },
     {
@@ -584,7 +603,9 @@ const SALES_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.OTHER,
     },
     ...CUSTOMER_LOOKUP_FIELDS,
-    ...timeBuckets('document_date'),
+    // document_date is a DATE, so "trading by hour" has to read the timestamp
+    // the sale was actually finalised at.
+    ...timeBuckets('document_date', { hourColumn: 'finalised_at' }),
   ],
 }
 
@@ -606,6 +627,7 @@ const SALE_LINES_SOURCE: CatalogSource = {
     PRODUCT_JOIN,
     PRODUCT_DEPT_JOIN,
     PRODUCT_BRAND_JOIN,
+    PRODUCT_LEVELS_JOIN,
     LINE_DEPT_JOIN,
     { name: 'customer', sql: 'LEFT JOIN customers c ON c.id = d.customer_id' },
     CUSTOMER_GROUP_JOIN,
@@ -948,6 +970,15 @@ const PRODUCTS_SOURCE: CatalogSource = {
     { name: 'dept', sql: 'LEFT JOIN departments pd ON pd.id = t.department_id' },
     { name: 'brand', sql: 'LEFT JOIN brands pbr ON pbr.id = t.brand_id' },
     {
+      // Levels moved off `products` in 028 — they belong to a pile of stock, not
+      // to the catalogue entry. The main location is the one a site that never
+      // opened the locations screen still has, so it is what "the" level means.
+      name: 'levels',
+      sql:
+        'LEFT JOIN product_location_stock pl ON pl.product_id = t.id ' +
+        'AND pl.location_id = (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1)',
+    },
+    {
       name: 'price',
       sql:
         'LEFT JOIN product_prices ppr ON ppr.product_id = t.id ' +
@@ -988,14 +1019,31 @@ const PRODUCTS_SOURCE: CatalogSource = {
       starter: true,
       group: FIELD_GROUPS.QUANTITIES,
     },
-    { key: 'minStock', label: 'Minimum level', type: 'number', expr: 't.min_stock', numeric: true, group: FIELD_GROUPS.QUANTITIES },
-    { key: 'maxStock', label: 'Maximum level', type: 'number', expr: 't.max_stock', numeric: true, group: FIELD_GROUPS.QUANTITIES },
+    {
+      key: 'minStock',
+      label: 'Minimum level',
+      type: 'number',
+      expr: 'pl.min_stock',
+      numeric: true,
+      needs: ['levels'],
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'maxStock',
+      label: 'Maximum level',
+      type: 'number',
+      expr: 'pl.max_stock',
+      numeric: true,
+      needs: ['levels'],
+      group: FIELD_GROUPS.QUANTITIES,
+    },
     {
       key: 'shortfall',
       label: 'Short of minimum',
       type: 'number',
-      expr: '(t.min_stock - t.stock_on_hand)',
+      expr: '(COALESCE(pl.min_stock, 0) - t.stock_on_hand)',
       numeric: true,
+      needs: ['levels'],
       group: FIELD_GROUPS.QUANTITIES,
       hint: 'Positive means the product is below its minimum level.',
     },
@@ -1080,7 +1128,7 @@ const STOCK_MOVEMENTS_SOURCE: CatalogSource = {
   shape: 'timeline',
   table: 'stock_movements',
   dateColumn: 'created_at',
-  joins: [PRODUCT_JOIN, PRODUCT_DEPT_JOIN, PRODUCT_BRAND_JOIN],
+  joins: [PRODUCT_JOIN, PRODUCT_DEPT_JOIN, PRODUCT_BRAND_JOIN, PRODUCT_LEVELS_JOIN],
   fields: [
     {
       key: 'movementType',
@@ -1386,6 +1434,7 @@ const PURCHASE_LINES_SOURCE: CatalogSource = {
     PRODUCT_JOIN,
     PRODUCT_DEPT_JOIN,
     PRODUCT_BRAND_JOIN,
+    PRODUCT_LEVELS_JOIN,
     LINE_DEPT_JOIN,
   ],
   defaultFilters: [{ field: 'status', op: 'eq', value: 'finalised' }],
@@ -1544,8 +1593,20 @@ const ACTIVITY_SOURCE: CatalogSource = {
   dateColumn: 'created_at',
   fields: [
     { key: 'action', label: 'Action', type: 'text', expr: 't.action', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
-    { key: 'entityType', label: 'Record type', type: 'text', expr: 't.entity_type', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
-    { key: 'entityLabel', label: 'Record', type: 'text', expr: 't.entity_label', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'entityType', label: 'Record type', type: 'text', expr: 't.entity', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
+    {
+      key: 'entityLabel',
+      label: 'Record',
+      type: 'text',
+      // The log stores what was acted on as entity + entity_id and never the
+      // record's name — deliberately, so a line survives the record being
+      // deleted. There is nothing to join to (the entity names a different
+      // table per row), so the reference is shown as written.
+      expr: "CONCAT(t.entity, COALESCE(CONCAT(' #', t.entity_id), ''))",
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The record the entry is against, as type and id — the log stores no name.',
+    },
     { key: 'userName', label: 'By', type: 'text', expr: 't.user_name', starter: true, group: FIELD_GROUPS.PEOPLE },
     { key: 'detail', label: 'Detail', type: 'text', expr: 't.detail', group: FIELD_GROUPS.OTHER },
     { key: 'createdAt', label: 'When', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },

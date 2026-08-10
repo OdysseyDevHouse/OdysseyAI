@@ -59,7 +59,7 @@
     },
     {
       "route": "/accounting/journals/[id]",
-      "url": "/accounting/journals/1044",
+      "url": "/accounting/journals/2648",
       "state": "pass"
     },
     {
@@ -159,12 +159,12 @@
     },
     {
       "route": "/customers/[id]",
-      "url": "/customers/11887",
+      "url": "/customers/13170",
       "state": "pass"
     },
     {
       "route": "/customers/[id]/statement",
-      "url": "/customers/11887/statement",
+      "url": "/customers/13170/statement",
       "state": "pass"
     },
     {
@@ -293,6 +293,11 @@
       "state": "pass"
     },
     {
+      "route": "/online-store/products",
+      "url": "/online-store/products",
+      "state": "pass"
+    },
+    {
       "route": "/online-store/reviews",
       "url": "/online-store/reviews",
       "state": "pass"
@@ -308,13 +313,23 @@
       "state": "pass"
     },
     {
+      "route": "/pos",
+      "url": "/pos",
+      "state": "pass"
+    },
+    {
+      "route": "/pos-unlock",
+      "url": "/pos-unlock",
+      "state": "pass"
+    },
+    {
       "route": "/products",
       "url": "/products",
       "state": "pass"
     },
     {
       "route": "/products/[id]",
-      "url": "/products/42685",
+      "url": "/products/43701",
       "state": "pass"
     },
     {
@@ -329,12 +344,12 @@
     },
     {
       "route": "/purchasing/[id]",
-      "url": "/purchasing/5207",
+      "url": "/purchasing/5493",
       "state": "pass"
     },
     {
       "route": "/purchasing/[id]/return",
-      "url": "/purchasing/5207/return",
+      "url": "/purchasing/5493/return",
       "state": "pass"
     },
     {
@@ -374,12 +389,12 @@
     },
     {
       "route": "/sales/[id]",
-      "url": "/sales/107642",
+      "url": "/sales/110292",
       "state": "pass"
     },
     {
       "route": "/sales/[id]/credit",
-      "url": "/sales/107642/credit",
+      "url": "/sales/110292/credit",
       "state": "pass"
     },
     {
@@ -414,7 +429,7 @@
     },
     {
       "route": "/sales/invoicing/[id]",
-      "url": "/sales/invoicing/107642",
+      "url": "/sales/invoicing/110292",
       "state": "pass"
     },
     {
@@ -435,6 +450,11 @@
     {
       "route": "/sales/new",
       "url": "/sales/new",
+      "state": "pass"
+    },
+    {
+      "route": "/sales/offline",
+      "url": "/sales/offline",
       "state": "pass"
     },
     {
@@ -579,12 +599,12 @@
     },
     {
       "route": "/suppliers/[id]",
-      "url": "/suppliers/913",
+      "url": "/suppliers/1227",
       "state": "pass"
     },
     {
       "route": "/suppliers/[id]/statement",
-      "url": "/suppliers/913/statement",
+      "url": "/suppliers/1227/statement",
       "state": "pass"
     },
     {

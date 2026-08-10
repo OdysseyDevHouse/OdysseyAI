@@ -31,15 +31,68 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
+/**
+ * Free till numbers for scratch terminals. See the note in test-cashup.ts for why a
+ * scratch till must have one at all.
+ *
+ * Queried, not fixed, so this and test-cashup cannot collide even if they run together —
+ * and so a terminal left behind by a crashed run (one holding a real document, which must
+ * not be swept) does not fail the INSERT.
+ */
+async function freeTillNumbers(count: number): Promise<string[]> {
+  const rows = await siteQuery<any>(
+    SITE,
+    'SELECT till_number FROM terminals WHERE till_number IS NOT NULL',
+  )
+  const taken = new Set(rows.map((r: any) => String(r.till_number)))
+  const free: string[] = []
+  // Down from 99, so a scratch till never takes a number a real shop would want.
+  for (let n = 99; n >= 50 && free.length < count; n--) {
+    if (!taken.has(String(n))) free.push(String(n))
+  }
+  if (free.length < count) {
+    throw new Error('Not enough free till numbers in 50..99 — sweep the scratch terminals.')
+  }
+  return free
+}
+
 async function main() {
   const stamp = Date.now().toString().slice(-8)
+
+  /* Sweep what an earlier crashed run left, so the unique till number is free. Only
+     terminals with no documents — one holding a real sale must not be deleted. */
+  const orphans = await siteQuery<any>(
+    SITE,
+    `SELECT id FROM terminals
+      WHERE (code LIKE 'MA%' OR code LIKE 'MB%')
+        AND (SELECT COUNT(*) FROM sales_documents d WHERE d.terminal_id = terminals.id) = 0`,
+  )
+  for (const o of orphans) {
+    await siteExecute(SITE, 'DELETE FROM shifts WHERE terminal_id = ?', [o.id]).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM document_sequences WHERE terminal_id = ?', [o.id]).catch(
+      () => null,
+    )
+    await siteExecute(SITE, 'DELETE FROM terminals WHERE id = ?', [o.id]).catch(() => null)
+  }
+
   const vat = await siteQueryOne<any>(SITE, "SELECT id, rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1")
   const rate = toNum(vat?.rate, 15)
 
-  const t1 = await siteExecute(SITE, 'INSERT INTO terminals (code, name) VALUES (?,?)', [`MA${stamp}`.slice(0, 24), 'Mode test till 1'])
-  const t2 = await siteExecute(SITE, 'INSERT INTO terminals (code, name) VALUES (?,?)', [`MB${stamp}`.slice(0, 24), 'Mode test till 2'])
+  const [no1, no2] = await freeTillNumbers(2)
+  const t1 = await siteExecute(SITE, 'INSERT INTO terminals (code, name, till_number) VALUES (?,?,?)', [`MA${stamp}`.slice(0, 24), 'Mode test till 1', no1])
+  const t2 = await siteExecute(SITE, 'INSERT INTO terminals (code, name, till_number) VALUES (?,?,?)', [`MB${stamp}`.slice(0, 24), 'Mode test till 2', no2])
   const till1 = t1.insertId
   const till2 = t2.insertId
+  /* A sequence each — see the note in test-cashup.ts. */
+  for (const id of [till1, till2]) {
+    await siteExecute(
+      SITE,
+      `INSERT INTO document_sequences (terminal_id, doc_type, prefix, next_number, padding)
+       VALUES (?, 'invoice', 'INV', 1, 6)
+       ON DUPLICATE KEY UPDATE doc_type = doc_type`,
+      [id],
+    )
+  }
 
   const prod = await siteExecute(SITE,
     `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)

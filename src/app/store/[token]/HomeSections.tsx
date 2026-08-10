@@ -280,22 +280,7 @@ function sectionBody(
 
     return (
       <section key={section.id}>
-        {href ? (
-          <Link
-            href={href}
-            className="relative block overflow-hidden rounded-card"
-            style={{ aspectRatio: '16 / 6' }}
-          >
-            {picture}
-          </Link>
-        ) : (
-          <div
-            className="relative block overflow-hidden rounded-card"
-            style={{ aspectRatio: '16 / 6' }}
-          >
-            {picture}
-          </div>
-        )}
+        <BannerFrame href={href}>{picture}</BannerFrame>
       </section>
     )
   }
@@ -354,6 +339,40 @@ function sectionBody(
   }
 
   return null
+}
+
+/**
+ * The box a banner picture sits in — a link when it has somewhere to go, a plain div
+ * when it does not.
+ *
+ * Exported because the carousel draws a single slide as a plain banner, and it has to be
+ * the SAME box: two copies of "a banner is 16:6, clipped and rounded" would drift, and a
+ * shop whose one-slide carousel is a slightly different shape from its banner section
+ * looks like a rendering fault rather than a design.
+ *
+ * ── WHY THE ASPECT RATIO IS AN INLINE STYLE ───────────────────────────────
+ *
+ * 16:6 is not one of Tailwind's ratios and this is a storefront, not the back office —
+ * it is the one place in the app that renders on a shopper's phone, so the crop is a
+ * design decision rather than a token. `aspect-[16/6]` would work too; the style keeps
+ * the number readable next to the reason for it.
+ *
+ * The ratio is what stops the page jumping as the picture loads: the box has its final
+ * height before any bytes arrive.
+ */
+export function BannerFrame({ href, children }: { href: string; children: ReactNode }) {
+  const className = 'relative block overflow-hidden rounded-card'
+  const style = { aspectRatio: '16 / 6' }
+
+  return href ? (
+    <Link href={href} className={className} style={style}>
+      {children}
+    </Link>
+  ) : (
+    <div className={className} style={style}>
+      {children}
+    </div>
+  )
 }
 
 function SectionHeading({ children }: { children: ReactNode }) {

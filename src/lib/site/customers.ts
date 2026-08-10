@@ -8,6 +8,7 @@ import {
   DEFAULT_ACCOUNT_TYPE,
   type AccountType,
 } from '../accountTypes'
+import { toStatementCycle, type StatementCycle } from '../statementCycles'
 import { isEmail } from './customerLookups'
 import { resolveMasterCode } from './masterCodes'
 import { logActivityTx, type Actor } from './activityLog'
@@ -60,6 +61,21 @@ export type Customer = {
   /** Explicit opt-in, separate from the rate — see interestRules.ts on the NCA. */
   interestEnabled: boolean
   interestGraceDays: number
+  /**
+   * How often this account is statemented, and from when.
+   *
+   * The cycle decides two things a statement cannot work out for itself: which period
+   * "this statement" covers, and how wide each rung of the age ladder is. A weekly
+   * account is not a monthly one read more often — thirty days late is four cycles gone
+   * rather than one, and `bucketFor` takes the width for exactly that reason.
+   *
+   * `statementAnchorDate` pins where a 7- or 14-day cycle starts counting from;
+   * `statementAnchorDay` is the day-of-month a monthly one closes on. Both are
+   * meaningless for the other cycle and are left at their defaults there.
+   */
+  statementCycle: StatementCycle
+  statementAnchorDay: number
+  statementAnchorDate: string | null
   notes: string | null
   createdAt: Date
   updatedAt: Date
@@ -106,6 +122,14 @@ function mapCustomer(r: Row): Customer {
     interestRatePct: toNum(r.interest_rate_pct),
     interestEnabled: Boolean(r.interest_enabled),
     interestGraceDays: Number(r.interest_grace_days ?? 0),
+    // Narrowed rather than cast: the column is an ENUM, but a row written before 065
+    // ran holds NULL, and `toStatementCycle` answers 'monthly' for anything it does not
+    // recognise — which is the right default and the one the settings default matches.
+    statementCycle: toStatementCycle(r.statement_cycle),
+    statementAnchorDay: Number(r.statement_anchor_day ?? 0),
+    statementAnchorDate: r.statement_anchor_date
+      ? String(r.statement_anchor_date).slice(0, 10)
+      : null,
     notes: (r.notes as string | null) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
@@ -123,6 +147,7 @@ const SELECT_CUSTOMER = `
          c.group_id, c.rep_id, c.category, c.payment_terms_days,
          c.credit_limit, c.balance,
          c.interest_rate_pct, c.interest_enabled, c.interest_grace_days,
+         c.statement_cycle, c.statement_anchor_day, c.statement_anchor_date,
          c.notes, c.created_at, c.updated_at,
          g.name AS group_name,
          r.name AS rep_name
@@ -292,6 +317,10 @@ export type CustomerInput = {
   /** Explicit opt-in — see the NCA note in interestRules.ts. */
   interestEnabled?: boolean
   interestGraceDays?: number
+  /** See the note on `Customer.statementCycle`. Defaults to monthly. */
+  statementCycle?: StatementCycle
+  statementAnchorDay?: number
+  statementAnchorDate?: string | null
   notes?: string | null
 }
 
@@ -351,6 +380,13 @@ function writableColumns(input: CustomerInput): unknown[] {
     (input.interestRatePct ?? 0).toFixed(4),
     input.interestEnabled ?? false,
     input.interestGraceDays ?? 0,
+    input.statementCycle ?? 'monthly',
+    input.statementAnchorDay ?? 0,
+    // Only a 7- or 14-day cycle anchors to a DATE. Storing one against a monthly
+    // account would be a value nothing reads and everything has to explain.
+    input.statementCycle && input.statementCycle !== 'monthly'
+      ? (input.statementAnchorDate ?? null)
+      : null,
     input.notes?.trim() || null,
   ]
 }
@@ -359,7 +395,8 @@ function writableColumns(input: CustomerInput): unknown[] {
 const COLUMN_LIST = `code, name, status, status_reason, account_type, contact_name, email, phone,
                      address_line1, address_line2, city, postal_code, vat_number, loyalty_number,
                      group_id, rep_id, category, payment_terms_days, credit_limit,
-                     interest_rate_pct, interest_enabled, interest_grace_days, notes`
+                     interest_rate_pct, interest_enabled, interest_grace_days,
+                     statement_cycle, statement_anchor_day, statement_anchor_date, notes`
 
 export async function createCustomer(
   siteId: number,
@@ -425,15 +462,23 @@ export async function updateCustomer(
     // balance is absent from this list on purpose: it moves only through
     // posted transactions. Adding it here would let a form edit falsify what
     // the customer owes.
+    /*
+     * The SET list is derived from COLUMN_LIST rather than written out again.
+     *
+     * It used to be a hand-kept copy, and that is exactly how this broke: adding the
+     * statement-cycle columns to COLUMN_LIST and `writableColumns` left this UPDATE
+     * with three fewer placeholders than values, which MySQL reports as "Malformed
+     * communication packet" — an error that says nothing about the real cause and sent
+     * me looking at the driver.
+     *
+     * Derived, the two cannot disagree. `balance` is still absent for the reason below,
+     * because it is absent from COLUMN_LIST too.
+     */
     await tx.execute(
       `UPDATE customers SET
-         code = ?, name = ?, status = ?, status_reason = ?, account_type = ?,
-         contact_name = ?, email = ?, phone = ?, address_line1 = ?, address_line2 = ?,
-         city = ?, postal_code = ?, vat_number = ?, loyalty_number = ?,
-         group_id = ?, rep_id = ?, category = ?, payment_terms_days = ?,
-         credit_limit = ?,
-         interest_rate_pct = ?, interest_enabled = ?, interest_grace_days = ?,
-         notes = ?
+         ${COLUMN_LIST.split(',')
+           .map((column) => `${column.trim()} = ?`)
+           .join(', ')}
        WHERE id = ?`,
       [...writableColumns(input), id] as never,
     )

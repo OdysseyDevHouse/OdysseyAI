@@ -29,15 +29,66 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
+/**
+ * The lowest till number nobody is using, for a scratch terminal.
+ *
+ * Per-till numbering refuses to number a sale from a till with no number — deliberately,
+ * since a silent fallback would hide that till's invoice in the middle of the site-wide
+ * run. So a scratch till needs one.
+ *
+ * QUERIED rather than hardcoded. `till_number` is UNIQUE, and a fixed value fails at the
+ * INSERT the moment any earlier run leaves one behind — including a run whose terminal
+ * cannot be swept because it issued a real document. That failure looks like a broken
+ * schema and is really just litter.
+ *
+ * Counts DOWN from 99 so a test till never takes a number a real one would want.
+ */
+async function freeTillNumber(): Promise<string> {
+  const rows = await siteQuery<any>(SITE, 'SELECT till_number FROM terminals WHERE till_number IS NOT NULL')
+  const taken = new Set(rows.map((r: any) => String(r.till_number)))
+  for (let n = 99; n >= 50; n--) {
+    const candidate = String(n)
+    if (!taken.has(candidate)) return candidate
+  }
+  throw new Error('No free till number in 50..99 — sweep the scratch terminals.')
+}
+
 async function main() {
   const stamp = Date.now().toString().slice(-8)
   const today = new Date().toISOString().slice(0, 10)
+
+  /* Sweep terminals an earlier crashed run left behind, so the unique till number is
+     free. Only ones with no documents — a scratch till that somehow issued a sale is
+     holding a real row, and deleting it would orphan that sale. */
+  const orphans = await siteQuery<any>(
+    SITE,
+    `SELECT id FROM terminals
+      WHERE code LIKE 'CU%'
+        AND (SELECT COUNT(*) FROM sales_documents d WHERE d.terminal_id = terminals.id) = 0`,
+  )
+  for (const o of orphans) {
+    await siteExecute(SITE, 'DELETE FROM shifts WHERE terminal_id = ?', [o.id]).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM document_sequences WHERE terminal_id = ?', [o.id]).catch(
+      () => null,
+    )
+    await siteExecute(SITE, 'DELETE FROM terminals WHERE id = ?', [o.id]).catch(() => null)
+  }
   const range = { from: today, to: today }
   const vat = await siteQueryOne<any>(SITE, "SELECT id, rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1")
   const rate = toNum(vat?.rate, 15)
 
-  const term = await siteExecute(SITE, 'INSERT INTO terminals (code, name) VALUES (?,?)', [`CU${stamp}`.slice(0, 24), 'Cash-up test till'])
+  const term = await siteExecute(SITE, 'INSERT INTO terminals (code, name, till_number) VALUES (?,?,?)', [`CU${stamp}`.slice(0, 24), 'Cash-up test till', await freeTillNumber()])
   const terminalId = term.insertId
+  /* Its own invoice sequence. A numbered till with no sequence cannot finalise —
+     nextDocumentNumber refuses rather than silently using the shared run. createTerminal
+     does this for a real till; a raw INSERT has to do it here. */
+  await siteExecute(
+    SITE,
+    `INSERT INTO document_sequences (terminal_id, doc_type, prefix, next_number, padding)
+     VALUES (?, 'invoice', 'INV', 1, 6)
+     ON DUPLICATE KEY UPDATE doc_type = doc_type`,
+    [terminalId],
+  )
   const prod = await siteExecute(SITE,
     `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)
      VALUES (?,?,'service',0,4,4,?,1)`, [`CUP${stamp}`, `Cashup item ${stamp}`, vat?.id ?? null])

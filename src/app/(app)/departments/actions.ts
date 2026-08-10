@@ -7,6 +7,9 @@ import {
   createDepartment,
   updateDepartment,
   deleteDepartment,
+  getDepartment,
+  patchDepartment,
+  reorderDepartments,
   type DepartmentInput,
 } from '@/lib/site/departments'
 
@@ -54,6 +57,120 @@ export async function saveDepartmentAction(
   // Product forms cache their department list.
   revalidatePath('/products')
   redirect('/departments?saved=1')
+}
+
+/**
+ * The inline controls on the list — colour, active switch, drag-to-reorder,
+ * and the quick editor.
+ *
+ * These return a result instead of redirecting: the list patches itself
+ * optimistically and only needs to know whether to keep the change or put it
+ * back. A redirect would throw the whole tree's expand state away on every
+ * switch flip.
+ */
+export type InlineResult = { ok: boolean; error?: string; message?: string }
+
+/** Revalidates everything a department change is visible in. */
+function revalidateDepartments(): void {
+  revalidatePath('/departments')
+  // Product forms and filters cache their department list.
+  revalidatePath('/products')
+}
+
+export async function setDepartmentColorAction(
+  id: number,
+  color: string | null,
+): Promise<InlineResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await patchDepartment(ctx.siteId, id, { color })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidateDepartments()
+  return { ok: true, message: color ? 'Colour set.' : 'Colour cleared.' }
+}
+
+export async function setDepartmentActiveAction(
+  id: number,
+  isActive: boolean,
+): Promise<InlineResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await patchDepartment(ctx.siteId, id, { isActive })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidateDepartments()
+  return { ok: true, message: isActive ? 'Department activated.' : 'Department deactivated.' }
+}
+
+export async function reorderDepartmentsAction(orderedIds: number[]): Promise<InlineResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await reorderDepartments(ctx.siteId, orderedIds)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidateDepartments()
+  return { ok: true, message: 'Order saved.' }
+}
+
+/**
+ * Create or rename from the list's own modal, without leaving the page.
+ *
+ * The full form at /departments/[id] still owns code, sort order and
+ * re-parenting — this covers only what the list itself offers.
+ */
+export async function quickSaveDepartmentAction(input: {
+  id?: number
+  name: string
+  parentId: number | null
+  color: string | null
+}): Promise<InlineResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  let result
+  if (input.id) {
+    // updateDepartment rewrites the whole row, so the fields this modal does
+    // not offer must be carried over from the record as it stands — passing
+    // the defaults would silently blank a code and reset the sort order.
+    const existing = await getDepartment(siteId, input.id)
+    if (!existing) return { ok: false, error: 'Department not found.' }
+
+    result = await updateDepartment(siteId, input.id, {
+      name: input.name,
+      parentId: input.parentId,
+      color: input.color,
+      code: existing.code,
+      sortOrder: existing.sortOrder,
+      isActive: existing.isActive,
+    })
+  } else {
+    result = await createDepartment(siteId, {
+      name: input.name,
+      parentId: input.parentId,
+      color: input.color,
+    })
+  }
+
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidateDepartments()
+  return { ok: true, message: input.id ? 'Department saved.' : 'Department created.' }
+}
+
+export async function deleteDepartmentInlineAction(id: number): Promise<InlineResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteDepartment(ctx.siteId, id)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidateDepartments()
+  return { ok: true, message: 'Department deleted.' }
 }
 
 export async function deleteDepartmentAction(form: FormData): Promise<void> {

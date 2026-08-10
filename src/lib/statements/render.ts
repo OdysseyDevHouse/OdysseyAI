@@ -1,8 +1,21 @@
 import 'server-only'
 import { round } from '../decimals'
 import { getCustomer } from '../site/customers'
-import { listLedger, agingFor } from '../site/customerLedger'
-import { bucketFor, daysBetween, emptyAging, today, type Aging } from '../site/ledger'
+import { listLedger, agingFor, agingAsAt } from '../site/customerLedger'
+import {
+  bucketFor,
+  daysBetween,
+  emptyAging,
+  today,
+  type Aging,
+  type AgingBucket,
+} from '../site/ledger'
+import {
+  periodContaining,
+  cycleBucketLabels,
+  CYCLE_DAYS,
+  type StatementCycle,
+} from '../statementCycles'
 
 /**
  * Turns a customer's ledger into a statement.
@@ -52,6 +65,23 @@ export type StatementData = {
     paymentTermsDays: number
   }
   period: { from: string; to: string }
+  /**
+   * The period as a person names it — "August 2026", "3–9 Aug 2026".
+   *
+   * What a customer recognises as the statement they were sent. Raw dates are a range
+   * they have to translate, and a weekly account gets a lot of them.
+   */
+  periodLabel: string
+  /** How often this account is statemented. Decides the ladder below. */
+  cycle: StatementCycle
+  /**
+   * The age-ladder headings for this cycle.
+   *
+   * Not fixed at 30/60/90/120: a weekly account's first overdue rung is 7 days, and a
+   * column headed "30 days" that actually holds 8-to-14-days-late debt is worse than an
+   * unlabelled one.
+   */
+  bucketLabels: Record<AgingBucket, string>
   openingBalance: number
   closingBalance: number
   lines: StatementLine[]
@@ -88,12 +118,52 @@ export async function buildStatement(
   if (!customer) return null
 
   const format = opts.format ?? 'open-item'
-  const to = opts.to ?? today()
-  const from = opts.from ?? defaultFrom(to)
+
+  /*
+   * The account's own statement cycle decides two things the caller usually should not
+   * have to state: which period "this statement" covers, and how wide each rung of the
+   * age ladder is.
+   *
+   * `fallbackAnchor` is the account's creation date, so a 7- or 14-day cycle with no
+   * anchor set still lands on a stable phase rather than drifting with whatever day the
+   * statement is run on.
+   */
+  const cycleConfig = {
+    cycle: customer.statementCycle,
+    anchorDay: customer.statementAnchorDay,
+    anchorDate: customer.statementAnchorDate,
+    fallbackAnchor: customer.createdAt.toISOString().slice(0, 10),
+  }
+
+  /* An explicit range wins — a manager asking for February means February, whatever the
+     cycle says. With neither end given, the account's CURRENT period is the honest
+     default: for a weekly account, `to - 30 days` would span four statements. */
+  const cyclePeriod = periodContaining(cycleConfig, opts.to ?? today())
+  const explicit = opts.from !== undefined || opts.to !== undefined
+  const to = opts.to ?? (explicit ? today() : cyclePeriod.to)
+  const from = opts.from ?? (explicit ? defaultFrom(to) : cyclePeriod.from)
+
+  const bucketWidth = CYCLE_DAYS[customer.statementCycle]
+
+  /*
+   * A statement of a PAST period reports that period as it stood.
+   *
+   * `agingFor` reads the live `amount_outstanding`, which is right for today and wrong
+   * for February: a January invoice settled in April shows as nothing owing now, so a
+   * February statement built from it would disagree with the one the customer was
+   * actually sent — and would keep changing every time it was reprinted.
+   *
+   * So a period ending today takes the fast path, and any earlier one is reconstructed
+   * from the allocations that existed by then. The distinction is `to < today`, not the
+   * format: an open-item statement of a past period needs it just as much.
+   */
+  const asAt = to < today()
 
   const [all, aging] = await Promise.all([
     listLedger(siteId, customerId, { limit: 2000 }),
-    agingFor(siteId, customerId),
+    asAt
+      ? agingAsAt(siteId, customerId, to, bucketWidth)
+      : agingFor(siteId, customerId, bucketWidth),
   ])
 
   // Everything before the period start is the opening balance, whichever
@@ -107,9 +177,16 @@ export async function buildStatement(
 
   const source =
     format === 'open-item'
-      ? // Open items regardless of when they were raised: a January invoice
-        // still unpaid belongs on today's statement.
-        all.filter((line) => line.amountOutstanding !== 0)
+      ? /*
+         * Open items regardless of when they were raised: a January invoice still unpaid
+         * belongs on today's statement.
+         *
+         * But never one raised AFTER the period. On a current statement that is
+         * impossible, so the filter is invisible; on a February statement it is the
+         * difference between the document the customer was sent and one that mentions a
+         * March invoice they had not yet received.
+         */
+        all.filter((line) => line.amountOutstanding !== 0 && line.docDate <= to)
       : inPeriod
 
   const now = today()
@@ -157,8 +234,34 @@ export async function buildStatement(
       paymentTermsDays: customer.paymentTermsDays,
     },
     period: { from, to },
+    /* Named rather than printed as raw dates. "August 2026" or "3–9 Aug 2026" is what a
+       customer recognises as the statement they were sent; "2026-08-01 to 2026-08-31" is
+       a database range they have to translate. A custom span falls back to the dates,
+       because there is nothing else honest to call it. */
+    periodLabel:
+      from === cyclePeriod.from && to === cyclePeriod.to
+        ? cyclePeriod.label
+        : `${from} to ${to}`,
+    cycle: customer.statementCycle,
+    /* The ladder's headings, from the cycle. A weekly statement reading "30 days" over a
+       column that means "8–14 days late" is worse than no heading at all. */
+    bucketLabels: cycleBucketLabels(customer.statementCycle),
     openingBalance: opening,
-    closingBalance: customer.balance,
+    /*
+     * What the account stood at ON THE PERIOD END, not what it stands at now.
+     *
+     * `customers.balance` is the live figure and is correct for a statement ending today.
+     * For February it is not: it includes every March and April movement, so a February
+     * statement would close at a number that never appeared on any February document.
+     *
+     * Summed from the ledger up to `to` — the same lines the statement lists, so the
+     * running balance on the last line and this figure cannot disagree.
+     */
+    closingBalance: asAt
+      ? all
+          .filter((line) => line.docDate <= to)
+          .reduce((sum, line) => round(sum + line.amountSigned, 2), 0)
+      : customer.balance,
     lines,
     aging,
     dueNow,
@@ -261,6 +364,18 @@ export async function buildSupplierStatement(
       paymentTermsDays: supplier.paymentTermsDays,
     },
     period: { from, to },
+    /*
+     * A SUPPLIER has no statement cycle. That setting lives on a debtor — it decides
+     * when we send a statement out — and a creditor's account is read on whatever span
+     * the person paying them asked for.
+     *
+     * So: the dates as the label, and the familiar 30-day ladder. Naming a supplier
+     * period after a cycle it does not have would be a fiction, and inventing a
+     * per-supplier cycle to fill this field would be a feature nobody asked for.
+     */
+    periodLabel: `${from} to ${to}`,
+    cycle: 'monthly' as const,
+    bucketLabels: cycleBucketLabels('monthly'),
     openingBalance: opening,
     closingBalance: supplier.balance,
     lines,

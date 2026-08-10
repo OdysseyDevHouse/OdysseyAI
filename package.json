@@ -72,6 +72,7 @@
     "test:storefront": "tsx --conditions=react-server --env-file=.env scripts/test-storefront.ts",
     "test:payments": "tsx --conditions=react-server --env-file=.env scripts/test-payments.ts",
     "test:builder": "tsx --conditions=react-server --env-file=.env scripts/test-builder.ts",
+    "test:report-templates": "tsx --conditions=react-server --env-file=.env scripts/test-report-templates.ts",
     "test:product-images": "tsx --conditions=react-server --env-file=.env scripts/test-product-images.ts",
     "test:customer-accounts": "tsx --conditions=react-server --env-file=.env scripts/test-customer-accounts.ts",
     "test:order-statuses": "tsx --conditions=react-server --env-file=.env scripts/test-order-statuses.ts",

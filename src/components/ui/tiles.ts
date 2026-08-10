@@ -23,12 +23,60 @@ export const TILE_SWATCHES: readonly TileSwatch[] = [
 ]
 
 /**
+ * The gradient options, offered beside the flat swatches.
+ *
+ * ── REBUILT, NOT RECOVERED ────────────────────────────────────────────────
+ *
+ * The original definition was lost (see RECOVERY-NOTES.md) and nothing recorded what
+ * it held: `products.image_color` is empty on every site, so no stored row names a
+ * gradient token. These are therefore NEW names, and any till tile that had been
+ * saved under the old ones would fall back to flat `tile-1`. Nothing has, so nothing
+ * is affected — but that is why the names could not simply be guessed and left to
+ * chance.
+ *
+ * Built from the SAME `--color-tile-*` tokens as the flat swatches rather than new
+ * colours, so the two rows read as one palette and restyling still means editing
+ * globals.css alone. Each is a pair, so the gradient is visibly a gradient at 24px in
+ * the picker — two adjacent hues would look like a rendering fault.
+ *
+ * Class strings written out in full, never interpolated: Tailwind scans source text,
+ * so a computed `from-${token}` is not emitted and the swatch renders blank.
+ */
+export const TILE_GRADIENTS: readonly TileSwatch[] = [
+  { token: 'tile-grad-1', className: 'bg-gradient-to-br from-tile-1 to-tile-6' },
+  { token: 'tile-grad-2', className: 'bg-gradient-to-br from-tile-2 to-tile-3' },
+  { token: 'tile-grad-3', className: 'bg-gradient-to-br from-tile-4 to-tile-5' },
+  { token: 'tile-grad-4', className: 'bg-gradient-to-br from-tile-5 to-tile-1' },
+  { token: 'tile-grad-5', className: 'bg-gradient-to-br from-tile-6 to-tile-2' },
+  { token: 'tile-grad-6', className: 'bg-gradient-to-br from-tile-3 to-tile-4' },
+  { token: 'tile-grad-7', className: 'bg-gradient-to-br from-tile-7 to-tile-5' },
+]
+
+/**
+ * "No background at all", as a token rather than an empty string.
+ *
+ * A named value so the picker can show it as pressed and the stored row says what was
+ * MEANT. An empty string cannot: it is indistinguishable from "never chosen", and the
+ * two need different renderings — an unset product falls back to a colour, one
+ * deliberately set to none must stay bare.
+ */
+export const TILE_NONE = { token: 'tile-none', className: 'bg-surface-2' } as const
+
+/**
  * The background class for a stored token.
  *
  * Falls back to the first swatch rather than rendering nothing: rows written
  * before these became tokens still hold a hex string, and a half-painted tile
  * is worse than a differently-coloured one.
+ *
+ * Gradients and the explicit "none" are looked up too — a picker offering options that
+ * render as flat blue is worse than one offering fewer.
  */
 export function tileClass(token: string | null | undefined): string {
-  return TILE_SWATCHES.find((t) => t.token === token)?.className ?? TILE_SWATCHES[0].className
+  if (token === TILE_NONE.token) return TILE_NONE.className
+  return (
+    TILE_SWATCHES.find((t) => t.token === token)?.className ??
+    TILE_GRADIENTS.find((t) => t.token === token)?.className ??
+    TILE_SWATCHES[0].className
+  )
 }

@@ -52,7 +52,14 @@ export { Card, CardHeader, CardBody, CardFooter } from './Card'
 export { SettingRow, SettingGroup } from './SettingRow'
 export { SelectableCard } from './SelectableCard'
 export { SectionTitle } from './SectionTitle'
-export { TILE_SWATCHES, tileClass, type TileSwatch } from './tiles'
+export {
+  TILE_SWATCHES,
+  TILE_GRADIENTS,
+  TILE_NONE,
+  tileClass,
+  type TileSwatch,
+} from './tiles'
+export { SwatchPicker } from './SwatchPicker'
 export { Badge, type BadgeTone } from './Badge'
 export { Callout, type CalloutTone } from './Callout'
 export {
@@ -78,6 +85,7 @@ export {
   TableToolbar,
   SegmentedControl,
   LinkSegmentedControl,
+  LinkSelect,
   ToolbarSearch,
   type SegmentedOption,
 } from './TableToolbar'

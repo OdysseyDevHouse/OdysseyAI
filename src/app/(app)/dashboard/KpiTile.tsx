@@ -24,6 +24,11 @@ type KpiDef = {
   tone: number
   icon: ReactNode
   value: (k: SalesKpis) => ReactNode
+  /**
+   * A second figure shown under the headline, for a number that qualifies it
+   * and is never read apart from it.
+   */
+  note?: (k: SalesKpis) => string
   /** The raw metric behind the comparison delta. */
   metric: (k: SalesKpis) => number
   series: SeriesKey
@@ -32,20 +37,21 @@ type KpiDef = {
 export const KPI_DEFS: KpiDef[] = [
   {
     id: 'turnoverIncl',
-    label: 'Turnover (incl)',
+    label: 'Turnover',
     tone: 0,
     icon: <Icons.Money size={18} />,
+    // Both turnovers on one tile, the same way gross profit carries its margin
+    // below. They are two readings of one number — the gap between them is
+    // just VAT — so side by side they answer "what did we take, and what of
+    // that is ours" at a glance. On separate tiles the pair cost two of six
+    // slots to say almost the same thing, and the reader had to look across
+    // the row to compare them.
+    //
+    // Incl leads because it is the figure a shop owner quotes and the one that
+    // reconciles against the till; excl is the secondary reading.
     value: (k) => money(k.turnoverIncl),
+    note: (k) => `${money(k.turnoverExcl)} excl`,
     metric: (k) => k.turnoverIncl,
-    series: 'turnover',
-  },
-  {
-    id: 'turnoverExcl',
-    label: 'Turnover (excl)',
-    tone: 1,
-    icon: <Icons.Percent size={18} />,
-    value: (k) => money(k.turnoverExcl),
-    metric: (k) => k.turnoverExcl,
     series: 'turnover',
   },
   {
@@ -72,7 +78,15 @@ export const KPI_DEFS: KpiDef[] = [
     label: 'Sales',
     tone: 3,
     icon: <Icons.Receipt size={18} />,
+    // How many baskets, and how full each one was. Both describe the same
+    // transactions from either end, and the second only means anything given
+    // the first — 5.6 items per sale reads very differently across 20 sales
+    // than across 685. Keeping them together is what makes that legible.
+    //
+    // The count leads: it is the harder number, and the average is derived
+    // from it.
     value: (k) => count(k.saleCount),
+    note: (k) => `${decimal(k.avgItemsPerSale)} items each`,
     metric: (k) => k.saleCount,
     series: 'count',
   },
@@ -84,15 +98,6 @@ export const KPI_DEFS: KpiDef[] = [
     value: (k) => money(k.avgSaleValue),
     metric: (k) => k.avgSaleValue,
     series: 'turnover',
-  },
-  {
-    id: 'avgItemsPerSale',
-    label: 'Items per sale',
-    tone: 5,
-    icon: <Icons.Boxes size={18} />,
-    value: (k) => decimal(k.avgItemsPerSale),
-    metric: (k) => k.avgItemsPerSale,
-    series: 'count',
   },
 ]
 
@@ -108,15 +113,26 @@ export const KPI_BY_ID = new Map(KPI_DEFS.map((d) => [d.id, d]))
  *
  * Measured on the rendered string, so "R821 674.90 (35.5%)" — gross profit
  * with its margin — is counted at its real length rather than its value's.
+ *
+ * Calibrated against the tile's real width: four to a row makes one ~305px at
+ * a 1600px viewport and ~255px at 1366px, leaving ~273px and ~223px inside the
+ * padding. The tabular `numeric` face advances about 0.6em per character, so
+ * at 24px a string of 15 needs ~216px and still fits the narrow case, while 19
+ * characters — "R860 025.54 (36.5%)", the longest a tile produces — needs
+ * ~205px at 18px. Hence the steps below.
+ *
+ * Measured on the rendered string, so gross profit is counted with its margin
+ * rather than at the value's own length.
  */
 function valueSize(value: ReactNode): string {
   const length = String(
     typeof value === 'string' || typeof value === 'number' ? value : renderedLength(value),
   ).length
 
-  if (length <= 10) return 'text-2xl'
-  if (length <= 14) return 'text-xl'
-  return 'text-lg'
+  if (length <= 15) return 'text-2xl'
+  if (length <= 17) return 'text-xl'
+  if (length <= 20) return 'text-lg'
+  return 'text-base'
 }
 
 /** Rough character count of a React fragment, for the size step above. */
@@ -202,6 +218,14 @@ export function KpiTile({
       >
         {def.value(kpis)}
       </div>
+
+      {/* Sits directly under the headline so the two read as one pair, not as
+          a figure and an afterthought further down the tile. */}
+      {def.note && (
+        <div className={`numeric text-sm font-semibold text-muted ${loading ? 'opacity-40' : ''}`}>
+          {def.note(kpis)}
+        </div>
+      )}
 
       {/* The comparison wraps rather than truncating. "vs same period in July
           2026" clipped to "vs same …" tells the reader nothing, and the tile

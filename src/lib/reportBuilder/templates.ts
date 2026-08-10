@@ -1,4 +1,4 @@
-import type { CustomReportSpec } from './spec'
+import { MAX_ROWS, type CustomReportSpec } from './spec'
 import type { Capability } from '../site/permissions'
 
 /**
@@ -209,6 +209,95 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    id: 'invoice-detail-list',
+    name: 'Invoice detail list',
+    description: 'Every line on every document — the line-by-line twin of the invoice list.',
+    category: 'Sales',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'saleLines',
+      columns: [
+        { field: 'documentDate' },
+        { field: 'documentNumber' },
+        { field: 'customerName' },
+        { field: 'productCode' },
+        { field: 'description' },
+        { field: 'qty' },
+        { field: 'unitPriceIncl' },
+        { field: 'discountIncl' },
+        { field: 'lineTotalIncl' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+      sort: { key: 'documentDate', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'sales-by-month',
+    name: 'Sales by month',
+    description: 'Turnover and profit month by month — the shape of the year rather than of the week.',
+    category: 'Sales',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'saleLines',
+      period: { key: 'thisYear' },
+      groupFields: ['month'],
+      columns: [
+        { field: 'lineTotalIncl', agg: 'sum' },
+        { field: 'lineTotalExcl', agg: 'sum' },
+        { field: 'lineVat', agg: 'sum' },
+        { field: 'grossProfit', agg: 'sum' },
+        { field: 'grossProfitPct', agg: 'avg' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+      sort: { key: 'month', dir: 'asc' },
+      chartType: 'line',
+    }),
+  },
+  {
+    id: 'sales-by-till',
+    name: 'Sales by till',
+    description: 'Turnover, basket count and average basket for each till — which lanes carry the shop.',
+    category: 'Sales',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'sales',
+      groupFields: ['terminalCode'],
+      columns: [
+        { field: '__rows' },
+        { field: 'totalIncl', agg: 'sum' },
+        { field: 'totalIncl', agg: 'avg' },
+      ],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        { field: 'docType', op: 'eq', value: 'invoice' },
+      ],
+      sort: { key: 'totalIncl_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'credit-notes',
+    name: 'Credit notes',
+    description: 'What went back and who authorised it. Returns are normal; a pattern in them is worth reading.',
+    category: 'Sales',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'sales',
+      columns: [
+        { field: 'documentDate' },
+        { field: 'documentNumber' },
+        { field: 'customerName' },
+        { field: 'userName' },
+        { field: 'reference' },
+        { field: 'totalIncl' },
+      ],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        { field: 'docType', op: 'eq', value: 'credit_note' },
+      ],
+      sort: { key: 'documentDate', dir: 'desc' },
+    }),
+  },
+  {
     id: 'discounts-and-voids',
     name: 'Discounts and voids by cashier',
     description:
@@ -242,6 +331,88 @@ export const TEMPLATES: ReportTemplate[] = [
       ],
       filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
       sort: { key: 'stockValue_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'stock-on-hand',
+    name: 'Stock on hand',
+    description: 'What is on the shelf right now, by product. Quantities only — no cost, so anyone may read it.',
+    category: 'Stock',
+    permission: 'products.view',
+    spec: spec({
+      source: 'products',
+      // A stock list that stops at 5,000 is a stocktake sheet missing pages.
+      limit: MAX_ROWS,
+      columns: [
+        { field: 'code' },
+        { field: 'description' },
+        { field: 'department' },
+        { field: 'stockOnHand' },
+        { field: 'minStock' },
+        { field: 'lastSoldDate' },
+      ],
+      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
+      sort: { key: 'description', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'product-price-list',
+    name: 'Product price list',
+    description: 'Every selling price in one list — for a shelf-edge check or a printed catalogue.',
+    category: 'Stock',
+    permission: 'products.view',
+    spec: spec({
+      source: 'products',
+      // A price list is printed and worked through — a truncated one is wrong
+      // in a way nobody notices until a shelf has no price.
+      limit: MAX_ROWS,
+      columns: [
+        { field: 'code' },
+        { field: 'barcode' },
+        { field: 'description' },
+        { field: 'department' },
+        { field: 'sellingPriceIncl' },
+      ],
+      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
+      sort: { key: 'description', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'price-list-by-supplier',
+    name: 'Price list per supplier',
+    description:
+      'What each supplier charges and what it sells for, from the lines actually bought — the buying list before an order goes out.',
+    category: 'Stock',
+    permission: 'purchasing.view',
+    spec: spec({
+      source: 'purchaseLines',
+      period: { key: 'thisYear' },
+      limit: MAX_ROWS,
+      groupFields: ['supplierName', 'productCode', 'description'],
+      columns: [
+        { field: 'unitCostExcl', agg: 'max' },
+        { field: 'qtyReceived', agg: 'sum' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+      sort: { key: 'supplierName', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'product-movement',
+    name: 'Product movement',
+    description:
+      'Every movement grouped by product — what came in, what went out and where a count went wrong.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'stockMovements',
+      groupFields: ['productCode', 'productDescription'],
+      columns: [
+        { field: '__rows' },
+        { field: 'qtyChange', agg: 'sum' },
+        { field: 'movementValue', agg: 'sum' },
+      ],
+      sort: { key: 'qtyChange_sum', dir: 'asc' },
     }),
   },
   {
@@ -365,6 +536,52 @@ export const TEMPLATES: ReportTemplate[] = [
         { key: 'daysOverdue', op: 'gt', value: '0' },
       ],
       sort: { key: 'daysOverdue', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'customer-age-analysis',
+    name: 'Age analysis',
+    description:
+      'Every unsettled document by how long it has been outstanding. The debtors ageing you work the phone from.',
+    category: 'Customers',
+    permission: 'customers.view',
+    spec: spec({
+      source: 'customerTransactions',
+      period: { key: 'thisYear' },
+      columns: [
+        { field: 'customerCode' },
+        { field: 'customerName' },
+        { field: 'docNumber' },
+        { field: 'docDate' },
+        { field: 'dueDate' },
+        { field: 'daysOverdue' },
+        { field: 'amountOutstanding' },
+      ],
+      // Settled documents are not part of an ageing, and leaving them in pushed
+      // the report past its row cap — which truncates the OLDEST debt, the one
+      // line the report exists to show.
+      filters: [{ field: 'amountOutstanding', op: 'gt', value: '0' }],
+      sort: { key: 'daysOverdue', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'customer-payments',
+    name: 'Customer payments',
+    description: 'Money received from accounts in the period, and who receipted it.',
+    category: 'Customers',
+    permission: 'customers.view',
+    spec: spec({
+      source: 'customerTransactions',
+      columns: [
+        { field: 'docDate' },
+        { field: 'docNumber' },
+        { field: 'customerName' },
+        { field: 'reference' },
+        { field: 'userName' },
+        { field: 'amountSigned' },
+      ],
+      filters: [{ field: 'docType', op: 'eq', value: 'payment' }],
+      sort: { key: 'docDate', dir: 'desc' },
     }),
   },
   {
@@ -549,6 +766,97 @@ export const TEMPLATES: ReportTemplate[] = [
       groupFields: ['userName'],
       columns: [{ field: '__rows' }, { field: 'variance', agg: 'sum' }, { field: 'varianceAbs', agg: 'sum' }],
       sort: { key: 'varianceAbs_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'refund-history',
+    name: 'Refund history',
+    description: 'Every credit note line — what was handed back, by whom, and what it cost in margin.',
+    category: 'Operations',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'saleLines',
+      columns: [
+        { field: 'documentDate' },
+        { field: 'documentNumber' },
+        { field: 'customerName' },
+        { field: 'userName' },
+        { field: 'productCode' },
+        { field: 'description' },
+        { field: 'qty' },
+        { field: 'lineTotalIncl' },
+      ],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        { field: 'docType', op: 'eq', value: 'credit_note' },
+      ],
+      sort: { key: 'documentDate', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'void-history',
+    name: 'Void history',
+    description:
+      'Documents that were voided, with the reason given. A void with no reason is the one to ask about.',
+    category: 'Operations',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'sales',
+      columns: [
+        { field: 'documentDate' },
+        { field: 'documentNumber' },
+        { field: 'customerName' },
+        { field: 'userName' },
+        { field: 'terminalCode' },
+        { field: 'voidReason' },
+        { field: 'totalIncl' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'void' }],
+      sort: { key: 'documentDate', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'discount-history',
+    name: 'Discount history',
+    description: 'Every discounted line, not a per-person total — the detail behind an outlier.',
+    category: 'Operations',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'saleLines',
+      columns: [
+        { field: 'documentDate' },
+        { field: 'documentNumber' },
+        { field: 'userName' },
+        { field: 'productCode' },
+        { field: 'description' },
+        { field: 'discountPct' },
+        { field: 'discountIncl' },
+        { field: 'lineTotalIncl' },
+      ],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        { field: 'discountIncl', op: 'gt', value: '0' },
+      ],
+      sort: { key: 'discountIncl', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'clerk-shifts',
+    name: 'Clerk time shifts',
+    description: 'When each person opened and closed a till, and how long the shift ran.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'shifts',
+      columns: [
+        { field: 'openedAt' },
+        { field: 'closedAt' },
+        { field: 'userName' },
+        { field: 'terminalCode' },
+        { field: 'closedByName' },
+        { field: 'shiftHours' },
+      ],
+      sort: { key: 'openedAt', dir: 'desc' },
     }),
   },
   {

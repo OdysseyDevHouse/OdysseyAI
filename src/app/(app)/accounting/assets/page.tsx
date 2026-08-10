@@ -20,7 +20,8 @@ import {
   StatTile,
   EmptyState,
   Icons,
-  LinkTabs,
+  TableToolbar,
+  LinkSegmentedControl,
 } from '@/components/ui'
 import { AssetsTable, type AssetTableRow } from './AssetsTable'
 
@@ -191,15 +192,22 @@ export default async function AssetsPage({
         <Card>
           <CardHeader title="Register" description="Everything the business owns and uses." />
 
-          <LinkTabs
-            items={[
-              { value: 'all', label: 'In use', href: href({ status: null }) },
-              { value: 'pending', label: 'Not yet in use', href: href({ status: 'pending' }) },
-              { value: 'disposed', label: 'Disposed', href: href({ status: 'disposed' }) },
-            ]}
-            value={status ?? 'all'}
-            aria-label="Asset status"
-          />
+          <TableToolbar className="border-b border-border px-6 py-3">
+            <LinkSegmentedControl
+              aria-label="Asset status"
+              value={status ?? 'all'}
+              options={[
+                { value: 'all', label: 'In use', href: href({ status: null }) },
+                {
+                  value: 'pending',
+                  label: 'Not yet in use',
+                  href: href({ status: 'pending' }),
+                  count: summary.pendingCount > 0 ? summary.pendingCount : undefined,
+                },
+                { value: 'disposed', label: 'Disposed', href: href({ status: 'disposed' }) },
+              ]}
+            />
+          </TableToolbar>
 
           {assets.length === 0 ? (
             <CardBody>

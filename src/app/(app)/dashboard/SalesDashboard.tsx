@@ -18,6 +18,7 @@ import {
 } from '@/components/ui'
 import type { DetailDimension, SalesDashboardData } from '@/lib/site/salesDashboard'
 import {
+  GRID_COLS,
   WIDGETS,
   defaultLayout,
   loadPrefs,
@@ -46,9 +47,9 @@ import 'react-resizable/css/styles.css'
 
 // A single breakpoint: the grid measures its own container, and the widths that
 // matter (a half-width card, a full-width one) are already expressed in the
-// 12-column layout rather than in device breakpoints.
+// column layout rather than in device breakpoints.
 const BREAKPOINTS = { lg: 0 }
-const COLS = { lg: 12 }
+const COLS = { lg: GRID_COLS }
 
 /** Which widgets get a "View more" button, and the list it opens. */
 const DETAIL_FOR: Partial<Record<WidgetId, DetailDimension>> = {

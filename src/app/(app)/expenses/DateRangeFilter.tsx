@@ -25,6 +25,7 @@ export function DateRangeFilter({
 
   return (
     <DateRangeField
+      label=""
       value={{ from, to }}
       onChange={(next) => {
         const params = new URLSearchParams()

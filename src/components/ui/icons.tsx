@@ -50,6 +50,9 @@ export {
   Ellipsis as MoreHorizontal,
   ExternalLink,
   CornerDownRight,
+  // The grab affordance on a re-orderable row. Distinct from MoreHorizontal:
+  // this one is never a menu, it only ever means "drag me".
+  GripVertical as DragHandle,
   ArrowRight,
   PanelLeft,
   // selection — the checkbox column and the "N selected" bar

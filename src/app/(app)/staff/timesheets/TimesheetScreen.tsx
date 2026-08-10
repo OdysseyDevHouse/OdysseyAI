@@ -294,7 +294,7 @@ function PersonCard({
       />
 
       {!allowed.ok && !fullyApproved && sheet.entryCount > 0 && (
-        <div className="px-5 pt-4">
+        <div className="px-5 py-4">
           <Callout tone="warning">{allowed.reason}</Callout>
         </div>
       )}

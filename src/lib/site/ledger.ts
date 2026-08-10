@@ -229,12 +229,28 @@ export function emptyAging(): Aging {
  * age analysis means thirty days late, not thirty days old. An invoice on
  * 30-day terms issued 45 days ago is 15 days overdue and belongs in the first
  * bucket, not the second.
+ *
+ * ── THE LADDER'S WIDTH FOLLOWS THE STATEMENT CYCLE ────────────────────────
+ *
+ * `width` is the size of one rung. It defaults to 30, which is the familiar
+ * 30/60/90/120 ladder and the ONLY behaviour every existing caller sees — an account
+ * statemented weekly is a different question, where "30 days late" is four cycles gone
+ * rather than one, and a 7-day ladder puts the same debt further out.
+ *
+ * The lateness never changes; only where the line is drawn. Nineteen days overdue is
+ * nineteen days overdue on either ladder — it sits in the first bucket at width 30 and
+ * the third at width 7, and the total is the same money either way. That is the property
+ * the age analysis rests on, so it is asserted in test-statement-periods rather than
+ * assumed.
  */
-export function bucketFor(daysOverdue: number): AgingBucket {
+export function bucketFor(daysOverdue: number, width = 30): AgingBucket {
   if (daysOverdue <= 0) return 'current'
-  if (daysOverdue <= 30) return 'd30'
-  if (daysOverdue <= 60) return 'd60'
-  if (daysOverdue <= 90) return 'd90'
+  // Guarded rather than trusted: a zero or negative width would divide every overdue
+  // debt into the top bucket and quietly make an age analysis meaningless.
+  const rung = width > 0 ? width : 30
+  if (daysOverdue <= rung) return 'd30'
+  if (daysOverdue <= rung * 2) return 'd60'
+  if (daysOverdue <= rung * 3) return 'd90'
   return 'd120'
 }
 

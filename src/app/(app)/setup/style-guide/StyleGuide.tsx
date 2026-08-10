@@ -59,6 +59,7 @@ import {
   Textarea,
   TextLink,
   TILE_SWATCHES,
+  SwatchPicker,
   tileClass,
   ToolbarSearch,
   useChartColors,
@@ -392,13 +393,13 @@ function SelectableCardSection() {
 }
 
 function TileSwatchSection() {
-  const [picked, setPicked] = useState(TILE_SWATCHES[0].token)
+  const [picked, setPicked] = useState<string | null>(TILE_SWATCHES[0].token)
 
   return (
     <Card>
       <CardHeader
         title="Tile swatches"
-        description="TILE_SWATCHES / tileClass() — the colour palette for records with no image (products, departments)"
+        description="<SwatchPicker> over TILE_SWATCHES / tileClass() — the colour palette for records with no image (products, departments)"
       />
       <CardBody className="flex flex-wrap items-center gap-4">
         <div
@@ -406,24 +407,14 @@ function TileSwatchSection() {
         >
           A
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {TILE_SWATCHES.map((swatch) => (
-            <button
-              key={swatch.token}
-              data-kit-ok
-              type="button"
-              aria-label={swatch.token}
-              aria-pressed={picked === swatch.token}
-              onClick={() => setPicked(swatch.token)}
-              className={`size-6 rounded-pill border-2 transition ${swatch.className} ${
-                picked === swatch.token ? 'border-ink' : 'border-transparent'
-              }`}
-            />
-          ))}
+        <div className="flex flex-col gap-2">
+          <SwatchPicker value={picked} onChange={setPicked} />
+          <SwatchPicker value={picked} onChange={setPicked} size="sm" />
         </div>
         <p className="max-w-80 text-xs text-muted">
           Records store the token name (<code>tile-3</code>), never a hex — so restyling the
-          palette in globals.css repaints every existing record.
+          palette in globals.css repaints every existing record. The leading swatch clears the
+          colour; a record with none falls back to a tile derived from its name.
         </p>
       </CardBody>
     </Card>

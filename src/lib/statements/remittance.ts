@@ -2,6 +2,7 @@ import 'server-only'
 import { round } from '../decimals'
 import { getSupplier } from '../site/suppliers'
 import { listPaymentItems, getPaymentRun } from '../site/paymentRuns'
+import { cycleBucketLabels } from '../statementCycles'
 import type { StatementData } from './render'
 
 /**
@@ -98,6 +99,18 @@ export async function buildRemittance(
       paymentTermsDays: supplier.paymentTermsDays,
     },
     period: { from: run.paymentDate, to: run.paymentDate },
+    /*
+     * A remittance covers one payment on one day, so the "period" is that date and the
+     * label is simply it — not a range, which would imply a span this document does not
+     * have.
+     *
+     * The cycle and ladder are carried only because the shared shape asks for them. This
+     * document shows no ageing at all (see the empty `aging` below): it is a payment
+     * advice, not a demand, and the headings are never rendered.
+     */
+    periodLabel: run.paymentDate,
+    cycle: 'monthly' as const,
+    bucketLabels: cycleBucketLabels('monthly'),
     openingBalance: 0,
     // On a remittance this is the amount PAID, which is what the document
     // labels it — see the variant handling in StatementDocument.

@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from 'react'
 import { useFormStatus } from 'react-dom'
-import { Close, Save } from '@/components/ui/icons'
+import { Save } from '@/components/ui/icons'
 import {
   Button,
   Callout,
@@ -11,8 +11,8 @@ import {
   Input,
   NumberInput,
   Select,
+  SwatchPicker,
   Switch,
-  TILE_SWATCHES,
 } from '@/components/ui'
 import { saveDepartmentAction, type DepartmentFormState } from './actions'
 import type { Department } from '@/lib/site/departments'
@@ -91,36 +91,7 @@ export default function DepartmentForm({
       <FieldGroup title="Presentation" hint="How it appears on tiles and in lists.">
         <div>
           <span className="mb-1.5 block text-sm font-medium text-ink-2">Colour</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {/* data-kit-ok: "None" is an option in the swatch palette, so it is
-                drawn as a swatch — a kit Button restyled to look like one would
-                be worse than the swatch it is pretending not to be. */}
-            <button
-              data-kit-ok
-              type="button"
-              aria-label="No colour"
-              aria-pressed={color === ''}
-              onClick={() => setColor('')}
-              className={`flex size-6 items-center justify-center rounded-pill border-2 bg-surface text-muted transition ${
-                color === '' ? 'border-ink' : 'border-border-strong'
-              }`}
-            >
-              <Close size={12} />
-            </button>
-            {TILE_SWATCHES.map((swatch) => (
-              <button
-                key={swatch.token}
-                data-kit-ok
-                type="button"
-                aria-label={`Colour ${swatch.token}`}
-                aria-pressed={color === swatch.token}
-                onClick={() => setColor(swatch.token)}
-                className={`size-6 rounded-pill border-2 transition ${swatch.className} ${
-                  color === swatch.token ? 'border-ink' : 'border-transparent'
-                }`}
-              />
-            ))}
-          </div>
+          <SwatchPicker value={color} onChange={(next) => setColor(next ?? '')} size="sm" />
           <p className="mt-1.5 text-xs text-muted">
             Optional — shown on the department&rsquo;s tile in lists and pickers.
           </p>

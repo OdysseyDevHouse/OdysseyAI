@@ -193,7 +193,18 @@ export async function unappliedCredits(siteId: number, customerId: number): Prom
  * than being dropped: money on account genuinely reduces what is owed, and an
  * age analysis whose buckets do not add up to the balance is one nobody trusts.
  */
-export async function agingFor(siteId: number, customerId: number): Promise<Aging> {
+export async function agingFor(
+  siteId: number,
+  customerId: number,
+  /**
+   * The width of one rung, from the account's statement cycle.
+   *
+   * Defaults to 30 so every existing caller is unchanged. A weekly account read on a
+   * 30-day ladder would show a debt four cycles overdue sitting in the first bucket —
+   * technically true, and useless to whoever is chasing it.
+   */
+  bucketWidth = 30,
+): Promise<Aging> {
   const rows = await siteQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE customer_id = ? AND amount_outstanding <> 0`,
@@ -209,10 +220,88 @@ export async function agingFor(siteId: number, customerId: number): Promise<Agin
       aging.current = round(aging.current + line.amountOutstanding, 2)
     } else {
       const overdue = line.dueDate ? daysBetween(line.dueDate, now) : 0
-      const bucket = bucketFor(overdue)
+      const bucket = bucketFor(overdue, bucketWidth)
       aging[bucket] = round(aging[bucket] + line.amountOutstanding, 2)
     }
     aging.total = round(aging.total + line.amountOutstanding, 2)
+  }
+
+  return aging
+}
+
+/**
+ * Age analysis for one account AS IT STOOD on a past date.
+ *
+ * ── WHY THIS CANNOT READ `amount_outstanding` ─────────────────────────────
+ *
+ * That column is the CURRENT position, and it is maintained as allocations happen. A
+ * January invoice settled by an April payment has `amount_outstanding = 0` today — so a
+ * February statement built from it reports February as though that April money had
+ * already arrived, and the aging silently disagrees with the statement a customer was
+ * actually sent.
+ *
+ * So the outstanding figure is RECONSTRUCTED: the debit's gross, less only the
+ * allocations made on or before `asAt`. `customer_allocations.allocated_at` is what
+ * makes that possible, and it is why allocations are rows with a date rather than a
+ * running total on the invoice.
+ *
+ * ── AND WHY LATENESS IS MEASURED TO `asAt`, NOT TO TODAY ──────────────────
+ *
+ * A statement dated 28 February says how late each invoice was ON THE 28TH. Measuring
+ * to today would age a February statement by however long ago February was, which is
+ * both wrong and unreproducible — reprinting the same statement next month would give a
+ * different answer.
+ */
+export async function agingAsAt(
+  siteId: number,
+  customerId: number,
+  asAt: string,
+  bucketWidth = 30,
+): Promise<Aging> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT t.id, t.doc_date, t.due_date, t.amount_signed, t.amount_gross,
+            COALESCE((
+              SELECT SUM(a.amount) FROM customer_allocations a
+               WHERE a.debit_txn_id = t.id AND DATE(a.allocated_at) <= ?
+            ), 0) AS allocated_by_then
+       FROM customer_transactions t
+      WHERE t.customer_id = ? AND t.doc_date <= ?`,
+    [asAt, customerId, asAt],
+  )
+
+  const aging = emptyAging()
+
+  for (const raw of rows) {
+    const signed = toNum(raw.amount_signed)
+    const dueDate = raw.due_date ? String(raw.due_date).slice(0, 10) : null
+
+    if (signed < 0) {
+      /* A CREDIT — a payment or a credit note. What of it was still unapplied on the
+         date counts as money on account, which genuinely reduces what was owed. Applied
+         against a debit, it is already netted off that debit below, so counting it here
+         too would double it. */
+      const applied = await siteQueryOne<Row>(
+        siteId,
+        `SELECT COALESCE(SUM(amount), 0) AS n FROM customer_allocations
+          WHERE credit_txn_id = ? AND DATE(allocated_at) <= ?`,
+        [Number(raw.id), asAt],
+      )
+      const unapplied = round(signed + toNum(applied?.n), 2)
+      if (unapplied < 0) {
+        aging.current = round(aging.current + unapplied, 2)
+        aging.total = round(aging.total + unapplied, 2)
+      }
+      continue
+    }
+
+    const outstanding = round(signed - toNum(raw.allocated_by_then), 2)
+    if (outstanding <= 0) continue
+
+    const overdue = dueDate ? daysBetween(dueDate, asAt) : 0
+    const bucket = bucketFor(overdue, bucketWidth)
+    aging[bucket] = round(aging[bucket] + outstanding, 2)
+    aging.total = round(aging.total + outstanding, 2)
   }
 
   return aging

@@ -127,12 +127,79 @@ export async function createTerminal(siteId: number, input: TerminalInput): Prom
   )
   if (clash) return { ok: false, error: `A till with code "${code}" already exists.` }
 
+  /*
+   * A till number, assigned rather than asked for.
+   *
+   * Under per-till numbering a terminal with no `till_number` cannot ring up a sale at
+   * all — `numberSegmentsFor` refuses it, deliberately, because falling back to the
+   * shared sequence would drop that till's invoice into the middle of the site-wide run
+   * with nothing to say it had happened.
+   *
+   * So it cannot be optional here. A till created without one was DEAD: registered,
+   * listed, and unable to sell. The owner can still rename it afterwards — the setup
+   * screen owns that, and freezes it once the till has issued a document — but the
+   * default has to be a working one.
+   *
+   * Lowest free number rather than max+1, so deleting till 02 of three and adding
+   * another reuses 02 instead of climbing to 04. Both are defensible; this one keeps a
+   * small shop's numbers small, which is what shows on every invoice.
+   */
+  const tillNo = await nextFreeTillNumber(siteId)
+
   const res = await siteExecute(
     siteId,
-    'INSERT INTO terminals (code, name, location, is_active) VALUES (?,?,?,?)',
-    [code, input.name.trim(), input.location?.trim() || null, input.isActive === false ? 0 : 1],
+    'INSERT INTO terminals (code, name, location, till_number, is_active) VALUES (?,?,?,?,?)',
+    [
+      code,
+      input.name.trim(),
+      input.location?.trim() || null,
+      tillNo,
+      input.isActive === false ? 0 : 1,
+    ],
   )
+
+  /* Its own numbering sequence, so the till can allocate offline from the moment it is
+     registered. Created here rather than lazily on first sale: a till discovering at
+     07:00 that it has no sequence is a till that cannot trade, and the fix would need a
+     database. */
+  await siteExecute(
+    siteId,
+    `INSERT INTO document_sequences (terminal_id, doc_type, prefix, next_number, padding)
+     VALUES (?, 'invoice', 'INV', 1, 6)
+     ON DUPLICATE KEY UPDATE doc_type = doc_type`,
+    [res.insertId],
+  ).catch(() => {
+    // A missing sequence is recoverable — the setup screen can create one, and an
+    // online sale still numbers site-wide. Failing the whole registration over it
+    // would be worse than a till that needs one more click.
+  })
+
   return { ok: true, id: res.insertId }
+}
+
+/**
+ * The lowest two-digit till number nobody is using.
+ *
+ * Two digits because that is what the invoice number carries — `INV_01_02_000097` — and
+ * a three-digit till would change the shape of every number issued after it. Ninety-nine
+ * tills per store is not a limit any shop on this system will meet; if one ever does, the
+ * number's width is a settings decision rather than something to silently overflow.
+ */
+async function nextFreeTillNumber(siteId: number): Promise<string> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    'SELECT till_number FROM terminals WHERE till_number IS NOT NULL',
+  )
+  const taken = new Set(rows.map((r) => String(r.till_number)))
+  for (let n = 1; n <= 99; n++) {
+    const candidate = String(n).padStart(2, '0')
+    if (!taken.has(candidate)) return candidate
+  }
+  /* Every two-digit number used. Returning a duplicate would collide on
+     uq_terminal_till_number, so this hands back a three-digit one: a wider number is a
+     visible oddity on an invoice, where a failed registration is a shop that cannot add
+     a till at all. */
+  return '100'
 }
 
 export async function updateTerminal(
