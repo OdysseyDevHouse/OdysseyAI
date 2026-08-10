@@ -288,6 +288,34 @@ const LINE_DEPT_JOIN: JoinUnit = {
  * have already discontinued.
  */
 const PRODUCT_LOOKUP_FIELDS: CatalogField[] = [
+  /*
+   * The product's own department and brand.
+   *
+   * PRODUCT_DEPT_JOIN and PRODUCT_BRAND_JOIN have been declared on several
+   * sources for a while with no field exposing them, so the join was there and
+   * unreachable. Grouping a stock movement by department is the question
+   * "which aisle is losing stock", which a shrinkage report cannot answer
+   * without this.
+   *
+   * Distinct from `lineDepartment` on sales lines, which is the department the
+   * line was SOLD under and can differ from the product's own.
+   */
+  {
+    key: 'productDepartment',
+    label: 'Department',
+    type: 'text',
+    expr: 'pdm.name',
+    needs: ['product', 'productDept'],
+    group: FIELD_GROUPS.CLASSIFICATION,
+  },
+  {
+    key: 'productBrand',
+    label: 'Brand',
+    type: 'text',
+    expr: 'pb.name',
+    needs: ['product', 'productBrand'],
+    group: FIELD_GROUPS.CLASSIFICATION,
+  },
   {
     key: 'currentSoh',
     label: 'Stock on hand now',
@@ -1648,11 +1676,207 @@ const ACTIVITY_SOURCE: CatalogSource = {
   ],
 }
 
+/**
+ * The answers a till was given when it asked its questions.
+ *
+ * ── WHY THIS IS A SOURCE OF ITS OWN ─────────────────────────────────────────
+ *
+ * "How many extra bacon did we sell in March, and what did it earn?" cannot be
+ * answered from `saleLines`: a modifier is not a line, and deliberately so —
+ * everything downstream of sales_document_lines is built on "one row is one
+ * product sold", and a bacon posing as a line would land in units-sold and
+ * margin reports as though somebody had bought one.
+ *
+ * So the answers live in their own table, and this is what makes them
+ * askable-about. In hospitality the modifiers are a real slice of the margin,
+ * and a shop that can price them but never count them is only half served.
+ *
+ * ── THE FIGURE THAT NEEDS EXPLAINING ────────────────────────────────────────
+ *
+ * `lineAdjustIncl` is what an answer contributed to its line — and that money is
+ * ALREADY inside the line's own total, because an answer's price is folded into
+ * `unit_price_incl` so specials, discounts and VAT price the item as sold.
+ *
+ * This source and `saleLines` therefore overlap on purpose, and adding a total
+ * from each together double-counts. The hint on the field says so, because the
+ * person building the report is the one who needs to know.
+ */
+const SALE_MODIFIERS_SOURCE: CatalogSource = {
+  key: 'saleModifiers',
+  label: 'Sales instructions',
+  description:
+    'One row per answer chosen when the till asked — extra bacon, no onions, which sauce. The source for "what did they ask for".',
+  category: 'Sales',
+  permission: 'sales.view',
+  shape: 'timeline',
+  table: 'sales_document_line_instructions',
+  dateColumn: 'document_date',
+  joins: [
+    // The date and the document context live on the parent document. NOT
+    // optional — the date range filters through it — so it is always emitted.
+    { name: 'doc', sql: 'INNER JOIN sales_documents d ON d.id = t.document_id' },
+    // The LINE this answer hangs off, so "which product was it asked about" can
+    // be answered. Also not optional: it is the most obvious grouping.
+    { name: 'line', sql: 'INNER JOIN sales_document_lines sl ON sl.id = t.line_id' },
+    { name: 'product', sql: 'LEFT JOIN products pm ON pm.id = sl.product_id' },
+    PRODUCT_DEPT_JOIN,
+    { name: 'customer', sql: 'LEFT JOIN customers c ON c.id = d.customer_id' },
+  ],
+  defaultFilters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+  note: 'Starts with finalised documents only. The money here is already inside the sales-line totals — it is the breakdown of what was charged, not an extra charge.',
+  fields: [
+    {
+      key: 'optionName',
+      label: 'Answer',
+      type: 'text',
+      // The SNAPSHOT, not a join to instruction_options: renaming "Extra bacon"
+      // must not rewrite what last month's tickets said, and the option may
+      // since have been deleted entirely.
+      expr: 't.option_name',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'groupName',
+      label: 'Question',
+      type: 'text',
+      expr: 't.group_name',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The question this was an answer to, as it was named at the time.',
+    },
+    {
+      key: 'soldProductCode',
+      label: 'Sold on product',
+      type: 'text',
+      expr: 'sl.product_code',
+      needs: ['line'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'The product the question was asked about — the burger, not the bacon.',
+    },
+    {
+      key: 'soldProductDescription',
+      label: 'Sold on description',
+      type: 'text',
+      expr: 'sl.description',
+      needs: ['line'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'department',
+      label: 'Department',
+      type: 'text',
+      expr: 'pdm.name',
+      needs: ['product', 'productDept'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'qtyPerItem',
+      label: 'Number per item',
+      type: 'number',
+      expr: 't.qty',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'How many of this answer ONE item carried. Adding these up counts burgers, not rashers — use “Number sold”.',
+    },
+    {
+      key: 'qtySold',
+      label: 'Number sold',
+      type: 'number',
+      // Per item x the line's own quantity: two burgers each with bacon x3 is
+      // six rashers, and this is the figure anybody means by "how many".
+      expr: 't.qty * sl.qty',
+      needs: ['line'],
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'priceAdjustIncl',
+      label: 'Price each (incl.)',
+      type: 'currency',
+      expr: 't.price_adjust_incl',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What ONE of this answer adds. A per-unit price — adding these up is meaningless.',
+    },
+    {
+      key: 'lineAdjustIncl',
+      label: 'Earned (incl.)',
+      type: 'currency',
+      expr: 't.line_adjust_incl',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What this answer added across the line. Already inside the sales-line total — do not add the two together.',
+    },
+    {
+      key: 'stockProductCode',
+      label: 'Deducts product',
+      type: 'text',
+      expr: '(SELECT p2.code FROM products p2 WHERE p2.id = t.product_id)',
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'The stocked item this answer consumed, when it was linked to one.',
+    },
+    {
+      key: 'stockTaken',
+      label: 'Stock taken',
+      type: 'number',
+      expr: 't.stock_qty_per * t.qty * sl.qty',
+      needs: ['line'],
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'How much of the linked product came off the shelf. Zero for an answer that is only words.',
+    },
+    yesNo('printsOnKitchen', 'On kitchen ticket', 't.prints_on_kitchen'),
+    yesNo('printsOnReceipt', 'On receipt', 't.prints_on_receipt'),
+    {
+      key: 'documentNumber',
+      label: 'Document number',
+      type: 'text',
+      expr: 'd.document_number',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      type: 'text',
+      expr: 'd.status',
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'customerName',
+      label: 'Customer',
+      type: 'text',
+      expr: 'd.customer_name',
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    {
+      key: 'documentDate',
+      label: 'Document date',
+      type: 'date',
+      expr: 'd.document_date',
+      group: FIELD_GROUPS.DATES,
+    },
+    ...timeBuckets('document_date').map((f) => ({
+      ...f,
+      // Derived from the PARENT's date column, exactly as the sales lines do:
+      // an answer has no date of its own, it has the date of the sale it was
+      // part of.
+      expr: f.expr.replace(/t\.`document_date`/g, 'd.`document_date`'),
+    })),
+  ],
+}
+
 /* ── the catalog ───────────────────────────────────────────────────────────── */
 
 export const SOURCES: CatalogSource[] = [
   SALES_SOURCE,
   SALE_LINES_SOURCE,
+  SALE_MODIFIERS_SOURCE,
   TENDERS_SOURCE,
   PRODUCTS_SOURCE,
   STOCK_MOVEMENTS_SOURCE,

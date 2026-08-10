@@ -8,12 +8,13 @@ import {
   Modal,
   NumPad,
   NumPadDisplay,
+  Input,
   SegmentedControl,
   numPadValue,
 } from '@/components/ui'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatMoney, formatQty, round } from '@/lib/decimals'
 import { lineTotals } from '@/lib/documentMath'
-import { discountAllowed, type BasketLine } from '@/lib/basket'
+import { discountAllowed, instructionAdjust, type BasketLine } from '@/lib/basket'
 
 /**
  * Changing one line: how many, what price, what discount.
@@ -50,6 +51,7 @@ export function LineEditModal({
   const [qty, setQty] = useState('')
   const [price, setPrice] = useState('')
   const [discount, setDiscount] = useState('')
+  const [note, setNote] = useState('')
 
   // Seeded from the line each time it opens, so the pad starts on the current
   // figures rather than empty — a cashier changing 1 to 2 should not have to
@@ -60,6 +62,7 @@ export function LineEditModal({
     setQty(String(line.qty))
     setPrice(line.unitPriceIncl.toFixed(2))
     setDiscount(line.discountPct ? String(line.discountPct) : '')
+    setNote(line.note)
   }, [line])
 
   if (!line) return null
@@ -75,7 +78,18 @@ export function LineEditModal({
   const nextPrice = numPadValue(price)
   const nextDiscount = numPadValue(discount)
 
-  const priceChanged = line.shelfPriceIncl !== null && nextPrice !== line.shelfPriceIncl
+  /*
+   * The answers' price is backed out before comparing to the shelf.
+   *
+   * It is folded INTO unitPriceIncl so the rest of the document prices the item
+   * as sold, which means a burger with bacon legitimately sits above the shelf
+   * figure. Without this subtraction, merely OPENING this dialog on a modified
+   * line and saving it unchanged would be refused as an override — the same trap
+   * checkPricing had, wearing a different face.
+   */
+  const adjust = instructionAdjust(line)
+  const priceChanged =
+    line.shelfPriceIncl !== null && round(nextPrice - adjust, 2) !== round(line.shelfPriceIncl, 2)
   const overCeiling = !discountAllowed(line, nextDiscount)
 
   // A refusal names the capability it needs, so a cashier knows to fetch a
@@ -112,6 +126,7 @@ export function LineEditModal({
                 qty: nextQty,
                 unitPriceIncl: nextPrice,
                 discountPct: nextDiscount,
+                note: note.trim(),
               })
             }
           >
@@ -140,7 +155,13 @@ export function LineEditModal({
                 : 'Quantity'
               : field === 'price'
                 ? line.shelfPriceIncl !== null
-                  ? `Unit price — shelf is ${formatMoney(line.shelfPriceIncl)}`
+                  ? // The answers are named in the comparison rather than hidden,
+                    // so a cashier looking at R30.50 against a R23.00 shelf can
+                    // see where the difference came from instead of assuming
+                    // somebody has overridden the price.
+                    adjust !== 0
+                    ? `Unit price — shelf is ${formatMoney(line.shelfPriceIncl)} plus ${formatMoney(adjust)} of answers`
+                    : `Unit price — shelf is ${formatMoney(line.shelfPriceIncl)}`
                   : 'Unit price'
                 : `Discount % — up to ${formatQty(line.maxDiscountPct)}% without a supervisor`
           }
@@ -154,6 +175,20 @@ export function LineEditModal({
           // Quantity of a whole-unit product takes no decimal point at all, which
           // is a clearer refusal than accepting 1.5 and rejecting it on save.
           maxDecimals={field === 'qty' && !line.allowFractions ? 0 : field === 'qty' ? 3 : 2}
+        />
+
+        {/* A note on ANY line, not only one that happened to be asked a
+            question. "No ice" is a thing a customer says about a Coke, and a
+            Coke asks nothing — without this the note box would exist only on
+            products a shop had already thought to configure, which is exactly
+            backwards for the unplanned thing a note is for. */}
+        <Input
+          size="touch"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          maxLength={190}
+          placeholder="Note for this line — e.g. no ice"
+          aria-label="Note for this line"
         />
 
         {refusal ? (
