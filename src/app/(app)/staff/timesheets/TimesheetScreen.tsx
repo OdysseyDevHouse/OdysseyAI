@@ -315,7 +315,11 @@ function PersonCard({
                 <td className={TABLE_TD}>
                   <div className="flex items-center gap-2">
                     <span className={day.minutes > 0 ? 'text-ink' : 'text-muted'}>
-                      {new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
+                      {/* 'en-ZA' explicitly, as everywhere else in the app: an
+                          undefined locale resolves to the server's on the way
+                          out and the browser's on the way in, so the two
+                          renders disagree and hydration fails. */}
+                      {new Date(`${day.date}T00:00:00`).toLocaleDateString('en-ZA', {
                         weekday: 'short',
                         day: 'numeric',
                         month: 'short',

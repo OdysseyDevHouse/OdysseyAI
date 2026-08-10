@@ -59,7 +59,7 @@
     },
     {
       "route": "/accounting/journals/[id]",
-      "url": "/accounting/journals/2648",
+      "url": "/accounting/journals/2731",
       "state": "pass"
     },
     {
@@ -159,12 +159,12 @@
     },
     {
       "route": "/customers/[id]",
-      "url": "/customers/13170",
+      "url": "/customers/13226",
       "state": "pass"
     },
     {
       "route": "/customers/[id]/statement",
-      "url": "/customers/13170/statement",
+      "url": "/customers/13226/statement",
       "state": "pass"
     },
     {
@@ -329,7 +329,7 @@
     },
     {
       "route": "/products/[id]",
-      "url": "/products/43701",
+      "url": "/products/43757",
       "state": "pass"
     },
     {
@@ -344,12 +344,12 @@
     },
     {
       "route": "/purchasing/[id]",
-      "url": "/purchasing/5493",
+      "url": "/purchasing/5506",
       "state": "pass"
     },
     {
       "route": "/purchasing/[id]/return",
-      "url": "/purchasing/5493/return",
+      "url": "/purchasing/5506/return",
       "state": "pass"
     },
     {
@@ -389,12 +389,12 @@
     },
     {
       "route": "/sales/[id]",
-      "url": "/sales/110292",
+      "url": "/sales/110442",
       "state": "pass"
     },
     {
       "route": "/sales/[id]/credit",
-      "url": "/sales/110292/credit",
+      "url": "/sales/110442/credit",
       "state": "pass"
     },
     {
@@ -429,7 +429,7 @@
     },
     {
       "route": "/sales/invoicing/[id]",
-      "url": "/sales/invoicing/110292",
+      "url": "/sales/invoicing/110442",
       "state": "pass"
     },
     {
@@ -599,12 +599,12 @@
     },
     {
       "route": "/suppliers/[id]",
-      "url": "/suppliers/1227",
+      "url": "/suppliers/1241",
       "state": "pass"
     },
     {
       "route": "/suppliers/[id]/statement",
-      "url": "/suppliers/1227/statement",
+      "url": "/suppliers/1241/statement",
       "state": "pass"
     },
     {

@@ -18,6 +18,7 @@ import {
 import { finaliseDocument, voidDocument, recordPrint } from '@/lib/site/salesPosting'
 import { setOrderDetails } from '@/lib/site/salesOrders'
 import { searchForTill, browseForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
+import { listDepartments, flattenTree } from '@/lib/site/departments'
 import {
   searchCustomersForTill,
   getTillCustomer,
@@ -55,6 +56,7 @@ export async function searchProductsAction(
  * somebody changes what is easy rather than what is possible.
  */
 export async function browseProductsAction(options: {
+  term?: string
   departmentId?: number | null
   priceStructureId?: number | null
   limit?: number
@@ -62,6 +64,26 @@ export async function browseProductsAction(options: {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
   return browseForTill(siteId, options)
+}
+
+/**
+ * The department list for a product picker's filter.
+ *
+ * Flattened with a depth marker so a plain <option> can indent, which is the
+ * only way a nested list reads correctly in a select. Guarded by `sales.till`
+ * like everything else here — the action is the boundary.
+ */
+export async function listProductDepartmentsAction(): Promise<
+  { id: number; name: string; depth: number }[]
+> {
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
+  const all = await listDepartments(siteId)
+  return flattenTree(all).map(({ department, depth }) => ({
+    id: department.id,
+    name: department.name,
+    depth,
+  }))
 }
 
 /** Resolves a scan, including weighed-goods barcodes. */

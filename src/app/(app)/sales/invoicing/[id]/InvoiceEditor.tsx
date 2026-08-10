@@ -18,6 +18,7 @@ import {
   NumberInput,
   PageBody,
   PageHeader,
+  PickerResults,
   Select,
   SummaryList,
   SummaryRow,
@@ -43,7 +44,14 @@ import type { SalesDocument } from '@/lib/site/salesDocuments'
 import type { PriceStructure, SalesRep } from '@/lib/site/lookups'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
-import { scanAction, searchProductsAction } from '@/app/(app)/sales/actions'
+import { stockNote } from '@/lib/tillProductNotes'
+import type { TillProduct } from '@/lib/site/tillSearch'
+import {
+  scanAction,
+  searchProductsAction,
+  browseProductsAction,
+  listProductDepartmentsAction,
+} from '@/app/(app)/sales/actions'
 import {
   finaliseInvoiceAction,
   getInvoiceCustomerAction,
@@ -101,10 +109,21 @@ const STATUS_TONE: Record<SalesDocument['status'], BadgeTone> = {
   cancelled: 'neutral',
 }
 
+/**
+ * How many products the picker loads at once.
+ *
+ * Enough that a shop of ordinary size sees its whole catalogue without
+ * filtering, and bounded so a chain with fifty thousand lines does not ship all
+ * of them to the browser. Past this the dialog says so rather than pretending
+ * the list is complete.
+ */
+const PICKER_LIMIT = 500
+
 export default function InvoiceEditor({
   document,
   structures,
   reps,
+  defaultRepUserId = null,
   tenders,
   cashRounding,
   customer: initialCustomer,
@@ -117,6 +136,11 @@ export default function InvoiceEditor({
   document: SalesDocument
   structures: PriceStructure[]
   reps: SalesRep[]
+  /**
+   * Whoever is capturing, pre-selected on every new line. Null when they are
+   * not a selectable rep, in which case lines start unattributed as before.
+   */
+  defaultRepUserId?: number | null
   tenders: TenderType[]
   cashRounding: number
   /** The attached account's credit position, or null for a once-off. */
@@ -148,7 +172,11 @@ export default function InvoiceEditor({
       description: l.description,
       productType: l.productType,
       departmentId: l.departmentId,
-      salesRepUserId: l.salesRepUserId,
+      /* A line that already names someone keeps them — reopening a draft must
+         not quietly re-attribute a colleague's work to whoever opened it. The
+         default only fills a gap, and only while the document can still be
+         changed: a finalised invoice is a record, not a form. */
+      salesRepUserId: l.salesRepUserId ?? (editable ? defaultRepUserId : null),
       qty: l.qty,
       unitPriceIncl: l.unitPriceIncl,
       discountPct: l.discountPct,
@@ -159,6 +187,26 @@ export default function InvoiceEditor({
 
   const [entry, setEntry] = useState('')
   const entryRef = useRef<HTMLInputElement>(null)
+
+  /*
+   * The product search dialog.
+   *
+   * The entry box below the grid only resolves an exact code or barcode, which
+   * is the right tool with the product in your hand and the wrong one when the
+   * customer says "the blue one, 20 mil". This is how you look without knowing
+   * the code.
+   *
+   * Kept out of `pending`: that transition disables the whole invoice while a
+   * save is in flight, and a search that greys out the grid behind it would
+   * make the dialog feel like it was committing something.
+   */
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [searchDept, setSearchDept] = useState<number | null>(null)
+  const [searchResults, setSearchResults] = useState<TillProduct[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searchDepts, setSearchDepts] = useState<{ id: number; name: string; depth: number }[]>([])
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const [tendering, setTendering] = useState(false)
   const [receipt, setReceipt] = useState<{ number: string; change: number } | null>(null)
@@ -244,6 +292,118 @@ export default function InvoiceEditor({
 
   /* ── Line entry ──────────────────────────────────────────────────────── */
 
+  /**
+   * Puts a resolved product on the invoice.
+   *
+   * Separate from the lookup below because there are two ways to arrive here —
+   * typing a code, and choosing from the search dialog — and only the first has
+   * anything to resolve. The dialog already holds the product.
+   */
+  function appendLine(found: TillProduct) {
+    setLines((current) => [
+      ...current,
+      {
+        key: nextKey(),
+        productId: found.id,
+        productCode: found.code,
+        description: found.description,
+        productType: found.productType,
+        departmentId: found.departmentId,
+        // Inherits the line above, which is nearly always right when one
+        // assistant is capturing a whole order; otherwise whoever is signed in.
+        // Inheritance wins so that deliberately re-attributing one line carries
+        // down the rest of the order rather than snapping back.
+        salesRepUserId: current[current.length - 1]?.salesRepUserId ?? defaultRepUserId,
+        qty: 1,
+        unitPriceIncl: found.priceIncl,
+        discountPct: 0,
+        vatRatePct: found.vatRatePct,
+        unitCostExcl: found.costExcl,
+      },
+    ])
+  }
+
+  /*
+   * Loads the catalogue as the term and department settle.
+   *
+   * Runs with an EMPTY term too — the dialog opens showing the first 500
+   * products, because a picker that shows nothing until you type hides the
+   * catalogue from anyone who does not already know what is in it. Typing and
+   * choosing a department both narrow the same list.
+   *
+   * Debounced because this would otherwise hit the database on every keystroke,
+   * and the sequence guard matters more than the delay: a short term matches far
+   * more rows than a long one, so a slow early request can land after a fast
+   * later one and replace the right answer with a stale list. Only the newest
+   * request is allowed to write.
+   */
+  useEffect(() => {
+    if (!searchOpen) return
+
+    let live = true
+    setSearching(true)
+    const timer = setTimeout(
+      async () => {
+        try {
+          const found = await browseProductsAction({
+            term: searchTerm.trim(),
+            departmentId: searchDept,
+            priceStructureId,
+            limit: PICKER_LIMIT,
+          })
+          if (live) setSearchResults(found)
+        } catch {
+          if (live) setSearchResults([])
+        } finally {
+          if (live) setSearching(false)
+        }
+      },
+      // No debounce on the very first load — the dialog would otherwise open
+      // empty for a quarter second every time.
+      searchTerm.trim() || searchDept !== null ? 250 : 0,
+    )
+
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [searchOpen, searchTerm, searchDept, priceStructureId])
+
+  /* The department list is the same for the life of the screen, so it is
+     fetched once on first open rather than with every query. */
+  useEffect(() => {
+    if (!searchOpen || searchDepts.length > 0) return
+    let live = true
+    listProductDepartmentsAction()
+      .then((d) => { if (live) setSearchDepts(d) })
+      .catch(() => { if (live) setSearchDepts([]) })
+    return () => { live = false }
+  }, [searchOpen, searchDepts.length])
+
+  function openSearch() {
+    setSearchTerm('')
+    setSearchDept(null)
+    setSearchResults([])
+    setSearchOpen(true)
+  }
+
+  /**
+   * Adds the chosen product and stays open.
+   *
+   * Capturing an order is nearly always several products in a row, so closing
+   * after each one would mean re-opening and re-typing.
+   */
+  function pickFromSearch(product: TillProduct) {
+    appendLine(product)
+    toast.success(`Added ${product.description}.`)
+    // The term clears so the next one can be typed straight away; the
+    // DEPARTMENT stays, because someone working through one aisle is usually
+    // adding several things from it. Results are left alone — clearing them
+    // would blank the list for the moment it takes to re-query.
+    setSearchTerm('')
+    searchInputRef.current?.focus()
+  }
+
   function addProduct(code: string) {
     const term = code.trim()
     if (!term) return
@@ -257,25 +417,7 @@ export default function InvoiceEditor({
         return
       }
 
-      setLines((current) => [
-        ...current,
-        {
-          key: nextKey(),
-          productId: found.id,
-          productCode: found.code,
-          description: found.description,
-          productType: found.productType,
-          departmentId: found.departmentId,
-          // Inherits the line above, which is nearly always right when one
-          // assistant is capturing a whole order.
-          salesRepUserId: current[current.length - 1]?.salesRepUserId ?? null,
-          qty: 1,
-          unitPriceIncl: found.priceIncl,
-          discountPct: 0,
-          vatRatePct: found.vatRatePct,
-          unitCostExcl: found.costExcl,
-        },
-      ])
+      appendLine(found)
       setEntry('')
       entryRef.current?.focus()
     })
@@ -446,14 +588,11 @@ export default function InvoiceEditor({
 
         <Card>
           <div className="flex flex-wrap items-end justify-between gap-4 px-4 py-3.5">
-            {/* Not the primary — Finalise is. The dashed entry box below is the
-                real affordance; this only moves focus to it. */}
-            <Button
-              variant="ghost"
-              onClick={() => entryRef.current?.focus()}
-              disabled={!editable || pending}
-            >
-              <Icons.Plus size={16} />
+            {/* Not the primary — Finalise is. Opens the search dialog, because
+                the dashed entry box below already covers the case where the
+                code is known; this is for when it is not. */}
+            <Button variant="ghost" onClick={openSearch} disabled={!editable || pending}>
+              <Icons.Search size={16} />
               Add product
             </Button>
 
@@ -744,6 +883,105 @@ export default function InvoiceEditor({
           pending={pending}
           onFinalise={finalise}
         />
+
+        {/* closeOnBackdrop stays on: nothing here is half-typed work worth
+            protecting — every pick is already on the invoice behind it. */}
+        <Modal
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          title="Add a product"
+          description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the invoice."
+          size="lg"
+          footer={
+            <Button variant="secondary" onClick={() => setSearchOpen(false)}>
+              Done
+            </Button>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Search" className="min-w-64 flex-1">
+                <Input
+                  ref={searchInputRef}
+                  autoFocus
+                  value={searchTerm}
+                  placeholder="Code, barcode or description…"
+                  aria-label="Search products by code, barcode or description"
+                  icon={<Icons.Search size={15} />}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter takes the first match, so a search that has already
+                    // narrowed to the right thing needs no reach for the mouse.
+                    if (e.key === 'Enter' && searchResults[0]) {
+                      e.preventDefault()
+                      pickFromSearch(searchResults[0])
+                    }
+                  }}
+                />
+              </Field>
+
+              <Field label="Department" className="w-60">
+                <Select
+                  value={searchDept ?? ''}
+                  aria-label="Filter products by department"
+                  onChange={(e) => setSearchDept(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">All departments</option>
+                  {searchDepts.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {/* Non-breaking spaces: a plain one is collapsed inside an
+                          <option>, so a nested list would render flat. */}
+                      {'  '.repeat(d.depth)}
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+
+            {/* A fixed height, so the dialog does not jump as results arrive and
+                a pick never lands on a row that moved under the cursor. */}
+            <div className="min-h-[18rem]">
+              {searching && searchResults.length === 0 ? (
+                <p className="px-1 py-3 text-sm text-muted">Loading products…</p>
+              ) : searchResults.length === 0 ? (
+                <p className="px-1 py-3 text-sm text-muted">
+                  {searchTerm.trim()
+                    ? `Nothing matches “${searchTerm.trim()}”${searchDept !== null ? ' in this department' : ''}.`
+                    : 'No products in this department.'}{' '}
+                  Only products visible at the till are listed here.
+                </p>
+              ) : (
+                <PickerResults
+                  results={searchResults.map((p) => ({
+                    key: p.id,
+                    label: p.description,
+                    // The same stock note the till shows, from the same helper:
+                    // billing for something the shop does not have is the
+                    // mistake this dialog is most likely to cause.
+                    meta: `${p.code}${stockNote(p)}`,
+                    trailing: formatMoney(p.priceIncl),
+                  }))}
+                  onPick={(key) => {
+                    const product = searchResults.find((p) => p.id === Number(key))
+                    if (product) pickFromSearch(product)
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Say so when the list is cut short. A picker that silently shows
+                the first 500 of 40,000 looks like a complete catalogue, and the
+                product someone cannot find is the one they conclude the shop
+                does not sell. */}
+            {searchResults.length >= PICKER_LIMIT && (
+              <p className="px-1 text-xs text-muted">
+                Showing the first <span className="numeric">{PICKER_LIMIT}</span> products. Narrow
+                by department or search to see the rest.
+              </p>
+            )}
+          </div>
+        </Modal>
 
         <Modal
           open={receipt !== null}

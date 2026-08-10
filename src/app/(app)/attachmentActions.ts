@@ -40,7 +40,12 @@ export type AttachmentState = {
   message: string | null
 }
 
-export const IDLE: AttachmentState = { ok: false, error: null, message: null }
+/* The idle state lives with the component that uses it, not here. A
+   'use server' module may export nothing but async functions — every export
+   becomes a callable server action — so a plain object breaks the whole file at
+   runtime with "can only export async functions, found object", taking every
+   other action on the page down with it. The type above is fine: it is erased
+   before any of this reaches the runtime. */
 
 /** Narrows the target pair from a form, or refuses. */
 function readTarget(form: FormData): { entity: AttachmentTarget; entityId: number } | null {

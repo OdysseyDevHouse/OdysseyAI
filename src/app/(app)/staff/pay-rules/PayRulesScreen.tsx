@@ -196,7 +196,10 @@ export default function PayRulesScreen({
                         </td>
                         <td className={TABLE_TD}>
                           <span className="text-ink-2">
-                            {new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, {
+                            {/* Explicit locale: an undefined one resolves to the
+                                server's on the way out and the browser's on the
+                                way in, and the mismatch fails hydration. */}
+                            {new Date(`${day.date}T12:00:00`).toLocaleDateString('en-ZA', {
                               weekday: 'long',
                             })}
                           </span>

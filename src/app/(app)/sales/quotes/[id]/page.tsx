@@ -3,7 +3,7 @@ import { requireSiteUser } from '@/lib/auth'
 import { getDocument, isEditable } from '@/lib/site/salesDocuments'
 import { liveSpecials } from '@/lib/site/specials'
 import { getQuote } from '@/lib/site/quotes'
-import { listPriceStructures } from '@/lib/site/lookups'
+import { listPriceStructures, repsForLines } from '@/lib/site/lookups'
 import { listUsers } from '@/lib/site/users'
 import { can } from '@/lib/site/permissions'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
@@ -34,7 +34,7 @@ export default async function QuoteEditorPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const { site, capabilities } = await requireSiteUser()
+  const { site, user, capabilities } = await requireSiteUser()
   const { id } = await params
 
   const documentId = Number(id)
@@ -57,9 +57,9 @@ export default async function QuoteEditorPage({
   if (document.docType !== 'quote') redirect(`/sales/invoicing/${documentId}`)
   if (!quote) notFound()
 
-  const reps = users
-    .filter((u) => u.isActive)
-    .map((u) => ({ id: u.id, name: u.name, code: null }))
+  // Whoever is capturing is pre-selected on every new line, as on an invoice —
+  // a quote becomes one, and the attribution carries with it.
+  const { reps, defaultUserId } = repsForLines(users, user.id)
 
   const customer = document.customerId
     ? await getTillCustomer(site.id, document.customerId)
@@ -87,6 +87,7 @@ export default async function QuoteEditorPage({
         document={document}
         structures={structures}
         reps={reps}
+        defaultRepUserId={defaultUserId}
         tenders={tenders}
         cashRounding={cashRounding}
         specials={specials}

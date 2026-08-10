@@ -17,7 +17,6 @@ import {
   uploadAttachmentAction,
   renameAttachmentAction,
   deleteAttachmentAction,
-  IDLE,
   type AttachmentState,
 } from '@/app/(app)/attachmentActions'
 import type { AttachmentTarget } from '@/lib/attachmentTargets'
@@ -35,6 +34,11 @@ import type { AttachmentTarget } from '@/lib/attachmentTargets'
  * serverActions.bodySizeLimit; download goes through /api/attachments/[id],
  * because a server action cannot hand the browser a file.
  */
+
+/* Declared here rather than imported from the actions module: that file is
+   'use server', where every export has to be an async function. Same reason the
+   party panels each hold their own. */
+const IDLE: AttachmentState = { ok: false, error: null, message: null }
 
 /** What the panel is showing, so a record's own screen can say it plainly. */
 export type AttachmentView = {

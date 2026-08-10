@@ -185,6 +185,13 @@ export async function searchForTill(
 export async function browseForTill(
   siteId: number,
   options: {
+    /**
+     * Narrows by code, barcode or description, as searchForTill does. Optional
+     * because the offline catalog wants everything — but the invoice picker
+     * needs one query that both browses and searches, or a term typed while a
+     * department is chosen would have to abandon the department to run.
+     */
+    term?: string
     departmentId?: number | null
     priceStructureId?: number | null
     limit?: number
@@ -213,13 +220,26 @@ export async function browseForTill(
   const params: unknown[] = [options.priceStructureId ?? 0]
   if (options.departmentId) params.push(options.departmentId)
 
+  /* Same matching rule as searchForTill: barcode exact, code and description
+     fuzzy. Under two characters is treated as no term at all rather than as a
+     wildcard — "a" would match most of the file and read as broken. */
+  const needle = (options.term ?? '').trim()
+  const filter = needle.length >= 2 ? 'AND (p.barcode = ? OR p.code LIKE ? OR p.description LIKE ?)' : ''
+  if (filter) params.push(needle, `%${needle}%`, `%${needle}%`)
+
+  // Exact matches first, but only when something was typed — with no term every
+  // row scores the same and the CASE is wasted work over 40,000 rows.
+  const ranking = needle.length >= 2 ? 'CASE WHEN p.barcode = ? OR p.code = ? THEN 0 ELSE 1 END,' : ''
+  if (ranking) params.push(needle, needle)
+
   const rows = await siteQuery<Row>(
     siteId,
     `${selectProduct(costBasis)}
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
         ${scope}
-      ORDER BY p.description ASC
+        ${filter}
+      ORDER BY ${ranking} p.description ASC
       LIMIT ${capped}`,
     params,
   )

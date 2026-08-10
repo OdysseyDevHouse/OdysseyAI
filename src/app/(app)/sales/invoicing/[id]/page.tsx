@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { getDocument, isEditable } from '@/lib/site/salesDocuments'
-import { listPriceStructures } from '@/lib/site/lookups'
+import { listPriceStructures, repsForLines } from '@/lib/site/lookups'
 import { listUsers } from '@/lib/site/users'
 import { liveSpecials } from '@/lib/site/specials'
 import { can } from '@/lib/site/permissions'
@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic'
  * form: every figure on a line is editable until the document is finalised.
  */
 export default async function InvoicingPage({ params }: { params: Promise<{ id: string }> }) {
-  const { site, capabilities } = await requireSiteUser()
+  const { site, user, capabilities } = await requireSiteUser()
   const { id } = await params
 
   const documentId = Number(id)
@@ -43,9 +43,9 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
   ])
   if (!document) notFound()
 
-  const reps = users
-    .filter((u) => u.isActive)
-    .map((u) => ({ id: u.id, name: u.name, code: null }))
+  // Whoever is capturing is pre-selected on every new line — right nearly
+  // every time, and otherwise they pick themselves out of a list on each one.
+  const { reps, defaultUserId } = repsForLines(users, user.id)
 
   // The credit position for the attached account, so the finalise dialog can
   // judge the account tender without a round trip on open. Depends on the
@@ -66,6 +66,7 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
         document={document}
         structures={structures}
         reps={reps}
+        defaultRepUserId={defaultUserId}
         tenders={tenders}
         cashRounding={cashRounding}
         customer={customer}

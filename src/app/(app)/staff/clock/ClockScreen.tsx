@@ -304,7 +304,9 @@ function CloseForgottenModal({ entry, onClose }: { entry: TimeEntry; onClose: ()
 
         <Callout tone="neutral">
           Clocked in {formatClock(entry.startedAt)} on{' '}
-          {new Date(entry.startedAt).toLocaleDateString()}.
+          {/* Explicit locale, or the server and the browser format this
+              differently and hydration fails. */}
+          {new Date(entry.startedAt).toLocaleDateString('en-ZA')}.
         </Callout>
 
         <Field

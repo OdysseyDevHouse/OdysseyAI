@@ -34,6 +34,7 @@ import {
   type Special,
 } from '@/lib/specialsEngine'
 import { deviceId, deviceLabel } from '@/lib/deviceId'
+import { stockNote } from '@/lib/tillProductNotes'
 import type { BasketLine } from '@/lib/basket'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
@@ -76,26 +77,9 @@ import OverridePrompt from './OverridePrompt'
    because this file's own sub-components import it from itself. */
 export type { BasketLine }
 
-/** Product types that carry no quantity, so stock never applies to them. */
-const UNSTOCKED: ReadonlySet<string> = new Set(['service', 'buyout'])
-
-/**
- * The stock note beside a search result, or nothing at all.
- *
- * Silent when there is plenty and none of it is spoken for — which is the
- * overwhelmingly common case, and a note on every line is a note nobody reads.
- * It speaks up for the two situations that change what the cashier should say
- * to the customer: some of this is promised to someone else, or there is none.
- */
-function stockNote(product: TillProduct): string {
-  if (UNSTOCKED.has(product.productType)) return ''
-
-  if (product.reservedQty > 0) {
-    return ` · ${formatQty(product.availableQty)} available of ${formatQty(product.stockOnHand)} (${formatQty(product.reservedQty)} on order)`
-  }
-  if (product.stockOnHand <= 0) return ' · none on hand'
-  return ''
-}
+/* stockNote lives in @/lib/tillProductNotes: the invoice editor's product
+   picker shows the same note, and one catalogue should answer "how many are
+   there" the same way at both screens. */
 
 export default function TillScreen({
   terminals,

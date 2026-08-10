@@ -86,6 +86,34 @@ export async function listPriceStructures(siteId: number): Promise<PriceStructur
 
 export type SalesRep = { id: number; name: string; code: string | null }
 
+/**
+ * The people an invoice line can be attributed to, and who to pre-select.
+ *
+ * Users rather than `sales_reps` rows, because commission is paid to a user
+ * (047) — the per-line picker has to name one or the attribution goes nowhere.
+ *
+ * `defaultUserId` is whoever is capturing, but only when they are themselves
+ * selectable: the list is active users only, and defaulting to an id the
+ * picker cannot display would leave a line looking blank while carrying an
+ * attribution — commission paid to somebody nobody can see on screen.
+ *
+ * Both the invoice and the quote editor need exactly this, and they are the
+ * same component; deriving it twice is how the two quietly drift apart.
+ */
+export function repsForLines(
+  users: readonly { id: number; name: string; isActive: boolean }[],
+  currentUserId: number,
+): { reps: SalesRep[]; defaultUserId: number | null } {
+  const reps = users
+    .filter((u) => u.isActive)
+    .map((u) => ({ id: u.id, name: u.name, code: null }))
+
+  return {
+    reps,
+    defaultUserId: reps.some((r) => r.id === currentUserId) ? currentUserId : null,
+  }
+}
+
 /** Active reps, for the clerk picker on an invoice line. */
 export async function listSalesReps(siteId: number): Promise<SalesRep[]> {
   const rows = await siteQuery<RowDataPacket>(
