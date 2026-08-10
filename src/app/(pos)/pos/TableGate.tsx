@@ -36,12 +36,20 @@ export function TableGate({
   tables,
   busy,
   onWalkIn,
+  splitting = false,
+  onToggleSplitting,
+  onSplitTable,
   onPickTable,
 }: {
   tables: readonly PosTable[]
   busy: boolean
   /** Start a sale with no table — the counter, or a takeaway. */
   onWalkIn: () => void
+  /** Armed: the next table tap opens the split screen instead of resuming. */
+  splitting?: boolean
+  onToggleSplitting?: (next: boolean) => void
+  /** Opens the split screen for a table that has a bill. */
+  onSplitTable?: (table: PosTable) => void
   /** Seat a free table, or resume an open one. The shell decides which by state. */
   onPickTable: (table: PosTable) => void
 }) {
@@ -84,6 +92,36 @@ export function TableGate({
         </div>
       )}
 
+      {/*
+        ── SPLITTING IS A MODE, NOT A CONTROL ON EACH TILE ──────────────────
+        A 132px tile already carries a code, a state and a total; a second button on it
+        would be a ~40px target inside a 112px one, next to the tap that resumes the
+        table. Getting that wrong opens the wrong bill in front of a customer.
+
+        So: arm the mode, then tap the table to split. The floor stays the thing you tap,
+        and the armed state says plainly what the next tap will do — which is also how the
+        gesture cancels, by disarming rather than by finding a way out of a dialog.
+
+        Only offered when some table HAS a bill. On an empty floor it is a button that can
+        only ever explain why it does nothing.
+      */}
+      {onSplitTable && tables.some((t) => t.documentId !== null && t.state !== 'free') && (
+        <Button
+          variant={splitting ? 'warning' : 'ghost'}
+          size="touch"
+          className="w-full justify-center"
+          disabled={busy}
+          onClick={() => onToggleSplitting?.(!splitting)}
+        >
+          {/* ArrowLeftRight, not scissors: a split MOVES lines between two bills rather
+              than cutting one, and the arrow says which. (Scissors is also not in the
+              kit — the third time this project that an icon name was assumed rather than
+              checked, which is why test-icon-names exists.) */}
+          <Icons.ArrowLeftRight size={20} />
+          {splitting ? 'Tap the bill to split — or tap here to stop' : 'Split a bill'}
+        </Button>
+      )}
+
       {tables.length === 0 ? (
         <EmptyState
           icon={<Icons.LayoutGrid size={26} />}
@@ -106,7 +144,16 @@ export function TableGate({
                   key={table.id}
                   table={table}
                   busy={busy}
-                  onPick={() => onPickTable(table)}
+                  /* While the split mode is armed, a tap opens the SPLIT screen for that
+                     table rather than resuming it — and a free table stays inert, because
+                     there is nothing on it to divide. */
+                  onPick={() =>
+                    splitting
+                      ? table.documentId !== null && table.state !== 'free'
+                        ? onSplitTable?.(table)
+                        : undefined
+                      : onPickTable(table)
+                  }
                 />
               ))}
             </TileGrid>

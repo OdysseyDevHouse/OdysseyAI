@@ -54,8 +54,17 @@ import { useSaleState } from './useSaleState'
 import { specialsFor, totalsFor, salePayloadLines, returnPayloadLines } from './saleSelectors'
 import { RefundPad } from './RefundPad'
 import { TableGate } from './TableGate'
-import { listTablesAction, openTableAction, updateTableBillAction, askForBillAction, tablePaidAction } from './tableActions'
+import {
+  listTablesAction,
+  openTableAction,
+  updateTableBillAction,
+  askForBillAction,
+  tablePaidAction,
+  billForSplitAction,
+  splitTableAction,
+} from './tableActions'
 import type { PosTable } from '@/lib/site/posTables'
+import { SplitBillModal, type SplitLine } from './SplitBillModal'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { TileSizeModal } from './TileSizeModal'
 import { TileSizeContext, useTileSize } from '@/lib/posOffline/useTileSize'
@@ -949,6 +958,48 @@ export default function PosShell({
   const [table, setTable] = useState<PosTable | null>(null)
   /** True while the waiter is choosing — the gate stands in front of the till. */
   const [choosingTable, setChoosingTable] = useState(hospitality)
+  /** The gate's split mode is armed — the next table tap opens the split screen. */
+  const [armedForSplit, setArmedForSplit] = useState(false)
+  /** The table being split, and its lines. Null when the split screen is closed. */
+  const [splitting, setSplitting] = useState<{
+    table: PosTable
+    lines: SplitLine[]
+  } | null>(null)
+
+  /**
+   * Opens the split screen for a table.
+   *
+   * The lines are fetched rather than taken from `table`, which carries only a count and
+   * a total — a split needs each line's id, quantity and price, and those live on the
+   * document. Disarms the mode either way: a fetch that failed and left the gate armed
+   * would have the next tap open a screen the waiter had stopped expecting.
+   */
+  async function openSplit(table: PosTable) {
+    setArmedForSplit(false)
+    const bill = await billForSplitAction(table.id).catch(() => null)
+    if (!bill || bill.lines.length === 0) {
+      toast.error('That bill has nothing on it to split.')
+      return
+    }
+    setSplitting({ table, lines: bill.lines })
+  }
+
+  /** Writes the split, then re-reads the floor so both halves show. */
+  function confirmSplit(toTableId: number, moves: { lineId: number; qty: number }[]) {
+    const from = splitting?.table
+    if (!from) return
+    startTransition(async () => {
+      const result = await splitTableAction({ fromTableId: from.id, toTableId, moves })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setTables(result.tables)
+      setSplitting(null)
+      const to = result.tables.find((t) => t.id === toTableId)
+      toast.success(`Moved to ${to?.code ?? 'the other table'}.`)
+    })
+  }
 
   /* Re-read after anything that could have changed the floor, and on a slow tick so a
      waiter sees another waiter's table go from open to bill-asked without reloading. A
@@ -1238,6 +1289,9 @@ export default function PosShell({
             setChoosingTable(false)
             dispatch({ type: 'CLEAR' })
           }}
+          splitting={armedForSplit}
+          onToggleSplitting={setArmedForSplit}
+          onSplitTable={openSplit}
           onPickTable={resumeTable}
         />
       ) : (
@@ -1334,6 +1388,18 @@ export default function PosShell({
         loyalty={loyalty}
         pending={pending}
         onFinalise={finalise}
+      />
+
+      {/* Dividing a bill. Nothing is written until Confirm, and the server writes both
+          halves in one transaction — see posSplit.ts. */}
+      <SplitBillModal
+        open={splitting !== null}
+        onClose={() => setSplitting(null)}
+        fromTable={splitting?.table ?? null}
+        lines={splitting?.lines ?? []}
+        tables={tables}
+        busy={pending}
+        onConfirm={confirmSplit}
       />
 
       {/* Paying a customer back. Its own pad rather than the tender pad with a flag —

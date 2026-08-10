@@ -9,6 +9,7 @@ import {
   freeTableForDocument,
   type PosTable,
 } from '@/lib/site/posTables'
+import { splitTableBill, billLinesForSplit } from '@/lib/site/posSplit'
 import { saveDraft, saveForLaterDocument, getDocument } from '@/lib/site/salesDocuments'
 import type { LineInput } from '@/lib/site/salesDocuments'
 
@@ -169,6 +170,39 @@ export async function askForBillAction(tableId: number): Promise<TablesResult> {
   const { siteId } = ctx
 
   const result = await markBillAsked(siteId, tableId)
+  if (!result.ok) return result
+  return { ok: true, tables: await listTables(siteId) }
+}
+
+/** The lines on a table's bill, for the split screen to divide. */
+export async function billForSplitAction(tableId: number) {
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return null
+  return billLinesForSplit(ctx.siteId, tableId)
+}
+
+/**
+ * Moves part of one table's bill onto another table.
+ *
+ * `sales.till` rather than a right of its own. Splitting moves lines between two open
+ * bills and creates no money — nothing is discounted, voided or paid — so whoever may
+ * take an order may divide one. A separate capability would leave a shop able to seat
+ * tables but not split them, which is a state no restaurant wants.
+ *
+ * Re-checked here rather than trusted from the screen that offered the gesture: a server
+ * action is a public endpoint, and the only capability check that counts is the one a
+ * client cannot skip.
+ */
+export async function splitTableAction(input: {
+  fromTableId: number
+  toTableId: number
+  moves: { lineId: number; qty: number }[]
+}): Promise<TablesResult> {
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await splitTableBill(siteId, actor, input)
   if (!result.ok) return result
   return { ok: true, tables: await listTables(siteId) }
 }
