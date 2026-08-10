@@ -969,6 +969,9 @@ const PRODUCTS_SOURCE: CatalogSource = {
   joins: [
     { name: 'dept', sql: 'LEFT JOIN departments pd ON pd.id = t.department_id' },
     { name: 'brand', sql: 'LEFT JOIN brands pbr ON pbr.id = t.brand_id' },
+    // The group a variant belongs to. LEFT because the great majority of
+    // products have no parent, and an inner join would quietly drop them.
+    { name: 'parent', sql: 'LEFT JOIN products pvp ON pvp.id = t.parent_id' },
     {
       // Levels moved off `products` in 028 — they belong to a pile of stock, not
       // to the catalogue entry. The main location is the one a site that never
@@ -1009,6 +1012,37 @@ const PRODUCTS_SOURCE: CatalogSource = {
     },
     { key: 'brand', label: 'Brand', type: 'text', expr: 'pbr.name', needs: ['brand'], group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'productType', label: 'Product type', type: 'text', expr: 't.product_type', group: FIELD_GROUPS.CLASSIFICATION },
+    /*
+     * Variants. Reported on the CHILD, which is the row that carries stock,
+     * price and sales — so "sales by size" is a group-by on these two columns
+     * rather than a join nobody would think to write.
+     *
+     * A parent is left in the file rather than filtered out here: it is
+     * legitimately part of the catalogue, and a stock report that silently
+     * omitted rows would be worse than one that shows a zero. "Has variants"
+     * is offered as a filter so anyone who wants only sellable rows can say so.
+     */
+    {
+      key: 'variantGroup',
+      label: 'Variant group',
+      type: 'text',
+      expr: 'pvp.description',
+      needs: ['parent'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'variantValue',
+      label: 'Variant',
+      type: 'text',
+      // The two axes read as one label — "Medium" or "Medium / Red" — because a
+      // report column showing 'Medium' with an empty neighbour is a column that
+      // looks broken on every standalone product.
+      expr:
+        "NULLIF(TRIM(BOTH ' / ' FROM CONCAT(COALESCE(t.axis_1_value,''), ' / ', " +
+        "COALESCE(t.axis_2_value,''))), '')",
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    yesNo('hasVariants', 'Has variants', 't.has_variants'),
     yesNo('isArchived', 'Archived', 't.is_archived'),
     {
       key: 'stockOnHand',
