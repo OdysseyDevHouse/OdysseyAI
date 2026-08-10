@@ -98,6 +98,18 @@ export type RecalledLine = {
   maxDiscountPct: number
   shelfPriceIncl: number | null
   allowFractions: boolean
+  /**
+   * The answers, and the note, exactly as they were stored.
+   *
+   * Re-read rather than recomputed, unlike the three product fields above: these
+   * are what the CUSTOMER ordered, and a waiter recalling table 4's bill must get
+   * back the burger that was actually sent to the kitchen. Looking them up from
+   * the product's current questions would silently rewrite the order if the menu
+   * had changed since — and dropping them would strip every modifier off the bill
+   * and reprice the line, which is the same bug wearing a quieter face.
+   */
+  instructions: BasketLine['instructions']
+  note: string
 }
 
 /**
@@ -181,6 +193,23 @@ export async function recallSaleForTillAction(
         maxDiscountPct: product?.maxDiscountPct ?? 0,
         shelfPriceIncl: product && !product.askPriceAtSale ? product.priceIncl : null,
         allowFractions: product?.allowFractions ?? false,
+        /* From the LINE, not the product — see the note on the type. What was
+           ordered is a fact about this bill, not about the menu as it stands
+           now. `unitPriceIncl` above already carries their price, so nothing is
+           re-folded here. */
+        instructions: line.instructions.map((c) => ({
+          groupId: c.groupId ?? 0,
+          groupName: c.groupName,
+          optionId: c.optionId ?? 0,
+          optionName: c.optionName,
+          qty: c.qty,
+          priceAdjustIncl: c.priceAdjustIncl,
+          productId: c.productId,
+          stockQtyPer: c.stockQtyPer,
+          printsOnKitchen: c.printsOnKitchen,
+          printsOnReceipt: c.printsOnReceipt,
+        })),
+        note: line.note,
       }
     }),
   }
