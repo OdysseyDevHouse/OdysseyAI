@@ -1,6 +1,7 @@
 'use client'
 
 import { posDb } from './db'
+import { pendingCancellations, markCancellationSynced } from './cancelOffline'
 import type { OfflineSale, OutboxSale, PosSyncState, SyncResponse } from './types'
 
 /**
@@ -59,14 +60,28 @@ async function pendingSales(siteId: number, limit: number): Promise<OutboxSale[]
     .then((rows) => rows.slice(0, limit))
 }
 
-/** What the header chip reads. Cheap enough to call after every change. */
-export async function syncCounts(siteId: number): Promise<{ pending: number; failed: number }> {
+/**
+ * What the header chip reads. Cheap enough to call after every change.
+ *
+ * `pending` counts SALES only — it is the figure a cashier must not cash up against,
+ * and it means "money not yet on the books". An undelivered cancellation is also
+ * outstanding work, but folding it into the same number would overstate the takings
+ * still to land and make the warning mean two different things.
+ */
+export async function syncCounts(
+  siteId: number,
+): Promise<{ pending: number; failed: number; cancellations: number }> {
   const db = posDb(siteId)
-  const [pending, failed] = await Promise.all([
+  const [pending, failed, cancelled] = await Promise.all([
     db.outbox.where('status').equals('pending').count(),
     db.outbox.where('status').equals('failed').count(),
+    db.outbox
+      .where('status')
+      .equals('cancelled')
+      .filter((row) => row.syncedAt === null)
+      .count(),
   ])
-  return { pending, failed }
+  return { pending, failed, cancellations: cancelled }
 }
 
 /* ── Queueing ────────────────────────────────────────────────────────────── */
@@ -102,14 +117,18 @@ export async function queueSale(siteId: number, sale: OfflineSale): Promise<void
  */
 async function flushBatch(siteId: number): Promise<number> {
   const batch = await pendingSales(siteId, BATCH_SIZE)
-  if (batch.length === 0) return 0
+  /* Cancelled sales ride the same request. They are not revenue, but they ARE the
+     audit trail for a sale that vanished, so they are as important to deliver — and a
+     till with nothing pending but cancellations still has work to do. */
+  const cancellations = await pendingCancellations(siteId, BATCH_SIZE)
+  if (batch.length === 0 && cancellations.length === 0) return 0
 
   let response: Response
   try {
     response = await fetch('/api/pos/sync', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sales: batch.map(stripLocalFields) }),
+      body: JSON.stringify({ sales: batch.map(stripLocalFields), cancellations }),
     })
   } catch (error) {
     // The fetch itself failed: offline, DNS, a dead server. Nothing was sent.
@@ -171,6 +190,18 @@ async function flushBatch(siteId: number): Promise<number> {
     })
   }
 
+  /*
+   * Cancellations that reached the audit trail are stamped, not deleted — the row
+   * stays as this till's own record of what it cancelled. One that was refused stays
+   * unstamped and goes again, because a cancellation nobody can see is exactly the
+   * hole the trail exists to close.
+   */
+  for (const outcome of payload.cancelled ?? []) {
+    if (!outcome.ok) continue
+    accepted += 1
+    await markCancellationSynced(siteId, outcome.saleUid)
+  }
+
   return accepted
 }
 
@@ -189,6 +220,12 @@ function stripLocalFields(entry: OutboxSale): OfflineSale {
  * backwards is exactly how the reference POS lost sales off the floor, and the
  * safe version of this query is the one that can only ever match rows the server
  * has already confirmed.
+ *
+ * Note what that phrasing already protects, and must keep protecting: a `cancelled`
+ * row is not `synced`, so this cannot reach one even when its audit record has not
+ * been delivered yet. Do not "simplify" this to a negated status — deleting a
+ * cancellation before the server has it destroys the only evidence that a sale was
+ * made to disappear, which is precisely what that trail exists to prevent.
  */
 export async function pruneSynced(siteId: number): Promise<void> {
   const cutoff = new Date(Date.now() - KEEP_SYNCED_DAYS * 86_400_000).toISOString()

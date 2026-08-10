@@ -25,6 +25,7 @@ export function TillStatusBar({
   failedSales,
   catalogAgeHours,
   itemCount,
+  onShowOutbox,
   onExit,
 }: {
   siteName: string
@@ -70,6 +71,8 @@ export function TillStatusBar({
   /** Hours since the catalog last refreshed, or null if it never has. */
   catalogAgeHours: number | null
   itemCount: number
+  /** Opens the outbox — the answer to the question the queue chip poses. */
+  onShowOutbox: () => void
   onExit: () => void
 }) {
   /* Past a few hours the prices on this till and the prices on the shelf edge may
@@ -117,7 +120,12 @@ export function TillStatusBar({
          * a person rather than patience.
          */}
         {(pendingSales > 0 || failedSales > 0) && (
-          <span
+          /* A BUTTON, not a chip. The count is the question ("can I cash up?") and the
+             outbox is the answer, so the thing displaying the number is the thing that
+             opens the list — a cashier should not have to find it elsewhere. */
+          <button
+            type="button"
+            onClick={onShowOutbox}
             title={
               failedSales > 0
                 ? `${failedSales} sale${failedSales === 1 ? '' : 's'} could not be sent and need attention. Do not cash up yet.`
@@ -125,13 +133,13 @@ export function TillStatusBar({
             }
             className={
               failedSales > 0
-                ? 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-danger/40 bg-danger-soft px-3.5 text-sm font-medium text-danger-ink'
-                : 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink'
+                ? 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-danger/40 bg-danger-soft px-3.5 text-sm font-medium text-danger-ink hover:bg-danger-soft/70'
+                : 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink hover:bg-warning-soft/70'
             }
           >
             <Icons.Syncing size={16} />
             {failedSales > 0 ? `${failedSales} stuck` : `${pendingSales} to send`}
-          </span>
+          </button>
         )}
 
         {/* A catalog old enough that the shelf edge may disagree with it. */}

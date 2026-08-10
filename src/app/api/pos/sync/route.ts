@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { siteIdForCapability } from '@/lib/auth'
-import { postOfflineSale } from '@/lib/site/offlineSync'
-import type { OfflineSale, SyncResponse, SyncSaleResult } from '@/lib/posOffline/types'
+import { postOfflineSale, recordCancelledSale } from '@/lib/site/offlineSync'
+import type {
+  CancelledSale,
+  OfflineSale,
+  SyncResponse,
+  SyncSaleResult,
+} from '@/lib/posOffline/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,9 +21,9 @@ export const dynamic = 'force-dynamic'
  * banks into exists — so it belongs on the server, where it cannot be got wrong by
  * a client that retried half a batch.
  *
- * Today that array is sales only. Shifts, voids and drawer movements join it as
- * further fields on the same request, processed in a fixed order, rather than as
- * further routes.
+ * Today it carries sales and cancellations, in that fixed order — see the comment at
+ * the cancellation loop for why sales must go first. Shifts and drawer movements join
+ * it as further fields on the same request rather than as further routes.
  *
  * ── SALES POST OLDEST FIRST, SEQUENTIALLY ─────────────────────────────────
  *
@@ -58,7 +63,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
   }
 
-  let body: { sales?: unknown }
+  let body: { sales?: unknown; cancellations?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -72,6 +77,14 @@ export async function POST(request: NextRequest) {
   if (sales.length > MAX_SALES) {
     return NextResponse.json(
       { error: `Send at most ${MAX_SALES} sales at a time.` },
+      { status: 400 },
+    )
+  }
+
+  const cancellations = Array.isArray(body?.cancellations) ? body.cancellations : []
+  if (cancellations.length > MAX_SALES) {
+    return NextResponse.json(
+      { error: `Send at most ${MAX_SALES} cancellations at a time.` },
       { status: 400 },
     )
   }
@@ -96,5 +109,33 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ results } satisfies SyncResponse)
+  /*
+   * Cancellations LAST, after every sale in this batch.
+   *
+   * The order is a correctness requirement, not tidiness. A cancelled sale and a
+   * posted one are mutually exclusive outcomes for the same uid, and the till may
+   * have both in flight — a sale queued, then cancelled before the flush finished.
+   * Recording the cancellation first and then posting the sale would leave the shop
+   * with an invoice AND an audit row saying it never happened.
+   *
+   * Sales first is also the safer order to be wrong in: `postOfflineSale` is
+   * idempotent through its claim, so a cancellation arriving for an already-posted
+   * uid is recorded as the audit fact it is, and the sale stays on the books where
+   * the customer's slip says it should be.
+   */
+  const cancelled: { saleUid: string; ok: boolean; error?: string }[] = []
+  for (const entry of cancellations as CancelledSale[]) {
+    try {
+      const result = await recordCancelledSale(siteId, entry)
+      cancelled.push({ saleUid: entry?.saleUid ?? '', ok: result.ok, error: result.error })
+    } catch (error) {
+      cancelled.push({
+        saleUid: entry?.saleUid ?? '',
+        ok: false,
+        error: error instanceof Error ? error.message : 'The cancellation could not be recorded.',
+      })
+    }
+  }
+
+  return NextResponse.json({ results, cancelled } satisfies SyncResponse)
 }

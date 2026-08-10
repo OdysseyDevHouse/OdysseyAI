@@ -14,6 +14,7 @@ import {
   discardParkedOffline,
   listParkedOffline,
 } from '@/lib/posOffline/parkOffline'
+import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
 import { offlineBlockedProduct, offlineBlockedTender } from '@/lib/offlineCapability'
 import type { Special } from '@/lib/specialsEngine'
 import type { TillProduct } from '@/lib/site/tillSearch'
@@ -38,6 +39,7 @@ import { CatalogPane } from './CatalogPane'
 import { TenderPad } from './TenderPad'
 import { CustomerModal } from './CustomerModal'
 import { SavedSalesModal, type SavedEntry } from './SavedSalesModal'
+import { OutboxModal } from './OutboxModal'
 import { LineEditModal } from './LineEditModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
@@ -116,6 +118,7 @@ export default function PosShell({
   const [tendering, setTendering] = useState(false)
   const [pickingCustomer, setPickingCustomer] = useState(false)
   const [showingSaved, setShowingSaved] = useState(false)
+  const [showingOutbox, setShowingOutbox] = useState(false)
   /*
    * How many baskets are parked, for the badge.
    *
@@ -723,6 +726,7 @@ export default function PosShell({
         failedSales={till.failed}
         catalogAgeHours={till.catalogAgeHours}
         itemCount={state.lines.length}
+        onShowOutbox={() => setShowingOutbox(true)}
         onExit={() => router.push('/dashboard')}
       />
 
@@ -800,6 +804,36 @@ export default function PosShell({
         customer={state.customer}
         pending={pending}
         onFinalise={finalise}
+      />
+
+      <OutboxModal
+        open={showingOutbox}
+        siteId={siteId}
+        busy={pending}
+        /* `sales.void` — the nearest existing right, and making a sale disappear is
+           exactly what it is for. The audit row records who did it either way, so this
+           decides what is offered rather than what is possible. */
+        canCancel={canVoid}
+        onClose={() => setShowingOutbox(false)}
+        onCancelSale={async (saleUid, reason) => {
+          const result = await cancelOfflineSale(siteId, saleUid, reason, {
+            userId: operatorUserId,
+            name: operatorName,
+          })
+          if (!result) {
+            toast.error('That sale can no longer be cancelled here.')
+            return
+          }
+          await till.recount()
+          /* Says which of the two happened, because they mean different things to
+             whoever reads the invoice register: a burnt number leaves an explainable
+             gap, a rewound one leaves the run intact. */
+          toast.success(
+            result.rewound
+              ? `${result.documentNumber} cancelled. The number goes back.`
+              : `${result.documentNumber} cancelled. That number is used up — the gap is on the record.`,
+          )
+        }}
       />
 
       <SavedSalesModal

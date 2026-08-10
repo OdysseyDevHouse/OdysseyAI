@@ -1,13 +1,13 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQueryOne, siteTransaction } from '../siteDb'
+import { siteExecute, siteQueryOne, siteTransaction } from '../siteDb'
 import { round } from '../decimals'
 import { isPeriodLocked } from './settings'
 import { capabilitiesForRole } from './permissions'
 import { checkPricing } from './priceGuard'
 import { saveDraft, getDocument, type LineInput } from './salesDocuments'
 import { finaliseDocument } from './salesPosting'
-import type { OfflineSale, SyncSaleResult } from '../posOffline/types'
+import type { CancelledSale, OfflineSale, SyncSaleResult } from '../posOffline/types'
 
 /**
  * Posting a sale that was rung up while the till had no database.
@@ -391,6 +391,68 @@ export async function postOfflineSale(
     documentId: posted.documentId,
     documentNumber: posted.documentNumber,
     exception,
+  }
+}
+
+/* ── Cancellations ───────────────────────────────────────────────────────── */
+
+/**
+ * Records a sale the till cancelled before it ever synced.
+ *
+ * No document is created, and that is correct: the sale never happened, nothing was
+ * tendered on the server's books, and inventing a cancelled invoice for it would put a
+ * row in the sales register for something that was never sold.
+ *
+ * What this exists for is the audit trail. A till that can make a sale vanish without
+ * a trace is a till somebody can steal from — so every line, every tender, the reason,
+ * who rang it up and who cancelled it are all kept. A manager comparing cancellations
+ * by operator is the whole point.
+ *
+ * Idempotent through `uq_cancelled_uid`: a till that sends the same cancellation twice
+ * gets one row, which matters because it retries exactly like a sale does.
+ */
+export async function recordCancelledSale(
+  siteId: number,
+  cancelled: CancelledSale,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!UUID.test(cancelled.saleUid ?? '')) {
+    return { ok: false, error: 'Missing or malformed sale uid.' }
+  }
+  if (!cancelled.reason?.trim()) {
+    // Refused rather than defaulted. A cancellation with no reason is the shape this
+    // trail exists to prevent, and accepting a blank one makes the column decorative.
+    return { ok: false, error: 'A cancelled sale must carry a reason.' }
+  }
+
+  try {
+    await siteExecute(
+      siteId,
+      `INSERT INTO offline_cancelled_sales
+         (sale_uid, document_number, terminal_id, terminal_code, user_id, user_name,
+          total_incl, reason, taken_at, cancelled_at, payload)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE sale_uid = sale_uid`,
+      [
+        cancelled.saleUid,
+        cancelled.documentNumber?.slice(0, 32) ?? null,
+        cancelled.terminalId ?? null,
+        cancelled.terminalCode?.slice(0, 24) ?? null,
+        // 0 is not a users row, so it must be NULL rather than a dangling id.
+        cancelled.operatorUserId > 0 ? cancelled.operatorUserId : null,
+        (cancelled.operatorName ?? '').slice(0, 120),
+        Number.isFinite(cancelled.totalIncl) ? cancelled.totalIncl.toFixed(4) : '0.0000',
+        cancelled.reason.trim().slice(0, 190),
+        sqlDateTime(cancelled.takenAt),
+        sqlDateTime(cancelled.cancelledAt),
+        JSON.stringify(cancelled.payload ?? null),
+      ],
+    )
+    return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'The cancellation could not be recorded.',
+    }
   }
 }
 

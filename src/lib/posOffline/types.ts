@@ -104,12 +104,23 @@ export type SyncSaleResult = {
   retryable?: boolean
 }
 
-export type SyncResponse = { results: SyncSaleResult[] }
+export type SyncResponse = {
+  results: SyncSaleResult[]
+  /** One per cancellation sent, so the till knows which reached the audit trail. */
+  cancelled?: { saleUid: string; ok: boolean; error?: string }[]
+}
 
 /* ── What the till holds locally ─────────────────────────────────────────── */
 
-/** An outbox entry's life. `failed` needs a human; the rest are the machine's. */
-export type OutboxStatus = 'pending' | 'synced' | 'failed'
+/**
+ * An outbox entry's life.
+ *
+ * `failed` needs a human; `pending` and `synced` are the machine's. `cancelled` is
+ * the odd one: the sale is NOT going to be posted, but the row still has to reach the
+ * server — a till that can make a sale disappear without a trace is a till somebody
+ * can steal from. See `offline_cancelled_sales`.
+ */
+export type OutboxStatus = 'pending' | 'synced' | 'failed' | 'cancelled'
 
 export type OutboxSale = OfflineSale & {
   status: OutboxStatus
@@ -118,6 +129,48 @@ export type OutboxSale = OfflineSale & {
   lastError: string | null
   /** Set once the server has it. */
   syncedAt: string | null
+  /** Why a cashier cancelled it, and when. Both null unless `status` is cancelled. */
+  cancelReason?: string | null
+  cancelledAt?: string | null
+  /**
+   * Who cancelled it — recorded ALONGSIDE `operatorUserId`, never over it.
+   *
+   * "Who rang this up" and "who made it disappear" are different questions, and a shop
+   * looking into a pattern of cancelled sales needs both. Overwriting the first would
+   * hide exactly the case this trail exists to catch.
+   */
+  cancelledByUserId?: number | null
+  cancelledByName?: string | null
+  /**
+   * Whether the number this sale consumed was BURNT rather than handed back.
+   *
+   * True in almost every case, and the exception is narrow: only a sale cancelled
+   * while it was still the most recently issued counter, with nothing printed since,
+   * can rewind. Anything else must burn — the customer may be holding a slip with
+   * that number on it, and reissuing it would put two different sales under one
+   * invoice number with no unique index offline to catch it.
+   *
+   * Recorded rather than inferred because it is the explanation for the one gap a
+   * till's otherwise gapless run can have, and `verifySequence` reads it the same way
+   * it reads a cancelled document that kept its number.
+   */
+  numberBurnt?: boolean
+}
+
+/** A cancelled offline sale, on its way to the audit trail. */
+export type CancelledSale = {
+  saleUid: string
+  documentNumber: string
+  terminalId: number | null
+  terminalCode: string | null
+  operatorUserId: number
+  operatorName: string
+  totalIncl: number
+  reason: string
+  takenAt: string
+  cancelledAt: string
+  /** Every line and tender, so a pattern of large cancellations is visible. */
+  payload: unknown
 }
 
 /** What the header chip shows, and what the cashier needs before going home. */
