@@ -1,7 +1,7 @@
 'use client'
 
 import Dexie, { type Table } from 'dexie'
-import type { OutboxSale } from './types'
+import type { OutboxReturn, OutboxSale } from './types'
 import type { TillProduct } from '../site/tillSearch'
 
 /**
@@ -71,6 +71,7 @@ export class PosDatabase extends Dexie {
   products!: Table<TillProduct, number>
   outbox!: Table<OutboxSale, string>
   parked!: Table<LocalParkedSale, string>
+  returns!: Table<OutboxReturn, string>
   kv!: Table<KvRow, string>
 
   constructor(siteId: number) {
@@ -113,6 +114,31 @@ export class PosDatabase extends Dexie {
       outbox: 'saleUid, status, takenAt',
       // Ordered by when it was set aside, which is how the recall list reads.
       parked: 'uid, parkedAt',
+      kv: 'key',
+    })
+
+    /*
+     * Version 3 — returns taken offline.
+     *
+     * Its OWN table rather than a kind flag on `outbox`, and the reason is the
+     * flush: sales and returns post through different server functions in a fixed
+     * order (sales first — see the sync route), so a single mixed table would have
+     * every read filtering by kind and the ordering rule would live in the client
+     * instead of on the server where it belongs.
+     *
+     * Same indexes and the same reasoning as `outbox`: `status` so the engine finds
+     * pending rows without reading the table, `takenAt` because returns flush oldest
+     * first too.
+     *
+     * Additive, and it does not touch `outbox` or `returns` destructively — the
+     * invariant from version 2 now covers both. A pending return is the only record
+     * that money left the drawer.
+     */
+    this.version(3).stores({
+      products: 'id, code, barcode, departmentId',
+      outbox: 'saleUid, status, takenAt',
+      parked: 'uid, parkedAt',
+      returns: 'returnUid, status, takenAt',
       kv: 'key',
     })
   }

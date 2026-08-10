@@ -2,7 +2,14 @@
 
 import { posDb } from './db'
 import { pendingCancellations, markCancellationSynced } from './cancelOffline'
-import type { OfflineSale, OutboxSale, PosSyncState, SyncResponse } from './types'
+import type {
+  OfflineReturn,
+  OfflineSale,
+  OutboxReturn,
+  OutboxSale,
+  PosSyncState,
+  SyncResponse,
+} from './types'
 
 /**
  * The loop that gets a shift's takings onto the books.
@@ -67,12 +74,25 @@ async function pendingSales(siteId: number, limit: number): Promise<OutboxSale[]
  * and it means "money not yet on the books". An undelivered cancellation is also
  * outstanding work, but folding it into the same number would overstate the takings
  * still to land and make the warning mean two different things.
+ *
+ * A pending RETURN is counted separately for the same reason, and it is not a nicety:
+ * a queued refund is money that has ALREADY LEFT the drawer with the opposite sign to
+ * a sale, so adding it to `pending` would net against the takings and understate both.
+ * But it must not be omitted either — cashing up with a refund unrecorded reports the
+ * drawer SHORT by its value, and no amount of recounting finds it. So: its own number,
+ * and the same "not yet through" warning covers both.
  */
 export async function syncCounts(
   siteId: number,
-): Promise<{ pending: number; failed: number; cancellations: number }> {
+): Promise<{
+  pending: number
+  failed: number
+  cancellations: number
+  pendingReturns: number
+  failedReturns: number
+}> {
   const db = posDb(siteId)
-  const [pending, failed, cancelled] = await Promise.all([
+  const [pending, failed, cancelled, retPending, retFailed] = await Promise.all([
     db.outbox.where('status').equals('pending').count(),
     db.outbox.where('status').equals('failed').count(),
     db.outbox
@@ -80,8 +100,16 @@ export async function syncCounts(
       .equals('cancelled')
       .filter((row) => row.syncedAt === null)
       .count(),
+    db.returns.where('status').equals('pending').count(),
+    db.returns.where('status').equals('failed').count(),
   ])
-  return { pending, failed, cancellations: cancelled }
+  return {
+    pending,
+    failed,
+    cancellations: cancelled,
+    pendingReturns: retPending,
+    failedReturns: retFailed,
+  }
 }
 
 /* ── Queueing ────────────────────────────────────────────────────────────── */
@@ -107,6 +135,36 @@ export async function queueSale(siteId: number, sale: OfflineSale): Promise<void
   await posDb(siteId).outbox.put(entry)
 }
 
+/**
+ * Puts a completed return in its outbox.
+ *
+ * Queued BEFORE the credit-note slip prints, for the same reason a sale is: a failed
+ * print is a reprint, whereas a crash between printing and queueing leaves a customer
+ * holding a credit note for a refund no system knows about — and with a refund the
+ * money has already left the drawer, so that record is the only thing standing between
+ * the shop and an unexplained shortage at cash-up.
+ */
+export async function queueReturn(siteId: number, ret: OfflineReturn): Promise<void> {
+  const entry: OutboxReturn = {
+    ...ret,
+    status: 'pending',
+    attempts: 0,
+    lastError: null,
+    syncedAt: null,
+  }
+  // `put`, not `add` — see queueSale. A throw here would lose the return.
+  await posDb(siteId).returns.put(entry)
+}
+
+/** Pending returns, OLDEST FIRST — the same rule sales flush by. */
+async function pendingReturns(siteId: number, limit: number): Promise<OutboxReturn[]> {
+  return posDb(siteId)
+    .returns.where('status')
+    .equals('pending')
+    .sortBy('takenAt')
+    .then((rows) => rows.slice(0, limit))
+}
+
 /* ── One flush ───────────────────────────────────────────────────────────── */
 
 /**
@@ -121,14 +179,22 @@ async function flushBatch(siteId: number): Promise<number> {
      audit trail for a sale that vanished, so they are as important to deliver — and a
      till with nothing pending but cancellations still has work to do. */
   const cancellations = await pendingCancellations(siteId, BATCH_SIZE)
-  if (batch.length === 0 && cancellations.length === 0) return 0
+  /* Returns ride the same request, and the server posts them after the sales — see
+     the ordering note in the sync route. A till with nothing but returns pending
+     still has work to do. */
+  const returns = await pendingReturns(siteId, BATCH_SIZE)
+  if (batch.length === 0 && cancellations.length === 0 && returns.length === 0) return 0
 
   let response: Response
   try {
     response = await fetch('/api/pos/sync', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sales: batch.map(stripLocalFields), cancellations }),
+      body: JSON.stringify({
+        sales: batch.map(stripLocalFields),
+        returns: returns.map(stripReturnLocalFields),
+        cancellations,
+      }),
     })
   } catch (error) {
     // The fetch itself failed: offline, DNS, a dead server. Nothing was sent.
@@ -191,6 +257,38 @@ async function flushBatch(siteId: number): Promise<number> {
   }
 
   /*
+   * Returns, on exactly the same terms as sales: accepted rows are stamped with the
+   * number the BOOKS ended up using, a non-retryable refusal becomes `failed` for a
+   * human, and anything else stays pending.
+   *
+   * The number can legitimately differ from the printed one here in a way a sale's
+   * cannot: if uq_doc_number refuses the printed number, the server keeps the credit
+   * note under the number it allocated and says so in the exception. Storing what came
+   * back means a reprint shows what the books say rather than what the till hoped.
+   */
+  for (const result of payload.returns ?? []) {
+    const entry = returns.find((r) => r.returnUid === result.returnUid)
+    if (!entry) continue
+
+    if (result.ok) {
+      accepted += 1
+      await db.returns.update(result.returnUid, {
+        status: 'synced',
+        syncedAt: new Date().toISOString(),
+        lastError: null,
+        documentNumber: result.documentNumber ?? entry.documentNumber,
+      })
+      continue
+    }
+
+    await db.returns.update(result.returnUid, {
+      status: result.retryable === false ? 'failed' : 'pending',
+      attempts: entry.attempts + 1,
+      lastError: result.error ?? 'The server would not accept this return.',
+    })
+  }
+
+  /*
    * Cancellations that reached the audit trail are stamped, not deleted — the row
    * stays as this till's own record of what it cancelled. One that was refused stays
    * unstamped and goes again, because a cancellation nobody can see is exactly the
@@ -211,6 +309,23 @@ function stripLocalFields(entry: OutboxSale): OfflineSale {
   return sale
 }
 
+/** The same, for a return. */
+function stripReturnLocalFields(entry: OutboxReturn): OfflineReturn {
+  const {
+    status,
+    attempts,
+    lastError,
+    syncedAt,
+    cancelReason,
+    cancelledAt,
+    cancelledByUserId,
+    cancelledByName,
+    numberBurnt,
+    ...ret
+  } = entry
+  return ret
+}
+
 /* ── Pruning ─────────────────────────────────────────────────────────────── */
 
 /**
@@ -229,8 +344,18 @@ function stripLocalFields(entry: OutboxSale): OfflineSale {
  */
 export async function pruneSynced(siteId: number): Promise<void> {
   const cutoff = new Date(Date.now() - KEEP_SYNCED_DAYS * 86_400_000).toISOString()
-  await posDb(siteId)
-    .outbox.where('status')
+  const db = posDb(siteId)
+  await db.outbox
+    .where('status')
+    .equals('synced')
+    .filter((row) => (row.syncedAt ?? '') < cutoff)
+    .delete()
+  /* Returns on identical terms, and written out rather than shared so the
+     `.equals('synced')` predicate above is repeated verbatim rather than abstracted
+     into something that could later be loosened for one table and not the other. A
+     pending or failed return is the only record that money left the drawer. */
+  await db.returns
+    .where('status')
     .equals('synced')
     .filter((row) => (row.syncedAt ?? '') < cutoff)
     .delete()

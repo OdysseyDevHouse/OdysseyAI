@@ -38,6 +38,17 @@ export type OfflineTillState = {
   pending: number
   /** Sales the server refused in a way that needs a person. */
   failed: number
+  /**
+   * Returns queued and not yet delivered — counted apart from `pending`.
+   *
+   * A queued refund is money that has ALREADY left the drawer, with the opposite sign
+   * to a sale, so adding it to `pending` would net against the takings and understate
+   * both figures. It cannot be omitted either: cashing up with a refund unrecorded
+   * reports the drawer SHORT by its value, and recounting never finds it.
+   */
+  pendingReturns: number
+  /** Returns the server refused in a way that needs a person. */
+  failedReturns: number
   /** Hours since the catalog last refreshed. */
   catalogAgeHours: number | null
   productsHeld: number
@@ -69,6 +80,8 @@ export function useOfflineTill(siteId: number, enabled = true): OfflineTill {
     loadingCatalog: false,
     pending: 0,
     failed: 0,
+    pendingReturns: 0,
+    failedReturns: 0,
     catalogAgeHours: null,
     productsHeld: 0,
     canSellOffline: false,
@@ -122,7 +135,17 @@ export function useOfflineTill(siteId: number, enabled = true): OfflineTill {
 
   const recount = useCallback(async () => {
     const counts = await syncCounts(siteId)
-    setState((s) => ({ ...s, pending: counts.pending, failed: counts.failed }))
+    setState((s) => ({
+      ...s,
+      pending: counts.pending,
+      failed: counts.failed,
+      /* Separate from `pending` on purpose — a queued refund is money that has already
+         left the drawer, so netting it against the takings would understate both. It
+         must still be SHOWN: cashing up with a refund unrecorded reports the drawer
+         short by its value, and recounting never finds it. */
+      pendingReturns: counts.pendingReturns,
+      failedReturns: counts.failedReturns,
+    }))
   }, [siteId])
 
   /* ── The sync engine, started once ────────────────────────────────────── */
