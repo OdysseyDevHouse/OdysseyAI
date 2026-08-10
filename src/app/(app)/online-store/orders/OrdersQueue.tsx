@@ -279,6 +279,7 @@ export default function OrdersQueue({
 
       <Card>
         <TableToolbar
+          inCard
           actions={
             <Button
               variant="secondary"

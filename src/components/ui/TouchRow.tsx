@@ -4,10 +4,23 @@ import type { ReactNode } from 'react'
 import { ChevronRight } from './icons'
 import type { CategoryTone } from './CategoryTile'
 
-/* The edge lives in styles.ts, shared with ProductTile and ActionTile — see the note
-   on EDGE_RING for why it is a border rather than a bar drawn on top, and why only
-   the leading side is at full strength. */
-import { EDGE_RING, EDGE_LEAD } from './styles'
+/**
+ * The coloured bar down a row's leading edge.
+ *
+ * Written out in full rather than built as `bg-cat-${tone}` — Tailwind scans source
+ * text, so an interpolated class is never emitted and the bar renders invisible.
+ */
+const EDGE: Record<CategoryTone, string> = {
+  indigo: 'bg-cat-indigo',
+  violet: 'bg-cat-violet',
+  emerald: 'bg-cat-emerald',
+  amber: 'bg-cat-amber',
+  sky: 'bg-cat-sky',
+  rose: 'bg-cat-rose',
+  teal: 'bg-cat-teal',
+  orange: 'bg-cat-orange',
+  slate: 'bg-cat-slate',
+}
 
 /**
  * A full-width, touch-sized row that is a button.
@@ -70,34 +83,22 @@ export function TouchRow({
       onClick={onClick}
       disabled={disabled}
       className={`relative flex w-full items-center gap-3 overflow-hidden rounded-card border py-3 pr-3 text-left transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50 ${
-        /* The bar is the row's own LEFT BORDER, not a rectangle laid over it.
-           That is what curves its inner edge: a border follows border-radius on
-           both sides, so the colour tapers into the corners exactly as the card
-           does, where an absolutely-positioned span can only round the outer two
-           and leaves a hard vertical line facing the text.
-
-           border-l-4 against border on the other three — thin, as in the
-           reference. Less leading padding to compensate, so the icon sits the
-           same distance from the colour as it would from a plain hairline. */
-        edge ? 'border-l-4 pl-2.5' : 'pl-3'
+        /* The edge is drawn INSIDE the row, so the content is pushed clear of it
+           rather than sitting on top. Without an edge the leading padding is the
+           plain p-3 every other row in the app uses. */
+        edge ? 'pl-4' : 'pl-3'
       } ${
-        /* `active` still wins on the surrounding hairline and the fill: which row is
-           CHOSEN has to be legible at a glance, and a brand-blue tint says that where
-           a slightly stronger department hue would just look like another department.
-           The LEADING edge stays the department's own, so a row does not change
-           identity by being selected — hence EDGE_LEAD trailing here too, whose
-           border-l-* wins over border-brand/40 by being the more specific side. */
         tone === 'active'
-          ? `border-brand/40 bg-brand-soft ${edge ? EDGE_LEAD[edge] : ''}`
-          : edge
-            ? /* No hover:border-brand here. It would repaint all four sides and take
-                 the department's leading edge with it — the row would lose its colour
-                 at the moment a finger is on it, which is the moment it most needs to
-                 be the one you aimed at. The press animation is the feedback instead. */
-              `${EDGE_RING[edge]} ${EDGE_LEAD[edge]} bg-surface`
-            : 'border-border bg-surface hover:border-brand/50'
+          ? 'border-brand/40 bg-brand-soft'
+          : 'border-border bg-surface hover:border-brand/50'
       } ${className}`}
     >
+      {/* aria-hidden: the colour repeats what the title already says, and a screen
+          reader announcing it would be noise. */}
+      {edge && (
+        <span aria-hidden className={`absolute inset-y-0 left-0 w-1.5 ${EDGE[edge]}`} />
+      )}
+
       {icon}
 
       <span className="min-w-0 flex-1">

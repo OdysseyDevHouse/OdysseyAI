@@ -153,7 +153,7 @@ export default async function PurchasingPage({
         )}
 
         <Card>
-          <TableToolbar className="border-b border-border px-4 py-3.5">
+          <TableToolbar inCard>
             <LinkSegmentedControl
               aria-label="Filter by document type"
               value={type ?? 'all'}

@@ -102,7 +102,7 @@ export default async function SupplierAgeAnalysisPage({
         )}
 
         <Card>
-          <TableToolbar className="border-b border-border px-4 py-3.5">
+          <TableToolbar inCard>
             <LinkSegmentedControl
               aria-label="Which suppliers to show"
               value={overdueOnly ? 'overdue' : 'all'}
