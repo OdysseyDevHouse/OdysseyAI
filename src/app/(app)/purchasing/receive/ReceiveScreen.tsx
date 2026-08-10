@@ -21,8 +21,9 @@ import {
   useToast,
   type ComboboxOption,
 } from '@/components/ui'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatMoney, formatQty, round } from '@/lib/decimals'
 import { useColumnPrefs } from '@/lib/useColumnPrefs'
+import ChargesEditor, { type ChargeRow } from './ChargesEditor'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import PurchaseLineGrid, {
   PURCHASE_COLUMNS,
@@ -103,7 +104,7 @@ export default function ReceiveScreen({
   const [supplierId, setSupplierId] = useState('')
   const [orderId, setOrderId] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
-  const [charges, setCharges] = useState(0)
+  const [charges, setCharges] = useState<ChargeRow[]>([])
   const [lines, setLines] = useState<ReceiveLine[]>([])
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<TillProduct[]>([])
@@ -236,9 +237,39 @@ export default function ReceiveScreen({
   // Every figure on the delivery, from the one place that computes them. The
   // grid re-derives each line from the same function, so what a row shows and
   // what the summary adds up can never disagree.
+  // Every charge lands in cost, whoever billed it — so the whole total is what
+  // gets apportioned across the lines.
+  const chargesTotal = useMemo(
+    () => charges.reduce((sum, c) => round(sum + c.amountExcl, 2), 0),
+    [charges],
+  )
+
   const totals = useMemo(
-    () => purchaseDocumentFigures(lines, { chargesExcl: charges }),
-    [lines, charges],
+    () => purchaseDocumentFigures(lines, { chargesExcl: chargesTotal }),
+    [lines, chargesTotal],
+  )
+
+  /**
+   * What the GOODS supplier is owed — their charges only.
+   *
+   * A courier's invoice in this figure would be chased from the wrong account
+   * and paid to the wrong company, so the summary must separate them even
+   * though both are in landed cost.
+   */
+  const ownCharges = useMemo(
+    () =>
+      charges
+        .filter((c) => !c.supplierId)
+        .reduce((sum, c) => round(sum + c.amountExcl + c.amountExcl * (c.vatRatePct / 100), 2), 0),
+    [charges],
+  )
+
+  const carrierCharges = useMemo(
+    () =>
+      charges
+        .filter((c) => c.supplierId)
+        .reduce((sum, c) => round(sum + c.amountExcl + c.amountExcl * (c.vatRatePct / 100), 2), 0),
+    [charges],
   )
 
   function submit() {
@@ -247,7 +278,16 @@ export default function ReceiveScreen({
         supplierId: Number(supplierId),
         orderId: orderId ? Number(orderId) : null,
         supplierInvoiceNo: invoiceNo || null,
-        chargesExcl: charges,
+        charges: charges
+          // A blank row the user added and never filled in is not a charge.
+          .filter((c) => c.description.trim() || c.amountExcl > 0)
+          .map((c) => ({
+            supplierId: c.supplierId,
+            description: c.description.trim() || 'Delivery',
+            amountExcl: c.amountExcl,
+            vatRatePct: c.vatRatePct,
+            theirInvoiceNo: c.theirInvoiceNo || null,
+          })),
         lines: lines.map((l) => ({
           orderLineId: l.orderLineId,
           productId: l.productId,
@@ -363,15 +403,26 @@ export default function ReceiveScreen({
               <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
             </Field>
 
-            <Field
-              label="Delivery and charges"
-              hint="Spread across the lines by value, so cost is landed cost."
-            >
-              <CurrencyInput
-                value={charges}
-                onChange={(e) => setCharges(Number(String(e.target.value).replace(',', '.')) || 0)}
-              />
-            </Field>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Delivery and charges"
+            description="Spread across the lines by value, so cost is landed cost — whoever billed it."
+          />
+          <CardBody>
+            <ChargesEditor
+              charges={charges}
+              suppliers={suppliers}
+              goodsSupplierName={
+                supplierId
+                  ? `On ${suppliers.find((s) => s.id === Number(supplierId))?.name ?? 'the'} invoice`
+                  : ''
+              }
+              defaultVatRate={defaultVatRate}
+              onChange={setCharges}
+            />
           </CardBody>
         </Card>
 
@@ -467,15 +518,35 @@ export default function ReceiveScreen({
         <Card className="p-4">
           <dl className="flex flex-col gap-1.5 text-sm">
             <Row label="Goods (excl.)" value={formatMoney(totals.subtotalExcl)} />
-            {charges > 0 && <Row label="Delivery" value={formatMoney(totals.chargesExcl)} />}
+            {ownCharges > 0 && <Row label="Delivery" value={formatMoney(ownCharges)} />}
             <Row label="VAT" value={formatMoney(totals.vatTotal)} />
           </dl>
           <div className="mt-3 flex items-baseline justify-between border-t border-border pt-3">
-            <span className="font-medium text-ink">Invoice total</span>
+            <span className="font-medium text-ink">
+              {carrierCharges > 0 ? 'Their invoice' : 'Invoice total'}
+            </span>
             <span className="numeric text-xl font-semibold text-ink">
-              {formatMoney(totals.totalIncl)}
+              {formatMoney(round(totals.subtotalExcl + totals.vatTotal + ownCharges, 2))}
             </span>
           </div>
+
+          {/* Billed separately, so it is NOT part of what this supplier is
+              owed — but it IS in the cost of the goods. Showing it here rather
+              than only on the charges table is what stops someone reading the
+              invoice total as the whole cost of the delivery. */}
+          {carrierCharges > 0 && (
+            <div className="mt-3 border-t border-border pt-3">
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="text-muted">Carriers, billed separately</span>
+                <span className="numeric text-ink-2">{formatMoney(carrierCharges)}</span>
+              </div>
+              <p className="mt-1.5 text-xs text-muted">
+                Posted to their own accounts. In the cost of the goods, not in what{' '}
+                {suppliers.find((s) => s.id === Number(supplierId))?.name ?? 'this supplier'} is
+                owed.
+              </p>
+            </div>
+          )}
         </Card>
 
         <Button variant="primary" disabled={!ready || pending} onClick={submit}>

@@ -1,5 +1,5 @@
 import 'server-only'
-import type { RowDataPacket } from 'mysql2/promise'
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { apportionDiscount, weightedAverageCost } from '../documentMath'
@@ -71,14 +71,46 @@ export type ReceiveLineInput = {
   warrantyUntil?: string | null
 }
 
+/**
+ * One charge on a delivery — freight, duty, a pallet deposit.
+ *
+ * EVERY charge is apportioned into landed cost, whoever billed it: the goods
+ * cost what they cost to get onto the shelf. What `supplierId` decides is who
+ * gets CREDITED for it. See 088_purchase_charges.sql.
+ */
+export type ReceiveChargeInput = {
+  /**
+   * Who invoiced it. Null means the goods supplier billed it on the same
+   * invoice — the behaviour chargesExcl has always had, and the default.
+   *
+   * A value means a SEPARATE invoice: their own creditor posting, and a GL
+   * line to freight-in rather than to stock.
+   */
+  supplierId?: number | null
+  description: string
+  /** EXCLUSIVE of VAT, like every other purchase figure. */
+  amountExcl: number
+  vatRatePct?: number
+  /** Their invoice number, which the payment run matches against. */
+  theirInvoiceNo?: string | null
+}
+
 export type ReceiveInput = {
   supplierId: number
   /** The purchase order being received against, if any. */
   orderId?: number | null
   supplierInvoiceNo?: string | null
   documentDate?: string
-  /** Freight and the like, spread across the lines so cost is landed cost. */
+  /**
+   * Freight and the like, spread across the lines so cost is landed cost.
+   *
+   * Kept for callers that only have a total. When `charges` is given this is
+   * ignored and the sum of those rows is used instead — one figure, derived
+   * from the itemisation rather than able to disagree with it.
+   */
   chargesExcl?: number
+  /** The same money, itemised and attributable. Preferred over chargesExcl. */
+  charges?: ReceiveChargeInput[]
   reference?: string | null
   notes?: string | null
   lines: ReceiveLineInput[]
@@ -88,9 +120,39 @@ export type ReceiveResult =
   | { ok: true; documentId: number; documentNumber: string; totalExcl: number }
   | { ok: false; error: string }
 
+/**
+ * The charge total this receipt will post.
+ *
+ * When rows are given they are the truth and chargesExcl is ignored — one
+ * figure derived from the itemisation, rather than two that can disagree about
+ * what the delivery cost.
+ */
+export function chargesTotalFor(input: ReceiveInput): number {
+  if (input.charges && input.charges.length > 0) {
+    return round(
+      input.charges.reduce((sum, c) => sum + round(c.amountExcl, 2), 0),
+      2,
+    )
+  }
+  return round(input.chargesExcl ?? 0, 2)
+}
+
 export function validateReceive(input: ReceiveInput): string | null {
   if (input.lines.length === 0) return 'Add at least one line.'
   if ((input.chargesExcl ?? 0) < 0) return 'Charges cannot be negative.'
+
+  for (const [index, charge] of (input.charges ?? []).entries()) {
+    const where = `Charge ${index + 1}`
+    if (!charge.description?.trim()) return `${where}: say what it is for.`
+    if (!Number.isFinite(charge.amountExcl) || charge.amountExcl < 0) {
+      return `${where}: the amount cannot be negative.`
+    }
+    // A charge billed by someone else with no amount is a row that will post an
+    // empty invoice to their account. Refused rather than silently skipped.
+    if (charge.supplierId && charge.amountExcl <= 0) {
+      return `${where}: a charge on another supplier's account needs an amount.`
+    }
+  }
 
   for (const [index, line] of input.lines.entries()) {
     const where = `Line ${index + 1}`
@@ -157,9 +219,25 @@ export async function receiveGoods(
     return round(gross - discount, 2)
   })
 
-  // Freight spread pro-rata by value. A flat split per line would load a R5
-  // packet of seasoning with the same delivery cost as a R900 case of stock.
-  const charges = apportionDiscount(lineValues, round(input.chargesExcl ?? 0, 2))
+  // EVERY charge lands in cost, whoever billed it — the goods cost what they
+  // cost to get onto the shelf. Spread pro-rata by value: a flat split per line
+  // would load a R5 packet of seasoning with the same delivery cost as a R900
+  // case of stock.
+  const chargesTotal = chargesTotalFor(input)
+  const charges = apportionDiscount(lineValues, chargesTotal)
+
+  // The credit side is where they part company. A charge with no supplier is
+  // on the goods invoice, exactly as before; one with a supplier is a separate
+  // creditor and must not inflate what the goods supplier is owed.
+  const chargeRows = input.charges ?? []
+  const ownCharges = round(
+    chargeRows.filter((c) => !c.supplierId).reduce((s, c) => s + round(c.amountExcl, 2), 0),
+    2,
+  )
+  // No itemisation at all means the whole total is the goods supplier's, which
+  // is what chargesExcl has always meant.
+  const goodsSupplierCharges = chargeRows.length > 0 ? ownCharges : chargesTotal
+  const thirdPartyCharges = chargeRows.filter((c) => c.supplierId && c.amountExcl > 0)
 
   const computed = input.lines.map((line, index) => {
     const netExcl = lineValues[index]
@@ -182,8 +260,20 @@ export async function receiveGoods(
 
   const subtotalExcl = computed.reduce((sum, c) => round(sum + c.netExcl, 2), 0)
   const vatTotal = computed.reduce((sum, c) => round(sum + c.vat, 2), 0)
-  const chargesExcl = round(input.chargesExcl ?? 0, 2)
-  const totalIncl = round(subtotalExcl + chargesExcl + vatTotal, 2)
+  // The document's charge figure is the WHOLE delivery cost, because that is
+  // what was apportioned into landed cost and what the GRV should show.
+  const chargesExcl = chargesTotal
+
+  // But the goods supplier is owed only THEIR share. A courier's invoice
+  // sitting in this total would be chased from the wrong account, and paid to
+  // the wrong company by the payment run.
+  const ownChargeVat = round(
+    chargeRows
+      .filter((c) => !c.supplierId)
+      .reduce((s, c) => s + round(round(c.amountExcl, 2) * ((c.vatRatePct ?? 0) / 100), 2), 0),
+    2,
+  )
+  const totalIncl = round(subtotalExcl + goodsSupplierCharges + vatTotal + ownChargeVat, 2)
 
   const dueDate = dueDateFor('invoice', docDate, Number(supplier.payment_terms_days ?? 30))
 
@@ -214,6 +304,28 @@ export async function receiveGoods(
         ] as never,
       )
       const documentId = (res as { insertId: number }).insertId
+
+      // The itemised charges, so the GRV can say what the delivery cost was
+      // made of and who billed each part. Skipped where 088 has not reached
+      // this site yet — the total on the document still carries the money, and
+      // a receipt must not fail because a migration is queued behind another.
+      if (chargeRows.length > 0 && (await tableExistsTx(tx, 'purchase_document_charges'))) {
+        for (const charge of chargeRows) {
+          await tx.execute(
+            `INSERT INTO purchase_document_charges
+               (document_id, supplier_id, description, amount_excl, vat_rate_pct, their_invoice_no)
+             VALUES (?,?,?,?,?,?)`,
+            [
+              documentId,
+              charge.supplierId ?? null,
+              charge.description.trim().slice(0, 120),
+              round(charge.amountExcl, 4).toFixed(4),
+              (charge.vatRatePct ?? 0).toFixed(3),
+              charge.theirInvoiceNo?.trim() || null,
+            ] as never,
+          )
+        }
+      }
 
       for (const [index, line] of input.lines.entries()) {
         const c = computed[index]
@@ -365,6 +477,38 @@ export async function receiveGoods(
       sourceDocId: posted.documentId,
     })
 
+    // Each freight company gets its OWN invoice on its OWN account. Grouped by
+    // supplier so a courier who billed two charges on one delivery is owed one
+    // invoice rather than two — the payment run matches an invoice number, and
+    // splitting it would make theirs unmatchable.
+    //
+    // After the goods invoice and on the same terms: already committed, so a
+    // failure here is a ledger gap to chase rather than a reason to un-receive
+    // goods that are on the shelf.
+    for (const [freightSupplierId, group] of groupBySupplier(thirdPartyCharges)) {
+      const excl = round(group.reduce((s, c) => s + round(c.amountExcl, 2), 0), 2)
+      const vat = round(
+        group.reduce((s, c) => s + round(round(c.amountExcl, 2) * ((c.vatRatePct ?? 0) / 100), 2), 0),
+        2,
+      )
+      const theirInvoice = group.find((c) => c.theirInvoiceNo?.trim())?.theirInvoiceNo?.trim()
+
+      await postSupplierTransaction(siteId, actor, {
+        supplierId: freightSupplierId,
+        docType: 'invoice',
+        amount: round(excl + vat, 2),
+        docDate,
+        // Falls back to OUR GRV number suffixed, so two freight invoices on one
+        // receipt cannot collide on the duplicate-number guard.
+        docNumber: theirInvoice || `${posted.documentNumber}-F${freightSupplierId}`,
+        reference: posted.documentNumber,
+        description: `${group.map((c) => c.description.trim()).join(', ')} on ${posted.documentNumber}`,
+        vatRatePct: excl === 0 ? 0 : round((vat / excl) * 100, 3),
+        source: 'purchase',
+        sourceDocId: posted.documentId,
+      })
+    }
+
     // The general ledger, on the same terms: debit stock and VAT input, credit
     // creditors. Cannot fail the receipt — the GL is a derived mirror, so a
     // missing journal is a reporting gap rather than a reason to un-receive
@@ -378,6 +522,14 @@ export async function receiveGoods(
       supplierId: input.supplierId,
       stockExcl: subtotalExcl,
       vatTotal,
+      // Freight billed by someone else is an EXPENSE, not stock value: it is
+      // debited to freight-in and credited to that supplier, rather than
+      // riding on the goods supplier's entry.
+      freight: thirdPartyCharges.map((c) => ({
+        supplierId: c.supplierId!,
+        excl: round(c.amountExcl, 2),
+        vat: round(round(c.amountExcl, 2) * ((c.vatRatePct ?? 0) / 100), 2),
+      })),
     })
 
     // Update the order's fulfilment state once its lines have moved.
@@ -524,7 +676,96 @@ export async function voidReceipt(
     autoAllocate: true,
   })
 
+  // And EVERY carrier this receipt also invoiced.
+  //
+  // This is the sharpest edge in the whole feature. A receipt can create more
+  // than one creditor invoice; a void that reverses only the goods supplier's
+  // leaves the courier's account permanently overstated, with nothing on
+  // either document to say so. It would be found, if at all, by someone
+  // querying a statement months later.
+  //
+  // Read outside a transaction and tolerant of the table being absent: on a
+  // site where 088 is still queued there are no rows, and nothing to reverse.
+  const freightGroups = await freightOwedFor(siteId, documentId)
+  for (const [freightSupplierId, owed] of freightGroups) {
+    await postSupplierTransaction(siteId, actor, {
+      supplierId: freightSupplierId,
+      docType: 'credit_note',
+      amount: owed,
+      docDate: todayIso(),
+      // Suffixed per carrier, so two carriers on one receipt cannot collide on
+      // the duplicate-number guard and silently drop the second reversal.
+      docNumber: `REV-${doc.document_number}-F${freightSupplierId}`,
+      description: `Void of ${doc.document_number} — ${reason.trim()}`,
+      source: 'purchase',
+      sourceDocId: documentId,
+      autoAllocate: true,
+    })
+  }
+
   return { ok: true }
+}
+
+/**
+ * What each carrier was invoiced on this receipt, VAT included.
+ *
+ * Returns nothing where 088 has not reached this site — such a receipt cannot
+ * have posted a carrier invoice in the first place, so there is nothing to
+ * reverse and an empty map is the correct answer rather than an error.
+ */
+async function freightOwedFor(
+  siteId: number,
+  documentId: number,
+): Promise<Map<number, number>> {
+  const present = await siteQueryOne<RowDataPacket>(
+    siteId,
+    `SELECT 1 AS ok FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'purchase_document_charges' LIMIT 1`,
+  )
+  if (!present) return new Map()
+
+  const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT supplier_id,
+            SUM(amount_excl * (1 + vat_rate_pct / 100)) AS owed
+       FROM purchase_document_charges
+      WHERE document_id = ? AND supplier_id IS NOT NULL
+      GROUP BY supplier_id`,
+    [documentId],
+  )
+
+  return new Map(rows.map((r) => [Number(r.supplier_id), round(toNum(r.owed), 2)]))
+}
+
+/** Charges gathered per freight supplier, so each gets one invoice. */
+function groupBySupplier(
+  charges: readonly ReceiveChargeInput[],
+): Map<number, ReceiveChargeInput[]> {
+  const groups = new Map<number, ReceiveChargeInput[]>()
+  for (const charge of charges) {
+    if (!charge.supplierId) continue
+    const list = groups.get(charge.supplierId)
+    if (list) list.push(charge)
+    else groups.set(charge.supplierId, [charge])
+  }
+  return groups
+}
+
+/**
+ * Whether a table has actually reached this site's database.
+ *
+ * Schema drifts between sites: a file in sql/site/ is only real once the runner
+ * has applied it there, and a concurrent migration can block the queue. A
+ * receipt must still post while 088 is pending — the charge total is on the
+ * document either way, and only the itemisation is lost.
+ */
+async function tableExistsTx(tx: PoolConnection, table: string): Promise<boolean> {
+  const [rows] = await tx.execute(
+    `SELECT 1 FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1`,
+    [table] as never,
+  )
+  return (rows as RowDataPacket[]).length > 0
 }
 
 function todayIso(): string {

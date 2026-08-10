@@ -450,11 +450,14 @@ async function main() {
     JSON.stringify(drift),
   )
 
+  // Measured as a DELTA against the baseline taken at the top of this run: the
+  // shared database may already carry gaps from other suites, and asserting an
+  // absolute zero here would fail for their reasons rather than ours.
   const seqAfter = await verifySequence(SITE, 'purchase_order')
   ok(
     '*** every PO number this run issued has a document ***',
-    seqAfter.missing.length === seqBefore.missing.length,
-    `before ${seqBefore.missing.length}, after ${seqAfter.missing.length}`,
+    seqAfter.missing === seqBefore.missing,
+    `before ${seqBefore.missing}, after ${seqAfter.missing}`,
   )
 
   console.log(`\n${fails === 0 ? 'All good.' : `${fails} FAILED`}\n`)

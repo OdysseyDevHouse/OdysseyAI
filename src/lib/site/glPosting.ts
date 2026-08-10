@@ -219,6 +219,15 @@ export type GrvMirror = {
   /** Stock value excluding VAT. */
   stockExcl: number
   vatTotal: number
+  /**
+   * Freight billed by someone OTHER than the goods supplier.
+   *
+   * A separate entry per freight company, because the credit goes to their
+   * account and not to the goods supplier's: debit freight-in, debit VAT
+   * input, credit that creditor. Empty or absent on an ordinary receipt, which
+   * posts exactly the journal it always did.
+   */
+  freight?: { supplierId: number; excl: number; vat: number }[]
 }
 
 /**
@@ -272,6 +281,43 @@ export async function mirrorGrv(
       supplierId: input.supplierId,
     })
 
+    // Freight from a third party rides on the same journal but a different
+    // pair of accounts: it is an EXPENSE we owe a courier, not value we owe
+    // the goods supplier. Falls back to cost_of_sales where 088's freight_in
+    // mapping has not reached this site — a journal in a slightly broad
+    // account beats an unbalanced one, and the alternative is throwing, which
+    // attempt() would swallow into no journal at all.
+    const freight = input.freight ?? []
+    if (freight.length > 0) {
+      const freightAccount =
+        (await mapped(siteId, 'freight_in')) ?? (await mapped(siteId, 'cost_of_sales'))
+      if (!freightAccount) throw new Error('No freight-in or cost-of-sales account is mapped.')
+
+      for (const leg of freight) {
+        if (round(leg.excl, 2) !== 0) {
+          lines.push({
+            accountId: freightAccount,
+            amount: round(sign * leg.excl, 2),
+            description: 'Freight in',
+          })
+        }
+        if (round(leg.vat, 2) !== 0) {
+          if (!vatAccount) throw new Error('No VAT input account is mapped.')
+          lines.push({
+            accountId: vatAccount,
+            amount: round(sign * leg.vat, 2),
+            description: 'VAT on freight',
+          })
+        }
+        lines.push({
+          accountId: creditorsAccount,
+          amount: round(-sign * (leg.excl + leg.vat), 2),
+          description: 'Owed to carrier',
+          supplierId: leg.supplierId,
+        })
+      }
+    }
+
     return siteTransaction(siteId, async (tx) => {
       const posted = await postTx(tx, actor, {
         journalDate: input.documentDate,
@@ -279,6 +325,210 @@ export async function mirrorGrv(
         reference: input.documentNumber,
         source: input.isReturn ? 'supplier_return' : 'grv',
         sourceDocId: input.documentId,
+        lines,
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
+/* ── Manufacturing ───────────────────────────────────────────────────────── */
+
+export type ManufactureMirror = {
+  orderId: number
+  documentNumber: string | null
+  documentDate: string
+  /** What the components were worth, at the cost they were consumed at. */
+  componentCost: number
+  /** Labour, packaging, power — the cost lines on the order. */
+  overheadCost: number
+  /** True when this is an unbuild, which is the same entry with every sign flipped. */
+  isReversal?: boolean
+}
+
+/**
+ * The journal behind a build.
+ *
+ *   DEBIT  stock control          value of the finished goods received
+ *   CREDIT stock control          value of the components consumed
+ *   CREDIT manufacturing overhead overhead recovered into inventory
+ *
+ * ── WHY BOTH STOCK LEGS, WHEN THEY USUALLY CANCEL ──────────────────────────
+ *
+ * With no overhead the two stock legs are equal and opposite: converting flour
+ * into bread changes WHAT the business owns, not how much it is worth. The
+ * entry is posted anyway rather than skipped, because a ledger that records
+ * production volume can answer "what did we make in March" and one that
+ * silently posts nothing cannot.
+ *
+ * Overhead is the only leg that moves the balance sheet total, and it must.
+ * Labour spent baking is real value added to inventory; crediting it here is
+ * what stops it being expensed twice — once as wages, and again as cost of
+ * sales when the bread sells.
+ *
+ * ── FAIL-SOFT, LIKE A SALE AND UNLIKE A GRV ────────────────────────────────
+ *
+ * mirrorGrv throws when its accounts are unmapped, because a purchase with no
+ * creditor entry is a genuine hole. A build has no such counterparty: the goods
+ * exist either way, and the stock movements are already committed by the time
+ * this runs. So an unmapped overhead account SKIPS the overhead leg rather than
+ * losing the entry, and an unmapped stock account gives up on the journal while
+ * leaving production standing. The gap surfaces in ledgerHealth().
+ */
+export async function mirrorManufacture(
+  siteId: number,
+  actor: Actor,
+  input: ManufactureMirror,
+): Promise<MirrorResult> {
+  const sign = input.isReversal ? -1 : 1
+  const label = `${input.isReversal ? 'Unbuilt' : 'Built'} ${input.documentNumber ?? `#${input.orderId}`}`
+
+  return attempt(siteId, actor, label, async () => {
+    const [stockAccount, overheadAccount] = await Promise.all([
+      mapped(siteId, 'stock_control'),
+      mapped(siteId, 'manufacturing_overhead'),
+    ])
+    if (!stockAccount) throw new Error('The stock control account is not mapped.')
+
+    const componentCost = round(input.componentCost, 2)
+    let overheadCost = round(input.overheadCost, 2)
+
+    // No account for it, so the overhead cannot be recovered. The finished
+    // goods are then valued at their ingredients alone in the ledger, which is
+    // wrong but recoverable; dropping the whole entry would not be.
+    if (overheadCost !== 0 && !overheadAccount) overheadCost = 0
+
+    const finishedValue = round(componentCost + overheadCost, 2)
+
+    // Nothing to say. A build of something whose ingredients are all costed at
+    // zero would otherwise post an all-zero journal and burn a number.
+    if (finishedValue === 0 && componentCost === 0) {
+      throw new Error('The build has no value to post.')
+    }
+
+    const lines: JournalLineInput[] = [
+      {
+        accountId: stockAccount,
+        amount: round(sign * finishedValue, 2),
+        description: 'Finished goods in',
+      },
+      {
+        accountId: stockAccount,
+        amount: round(-sign * componentCost, 2),
+        description: 'Components consumed',
+      },
+    ]
+
+    if (overheadCost !== 0 && overheadAccount) {
+      lines.push({
+        accountId: overheadAccount,
+        amount: round(-sign * overheadCost, 2),
+        description: 'Overhead recovered into stock',
+      })
+    }
+
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.documentDate,
+        description: label,
+        reference: input.documentNumber,
+        source: input.isReversal ? 'manufacture_cancel' : 'manufacture',
+        sourceDocId: input.orderId,
+        lines,
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
+/* ── Stock takes ─────────────────────────────────────────────────────────── */
+
+export type StockTakeMirror = {
+  stockTakeId: number
+  documentNumber: string | null
+  documentDate: string
+  /**
+   * NET value of the variance, at the cost the stock was carried at.
+   *
+   * Positive means MORE was found than the books said. Net rather than the two
+   * sides separately: a sheet where one product is over by R400 and another
+   * short by R390 has moved the balance sheet by R10, and posting the gross
+   * figures would inflate both sides of the P&L with offsetting noise.
+   */
+  varianceValue: number
+  /** True for the reversal written when a posted sheet is cancelled. */
+  isReversal?: boolean
+}
+
+/**
+ * The journal behind a count.
+ *
+ *   Stock written OFF (counted less than the books said):
+ *     DEBIT  stock adjustments   the value that walked
+ *     CREDIT stock control       the asset that is not there
+ *
+ *   Stock written ON is the same entry reversed.
+ *
+ * ── WHY THIS IS THE FIRST ADJUSTMENT JOURNAL ───────────────────────────────
+ *
+ * movement_type 'adjustment' has existed since 015, but until stock takes the
+ * only thing writing one was a document VOID — and a void reverses the journal
+ * its document already posted, so it needed no entry of its own. A count has no
+ * such partner. Without this, stock would leave the building with the asset
+ * silently shrinking and nothing in the P&L to explain it, which is the single
+ * biggest thing this module must not do.
+ *
+ * ── FAIL-SOFT, LIKE A SALE AND UNLIKE A GRV ────────────────────────────────
+ *
+ * The movements are already committed by the time this runs, and a count is
+ * true whether or not anybody has mapped an account for it. So an unmapped
+ * account loses the JOURNAL, never the count; the gap surfaces in
+ * ledgerHealth(). 081 seeds the mapping to 5100, which 045 had already seeded
+ * as an account and left pointing at nothing.
+ */
+export async function mirrorStockTake(
+  siteId: number,
+  actor: Actor,
+  input: StockTakeMirror,
+): Promise<MirrorResult> {
+  const sign = input.isReversal ? -1 : 1
+  const label = `${input.isReversal ? 'Stock take reversal' : 'Stock take'} ${input.documentNumber ?? `#${input.stockTakeId}`}`
+
+  return attempt(siteId, actor, label, async () => {
+    const variance = round(sign * input.varianceValue, 2)
+
+    // A sheet that balanced in value has nothing to say. Posting an all-zero
+    // journal would burn a batch number to record that nothing happened.
+    if (variance === 0) throw new Error('The stock take has no value to post.')
+
+    const [stockAccount, adjustmentAccount] = await Promise.all([
+      mapped(siteId, 'stock_control'),
+      mapped(siteId, 'stock_adjustment'),
+    ])
+    if (!stockAccount || !adjustmentAccount) {
+      throw new Error('The stock control or stock adjustment account is not mapped.')
+    }
+
+    const lines: JournalLineInput[] = [
+      {
+        accountId: stockAccount,
+        amount: variance,
+        description: variance > 0 ? 'Stock found' : 'Stock written off',
+      },
+      {
+        accountId: adjustmentAccount,
+        amount: round(-variance, 2),
+        description: variance > 0 ? 'Stock surplus' : 'Stock shortfall',
+      },
+    ]
+
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.documentDate,
+        description: label,
+        reference: input.documentNumber,
+        source: input.isReversal ? 'stock_take_cancel' : 'stock_take',
+        sourceDocId: input.stockTakeId,
         lines,
       })
       return { batchId: posted.id }
