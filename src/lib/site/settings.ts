@@ -80,6 +80,18 @@ export const SETTING_DEFAULTS = {
    */
   pos_mode: 'retail',
   /**
+   * Whether a service charge applies only to a TABLE's bill.
+   *
+   * ON by default, and that default is the careful one: a percentage added to a R600
+   * takeaway or a retail basket is a charge the customer did not expect and did not agree
+   * to, and it would start appearing the moment a shop configured its first tier. A
+   * restaurant gets service charges where they belong; a retail shop never sees the
+   * feature at all.
+   *
+   * '1' or '0' rather than a boolean, matching every other flag in this table.
+   */
+  tips_tables_only: '1',
+  /**
    * Lay-by cancellation fee, as a percentage of the FULL price.
    *
    * Defaults to zero deliberately. Section 62 of the Consumer Protection Act
@@ -387,6 +399,13 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === 'retail' || value === 'hospitality'
         ? null
         : "POS mode must be 'retail' or 'hospitality'."
+
+    /* A flag, so only the two values this table uses everywhere else. Validated rather
+       than coerced: a stray 'true' would read as ON by the !== '0' test and as OFF by any
+       future reader that compared to '1', which is the kind of disagreement that surfaces
+       months later as a service charge on a takeaway. */
+    case 'tips_tables_only':
+      return value === '1' || value === '0' ? null : 'That setting must be 1 or 0.'
 
     case 'cashup_mode':
       return value === 'terminal' || value === 'user'
