@@ -307,6 +307,17 @@ export async function finaliseSaleAction(
   tenders: { tenderTypeId: number; amount: number; reference?: string | null }[],
   /** Loyalty reward codes the cashier applied. Priced and spent server-side. */
   voucherCodes: string[] = [],
+  /**
+   * Tips, from the tender pad.
+   *
+   * Defaulted so every existing caller is unchanged. `declaredTips` is what a cashier said
+   * of an ambiguous cash over-tender; `serviceCharge` is the tier amount the pad showed the
+   * customer, already zero if a manager waived it.
+   *
+   * Both are re-derived or re-checked server-side by `finaliseDocument`'s own `planTips`
+   * call — this is what was CHARGED, not a claim the server trusts.
+   */
+  tips: { declaredTips?: Record<number, number>; serviceCharge?: number } = {},
 ): Promise<FinaliseSaleResult> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
@@ -335,6 +346,8 @@ export async function finaliseSaleAction(
     tenders,
     customerId: sale.customerId ?? null,
     voucherCodes,
+    declaredTips: tips.declaredTips,
+    serviceCharge: tips.serviceCharge,
   })
   if (!posted.ok) return { ok: false, error: posted.error }
 

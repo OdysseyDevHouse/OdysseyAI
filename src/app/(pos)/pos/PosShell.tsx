@@ -45,7 +45,7 @@ import {
   discardSaleAction,
   voidSaleAction,
 } from '@/app/(app)/sales/actions'
-import { recallSaleForTillAction } from './actions'
+import { recallSaleForTillAction, recordServiceChargeWaivedAction } from './actions'
 import { tillStandingAction, type TillStanding } from '@/app/(app)/loyalty/actions'
 import { TillStatusBar } from './TillStatusBar'
 import { SalePane } from './SalePane'
@@ -61,6 +61,7 @@ import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
 import { useSaleState } from './useSaleState'
 import { specialsFor, totalsFor, salePayloadLines, returnPayloadLines } from './saleSelectors'
+import { serviceChargeFor, type ServiceTier } from '@/lib/tipMath'
 import { RefundPad } from './RefundPad'
 import { TableGate } from './TableGate'
 import {
@@ -147,6 +148,8 @@ export default function PosShell({
   initialTables,
   floorRooms,
   floorFeatures,
+  serviceTiers,
+  tipsTablesOnly,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
   siteId: number
@@ -185,6 +188,16 @@ export default function PosShell({
   /** The DRAWN floor, if a manager built one. Empty means the gate uses the grid. */
   floorRooms: FloorRoom[]
   floorFeatures: FloorFeature[]
+  /**
+   * Service-charge bands, shipped with the page.
+   *
+   * Sent rather than fetched so the pad can price a charge with no round trip — and so a
+   * till that has lost the network still charges what it was last told, which is the same
+   * reasoning the specials and the pending price changes already use.
+   */
+  serviceTiers: ServiceTier[]
+  /** Whether a service charge applies only to a table's bill. Defaults on. */
+  tipsTablesOnly: boolean
 }) {
   const [state, dispatch] = useSaleState()
   const [pending, startTransition] = useTransition()
@@ -413,6 +426,24 @@ export default function PosShell({
   )
   const totals = useMemo(() => totalsFor(state.lines, lineSpecials), [state.lines, lineSpecials])
 
+  /**
+   * The service charge a bill of this size would earn, ignoring whether a table is
+   * attached.
+   *
+   * Split from the table test on purpose: `table` is declared several hundred lines below
+   * this — moving either would mean reordering state in a file another session also edits —
+   * so the AMOUNT is resolved here and the tables-only rule applied at the render site,
+   * where `table` is in scope. `serviceChargeOn` below is the one the pad receives.
+   *
+   * Computed on the CLIENT from tiers the page shipped, using the same `serviceChargeFor`
+   * the server runs at finalise, so the figure the customer is told and the tip the server
+   * writes come from one implementation. The server recomputes it regardless.
+   */
+  const serviceChargeForTotal = useMemo(
+    () => serviceChargeFor(totals.doc.totalIncl, serviceTiers),
+    [totals.doc.totalIncl, serviceTiers],
+  )
+
   /* ── Search ───────────────────────────────────────────────────────────
      Debounced at 180ms: a scanner types a whole barcode in milliseconds, and
      querying per character would fire a dozen useless round trips.
@@ -633,7 +664,30 @@ export default function PosShell({
   function finalise(
     paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
     voucherCodes: string[] = [],
+    /**
+     * Tips, from the pad.
+     *
+     * Defaulted so every other caller — the quick-key runner, the offline retry — is
+     * unchanged: no declared tips and no waiver is exactly the behaviour before tips
+     * existed.
+     */
+    tipInfo: { declared: Record<number, number>; serviceChargeWaived: boolean } = {
+      declared: {},
+      serviceChargeWaived: false,
+    },
   ) {
+    /*
+     * A waived service charge is recorded BEFORE the sale posts, not after.
+     *
+     * The removal is the fact worth keeping even if the sale then fails — a manager who
+     * took a charge off a bill that was never completed still took it off, and a shop
+     * looking at who removes them wants that visible. It is also fire-and-forget: a
+     * failure to write the audit row must never stop a customer paying.
+     */
+    if (tipInfo.serviceChargeWaived && serviceCharge > 0.005) {
+      void recordServiceChargeWaivedAction(state.documentId, serviceCharge).catch(() => {})
+    }
+
     /* Known to be offline: go straight to the local path rather than spending four
        seconds on a doomed request with a customer waiting. */
     if (!till.online) {
@@ -679,6 +733,13 @@ export default function PosShell({
           },
           paid,
           voucherCodes,
+          {
+            declaredTips: tipInfo.declared,
+            /* Zero when a manager waived it, so the server writes no service tip. The
+               waiver itself was recorded above — the charge does not silently disappear,
+               it disappears with a name against it. */
+            serviceCharge: tipInfo.serviceChargeWaived ? 0 : serviceCharge,
+          },
         )
       } catch {
         await finaliseLocally(paid)
@@ -1085,6 +1146,15 @@ export default function PosShell({
   const [tables, setTables] = useState<PosTable[]>(initialTables)
   /** The table this basket belongs to, or null for a walk-in. */
   const [table, setTable] = useState<PosTable | null>(null)
+
+  /**
+   * The service charge actually applying to THIS bill.
+   *
+   * `tips_tables_only` defaults on, and on a retail till `table` is always null — so the
+   * charge is zero and the pad never mentions it, which is what keeps the feature invisible
+   * to a shop that does not serve tables.
+   */
+  const serviceCharge = tipsTablesOnly && !table ? 0 : serviceChargeForTotal
   /** True while the waiter is choosing — the gate stands in front of the till. */
   const [choosingTable, setChoosingTable] = useState(hospitality)
   /** The gate's split mode is armed — the next table tap opens the split screen. */
@@ -1519,6 +1589,10 @@ export default function PosShell({
            redeeming against a stale balance is what offlineBlockedTender prevents. */
         loyalty={loyalty}
         pending={pending}
+        serviceCharge={serviceCharge}
+        /* `sales.discount_override` — the same right that lets somebody override a price.
+           A waiter cannot take a forced charge off; somebody who can override money can. */
+        canRemoveServiceCharge={canOverrideDiscount}
         onFinalise={finalise}
       />
 

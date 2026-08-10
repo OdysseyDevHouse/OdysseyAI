@@ -11,6 +11,7 @@ import type { Terminal } from '@/lib/site/terminals'
 import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { PosTable } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
+import type { ServiceTier } from '@/lib/tipMath'
 import type { Department } from './types'
 
 /**
@@ -56,6 +57,8 @@ export default function PosEntry({
   initialTables,
   floorRooms,
   floorFeatures,
+  serviceTiers,
+  tipsTablesOnly,
 }: {
   siteId: number
   siteName: string
@@ -90,6 +93,9 @@ export default function PosEntry({
   /** The drawn floor. Relayed unchanged — this component owns sign-in, not the floor. */
   floorRooms: FloorRoom[]
   floorFeatures: FloorFeature[]
+  /** Tips config. Relayed unchanged — this component owns sign-in, not pricing. */
+  serviceTiers: ServiceTier[]
+  tipsTablesOnly: boolean
 }) {
   /*
    * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
@@ -163,6 +169,8 @@ export default function PosEntry({
       initialTables={initialTables}
       floorRooms={floorRooms}
       floorFeatures={floorFeatures}
+      serviceTiers={serviceTiers}
+      tipsTablesOnly={tipsTablesOnly}
     />
   )
 }

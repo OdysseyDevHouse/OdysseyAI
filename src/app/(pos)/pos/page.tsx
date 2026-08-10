@@ -14,6 +14,7 @@ import { listDepartments } from '@/lib/site/departments'
 import { listQuickKeys } from '@/lib/site/quickKeys'
 import { listTables } from '@/lib/site/posTables'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
+import { listServiceTiers } from '@/lib/site/tips'
 import { siteQuery } from '@/lib/siteDb'
 import PosEntry from './PosEntry'
 
@@ -70,6 +71,8 @@ export default async function PosPage() {
     tables,
     floorRooms,
     floorFeatures,
+    serviceTiers,
+    tipsTablesOnlySetting,
   ] = await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
@@ -115,6 +118,11 @@ export default async function PosPage() {
          reason the tables are: one query beats a branch repeated per consumer. */
       listRooms(site.id),
       listFeatures(site.id),
+      /* The service-charge bands and where they apply. Shipped with the page so the pad can
+         price a charge with no round trip, and so a till that has lost the network still
+         charges what it was last told — the same reasoning the specials already use. */
+      listServiceTiers(site.id),
+      getSetting(site.id, 'tips_tables_only'),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
@@ -189,6 +197,10 @@ export default async function PosPage() {
       initialTables={tables}
       floorRooms={floorRooms}
       floorFeatures={floorFeatures}
+      serviceTiers={serviceTiers}
+      /* Absent means ON — the careful default. A percentage appearing on takeaways the
+         moment a shop configures its first band is a charge nobody agreed to. */
+      tipsTablesOnly={tipsTablesOnlySetting === null || tipsTablesOnlySetting === undefined ? true : String(tipsTablesOnlySetting) !== '0'}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
     />
   )
