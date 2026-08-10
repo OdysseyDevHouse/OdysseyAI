@@ -9,9 +9,11 @@ import { can, capabilitiesForRole } from '@/lib/site/permissions'
 import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
 import { liveSpecials } from '@/lib/site/specials'
+import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { listDepartments } from '@/lib/site/departments'
 import { listQuickKeys } from '@/lib/site/quickKeys'
 import { listTables } from '@/lib/site/posTables'
+import { listRooms, listFeatures } from '@/lib/site/posFloor'
 import { siteQuery } from '@/lib/siteDb'
 import PosEntry from './PosEntry'
 
@@ -54,8 +56,21 @@ export default async function PosPage() {
     ? await capabilitiesForRole(site.id, operator.roleId)
     : capabilities
 
-  const [terminals, tenders, saved, structures, cashRounding, specials, departments, quickKeys, posMode, tables] =
-    await Promise.all([
+  const [
+    terminals,
+    tenders,
+    saved,
+    structures,
+    cashRounding,
+    specials,
+    pendingPrices,
+    departments,
+    quickKeys,
+    posMode,
+    tables,
+    floorRooms,
+    floorFeatures,
+  ] = await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
       /* Site-wide, and it cannot be otherwise here: which till this machine IS
@@ -71,6 +86,16 @@ export default async function PosPage() {
        * even though this page was loaded at ten to.
        */
       liveSpecials(site.id),
+      /*
+       * Scheduled price changes, sent the same way and for the same reason.
+       *
+       * Rendered here as well as shipped in the catalogue: a till that reloads
+       * its PAGE while online takes its props from this render, and one that has
+       * been offline takes them from IndexedDB. If only the catalogue carried
+       * them, a fresh load at five to six would hold none and the change would
+       * miss its moment on exactly the machine that had just been restarted.
+       */
+      pendingSchedulesForTill(site.id),
       // The department rail. Flat, with parent ids — the tree is assembled on the
       // client because drilling into one must not cost a round trip.
       listDepartments(site.id, true),
@@ -84,6 +109,12 @@ export default async function PosPage() {
          be repeated for every consumer of the result. */
       getSetting(site.id, 'pos_mode'),
       listTables(site.id),
+      /* The drawn plan, if a manager built one. Both come back empty on a shop that
+         never opened the designer, and the gate then renders the sectioned grid — so
+         these are fetched unconditionally rather than behind a mode check, for the same
+         reason the tables are: one query beats a branch repeated per consumer. */
+      listRooms(site.id),
+      listFeatures(site.id),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
@@ -151,10 +182,13 @@ export default async function PosPage() {
       savedCount={saved.length}
       cashRounding={cashRounding}
       specials={specials}
+      pendingPrices={pendingPrices}
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
       hospitality={posMode === 'hospitality'}
       initialTables={tables}
+      floorRooms={floorRooms}
+      floorFeatures={floorFeatures}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
     />
   )
