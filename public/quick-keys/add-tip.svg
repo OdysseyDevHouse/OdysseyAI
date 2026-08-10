@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Add tip</title>
+  <path d="M8 19.5h22v14.6c0 2.7-4.93 4.9-11 4.9S8 36.8 8 34.1Z" fill="#F5A623"/>
+  <ellipse cx="19" cy="19.5" rx="11" ry="4.9" fill="#FBBF24"/>
+  <ellipse cx="19" cy="19.5" rx="5" ry="2.1" fill="#F5A623"/>
+  <path d="M8 24.4c0 2.7 4.93 4.9 11 4.9s11-2.2 11-4.9" stroke="#E0870B" stroke-width="1.6" fill="none"/>
+  <path d="M8 29.3c0 2.7 4.93 4.9 11 4.9s11-2.2 11-4.9" stroke="#E0870B" stroke-width="1.6" fill="none"/>
+  <circle cx="37.5" cy="13" r="9" fill="#2FA84F"/><path d="M37.5 8.50V17.50M33.00 13H42.00" stroke="#FFFFFF" stroke-width="2.70" stroke-linecap="round"/>
+</svg>

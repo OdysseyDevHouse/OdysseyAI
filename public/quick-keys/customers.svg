@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Customers</title>
+  <circle cx="12" cy="19.6" r="5.4" fill="#1D4ED8"/>
+  <path d="M2.6 34.6c0-4.5 4.2-7.4 9.4-7.4s9.4 2.9 9.4 7.4v.6a1.7 1.7 0 0 1-1.7 1.7H4.3a1.7 1.7 0 0 1-1.7-1.7Z" fill="#1D4ED8"/>
+  <circle cx="36" cy="19.6" r="5.4" fill="#93C5FD"/>
+  <path d="M26.6 34.6c0-4.5 4.2-7.4 9.4-7.4s9.4 2.9 9.4 7.4v.6a1.7 1.7 0 0 1-1.7 1.7H28.3a1.7 1.7 0 0 1-1.7-1.7Z" fill="#93C5FD"/>
+  <circle cx="24" cy="16.4" r="7.4" fill="#3B82F6"/>
+  <path d="M10.6 36.2c0-6 6-10.1 13.4-10.1s13.4 4.1 13.4 10.1v1.1a2 2 0 0 1-2 2H12.6a2 2 0 0 1-2-2Z" fill="#3B82F6"/>
+</svg>

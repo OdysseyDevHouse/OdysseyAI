@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Loyalty payment</title>
+  <rect x="4" y="12" width="40" height="24" rx="3.5" fill="#6D28D9"/>
+  <path d="M4 15.5A3.5 3.5 0 0 1 7.5 12h33A3.5 3.5 0 0 1 44 15.5v3.1H4Z" fill="#8B5CF6"/>
+  <rect x="9" y="22" width="11" height="2.9" rx="1.45" fill="#FFFFFF"/>
+  <rect x="9" y="27" width="8" height="2.9" rx="1.45" fill="#FFFFFF"/>
+  <rect x="9" y="32" width="5" height="2.9" rx="1.45" fill="#C4B5FD"/>
+  <path d="M32.00 16.90L34.30 22.33L40.18 22.84L35.72 26.71L37.05 32.46L32.00 29.41L26.95 32.46L28.28 26.71L23.82 22.84L29.70 22.33Z" fill="#FFFFFF"/>
+</svg>

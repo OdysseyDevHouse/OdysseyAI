@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Print labels</title>
+  <rect x="5" y="12" width="38" height="24" rx="3.6" fill="#F5A623"/>
+  <rect x="8.6" y="15.6" width="30.8" height="16.8" rx="1.6" fill="#FFFFFF"/>
+  <rect x="11.4" y="18" width="2.6" height="12" fill="#1E293B"/>
+  <rect x="15.4" y="18" width="1.5" height="12" fill="#1E293B"/>
+  <rect x="18.6" y="18" width="2.6" height="12" fill="#1E293B"/>
+  <rect x="22.8" y="18" width="1.5" height="12" fill="#1E293B"/>
+  <rect x="26" y="18" width="2.6" height="12" fill="#1E293B"/>
+  <rect x="30.2" y="18" width="1.5" height="12" fill="#1E293B"/>
+  <rect x="33.4" y="18" width="2.6" height="12" fill="#1E293B"/>
+</svg>

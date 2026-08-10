@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Customer payment</title>
+  <rect x="4" y="11" width="36" height="24" rx="3.5" fill="#2563EB"/>
+  <rect x="4" y="16" width="36" height="4.8" fill="#FFFFFF"/>
+  <rect x="8" y="24.5" width="11" height="3.1" rx="1.55" fill="#FFFFFF"/>
+  <rect x="8" y="29.6" width="7.5" height="3.1" rx="1.55" fill="#FFFFFF"/>
+  <circle cx="35.5" cy="34.5" r="9.5" fill="#F5A623"/><g transform="translate(35.5 34.5) scale(0.920)" stroke="#FFFFFF" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M2.45-2.15C2.45-3.4 1.3-4.05 0-4.05C-1.45-4.05-2.5-3.3-2.5-2.05C-2.5-0.85-1.5-0.3 0 .18C1.5 .66 2.5 1.15 2.5 2.35C2.5 3.65 1.4 4.35 0 4.35C-1.35 4.35-2.45 3.7-2.45 2.45"/><path d="M0-5.75V5.75"/></g>
+</svg>

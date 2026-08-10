@@ -2,6 +2,25 @@
 
 import type { ReactNode } from 'react'
 import { ChevronRight } from './icons'
+import type { CategoryTone } from './CategoryTile'
+
+/**
+ * The coloured bar down a row's leading edge.
+ *
+ * Written out in full rather than built as `bg-cat-${tone}` — Tailwind scans source
+ * text, so an interpolated class is never emitted and the bar renders invisible.
+ */
+const EDGE: Record<CategoryTone, string> = {
+  indigo: 'bg-cat-indigo',
+  violet: 'bg-cat-violet',
+  emerald: 'bg-cat-emerald',
+  amber: 'bg-cat-amber',
+  sky: 'bg-cat-sky',
+  rose: 'bg-cat-rose',
+  teal: 'bg-cat-teal',
+  orange: 'bg-cat-orange',
+  slate: 'bg-cat-slate',
+}
 
 /**
  * A full-width, touch-sized row that is a button.
@@ -27,6 +46,7 @@ export function TouchRow({
   trailing,
   showChevron = true,
   tone = 'default',
+  edge,
   disabled = false,
   onClick,
   className = '',
@@ -40,6 +60,19 @@ export function TouchRow({
   showChevron?: boolean
   /** `active` when the row represents something currently chosen. */
   tone?: 'default' | 'active'
+  /**
+   * A colour down the leading edge, for a list where every row is a different
+   * SUBJECT — the till's department rail.
+   *
+   * Pass the same tone as the row's `CategoryTile`, so the bar and the disc are
+   * one identifier rather than two decorations. It earns its place in a scrolling
+   * list a cashier reads by colour: the discs alone are 44px of hue with 200px of
+   * white between them, and the eye loses the column. On a list where the rows
+   * are all the same kind of thing, leave it off — an edge on every row of a
+   * saved-sales list is decoration, and that is what makes colour stop meaning
+   * anything elsewhere.
+   */
+  edge?: CategoryTone
   disabled?: boolean
   onClick?: () => void
   className?: string
@@ -49,12 +82,23 @@ export function TouchRow({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex w-full items-center gap-3 rounded-card border p-3 text-left transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50 ${
+      className={`relative flex w-full items-center gap-3 overflow-hidden rounded-card border py-3 pr-3 text-left transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50 ${
+        /* The edge is drawn INSIDE the row, so the content is pushed clear of it
+           rather than sitting on top. Without an edge the leading padding is the
+           plain p-3 every other row in the app uses. */
+        edge ? 'pl-4' : 'pl-3'
+      } ${
         tone === 'active'
           ? 'border-brand/40 bg-brand-soft'
           : 'border-border bg-surface hover:border-brand/50'
       } ${className}`}
     >
+      {/* aria-hidden: the colour repeats what the title already says, and a screen
+          reader announcing it would be noise. */}
+      {edge && (
+        <span aria-hidden className={`absolute inset-y-0 left-0 w-1.5 ${EDGE[edge]}`} />
+      )}
+
       {icon}
 
       <span className="min-w-0 flex-1">

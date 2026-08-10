@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import {
+  ActionTile,
   Badge,
   CategoryTile,
   ChoiceTile,
@@ -61,6 +62,10 @@ import {
   Textarea,
   TextLink,
   TILE_SWATCHES,
+  TileGrid,
+  toneForId,
+  TouchRow,
+  ProductTile,
   Slider,
   SwatchPicker,
   tileClass,
@@ -70,6 +75,7 @@ import {
 } from '@/components/ui'
 import type { Column } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+import { quickKeyArt, quickKeyArtSrc } from '@/lib/quickKeyArt'
 
 /**
  * The style guide — every shared building block, rendered live and named.
@@ -124,6 +130,7 @@ export default function StyleGuidePage() {
         <FilterBarSection />
         <DateRangeSection />
         <CategoryTileSection />
+        <TillTileSection />
         <PaginationSection />
         <EmptyStateSection />
         <SkeletonSection />
@@ -1225,6 +1232,95 @@ function CategoryTileSection() {
             icon={<CategoryTile icon={<Icons.Boxes size={16} />} tone="teal" size="sm" />}
             onClick={() => {}}
           />
+        </div>
+      </Row>
+    </Card>
+  )
+}
+
+/** One key's drawn artwork, at the size the till draws it. */
+function KeyArt({ slug }: { slug: string }) {
+  const art = quickKeyArt({ actionSlug: slug })
+  if (!art) return null
+  return <img src={quickKeyArtSrc(art.file)} alt="" className="h-7 w-7" />
+}
+
+function TillTileSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Till tiles"
+        description="<ProductTile /> names a THING and shows what it costs; <ActionTile /> names an ACT and shows what it will do. Both put colour in a 44px disc and leave the caption ink-on-surface — a grid of fully-saturated tiles has no hierarchy left and its white captions are the worst contrast on the screen."
+      />
+      <Row>
+        <Spec name="<ActionTile tone icon hint>" note="A till quick key — runs something" />
+        <div className="w-full max-w-xl">
+          <TileGrid tileWidth={190} tileHeight={150}>
+            {/* The real till art, resolved the way the till resolves it — a demo drawn
+                with stand-in glyphs would not show that the pictures and their discs
+                agree, which is the part worth checking. */}
+            <ActionTile
+              title="Cash up"
+              hint="Counts the drawer and closes the shift."
+              icon={<KeyArt slug="cashup" />}
+              tone={quickKeyArt({ actionSlug: 'cashup' })?.tone}
+              onClick={() => {}}
+            />
+            <ActionTile
+              title="Supervisor"
+              hint="6 keys"
+              icon={<KeyArt slug="supervisor" />}
+              tone={quickKeyArt({ actionSlug: 'supervisor' })?.tone}
+              chevron
+              corner={<Icons.KeyRound size={13} />}
+              onClick={() => {}}
+            />
+            <ActionTile
+              title="Void sale"
+              hint="Clears the basket. Nothing has posted."
+              icon={<KeyArt slug="void-sale" />}
+              tone={quickKeyArt({ actionSlug: 'void-sale' })?.tone}
+              disabled
+              onClick={() => {}}
+            />
+          </TileGrid>
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<ProductTile tone price>" note="A product or a department" />
+        <div className="w-full max-w-xl">
+          <TileGrid tileWidth={190} tileHeight={150}>
+            <ProductTile
+              title="Country Fresh Chocolate 2L"
+              subtitle="12 on hand"
+              price="R 55.00"
+              icon={<Icons.Package size={20} />}
+              tone={toneForId(3)}
+              onClick={() => {}}
+            />
+            <ProductTile
+              title="Frozen Foods"
+              icon={<Icons.Tag size={20} />}
+              tone={toneForId(5)}
+              chevron
+              onClick={() => {}}
+            />
+          </TileGrid>
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<TouchRow edge>" note="The department rail — colour down the edge" />
+        <div className="flex w-full max-w-sm flex-col gap-2">
+          {['Beer', 'Kitchen', 'Frozen Foods'].map((name, i) => (
+            <TouchRow
+              key={name}
+              edge={toneForId(i + 2)}
+              icon={<CategoryTile icon={<Icons.Tag size={18} />} tone={toneForId(i + 2)} size="lg" />}
+              title={name}
+              showChevron={false}
+              onClick={() => {}}
+            />
+          ))}
         </div>
       </Row>
     </Card>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Reprint last slip</title>
+  <path d="M11.5 8.5a2.4 2.4 0 0 1 2.4-2.4h18.2a2.4 2.4 0 0 1 2.4 2.4v31.9l-2.6-2.4-2.6 2.4-2.6-2.4-2.6 2.4-2.6-2.4-2.6 2.4-2.6-2.4-2.8 2.4Z" fill="#F8FAFC" stroke="#475569" stroke-width="2.1" stroke-linejoin="round"/>
+  <rect x="15.5" y="12" width="9" height="2.4" rx="1.2" fill="#64748B"/>
+  <rect x="26.5" y="12" width="4.5" height="2.4" rx="1.2" fill="#334155"/>
+  <rect x="15.5" y="18" width="15.5" height="2.4" rx="1.2" fill="#94A3B8"/>
+  <rect x="15.5" y="23" width="15.5" height="2.4" rx="1.2" fill="#94A3B8"/>
+  <rect x="15.5" y="28" width="10" height="2.4" rx="1.2" fill="#94A3B8"/>
+  <circle cx="36.5" cy="36.5" r="9.4" fill="#2563EB"/>
+  <path d="M31.94 37.14A4.6 4.6 0 1 1 41.06 37.14" stroke="#FFFFFF" stroke-width="2.0" stroke-linecap="round" fill="none"/><path d="M40.55 40.71L38.58 35.38L43.92 36.13Z" fill="#FFFFFF"/><path d="M41.06 35.86A4.6 4.6 0 1 1 31.94 35.86" stroke="#FFFFFF" stroke-width="2.0" stroke-linecap="round" fill="none"/><path d="M32.45 32.29L34.42 37.62L29.08 36.87Z" fill="#FFFFFF"/>
+</svg>

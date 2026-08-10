@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>End shift</title>
+  <circle cx="21" cy="21" r="14" stroke="#2563EB" stroke-width="4.4" fill="none"/>
+  <path d="M21 12.4V21h7.2" stroke="#2563EB" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <circle cx="36.8" cy="36.8" r="9.4" fill="#4CAF50"/><path d="M32.40 36.95l3.1 3.1 5.7-6.1" stroke="#FFFFFF" stroke-width="2.73" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

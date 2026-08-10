@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Split table</title>
+  <circle cx="13" cy="19.4" r="5.2" fill="#26A69A"/>
+  <path d="M5.2 33.6c0-4.5 3.5-7.3 7.8-7.3s7.8 2.8 7.8 7.3Z" fill="#26A69A"/>
+  <circle cx="35" cy="19.4" r="5.2" fill="#26A69A"/>
+  <path d="M27.2 33.6c0-4.5 3.5-7.3 7.8-7.3s7.8 2.8 7.8 7.3Z" fill="#26A69A"/>
+  <path d="M24 8v32" stroke="#5EEAD4" stroke-width="2.6" stroke-linecap="round"/>
+</svg>
