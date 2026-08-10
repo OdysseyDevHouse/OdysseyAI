@@ -14,8 +14,10 @@ import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
 import { Callout, PageBody, PageHeader } from '@/components/ui'
 import { listImages } from '@/lib/site/productImages'
+import { variantStanding } from '@/lib/site/productVariants'
 import ProductForm, { SaveProductButton } from '../ProductForm'
 import ProductImages from '../ProductImages'
+import VariantsPanel from '../VariantsPanel'
 import ProductActions from './ProductActions'
 
 export const dynamic = 'force-dynamic'
@@ -94,6 +96,13 @@ export default async function EditProductPage({
     // it simply has no gallery yet.
     listImages(siteId, product.id).catch(() => []),
   ])
+
+  // Same tolerance: a store that has not run 070 yet has no parent_id column,
+  // and the product screen must still open.
+  const variants = await variantStanding(siteId, product.id).catch(() => ({
+    group: null,
+    parent: null,
+  }))
 
   // The pricing tables are laid out by THIS store's price structures, but each
   // linked store returns its own tiers by name. Map them across so a tier that
@@ -179,6 +188,17 @@ export default async function EditProductPage({
           productSuppliers={productSuppliers}
           // Archive and delete live in the header's Actions menu — Save stays
           // the one primary on this screen.
+        />
+
+        {/* Above the gallery and below the form, both deliberately. Variants
+            change what this product IS — whether it can be sold at all — so it
+            outranks merchandising; but it saves on its own, so it sits outside
+            the form like the images do. */}
+        <VariantsPanel
+          productId={product.id}
+          productDescription={product.description}
+          initialGroup={variants.group}
+          isChildOf={variants.parent}
         />
 
         {/* Below the form rather than inside it: images upload immediately and

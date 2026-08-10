@@ -110,6 +110,42 @@ export async function isParentTx(tx: PoolConnection, productId: number): Promise
   return list.length > 0 ? Number(list[0].has_variants) === 1 : false
 }
 
+/**
+ * Where one product sits in the variant scheme: a parent, a child, or neither.
+ *
+ * One query rather than three, because the product screen needs the answer on
+ * every render and two of the three answers are "no".
+ */
+export type VariantStanding = {
+  /** The group, when this product is a parent. */
+  group: VariantGroup | null
+  /** The parent, when this product is somebody's variant. */
+  parent: { id: number; description: string } | null
+}
+
+export async function variantStanding(
+  siteId: number,
+  productId: number,
+): Promise<VariantStanding> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT p.has_variants, p.parent_id, parent.description AS parent_description
+       FROM products p
+       LEFT JOIN products parent ON parent.id = p.parent_id
+      WHERE p.id = ?`,
+    [productId],
+  )
+  if (!row) return { group: null, parent: null }
+
+  return {
+    group: Number(row.has_variants) === 1 ? await getGroup(siteId, productId) : null,
+    parent:
+      row.parent_id === null || row.parent_id === undefined
+        ? null
+        : { id: Number(row.parent_id), description: String(row.parent_description ?? '') },
+  }
+}
+
 /** The whole group for a parent, or null when the product is not one. */
 export async function getGroup(siteId: number, parentId: number): Promise<VariantGroup | null> {
   const parent = await siteQueryOne<Row>(
