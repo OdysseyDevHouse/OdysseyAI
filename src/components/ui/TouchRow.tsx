@@ -94,9 +94,17 @@ export function TouchRow({
       } ${className}`}
     >
       {/* aria-hidden: the colour repeats what the title already says, and a screen
-          reader announcing it would be noise. */}
+          reader announcing it would be noise.
+
+          Inset by the border width on three sides rather than pinned to the row's
+          outer edge. Flush, the bar paints OVER the left border and the row reads as
+          a card with one side missing — the hairline has to close all the way round
+          for the colour to look applied to the row rather than leaked out of it. */}
       {edge && (
-        <span aria-hidden className={`absolute inset-y-0 left-0 w-1.5 ${EDGE[edge]}`} />
+        <span
+          aria-hidden
+          className={`absolute inset-y-px left-px w-1.5 rounded-l-[11px] ${EDGE[edge]}`}
+        />
       )}
 
       {icon}
