@@ -12,6 +12,7 @@ import { getSequence } from '@/lib/site/sequences'
 import { numberingConfig, tillNumber } from '@/lib/site/numbering'
 import { operatorsForDevice } from '@/lib/site/offlineOperators'
 import { listQuickKeys } from '@/lib/site/quickKeys'
+import { readInstructionLibrary } from '@/lib/site/instructions'
 import { siteQuery } from '@/lib/siteDb'
 
 export const dynamic = 'force-dynamic'
@@ -47,11 +48,16 @@ export const dynamic = 'force-dynamic'
  * charging the old price straight through a change it has no way to know about —
  * and would keep doing it until the cron caught up minutes later.
  *
+ * 4 added the instruction library — the questions a till asks when an item is
+ * sold. A till on 3 holds none, so it would sell a burger without ever asking
+ * how it should be cooked, and no amount of patching products into it would
+ * change that: the questions are not on the product rows.
+ *
  * ⚠ MUST match `SCHEMA` in lib/posOffline/catalog.ts. The till sends its own
  * number and this route decides whether a delta is safe; bump only one and every
  * till in the shop full-loads on every poll, forever, with no error to show for it.
  */
-const CATALOG_SCHEMA = 3
+const CATALOG_SCHEMA = 4
 
 /**
  * Ceiling on one response.
@@ -142,6 +148,7 @@ export async function GET(req: NextRequest) {
     pendingPrices,
     settings,
     operators,
+    instructions,
   ] = await Promise.all([
       productsSince(siteId, cutoff, priceStructure?.id ?? null),
     wantsDelta ? removedSince(siteId, cutoff!) : Promise.resolve<number[]>([]),
@@ -180,6 +187,26 @@ export async function GET(req: NextRequest) {
       'pos_mode',
     ]),
     deviceId ? operatorsForDevice(siteId, deviceId) : Promise.resolve([]),
+    /*
+     * The questions a till asks, sent WHOLE on every response — never as a delta.
+     *
+     * Two reasons, and the first is a correctness one. Editing an option touches
+     * `instruction_options.updated_at` and NOTHING on the product, so a delta
+     * keyed off `products.updated_at` would miss it entirely: the exact blind
+     * spot `pricesChangedSince` exists to cover for prices. A shop that renamed
+     * "extra bacon" or changed what it costs would go on asking the old question
+     * at every till until something else happened to touch the product.
+     *
+     * The second is that it is small. This is a MENU — a few dozen questions
+     * shared across the whole product file — not a per-product structure, which
+     * is why it ships as one library plus a map of ids rather than inlined into
+     * 40,000 product rows. A delta mechanism for a few kilobytes would be one
+     * more thing to get wrong for no measurable gain.
+     */
+    /* Tolerant of the tables not existing: a site that has not run 080-082 yet
+       must still be able to sell, and an empty library asks no questions — which
+       is exactly how that shop behaves today. */
+    readInstructionLibrary(siteId).catch(() => ({ groups: [], byProduct: {} })),
   ])
 
   // This till's own invoice sequence, so it can number a sale with no server.
@@ -257,6 +284,19 @@ export async function GET(req: NextRequest) {
        */
       pendingPrices,
       settings,
+      /**
+       * The questions the till may ask, and which ones each product starts on.
+       *
+       * Flat, and split in two, because the whole point of the feature is that
+       * "choice of bread" is defined once and attached to forty sandwiches —
+       * inlining it per product would put forty copies of it in a payload that
+       * already carries up to fifty thousand rows. Growth follows the menu, not
+       * the product file.
+       *
+       * Always present, even on a delta: see the note at the fetch above.
+       */
+      instructionGroups: instructions.groups,
+      productInstructionGroups: instructions.byProduct,
       priceStructureId: priceStructure?.id ?? null,
       terminal: terminal
         ? { id: terminal.id, code: terminal.code, tillNumber: till }

@@ -240,4 +240,14 @@ export const KV = {
   quickKeys: 'quickKeys',
   /** Captions the keys fall back to: { products: {}, departments: {} }. */
   quickKeyNames: 'quickKeyNames',
+  /**
+   * The questions the till asks when an item is sold, whole.
+   *
+   * A library rather than a per-product structure — "choice of bread" is one
+   * entry however many sandwiches ask it — so it is small enough to sit in `kv`
+   * and be read whole, which is the criterion for kv over a table.
+   */
+  instructionGroups: 'instructionGroups',
+  /** productId → the ids of the questions it asks first, in order. */
+  productInstructions: 'productInstructions',
 } as const

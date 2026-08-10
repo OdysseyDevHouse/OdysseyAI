@@ -5,6 +5,11 @@ import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
 import type { TillProduct } from '../site/tillSearch'
 import type { PendingSchedule } from '../priceSchedules'
+/* Type-only, and therefore erased at compile time — `instructions.ts` is
+   `server-only` and none of it reaches the browser bundle. The same trick as
+   `OfflineOperator` below, and for the same reason: one definition of the shape
+   the two halves exchange, rather than two that can drift. */
+import type { TillInstructionGroup } from '../site/instructions'
 
 /**
  * Pulling the shop down onto the till, and keeping it current.
@@ -36,11 +41,15 @@ import type { PendingSchedule } from '../priceSchedules'
 /**
  * Bumped when the STORED shape changes. Must match the route's CATALOG_SCHEMA.
  *
- * 3 added the pending price changes. Bump only one of the two and this till asks
- * for a delta the route will not give it — so it full-loads on every poll,
- * forever, with nothing on screen to say why.
+ * 3 added the pending price changes. 4 added the instruction library — the
+ * questions the till asks when an item is sold, which live in their own tables
+ * and so cannot arrive by patching product rows.
+ *
+ * Bump only one of the two and this till asks for a delta the route will not
+ * give it — so it full-loads on every poll, forever, with nothing on screen to
+ * say why.
  */
-const SCHEMA = 3
+const SCHEMA = 4
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -104,6 +113,15 @@ type CatalogResponse = {
   quickKeys: unknown[]
   quickKeyProductNames: Record<number, string>
   quickKeyDepartmentNames: Record<number, string>
+  /**
+   * The questions the till may ask, and which ones each product starts on.
+   *
+   * Optional: a server on schema 3 does not send them, and an unmigrated site
+   * sends empty ones. Both mean the same thing to the till — no questions — so
+   * the default at the store covers both without a special case.
+   */
+  instructionGroups?: TillInstructionGroup[]
+  productInstructionGroups?: Record<number, number[]>
 }
 
 export type CatalogResult =
@@ -207,6 +225,12 @@ export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
           departments: body.quickKeyDepartmentNames ?? {},
         },
       },
+      /* Written on EVERY response, delta or not, because the server sends them
+         whole every time — an option's price can change without anything on the
+         product moving, so there is no cursor that would catch it. Defaulted for
+         the same reason as the pending prices above. */
+      { key: KV.instructionGroups, value: body.instructionGroups ?? [] },
+      { key: KV.productInstructions, value: body.productInstructionGroups ?? {} },
     ])
   })
 
@@ -349,6 +373,31 @@ export async function storedOperators(siteId: number): Promise<OfflineOperator[]
  */
 export async function storedPendingPrices(siteId: number): Promise<PendingSchedule[]> {
   return (await kvGet<PendingSchedule[]>(siteId, KV.pendingPrices)) ?? []
+}
+
+/**
+ * The questions this till can ask, and which ones each product starts on.
+ *
+ * Returned as a map keyed by group id as well as the raw list, because every
+ * caller wants to look one up: a product names the ids it asks, and an answer
+ * names the ids it goes on to ask. Building that map once here saves every
+ * screen doing a linear scan per question.
+ */
+export async function storedInstructions(siteId: number): Promise<{
+  groups: TillInstructionGroup[]
+  byId: Map<number, TillInstructionGroup>
+  byProduct: Record<number, number[]>
+}> {
+  const [groups, byProduct] = await Promise.all([
+    kvGet<TillInstructionGroup[]>(siteId, KV.instructionGroups),
+    kvGet<Record<number, number[]>>(siteId, KV.productInstructions),
+  ])
+  const list = groups ?? []
+  return {
+    groups: list,
+    byId: new Map(list.map((g) => [g.id, g])),
+    byProduct: byProduct ?? {},
+  }
 }
 
 /**
