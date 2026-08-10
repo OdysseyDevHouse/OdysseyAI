@@ -61,7 +61,7 @@ import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
 import { useSaleState } from './useSaleState'
 import { specialsFor, totalsFor, salePayloadLines, returnPayloadLines } from './saleSelectors'
-import { serviceChargeFor, type ServiceTier } from '@/lib/tipMath'
+import { serviceChargeFor, planTips, type ServiceTier } from '@/lib/tipMath'
 import { RefundPad } from './RefundPad'
 import { TableGate } from './TableGate'
 import {
@@ -609,8 +609,50 @@ export default function PosShell({
    */
   async function finaliseLocally(
     paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
+    /**
+     * Tips, from the pad.
+     *
+     * Defaulted, so the offline RETRY path and any other caller behave as before.
+     */
+    tipInfo: { declared: Record<number, number>; serviceChargeWaived: boolean } = {
+      declared: {},
+      serviceChargeWaived: false,
+    },
   ) {
     const tendered = paid.reduce((sum, p) => sum + p.amount, 0)
+    const charge = tipInfo.serviceChargeWaived ? 0 : serviceCharge
+
+    /*
+     * ── THE OFFLINE SLIP MUST NOT PROMISE THE TIP BACK AS CHANGE ────────────
+     *
+     * This used to report `tendered - totalIncl` as change, which offline is the WHOLE
+     * excess. So a customer leaving a R150 tip on a card was told the till owed them R150 —
+     * and at sync the server planned no tip either, so the money silently became change on
+     * the books. Both halves wrong, in the same direction, with nothing to notice it.
+     *
+     * `planTips` is the same function the online pad and the server both run, so the figure
+     * printed here is the figure that eventually posts.
+     */
+    const plan = planTips({
+      totalExcess: Math.max(0, tendered - totals.doc.totalIncl),
+      tenders: paid.flatMap((p) => {
+        const type = tenders.find((t) => t.id === p.tenderTypeId)
+        return type
+          ? [
+              {
+                tenderTypeId: type.id,
+                amount: p.amount,
+                allowsChange: type.allowsChange,
+                tipOnOverTender: type.tipOnOverTender,
+                tenderName: type.name,
+              },
+            ]
+          : []
+      }),
+      declared: tipInfo.declared,
+      serviceCharge:
+        charge > 0.005 && paid[0] ? { tenderTypeId: paid[0].tenderTypeId, amount: charge } : null,
+    })
     const result = await finaliseOffline({
       siteId,
       terminal: terminal ? { id: terminal.id, code: terminal.code } : null,
@@ -633,7 +675,11 @@ export default function PosShell({
       })),
       totalIncl: totals.doc.totalIncl,
       tenderedTotal: tendered,
-      change: Math.max(0, tendered - totals.doc.totalIncl),
+      /* AFTER tips — see the plan above. A refused plan falls back to the raw excess, which
+         is the pre-tip behaviour and never promises less than is owed. */
+      change: plan.ok ? plan.changeRemaining : Math.max(0, tendered - totals.doc.totalIncl),
+      declaredTips: tipInfo.declared,
+      serviceCharge: charge,
     })
 
     if (!result.ok) {
@@ -691,7 +737,7 @@ export default function PosShell({
     /* Known to be offline: go straight to the local path rather than spending four
        seconds on a doomed request with a customer waiting. */
     if (!till.online) {
-      startTransition(() => finaliseLocally(paid))
+      startTransition(() => finaliseLocally(paid, tipInfo))
       return
     }
 
@@ -742,7 +788,7 @@ export default function PosShell({
           },
         )
       } catch {
-        await finaliseLocally(paid)
+        await finaliseLocally(paid, tipInfo)
         // Re-check the connection so the header stops claiming to be online.
         void till.refresh()
         return

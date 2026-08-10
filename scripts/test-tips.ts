@@ -31,6 +31,7 @@ import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { saveDraft } from '../src/lib/site/salesDocuments'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
 import { shiftPosition } from '../src/lib/site/shifts'
+import { postOfflineSale } from '../src/lib/site/offlineSync'
 import { setSetting, getSetting } from '../src/lib/site/settings'
 import { toNum, round } from '../src/lib/decimals'
 
@@ -42,6 +43,22 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
+
+/**
+ * A till number no terminal is using.
+ *
+ * QUERIED, never hardcoded: several suites make scratch terminals and till_number is
+ * UNIQUE, so a fixed value dies on a leftover row before reaching an assertion.
+ */
+async function freeTillNumber(): Promise<string> {
+  const rows = await siteQuery<{ till_number: string }>(
+    SITE,
+    'SELECT till_number FROM terminals WHERE till_number IS NOT NULL',
+  )
+  const taken = new Set(rows.map((r) => String(r.till_number)))
+  for (let n = 99; n >= 50; n--) if (!taken.has(String(n))) return String(n)
+  throw new Error('No free till number in 50..99 — sweep the scratch terminals.')
+}
 async function main() {
   const stamp = Date.now().toString().slice(-8)
 
@@ -473,6 +490,166 @@ async function main() {
       await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [sale.id])
     }
     await siteExecute(SITE, 'DELETE FROM shifts WHERE id = ?', [shift.insertId])
+  }
+
+  /* ── 9. A tip rung up OFFLINE survives the round trip ──────────────────────
+     The gap this closes was worse than "tips are lost": the offline slip reported the whole
+     excess as change, so a customer leaving a R150 card tip was told the till owed them
+     R150 — and at sync the server planned no tip either, so the money silently became
+     change on the books. Both halves wrong in the same direction. */
+
+  {
+    const SCRATCH_TILL = await freeTillNumber()
+    const tillIns = await siteExecute(
+      SITE,
+      'INSERT INTO terminals (code, till_number, name, is_active) VALUES (?,?,?,1)',
+      [`TIPOFF${stamp}`.slice(0, 24), SCRATCH_TILL, `Tips offline till ${stamp}`],
+    )
+    const terminalId = tillIns.insertId
+    await siteExecute(
+      SITE,
+      `INSERT INTO document_sequences (terminal_id, doc_type, prefix, next_number, padding)
+       VALUES (?, 'invoice', 'INV', 1, 6) ON DUPLICATE KEY UPDATE doc_type = doc_type`,
+      [terminalId],
+    )
+
+    const uid = `30000000-3000-4000-8000-${Date.now().toString(16).padStart(12, '0').slice(-12)}`
+    const offlineSale = {
+      saleUid: uid,
+      documentNumber: `INV_01_${SCRATCH_TILL}_000501`,
+      terminalId,
+      terminalCode: `TIPOFF${stamp}`.slice(0, 24),
+      operatorUserId: 1,
+      operatorName: 'Offline tipper',
+      shiftId: null,
+      takenAt: new Date().toISOString(),
+      documentDate: new Date().toISOString().slice(0, 10),
+      priceStructureId: null,
+      customerId: null,
+      customerName: 'Offline tip test',
+      customerVatNo: null,
+      customerPhone: null,
+      lines: [
+        {
+          productId: null,
+          productCode: null,
+          description: 'Dinner',
+          productType: 'normal' as const,
+          departmentId: null,
+          qty: 1,
+          unitPriceIncl: 100,
+          discountPct: 0,
+          specialId: null,
+          vatRatePct: 15,
+          unitCostExcl: 20,
+        },
+      ],
+      /* R150 on a R100 bill, on CARD — which gives no change. With tips on, the R50 excess
+         is a tip; the slip said so, and the sync must agree. */
+      tenders: [{ tenderTypeId: card.id, tenderCode: 'CARD', amount: 150, reference: null }],
+      claimedTotalIncl: 100,
+      claimedTenderedTotal: 150,
+      claimedChange: 0,
+      declaredTips: {},
+      serviceCharge: 0,
+    }
+
+    /* CARD must accept tips for this to be a tip rather than a refusal. Restored after. */
+    const cardBefore = await siteQueryOne<any>(
+      SITE,
+      'SELECT tip_on_over_tender FROM tender_types WHERE id = ?',
+      [card.id],
+    )
+    await siteExecute(SITE, 'UPDATE tender_types SET tip_on_over_tender = 1 WHERE id = ?', [card.id])
+
+    try {
+      const synced = await postOfflineSale(SITE, offlineSale as never)
+      ok('an offline sale with a tip posts', synced.ok === true, synced.error ?? '')
+
+      if (synced.ok) {
+        const tip = await siteQueryOne<any>(
+          SITE,
+          'SELECT amount, source FROM sales_tips WHERE document_id = ?',
+          [synced.documentId],
+        )
+        ok(
+          '*** the R50 card excess becomes a TIP at sync, not change ***',
+          toNum(tip?.amount) === 50,
+          `tip = ${tip?.amount ?? 'none'}`,
+        )
+        ok('  recorded as an over-tender', tip?.source === 'over_tender', String(tip?.source))
+
+        const tender = await siteQueryOne<any>(
+          SITE,
+          'SELECT amount, change_given FROM sales_tenders WHERE document_id = ?',
+          [synced.documentId],
+        )
+        ok(
+          '*** and NO change is recorded against the card ***',
+          toNum(tender?.change_given) === 0,
+          `change_given = ${tender?.change_given}`,
+        )
+        ok('  with the full amount handed over', toNum(tender?.amount) === 150)
+
+        const doc = await siteQueryOne<any>(
+          SITE,
+          'SELECT total_incl FROM sales_documents WHERE id = ?',
+          [synced.documentId],
+        )
+        ok('  the invoice is still R100', toNum(doc?.total_incl) === 100, String(doc?.total_incl))
+
+        await siteExecute(SITE, 'DELETE FROM sales_tips WHERE document_id = ?', [synced.documentId])
+        await siteExecute(SITE, 'DELETE FROM sales_tenders WHERE document_id = ?', [synced.documentId])
+        await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [synced.documentId])
+        await siteExecute(SITE, 'DELETE FROM stock_movements WHERE document_id = ?', [synced.documentId]).catch(() => null)
+        await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [synced.documentId])
+      }
+
+      /*
+       * AND an OLD queued sale — one with no tip fields at all — must still post.
+       *
+       * The outbox is the one store whose rows cannot be recreated, so a sale queued before
+       * tips shipped has to go through unchanged. `declaredTips` and `serviceCharge` are
+       * optional for exactly this.
+       */
+      const legacyUid = `30000000-3000-4000-8000-${(Date.now() + 1).toString(16).padStart(12, '0').slice(-12)}`
+      const { declaredTips: _d, serviceCharge: _s, ...legacy } = offlineSale
+      const legacySale = {
+        ...legacy,
+        saleUid: legacyUid,
+        documentNumber: `INV_01_${SCRATCH_TILL}_000502`,
+        tenders: [{ tenderTypeId: cash.id, tenderCode: 'CASH', amount: 100, reference: null }],
+      }
+      const legacyPosted = await postOfflineSale(SITE, legacySale as never)
+      ok(
+        '*** a sale queued BEFORE tips existed still posts ***',
+        legacyPosted.ok === true,
+        legacyPosted.error ?? '',
+      )
+      if (legacyPosted.ok) {
+        const none = await siteQueryOne<any>(
+          SITE,
+          'SELECT COUNT(*) AS n FROM sales_tips WHERE document_id = ?',
+          [legacyPosted.documentId],
+        )
+        ok('  with no tip invented for it', toNum(none?.n) === 0, String(none?.n))
+        await siteExecute(SITE, 'DELETE FROM sales_tenders WHERE document_id = ?', [legacyPosted.documentId])
+        await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [legacyPosted.documentId])
+        await siteExecute(SITE, 'DELETE FROM stock_movements WHERE document_id = ?', [legacyPosted.documentId]).catch(() => null)
+        await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [legacyPosted.documentId])
+      }
+    } finally {
+      await siteExecute(SITE, 'UPDATE tender_types SET tip_on_over_tender = ? WHERE id = ?', [
+        cardBefore?.tip_on_over_tender ?? 0,
+        card.id,
+      ])
+      await siteExecute(SITE, 'DELETE FROM offline_sync_claims WHERE sale_uid IN (?,?)', [
+        uid,
+        `30000000-3000-4000-8000-${(Date.now() + 1).toString(16).padStart(12, '0').slice(-12)}`,
+      ]).catch(() => null)
+      await siteExecute(SITE, 'DELETE FROM document_sequences WHERE terminal_id = ?', [terminalId])
+      await siteExecute(SITE, 'DELETE FROM terminals WHERE id = ?', [terminalId])
+    }
   }
 
   /* ── Clean up ───────────────────────────────────────────────────────────── */

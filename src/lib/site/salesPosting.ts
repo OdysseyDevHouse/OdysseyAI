@@ -266,10 +266,51 @@ export async function finaliseDocument(
     return { ok: false, error: 'Switch the Loyalty points tender on before taking vouchers.' }
   }
 
+  /*
+   * ── TIPS ARE PLANNED BEFORE THE TENDER CHECK, NOT AFTER ───────────────────
+   *
+   * `checkTenders` refuses any excess the drawer cannot give back as change. A tender that
+   * takes tips has no change to give and is not in error, so the check has to be told how
+   * much of the excess is already accounted for — otherwise a legitimate card tip is refused
+   * with "Over-tendered by 50.00, but only 0.00 can give change".
+   *
+   * MEASURED: that is exactly what an offline card tip did at sync until this moved. The pad
+   * had the identical bug and the identical fix; this is the server half of it.
+   *
+   * The plan is recomputed inside the transaction as well, against `check.change`, because
+   * that is where the rows are written. Planning twice is cheap and pure; the alternative is
+   * carrying a value across the transaction boundary for no gain.
+   */
+  const netPayable = round(Math.max(0, payable - voucherCredit), 2)
+  const tenderedTotal = tenders.reduce((sum, t) => round(sum + t.input.amount, 2), 0)
+  const preCheckTips = planTips({
+    totalExcess: round(Math.max(0, tenderedTotal - netPayable), 2),
+    tenders: tenders.map(({ input, type }) => ({
+      tenderTypeId: type.id,
+      amount: input.amount,
+      allowsChange: type.allowsChange,
+      tipOnOverTender: type.tipOnOverTender,
+      tenderName: type.name,
+    })),
+    declared: input.declaredTips,
+  })
+  /* A refusal here is reported as the refusal it is, rather than being left to surface as a
+     confusing change error a few lines down. */
+  if (!preCheckTips.ok) return { ok: false, error: preCheckTips.error }
+  /* Service tips excluded: a service charge was added to the bill BEFORE payment, so it is
+     inside what the customer settled and never part of the excess. */
+  const tippableExcess = round(
+    preCheckTips.tips
+      .filter((t) => t.source !== 'service')
+      .reduce((sum, t) => sum + t.amount, 0),
+    2,
+  )
+
   const check = checkTenders(
     tenders.map((t) => ({ tender: t.type, amount: t.input.amount, reference: t.input.reference })),
-    round(Math.max(0, payable - voucherCredit), 2),
+    netPayable,
     customerId !== null,
+    tippableExcess,
   )
   if (check.errors.length > 0) return { ok: false, error: check.errors[0] }
   if (check.outstanding > 0) {
@@ -509,21 +550,25 @@ export async function finaliseDocument(
       /*
        * 2. TIPS FIRST, then tenders.
        *
-       * A tip and change are two claims on ONE excess. `check.change` is that excess, and
-       * the loop below divides it as change — so tips have to be taken out of it BEFORE
-       * that runs, or the same rand is recorded twice: once as change handed back and once
-       * as a gratuity kept. The drawer would then be expected to hold it twice and every
-       * cash-up with a tip in it would read short by exactly the tip.
+       * A tip and change are two claims on ONE excess, and the loop below divides what is
+       * left as change — so tips have to come out of it first, or the same rand is recorded
+       * twice: once handed back, once kept.
        *
-       * `planTips` is the SAME function the tender pad runs, so what the slip said and what
-       * posts here cannot disagree. It returns the change that remains, which is what the
-       * loop below consumes.
+       * ── PLANNED FROM THE RAW EXCESS, NOT FROM check.change ──────────────────
+       *
+       * Using `check.change` here was a bug, MEASURED: the check has already subtracted the
+       * tip (that is what `tippableExcess` above is for), so by this point it reports ZERO
+       * change on a fully-tipped over-payment — and the plan then had nothing to claim and
+       * wrote no tip row. Right refusal, no record.
+       *
+       * So the pre-check plan is REUSED and only the service charge is added, rather than
+       * planning a second time against a figure that has already been reduced.
        */
       const tipPlan = planTips({
-        totalExcess: check.change,
-        tenders: tenders.map(({ input, type }) => ({
+        totalExcess: round(Math.max(0, tenderedTotal - netPayable), 2),
+        tenders: tenders.map(({ input: paid, type }) => ({
           tenderTypeId: type.id,
-          amount: input.amount,
+          amount: paid.amount,
           allowsChange: type.allowsChange,
           tipOnOverTender: type.tipOnOverTender,
           tenderName: type.name,
@@ -540,6 +585,9 @@ export async function finaliseDocument(
        * It means a no-change tender was paid over on a method that neither gives change nor
        * accepts tips — so there is no honest place for the money. Posting anyway would
        * either keep it silently or leave the document unbalanced against its tenders.
+       *
+       * In practice the pre-check above has already returned this refusal as a clean error;
+       * this is the backstop for a service charge that only appears here.
        */
       if (!tipPlan.ok) throw new Error(tipPlan.error)
 

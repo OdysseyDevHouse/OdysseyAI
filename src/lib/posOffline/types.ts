@@ -88,6 +88,25 @@ export type OfflineSale = {
   claimedTotalIncl: number
   claimedTenderedTotal: number
   claimedChange: number
+  /**
+   * Tips a cashier DECLARED at the pad, keyed by tender type id.
+   *
+   * OPTIONAL, and that is load-bearing for the same reason `instructions` is: a sale queued
+   * before this shipped has no such field and must still post. The outbox is the one store
+   * whose rows cannot be recreated.
+   *
+   * Undefined means "no tips", which is exactly the behaviour before tips existed — so an
+   * old queued sale posts identically.
+   */
+  declaredTips?: Record<number, number>
+  /**
+   * The forced service charge the slip showed, or absent.
+   *
+   * Carried rather than recomputed at sync, because the TIERS may have changed by the time
+   * the till reconnects — a shop that edited its bands at 18:00 must not have that reprice a
+   * bill a customer settled at 17:30. The figure on the slip is the figure that posts.
+   */
+  serviceCharge?: number
 }
 
 /* ── One request ─────────────────────────────────────────────────────────── */
