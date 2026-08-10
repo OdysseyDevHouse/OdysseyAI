@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
   Icons,
@@ -50,6 +50,7 @@ export function CatalogPane({
   onShowKeys,
   onPick,
   browse,
+  quickKeys,
 }: {
   view: CatalogView
   query: string
@@ -65,6 +66,15 @@ export function CatalogPane({
   onPick: (product: TillProduct) => void
   /** Products directly in a department. Resolved by the shell. */
   browse: { loading: boolean; products: TillProduct[] }
+  /**
+   * The quick-key grid, already built.
+   *
+   * Passed as a NODE rather than as its data: the panel needs the runner, the operator
+   * rights and half a dozen handlers, and threading all of that through this pane would
+   * make it a conduit for state it has no use for. This pane owns the three-way switch
+   * between keys, departments and results; what a key does is not its business.
+   */
+  quickKeys: ReactNode
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -131,13 +141,7 @@ export function CatalogPane({
 
       {/* ── The grid ─────────────────────────────────────────────────────── */}
       <div className="till-pane flex-1 overflow-y-auto p-3">
-        {view.kind === 'keys' && (
-          <EmptyState
-            icon={<Icons.Sparkles size={28} />}
-            title="Quick keys are coming"
-            hint="Pick a department on the left, or scan a barcode to start selling."
-          />
-        )}
+        {view.kind === 'keys' && quickKeys}
 
         {view.kind === 'departments' && (
           <DepartmentLevel

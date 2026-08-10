@@ -7,7 +7,12 @@ import { deviceId } from '@/lib/deviceId'
 import { useOfflineShell } from '@/lib/posOffline/useOfflineShell'
 import { useOfflineTill } from '@/lib/posOffline/useOfflineTill'
 import { finaliseOffline, currentShiftId } from '@/lib/posOffline/finaliseOffline'
-import { findByCode, searchOffline, browseOffline } from '@/lib/posOffline/catalog'
+import {
+  findByCode,
+  searchOffline,
+  browseOffline,
+  storedQuickKeys,
+} from '@/lib/posOffline/catalog'
 import {
   parkOffline,
   recallOffline,
@@ -45,6 +50,9 @@ import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
 import { useSaleState } from './useSaleState'
 import { specialsFor, totalsFor, salePayloadLines } from './saleSelectors'
+import { QuickKeyPanel } from './QuickKeyPanel'
+import { runQuickKey, quickKeyEnabled } from './quickKeyRunner'
+import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { Department } from './types'
 
 /**
@@ -86,6 +94,9 @@ export default function PosShell({
   canVoid,
   savedCount,
   specials,
+  quickKeys,
+  quickKeyProductNames,
+  quickKeyDepartmentNames,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
   siteId: number
@@ -105,6 +116,10 @@ export default function PosShell({
      its button's badge. Typed now so the server page's contract is settled. */
   savedCount: number
   specials: Special[]
+  /** The shop's own till buttons. Shipped with the page so they survive the line dropping. */
+  quickKeys: QuickKeyRow[]
+  quickKeyProductNames: Record<number, string>
+  quickKeyDepartmentNames: Record<number, string>
 }) {
   const [state, dispatch] = useSaleState()
   const [pending, startTransition] = useTransition()
@@ -686,6 +701,102 @@ export default function PosShell({
     })
   }
 
+  /* ── Quick keys ─────────────────────────────────────────────────────────
+     What the shop put on its own buttons.
+
+     The page's props are the source when it renders — one round trip already made, and
+     the grid is needed for the first paint. But a RELOAD with no network gets no props,
+     and the key grid is the default pane: the till would open on an empty screen at
+     exactly the moment a cashier can least afford to hunt by department. So the stored
+     copy takes over whenever the props arrive empty. */
+  const [heldKeys, setHeldKeys] = useState<{
+    keys: QuickKeyRow[]
+    productNames: Record<number, string>
+    departmentNames: Record<number, string>
+  } | null>(null)
+
+  useEffect(() => {
+    if (quickKeys.length > 0) return
+    let cancelled = false
+    void storedQuickKeys(siteId).then((held) => {
+      if (!cancelled && held.keys.length > 0) {
+        setHeldKeys({
+          keys: held.keys as QuickKeyRow[],
+          productNames: held.productNames,
+          departmentNames: held.departmentNames,
+        })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [siteId, quickKeys.length])
+
+  const keysToShow = quickKeys.length > 0 ? quickKeys : (heldKeys?.keys ?? [])
+  const keyProductNames = quickKeys.length > 0 ? quickKeyProductNames : (heldKeys?.productNames ?? {})
+  const keyDepartmentNames =
+    quickKeys.length > 0 ? quickKeyDepartmentNames : (heldKeys?.departmentNames ?? {})
+
+  const quickKeyContext = useMemo(
+    () => ({
+      handlers: {
+        pay: () => setTendering(true),
+        clear: () => setConfirmClear(true),
+        park,
+        showSaved: () => setShowingSaved(true),
+        undo: () => {
+          const last = state.lines[state.lines.length - 1]
+          if (last) dispatch({ type: 'REMOVE', key: last.key })
+        },
+        pickCustomer: () => setPickingCustomer(true),
+        editLine: () => {
+          const line = state.lines.find((l) => l.key === state.selectedKey)
+          if (line) setEditing(line)
+        },
+        openDepartment: (departmentId: number) => dispatch({ type: 'DRILL', departmentId }),
+        addProduct: (productId: number) => {
+          /* Resolved against the till's OWN catalogue, so a product key works offline —
+             which is the point of storing an id rather than a whole product on the key. */
+          const held = results.find((p) => p.id === productId) ?? browse.products.find((p) => p.id === productId)
+          if (held) {
+            add(held)
+            return
+          }
+          startTransition(async () => {
+            const found = till.online
+              ? await scanAction(String(productId), priceStructureId).catch(() => null)
+              : null
+            const offline = found ?? (await findByCode(siteId, String(productId)))
+            if (offline) add(offline)
+            else toast.error('That product is not on this till right now.')
+          })
+        },
+        showOutbox: () => setShowingOutbox(true),
+        navigate: (href: string) => router.push(href),
+        say: (message: string, tone: 'info' | 'error') =>
+          tone === 'error' ? toast.error(message) : toast.info(message),
+      },
+      /* The OPERATOR's rights, from the same booleans the screen already uses. Every
+         action behind a key re-checks server-side, so this decides what is offered. */
+      can: (capability: string) =>
+        capability === 'sales.till' ||
+        (capability === 'sales.discount_override' && canOverrideDiscount) ||
+        (capability === 'sales.price_override' && canOverridePrice) ||
+        (capability === 'sales.void' && canVoid) ||
+        /* Everything else is a back-office right this screen was not told about. Allowed
+           through to the action, which knows — refusing here would grey out keys a
+           cashier legitimately holds, and a greyed key nobody can explain is worse than
+           one that says why when pressed. */
+        !['sales.discount_override', 'sales.price_override', 'sales.void'].includes(capability),
+      hospitality: false,
+      online: till.online,
+      hasSelection: state.selectedKey !== null,
+      hasLines: state.lines.length > 0,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.lines, state.selectedKey, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid],
+  )
+
   const customerLabel = state.customer?.name ?? (state.customerName.trim() || null)
 
   /*
@@ -774,6 +885,15 @@ export default function PosShell({
             dispatch({ type: 'SHOW_KEYS' })
           }}
           onPick={add}
+          quickKeys={
+            <QuickKeyPanel
+              keys={keysToShow}
+              productNames={keyProductNames}
+              departmentNames={keyDepartmentNames}
+              isEnabled={(key) => quickKeyEnabled(key, quickKeyContext)}
+              onPress={(key) => runQuickKey(key, quickKeyContext)}
+            />
+          }
         />
       </div>
 

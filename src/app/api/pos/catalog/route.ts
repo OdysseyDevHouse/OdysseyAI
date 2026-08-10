@@ -10,6 +10,7 @@ import { terminalForDevice } from '@/lib/site/terminals'
 import { getSequence } from '@/lib/site/sequences'
 import { numberingConfig, tillNumber } from '@/lib/site/numbering'
 import { operatorsForDevice } from '@/lib/site/offlineOperators'
+import { listQuickKeys } from '@/lib/site/quickKeys'
 import { siteQuery } from '@/lib/siteDb'
 
 export const dynamic = 'force-dynamic'
@@ -35,8 +36,13 @@ export const dynamic = 'force-dynamic'
  * a till does not need the whole product file to sell from it.
  */
 
-/** Bumped when the SHAPE changes, forcing a full reload rather than a delta. */
-const CATALOG_SCHEMA = 1
+/**
+ * Bumped when the SHAPE changes, forcing a full reload rather than a delta.
+ *
+ * 2 added the quick keys. A till on 1 holds no key grid at all, and patching products
+ * into it would leave it believing it was current while its default pane stayed empty.
+ */
+const CATALOG_SCHEMA = 2
 
 /**
  * Ceiling on one response.
@@ -149,6 +155,28 @@ export async function GET(req: NextRequest) {
       : null
   const till = terminal ? await tillNumber(siteId, terminal.id) : null
 
+  /* The quick keys, plus the names their captions fall back to. Only the products and
+     departments actually ON a key — the product file is already in this response, but the
+     till would have to search 40,000 rows to label six buttons. */
+  const quickKeys = await listQuickKeys(siteId, 'main')
+  const keyProductIds = [
+    ...new Set(quickKeys.map((k) => k.productId).filter((id): id is number => !!id)),
+  ]
+  const keyDepartmentIds = new Set(
+    quickKeys.map((k) => k.departmentId).filter((id): id is number => !!id),
+  )
+  const keyProducts = keyProductIds.length
+    ? await siteQuery<{ id: number; description: string }>(
+        siteId,
+        `SELECT id, description FROM products WHERE id IN (${keyProductIds.map(() => '?').join(',')})`,
+        keyProductIds,
+      )
+    : []
+  const quickKeyProductNames = Object.fromEntries(keyProducts.map((p) => [p.id, p.description]))
+  const quickKeyDepartmentNames = Object.fromEntries(
+    departments.filter((d) => keyDepartmentIds.has(d.id)).map((d) => [d.id, d.name]),
+  )
+
   return NextResponse.json(
     {
       schema: CATALOG_SCHEMA,
@@ -191,6 +219,21 @@ export async function GET(req: NextRequest) {
             }
           : null,
       operators,
+      /*
+       * The shop's own till buttons, and the names their captions fall back to.
+       *
+       * Shipped because the key grid is the till's DEFAULT pane: an offline till that
+       * reloaded without them would open on an empty grid and lose the fastest way it
+       * has to sell — at exactly the moment a cashier is least able to go looking for
+       * a product by department.
+       *
+       * Found by driving the till in a browser rather than by reading the code: the page
+       * passes the keys as props, which works perfectly right up until a reload with no
+       * network.
+       */
+      quickKeys,
+      quickKeyProductNames,
+      quickKeyDepartmentNames,
     },
     {
       // Never cached by anything in between. A catalog is per-site, per-device and

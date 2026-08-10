@@ -7,6 +7,7 @@ import PosShell from './PosShell'
 import type { Special } from '@/lib/specialsEngine'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { Terminal } from '@/lib/site/terminals'
+import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { Department } from './types'
 
 /**
@@ -44,6 +45,9 @@ export default function PosEntry({
   cashRounding,
   savedCount,
   specials,
+  quickKeys,
+  quickKeyProductNames,
+  quickKeyDepartmentNames,
 }: {
   siteId: number
   siteName: string
@@ -68,6 +72,9 @@ export default function PosEntry({
   cashRounding: number
   savedCount: number
   specials: Special[]
+  quickKeys: QuickKeyRow[]
+  quickKeyProductNames: Record<number, string>
+  quickKeyDepartmentNames: Record<number, string>
 }) {
   /*
    * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
@@ -133,6 +140,9 @@ export default function PosEntry({
       canOverridePrice={operator.canOverridePrice}
       canVoid={operator.canVoid}
       specials={specials}
+      quickKeys={quickKeys}
+      quickKeyProductNames={quickKeyProductNames}
+      quickKeyDepartmentNames={quickKeyDepartmentNames}
     />
   )
 }

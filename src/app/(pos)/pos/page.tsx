@@ -10,6 +10,8 @@ import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
 import { liveSpecials } from '@/lib/site/specials'
 import { listDepartments } from '@/lib/site/departments'
+import { listQuickKeys } from '@/lib/site/quickKeys'
+import { siteQuery } from '@/lib/siteDb'
 import PosEntry from './PosEntry'
 
 export const dynamic = 'force-dynamic'
@@ -51,7 +53,7 @@ export default async function PosPage() {
     ? await capabilitiesForRole(site.id, operator.roleId)
     : capabilities
 
-  const [terminals, tenders, saved, structures, cashRounding, specials, departments] =
+  const [terminals, tenders, saved, structures, cashRounding, specials, departments, quickKeys] =
     await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
@@ -71,9 +73,38 @@ export default async function PosPage() {
       // The department rail. Flat, with parent ids — the tree is assembled on the
       // client because drilling into one must not cost a round trip.
       listDepartments(site.id, true),
+      /* The shop's own till buttons. Shipped with the page rather than fetched by the
+         client: they are the DEFAULT pane, so a till that had to wait for them would
+         open on an empty grid — and one that lost them when the line dropped would lose
+         the fastest way it has to sell. */
+      listQuickKeys(site.id, 'main'),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
+
+  /* Names for the keys that point at something, so a key with no caption of its own can
+     read the product's. Only the ones ACTUALLY on a key — the alternative is shipping the
+     whole product file so the till can look one up, which the offline catalog already
+     does at 0.9MB and has no business doing twice. */
+  const keyProductIds = [
+    ...new Set(quickKeys.map((k) => k.productId).filter((id): id is number => !!id)),
+  ]
+  const keyDepartmentIds = [
+    ...new Set(quickKeys.map((k) => k.departmentId).filter((id): id is number => !!id)),
+  ]
+  const keyProducts = keyProductIds.length
+    ? await siteQuery<{ id: number; description: string }>(
+        site.id,
+        `SELECT id, description FROM products WHERE id IN (${keyProductIds.map(() => '?').join(',')})`,
+        keyProductIds,
+      )
+    : []
+  const quickKeyProductNames = Object.fromEntries(keyProducts.map((p) => [p.id, p.description]))
+  /* Departments come from the list already loaded above rather than a second query — the
+     rail needs all of them anyway, so the names are in hand. */
+  const quickKeyDepartmentNames = Object.fromEntries(
+    departments.filter((d) => keyDepartmentIds.includes(d.id)).map((d) => [d.id, d.name]),
+  )
 
   return (
     <PosEntry
@@ -114,6 +145,9 @@ export default async function PosPage() {
       savedCount={saved.length}
       cashRounding={cashRounding}
       specials={specials}
+      quickKeys={quickKeys}
+      quickKeyProductNames={quickKeyProductNames}
+      quickKeyDepartmentNames={quickKeyDepartmentNames}
     />
   )
 }

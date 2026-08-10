@@ -194,4 +194,8 @@ export const KV = {
   operators: 'operators',
   /** The shift to bank into. */
   shift: 'shift',
+  /** The shop's own till buttons, so an offline reload still opens on them. */
+  quickKeys: 'quickKeys',
+  /** Captions the keys fall back to: { products: {}, departments: {} }. */
+  quickKeyNames: 'quickKeyNames',
 } as const

@@ -33,7 +33,7 @@ import type { TillProduct } from '../site/tillSearch'
  */
 
 /** Bumped when the STORED shape changes. Must match the route's CATALOG_SCHEMA. */
-const SCHEMA = 1
+const SCHEMA = 2
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -82,6 +82,9 @@ type CatalogResponse = {
     serverNextNumber: number
   } | null
   operators: OfflineOperator[]
+  quickKeys: unknown[]
+  quickKeyProductNames: Record<number, string>
+  quickKeyDepartmentNames: Record<number, string>
 }
 
 export type CatalogResult =
@@ -166,6 +169,14 @@ export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
       { key: KV.settings, value: body.settings },
       { key: KV.operators, value: body.operators },
       { key: KV.terminal, value: body.terminal },
+      { key: KV.quickKeys, value: body.quickKeys ?? [] },
+      {
+        key: KV.quickKeyNames,
+        value: {
+          products: body.quickKeyProductNames ?? {},
+          departments: body.quickKeyDepartmentNames ?? {},
+        },
+      },
     ])
   })
 
@@ -309,4 +320,34 @@ export async function decrementStock(
       await db.products.put({ ...product, stockOnHand: product.stockOnHand - line.qty })
     }
   })
+}
+
+/**
+ * The quick keys this till holds, and the names their captions fall back to.
+ *
+ * Read from storage rather than from the page's props when the till is offline. The
+ * props are correct on a fresh load and gone after a reload with no network — and the
+ * key grid is the DEFAULT pane, so losing it means opening on an empty screen at exactly
+ * the moment a cashier can least afford to go hunting by department.
+ *
+ * Returns empty rather than throwing: a till that has never pulled a catalog has no keys,
+ * which the panel already renders as "ask a manager to set these up".
+ */
+export async function storedQuickKeys(siteId: number): Promise<{
+  keys: unknown[]
+  productNames: Record<number, string>
+  departmentNames: Record<number, string>
+}> {
+  const [keys, names] = await Promise.all([
+    kvGet<unknown[]>(siteId, KV.quickKeys),
+    kvGet<{ products: Record<number, string>; departments: Record<number, string> }>(
+      siteId,
+      KV.quickKeyNames,
+    ),
+  ])
+  return {
+    keys: keys ?? [],
+    productNames: names?.products ?? {},
+    departmentNames: names?.departments ?? {},
+  }
 }
