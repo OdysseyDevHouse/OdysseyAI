@@ -10,6 +10,7 @@ import {
 } from '@/lib/site/departments'
 import { ButtonLink, Callout, Card, CardHeader, PageBody, PageHeader } from '@/components/ui'
 import DepartmentForm from '../DepartmentForm'
+import { storefrontImagesByIds } from '@/lib/site/storefrontImages'
 import DeleteDepartmentButton from '../DeleteDepartmentButton'
 
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,16 @@ export default async function EditDepartmentPage({
     listDepartments(siteId, true),
   ])
   if (!department) notFound()
+
+  /*
+   * The two pictures, in one query for both. An id that no longer resolves is
+   * simply absent from the map — a picture deleted from the library is not an
+   * error here, it is a department that falls back to its colour and initial.
+   */
+  const pictures = await storefrontImagesByIds(
+    siteId,
+    [department.posImageId, department.onlineImageId].filter((id): id is number => id !== null),
+  )
 
   // A department cannot be moved inside itself or its own descendants — that
   // would cut the branch off from the tree entirely. The server re-checks this;
@@ -79,6 +90,12 @@ export default async function EditDepartmentPage({
             department={department}
             parentOptions={parentOptions}
             defaultParentId={department.parentId}
+            pictures={{
+              pos: department.posImageId ? pictures.get(department.posImageId) ?? null : null,
+              online: department.onlineImageId
+                ? pictures.get(department.onlineImageId) ?? null
+                : null,
+            }}
           />
         </Card>
       </PageBody>

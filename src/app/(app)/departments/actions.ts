@@ -33,7 +33,22 @@ function readInput(form: FormData): DepartmentInput {
     color: String(form.get('color') ?? '') || null,
     sortOrder: Number.isFinite(sort) ? sort : 0,
     isActive: form.get('isActive') === 'on',
+    posImageId: pictureId(form.get('posImageId')),
+    onlineImageId: pictureId(form.get('onlineImageId')),
   }
+}
+
+/**
+ * A picture id posted by a form, or null.
+ *
+ * An empty field means "no picture" and must not become 0 — `imageId` in
+ * departments.ts would discard a 0 anyway, but a form that posts one is saying
+ * something it does not mean, and the coercion belongs where the untrusted
+ * string is read.
+ */
+function pictureId(value: FormDataEntryValue | null): number | null {
+  const n = Number(String(value ?? '').trim())
+  return Number.isInteger(n) && n > 0 ? n : null
 }
 
 export async function saveDepartmentAction(

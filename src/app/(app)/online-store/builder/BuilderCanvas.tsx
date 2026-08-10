@@ -720,6 +720,17 @@ function emptyReason(
         ? 'That picture has been deleted. Choose another in the panel on the right.'
         : 'Choose a picture in the panel on the right.'
 
+    case 'carousel': {
+      const slides = section.slides ?? []
+      if (slides.length === 0) return 'No pictures yet. Add one in the panel on the right.'
+      // Three different problems, three different fixes — and the third is the
+      // one nobody would work out alone: the slides are all there, they simply
+      // point at pictures that have since been deleted from the library.
+      return slides.some((s) => s.imageId)
+        ? 'Those pictures have been deleted. Choose others in the panel on the right.'
+        : 'None of these have a picture yet. Choose one for each in the panel on the right.'
+    }
+
     case 'text':
       return 'Nothing written yet. Type something in the panel on the right.'
 

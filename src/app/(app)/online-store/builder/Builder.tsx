@@ -30,9 +30,13 @@ import {
 } from '@/components/ui'
 import {
   BRAND_SWATCHES,
+  DEFAULT_AUTOPLAY_SECONDS,
+  MAX_AUTOPLAY_SECONDS,
   MAX_SECTIONS,
   MAX_SECTION_CARDS,
   MAX_SECTION_TEXT,
+  MAX_SLIDES,
+  MIN_AUTOPLAY_SECONDS,
   PAGE_PRESETS,
   SECTION_HINT,
   SECTION_KINDS,
@@ -44,6 +48,7 @@ import {
   isScheduledNow,
   normaliseSections,
   shopToday,
+  type BannerSlide,
   type HomeSection,
   type LayoutChange,
   type PagePreset,
@@ -57,7 +62,7 @@ import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { ProductDisplay, SectionContent } from '@/app/store/[token]/HomeSections'
 import { BuilderCanvas, type PreviewWidth } from './BuilderCanvas'
 import ProductPicker from './ProductPicker'
-import ImagePicker from './ImagePicker'
+import PicturePicker from '@/components/PicturePicker'
 import { discardDraftAction, publishDraftAction, saveDraftAction, saveThemeAction } from './actions'
 
 /**
@@ -117,8 +122,53 @@ function newSection(kind: SectionKind): HomeSection {
   if (kind === 'banner') {
     return { ...base, title: '', imageId: null, imageAlt: '', linkUrl: '', bodyText: '', buttonLabel: '' }
   }
+  if (kind === 'carousel') {
+    // TWO empty slides, not one: a carousel of one is drawn as a plain banner,
+    // so starting with one would show the owner something that is not what
+    // they added. Two makes the arrows and dots appear the moment both have
+    // pictures, which is the thing they came for.
+    return {
+      ...base,
+      title: '',
+      slides: [newSlide(), newSlide()],
+      autoplaySeconds: DEFAULT_AUTOPLAY_SECONDS,
+    }
+  }
   if (kind === 'text') return { ...base, title: '', text: '', align: 'left' }
   return { ...base, title: '' }
+}
+
+/** A blank slide. Same id reasoning as `newId` — date-free, so two in one
+ *  millisecond cannot collide. */
+function newSlide(): BannerSlide {
+  return {
+    id: `sl-${++idCounter}-${Math.random().toString(36).slice(2, 7)}`,
+    imageId: null,
+    imageAlt: '',
+    heading: '',
+    bodyText: '',
+    buttonLabel: '',
+    linkUrl: '',
+  }
+}
+
+/**
+ * The pictures a carousel's slides currently resolve to.
+ *
+ * Only THIS section's, because `sectionIsEmpty` asks whether a slide's picture
+ * resolves — handing over the browser's whole library would let a carousel
+ * inherit the answer for a picture belonging to somewhere else.
+ */
+function slideImagesFor(
+  section: HomeSection,
+  known: Map<number, StorefrontImage>,
+): Map<number, StorefrontImage> {
+  const mine = new Map<number, StorefrontImage>()
+  for (const slide of section.slides ?? []) {
+    const found = slide.imageId ? known.get(slide.imageId) : undefined
+    if (found) mine.set(slide.imageId as number, found)
+  }
+  return mine
 }
 
 /**
@@ -356,6 +406,12 @@ export default function Builder({
       ...(section.kind === 'banner'
         ? { image: section.imageId ? knownImages.get(section.imageId) ?? null : null }
         : {}),
+      // A carousel's slides, resolved the same way and for the same reason: a
+      // picture chosen a moment ago must appear at once, and a slide whose
+      // picture was deleted must correctly resolve to nothing.
+      ...(section.kind === 'carousel'
+        ? { slideImages: slideImagesFor(section, knownImages) }
+        : {}),
       section,
     }
   })
@@ -494,6 +550,10 @@ export default function Builder({
       id: newId(source.kind),
       productIds: source.productIds ? [...source.productIds] : undefined,
       cards: source.cards?.map((c) => ({ ...c })),
+      // Fresh slide ids, not merely a fresh array: an id is the drag key in the
+      // slide editor, and two carousels sharing them would make dragging a
+      // slide in one reorder the other.
+      slides: source.slides?.map((s) => ({ ...s, id: newSlide().id })),
     }
     commit((prev) => {
       const index = prev.findIndex((s) => s.id === id)
@@ -895,7 +955,7 @@ export default function Builder({
                 {selected.kind === 'banner' && (
                   <>
                     <Field label="Picture">
-                      <ImagePicker
+                      <PicturePicker
                         value={selected.imageId ?? null}
                         current={
                           selected.imageId ? knownImages.get(selected.imageId) ?? null : null
@@ -978,6 +1038,19 @@ export default function Builder({
                       </Field>
                     )}
                   </>
+                )}
+
+                {selected.kind === 'carousel' && (
+                  <SlideEditor
+                    slides={selected.slides ?? []}
+                    autoplaySeconds={selected.autoplaySeconds ?? DEFAULT_AUTOPLAY_SECONDS}
+                    knownImages={knownImages}
+                    onRememberImage={rememberImage}
+                    onChange={(slides) => patch(selected.id, { slides })}
+                    onAutoplayChange={(autoplaySeconds) =>
+                      patch(selected.id, { autoplaySeconds })
+                    }
+                  />
                 )}
 
                 {selected.kind === 'text' && (
@@ -1174,7 +1247,7 @@ export default function Builder({
                   label="Your logo"
                   hint="Shown at the top of every page, in place of your shop’s name."
                 >
-                  <ImagePicker
+                  <PicturePicker
                     value={theme.logoImageId}
                     current={theme.logoImageId ? knownImages.get(theme.logoImageId) ?? null : null}
                     onChange={(image) => {
@@ -1371,6 +1444,310 @@ function SwatchRow({ value, onChange }: { value: string; onChange: (colour: stri
           />
         )
       })}
+    </div>
+  )
+}
+
+/** The repeating editor for an info-cards section. */
+/**
+ * The slides of a rotating banner.
+ *
+ * ── ONE OPEN AT A TIME ───────────────────────────────────────────────────
+ *
+ * A slide has six fields. Eight slides expanded is forty-eight controls in a
+ * 360px panel, which is not an editor so much as a wall — and the thing an
+ * owner is actually doing most of the time is looking at the ORDER, which that
+ * wall makes impossible to see.
+ *
+ * So each slide is a row showing its picture and its heading, and opens when
+ * clicked. Closed rows stay small enough that the whole carousel is visible at
+ * once, which is what reordering needs.
+ */
+function SlideEditor({
+  slides,
+  autoplaySeconds,
+  knownImages,
+  onRememberImage,
+  onChange,
+  onAutoplayChange,
+}: {
+  slides: BannerSlide[]
+  autoplaySeconds: number
+  knownImages: Map<number, StorefrontImage>
+  onRememberImage: (image: StorefrontImage | null) => void
+  onChange: (slides: BannerSlide[]) => void
+  onAutoplayChange: (seconds: number) => void
+}) {
+  /** Which slide is expanded. Null means all closed. */
+  const [openId, setOpenId] = useState<string | null>(slides[0]?.id ?? null)
+
+  const edit = (id: string, changes: Partial<BannerSlide>) =>
+    onChange(slides.map((s) => (s.id === id ? { ...s, ...changes } : s)))
+
+  /** Move a slide one place, which is how the ORDER is set — see the header. */
+  const move = (index: number, by: number) => {
+    const to = index + by
+    if (to < 0 || to >= slides.length) return
+    const next = [...slides]
+    const [moved] = next.splice(index, 1)
+    next.splice(to, 0, moved)
+    onChange(next)
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {slides.length === 0 && (
+        <p className="text-sm text-muted">
+          No pictures yet. Add one below — a rotating banner needs at least two to turn.
+        </p>
+      )}
+
+      {slides.map((slide, index) => {
+        const open = openId === slide.id
+        const picture = slide.imageId ? knownImages.get(slide.imageId) ?? null : null
+
+        return (
+          <div key={slide.id} className="flex flex-col gap-3 rounded-control bg-surface-2 p-3">
+            {/* The row: what this slide is, and where it sits. */}
+            <div className="flex items-center gap-2">
+              {/* Opens the slide. Not a kit Button — it is a summary row with a
+                  thumbnail in it, and a Button would fight its own padding. */}
+              <button
+                data-kit-ok
+                type="button"
+                onClick={() => setOpenId(open ? null : slide.id)}
+                aria-expanded={open}
+                className="flex min-w-0 flex-1 items-center gap-2.5 rounded-control text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                <Icons.ChevronRight
+                  size={14}
+                  className={`shrink-0 text-muted transition ${open ? 'rotate-90' : ''}`}
+                />
+                {/* The picture itself, because that is what identifies a slide
+                    — a list of "Slide 1, Slide 2" tells the owner nothing about
+                    which is which. */}
+                {picture ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`/api/storefront-images/${picture.id}`}
+                    alt=""
+                    className="size-9 shrink-0 rounded-control border border-border object-cover"
+                  />
+                ) : (
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-control border border-dashed border-border-strong text-muted">
+                    <Icons.Picture size={14} />
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-ink">
+                    {slide.heading.trim() || `Picture ${index + 1}`}
+                  </span>
+                  {!slide.imageId && (
+                    <span className="block text-xs text-warning-ink">No picture yet</span>
+                  )}
+                </span>
+              </button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label={`Move picture ${index + 1} up`}
+                title="Move up"
+                disabled={index === 0}
+                onClick={() => move(index, -1)}
+              >
+                <Icons.ChevronUp size={14} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label={`Move picture ${index + 1} down`}
+                title="Move down"
+                disabled={index === slides.length - 1}
+                onClick={() => move(index, 1)}
+              >
+                <Icons.ChevronDown size={14} />
+              </Button>
+              <Button
+                variant="danger-ghost"
+                size="sm"
+                iconOnly
+                aria-label={`Remove picture ${index + 1}`}
+                onClick={() => onChange(slides.filter((s) => s.id !== slide.id))}
+              >
+                <Icons.Trash size={14} />
+              </Button>
+            </div>
+
+            {open && (
+              <div className="flex flex-col gap-3 border-t border-border pt-3">
+                <Field label="Picture">
+                  <PicturePicker
+                    value={slide.imageId}
+                    current={picture}
+                    onChange={(image) => {
+                      onRememberImage(image)
+                      edit(slide.id, {
+                        imageId: image?.id ?? null,
+                        // The library's description unless this slide already
+                        // has its own — same rule as a single banner.
+                        imageAlt: slide.imageAlt || image?.altText || '',
+                      })
+                    }}
+                  />
+                </Field>
+
+                <Field
+                  label="Describe the picture"
+                  hint="Read aloud to shoppers who cannot see it."
+                >
+                  <Input
+                    value={slide.imageAlt}
+                    maxLength={190}
+                    placeholder="e.g. Fresh bread on a wooden counter"
+                    onChange={(e) => edit(slide.id, { imageAlt: e.target.value })}
+                  />
+                </Field>
+
+                {/* Same rule as a single banner: only once there is a picture
+                    to describe. Nagging before then is noise, and a warning
+                    that is usually noise is one nobody reads. */}
+                {slide.imageId && !slide.imageAlt.trim() && (
+                  <Callout tone="warning" title="No description yet">
+                    Shoppers using a screen reader will hear nothing where this picture is.
+                  </Callout>
+                )}
+
+                <Field label="Words over the picture" hint="Optional — leave blank for none.">
+                  <Input
+                    value={slide.heading}
+                    maxLength={80}
+                    placeholder="Headline"
+                    onChange={(e) => edit(slide.id, { heading: e.target.value })}
+                  />
+                </Field>
+
+                <Field label="Under the headline">
+                  <Textarea
+                    value={slide.bodyText}
+                    rows={2}
+                    maxLength={300}
+                    onChange={(e) => edit(slide.id, { bodyText: e.target.value })}
+                  />
+                </Field>
+
+                <Field
+                  label="Where it goes when clicked"
+                  hint="A page in your shop like /store, or a full https:// link."
+                >
+                  <Input
+                    value={slide.linkUrl}
+                    maxLength={300}
+                    placeholder="https://…"
+                    onChange={(e) => edit(slide.id, { linkUrl: e.target.value })}
+                  />
+                </Field>
+
+                {/* Only once there is somewhere to go — a button that does
+                    nothing is worse than no button. */}
+                {slide.linkUrl.trim() !== '' && (
+                  <Field label="Button" hint="Leave blank to show no button.">
+                    <Input
+                      value={slide.buttonLabel}
+                      maxLength={40}
+                      placeholder="Shop now"
+                      onChange={(e) => edit(slide.id, { buttonLabel: e.target.value })}
+                    />
+                  </Field>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      {slides.length < MAX_SLIDES ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            const slide = newSlide()
+            onChange([...slides, slide])
+            // Opened, because the next thing anybody does after adding a slide
+            // is choose its picture.
+            setOpenId(slide.id)
+          }}
+        >
+          <Icons.Plus size={15} />
+          Add a picture
+        </Button>
+      ) : (
+        <p className="text-sm text-muted">
+          {MAX_SLIDES} pictures is the most one rotating banner can hold.
+        </p>
+      )}
+
+      {/*
+        How fast it turns, and whether it turns at all.
+
+        Below the slides because it is a property of the whole set, and because
+        it is the thing an owner decides once — after the pictures are in.
+      */}
+      <FieldGroup title="Turning">
+        <Field
+          label="Seconds on each picture"
+          hint={
+            autoplaySeconds === 0
+              ? 'Shoppers move it themselves with the arrows.'
+              : `Between ${MIN_AUTOPLAY_SECONDS} and ${MAX_AUTOPLAY_SECONDS} seconds. It stops while a shopper is looking at it.`
+          }
+        >
+          <div className="flex items-center gap-3">
+            <NumberInput
+              value={autoplaySeconds}
+              min={0}
+              max={MAX_AUTOPLAY_SECONDS}
+              disabled={autoplaySeconds === 0}
+              onChange={(e) => {
+                const seconds = Number(e.target.value)
+                onAutoplayChange(
+                  !Number.isFinite(seconds) || seconds <= 0
+                    ? MIN_AUTOPLAY_SECONDS
+                    : Math.min(Math.max(seconds, MIN_AUTOPLAY_SECONDS), MAX_AUTOPLAY_SECONDS),
+                )
+              }}
+              className="w-24"
+            />
+            {/*
+              A switch rather than "type 0", because 0 meaning "never" is a
+              convention the owner has no way to guess — and typing 0 into a
+              box whose hint says "between 4 and 30" reads as an error.
+            */}
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <Switch
+                checked={autoplaySeconds > 0}
+                onChange={(on) => onAutoplayChange(on ? DEFAULT_AUTOPLAY_SECONDS : 0)}
+                ariaLabel="Turn by itself"
+              />
+              Turn by itself
+            </label>
+          </div>
+        </Field>
+
+        {/*
+          Said once, where the decision is made. Owners ask for a carousel and
+          then wonder why it sits still on their phone; this is the answer, and
+          it is not a fault.
+        */}
+        {autoplaySeconds > 0 && (
+          <p className="text-sm text-muted">
+            Shoppers who have asked their device to reduce motion will see the first picture and
+            the arrows, and it will not turn on its own.
+          </p>
+        )}
+      </FieldGroup>
     </div>
   )
 }

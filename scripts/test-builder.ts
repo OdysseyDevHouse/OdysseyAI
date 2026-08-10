@@ -15,12 +15,20 @@
  */
 import { siteExecute, siteQueryOne } from '../src/lib/siteDb'
 import {
+  DEFAULT_AUTOPLAY_SECONDS,
+  MAX_AUTOPLAY_SECONDS,
   MAX_SECTIONS,
   MAX_SECTION_CARDS,
   MAX_SECTION_ITEMS,
   MAX_SECTION_TEXT,
+  MAX_SLIDES,
+  MIN_AUTOPLAY_SECONDS,
   describeLayoutChanges,
   isScheduledNow,
+  // The rule the shop rotates by and the emptiness check counts with — one
+  // definition, asserted here because a disagreement is a blank frame.
+  liveSlides,
+  readTheme,
   safeDate,
   safeLinkTarget,
   defaultSections,
@@ -33,6 +41,9 @@ import {
   safeUrl,
   saveDraft,
   saveTheme,
+  // The SHOP's own "would this draw anything" rule, asserted here because four
+  // separate places now depend on it agreeing with the page it describes.
+  sectionIsEmpty,
   DEFAULT_BRAND_COLOUR,
 } from '../src/lib/site/storefrontLayout'
 
@@ -144,6 +155,141 @@ async function main() {
     normaliseSections([{ kind: 'banner', id: 'b', imageId: 'evil' }])[0].imageId === null)
   ok('banner alt text is truncated', banner.imageAlt!.length === 190, String(banner.imageAlt!.length))
   ok('a banner button label is truncated', banner.buttonLabel!.length === 40)
+
+  /* ── A rotating banner ─────────────────────────────────────────────────
+   *
+   * A slide is a banner, so every rule that protects a banner has to protect a
+   * slide — and being nested one level deeper is exactly how a validator gets
+   * skipped. The link check below is the one that matters: it is the only
+   * place a shop owner supplies an href that lands on a public page.
+   */
+  const carousel = normaliseSections([
+    {
+      kind: 'carousel',
+      id: 'c',
+      autoplaySeconds: 6,
+      slides: [
+        {
+          id: 'a',
+          imageId: '9',
+          imageAlt: 'x'.repeat(500),
+          heading: 'h'.repeat(200),
+          bodyText: 'b'.repeat(900),
+          buttonLabel: 'y'.repeat(99),
+          linkUrl: '/store?department=2',
+        },
+        { id: 'b', imageId: 'evil', linkUrl: 'javascript:alert(1)' },
+      ],
+    },
+  ])[0]
+
+  ok('a slide image id is coerced to a number', carousel.slides![0].imageId === 9)
+  ok('a junk slide image id becomes none', carousel.slides![1].imageId === null)
+  ok('slide alt text is truncated', carousel.slides![0].imageAlt.length === 190)
+  ok('a slide heading is truncated', carousel.slides![0].heading.length === 80)
+  ok('slide body text is truncated', carousel.slides![0].bodyText.length === 300)
+  ok('a slide button label is truncated', carousel.slides![0].buttonLabel.length === 40)
+  ok('an in-shop slide link survives', carousel.slides![0].linkUrl === '/store?department=2')
+  // The whole reason slides go through safeLinkTarget rather than String().
+  ok('a javascript: slide link is refused', carousel.slides![1].linkUrl === '')
+  ok(
+    'a protocol-relative slide link is refused',
+    normaliseSections([
+      { kind: 'carousel', id: 'c', slides: [{ id: 'a', linkUrl: '//evil.example/x' }] },
+    ])[0].slides![0].linkUrl === '',
+  )
+
+  ok(
+    'slides are capped',
+    normaliseSections([
+      { kind: 'carousel', id: 'c', slides: Array.from({ length: MAX_SLIDES + 40 }, (_, i) => ({ id: `s${i}` })) },
+    ])[0].slides!.length === MAX_SLIDES,
+  )
+  ok(
+    'junk slides become an empty list',
+    normaliseSections([{ kind: 'carousel', id: 'c', slides: 'not-a-list' }])[0].slides!.length === 0,
+  )
+  ok(
+    'a null slide does not throw',
+    normaliseSections([{ kind: 'carousel', id: 'c', slides: [null, 5] }])[0].slides!.length === 2,
+  )
+  // Two slides sharing an id would share a React key and a drag handle.
+  ok(
+    'duplicate slide ids are re-identified',
+    new Set(
+      normaliseSections([
+        { kind: 'carousel', id: 'c', slides: [{ id: 'same' }, { id: 'same' }] },
+      ])[0].slides!.map((s) => s.id),
+    ).size === 2,
+  )
+
+  ok('a sane interval survives', carousel.autoplaySeconds === 6)
+  ok(
+    'too fast is clamped up',
+    normaliseSections([{ kind: 'carousel', id: 'c', autoplaySeconds: 1 }])[0].autoplaySeconds ===
+      MIN_AUTOPLAY_SECONDS,
+  )
+  ok(
+    'too slow is clamped down',
+    normaliseSections([{ kind: 'carousel', id: 'c', autoplaySeconds: 9000 }])[0].autoplaySeconds ===
+      MAX_AUTOPLAY_SECONDS,
+  )
+  // 0 is a real value — "the shopper turns it" — and must survive the clamp
+  // that would otherwise round it up to the minimum.
+  ok(
+    'not turning by itself survives',
+    normaliseSections([{ kind: 'carousel', id: 'c', autoplaySeconds: 0 }])[0].autoplaySeconds === 0,
+  )
+  // Junk becomes the default, NOT 0: silently switching rotation off is the
+  // failure an owner would never spot.
+  ok(
+    'a junk interval becomes the default',
+    normaliseSections([{ kind: 'carousel', id: 'c', autoplaySeconds: 'fast' }])[0]
+      .autoplaySeconds === DEFAULT_AUTOPLAY_SECONDS,
+  )
+  ok(
+    'a negative interval means the shopper turns it',
+    normaliseSections([{ kind: 'carousel', id: 'c', autoplaySeconds: -5 }])[0].autoplaySeconds === 0,
+  )
+
+  /*
+   * A carousel is empty when nothing in it can DRAW — which is not the same as
+   * having no slides. Three slides that all point at deleted pictures is the
+   * case that would otherwise rotate through blank frames on the live shop.
+   */
+  const blankTheme = readTheme({})
+  const carouselSection = normaliseSections([
+    { kind: 'carousel', id: 'c', slides: [{ id: 'a', imageId: 3 }, { id: 'b', imageId: 4 }] },
+  ])[0]
+  ok(
+    'a carousel with no slides is empty',
+    sectionIsEmpty({ section: normaliseSections([{ kind: 'carousel', id: 'c' }])[0] }, blankTheme),
+  )
+  ok(
+    'a carousel whose pictures are all gone is empty',
+    sectionIsEmpty({ section: carouselSection, slideImages: new Map() }, blankTheme),
+  )
+  ok(
+    'one surviving picture is enough',
+    !sectionIsEmpty(
+      { section: carouselSection, slideImages: new Map([[4, { id: 4 }]]) },
+      blankTheme,
+    ),
+  )
+  // What the shop rotates must be exactly what the emptiness check counted —
+  // asking the question twice, two ways, is how a blank frame gets into the
+  // rotation.
+  ok(
+    'only the slides with pictures are live',
+    liveSlides(carouselSection, new Map([[4, { id: 4 }]])).length === 1,
+  )
+  ok(
+    'a slide with no picture at all is dropped',
+    liveSlides(
+      normaliseSections([{ kind: 'carousel', id: 'c', slides: [{ id: 'a' }] }])[0],
+      new Map(),
+    ).length === 0,
+  )
 
   const long = 'w'.repeat(MAX_SECTION_TEXT + 500)
   const text = normaliseSections([{ kind: 'text', id: 't', text: long, align: 'justify' }])[0]

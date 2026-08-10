@@ -80,6 +80,7 @@ export default async function StoreLayout({
         storeName={context.storeName}
         blurb={context.settings.blurb}
         departments={departments}
+        showDepartmentImages={context.settings.showDepartmentImages}
         theme={layout.theme}
         allowAccount={context.settings.allowAccount}
         customerName={session?.name ?? null}

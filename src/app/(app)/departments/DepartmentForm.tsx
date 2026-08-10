@@ -14,7 +14,9 @@ import {
   SwatchPicker,
   Switch,
 } from '@/components/ui'
+import PicturePicker from '@/components/PicturePicker'
 import { saveDepartmentAction, type DepartmentFormState } from './actions'
+import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { Department } from '@/lib/site/departments'
 
 function SubmitButton() {
@@ -31,12 +33,20 @@ export default function DepartmentForm({
   department,
   parentOptions,
   defaultParentId,
+  pictures,
 }: {
   department: Department | null
   /** Every department this one may sit under — already excludes itself and its
    *  own descendants, which would detach the branch from the tree. */
   parentOptions: { id: number; label: string }[]
   defaultParentId: number | null
+  /**
+   * The two pictures this department already has, resolved server-side, so
+   * each picker shows a thumbnail before its dialog has ever been opened.
+   * Either may be null — for "none chosen" and for "the picture was deleted",
+   * which are the same thing to everything downstream.
+   */
+  pictures: { pos: StorefrontImage | null; online: StorefrontImage | null }
 }) {
   const [state, formAction] = useActionState<DepartmentFormState, FormData>(
     saveDepartmentAction,
@@ -45,6 +55,16 @@ export default function DepartmentForm({
 
   const [color, setColor] = useState(department?.color ?? '')
   const [active, setActive] = useState(department?.isActive ?? true)
+
+  /*
+   * The chosen pictures, as ids plus the resolved image for the thumbnail.
+   *
+   * Held together rather than as two pieces of state because they always
+   * change together — the picker hands back the whole image, and an id without
+   * its image would draw an empty box until the page revalidated.
+   */
+  const [posImage, setPosImage] = useState(pictures.pos)
+  const [onlineImage, setOnlineImage] = useState(pictures.online)
 
   return (
     <form action={formAction} className="flex flex-col gap-5 p-5">
@@ -97,6 +117,38 @@ export default function DepartmentForm({
           </p>
           <input type="hidden" name="color" value={color} />
         </div>
+
+        {/*
+          Two pictures, side by side and clearly labelled, because the whole
+          point is that they are DIFFERENT pictures for different jobs — see
+          064_department_images.sql. Put one above the other and they read as
+          "the picture" and "the other picture", which is how a shop ends up
+          with a wide storefront photograph squeezed into a 40px till tile.
+
+          Both draw from the same library as the front page's banners, so a
+          picture uploaded here can be reused there and the other way round.
+        */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Till icon"
+            hint="Shown on this department's tile at the till. A clear, simple picture works best at that size."
+          >
+            <PicturePicker value={posImage?.id ?? null} current={posImage} onChange={setPosImage} />
+          </Field>
+
+          <Field
+            label="Online store picture"
+            hint="Shown in your shop, if you have switched department pictures on under Online Store → Setup."
+          >
+            <PicturePicker
+              value={onlineImage?.id ?? null}
+              current={onlineImage}
+              onChange={setOnlineImage}
+            />
+          </Field>
+        </div>
+        <input type="hidden" name="posImageId" value={posImage?.id ?? ''} />
+        <input type="hidden" name="onlineImageId" value={onlineImage?.id ?? ''} />
 
         <Field
           label="Sort order"

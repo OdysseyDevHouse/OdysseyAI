@@ -9,6 +9,7 @@ import type { StorefrontTheme } from '@/lib/storefrontModel'
 import { useCart } from './CartContext'
 import { useWishlist } from './WishlistContext'
 import CartBar from './CartBar'
+import { DepartmentImage } from './ShopBits'
 
 /**
  * The shop's frame: masthead, department rail, footer.
@@ -32,6 +33,7 @@ export default function StoreChrome({
   storeName,
   blurb,
   departments,
+  showDepartmentImages,
   theme,
   allowAccount,
   customerName,
@@ -42,6 +44,8 @@ export default function StoreChrome({
   storeName: string
   blurb: string
   departments: StorefrontDepartment[]
+  /** Whether the rail shows each department's picture. The shop's setting. */
+  showDepartmentImages: boolean
   theme: StorefrontTheme
   /** Whether this shop offers account ordering at all. */
   allowAccount: boolean
@@ -150,8 +154,29 @@ export default function StoreChrome({
                 <Link
                   key={d.id}
                   href={`${base}/c/${d.id}`}
-                  className="shrink-0 whitespace-nowrap rounded-pill px-3 py-1.5 text-sm text-ink-2 transition hover:bg-surface-2"
+                  /*
+                    The pill grows a picture rather than being replaced by one.
+                    A rail of bare thumbnails would be prettier and unusable —
+                    this is navigation, and a shopper scanning for "Bakery"
+                    reads the word. The picture helps them find it faster; it
+                    does not replace the label.
+                  */
+                  className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-pill text-sm text-ink-2 transition hover:bg-surface-2 ${
+                    showDepartmentImages ? 'py-1 pl-1 pr-3' : 'px-3 py-1.5'
+                  }`}
                 >
+                  {showDepartmentImages && (
+                    <DepartmentImage
+                      department={d}
+                      // StoreChrome is itself a client component, so building
+                      // the URL inline crosses no boundary — but the prop is a
+                      // string regardless, because HomeSections cannot pass a
+                      // function. One shape, both callers.
+                      src={d.imageId ? `/api/store-images/${token}/shop/${d.imageId}` : null}
+                      rounded="rounded-pill"
+                      className="size-7 text-[11px]"
+                    />
+                  )}
                   {d.name}
                 </Link>
               ))}

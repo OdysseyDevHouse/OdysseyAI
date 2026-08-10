@@ -45,6 +45,8 @@ export default async function NewDepartmentPage({
             department={null}
             parentOptions={parentOptions}
             defaultParentId={defaultParentId}
+            // A department being created has neither picture yet.
+            pictures={{ pos: null, online: null }}
           />
         </Card>
       </PageBody>

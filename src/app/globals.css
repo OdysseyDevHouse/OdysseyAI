@@ -54,6 +54,23 @@
      green so there is still only one place to change it. */
   --color-positive: #17a34a;
 
+  /* --- Over a photograph -------------------------------------------------- */
+  /* Anything drawn ON an uploaded image: a banner's scrim and the words over
+     it, a carousel's arrows and dots.
+
+     These are the ONE group that must NOT flip with the theme, and that is the
+     whole reason they exist. A scrim written as `bg-ink/45` reads as "dark
+     wash" in the light theme and paints a PALE one in the dark theme, where
+     `ink` is #e8ebef — so the text over a bright photograph became unreadable
+     exactly where the scrim was supposed to save it. `text-surface` inverted
+     the same way and turned white banner text near-black.
+
+     A shopper's photograph is not themed. The overlay on it must not be
+     either, so these are deliberately NOT redefined in either dark block
+     below — "keep the two in sync" here means keeping them the SAME. */
+  --color-on-image: #ffffff; /* words and icons over a picture */
+  --color-image-scrim: #101317; /* the wash that makes them legible */
+
   /* --- Tile swatches ------------------------------------------------------ */
   /* The palette offered when a product has no photo and gets a coloured
      initial instead. These are content, not UI chrome — each must stay
@@ -214,6 +231,10 @@
 
     --color-positive: #4ade80;
 
+    /* --color-on-image and --color-image-scrim are deliberately NOT redefined
+       here. They sit on an uploaded photograph, which does not change with the
+       theme — flipping them is the bug they were added to fix. */
+
     /* Lifted and desaturated for dark: the light-mode ramp goes muddy on a
        dark surface, so each hue keeps its identity but gains lightness. */
     --color-chart-1: #6a9bff;
@@ -283,6 +304,9 @@
   --color-danger-soft: #33191a;
 
   --color-positive: #4ade80;
+
+  /* --color-on-image and --color-image-scrim are deliberately NOT redefined
+     here — see the note in the block above. */
 
   /* Lifted and desaturated for dark: the light-mode ramp goes muddy on a
      dark surface, so each hue keeps its identity but gains lightness. */

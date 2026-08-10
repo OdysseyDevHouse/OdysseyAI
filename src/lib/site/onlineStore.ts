@@ -74,6 +74,16 @@ export type OnlineSettings = {
   showPhotos: boolean
   /** Whether brand names are shown and offered as a filter. */
   showBrands: boolean
+  /**
+   * Whether departments show their picture — on the rail under the search and
+   * on the "Shop by department" tiles.
+   *
+   * Off by default and for existing shops, because a shop that upgrades into
+   * this has no department pictures yet: switching it on for them would turn
+   * every tile into a colour-and-letter placeholder overnight. The owner turns
+   * it on once the pictures are in, which is also when they can see the result.
+   */
+  showDepartmentImages: boolean
   updatedAt: Date | null
   updatedBy: string
 }
@@ -142,6 +152,7 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       showStock: false,
       showPhotos: true,
       showBrands: true,
+      showDepartmentImages: false,
       updatedAt: null,
       updatedBy: '',
     }
@@ -163,6 +174,7 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
     showStock: !!row.show_stock,
     showPhotos: !!row.show_photos,
     showBrands: !!row.show_brands,
+    showDepartmentImages: !!row.show_department_images,
     updatedAt: row.updated_at instanceof Date ? row.updated_at : null,
     updatedBy: String(row.updated_by ?? ''),
   }
@@ -255,7 +267,8 @@ export async function saveOnlineSettings(
             payment_mode = ?, allow_account = ?, publish_mode = ?,
             price_structure_id = ?, lead_time_minutes = ?, min_order_incl = ?,
             blurb = ?, paid_status_id = ?, reviews_enabled = ?,
-            show_stock = ?, show_photos = ?, show_brands = ?, updated_by = ?
+            show_stock = ?, show_photos = ?, show_brands = ?,
+            show_department_images = ?, updated_by = ?
       WHERE id = 1`,
     [
       input.isEnabled ? 1 : 0,
@@ -273,6 +286,7 @@ export async function saveOnlineSettings(
       input.showStock ? 1 : 0,
       input.showPhotos ? 1 : 0,
       input.showBrands ? 1 : 0,
+      input.showDepartmentImages ? 1 : 0,
       updatedBy.slice(0, 120),
     ],
   )

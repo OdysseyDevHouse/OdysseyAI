@@ -64,7 +64,11 @@ export default async function BuilderPage() {
    */
   const resolved = context ? await resolveSectionContent(context, editing) : editing.map(() => ({}))
   const bannerImages = await storefrontImagesByIds(siteId, [
-    ...editing.map((s) => s.imageId).filter((id): id is number => typeof id === 'number' && id > 0),
+    ...editing
+      // A carousel's slides carry their own ids, and they need resolving here
+      // for exactly the same reason a banner's does.
+      .flatMap((s) => [s.imageId, ...(s.slides ?? []).map((slide) => slide.imageId)])
+      .filter((id): id is number => typeof id === 'number' && id > 0),
     // The logo travels with them: it comes from the same library, and the
     // picker in Appearance needs it to draw a thumbnail before the dialog has
     // ever been opened.
@@ -93,6 +97,16 @@ export default async function BuilderPage() {
             ...(section.kind === 'banner'
               ? { image: section.imageId ? bannerImages.get(section.imageId) ?? null : null }
               : {}),
+            ...(section.kind === 'carousel'
+              ? {
+                  slideImages: new Map(
+                    (section.slides ?? []).flatMap((slide) => {
+                      const found = slide.imageId ? bannerImages.get(slide.imageId) : undefined
+                      return found ? [[slide.imageId as number, found] as const] : []
+                    }),
+                  ),
+                }
+              : {}),
           }))}
           images={[...bannerImages.values()]}
           departments={departments
@@ -110,6 +124,7 @@ export default async function BuilderPage() {
             showStock: settings.showStock,
             showPhotos: settings.showPhotos,
             showBrands: settings.showBrands,
+            showDepartmentImages: settings.showDepartmentImages,
           }}
         />
       </PageBody>

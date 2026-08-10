@@ -75,6 +75,7 @@ export default function SetupForm({
     showStock: settings.showStock,
     showPhotos: settings.showPhotos,
     showBrands: settings.showBrands,
+    showDepartmentImages: settings.showDepartmentImages,
   })
 
   function patch(next: Partial<OnlineSettingsInput>) {
@@ -403,6 +404,21 @@ export default function SetupForm({
             checked={form.showPhotos}
             onChange={(next) => patch({ showPhotos: next })}
             label="Show product photographs"
+          />
+        </SettingRow>
+
+        {/* Beside the product-photograph switch, because they are the same
+            kind of decision — how picture-led the shop is — and an owner
+            turning one on usually wants the other. */}
+        <SettingRow
+          icon={<Icons.LayoutGrid size={18} />}
+          label="Show department pictures"
+          description="Puts each department’s picture on the row under the search and on the “Shop by department” tiles. Departments without one show their colour and initial instead — set a picture on the department itself."
+        >
+          <Switch
+            checked={form.showDepartmentImages}
+            onChange={(next) => patch({ showDepartmentImages: next })}
+            label="Show department pictures"
           />
         </SettingRow>
 

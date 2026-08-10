@@ -78,7 +78,24 @@ export type StorefrontProduct = {
   imageAlt: string
 }
 
-export type StorefrontDepartment = { id: number; name: string; productCount: number }
+export type StorefrontDepartment = {
+  id: number
+  name: string
+  productCount: number
+  /**
+   * The department's shop picture, as an id into `storefront_images`, or null.
+   *
+   * Carried on the department rather than resolved to a URL here, for the same
+   * reason a banner's is: the shop and the builder read the same bytes through
+   * different routes, and only the caller knows which. See ImageSrc.
+   *
+   * Null draws the colour-and-initial tile — a shop is expected to be part way
+   * through adding these, so a missing picture is the normal case, not a fault.
+   */
+  imageId: number | null
+  /** The department's colour, for that fallback tile. Null means the default. */
+  color: string | null
+}
 
 // Re-exported so a caller rendering a front page has one import for everything
 // on it — the same reasoning as storefrontLayout re-exporting the model.
@@ -308,7 +325,7 @@ export async function publishedDepartments(
 ): Promise<StorefrontDepartment[]> {
   const rows = await siteQuery<Row>(
     context.siteId,
-    `SELECT dep.id, dep.name, COUNT(*) AS product_count
+    `SELECT dep.id, dep.name, dep.online_image_id, dep.color, COUNT(*) AS product_count
        FROM products p
        JOIN product_prices pp
          ON pp.product_id = p.id
@@ -317,15 +334,22 @@ export async function publishedDepartments(
             ))
        JOIN departments dep ON dep.id = p.department_id
       WHERE ${SELLABLE} AND ${publishFilter(context.settings.publishMode)}
-      GROUP BY dep.id, dep.name
+      GROUP BY dep.id, dep.name, dep.online_image_id, dep.color
       ORDER BY dep.name`,
     [context.settings.priceStructureId],
   )
-  return rows.map((r) => ({
-    id: Number(r.id),
-    name: String(r.name),
-    productCount: Number(r.product_count),
-  }))
+  return rows.map((r) => {
+    // 0 and junk both read as "no picture" — see `imageId` in departments.ts
+    // for why a 0 must never survive as an id.
+    const image = Number(r.online_image_id)
+    return {
+      id: Number(r.id),
+      name: String(r.name),
+      productCount: Number(r.product_count),
+      imageId: Number.isInteger(image) && image > 0 ? image : null,
+      color: (r.color as string | null) ?? null,
+    }
+  })
 }
 
 /**
@@ -570,30 +594,59 @@ export async function resolveSectionContent(
     departmentId?: number | null
     productIds?: number[]
     imageId?: number | null
+    slides?: { imageId: number | null }[]
   }[],
 ): Promise<{
   products?: StorefrontProduct[]
   departments?: StorefrontDepartment[]
   image?: StorefrontImage | null
+  slideImages?: Map<number, StorefrontImage>
 }[]> {
   /*
-   * Every banner's picture, in ONE query for the whole page.
+   * Every picture on the page, in ONE query.
    *
    * Resolved up front rather than inside the map: a page can hold several
-   * banners, and asking per section is several round trips to answer one
-   * question. An id that no longer resolves is simply absent — see the module
-   * header of storefrontImages.ts on why a deleted picture is not an error.
+   * banners and a carousel of eight slides, and asking per section — worse,
+   * per slide — is a round trip each to answer one question. An id that no
+   * longer resolves is simply absent — see the module header of
+   * storefrontImages.ts on why a deleted picture is not an error.
+   *
+   * Banners and slides share the query because they share the library. Keeping
+   * them separate would double the round trips to fetch from one table.
    */
-  const bannerIds = sections
-    .filter((s) => s.kind === 'banner')
-    .map((s) => s.imageId)
-    .filter((id): id is number => typeof id === 'number' && id > 0)
-  const images = await storefrontImagesByIds(context.siteId, bannerIds)
+  const imageIds = sections.flatMap((s) =>
+    s.kind === 'banner'
+      ? [s.imageId]
+      : s.kind === 'carousel'
+        ? (s.slides ?? []).map((slide) => slide.imageId)
+        : [],
+  )
+  const images = await storefrontImagesByIds(
+    context.siteId,
+    imageIds.filter((id): id is number => typeof id === 'number' && id > 0),
+  )
 
   return Promise.all(
     sections.map(async (section) => {
       if (section.kind === 'banner') {
         return { image: section.imageId ? images.get(section.imageId) ?? null : null }
+      }
+
+      if (section.kind === 'carousel') {
+        /*
+         * Only THIS section's slides, not the page-wide map.
+         *
+         * Handing every section the whole map would work and would be wrong:
+         * `sectionIsEmpty` asks whether a slide's picture resolves, so a
+         * carousel would inherit the answer for a picture belonging to some
+         * other section and count a dead slide as live.
+         */
+        const mine = new Map<number, StorefrontImage>()
+        for (const slide of section.slides ?? []) {
+          const found = slide.imageId ? images.get(slide.imageId) : undefined
+          if (found) mine.set(slide.imageId as number, found)
+        }
+        return { slideImages: mine }
       }
 
       if (section.kind === 'categories') {

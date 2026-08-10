@@ -1,18 +1,33 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import type { HomeSection, StorefrontTheme } from '@/lib/storefrontModel'
+import {
+  liveSlides,
+  sectionIsEmpty,
+  type HomeSection,
+  type StorefrontTheme,
+} from '@/lib/storefrontModel'
 import type {
   StorefrontDepartment,
   StorefrontImage,
   StorefrontProduct,
 } from '@/lib/site/storefront'
 import ProductGrid from './ProductGrid'
+import Carousel from './Carousel'
+import { DepartmentImage } from './ShopBits'
 
 export type ProductDisplay = {
   layout: 'grid' | 'list'
   showStock: boolean
   showPhotos: boolean
   showBrands: boolean
+  /**
+   * Whether departments show their picture, here and on the rail.
+   *
+   * Travels with the product display flags because it reaches the page the
+   * same way — one settings row, passed whole — and because the builder must
+   * pass exactly what the shop passes or the preview stops matching.
+   */
+  showDepartmentImages: boolean
 }
 
 /**
@@ -42,6 +57,8 @@ export type SectionContent = {
   departments?: StorefrontDepartment[]
   /** banner: the resolved picture, or null when it is missing or unset. */
   image?: StorefrontImage | null
+  /** carousel: each slide's picture, keyed by image id. See SectionFill. */
+  slideImages?: Map<number, StorefrontImage>
 }
 
 /**
@@ -148,14 +165,25 @@ function toned(section: HomeSection, node: ReactNode): ReactNode {
  * draws instead is keyed off exactly that.
  */
 function sectionBody(
-  { section, products, departments, image }: SectionContent,
+  entry: SectionContent,
   token: string,
   theme: StorefrontTheme,
   display: ProductDisplay,
   imageSrc: ImageSrc,
 ): ReactNode {
+  const { section, products, departments, image } = entry
+
+  /*
+   * ONE gate, at the top, rather than a guard inside each branch.
+   *
+   * Every branch below used to re-test its own emptiness, which meant the rule
+   * lived in seven places and the publish summary would have made an eighth.
+   * Asking `sectionIsEmpty` once means the shop, the builder's placeholder and
+   * the pre-publish warning cannot disagree about what "shows nothing" means.
+   */
+  if (sectionIsEmpty(entry, theme)) return null
+
   if (section.kind === 'hero') {
-    if (!theme.heroHeadline && !theme.heroSubtext) return null
     return (
       <section key={section.id}>
         <div
@@ -180,7 +208,9 @@ function sectionBody(
   }
 
   if (section.kind === 'categories') {
-    if (!departments || departments.length === 0) return null
+    // Unreachable after the gate above — kept only so `departments` narrows
+    // from `T[] | undefined` for the map below.
+    if (!departments) return null
     return (
       <section key={section.id}>
         {section.title && <SectionHeading>{section.title}</SectionHeading>}
@@ -189,12 +219,34 @@ function sectionBody(
             <li key={department.id}>
               <Link
                 href={`/store/${token}?department=${department.id}`}
-                className="flex h-full flex-col justify-between rounded-card border border-border bg-surface p-4 shadow-card transition hover:bg-surface-2"
+                className="flex h-full flex-col overflow-hidden rounded-card border border-border bg-surface shadow-card transition hover:bg-surface-2"
               >
-                <span className="text-sm font-medium text-ink">{department.name}</span>
-                <span className="mt-2 text-xs text-muted">
-                  {department.productCount.toLocaleString('en-ZA')} item
-                  {department.productCount === 1 ? '' : 's'}
+                {/*
+                  The picture, when the shop has switched them on. A 4:3 band
+                  across the top of the tile rather than a thumbnail beside the
+                  name: this section is the shop's own aisle signage, and a
+                  photograph of the produce is what makes somebody pick an aisle.
+
+                  Square-cropped via object-cover on a fixed ratio, unlike a
+                  banner: these sit in a GRID, and letting each keep its own
+                  proportions would give four tiles in a row four heights.
+                */}
+                {display.showDepartmentImages && (
+                  <DepartmentImage
+                    department={department}
+                    // Resolved HERE, on the server, because DepartmentImage is
+                    // a client component — see its `src` prop.
+                    src={department.imageId ? imageSrc(department.imageId) : null}
+                    rounded=""
+                    className="aspect-[4/3] w-full text-2xl"
+                  />
+                )}
+                <span className="flex flex-1 flex-col justify-between p-4">
+                  <span className="text-sm font-medium text-ink">{department.name}</span>
+                  <span className="mt-2 text-xs text-muted">
+                    {department.productCount.toLocaleString('en-ZA')} item
+                    {department.productCount === 1 ? '' : 's'}
+                  </span>
                 </span>
               </Link>
             </li>
@@ -205,7 +257,8 @@ function sectionBody(
   }
 
   if (section.kind === 'products') {
-    if (!products || products.length === 0) return null
+    // Unreachable after the gate; narrows `products` for ProductGrid.
+    if (!products) return null
     return (
       <section key={section.id}>
         {section.title && <SectionHeading>{section.title}</SectionHeading>}
@@ -224,63 +277,55 @@ function sectionBody(
   if (section.kind === 'banner') {
     // No picture means no banner. A coloured box with words in it is what the
     // welcome section already does, and doing it twice is not a second design.
+    // Unreachable after the gate; narrows `image` for the src below.
     if (!image) return null
-    const href = section.linkUrl?.trim() ?? ''
-    const hasWords = Boolean(section.title || section.bodyText)
-
-    const picture = (
-      <>
-        {/*
-          A plain <img>, not next/image. The bytes come from a route that
-          re-sniffs them on the way out and serves them with a sandbox CSP;
-          putting the optimiser in front would fetch and re-encode them
-          through a second path that does none of that.
-
-          16:9 and object-cover: a banner is a crop, and letting the natural
-          height through means the page jumps as it loads.
-        */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={imageSrc(image.id)}
-          alt={section.imageAlt || image.altText || ''}
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-        {/*
-          The scrim. Only when there are words: darkening a picture nobody is
-          reading over is just a worse picture. Without it, white text on a
-          pale photograph is invisible — and the owner cannot fix it, because
-          they do not choose the text colour.
-        */}
-        {hasWords && <span className="absolute inset-0 bg-ink/45" aria-hidden />}
-
-        {hasWords && (
-          <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
-            {section.title && (
-              <span className="text-2xl font-semibold text-surface @sm:text-3xl">
-                {section.title}
-              </span>
-            )}
-            {section.bodyText && (
-              <span className="max-w-xl text-sm text-surface/90 @sm:text-base">
-                {section.bodyText}
-              </span>
-            )}
-            {/* A SPAN styled as a button, never a nested <a>: the whole banner
-                is already the link, and an anchor inside an anchor is invalid
-                HTML that browsers recover from unpredictably. */}
-            {href && section.buttonLabel && (
-              <span className="mt-1 inline-flex h-control items-center rounded-control bg-surface px-4 text-sm font-medium text-ink">
-                {section.buttonLabel}
-              </span>
-            )}
-          </span>
-        )}
-      </>
-    )
 
     return (
       <section key={section.id}>
-        <BannerFrame href={href}>{picture}</BannerFrame>
+        <BannerFrame href={section.linkUrl?.trim() ?? ''}>
+          <BannerFace
+            src={imageSrc(image.id)}
+            alt={section.imageAlt || image.altText || ''}
+            heading={section.title}
+            bodyText={section.bodyText ?? ''}
+            buttonLabel={section.buttonLabel ?? ''}
+            hasLink={Boolean(section.linkUrl?.trim())}
+          />
+        </BannerFrame>
+      </section>
+    )
+  }
+
+  if (section.kind === 'carousel') {
+    /*
+     * The slides that can actually draw, through the SAME helper the gate
+     * above used — so what is rotated is exactly what was counted. Asking the
+     * question twice, two ways, is how a carousel ends up with a blank frame
+     * in the rotation.
+     */
+    const slides = liveSlides(section, entry.slideImages)
+    if (slides.length === 0) return null
+
+    return (
+      <section key={section.id}>
+        {section.title && <SectionHeading>{section.title}</SectionHeading>}
+        <Carousel
+          autoplaySeconds={section.autoplaySeconds ?? 0}
+          slides={slides.map(({ slide, image: picture }) => ({
+            id: slide.id,
+            href: slide.linkUrl.trim(),
+            face: (
+              <BannerFace
+                src={imageSrc(picture.id)}
+                alt={slide.imageAlt || picture.altText || ''}
+                heading={slide.heading}
+                bodyText={slide.bodyText}
+                buttonLabel={slide.buttonLabel}
+                hasLink={Boolean(slide.linkUrl.trim())}
+              />
+            ),
+          }))}
+        />
       </section>
     )
   }
@@ -341,40 +386,140 @@ function sectionBody(
   return null
 }
 
+function SectionHeading({ children }: { children: ReactNode }) {
+  return <h2 className="mb-3 text-base font-semibold text-ink">{children}</h2>
+}
+
+/* ── The banner, shared by the single one and every carousel slide ────────── */
+
 /**
- * The box a banner picture sits in — a link when it has somewhere to go, a plain div
- * when it does not.
+ * The box a banner picture sits in — a link when it has somewhere to go, a
+ * plain div when it does not.
  *
- * Exported because the carousel draws a single slide as a plain banner, and it has to be
- * the SAME box: two copies of "a banner is 16:6, clipped and rounded" would drift, and a
- * shop whose one-slide carousel is a slightly different shape from its banner section
- * looks like a rendering fault rather than a design.
+ * Exported because the carousel draws its slides through the same box: two
+ * copies of "a banner is clipped and rounded" would drift, and a shop whose
+ * carousel is a slightly different shape from its banner section looks like a
+ * rendering fault rather than a design.
  *
- * ── WHY THE ASPECT RATIO IS AN INLINE STYLE ───────────────────────────────
+ * ── THE PICTURE DECIDES THE HEIGHT ───────────────────────────────────────
  *
- * 16:6 is not one of Tailwind's ratios and this is a storefront, not the back office —
- * it is the one place in the app that renders on a shopper's phone, so the crop is a
- * design decision rather than a token. `aspect-[16/6]` would work too; the style keeps
- * the number readable next to the reason for it.
+ * This used to be a hard 16:6 box with the image absolutely positioned inside
+ * it under `object-cover`, which meant a tall or square photograph had its
+ * middle cut out and its top and bottom thrown away. An owner who uploads a
+ * poster wants the poster, not a letterbox slice of it.
  *
- * The ratio is what stops the page jumping as the picture loads: the box has its final
- * height before any bytes arrive.
+ * So the frame has no height of its own: the `<img>` is a normal block element
+ * and the box is whatever the picture makes it. `overflow-hidden` still applies
+ * for the rounded corners; nothing is cropped because nothing overflows.
  */
 export function BannerFrame({ href, children }: { href: string; children: ReactNode }) {
   const className = 'relative block overflow-hidden rounded-card'
-  const style = { aspectRatio: '16 / 6' }
 
-  return href ? (
-    <Link href={href} className={className} style={style}>
+  if (!href) return <div className={className}>{children}</div>
+  return (
+    <Link href={href} className={className}>
       {children}
     </Link>
-  ) : (
-    <div className={className} style={style}>
-      {children}
-    </div>
   )
 }
 
-function SectionHeading({ children }: { children: ReactNode }) {
-  return <h2 className="mb-3 text-base font-semibold text-ink">{children}</h2>
+/**
+ * A picture with words over it.
+ *
+ * ── ONE COMPONENT, TWO CALLERS ───────────────────────────────────────────
+ *
+ * The single banner section and every carousel slide draw through this. They
+ * were the same markup twice for exactly as long as it took to add the second
+ * one, and the parts that would have drifted are the parts that matter: the
+ * scrim, and the rule that the button is a SPAN.
+ */
+export function BannerFace({
+  src,
+  alt,
+  heading,
+  bodyText,
+  buttonLabel,
+  hasLink,
+}: {
+  src: string
+  alt: string
+  heading: string
+  bodyText: string
+  buttonLabel: string
+  /** Whether the frame around this is a link — the button only shows if so. */
+  hasLink: boolean
+}) {
+  const hasWords = Boolean(heading || bodyText)
+
+  return (
+    <>
+      {/*
+        A plain <img>, not next/image. The bytes come from a route that
+        re-sniffs them on the way out and serves them with a sandbox CSP;
+        putting the optimiser in front would fetch and re-encode them through a
+        second path that does none of that.
+
+        A BLOCK element in normal flow, not an absolute fill: this is what
+        gives the frame its height, so the whole picture shows rather than a
+        16:6 slice of its middle.
+
+        ── WHY IT IS CAPPED, AND WHY IT IS CENTRED ──────────────────────────
+
+        `w-full` alone was not enough. A small portrait — the real case is a
+        316x400 poster — was stretched to the full content width and came out
+        1086px tall, taller than the window, pushing the entire shop below the
+        fold to show one banner.
+
+        So: `max-h-[70svh]` bounds it to most of the viewport whatever its
+        proportions, `w-auto` lets a tall picture stop at the width that height
+        implies rather than being forced wider, and `mx-auto` centres what is
+        then narrower than the column. `object-contain` guarantees the whole
+        picture is inside the box even at the cap — the one thing this change
+        exists to promise.
+
+        svh, not vh: on a phone the browser's chrome slides away as you scroll,
+        and vh is measured against the LARGEST viewport, so a 70vh banner is
+        taller than the screen it is first painted on.
+      */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        className="mx-auto block h-auto max-h-[70svh] w-auto max-w-full object-contain"
+      />
+
+      {/*
+        The scrim. Only when there are words: darkening a picture nobody is
+        reading over is just a worse picture. Without it, white text on a pale
+        photograph is invisible — and the owner cannot fix it, because they do
+        not choose the text colour.
+
+        `image-scrim` and `on-image`, NOT `ink` and `surface`. Those two invert
+        with the theme, so in dark mode the wash came out pale and the words
+        came out black — over a bright yellow photograph the text disappeared
+        into exactly the picture the scrim existed to separate it from. A
+        shopper's photograph is not themed; what sits on it must not be either.
+      */}
+      {hasWords && <span className="absolute inset-0 bg-image-scrim/45" aria-hidden />}
+
+      {hasWords && (
+        <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
+          {heading && (
+            <span className="text-2xl font-semibold text-on-image @sm:text-3xl">{heading}</span>
+          )}
+          {bodyText && (
+            <span className="max-w-xl text-sm text-on-image/90 @sm:text-base">{bodyText}</span>
+          )}
+          {/* A SPAN styled as a button, never a nested <a>: the whole banner is
+              already the link, and an anchor inside an anchor is invalid HTML
+              that browsers recover from unpredictably. */}
+          {hasLink && buttonLabel && (
+            <span className="mt-1 inline-flex h-control items-center rounded-control bg-on-image px-4 text-sm font-medium text-image-scrim">
+              {buttonLabel}
+            </span>
+          )}
+        </span>
+      )}
+    </>
+  )
 }

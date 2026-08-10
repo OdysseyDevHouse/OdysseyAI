@@ -17,6 +17,17 @@ export type Department = {
   color: string | null
   sortOrder: number
   isActive: boolean
+  /**
+   * The picture the TILL shows on its department tiles, as an id into
+   * `storefront_images` — null for the colour-and-initial tile it draws today.
+   */
+  posImageId: number | null
+  /**
+   * The picture the SHOP shows. A different image from the one above on
+   * purpose: see 064_department_images.sql on why one column would have forced
+   * the owner to pick which of the two to be bad at.
+   */
+  onlineImageId: number | null
   /** Products pointing directly at this department, not at its descendants. */
   productCount: number
   childCount: number
@@ -33,13 +44,28 @@ function mapDepartment(r: Row): Department {
     color: (r.color as string | null) ?? null,
     sortOrder: Number(r.sort_order),
     isActive: !!r.is_active,
+    posImageId: imageId(r.pos_image_id),
+    onlineImageId: imageId(r.online_image_id),
     productCount: Number(r.product_count ?? 0),
     childCount: Number(r.child_count ?? 0),
   }
 }
 
+/**
+ * An image id, or null for anything that is not one.
+ *
+ * 0 and NaN both become null rather than being kept: a 0 would be a reference
+ * to a picture that cannot exist, and every reader treats null as "no picture,
+ * draw the colour and letter" — which is the right answer for junk too.
+ */
+function imageId(value: unknown): number | null {
+  const n = Number(value)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
 const SELECT_DEPARTMENT = `
   SELECT d.id, d.parent_id, d.name, d.code, d.color, d.sort_order, d.is_active,
+         d.pos_image_id, d.online_image_id,
          (SELECT COUNT(*) FROM products p    WHERE p.department_id = d.id) AS product_count,
          (SELECT COUNT(*) FROM departments c WHERE c.parent_id     = d.id) AS child_count
     FROM departments d
@@ -132,6 +158,8 @@ export type DepartmentInput = {
   color?: string | null
   sortOrder?: number
   isActive?: boolean
+  posImageId?: number | null
+  onlineImageId?: number | null
 }
 
 export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
@@ -185,8 +213,9 @@ export async function createDepartment(
 
   const res = await siteExecute(
     siteId,
-    `INSERT INTO departments (parent_id, name, code, color, sort_order, is_active)
-     VALUES (?,?,?,?,?,?)`,
+    `INSERT INTO departments
+       (parent_id, name, code, color, sort_order, is_active, pos_image_id, online_image_id)
+     VALUES (?,?,?,?,?,?,?,?)`,
     [
       parentId,
       name,
@@ -194,6 +223,8 @@ export async function createDepartment(
       input.color?.trim() || null,
       input.sortOrder ?? 0,
       input.isActive === false ? 0 : 1,
+      imageId(input.posImageId),
+      imageId(input.onlineImageId),
     ],
   )
   return { ok: true, id: res.insertId }
@@ -233,7 +264,8 @@ export async function updateDepartment(
   await siteExecute(
     siteId,
     `UPDATE departments
-        SET parent_id = ?, name = ?, code = ?, color = ?, sort_order = ?, is_active = ?
+        SET parent_id = ?, name = ?, code = ?, color = ?, sort_order = ?, is_active = ?,
+            pos_image_id = ?, online_image_id = ?
       WHERE id = ?`,
     [
       parentId,
@@ -242,6 +274,8 @@ export async function updateDepartment(
       input.color?.trim() || null,
       input.sortOrder ?? 0,
       input.isActive === false ? 0 : 1,
+      imageId(input.posImageId),
+      imageId(input.onlineImageId),
       id,
     ],
   )

@@ -21,6 +21,7 @@ import {
   saveOnlineSettings,
   type OnlineSettingsInput,
 } from '../src/lib/site/onlineStore'
+import { getDepartment, updateDepartment } from '../src/lib/site/departments'
 
 const SITE = 1
 let fails = 0
@@ -300,6 +301,72 @@ async function main() {
     'a negative minimum order is refused',
     !(await saveOnlineSettings(SITE, { ...publishable, minOrderIncl: -1 }, 'test')).ok,
   )
+
+  /* ── Department pictures ────────────────────────────────────────────────
+   *
+   * Two columns and a switch, and the thing worth asserting is that they are
+   * INDEPENDENT: the till icon and the shop picture are different pictures for
+   * different jobs, and a save that quietly copied one onto the other would
+   * look right in the form and be wrong at the till.
+   */
+  console.log('\n— Department pictures —')
+
+  const settingOn = await saveOnlineSettings(
+    SITE,
+    { ...publishable, showDepartmentImages: true },
+    'test',
+  )
+  ok('the department-picture setting saves', settingOn.ok, settingOn.ok ? '' : settingOn.error)
+  ok('and reads back on', (await getOnlineSettings(SITE)).showDepartmentImages)
+  await saveOnlineSettings(SITE, { ...publishable, showDepartmentImages: false }, 'test')
+  ok('and off again', !(await getOnlineSettings(SITE)).showDepartmentImages)
+
+  const anyDept = (await listDepartmentVisibility(SITE))[0]
+  if (!anyDept) {
+    ok('a department exists to put a picture on', false, 'no departments on this site')
+  } else {
+    const before = await getDepartment(SITE, anyDept.id)
+    const wasPos = before?.posImageId ?? null
+    const wasOnline = before?.onlineImageId ?? null
+
+    /** The department's own fields, so only the pictures vary between saves. */
+    const asInput = (posImageId: number | null, onlineImageId: number | null) => ({
+      name: before!.name,
+      parentId: before!.parentId,
+      code: before!.code,
+      color: before!.color,
+      sortOrder: before!.sortOrder,
+      isActive: before!.isActive,
+      posImageId,
+      onlineImageId,
+    })
+
+    // Real ids are not needed: nothing enforces that the picture still exists —
+    // deliberately, see 064_department_images.sql — so the column's job is to
+    // carry the number it was given.
+    await updateDepartment(SITE, anyDept.id, asInput(11, 22))
+    const saved = await getDepartment(SITE, anyDept.id)
+    ok('the till icon is stored', saved?.posImageId === 11, String(saved?.posImageId))
+    ok('the shop picture is stored', saved?.onlineImageId === 22, String(saved?.onlineImageId))
+    // The whole reason there are two columns.
+    ok('the two are independent', saved?.posImageId !== saved?.onlineImageId)
+
+    // A department with no picture must read back as null, not 0 — every
+    // renderer treats null as "draw the colour and initial", and a 0 would be
+    // a reference to a picture that cannot exist.
+    await updateDepartment(SITE, anyDept.id, asInput(0, null))
+    const cleared = await getDepartment(SITE, anyDept.id)
+    ok('a 0 picture id becomes none', cleared?.posImageId === null, String(cleared?.posImageId))
+    ok('and an unset one stays none', cleared?.onlineImageId === null)
+
+    // Put the department back exactly as it was.
+    await updateDepartment(SITE, anyDept.id, asInput(wasPos, wasOnline))
+    const restored = await getDepartment(SITE, anyDept.id)
+    ok(
+      'the department is put back',
+      restored?.posImageId === wasPos && restored?.onlineImageId === wasOnline,
+    )
+  }
 
   // ── Restore everything this test touched ──────────────────────────────
   // Delivery areas are cleared above and then re-created from what was there,

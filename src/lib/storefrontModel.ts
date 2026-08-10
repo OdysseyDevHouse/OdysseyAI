@@ -38,6 +38,7 @@
 export const SECTION_KINDS = [
   'hero',
   'banner',
+  'carousel',
   'categories',
   'products',
   'cards',
@@ -73,6 +74,37 @@ export const SECTION_TONES = ['plain', 'tinted'] as const
 export type SectionTone = (typeof SECTION_TONES)[number]
 
 export type InfoCard = { icon: string; heading: string; text: string }
+
+/**
+ * One picture in a rotating banner.
+ *
+ * ── THE SAME FIELDS A BANNER SECTION HAS ─────────────────────────────────
+ *
+ * Deliberately, and named identically: a slide IS a banner, and the carousel
+ * is a banner section that holds several. Keeping the shapes aligned is what
+ * lets `BannerFace` draw both from one component — a slide with its own
+ * vocabulary would have meant a second renderer, and a second renderer is a
+ * second set of rules about scrims and buttons to keep in step.
+ *
+ * `heading` rather than `title` is the one difference, because `title` on a
+ * section is the heading ABOVE it while these words sit OVER the picture.
+ * Calling both `title` is how the two would get wired to the wrong one.
+ */
+export type BannerSlide = {
+  /**
+   * Stable identity, for the same reasons a section has one: it is the React
+   * key and the drag key in the slide editor. Indexes remount every slide
+   * below the one that moved.
+   */
+  id: string
+  /** An id into `storefront_images`, NOT a path — see HomeSection.imageId. */
+  imageId: number | null
+  imageAlt: string
+  heading: string
+  bodyText: string
+  buttonLabel: string
+  linkUrl: string
+}
 
 export type HomeSection = {
   /**
@@ -127,6 +159,21 @@ export type HomeSection = {
   bodyText?: string
   /** banner: the button drawn over the picture. Empty draws no button. */
   buttonLabel?: string
+  /** carousel: the pictures it rotates through, in order. */
+  slides?: BannerSlide[]
+  /**
+   * carousel: seconds each slide is held before the next one.
+   *
+   * 0 means DO NOT rotate on its own — the shopper moves it with the arrows
+   * and dots. That is a real choice, not an off switch: motion nobody asked
+   * for is the standing complaint about carousels, and a shop with two slides
+   * may well want both reachable without either moving under a reader's eye.
+   *
+   * Stored in whole seconds because that is what the owner is asked for; the
+   * renderer converts. Milliseconds in the model would put a unit conversion
+   * between the field and the value, which is where an off-by-1000 lives.
+   */
+  autoplaySeconds?: number
   /** text: the paragraph itself. */
   text?: string
   /** text: how the paragraph is aligned. */
@@ -163,10 +210,31 @@ export const MAX_SECTION_ITEMS = 24
 export const MAX_SECTION_CARDS = 12
 /** A paragraph, not an essay — the front page is a shop window. */
 export const MAX_SECTION_TEXT = 1200
+/**
+ * How many pictures one rotating banner may hold.
+ *
+ * Low on purpose. Every slide past the first is one a shopper will probably
+ * never see — they scroll before it comes round — while costing a full-width
+ * image on the shop's slowest page. Eight is already generous; the cap exists
+ * so a page cannot be made to hold fifty.
+ */
+export const MAX_SLIDES = 8
+/**
+ * The slowest and fastest rotation an owner may set, in seconds.
+ *
+ * Four at the bottom because anything quicker is unreadable — a shopper who
+ * has to finish a sentence cannot, and one who uses the arrows loses their
+ * place. Thirty at the top because beyond that the second slide may as well
+ * not exist. 0 sits outside the range and means "do not rotate".
+ */
+export const MIN_AUTOPLAY_SECONDS = 4
+export const MAX_AUTOPLAY_SECONDS = 30
+export const DEFAULT_AUTOPLAY_SECONDS = 6
 
 export const SECTION_LABEL: Record<SectionKind, string> = {
   hero: 'Welcome banner',
   banner: 'Picture banner',
+  carousel: 'Rotating banners',
   categories: 'Shop by department',
   products: 'A row of products',
   cards: 'Info cards',
@@ -176,6 +244,7 @@ export const SECTION_LABEL: Record<SectionKind, string> = {
 export const SECTION_HINT: Record<SectionKind, string> = {
   hero: 'Your headline and a line under it.',
   banner: 'A photograph across the page, with words over it.',
+  carousel: 'Several pictures in the same spot, one after another.',
   categories: 'Tiles linking to each department you publish.',
   products: 'Pick the products yourself, or let a rule fill the row.',
   cards: 'Your own tiles — delivery info, opening hours, anything.',
@@ -296,6 +365,43 @@ export const PAGE_PRESETS: PagePreset[] = [
     ],
   },
   {
+    key: 'showcase',
+    name: 'Rotating pictures',
+    hint: 'Several banners turning at the top — for a shop with promotions to show.',
+    sections: [
+      /*
+       * Three EMPTY slides, deliberately.
+       *
+       * A preset cannot know which pictures a shop has, and inventing slides
+       * with no pictures would produce a section that draws nothing — the very
+       * thing the publish warning exists to catch. Empty slides make the shape
+       * of the thing obvious in the builder ("oh, three pictures go here")
+       * while the placeholder says exactly what to do next.
+       */
+      {
+        kind: 'carousel',
+        title: '',
+        enabled: true,
+        autoplaySeconds: DEFAULT_AUTOPLAY_SECONDS,
+        slides: [
+          { id: 'a', imageId: null, imageAlt: '', heading: '', bodyText: '', buttonLabel: 'Shop now', linkUrl: '' },
+          { id: 'b', imageId: null, imageAlt: '', heading: '', bodyText: '', buttonLabel: '', linkUrl: '' },
+          { id: 'c', imageId: null, imageAlt: '', heading: '', bodyText: '', buttonLabel: '', linkUrl: '' },
+        ],
+      },
+      { kind: 'categories', title: 'Shop by department', enabled: true, maxItems: 0 },
+      {
+        kind: 'products',
+        title: 'This week’s specials',
+        enabled: true,
+        source: 'special',
+        maxItems: 8,
+        tone: 'tinted',
+      },
+      { kind: 'products', title: 'New in', enabled: true, source: 'newest', maxItems: 8 },
+    ],
+  },
+  {
     key: 'simple',
     name: 'Keep it simple',
     hint: 'A welcome and your products. Nothing else.',
@@ -378,6 +484,111 @@ export function isScheduledNow(
   if (from && asAt < from) return false
   if (until && asAt > until) return false
   return true
+}
+
+/* ── Would a section draw anything? ───────────────────────────────────────── */
+
+/**
+ * What a section needs before it can draw: whatever the server resolved for it.
+ *
+ * Structurally the same as the storefront's `SectionContent`, restated here
+ * without importing it — that type lives in a component file that pulls in
+ * next/link, and this module must stay free of anything a plain script or a
+ * server-only context cannot load.
+ */
+export type SectionFill = {
+  section: HomeSection
+  products?: unknown[]
+  departments?: unknown[]
+  image?: unknown
+  /**
+   * carousel: the resolved picture for each slide, keyed by image id.
+   *
+   * A MAP rather than an array parallel to `slides`, because a slide whose
+   * picture was deleted has to resolve to nothing without shifting every slide
+   * after it — which is exactly what a positional array does the moment one
+   * entry is dropped.
+   */
+  slideImages?: Map<number, unknown>
+}
+
+/**
+ * The slides that would actually draw, with their pictures.
+ *
+ * ── ONE DEFINITION, THREE CALLERS ────────────────────────────────────────
+ *
+ * The shop rotates these, `sectionIsEmpty` counts them, and the builder's
+ * placeholder explains why there are none. Stating "a slide needs a picture
+ * that still resolves" three times is how the shop ends up rotating through a
+ * blank frame that the builder swore was fine.
+ *
+ * A slide whose picture was deleted is DROPPED, not drawn empty: the carousel
+ * then rotates through what is left, which is the same forgiving behaviour a
+ * single banner has when its picture goes — see storefrontImages.
+ */
+export function liveSlides<T>(
+  section: Pick<HomeSection, 'slides'>,
+  images: Map<number, T> | undefined,
+): { slide: BannerSlide; image: T }[] {
+  const out: { slide: BannerSlide; image: T }[] = []
+  for (const slide of section.slides ?? []) {
+    if (!slide.imageId) continue
+    const image = images?.get(slide.imageId)
+    if (image === undefined || image === null) continue
+    out.push({ slide, image })
+  }
+  return out
+}
+
+/**
+ * Would this section draw anything at all?
+ *
+ * ── ONE RULE, FOUR CALLERS ───────────────────────────────────────────────
+ *
+ * The shop renders by it, the builder's placeholder is keyed off it, the shop
+ * page decides whether to fall back to the catalogue with it, and the
+ * pre-publish warning counts with it.
+ *
+ * It used to be four separate statements of the same idea — and a mirror is
+ * correct only until someone adds a kind and updates one copy, with a silent
+ * failure: a shopper sees an empty heading, or an owner is told their page is
+ * broken when it is fine.
+ *
+ * ── AND WHY IT IS HERE ───────────────────────────────────────────────────
+ *
+ * In the model rather than beside the markup, because the publish summary has
+ * to ask the question WITHOUT rendering — counting dead sections by drawing a
+ * whole storefront would be absurd — and because a test must be able to import
+ * it without dragging next/link into a react-server script.
+ */
+export function sectionIsEmpty(fill: SectionFill, theme: StorefrontTheme): boolean {
+  const { section, products, departments, image, slideImages } = fill
+  switch (section.kind) {
+    case 'hero':
+      return !theme.heroHeadline && !theme.heroSubtext
+    case 'banner':
+      return !image
+    case 'carousel':
+      // Same rule as a banner, applied per slide: no picture, nothing to show.
+      // A carousel of slides that have all lost their pictures is as empty as
+      // one with no slides at all.
+      return liveSlides(section, slideImages).length === 0
+    case 'categories':
+      return !departments || departments.length === 0
+    case 'products':
+      return !products || products.length === 0
+    case 'text':
+      return !(section.text?.trim() ?? '') && !section.title
+    case 'cards':
+      // A card with nothing written on it is not worth a tile, so a section of
+      // blank cards is as empty as one with none.
+      return (section.cards ?? []).filter((c) => c.heading || c.text).length === 0
+    default:
+      // A kind this build cannot draw. Normalisation drops these before they
+      // are ever stored, so reaching here means something is very wrong —
+      // "empty" is the safe answer either way.
+      return true
+  }
 }
 
 /* ── What publishing would change ─────────────────────────────────────────── */
@@ -586,6 +797,16 @@ function changedFields(was: HomeSection, now: HomeSection): string {
   if (differs('imageAlt')) names.push('picture description')
   if (differs('linkUrl') || differs('buttonLabel')) names.push('link')
   if (differs('bodyText') || differs('text')) names.push('words')
+  /*
+   * A carousel's slides as ONE line rather than a field-by-field breakdown.
+   *
+   * "pictures" covers a slide added, removed, reordered or reworded, because
+   * to the owner reading the summary those are all "I changed the banners" —
+   * and enumerating six slides' worth of differences would bury the rest of
+   * the page's changes under one section's detail.
+   */
+  if (differs('slides')) names.push('pictures')
+  if (differs('autoplaySeconds')) names.push('how fast it turns')
   if (differs('align')) names.push('alignment')
   if (differs('showFrom') || differs('showUntil')) names.push('when it shows')
 
@@ -686,6 +907,51 @@ export function normaliseSections(input: unknown): HomeSection[] {
       section.linkUrl = safeLinkTarget(s.linkUrl).slice(0, 300)
       section.bodyText = String(s.bodyText ?? '').slice(0, 300)
       section.buttonLabel = String(s.buttonLabel ?? '').slice(0, 40)
+    }
+
+    if (kind === 'carousel') {
+      const seenSlideIds = new Set<string>()
+      section.slides = (Array.isArray(s.slides) ? s.slides : [])
+        .slice(0, MAX_SLIDES)
+        .map((raw, index) => {
+          const slide = (raw ?? {}) as Record<string, unknown>
+          const image = typeof slide.imageId === 'number' ? slide.imageId : Number(slide.imageId)
+
+          // Same reasoning as a section id: two slides sharing one would share
+          // a React key and a drag handle in the editor.
+          let id = String(slide.id ?? '').slice(0, 40) || `sl-${index}`
+          while (seenSlideIds.has(id)) id = `${id}-${index}`
+          seenSlideIds.add(id)
+
+          return {
+            id,
+            imageId: Number.isInteger(image) && image > 0 ? image : null,
+            imageAlt: String(slide.imageAlt ?? '').slice(0, 190),
+            heading: String(slide.heading ?? '').slice(0, 80),
+            bodyText: String(slide.bodyText ?? '').slice(0, 300),
+            buttonLabel: String(slide.buttonLabel ?? '').slice(0, 40),
+            // Through safeLinkTarget, exactly as a banner's is: this lands in
+            // an href on a public page that takes payments, and a slide is no
+            // less public for being one of several. The single-banner branch
+            // is the precedent, and the reason this must not be a plain
+            // String() — a `javascript:` link here would be stored XSS.
+            linkUrl: safeLinkTarget(slide.linkUrl).slice(0, 300),
+          }
+        })
+
+      /*
+       * 0 is a real value — "do not rotate on its own" — so it cannot be
+       * clamped into the range like an out-of-bounds number. Anything else
+       * unusable becomes the default rather than 0, because silently switching
+       * rotation OFF is the failure an owner would not spot: the shop looks
+       * like a plain banner and nothing says why.
+       */
+      const seconds = Math.round(Number(s.autoplaySeconds))
+      section.autoplaySeconds = !Number.isFinite(seconds)
+        ? DEFAULT_AUTOPLAY_SECONDS
+        : seconds <= 0
+          ? 0
+          : Math.min(Math.max(seconds, MIN_AUTOPLAY_SECONDS), MAX_AUTOPLAY_SECONDS)
     }
 
     if (kind === 'text') {

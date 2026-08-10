@@ -2,7 +2,7 @@
 
 import { Badge, Button, Icons } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import type { StorefrontProduct } from '@/lib/site/storefront'
+import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefront'
 import { useCart } from './CartContext'
 import { useWishlist } from './WishlistContext'
 
@@ -130,6 +130,96 @@ export function ProductImage({
       decoding="async"
       style={style}
       className={`shrink-0 bg-surface-2 object-cover ${className}`}
+    />
+  )
+}
+
+/**
+ * A department's picture, or the tile drawn when it has none.
+ *
+ * ── ONE COMPONENT, TWO PLACES ────────────────────────────────────────────
+ *
+ * The rail under the search and the "Shop by department" tiles both draw
+ * through this. They are different sizes and different shapes, which is why
+ * the caller supplies the classes — but "which picture, and what if there
+ * isn't one" is one rule, stated once.
+ *
+ * ── THE FALLBACK IS NOT AN EMPTY BOX ─────────────────────────────────────
+ *
+ * A shop turning this on will be part way through adding pictures, so a
+ * department without one is the normal case rather than a fault. It gets the
+ * department's own colour and its initial — the same lettermark idea products
+ * already use — so a half-finished row still reads as a row of tiles rather
+ * than as a page that failed to load.
+ */
+export function DepartmentImage({
+  department,
+  className = '',
+  src,
+  rounded = 'rounded-card',
+}: {
+  department: Pick<StorefrontDepartment, 'id' | 'name' | 'imageId' | 'color'>
+  /** The box it fills. Set by the caller — the rail and the tiles differ. */
+  className?: string
+  /**
+   * The resolved URL for the picture, or null when there is none.
+   *
+   * ── A STRING, NOT THE `imageSrc` FUNCTION THE BANNERS TAKE ───────────
+   *
+   * This is a CLIENT component and `HomeSections` is a server one, so a
+   * function prop cannot cross the boundary between them — React refuses it at
+   * request time with "Functions cannot be passed directly to Client
+   * Components", and both `tsc` and `next build` pass on it regardless. The
+   * banner's `ImageSrc` works only because everything it passes through stays
+   * on one side.
+   *
+   * So the caller — which already knows whether it is the shop or the builder
+   * — resolves the URL and hands over the answer.
+   */
+  src: string | null
+  rounded?: string
+}) {
+  // No picture, or one whose URL the caller could not resolve — the same
+  // answer either way, which is what makes "deleted" and "never set"
+  // indistinguishable here on purpose.
+  if (department.imageId === null || src === null) {
+    /*
+     * The department's OWN colour, mixed down for the fill and used at full
+     * strength for the letter. Inline because the value is the shop's data — a
+     * department's colour is a hex the owner picked, not a design token — and
+     * it is validated to a hex on the way in by validateDepartment.
+     *
+     * No colour set falls back to the brand tint, which is exactly what the
+     * product lettermark does, so the two placeholders match.
+     */
+    return (
+      <span
+        aria-hidden
+        className={`flex shrink-0 items-center justify-center font-semibold ${rounded} ${className} ${
+          department.color ? '' : 'bg-brand-soft text-brand'
+        }`}
+        style={
+          department.color
+            ? {
+                background: `color-mix(in srgb, ${department.color} 18%, transparent)`,
+                color: department.color,
+              }
+            : undefined
+        }
+      >
+        {initialsOf(department.name)}
+      </span>
+    )
+  }
+
+  /* A plain <img> for the same reason as a product's — see ProductImage. */
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      className={`shrink-0 bg-surface-2 object-cover ${rounded} ${className}`}
     />
   )
 }

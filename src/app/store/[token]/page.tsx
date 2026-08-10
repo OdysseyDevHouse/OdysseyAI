@@ -119,6 +119,7 @@ export default async function StorePage({
         showStock: settings.showStock,
         showPhotos: settings.showPhotos,
         showBrands: settings.showBrands,
+        showDepartmentImages: settings.showDepartmentImages,
       }}
       // The PUBLIC route: it re-checks the store is open before serving a
       // byte. The builder passes the back-office one, which does not — see
