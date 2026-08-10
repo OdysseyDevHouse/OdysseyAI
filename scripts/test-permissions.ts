@@ -236,6 +236,13 @@ async function main() {
      keys so a tile pointing nowhere is a compile error — so the risk is drift,
      and a screen renamed in one place would be called two different things.
 
+     THE HUB, NOT THE SIDEBAR, IS THE SET TO CHECK AGAINST. Setup used to be a
+     sidebar group listing every screen, so "a label with no menu item" meant an
+     unreachable screen. It is now one link to /setup, and the catalogue there is
+     what makes a screen reachable — so a label whose href is absent from the
+     SIDEBAR is normal, while one absent from the CATALOGUE is the real orphan.
+     Checking the sidebar reported all fourteen hub screens as dropped.
+
      Read as SOURCE, not imported, for the same reason the capability scan above
      is: nav.ts pulls in lucide-react, which needs a React runtime this test has
      no business booting. */
@@ -266,10 +273,24 @@ async function main() {
     drift.map((i) => `${i.href}: menu "${i.label}" vs hub "${declaredLabels.get(i.href)}"`).join('; '),
   )
 
-  const orphans = [...declaredLabels.keys()].filter(
-    (href) => !setupItems.some((i) => i.href === href),
+  const catalogueSrc = await readFile(
+    path.join(ROOT, 'src', 'app', '(app)', 'setup', 'catalogue.ts'),
+    'utf8',
   )
-  check('no label entry points at a screen the menu has dropped', orphans.length === 0, orphans.join(', '))
+  const catalogueHrefs = new Set(
+    [...catalogueSrc.matchAll(/href:\s*'(\/setup\/[a-z-]+)'/g)].map((m) => m[1]),
+  )
+  check('the Setup catalogue was found and parsed', catalogueHrefs.size > 0, `${catalogueHrefs.size} tiles`)
+
+  // Every tile resolves its name through SUBPAGE_LABELS, so a tile with no
+  // label entry renders nameless.
+  const unnamed = [...catalogueHrefs].filter((href) => !declaredLabels.has(href))
+  check('every Setup hub tile has a label entry', unnamed.length === 0, unnamed.join(', '))
+
+  // And the reverse: a label for a screen no longer on the hub is dead weight,
+  // and points at a screen nothing links to.
+  const orphans = [...declaredLabels.keys()].filter((href) => !catalogueHrefs.has(href))
+  check('no label entry points at a screen the hub has dropped', orphans.length === 0, orphans.join(', '))
 }
 
 main()

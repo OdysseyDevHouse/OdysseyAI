@@ -255,8 +255,23 @@ async function main() {
       [delivered.orderId],
     )
     // The fee is money: it must come from the zone, not from the browser.
-    ok('the fee is the store’s, not the shopper’s', toNum(row?.delivery_fee_incl) === 35)
-    ok('the total includes it', Math.abs(toNum(row?.total_incl) - (target.priceIncl + 35)) < 0.01)
+    //
+    // Which fee depends on the basket. The zone above gives free delivery over
+    // R500, and catalogue[0] is whatever the shop happens to list first — at
+    // R944 it qualifies, so the correct fee is ZERO. Asserting a flat 35 made
+    // this fail whenever the first product happened to be expensive, which
+    // reads as a delivery bug and is nothing of the sort.
+    const expectedFee = target.priceIncl >= 500 ? 0 : 35
+    ok(
+      'the fee is the store’s, not the shopper’s',
+      toNum(row?.delivery_fee_incl) === expectedFee,
+      `fee ${toNum(row?.delivery_fee_incl)}, expected ${expectedFee} on a basket of ${target.priceIncl.toFixed(2)}`,
+    )
+    ok(
+      'the total includes it',
+      Math.abs(toNum(row?.total_incl) - (target.priceIncl + expectedFee)) < 0.01,
+      `total ${toNum(row?.total_incl)}`,
+    )
     ok('the zone is recorded', row?.zone_id !== null)
   }
 
