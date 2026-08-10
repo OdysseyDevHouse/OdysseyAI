@@ -37,6 +37,7 @@ import {
   voidSaleAction,
 } from '@/app/(app)/sales/actions'
 import { recallSaleForTillAction } from './actions'
+import { tillStandingAction, type TillStanding } from '@/app/(app)/loyalty/actions'
 import { TillStatusBar } from './TillStatusBar'
 import { SalePane } from './SalePane'
 import { DeptRail } from './DeptRail'
@@ -467,7 +468,10 @@ export default function PosShell({
     toast.success(`${result.documentNumber} saved on this till — it will send itself.`)
   }
 
-  function finalise(paid: { tenderTypeId: number; amount: number; reference?: string | null }[]) {
+  function finalise(
+    paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
+    voucherCodes: string[] = [],
+  ) {
     /* Known to be offline: go straight to the local path rather than spending four
        seconds on a doomed request with a customer waiting. */
     if (!till.online) {
@@ -512,6 +516,7 @@ export default function PosShell({
             lines: salePayloadLines(state.lines, lineSpecials),
           },
           paid,
+          voucherCodes,
         )
       } catch {
         await finaliseLocally(paid)
@@ -747,6 +752,37 @@ export default function PosShell({
       router.refresh()
     })
   }
+
+  /* ── What the attached member is holding ─────────────────────────────────
+     Re-read whenever the customer changes AND whenever the tender pad opens: a balance
+     can move at another till while a basket sits on screen, and the figure a cashier is
+     about to quote should be the current one.
+
+     Failures collapse to null — loyalty must never be able to block a sale, and a till
+     that refused to take cash because a points lookup timed out would be worse than one
+     with no loyalty at all. */
+  const [loyalty, setLoyalty] = useState<TillStanding | null>(null)
+
+  useEffect(() => {
+    const customerId = state.customer?.id
+    if (!customerId || !till.online) {
+      setLoyalty(null)
+      return
+    }
+    let cancelled = false
+    void tillStandingAction(customerId)
+      .then((standing) => {
+        if (!cancelled) setLoyalty(standing)
+      })
+      .catch(() => {
+        if (!cancelled) setLoyalty(null)
+      })
+    return () => {
+      cancelled = true
+    }
+    /* `tendering` is a dependency on purpose: opening the pad re-reads the balance, which
+       is the moment it matters most. */
+  }, [state.customer?.id, tendering, till.online])
 
   /* ── The floor ──────────────────────────────────────────────────────────
      Only in hospitality. In retail `tables` is empty, the gate never mounts, and this
@@ -1126,6 +1162,9 @@ export default function PosShell({
         totalIncl={totals.doc.totalIncl}
         cashRounding={cashRounding}
         customer={state.customer}
+        /* What the member is holding, so the pad can OFFER the reward. Null offline —
+           redeeming against a stale balance is what offlineBlockedTender prevents. */
+        loyalty={loyalty}
         pending={pending}
         onFinalise={finalise}
       />

@@ -22,6 +22,7 @@ import { quickAmounts, loyaltyCeiling, prefillAmount } from '@/lib/tenderOffers'
 import { headroomRefusal } from '@/lib/creditRules'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
+import type { TillStanding } from '@/app/(app)/loyalty/actions'
 
 /**
  * Taking payment, at a till.
@@ -53,6 +54,7 @@ export function TenderPad({
   totalIncl,
   cashRounding,
   customer,
+  loyalty = null,
   pending,
   onFinalise,
 }: {
@@ -63,8 +65,20 @@ export function TenderPad({
   cashRounding: number
   /** Null for a walk-in. Non-null is what unlocks an account tender. */
   customer: TillCustomer | null
+  /**
+   * What this member is holding, or null.
+   *
+   * `TillStanding` from the loyalty actions — NOT a shape declared here. The desk till's
+   * pad redeclared it as its own `LoyaltyStanding`, and a third copy would be a third
+   * thing to keep in step with what the server actually returns.
+   *
+   * Null when the programme is off, when the sale is a walk-in, or when the read failed.
+   * All three mean the same thing to this pad: show no loyalty. Loyalty must never be
+   * able to block a sale.
+   */
+  loyalty?: TillStanding | null
   pending: boolean
-  onFinalise: (taken: Taken[]) => void
+  onFinalise: (taken: Taken[], voucherCodes: string[]) => void
 }) {
   const hasCustomer = customer !== null
   const [taken, setTaken] = useState<Taken[]>([])
@@ -72,6 +86,8 @@ export function TenderPad({
   /** The pad's live value — a decimal STRING, never a number. See NumPad. */
   const [entry, setEntry] = useState('')
   const [reference, setReference] = useState('')
+  /** Voucher codes tapped onto this sale. Spent server-side, inside the transaction. */
+  const [vouchers, setVouchers] = useState<string[]>([])
 
   // Reset between sales, so the next customer never inherits the last one's
   // half-entered payment.
@@ -81,6 +97,7 @@ export function TenderPad({
     setActive(null)
     setEntry('')
     setReference('')
+    setVouchers([])
   }, [open])
 
   const amount = numPadValue(entry)
@@ -92,10 +109,50 @@ export function TenderPad({
     taken.some((t) => tenders.find((x) => x.id === t.tenderTypeId)?.roundsToCashDenomination) ||
     (active?.roundsToCashDenomination ?? false)
 
-  const { rounded: payable, adjustment } =
+  /*
+   * Rand of this basket already covered by a voucher.
+   *
+   * A VOUCHER IS NOT A TENDER — it reduces what is owed. Treating it as a payment would
+   * ask the till to cover its value in cash as well, and every voucher sale would refuse
+   * with "still to pay". This is the same order `finaliseDocument` uses: credit first,
+   * then rounding, then the tender check.
+   *
+   * Priced from the standing the server sent, and re-priced server-side at finalise from
+   * the stored row — so a client claiming a R500 voucher gets the R25 the database says
+   * it is worth.
+   */
+  const voucherCredit = useMemo(
+    () =>
+      round(
+        vouchers.reduce(
+          (sum, code) => sum + (loyalty?.vouchers.find((v) => v.code === code)?.value ?? 0),
+          0,
+        ),
+        2,
+      ),
+    [vouchers, loyalty],
+  )
+
+  /*
+   * ROUND FIRST, THEN SUBTRACT THE VOUCHER — in that order, because that is the order
+   * `finaliseDocument` uses.
+   *
+   * The two orders disagree. On a R100.02 sale with 5c rounding and a R25 voucher,
+   * rounding first gives 100.00 − 25 = R75.00, while subtracting first gives
+   * round(75.02) = R75.00 — the same here, but 5c apart the moment the voucher value
+   * lands on an odd cent. A pad that says R75.05 while the server insists on R75.00
+   * refuses a correctly-tendered sale in front of the customer.
+   *
+   * (The desk till's pad subtracts first. That is a latent 5c bug there, and copying it
+   * here would have made it two — the whole reason this pad shares its arithmetic with
+   * the engine rather than restating it.)
+   */
+  const { rounded: roundedTotal, adjustment } =
     roundsToCash && cashRounding > 0
       ? roundToCash(totalIncl, cashRounding)
       : { rounded: totalIncl, adjustment: 0 }
+
+  const payable = round(Math.max(0, roundedTotal - voucherCredit), 2)
 
   const check = useMemo(() => {
     // flatMap rather than map+filter: it drops unmatched entries without needing
@@ -113,7 +170,7 @@ export function TenderPad({
   function pick(tender: TenderType) {
     setActive(tender)
     setReference('')
-    setEntry(String(prefillAmount(tender, owed, null)))
+    setEntry(String(prefillAmount(tender, owed, loyalty)))
   }
 
   function commit() {
@@ -188,7 +245,7 @@ export function TenderPad({
               size="touch-lg"
               className="flex-1 justify-center"
               disabled={!settled || pending}
-              onClick={() => onFinalise(taken)}
+              onClick={() => onFinalise(taken, vouchers)}
             >
               <Icons.Check size={20} />
               {pending ? 'Posting…' : 'Complete sale'}
@@ -198,6 +255,92 @@ export function TenderPad({
       }
     >
       <div className="flex flex-col gap-3">
+        {/*
+          ── What this member is holding ──────────────────────────────────────
+          Above the tender keys, so a cashier can OFFER the reward rather than wait to be
+          asked for it — which is the whole commercial point of a loyalty programme and
+          the thing a till usually gets wrong by burying it.
+
+          Shown only when there is something to offer. A panel reading "0 points, no
+          vouchers" on every member is noise that trains people to stop reading it.
+        */}
+        {loyalty &&
+          (loyalty.points > 0 || loyalty.walletBalance > 0 || loyalty.vouchers.length > 0) && (
+            <div className="rounded-card border border-brand/40 bg-brand-soft px-4 py-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-base font-semibold text-brand">
+                  {loyalty.tierName ? `${loyalty.tierName} member` : 'Loyalty member'}
+                </span>
+                <span className="text-sm font-medium text-brand">
+                  {Math.floor(loyalty.points).toLocaleString('en-ZA')} points
+                  {loyalty.pointsValue > 0 && ` · ${formatMoney(loyalty.pointsValue)}`}
+                  {loyalty.walletBalance > 0 && ` · ${formatMoney(loyalty.walletBalance)} on card`}
+                </span>
+              </div>
+
+              {loyalty.vouchers.length > 0 && (
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  {loyalty.vouchers.map((voucher) => {
+                    const used = vouchers.includes(voucher.code)
+                    return (
+                      <Button
+                        key={voucher.code}
+                        variant={used ? 'ghost' : 'secondary'}
+                        /* touch, not sm: this is a key a cashier hits with a finger while
+                           a customer waits, and the rest of this pad is 56px. */
+                        size="touch"
+                        disabled={used || pending}
+                        title={voucher.description}
+                        onClick={() => setVouchers((current) => [...current, voucher.code])}
+                      >
+                        <Icons.Ticket size={18} />
+                        {voucher.rewardLabel}
+                        {used && <Icons.Check size={16} />}
+                      </Button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+        {/* What has been applied, and how to take it back off. Removable because a
+            voucher tapped by mistake would otherwise have to be undone by abandoning the
+            whole payment. */}
+        {vouchers.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            {vouchers.map((code) => {
+              const voucher = loyalty?.vouchers.find((v) => v.code === code)
+              return (
+                <div
+                  key={code}
+                  className="flex items-center justify-between gap-2 rounded-control border border-success/40 bg-success-soft px-3 py-2"
+                >
+                  <span className="min-w-0 truncate text-sm font-medium text-success-ink">
+                    {voucher?.rewardLabel ?? 'Reward'}
+                    <span className="numeric ml-2 text-xs opacity-80">{code}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="numeric text-sm font-bold text-success-ink">
+                      −{formatMoney(voucher?.value ?? 0)}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label={`Take ${code} off this sale`}
+                      disabled={pending}
+                      onClick={() => setVouchers((current) => current.filter((c) => c !== code))}
+                    >
+                      <Icons.Close size={15} />
+                    </Button>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         {/* ── What is still owed, or what change to hand back ─────────────
             The largest thing on the screen, deliberately. It is the one figure a
             cashier reads out loud, and the one they get wrong if they have to
@@ -285,6 +428,7 @@ export function TenderPad({
             tenders={tenders}
             customer={customer}
             owed={owed}
+            loyalty={loyalty}
             disabled={pending || owed <= 0}
             onPick={pick}
           />
@@ -300,6 +444,7 @@ function TenderKeys({
   tenders,
   customer,
   owed,
+  loyalty,
   disabled,
   onPick,
 }: {
@@ -307,6 +452,8 @@ function TenderKeys({
   customer: TillCustomer | null
   /** What this key would have to cover, for the credit check. */
   owed: number
+  /** So a loyalty key can grey itself out when the balance is zero. */
+  loyalty: TillStanding | null
   disabled: boolean
   onPick: (tender: TenderType) => void
 }) {
@@ -319,7 +466,7 @@ function TenderKeys({
         // vanishes when there is no customer leaves the cashier wondering whether
         // the store even has an account facility.
         const needsCustomer = tender.requiresCustomer && !customer
-        const noBalance = loyaltyCeiling(tender, null) === 0
+        const noBalance = loyaltyCeiling(tender, loyalty) === 0
         /*
          * The credit check, at the point of offer.
          *
