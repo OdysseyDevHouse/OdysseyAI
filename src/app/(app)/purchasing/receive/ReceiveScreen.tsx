@@ -36,6 +36,7 @@ import { purchaseDocumentFigures } from '../purchaseLine'
 import {
   searchProductsForPurchaseAction,
   receiveGoodsAction,
+  saveDraftReceiptAction,
   loadOrderAction,
   productPositionsAction,
 } from '../actions'
@@ -78,6 +79,7 @@ export default function ReceiveScreen({
   defaultVatRate,
   sellingVatRate,
   initialOrderId,
+  draft,
   locations,
 }: {
   suppliers: { id: number; code: string; name: string; terms: number }[]
@@ -94,6 +96,19 @@ export default function ReceiveScreen({
   sellingVatRate: number
   /** An order to open against, from "Receive" on an issued order. */
   initialOrderId?: number | null
+  /** A draft being reopened. Everything below starts from it. */
+  draft?: {
+    id: number
+    supplierId: number
+    supplierInvoiceNo: string
+    orderId: number | null
+    reference: string
+    notes: string
+    discountPct: number
+    discountExcl: number
+    lines: ReceiveLine[]
+    charges: ChargeRow[]
+  } | null
   /** Active stock locations. Always at least one — the main location. */
   locations: StockLocationOption[]
 }) {
@@ -102,13 +117,15 @@ export default function ReceiveScreen({
   // empty box it must fill in ten times.
   const mainLocationId = locations.find((l) => l.isMain)?.id ?? locations[0]?.id ?? null
   const multiLocation = locations.length > 1
-  const [supplierId, setSupplierId] = useState('')
-  const [orderId, setOrderId] = useState('')
-  const [invoiceNo, setInvoiceNo] = useState('')
-  const [charges, setCharges] = useState<ChargeRow[]>([])
-  const [docDiscountPct, setDocDiscountPct] = useState(0)
-  const [docDiscountAmount, setDocDiscountAmount] = useState(0)
-  const [lines, setLines] = useState<ReceiveLine[]>([])
+  const [supplierId, setSupplierId] = useState(draft ? String(draft.supplierId) : '')
+  const [orderId, setOrderId] = useState(draft?.orderId ? String(draft.orderId) : '')
+  const [invoiceNo, setInvoiceNo] = useState(draft?.supplierInvoiceNo ?? '')
+  const [charges, setCharges] = useState<ChargeRow[]>(draft?.charges ?? [])
+  const [docDiscountPct, setDocDiscountPct] = useState(draft?.discountPct ?? 0)
+  const [docDiscountAmount, setDocDiscountAmount] = useState(draft?.discountExcl ?? 0)
+  const [lines, setLines] = useState<ReceiveLine[]>(draft?.lines ?? [])
+  /** Set once saved, so a second save updates rather than making another. */
+  const [draftId, setDraftId] = useState<number | null>(draft?.id ?? null)
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<TillProduct[]>([])
   const [searching, setSearching] = useState(false)
@@ -280,44 +297,75 @@ export default function ReceiveScreen({
     [charges],
   )
 
+  /**
+   * The payload, built once and used by both saving and posting.
+   *
+   * Shared deliberately: a draft that serialises differently from the receipt
+   * it becomes would post something other than what was on screen when it was
+   * saved, and the difference would only show up after the stock had moved.
+   */
+  function payload() {
+    return {
+      supplierId: Number(supplierId),
+      orderId: orderId ? Number(orderId) : null,
+      supplierInvoiceNo: invoiceNo || null,
+      discountPct: docDiscountPct,
+      discountExcl: docDiscountAmount,
+      charges: charges
+        // A blank row the user added and never filled in is not a charge.
+        .filter((c) => c.description.trim() || c.amountExcl > 0)
+        .map((c) => ({
+          supplierId: c.supplierId,
+          description: c.description.trim() || 'Delivery',
+          amountExcl: c.amountExcl,
+          vatRatePct: c.vatRatePct,
+          theirInvoiceNo: c.theirInvoiceNo || null,
+        })),
+      lines: lines.map((l) => ({
+        orderLineId: l.orderLineId,
+        productId: l.productId,
+        locationId: l.locationId,
+        productCode: l.productCode,
+        supplierCode: l.supplierCode || null,
+        description: l.description,
+        productType: l.productType,
+        departmentId: l.departmentId,
+        qtyOrdered: l.qtyOrdered || l.qty,
+        qtyReceived: l.qty,
+        qtyBonus: l.qtyBonus,
+        unitCostExcl: l.unitCostExcl,
+        discountPct: l.discountPct,
+        discountAmount: l.discountAmount,
+        vatRatePct: l.vatRatePct,
+        serials: l.productType === 'serial' ? l.serials : undefined,
+        warrantyUntil: l.productType === 'serial' ? l.warrantyUntil || null : undefined,
+      })),
+    }
+  }
+
+  /** Puts the delivery down without posting it. */
+  function saveDraft() {
+    startTransition(async () => {
+      const result = await saveDraftReceiptAction(draftId, payload())
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      // Kept, so pressing Save again updates this draft rather than leaving a
+      // trail of half-finished receipts behind it.
+      setDraftId(result.id)
+      toast.success(result.message)
+    })
+  }
+
+  /** Posts it. Stock moves, cost moves, the supplier is credited. */
   function submit() {
     startTransition(async () => {
       const result = await receiveGoodsAction({
-        supplierId: Number(supplierId),
-        orderId: orderId ? Number(orderId) : null,
-        supplierInvoiceNo: invoiceNo || null,
-        discountPct: docDiscountPct,
-        discountExcl: docDiscountAmount,
-        charges: charges
-          // A blank row the user added and never filled in is not a charge.
-          .filter((c) => c.description.trim() || c.amountExcl > 0)
-          .map((c) => ({
-            supplierId: c.supplierId,
-            description: c.description.trim() || 'Delivery',
-            amountExcl: c.amountExcl,
-            vatRatePct: c.vatRatePct,
-            theirInvoiceNo: c.theirInvoiceNo || null,
-          })),
-        lines: lines.map((l) => ({
-          orderLineId: l.orderLineId,
-          productId: l.productId,
-          locationId: l.locationId,
-          productCode: l.productCode,
-          supplierCode: l.supplierCode || null,
-          description: l.description,
-          productType: l.productType,
-          departmentId: l.departmentId,
-          qtyOrdered: l.qtyOrdered || l.qty,
-          qtyReceived: l.qty,
-          qtyBonus: l.qtyBonus,
-          unitCostExcl: l.unitCostExcl,
-          discountPct: l.discountPct,
-          vatRatePct: l.vatRatePct,
-          // Only for the lines that carry them, so an ordinary receipt posts
-          // exactly the payload it always did.
-          serials: l.productType === 'serial' ? l.serials : undefined,
-          warrantyUntil: l.productType === 'serial' ? l.warrantyUntil || null : undefined,
-        })),
+        ...payload(),
+        // Finalises the draft IN PLACE when there is one, so its id survives
+        // and anything already pointing at it still resolves.
+        draftId,
       })
 
       if (!result.ok) {
@@ -602,11 +650,26 @@ export default function ReceiveScreen({
           {pending ? 'Receiving…' : 'Receive the goods'}
         </Button>
 
+        {/* Needs only a supplier, where posting needs everything. That is the
+            point: a half-checked pallet is exactly what gets put down, and
+            refusing to save it because a quantity is still zero would defeat
+            the feature. */}
+        <Button variant="ghost" disabled={supplierId === '' || pending} onClick={saveDraft}>
+          <Icons.Save size={16} />
+          {draftId ? 'Update the draft' : 'Save for later'}
+        </Button>
+
         {/* Everything that blocks the button is marked at its source — the
             supplier field, a quantity box, or a line's serial badge. The only
             state with nowhere to point is an empty delivery. */}
         {lines.length === 0 && (
           <p className="text-center text-xs text-muted">Add what arrived.</p>
+        )}
+
+        {draftId && (
+          <p className="text-center text-xs text-muted">
+            Saved as a draft. Nothing has moved yet.
+          </p>
         )}
 
         <Card className="p-3">

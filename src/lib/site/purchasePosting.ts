@@ -1,6 +1,6 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { apportionDiscount, weightedAverageCost } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
@@ -123,6 +123,14 @@ export type ReceiveInput = {
   /** The same money, itemised and attributable. Preferred over chargesExcl. */
   charges?: ReceiveChargeInput[]
   /**
+   * A draft being finalised, rather than a receipt keyed in one go.
+   *
+   * The draft row is REUSED rather than deleted and re-inserted, so its id
+   * survives — anything already pointing at it (an attachment, a link someone
+   * sent) still resolves to the posted receipt.
+   */
+  draftId?: number | null
+  /**
    * A discount on the whole delivery — settlement terms, a volume rebate.
    *
    * Apportioned across the lines by value before VAT is worked out, never
@@ -220,6 +228,254 @@ export function validateReceive(input: ReceiveInput): string | null {
     }
   }
   return null
+}
+
+/* ── Drafts ──────────────────────────────────────────────────────────────── */
+
+export type DraftResult = { ok: true; id: number } | { ok: false; error: string }
+
+/**
+ * Saves a receipt WITHOUT posting it.
+ *
+ * A delivery is not always keyable in one sitting: half the pallet is checked,
+ * the driver needs signing out, a price is queried with the supplier, the phone
+ * goes. Until now the only options were to finish or to lose the lot, and on a
+ * sixty-line delivery that is an hour of work standing on one interruption.
+ *
+ * ── WHAT A DRAFT DELIBERATELY DOES NOT DO ────────────────────────────────
+ *
+ * NOTHING. No stock, no cost, no ledger, no number — exactly like a purchase
+ * order, and for the same reason: none of it has been agreed yet. Everything
+ * that actually happens lives in receiveGoods(), and a draft is only a
+ * remembered keystroke set.
+ *
+ * That is why this is a separate function rather than a flag on receiveGoods:
+ * a posting path with an "actually, do not post" branch is one bad condition
+ * away from moving stock for a document nobody finished.
+ *
+ * ── AND WHY IT VALIDATES ALMOST NOTHING ──────────────────────────────────
+ *
+ * A draft is by definition incomplete. Refusing to save one because a quantity
+ * is still zero, or a serial has not been scanned, defeats the whole point —
+ * the receiver saved it precisely BECAUSE they had not got to that yet. The
+ * full validation runs at finalise, where it belongs. Only a supplier is
+ * required, because the row cannot exist without one.
+ *
+ * Lines are rewritten wholesale, as saveOrder does: nothing has been received,
+ * so there is no state to preserve.
+ */
+export async function saveDraftReceipt(
+  siteId: number,
+  actor: Actor,
+  input: ReceiveInput,
+  documentId?: number,
+): Promise<DraftResult> {
+  if (!input.supplierId) return { ok: false, error: 'Choose who this delivery came from.' }
+
+  const supplier = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    'SELECT id, code, name, status FROM suppliers WHERE id = ? LIMIT 1',
+    [input.supplierId],
+  )
+  if (!supplier) return { ok: false, error: 'That supplier no longer exists.' }
+  if (String(supplier.status) === 'closed') {
+    return { ok: false, error: `${supplier.name}'s account is closed.` }
+  }
+
+  if (documentId) {
+    const existing = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+      siteId,
+      "SELECT id, status, doc_type FROM purchase_documents WHERE id = ? LIMIT 1",
+      [documentId],
+    )
+    if (!existing) return { ok: false, error: 'That receipt no longer exists.' }
+    if (String(existing.doc_type) !== 'grv') {
+      return { ok: false, error: 'That document is not a goods receipt.' }
+    }
+    // The important refusal. A finalised GRV has moved stock and credited a
+    // supplier; rewriting its lines here would leave the document disagreeing
+    // with the movements and the ledger it produced, with nothing to say which
+    // was right. A posted receipt is corrected by a return or a void.
+    if (String(existing.status) !== 'draft') {
+      return { ok: false, error: 'That receipt has been posted and cannot be edited.' }
+    }
+  }
+
+  // Figures are computed so the draft shows sensible totals when reopened, but
+  // they are not authoritative — finalise recomputes everything from the lines.
+  const docDate = input.documentDate ?? todayIso()
+  const lineValues = input.lines.map((line) => {
+    const gross = round((line.qtyReceived || 0) * line.unitCostExcl, 2)
+    const discount =
+      (line.discountAmount ?? 0) > 0
+        ? round(Math.min(line.discountAmount ?? 0, gross), 2)
+        : round(gross * ((line.discountPct ?? 0) / 100), 2)
+    return round(gross - discount, 2)
+  })
+  const subtotalExcl = lineValues.reduce((sum, v) => round(sum + v, 2), 0)
+  const vatTotal = input.lines.reduce(
+    (sum, line, i) => round(sum + lineValues[i] * (line.vatRatePct / 100), 2),
+    0,
+  )
+  const chargesExcl = chargesTotalFor(input)
+
+  return siteTransaction(siteId, async (tx) => {
+    const hasBonus = await columnExistsTx(tx, 'purchase_document_lines', 'qty_bonus')
+    const hasLineDiscountAmount = await columnExistsTx(
+      tx,
+      'purchase_document_lines',
+      'discount_amount',
+    )
+
+    let id = documentId
+
+    if (id) {
+      await tx.execute(
+        `UPDATE purchase_documents SET
+           document_date = ?, supplier_id = ?, supplier_code = ?, supplier_name = ?,
+           supplier_invoice_no = ?, subtotal_excl = ?, vat_total = ?, total_incl = ?,
+           charges_excl = ?, ordered_from_id = ?, reference = ?, notes = ?
+         WHERE id = ?`,
+        [
+          docDate,
+          input.supplierId,
+          String(supplier.code),
+          String(supplier.name),
+          input.supplierInvoiceNo?.trim() || null,
+          subtotalExcl.toFixed(4),
+          vatTotal.toFixed(4),
+          round(subtotalExcl + chargesExcl + vatTotal, 2).toFixed(4),
+          chargesExcl.toFixed(4),
+          input.orderId ?? null,
+          input.reference?.trim() || null,
+          input.notes?.trim() || null,
+          id,
+        ] as never,
+      )
+      await tx.execute('DELETE FROM purchase_document_lines WHERE document_id = ?', [id] as never)
+      if (await tableExistsTx(tx, 'purchase_document_charges')) {
+        await tx.execute(
+          'DELETE FROM purchase_document_charges WHERE document_id = ?',
+          [id] as never,
+        )
+      }
+    } else {
+      // No due date and NO NUMBER: both belong to a posted invoice. A draft
+      // that consumed a GRV number would leave a hole in the sequence if it
+      // were abandoned, and verifySequence would report it forever.
+      const [res] = await tx.execute(
+        `INSERT INTO purchase_documents
+           (doc_type, status, document_date, supplier_id, supplier_code, supplier_name,
+            supplier_invoice_no, user_id, user_name, subtotal_excl, vat_total, total_incl,
+            charges_excl, ordered_from_id, reference, notes)
+         VALUES ('grv','draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          docDate,
+          input.supplierId,
+          String(supplier.code),
+          String(supplier.name),
+          input.supplierInvoiceNo?.trim() || null,
+          actor.userId,
+          actor.userName.slice(0, 120),
+          subtotalExcl.toFixed(4),
+          vatTotal.toFixed(4),
+          round(subtotalExcl + chargesExcl + vatTotal, 2).toFixed(4),
+          chargesExcl.toFixed(4),
+          input.orderId ?? null,
+          input.reference?.trim() || null,
+          input.notes?.trim() || null,
+        ] as never,
+      )
+      id = (res as { insertId: number }).insertId
+    }
+
+    for (const [index, line] of input.lines.entries()) {
+      await tx.execute(
+        `INSERT INTO purchase_document_lines
+           (document_id, line_number, product_id, location_id, product_code, supplier_code,
+            description, product_type, department_id, qty_ordered, qty_received,
+            ${hasBonus ? 'qty_bonus, ' : ''}unit_cost_excl, discount_pct,
+            ${hasLineDiscountAmount ? 'discount_amount, ' : ''}vat_rate_pct,
+            line_total_excl, line_vat, line_total_incl)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,${hasBonus ? '?,' : ''}?,?,${
+           hasLineDiscountAmount ? '?,' : ''
+         }?,?,?,?)`,
+        [
+          id,
+          index + 1,
+          line.productId ?? null,
+          line.locationId ?? null,
+          line.productCode ?? null,
+          line.supplierCode ?? null,
+          line.description.trim().slice(0, 190) || 'Line',
+          line.productType ?? 'normal',
+          line.departmentId ?? null,
+          round(line.qtyOrdered ?? line.qtyReceived ?? 0, 3).toFixed(3),
+          round(line.qtyReceived || 0, 3).toFixed(3),
+          ...(hasBonus ? [round(line.qtyBonus ?? 0, 3).toFixed(3)] : []),
+          round(line.unitCostExcl, 4).toFixed(4),
+          (line.discountPct ?? 0).toFixed(3),
+          ...(hasLineDiscountAmount ? [round(line.discountAmount ?? 0, 4).toFixed(4)] : []),
+          line.vatRatePct.toFixed(3),
+          lineValues[index].toFixed(4),
+          round(lineValues[index] * (line.vatRatePct / 100), 2).toFixed(4),
+          round(lineValues[index] * (1 + line.vatRatePct / 100), 2).toFixed(4),
+        ] as never,
+      )
+    }
+
+    const charges = input.charges ?? []
+    if (charges.length > 0 && (await tableExistsTx(tx, 'purchase_document_charges'))) {
+      for (const charge of charges) {
+        await tx.execute(
+          `INSERT INTO purchase_document_charges
+             (document_id, supplier_id, description, amount_excl, vat_rate_pct, their_invoice_no)
+           VALUES (?,?,?,?,?,?)`,
+          [
+            id,
+            charge.supplierId ?? null,
+            charge.description.trim().slice(0, 120) || 'Delivery',
+            round(charge.amountExcl, 4).toFixed(4),
+            (charge.vatRatePct ?? 0).toFixed(3),
+            charge.theirInvoiceNo?.trim() || null,
+          ] as never,
+        )
+      }
+    }
+
+    return { ok: true as const, id: id! }
+  })
+}
+
+/**
+ * Throws away a draft receipt.
+ *
+ * DELETE rather than a cancelled status, unlike an order: an order that was
+ * issued and then abandoned is a fact about the supplier relationship worth
+ * keeping. A half-keyed delivery that was never posted is not history — it is
+ * an unfinished form, and leaving cancelled shells in the purchasing list makes
+ * the list worse.
+ *
+ * Refuses anything finalised, for the obvious reason.
+ */
+export async function deleteDraftReceipt(
+  siteId: number,
+  documentId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const doc = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    'SELECT id, status, doc_type FROM purchase_documents WHERE id = ? LIMIT 1',
+    [documentId],
+  )
+  if (!doc) return { ok: false, error: 'That receipt no longer exists.' }
+  if (String(doc.doc_type) !== 'grv') return { ok: false, error: 'That is not a goods receipt.' }
+  if (String(doc.status) !== 'draft') {
+    return { ok: false, error: 'Only a draft can be discarded. A posted receipt is voided.' }
+  }
+
+  // Lines and charges cascade from the document — see 017 and 088.
+  await siteExecute(siteId, 'DELETE FROM purchase_documents WHERE id = ?', [documentId])
+  return { ok: true }
 }
 
 export async function receiveGoods(
@@ -349,6 +605,25 @@ export async function receiveGoods(
 
   const dueDate = dueDateFor('invoice', docDate, Number(supplier.payment_terms_days ?? 30))
 
+  // Finalising a draft: check it is still a draft BEFORE any work starts.
+  // Without this, two people finalising the same draft — or one double-click —
+  // would post the stock twice and credit the supplier twice, with two
+  // documents claiming to be the same delivery.
+  if (input.draftId) {
+    const draft = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+      siteId,
+      "SELECT id, status, doc_type FROM purchase_documents WHERE id = ? LIMIT 1",
+      [input.draftId],
+    )
+    if (!draft) return { ok: false, error: 'That draft no longer exists.' }
+    if (String(draft.doc_type) !== 'grv') {
+      return { ok: false, error: 'That document is not a goods receipt.' }
+    }
+    if (String(draft.status) !== 'draft') {
+      return { ok: false, error: 'That receipt has already been posted.' }
+    }
+  }
+
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
       // 092 adds the document discount columns. A site it has not reached must
@@ -356,34 +631,73 @@ export async function receiveGoods(
       // lines above, so only the record of WHY the lines are lower is lost.
       const hasDocDiscount = await columnExistsTx(tx, 'purchase_documents', 'discount_excl')
 
-      const [res] = await tx.execute(
-        `INSERT INTO purchase_documents
-           (doc_type, status, document_date, due_date, supplier_id, supplier_code, supplier_name,
-            supplier_invoice_no, user_id, user_name, subtotal_excl, vat_total, total_incl,
-            charges_excl, ${hasDocDiscount ? 'discount_pct, discount_excl, ' : ''}ordered_from_id, reference, notes)
-         VALUES ('grv','finalised',?,?,?,?,?,?,?,?,?,?,?,?,${hasDocDiscount ? '?,?,' : ''}?,?,?)`,
-        [
-          docDate,
-          dueDate,
-          input.supplierId,
-          String(supplier.code),
-          String(supplier.name),
-          input.supplierInvoiceNo?.trim() || null,
-          actor.userId,
-          actor.userName.slice(0, 120),
-          subtotalExcl.toFixed(4),
-          vatTotal.toFixed(4),
-          totalIncl.toFixed(4),
-          chargesExcl.toFixed(4),
-          ...(hasDocDiscount
-            ? [(input.discountPct ?? 0).toFixed(3), documentDiscount.toFixed(4)]
-            : []),
-          input.orderId ?? null,
-          input.reference?.trim() || null,
-          input.notes?.trim() || null,
-        ] as never,
-      )
-      const documentId = (res as { insertId: number }).insertId
+      const values = [
+        docDate,
+        dueDate,
+        input.supplierId,
+        String(supplier.code),
+        String(supplier.name),
+        input.supplierInvoiceNo?.trim() || null,
+        actor.userId,
+        actor.userName.slice(0, 120),
+        subtotalExcl.toFixed(4),
+        vatTotal.toFixed(4),
+        totalIncl.toFixed(4),
+        chargesExcl.toFixed(4),
+        ...(hasDocDiscount
+          ? [(input.discountPct ?? 0).toFixed(3), documentDiscount.toFixed(4)]
+          : []),
+        input.orderId ?? null,
+        input.reference?.trim() || null,
+        input.notes?.trim() || null,
+      ]
+
+      let documentId: number
+
+      if (input.draftId) {
+        // The draft row BECOMES the receipt, keeping its id: an attachment
+        // filed against the draft, or a link someone sent, still resolves to
+        // the posted document. Re-checked as a draft inside the transaction —
+        // the guard above is outside it, so two finalises racing could both
+        // pass there but only one can pass here.
+        const [res] = await tx.execute(
+          `UPDATE purchase_documents SET
+             status = 'finalised', finalised_at = NOW(),
+             document_date = ?, due_date = ?, supplier_id = ?, supplier_code = ?,
+             supplier_name = ?, supplier_invoice_no = ?, user_id = ?, user_name = ?,
+             subtotal_excl = ?, vat_total = ?, total_incl = ?, charges_excl = ?,
+             ${hasDocDiscount ? 'discount_pct = ?, discount_excl = ?,' : ''}
+             ordered_from_id = ?, reference = ?, notes = ?
+           WHERE id = ? AND status = 'draft'`,
+          [...values, input.draftId] as never,
+        )
+        if ((res as { affectedRows: number }).affectedRows === 0) {
+          throw new Error('That receipt has already been posted.')
+        }
+        documentId = input.draftId
+
+        // The draft's own lines and charges go; what follows replaces them.
+        await tx.execute(
+          'DELETE FROM purchase_document_lines WHERE document_id = ?',
+          [documentId] as never,
+        )
+        if (await tableExistsTx(tx, 'purchase_document_charges')) {
+          await tx.execute(
+            'DELETE FROM purchase_document_charges WHERE document_id = ?',
+            [documentId] as never,
+          )
+        }
+      } else {
+        const [res] = await tx.execute(
+          `INSERT INTO purchase_documents
+             (doc_type, status, document_date, due_date, supplier_id, supplier_code, supplier_name,
+              supplier_invoice_no, user_id, user_name, subtotal_excl, vat_total, total_incl,
+              charges_excl, ${hasDocDiscount ? 'discount_pct, discount_excl, ' : ''}ordered_from_id, reference, notes)
+           VALUES ('grv','finalised',?,?,?,?,?,?,?,?,?,?,?,?,${hasDocDiscount ? '?,?,' : ''}?,?,?)`,
+          values as never,
+        )
+        documentId = (res as { insertId: number }).insertId
+      }
 
       // The itemised charges, so the GRV can say what the delivery cost was
       // made of and who billed each part. Skipped where 088 has not reached

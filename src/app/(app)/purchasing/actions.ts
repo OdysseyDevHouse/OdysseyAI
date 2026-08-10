@@ -10,7 +10,13 @@ import {
   productPositions,
   type OrderInput,
 } from '@/lib/site/purchaseDocuments'
-import { receiveGoods, voidReceipt, type ReceiveInput } from '@/lib/site/purchasePosting'
+import {
+  receiveGoods,
+  voidReceipt,
+  saveDraftReceipt,
+  deleteDraftReceipt,
+  type ReceiveInput,
+} from '@/lib/site/purchasePosting'
 import { createSupplierReturn, type SupplierReturnInput } from '@/lib/site/purchaseReversal'
 import {
   reorderBySupplier,
@@ -81,6 +87,40 @@ export async function receiveGoodsAction(input: ReceiveInput): Promise<ReceiveAc
   revalidatePath('/products')
   revalidatePath(`/suppliers/${input.supplierId}`)
   return result
+}
+
+/**
+ * Saves a delivery part-keyed, without posting anything.
+ *
+ * Separate from receiveGoodsAction on purpose: a posting path with a "do not
+ * post" branch is one bad condition away from moving stock for a document
+ * nobody finished.
+ */
+export async function saveDraftReceiptAction(
+  documentId: number | null,
+  input: ReceiveInput,
+): Promise<PurchaseResult> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+  const result = await saveDraftReceipt(siteId, actor, input, documentId ?? undefined)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/purchasing')
+  return { ok: true, id: result.id, message: 'Saved. Nothing has been posted yet.' }
+}
+
+export async function deleteDraftReceiptAction(
+  id: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+  const result = await deleteDraftReceipt(siteId, id)
+  if (!result.ok) return result
+
+  revalidatePath('/purchasing')
+  return { ok: true }
 }
 
 export async function voidReceiptAction(
