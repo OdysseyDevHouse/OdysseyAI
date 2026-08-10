@@ -78,8 +78,11 @@ import { createPublicStoreToken } from '../src/lib/publicStoreToken'
 import {
   MAX_QUOTES,
   MAX_RICH_BLOCKS,
+  BRAND_SWATCHES,
   SECTION_KINDS,
   announcementShowing,
+  brandColourProblem,
+  contrastRatio,
   groupRichBlocks,
   kindsFor,
   pageWarnings,
@@ -953,6 +956,46 @@ async function main() {
       'no text means no strip whatever the dates',
       !announcementShowing({ ...t, announceText: '   ' }, '2026-06-01'),
     )
+  }
+
+  console.log('\n— Is the shop’s colour readable —')
+  {
+    // The two anchors of the WCAG scale. If these are wrong the rest is
+    // meaningless, and both are exact rather than approximate.
+    ok('black on white is 21:1', Math.round(contrastRatio('#000000', '#ffffff')) === 21)
+    ok('a colour against itself is 1:1', Math.round(contrastRatio('#2f6fed', '#2f6fed')) === 1)
+    ok('the order of the pair does not matter',
+      contrastRatio('#000000', '#ffffff') === contrastRatio('#ffffff', '#000000'))
+
+    /*
+     * The gamma expansion, asserted directly.
+     *
+     * A naive channel average calls yellow dark and blue light, which is
+     * backwards — and would PASS exactly the pale colours this check exists
+     * to catch. Pure yellow against white is genuinely awful (about 1.07:1);
+     * pure blue against white is genuinely fine (about 8.6:1).
+     */
+    ok('yellow is understood as light', contrastRatio('#ffff00', '#ffffff') < 1.5)
+    ok('blue is understood as dark', contrastRatio('#0000ff', '#ffffff') > 8)
+
+    // Every ready-made swatch must pass — they are offered as the safe option,
+    // and the warning tells owners so.
+    const badSwatches = BRAND_SWATCHES.filter((c) => brandColourProblem(c) !== '')
+    ok('every ready-made swatch is readable', badSwatches.length === 0, badSwatches.join(','))
+
+    // A pale colour is the case this exists for: white button labels on it are
+    // invisible, and the owner cannot fix that by other means.
+    ok('a pale colour is flagged', brandColourProblem('#ffe066') !== '')
+    ok('a very pale one too', brandColourProblem('#f5f5f5') !== '')
+    ok('a mid-weight one is not', brandColourProblem('#2f6fed') === '')
+    ok('and a very dark one is not', brandColourProblem('#1a1a1a') === '')
+
+    // Junk goes through safeColour first, so it is judged as the DEFAULT
+    // rather than throwing on a colour that cannot exist in the database.
+    ok('junk is judged as the default', brandColourProblem('not-a-colour') === '')
+    // The short hex form is a real hex and must be expanded, not misread —
+    // #fff read as three channels of 15 would look almost black.
+    ok('the short hex form is expanded', brandColourProblem('#fff') !== '')
   }
 
   console.log('\n— Warnings before publishing —')

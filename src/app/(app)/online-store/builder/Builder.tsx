@@ -36,6 +36,7 @@ import {
   FONT_KEYS,
   FONT_LABEL,
   announcementShowing,
+  brandColourProblem,
   MAX_AUTOPLAY_SECONDS,
   MAX_LOGOS,
   MAX_QUOTES,
@@ -793,6 +794,10 @@ export default function Builder({
    * it has to be ready the instant the owner reaches for Publish.
    */
   const warnings = useMemo(() => pageWarnings(sections), [sections])
+
+  // Silent for every ready-made swatch; speaks only for a typed colour that
+  // fails — see brandColourProblem.
+  const colourProblem = useMemo(() => brandColourProblem(theme.brandColour), [theme.brandColour])
 
   function publish() {
     setConfirmOpen(false)
@@ -2340,6 +2345,42 @@ export default function Builder({
                     />
                   </div>
                 </Field>
+
+                {/*
+                  Only for a colour that actually fails — every swatch above
+                  passes, so this is silent unless the owner typed their own.
+                  A warning that is usually noise is one nobody reads by the
+                  time it matters.
+                */}
+                {colourProblem && (
+                  <Callout tone="warning" title="This colour may be hard to read">
+                    <p className="text-sm">{colourProblem}</p>
+                    {/*
+                      The two failures shown rather than described. An owner
+                      looking at their own colour behind white text decides in
+                      a second what a contrast ratio would never convey — and
+                      the button below is exactly what their shop will draw.
+                    */}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span
+                        className="inline-flex h-control items-center rounded-control px-4 text-sm font-medium text-white"
+                        style={{ background: theme.brandColour }}
+                      >
+                        Add to basket
+                      </span>
+                      <span
+                        className="inline-flex h-control items-center rounded-control bg-white px-4 text-sm font-medium"
+                        style={{ color: theme.brandColour }}
+                      >
+                        A link on your shop
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm">
+                      You can keep it — the ready-made colours above are all safe if you would
+                      rather not.
+                    </p>
+                  </Callout>
+                )}
 
                 <Field
                   label="Your typeface"

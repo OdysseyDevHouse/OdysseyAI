@@ -1833,6 +1833,100 @@ export function safeColour(value: unknown): string {
   return HEX.test(raw) ? raw : DEFAULT_BRAND_COLOUR
 }
 
+/* ── Is the shop's colour readable? ───────────────────────────────────────── */
+
+/**
+ * A hex colour's three channels, 0–255. Handles the #abc short form.
+ *
+ * Assumes `safeColour` has already run — anything reaching here is a valid hex,
+ * because that is the only shape the database can hold.
+ */
+function channels(hex: string): [number, number, number] {
+  const raw = hex.replace('#', '')
+  const full =
+    raw.length === 3
+      ? raw
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : raw
+  return [
+    parseInt(full.slice(0, 2), 16),
+    parseInt(full.slice(2, 4), 16),
+    parseInt(full.slice(4, 6), 16),
+  ]
+}
+
+/**
+ * Relative luminance, per WCAG 2.1.
+ *
+ * The gamma expansion is not decoration: a naive average of the channels calls
+ * pure yellow dark and pure blue light, which is backwards, and would pass
+ * exactly the colours this check exists to catch.
+ */
+function luminance(hex: string): number {
+  const [r, g, b] = channels(hex).map((v) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/** The WCAG contrast ratio between two colours, 1 (identical) to 21. */
+export function contrastRatio(a: string, b: string): number {
+  const la = luminance(a)
+  const lb = luminance(b)
+  const [light, dark] = la > lb ? [la, lb] : [lb, la]
+  return (light + 0.05) / (dark + 0.05)
+}
+
+/**
+ * WCAG AA for normal text. 3.0 is the large-text threshold, and using it here
+ * would pass colours that are unreadable in the places that matter most — a
+ * button label and a link are both normal text.
+ */
+const AA = 4.5
+
+/**
+ * What is wrong with this brand colour, or '' when nothing is.
+ *
+ * ── TWO FAILURES, AND THEY PULL IN OPPOSITE DIRECTIONS ───────────────────
+ *
+ * The storefront uses the brand colour two ways, and a colour can be wrong for
+ * either without being wrong for both:
+ *
+ *   WHITE ON BRAND — every primary button, the announcement strip, the basket
+ *   count. A pale colour makes those labels invisible, and the owner cannot fix
+ *   it by other means because they do not choose the text colour.
+ *
+ *   BRAND ON WHITE — every link, every "Get directions", the footer's social
+ *   links. A pale colour fails here too, and a very dark one is fine.
+ *
+ * So a pale colour breaks both and a mid-weight breaks neither, which is why
+ * BRAND_SWATCHES are all mid-weight. This exists for the shop that types its
+ * own — the case those swatches cannot cover.
+ *
+ * ── IT WARNS; IT DOES NOT REFUSE ─────────────────────────────────────────
+ *
+ * Same reasoning as the publish check. A shop's brand colour is the shop's,
+ * and a checker that rejected the actual hex from their signwriting would be
+ * wrong about which of the two of us knows more. It says what will happen and
+ * lets them decide.
+ */
+export function brandColourProblem(colour: string): string {
+  const hex = safeColour(colour)
+  const onWhite = contrastRatio(hex, '#ffffff')
+
+  // Both readings come from the same ratio: white-on-brand and brand-on-white
+  // are the same pair of colours, so one number answers both questions. What
+  // differs is what a failure MEANS, which is what the message has to say.
+  if (onWhite >= AA) return ''
+
+  // A colour light enough to fail against white is light — so the button
+  // labels are the visible casualty, and that is the one to lead with.
+  return 'Button labels and links may be hard to read on this colour.'
+}
+
 /**
  * A link we are willing to render.
  *
