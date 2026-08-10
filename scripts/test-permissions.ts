@@ -73,6 +73,12 @@ const OPEN_ROUTES = new Set([
   'src/app/api/contracts/tick/route.ts',
   'src/app/store-images/[token]/[imageId]/route.ts',
   'src/app/api/store-images/[token]/[imageId]/route.ts', // public storefront asset
+  // The shop's OWN pictures — a front-page banner or the masthead logo — for the
+  // public storefront. Listed for the same reason as its product-image sibling
+  // above: a shopper has no session and must not need one, so the gate is a signed
+  // store token plus `storefrontContext` agreeing the shop is open, not a
+  // capability. A closed shop or a bad token both 404, indistinguishably.
+  'src/app/api/store-images/[token]/shop/[imageId]/route.ts',
 ])
 
 async function main() {
@@ -223,6 +229,47 @@ async function main() {
   )
   const navUnknown = [...navCaps].filter((c) => !declared.has(c))
   check('every nav capability is declared', navUnknown.length === 0, navUnknown.join(', '))
+
+  /* ── Setup labels ──────────────────────────────────────────────────────
+     The Setup hub's tiles take their name from SUBPAGE_LABELS while the sidebar
+     takes its own from NAV. Both lists exist on purpose — the hub needs literal
+     keys so a tile pointing nowhere is a compile error — so the risk is drift,
+     and a screen renamed in one place would be called two different things.
+
+     Read as SOURCE, not imported, for the same reason the capability scan above
+     is: nav.ts pulls in lucide-react, which needs a React runtime this test has
+     no business booting. */
+  const setupItems = [
+    ...navSrc.matchAll(/label:\s*'([^']+)',\s*href:\s*'(\/setup\/[a-z-]+)'/g),
+  ].map((m) => ({ label: m[1].replace(/\\'/g, "'"), href: m[2] }))
+  const labelBlock = navSrc.match(/export const SUBPAGE_LABELS = \{([\s\S]*?)\n\} as const/)
+  const declaredLabels = new Map(
+    [...(labelBlock?.[1] ?? '').matchAll(/'(\/setup\/[a-z-]+)':\s*'([^']+)'/g)].map((m) => [
+      m[1],
+      m[2].replace(/\\'/g, "'"),
+    ]),
+  )
+
+  check('SUBPAGE_LABELS was found and parsed', declaredLabels.size > 0, `${declaredLabels.size} entries`)
+  check(
+    'every Setup menu item has a label entry',
+    setupItems.every((i) => declaredLabels.has(i.href)),
+    setupItems.filter((i) => !declaredLabels.has(i.href)).map((i) => i.href).join(', '),
+  )
+
+  const drift = setupItems.filter(
+    (i) => declaredLabels.has(i.href) && declaredLabels.get(i.href) !== i.label,
+  )
+  check(
+    'the Setup menu and the Setup hub agree on every screen name',
+    drift.length === 0,
+    drift.map((i) => `${i.href}: menu "${i.label}" vs hub "${declaredLabels.get(i.href)}"`).join('; '),
+  )
+
+  const orphans = [...declaredLabels.keys()].filter(
+    (href) => !setupItems.some((i) => i.href === href),
+  )
+  check('no label entry points at a screen the menu has dropped', orphans.length === 0, orphans.join(', '))
 }
 
 main()

@@ -398,6 +398,41 @@ export async function actorFor(capability: Capability): Promise<
 }
 
 /**
+ * `actorFor`, but satisfied by ANY ONE of several capabilities.
+ *
+ * For a resource reached from two screens whose editors are legitimately different
+ * people. The shop's picture library is the case this exists for: a front-page banner
+ * is edited under `online.edit`, a department picture under `products.edit`, and
+ * neither person necessarily holds the other's right. Guarding the library on one of
+ * them would hand the other an empty picker and an upload that failed — which looks
+ * broken rather than forbidden.
+ *
+ * This grants nobody anything new. Each capability already permits putting pictures on
+ * the things its own screen owns; what this expresses is "may edit something pictures
+ * go on", which is the actual question. A narrower AND would be wrong, not safer — it
+ * would demand rights neither editor needs.
+ */
+export async function actorForAny(
+  ...capabilities: Capability[]
+): Promise<
+  | { siteId: number; actor: { userId: number; userName: string }; capabilities: CapabilitySet }
+  | Denied
+> {
+  const { site, user, capabilities: held } = await requireSiteUser()
+  if (!capabilities.some((capability) => can(held, capability))) {
+    return {
+      ok: false,
+      error: 'You do not have permission to do that. An owner can grant it in Setup → Roles.',
+    }
+  }
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities: held,
+  }
+}
+
+/**
  * For actions whose return type has no room for a refusal.
  *
  * A lookup returning `TillProduct[]`, or a form action returning a state

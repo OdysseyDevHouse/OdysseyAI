@@ -289,6 +289,71 @@ export function navFor(granted: (capability: string) => boolean): NavSection[] {
 
 export type Crumb = { label: string; href?: string }
 
+/**
+ * The name of each setup screen, keyed by its route.
+ *
+ * The Setup hub's tiles carry no label of their own — they read it from here, so
+ * renaming a screen is one edit and the tile, the sidebar and the breadcrumb all follow
+ * rather than drifting into three names for one page.
+ *
+ * ── WHY THIS IS WRITTEN OUT AND NOT DERIVED FROM `NAV` ────────────────────
+ *
+ * Deriving it (`Object.fromEntries(setupSection.items.map(...))`) would type the keys as
+ * plain `string`, and the hub leans on the opposite: `SetupHref = keyof typeof
+ * SUBPAGE_LABELS` is what makes a tile pointing at a screen nothing else knows about a
+ * COMPILE ERROR rather than a page that renders with no name. A literal map keeps that
+ * check; a derived one silently accepts a typo.
+ *
+ * The cost is that this and `NAV` must agree, so `assertSetupLabels()` below checks
+ * exactly that and `test-navigation` calls it.
+ */
+export const SUBPAGE_LABELS = {
+  '/setup/users': 'Users',
+  '/setup/roles': 'Roles & permissions',
+  '/setup/linked-stores': 'Linked stores',
+  '/setup/locations': 'Stock locations',
+  '/setup/pricing': 'Price types & VAT',
+  '/setup/tender-types': 'Tender types',
+  '/setup/terminals': 'Terminals',
+  '/setup/numbering': 'Numbering',
+  '/setup/reconciliation': 'Reconciliation',
+  '/setup/opening-balances': 'Opening balances',
+  '/setup/laybys': 'Lay-bys',
+  '/setup/expense-categories': 'Expense categories',
+  '/setup/databases': 'Site & databases',
+  '/setup/style-guide': 'Style Guide',
+} as const
+
+/**
+ * Where `SUBPAGE_LABELS` and `NAV` disagree, if anywhere.
+ *
+ * Returns the mismatches rather than throwing, so a test can name all of them at once
+ * instead of failing on the first. Two duplicated lists is the price of keeping the
+ * hub's compile-time href check (see above), and this is what stops that price being
+ * paid in silent drift: a screen renamed in the sidebar but not here would show one
+ * name in the menu and another on its tile.
+ */
+export function setupLabelMismatches(): string[] {
+  const section = NAV.find((s) => s.label === 'Setup')
+  const items = section?.items ?? []
+  const problems: string[] = []
+
+  for (const item of items) {
+    const declared = (SUBPAGE_LABELS as Record<string, string>)[item.href]
+    if (declared === undefined) {
+      problems.push(`${item.href} is in the Setup menu but has no SUBPAGE_LABELS entry`)
+    } else if (declared !== item.label) {
+      problems.push(`${item.href} is "${item.label}" in the menu but "${declared}" in SUBPAGE_LABELS`)
+    }
+  }
+  for (const href of Object.keys(SUBPAGE_LABELS)) {
+    if (!items.some((item) => item.href === href)) {
+      problems.push(`${href} has a SUBPAGE_LABELS entry but is not in the Setup menu`)
+    }
+  }
+  return problems
+}
+
 /** Trailing crumb for a detail route, by section base path. */
 const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   '/products': { new: 'New product', edit: 'Edit product' },
