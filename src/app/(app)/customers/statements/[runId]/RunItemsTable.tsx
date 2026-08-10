@@ -16,6 +16,8 @@ export type RunItemRow = {
   code: string
   name: string
   email: string | null
+  /** What this account was statemented for — it varies per row on a cycle run. */
+  period: string
   balance: number
   overdue: number
   when: string | null
@@ -58,6 +60,15 @@ const COLUMNS: readonly Column<RunItemRow>[] = [
     sortable: true,
     sortValue: (row) => row.email ?? '',
     cell: (row) => row.email ?? <span className="text-faint">—</span>,
+  },
+  {
+    // Its own column because it varies per row: each account is statemented for
+    // its own cycle period, so the run header cannot speak for all of them.
+    key: 'period',
+    header: 'Period',
+    sortable: true,
+    sortValue: (row) => row.period,
+    cell: (row) => <span className="text-ink-2">{row.period}</span>,
   },
   {
     key: 'balance',

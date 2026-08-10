@@ -1,6 +1,7 @@
 'use server'
 
 import { toAccountType } from '@/lib/accountTypes'
+import { toStatementCycle } from '@/lib/statementCycles'
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
@@ -58,6 +59,11 @@ function readInput(form: FormData): CustomerInput {
     repId: optionalId(form, 'repId'),
     category: text(form, 'category'),
     paymentTermsDays: num(form, 'paymentTermsDays', 30),
+    // Only the anchor field for the chosen cycle is rendered, so the other
+    // posts nothing and falls back to its default — which is what we want.
+    statementCycle: toStatementCycle(form.get('statementCycle')),
+    statementAnchorDay: num(form, 'statementAnchorDay', 0),
+    statementAnchorDate: text(form, 'statementAnchorDate'),
     creditLimit: num(form, 'creditLimit', 0),
     // A Switch posts nothing when off, so absence means false.
     interestEnabled: form.get('interestEnabled') !== null,

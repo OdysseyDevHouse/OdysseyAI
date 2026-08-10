@@ -4,7 +4,15 @@ import { buildStatement, type StatementFormat } from '@/lib/statements/render'
 import { PageHeader, PageBody, Card, ButtonLink, Menu, MenuItem, Icons, LinkTabs } from '@/components/ui'
 import { StatementDocument } from '@/components/statements/StatementDocument'
 import { withParams } from '@/lib/searchParams'
-import PeriodPicker from './PeriodPicker'
+import { getCustomer, type Customer } from '@/lib/site/customers'
+import { today } from '@/lib/site/ledger'
+import {
+  statementPeriods,
+  periodFromKey,
+  CYCLE_LABELS,
+  type CycleConfig,
+} from '@/lib/statementCycles'
+import CyclePeriodPicker from './CyclePeriodPicker'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,32 +29,50 @@ export default async function StatementPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ format?: string; from?: string; to?: string }>
+  searchParams: Promise<{ format?: string; from?: string; to?: string; period?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   await requireCapability('customers.view')
   const site = await requireSite()
   const { id } = await params
-  const { format: formatRaw, from, to } = await searchParams
+  const { format: formatRaw, from, to, period: periodKey } = await searchParams
 
   const customerId = Number(id)
   if (!Number.isFinite(customerId) || customerId <= 0) notFound()
 
   const format: StatementFormat = formatRaw === 'activity' ? 'activity' : 'open-item'
 
+  const customer = await getCustomer(site.id, customerId)
+  if (!customer) notFound()
+
+  const config: CycleConfig = {
+    cycle: customer.statementCycle,
+    anchorDay: customer.statementAnchorDay,
+    anchorDate: customer.statementAnchorDate,
+    fallbackAnchor: isoDate(customer.createdAt),
+  }
+  const now = today()
+  const periods = statementPeriods(config, now, 13)
+
+  // Explicit dates win over the dropdown. Both cannot be honoured, and the
+  // custom range has to stay reachable — so a from/to in the URL means the user
+  // asked for exactly that window.
+  const explicit = iso(from) ?? iso(to)
+  const chosen = explicit ? null : (periodFromKey(config, periodKey, now) ?? periods[0])
+
   const data = await buildStatement(site.id, site.displayName, site.vatNumber, customerId, {
     format,
-    from: iso(from),
-    to: iso(to),
+    from: chosen ? chosen.from : iso(from),
+    to: chosen ? chosen.to : iso(to),
   })
   if (!data) notFound()
 
   const basePath = `/customers/${customerId}/statement`
 
-  // Only the dates the user actually asked for. Seeding these from data.period
-  // instead would pin the 90-day default into every link, so "Reset" could
-  // never get back to it.
-  const period = { from: iso(from), to: iso(to) }
+  // The PDF route knows nothing about cycles, so links always carry resolved
+  // dates. The composite key is a UI affordance; keeping it out of the API means
+  // that route needs no change and cannot disagree about what a key resolves to.
+  const period = { from: data.period.from, to: data.period.to }
   const pdfHref = `/api/customers/${customerId}/statement${withParams(period, { format })}`
 
   return (
@@ -111,11 +137,22 @@ export default async function StatementPage({
           aria-label="Statement format"
         />
 
-        {/* Open items are "everything still unpaid, whenever it was raised", so
-            a period would only mislead — it belongs on the activity view. */}
-        {format === 'activity' && (
-          <PeriodPicker basePath={basePath} from={data.period.from} to={data.period.to} />
-        )}
+        {/* On BOTH formats. A free-form range genuinely did not belong on open
+            items, but a cycle period does: it dates the document, names the PDF,
+            and now sets the aging and the closing balance as at its end. */}
+        <CyclePeriodPicker
+          basePath={basePath}
+          periods={periods}
+          selectedKey={chosen?.key ?? null}
+          from={data.period.from}
+          to={data.period.to}
+          cycleNote={cycleNote(customer.statementCycle, data.period.from)}
+          hint={
+            format === 'open-item'
+              ? 'Dates the statement and ages it to the period end. Open items are listed whenever they were raised.'
+              : 'Movements inside this period, after the balance brought forward.'
+          }
+        />
 
         <Card className="overflow-hidden">
           <StatementDocument data={data} />
@@ -127,4 +164,29 @@ export default async function StatementPage({
 
 function iso(value: string | undefined): string | undefined {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+/** Why these dates — otherwise "28 Jul – 3 Aug" looks arbitrary. */
+function cycleNote(cycle: Customer['statementCycle'], from: string): string {
+  const label = CYCLE_LABELS[cycle]
+  if (cycle === 'monthly') {
+    const day = Number(from.slice(8, 10))
+    return day === 1 ? `${label} · calendar months` : `${label} · cut on the ${ordinal(day)}`
+  }
+  const weekday = new Date(`${from}T00:00:00`).getDay()
+  return `${label} · ${WEEKDAYS[weekday]} to ${WEEKDAYS[(weekday + 6) % 7]}`
+}
+
+function ordinal(day: number): string {
+  if (day > 3 && day < 21) return `${day}th`
+  return `${day}${['th', 'st', 'nd', 'rd'][day % 10] ?? 'th'}`
+}
+
+/** A Date to yyyy-mm-dd in local time, for the cycle anchor fallback. */
+function isoDate(value: Date): string {
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${value.getFullYear()}-${month}-${day}`
 }

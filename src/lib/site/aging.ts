@@ -52,6 +52,17 @@ export type AgingOptions = {
   overdueOnly?: boolean
   groupId?: number
   repId?: number
+  /**
+   * One account only. For a per-account document — a statement — rather than
+   * the book-wide report this function is named for.
+   */
+  customerId?: number
+  /**
+   * Rung width for the age ladder, default 30. Only a single-account caller
+   * should set it: widths that differ per row would make a comparison table's
+   * headings mean a different thing on every line.
+   */
+  bucketDays?: number
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -87,6 +98,12 @@ export async function customerAging(
   if (opts.repId) {
     where.push('c.rep_id = ?')
     params.push(opts.repId)
+  }
+  // Both row helpers alias the customer table as `c`, so this one filter scopes
+  // the fast path and the reconstruction alike.
+  if (opts.customerId) {
+    where.push('c.id = ?')
+    params.push(opts.customerId)
   }
 
   const rows = isToday
@@ -129,7 +146,7 @@ export async function customerAging(
       const reference =
         basis === 'doc' ? String(r.doc_date) : ((r.due_date as string | null) ?? String(r.doc_date))
       const days = daysBetween(reference, asAt)
-      const bucket = bucketFor(days)
+      const bucket = bucketFor(days, opts.bucketDays)
       entry.aging[bucket] = round(entry.aging[bucket] + outstanding, 2)
       if (days > entry.oldestDays) entry.oldestDays = days
     }
@@ -280,44 +297,89 @@ export type SupplierAgingRow = {
   oldestDays: number
 }
 
+export type SupplierAgingOptions = {
+  /** yyyy-mm-dd. Omit for today, which takes the fast path. */
+  asAt?: string
+  /** Age from the due date (default) or the document date. */
+  basis?: AgingBasis
+  /** Only accounts with something in 30+. */
+  overdueOnly?: boolean
+  /** One account only, for a per-supplier statement. */
+  supplierId?: number
+}
+
+const SUPPLIER_COLUMNS = `
+  s.id, s.code, s.name, s.status, s.contact_name, s.email, s.phone, s.account_number
+`
+
+/** The payables fast path — the mirror of currentRows above. */
+async function supplierCurrentRows(
+  siteId: number,
+  where: string[],
+  params: unknown[],
+): Promise<Row[]> {
+  const filter = where.length ? `AND ${where.join(' AND ')}` : ''
+  return siteQuery<Row>(
+    siteId,
+    `SELECT ${SUPPLIER_COLUMNS},
+            t.doc_date, t.due_date, t.amount_outstanding AS outstanding
+       FROM supplier_transactions t
+       JOIN suppliers s ON s.id = t.supplier_id
+      WHERE t.amount_outstanding <> 0 ${filter}`,
+    params,
+  )
+}
+
+/** The payables as-at path — the same reconstruction asAtRows does. */
+async function supplierAsAtRows(
+  siteId: number,
+  asAt: string,
+  where: string[],
+  params: unknown[],
+): Promise<Row[]> {
+  const filter = where.length ? `AND ${where.join(' AND ')}` : ''
+  return siteQuery<Row>(
+    siteId,
+    `SELECT ${SUPPLIER_COLUMNS},
+            t.doc_date, t.due_date,
+            t.amount_signed - COALESCE(a.matched, 0) AS outstanding
+       FROM supplier_transactions t
+       JOIN suppliers s ON s.id = t.supplier_id
+       LEFT JOIN (
+             SELECT debit_txn_id AS txn_id, SUM(amount) AS matched
+               FROM supplier_allocations WHERE allocated_at <= ?
+              GROUP BY debit_txn_id
+             UNION ALL
+             SELECT credit_txn_id AS txn_id, -SUM(amount) AS matched
+               FROM supplier_allocations WHERE allocated_at <= ?
+              GROUP BY credit_txn_id
+            ) a ON a.txn_id = t.id
+      WHERE t.doc_date <= ? ${filter}
+      HAVING outstanding <> 0`,
+    [`${asAt} 23:59:59`, `${asAt} 23:59:59`, asAt, ...params],
+  )
+}
+
 /** The payables mirror — who we owe, and how late we are paying them. */
 export async function supplierAging(
   siteId: number,
-  opts: { asAt?: string; basis?: AgingBasis; overdueOnly?: boolean } = {},
+  opts: SupplierAgingOptions = {},
 ): Promise<{ rows: SupplierAgingRow[]; totals: Aging }> {
   const asAt = opts.asAt ?? today()
   const isToday = asAt >= today()
   const basis = opts.basis ?? 'due'
 
+  const where: string[] = []
+  const params: unknown[] = []
+
+  if (opts.supplierId) {
+    where.push('s.id = ?')
+    params.push(opts.supplierId)
+  }
+
   const rows = isToday
-    ? await siteQuery<Row>(
-        siteId,
-        `SELECT s.id, s.code, s.name, s.status, s.contact_name, s.email, s.phone, s.account_number,
-                t.doc_date, t.due_date, t.amount_outstanding AS outstanding
-           FROM supplier_transactions t
-           JOIN suppliers s ON s.id = t.supplier_id
-          WHERE t.amount_outstanding <> 0`,
-      )
-    : await siteQuery<Row>(
-        siteId,
-        `SELECT s.id, s.code, s.name, s.status, s.contact_name, s.email, s.phone, s.account_number,
-                t.doc_date, t.due_date,
-                t.amount_signed - COALESCE(a.matched, 0) AS outstanding
-           FROM supplier_transactions t
-           JOIN suppliers s ON s.id = t.supplier_id
-           LEFT JOIN (
-                 SELECT debit_txn_id AS txn_id, SUM(amount) AS matched
-                   FROM supplier_allocations WHERE allocated_at <= ?
-                  GROUP BY debit_txn_id
-                 UNION ALL
-                 SELECT credit_txn_id AS txn_id, -SUM(amount) AS matched
-                   FROM supplier_allocations WHERE allocated_at <= ?
-                  GROUP BY credit_txn_id
-                ) a ON a.txn_id = t.id
-          WHERE t.doc_date <= ?
-          HAVING outstanding <> 0`,
-        [`${asAt} 23:59:59`, `${asAt} 23:59:59`, asAt],
-      )
+    ? await supplierCurrentRows(siteId, where, params)
+    : await supplierAsAtRows(siteId, asAt, where, params)
 
   const bySupplier = new Map<number, SupplierAgingRow>()
 

@@ -1,5 +1,5 @@
 import { formatMoney } from '@/lib/decimals'
-import { BUCKET_LABELS, AGING_BUCKETS } from '@/lib/site/ledger'
+import { AGING_BUCKETS } from '@/lib/site/ledger'
 import type { StatementData } from '@/lib/statements/render'
 import { TABLE, TABLE_HEAD_ROW, TABLE_TH, TABLE_TD, TABLE_ROW, TABLE_NUMERIC } from '@/components/ui'
 
@@ -47,7 +47,7 @@ export function StatementDocument({
                 : 'STATEMENT'}
           </h2>
           <p className="mt-1 text-xs text-muted">
-            {data.period.from} to {data.period.to}
+            {data.periodLabel}
           </p>
         </div>
       </header>
@@ -114,7 +114,13 @@ export function StatementDocument({
           {data.lines.length === 0 ? (
             <tr className={TABLE_ROW}>
               <td className={`${TABLE_TD} text-center text-muted`} colSpan={6}>
-                Nothing outstanding — thank you.
+                {/* On activity, empty means nothing MOVED — the account may still
+                    owe the balance brought forward above, and thanking someone
+                    for settling when they have not is worse than saying nothing.
+                    On open item, empty really is settled. */}
+                {data.format === 'activity'
+                  ? 'No movements in this period.'
+                  : 'Nothing outstanding — thank you.'}
               </td>
             </tr>
           ) : (
@@ -161,7 +167,7 @@ export function StatementDocument({
               <tr className={TABLE_HEAD_ROW}>
                 {AGING_BUCKETS.map((bucket) => (
                   <th key={bucket} className={`${TABLE_TH} text-right`}>
-                    {BUCKET_LABELS[bucket]}
+                    {data.bucketLabels[bucket]}
                   </th>
                 ))}
                 <th className={`${TABLE_TH} text-right`}>Total</th>

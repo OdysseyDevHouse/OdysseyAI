@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
 import { toNum } from '../decimals'
+import { toStatementCycle, type StatementCycle } from '../statementCycles'
 
 /**
  * The customer master file's supporting lists — groups, reps and categories.
@@ -27,6 +28,9 @@ export type CustomerGroup = {
   defaultInterestRatePct: number
   defaultInterestEnabled: boolean
   defaultInterestGraceDays: number
+  /** Statement cycle a new account in this group starts on. */
+  defaultStatementCycle: StatementCycle
+  defaultStatementAnchorDay: number
   priceStructureId: number | null
   sortOrder: number
   isActive: boolean
@@ -44,6 +48,8 @@ function mapGroup(r: Row): CustomerGroup {
     defaultInterestRatePct: toNum(r.default_interest_rate_pct),
     defaultInterestEnabled: Boolean(r.default_interest_enabled),
     defaultInterestGraceDays: Number(r.default_interest_grace_days ?? 0),
+    defaultStatementCycle: toStatementCycle(r.default_statement_cycle),
+    defaultStatementAnchorDay: Number(r.default_statement_anchor_day ?? 0),
     priceStructureId: r.price_structure_id === null ? null : Number(r.price_structure_id),
     sortOrder: Number(r.sort_order),
     isActive: !!r.is_active,
@@ -54,6 +60,7 @@ function mapGroup(r: Row): CustomerGroup {
 const SELECT_GROUP = `
   SELECT g.id, g.name, g.code, g.default_terms_days, g.default_credit_limit,
          g.default_interest_rate_pct, g.default_interest_enabled, g.default_interest_grace_days,
+         g.default_statement_cycle, g.default_statement_anchor_day,
          g.price_structure_id, g.sort_order, g.is_active,
          (SELECT COUNT(*) FROM customers c WHERE c.group_id = g.id) AS customer_count
     FROM customer_groups g

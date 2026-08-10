@@ -24,12 +24,126 @@ import {
   accountTypeOption,
   toAccountType,
 } from '@/lib/accountTypes'
+import {
+  periodContaining,
+  toStatementCycle,
+  CYCLE_LABELS,
+  STATEMENT_CYCLES,
+  type StatementCycle,
+} from '@/lib/statementCycles'
 import type { Customer, CustomerStatus } from '@/lib/site/customers'
 import type { CustomerGroup, SalesRep } from '@/lib/site/customerLookups'
 import { saveCustomerAction, type CustomerFormState } from './actions'
 
 /** Shared by Save in the header and the form itself, so one button can sit outside. */
 const FORM_ID = 'customer-form'
+
+/**
+ * How often the account is statemented, and on what rhythm.
+ *
+ * Which anchor field is shown depends on the cycle, because the two mean
+ * different things: monthly wants a day of the month, weekly wants a date that
+ * sets the phase. Held in state rather than rendered both-and-disabled so only
+ * the meaningful one is ever posted.
+ *
+ * The preview underneath is the reason statementCycles.ts is a pure module —
+ * it runs here in the browser, so an anchor can be checked before saving
+ * instead of after.
+ */
+function StatementCycleFields({
+  customer,
+  group,
+}: {
+  customer: Customer | null
+  group: CustomerGroup | undefined
+}) {
+  const [cycle, setCycle] = useState<StatementCycle>(
+    customer?.statementCycle ?? group?.defaultStatementCycle ?? 'monthly',
+  )
+  const [anchorDay, setAnchorDay] = useState(
+    String(customer?.statementAnchorDay ?? group?.defaultStatementAnchorDay ?? 0),
+  )
+  const [anchorDate, setAnchorDate] = useState(customer?.statementAnchorDate ?? '')
+
+  const preview = periodContaining(
+    {
+      cycle,
+      anchorDay: Number(anchorDay) || 0,
+      anchorDate: anchorDate || null,
+      fallbackAnchor: customer ? isoDate(customer.createdAt) : undefined,
+    },
+    isoDate(new Date()),
+  )
+
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Statement cycle" hint="How often this account is statemented.">
+          <Select
+            name="statementCycle"
+            value={cycle}
+            onChange={(e) => setCycle(toStatementCycle(e.target.value))}
+          >
+            {STATEMENT_CYCLES.map((c) => (
+              <option key={c} value={c}>
+                {CYCLE_LABELS[c]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {cycle === 'monthly' ? (
+          <Field
+            label="Cut on day"
+            className="max-w-40"
+            hint="Zero for calendar months. The 31st becomes the last day in shorter months."
+          >
+            <NumberInput
+              name="statementAnchorDay"
+              min={0}
+              max={31}
+              value={anchorDay}
+              onChange={(e) => setAnchorDay(e.target.value)}
+            />
+          </Field>
+        ) : (
+          <Field
+            label="Cycle starts"
+            hint="Any day a period begins on — it sets the rhythm. Blank uses the creation date."
+          >
+            <Input
+              name="statementAnchorDate"
+              type="date"
+              value={anchorDate}
+              onChange={(e) => setAnchorDate(e.target.value)}
+            />
+          </Field>
+        )}
+
+        <div>
+          <div className="mb-1.5 text-sm font-medium text-ink-2">Current period</div>
+          <div className="flex h-control items-center font-medium text-ink">{preview.label}</div>
+          <p className="mt-1.5 text-xs text-muted">
+            {preview.from} to {preview.to}
+          </p>
+        </div>
+      </div>
+
+      <p className="mt-3 text-sm text-muted">
+        Payment terms decide when an invoice is <strong className="text-ink-2">due</strong>. The
+        cycle decides when the account is <strong className="text-ink-2">statemented</strong>. They
+        are independent — an account on 30-day terms can still be statemented weekly.
+      </p>
+    </>
+  )
+}
+
+/** A Date to yyyy-mm-dd in local time. */
+function isoDate(value: Date): string {
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${value.getFullYear()}-${month}-${day}`
+}
 
 function SubmitButton({ isNew }: { isNew: boolean }) {
   const { pending } = useFormStatus()
@@ -295,6 +409,13 @@ export default function CustomerForm({
                   />
                 </Field>
               </div>
+            </div>
+
+            {/* Cycle is not terms. Terms decide when an invoice falls DUE; the
+                cycle decides when the account is CUT into a statement. They are
+                independent, and saying so here is cheaper than the support call. */}
+            <div className="border-t border-border pt-4">
+              <StatementCycleFields customer={customer} group={group} />
             </div>
           </CardBody>
         </Card>

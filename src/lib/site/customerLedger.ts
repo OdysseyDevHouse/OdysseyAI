@@ -251,6 +251,16 @@ export async function agingFor(
  * to today would age a February statement by however long ago February was, which is
  * both wrong and unreproducible — reprinting the same statement next month would give a
  * different answer.
+ *
+ * ── WHY THIS DELEGATES RATHER THAN RECONSTRUCTING ─────────────────────────
+ *
+ * aging.ts already owns that reconstruction for the whole book, and scoping it to one
+ * customer is a WHERE clause. A second implementation here would be a second thing to
+ * keep correct — and a per-row query for each credit besides. See the header of aging.ts
+ * on why the fast and as-at paths must not drift.
+ *
+ * An account with nothing outstanding produces no row, hence the empty fallback: a
+ * settled account's statement shows zeros, which is right.
  */
 export async function agingAsAt(
   siteId: number,
@@ -258,53 +268,13 @@ export async function agingAsAt(
   asAt: string,
   bucketWidth = 30,
 ): Promise<Aging> {
-  const rows = await siteQuery<Row>(
-    siteId,
-    `SELECT t.id, t.doc_date, t.due_date, t.amount_signed, t.amount_gross,
-            COALESCE((
-              SELECT SUM(a.amount) FROM customer_allocations a
-               WHERE a.debit_txn_id = t.id AND DATE(a.allocated_at) <= ?
-            ), 0) AS allocated_by_then
-       FROM customer_transactions t
-      WHERE t.customer_id = ? AND t.doc_date <= ?`,
-    [asAt, customerId, asAt],
-  )
-
-  const aging = emptyAging()
-
-  for (const raw of rows) {
-    const signed = toNum(raw.amount_signed)
-    const dueDate = raw.due_date ? String(raw.due_date).slice(0, 10) : null
-
-    if (signed < 0) {
-      /* A CREDIT — a payment or a credit note. What of it was still unapplied on the
-         date counts as money on account, which genuinely reduces what was owed. Applied
-         against a debit, it is already netted off that debit below, so counting it here
-         too would double it. */
-      const applied = await siteQueryOne<Row>(
-        siteId,
-        `SELECT COALESCE(SUM(amount), 0) AS n FROM customer_allocations
-          WHERE credit_txn_id = ? AND DATE(allocated_at) <= ?`,
-        [Number(raw.id), asAt],
-      )
-      const unapplied = round(signed + toNum(applied?.n), 2)
-      if (unapplied < 0) {
-        aging.current = round(aging.current + unapplied, 2)
-        aging.total = round(aging.total + unapplied, 2)
-      }
-      continue
-    }
-
-    const outstanding = round(signed - toNum(raw.allocated_by_then), 2)
-    if (outstanding <= 0) continue
-
-    const overdue = dueDate ? daysBetween(dueDate, asAt) : 0
-    const bucket = bucketFor(overdue, bucketWidth)
-    aging[bucket] = round(aging[bucket] + outstanding, 2)
-    aging.total = round(aging.total + outstanding, 2)
-  }
-
-  return aging
+  const { customerAging } = await import('./aging')
+  const { rows } = await customerAging(siteId, {
+    asAt,
+    customerId,
+    bucketDays: bucketWidth,
+  })
+  return rows[0]?.aging ?? emptyAging()
 }
 
 /** The whole book, bucketed, for the age-analysis screen. */

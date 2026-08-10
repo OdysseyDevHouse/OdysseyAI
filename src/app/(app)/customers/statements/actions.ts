@@ -47,7 +47,12 @@ export async function startRunAction(input: CreateRunInput): Promise<RunResult> 
 /** Queues every account matching the current filter, not just the page. */
 export async function startRunForFilterAction(
   filter: CustomerListOptions,
-  period: { from: string; to: string; format?: 'open-item' | 'activity' },
+  period: {
+    from: string
+    to: string
+    format?: 'open-item' | 'activity'
+    periodMode?: 'cycle' | 'fixed'
+  },
 ): Promise<RunResult> {
   const site = await requireSite()
   const ids = await customerIdsMatching(site.id, filter)
@@ -58,6 +63,7 @@ export async function startRunForFilterAction(
     periodFrom: period.from,
     periodTo: period.to,
     format: period.format,
+    periodMode: period.periodMode,
   })
 }
 

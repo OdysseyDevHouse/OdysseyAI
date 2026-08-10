@@ -1,7 +1,7 @@
 import 'server-only'
 import PDFDocument from 'pdfkit'
 import { formatMoney } from '../decimals'
-import { AGING_BUCKETS, BUCKET_LABELS } from '../site/ledger'
+import { AGING_BUCKETS } from '../site/ledger'
 import type { StatementData } from './render'
 
 /**
@@ -92,7 +92,7 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
     .font('Helvetica')
     .fontSize(8)
     .fillColor(MUTED)
-    .text(`${data.period.from} to ${data.period.to}`, MARGIN, MARGIN + 20, {
+    .text(data.periodLabel, MARGIN, MARGIN + 20, {
       width: CONTENT_WIDTH,
       align: 'right',
     })
@@ -142,7 +142,15 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
   }
 
   if (data.lines.length === 0) {
-    y = tableRow(doc, y, ['', '', 'Nothing outstanding — thank you.', '', '', ''])
+    // Same wording rule as the on-screen document, so the two cannot disagree.
+    y = tableRow(doc, y, [
+      '',
+      '',
+      data.format === 'activity' ? 'No movements in this period.' : 'Nothing outstanding — thank you.',
+      '',
+      '',
+      '',
+    ])
   }
 
   for (const line of data.lines) {
@@ -185,7 +193,7 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
     const cellWidth = CONTENT_WIDTH / 6
     doc.font('Helvetica').fontSize(8).fillColor(MUTED)
     AGING_BUCKETS.forEach((bucket, index) => {
-      doc.text(BUCKET_LABELS[bucket], MARGIN + index * cellWidth, y, {
+      doc.text(data.bucketLabels[bucket], MARGIN + index * cellWidth, y, {
         width: cellWidth - 6,
         align: 'right',
       })

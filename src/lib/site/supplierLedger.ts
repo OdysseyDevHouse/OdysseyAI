@@ -188,6 +188,27 @@ export async function supplierAgingFor(siteId: number, supplierId: number): Prom
   return aging
 }
 
+/**
+ * One supplier's aging AS IT STOOD on a past date — the creditors twin of agingAsAt.
+ *
+ * supplierAgingFor above reads amount_outstanding, which is the CURRENT position and
+ * therefore wrong for a statement of a past period: an invoice we have since paid would
+ * read as settled on a document dated before we paid it.
+ *
+ * No bucket width here. Suppliers have no statement cycle of ours — they decide when to
+ * statement us, and this screen exists to reconcile against the document they send — so
+ * the ladder stays the 30/60/90/120 every creditors report uses.
+ */
+export async function supplierAgingAsAt(
+  siteId: number,
+  supplierId: number,
+  asAt: string,
+): Promise<Aging> {
+  const { supplierAging } = await import('./aging')
+  const { rows } = await supplierAging(siteId, { asAt, supplierId })
+  return rows[0]?.aging ?? emptyAging()
+}
+
 export async function supplierAgingSummary(siteId: number): Promise<Aging> {
   const rows = await siteQuery<Row>(
     siteId,

@@ -13,7 +13,7 @@ import { createCustomer } from '../src/lib/site/customers'
 import { postTransaction } from '../src/lib/site/customerLedger'
 import {
   createRun, processRun, listItems, getRun, retryFailed, refreshCounts,
-  lastStatementFor, deleteRun,
+  lastStatementFor, deleteRun, itemPeriod,
 } from '../src/lib/site/statementRuns'
 import { isConfigured } from '../src/lib/mail'
 import { toNum } from '../src/lib/decimals'
@@ -67,6 +67,62 @@ async function main() {
     byCode.get(`STC${stamp}`)?.error ?? '')
   ok('  the sendable one is queued', byCode.get(`STA${stamp}`)?.status === 'queued')
   ok('  balance captured at queue time', byCode.get(`STA${stamp}`)?.closingBalance === 1150, String(byCode.get(`STA${stamp}`)?.closingBalance))
+
+  // ── Per-item periods
+  //
+  // Three accounts on three different cycles, one requested end date. Each must
+  // get ITS OWN period containing that date, or a weekly customer receives a
+  // month-long "statement" — a different document, not a rounding error.
+  await siteExecute(SITE, "UPDATE customers SET statement_cycle='7day', statement_anchor_date='2026-08-04' WHERE id = ?", [withEmail.id])
+  await siteExecute(SITE, "UPDATE customers SET statement_cycle='14day', statement_anchor_date='2026-08-04' WHERE id = ?", [noEmail.id])
+  await siteExecute(SITE, "UPDATE customers SET statement_cycle='monthly', statement_anchor_day=0 WHERE id = ?", [noBalance.id])
+
+  const cycleRun = await createRun(SITE, actor, {
+    customerIds: [withEmail.id, noEmail.id, noBalance.id],
+    periodFrom: '2026-08-01',
+    periodTo: '2026-08-06',
+  })
+  ok('*** a cycle run is created ***', cycleRun.ok, cycleRun.ok ? '' : cycleRun.error)
+  if (cycleRun.ok) {
+    const byCycleCode = new Map((await listItems(SITE, cycleRun.runId)).map((i) => [i.customerCode, i]))
+    const weekly = byCycleCode.get(`STA${stamp}`)
+    const fortnightly = byCycleCode.get(`STB${stamp}`)
+    const monthly = byCycleCode.get(`STC${stamp}`)
+
+    ok('  the weekly account gets its week', weekly?.periodFrom === '2026-08-04' && weekly?.periodTo === '2026-08-10', `${weekly?.periodFrom}..${weekly?.periodTo}`)
+    ok('  the fortnightly account gets its fortnight', fortnightly?.periodFrom === '2026-08-04' && fortnightly?.periodTo === '2026-08-17', `${fortnightly?.periodFrom}..${fortnightly?.periodTo}`)
+    ok('  the monthly account gets the whole month', monthly?.periodFrom === '2026-08-01' && monthly?.periodTo === '2026-08-31', `${monthly?.periodFrom}..${monthly?.periodTo}`)
+    ok('  every period contains the requested end date',
+      [weekly, fortnightly, monthly].every((i) => (i?.periodFrom ?? '') <= '2026-08-06' && (i?.periodTo ?? '') >= '2026-08-06'))
+    ok('  and they are genuinely different', new Set([weekly?.periodTo, fortnightly?.periodTo, monthly?.periodTo]).size === 3)
+
+    // The escape hatch: everyone's January, whatever their cycle.
+    const fixedRun = await createRun(SITE, actor, {
+      customerIds: [withEmail.id, noEmail.id, noBalance.id],
+      periodFrom: '2026-01-01',
+      periodTo: '2026-01-31',
+      periodMode: 'fixed',
+    })
+    ok('*** a fixed run overrides every cycle ***', fixedRun.ok, fixedRun.ok ? '' : fixedRun.error)
+    if (fixedRun.ok) {
+      const fixedItems = await listItems(SITE, fixedRun.runId)
+      ok('  no item carries its own period', fixedItems.every((i) => i.periodFrom === null && i.periodTo === null))
+      // Which is how a legacy row behaves too, and it must still send.
+      const fixed = await getRun(SITE, fixedRun.runId)
+      const resolved = fixed ? itemPeriod(fixed, fixedItems[0]) : null
+      ok('  so they fall back to the run period', resolved?.from === '2026-01-01' && resolved?.to === '2026-01-31', `${resolved?.from}..${resolved?.to}`)
+      await siteExecute(SITE, 'DELETE FROM customer_statement_items WHERE run_id = ?', [fixedRun.runId])
+      await siteExecute(SITE, 'DELETE FROM customer_statement_runs WHERE id = ?', [fixedRun.runId])
+    }
+
+    await siteExecute(SITE, 'DELETE FROM customer_statement_items WHERE run_id = ?', [cycleRun.runId])
+    await siteExecute(SITE, 'DELETE FROM customer_statement_runs WHERE id = ?', [cycleRun.runId])
+  }
+
+  // Back to monthly so the send assertions below are not cycle-dependent.
+  for (const id of [withEmail.id, noEmail.id, noBalance.id]) {
+    await siteExecute(SITE, "UPDATE customers SET statement_cycle='monthly', statement_anchor_date=NULL WHERE id = ?", [id])
+  }
 
   // Queueing the same account twice on one run must be impossible.
   let duplicate = false

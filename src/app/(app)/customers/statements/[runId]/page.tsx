@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
-import { getRun, listItems, refreshCounts } from '@/lib/site/statementRuns'
+import { getRun, listItems, refreshCounts, itemPeriod } from '@/lib/site/statementRuns'
 import {
   PageHeader,
   PageBody,
@@ -101,6 +101,7 @@ export default async function StatementRunPage({
               code: item.customerCode,
               name: item.customerName,
               email: item.email,
+              period: formatPeriod(itemPeriod(run, item)),
               balance: item.closingBalance,
               overdue: item.overdueAmount,
               when: item.sentAt?.toLocaleString('en-ZA') ?? null,
@@ -114,3 +115,12 @@ export default async function StatementRunPage({
     </>
   )
 }
+
+/** '1–31 Aug 2026' when one month, otherwise both dates. Kept short — it is a column. */
+function formatPeriod({ from, to }: { from: string; to: string }): string {
+  return from.slice(0, 7) === to.slice(0, 7)
+    ? `${Number(from.slice(8))}–${Number(to.slice(8))} ${MONTHS[Number(to.slice(5, 7)) - 1]} ${to.slice(0, 4)}`
+    : `${from} → ${to}`
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

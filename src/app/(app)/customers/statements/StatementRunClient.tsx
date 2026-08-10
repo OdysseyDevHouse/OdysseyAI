@@ -21,7 +21,8 @@ import {
   useToast,
   type Column,
 } from '@/components/ui'
-import { DateRangeField } from '@/components/ui'
+import { Callout, DateRangeField, Input } from '@/components/ui'
+import { CYCLE_LABELS, type StatementCycle } from '@/lib/statementCycles'
 import { formatMoney } from '@/lib/decimals'
 import { startRunAction } from './actions'
 
@@ -46,6 +47,7 @@ type Candidate = {
   name: string
   email: string | null
   balance: number
+  cycle: StatementCycle
 }
 
 export default function StatementRunClient({
@@ -67,6 +69,10 @@ export default function StatementRunClient({
   const [owingOnly, setOwingOnly] = useState(true)
   const [format, setFormat] = useState<'open-item' | 'activity'>('open-item')
   const [period, setPeriod] = useState(defaultPeriod())
+  const [periodMode, setPeriodMode] = useState<'cycle' | 'fixed'>('cycle')
+  // In cycle mode the operator supplies one date — "statements up to" — and each
+  // account contributes its own period containing it.
+  const [upTo, setUpTo] = useState(() => defaultPeriod().to)
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -80,6 +86,15 @@ export default function StatementRunClient({
   const sendable = chosen.filter((c) => c.email && c.balance !== 0)
   const skipped = chosen.length - sendable.length
 
+  // Which cycles the sendable selection spans, biggest group first.
+  const cycleMix = useMemo(() => {
+    const counts = new Map<StatementCycle, number>()
+    for (const c of sendable) counts.set(c.cycle, (counts.get(c.cycle) ?? 0) + 1)
+    return [...counts.entries()]
+      .map(([cycle, count]) => ({ cycle, count }))
+      .sort((a, b) => b.count - a.count)
+  }, [sendable])
+
   function selectAllSendable() {
     setSelected(new Set(rows.filter((r) => r.email && r.balance !== 0).map((r) => String(r.id))))
   }
@@ -88,9 +103,12 @@ export default function StatementRunClient({
     startTransition(async () => {
       const result = await startRunAction({
         customerIds: chosen.map((c) => c.id),
-        periodFrom: period.from,
-        periodTo: period.to,
+        // In cycle mode the run's own dates are only the reference window the
+        // screen shows; each item carries the period actually used.
+        periodFrom: periodMode === 'cycle' ? upTo : period.from,
+        periodTo: periodMode === 'cycle' ? upTo : period.to,
         format,
+        periodMode,
       })
 
       if (!result.ok) {
@@ -137,9 +155,33 @@ export default function StatementRunClient({
             }
           />
 
-          <CardBody className="border-b border-border">
+          <CardBody className="flex flex-col gap-4 border-b border-border">
             <TableToolbar>
-              <DateRangeField value={period} onChange={setPeriod} label="Period" />
+              <Field
+                label="Period"
+                hint={
+                  periodMode === 'cycle'
+                    ? 'Each account gets its own period containing this date.'
+                    : 'The same dates for every account, whatever their cycle.'
+                }
+                className="w-56"
+              >
+                <Select
+                  value={periodMode}
+                  onChange={(e) => setPeriodMode(e.target.value as typeof periodMode)}
+                >
+                  <option value="cycle">Each account&rsquo;s own cycle</option>
+                  <option value="fixed">One fixed period for everyone</option>
+                </Select>
+              </Field>
+
+              {periodMode === 'cycle' ? (
+                <Field label="Statements up to" className="w-44">
+                  <Input type="date" value={upTo} onChange={(e) => setUpTo(e.target.value)} />
+                </Field>
+              ) : (
+                <DateRangeField value={period} onChange={setPeriod} label="Dates" />
+              )}
               <Field
                 label="Format"
                 hint="Open items is what a customer needs in order to pay."
@@ -157,6 +199,16 @@ export default function StatementRunClient({
                 hint="A statement saying nothing is owed is inbox noise."
               />
             </TableToolbar>
+
+            {/* Only worth saying when the selection actually spans cycles —
+                otherwise it is a notice about nothing. */}
+            {periodMode === 'cycle' && cycleMix.length > 1 && (
+              <Callout tone="neutral" title="These accounts are on different cycles">
+                {cycleMix.map((m) => `${m.count} ${CYCLE_LABELS[m.cycle].toLowerCase()}`).join(', ')}
+                {' — each gets its own period containing '}
+                {upTo}.
+              </Callout>
+            )}
           </CardBody>
 
           <BulkActionBar count={chosen.length} onClear={() => setSelected(new Set())}>

@@ -31,6 +31,7 @@ export default async function StatementsPage() {
         name: c.name,
         email: c.email,
         balance: c.balance,
+        cycle: c.cycle,
       }))}
       mailReady={mailReady}
       subtitle={`${owing.length} account${owing.length === 1 ? '' : 's'} with a balance`}

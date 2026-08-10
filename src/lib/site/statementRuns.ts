@@ -6,6 +6,7 @@ import { send, isConfigured } from '../mail'
 import { buildStatement, type StatementFormat } from '../statements/render'
 import { renderStatementPdf } from '../statements/pdf'
 import { logActivity, type Actor } from './activityLog'
+import { periodContaining, toStatementCycle } from '../statementCycles'
 
 /**
  * Statement runs — sending many statements without blocking a request.
@@ -54,7 +55,23 @@ export type StatementItem = {
   overdueAmount: number
   attempts: number
   error: string | null
+  /**
+   * The period this account was actually statemented for.
+   *
+   * Null on rows written before per-item periods existed, and on a fixed-period
+   * run — both fall back to the run's own dates.
+   */
+  periodFrom: string | null
+  periodTo: string | null
   sentAt: Date | null
+}
+
+/** The period an item was sent for, falling back to the run's. */
+export function itemPeriod(run: StatementRun, item: StatementItem): { from: string; to: string } {
+  return {
+    from: item.periodFrom ?? run.periodFrom,
+    to: item.periodTo ?? run.periodTo,
+  }
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -86,6 +103,8 @@ function mapItem(r: Row): StatementItem {
     customerCode: String(r.customer_code),
     customerName: String(r.customer_name),
     email: (r.email as string | null) ?? null,
+    periodFrom: r.period_from == null ? null : String(r.period_from),
+    periodTo: r.period_to == null ? null : String(r.period_to),
     status: String(r.status) as ItemStatus,
     closingBalance: toNum(r.closing_balance),
     overdueAmount: toNum(r.overdue_amount),
@@ -150,6 +169,16 @@ export type CreateRunInput = {
   periodFrom: string
   periodTo: string
   format?: StatementFormat
+  /**
+   * 'cycle'  — each account gets its OWN period containing periodTo. A weekly
+   *            account gets that week, a monthly one that month. The default,
+   *            because it is what "statements up to the 31st" means once
+   *            accounts are on different cycles.
+   * 'fixed'  — every account gets periodFrom..periodTo unchanged. The escape
+   *            hatch for "everyone's January, whatever their cycle", which an
+   *            accountant reconciling a year eventually wants.
+   */
+  periodMode?: 'cycle' | 'fixed'
 }
 
 export type CreateResult = { ok: true; runId: number; queued: number } | { ok: false; error: string }
@@ -178,10 +207,14 @@ export async function createRun(
 
   const customers = await siteQuery<Row>(
     siteId,
-    `SELECT id, code, name, email, balance FROM customers WHERE id IN (${ids.map(() => '?').join(',')})`,
+    `SELECT id, code, name, email, balance, created_at,
+            statement_cycle, statement_anchor_day, statement_anchor_date
+       FROM customers WHERE id IN (${ids.map(() => '?').join(',')})`,
     ids,
   )
   if (customers.length === 0) return { ok: false, error: 'None of those accounts exist.' }
+
+  const byCycle = (input.periodMode ?? 'cycle') === 'cycle'
 
   return siteTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
@@ -212,16 +245,37 @@ export async function createRun(
           : null
       if (skipReason) skipped++
 
+      // Resolved once, at queue time, and stored. Deriving it at send time
+      // instead would let an account's cycle change mid-run and produce a
+      // document for a period nobody asked for.
+      const period = byCycle
+        ? periodContaining(
+            {
+              cycle: toStatementCycle(customer.statement_cycle),
+              anchorDay: Number(customer.statement_anchor_day ?? 0),
+              anchorDate:
+                customer.statement_anchor_date == null
+                  ? null
+                  : String(customer.statement_anchor_date),
+              fallbackAnchor: isoDate(customer.created_at as Date),
+            },
+            input.periodTo,
+          )
+        : null
+
       await tx.execute(
         `INSERT INTO customer_statement_items
-           (run_id, customer_id, customer_code, customer_name, email, status, closing_balance, error)
-         VALUES (?,?,?,?,?,?,?,?)`,
+           (run_id, customer_id, customer_code, customer_name, email,
+            period_from, period_to, status, closing_balance, error)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [
           runId,
           Number(customer.id),
           String(customer.code),
           String(customer.name),
           email,
+          period?.from ?? null,
+          period?.to ?? null,
           skipReason ? 'skipped' : 'queued',
           balance.toFixed(4),
           skipReason,
@@ -319,11 +373,15 @@ async function sendOne(
 
   if (!item.email) return fail('No email address on file.')
 
+  // This account's own period, not the run's — on a cycle run they differ, and
+  // the subject line and filename must name what was actually sent.
+  const period = itemPeriod(run, item)
+
   try {
     const data = await buildStatement(siteId, siteName, siteVatNumber, item.customerId, {
       format: run.format,
-      from: run.periodFrom,
-      to: run.periodTo,
+      from: period.from,
+      to: period.to,
     })
     if (!data) return fail('That account no longer exists.')
 
@@ -331,11 +389,11 @@ async function sendOne(
 
     const result = await send({
       to: item.email,
-      subject: `Statement — ${data.account.code} — ${run.periodTo}`,
+      subject: `Statement — ${data.account.code} — ${period.to}`,
       text: plainBody(data.account.name, data.closingBalance, data.dueNow, siteName, data.account.code),
       attachments: [
         {
-          filename: `statement-${data.account.code}-${run.periodTo}.pdf`,
+          filename: `statement-${data.account.code}-${period.to}.pdf`,
           content: pdf,
           contentType: 'application/pdf',
         },
@@ -455,4 +513,11 @@ export async function deleteRun(
     detail: `Run of ${run.totalCount} statement${run.totalCount === 1 ? '' : 's'} removed`,
   })
   return { ok: true }
+}
+
+/** A Date to yyyy-mm-dd in local time, for the cycle anchor fallback. */
+function isoDate(value: Date): string {
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${value.getFullYear()}-${month}-${day}`
 }

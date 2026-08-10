@@ -296,7 +296,7 @@ export async function buildSupplierStatement(
   opts: StatementOptions = {},
 ): Promise<StatementData | null> {
   const { getSupplier } = await import('../site/suppliers')
-  const { listSupplierLedger, supplierAgingFor } = await import('../site/supplierLedger')
+  const { listSupplierLedger, supplierAgingAsAt } = await import('../site/supplierLedger')
 
   const supplier = await getSupplier(siteId, supplierId)
   if (!supplier) return null
@@ -304,10 +304,14 @@ export async function buildSupplierStatement(
   const format = opts.format ?? 'open-item'
   const to = opts.to ?? today()
   const from = opts.from ?? defaultFrom(to)
+  const historic = to < today()
 
   const [all, aging] = await Promise.all([
     listSupplierLedger(siteId, supplierId, { limit: 2000 }),
-    supplierAgingFor(siteId, supplierId),
+    // As at the period end, exactly as the debtors side does it. A creditor has
+    // no cycle, but "what did this account look like in June" is the same
+    // question and has the same wrong answer if measured from today.
+    supplierAgingAsAt(siteId, supplierId, to),
   ])
 
   const opening = all
@@ -317,9 +321,13 @@ export async function buildSupplierStatement(
   const inPeriod = all.filter((line) => line.docDate >= from && line.docDate <= to)
 
   const source =
-    format === 'open-item' ? all.filter((line) => line.amountOutstanding !== 0) : inPeriod
+    format === 'open-item'
+      ? // On a historic period, documents raised after it are excluded — listing
+        // a July invoice on a June statement is plainly wrong.
+        all.filter((line) => line.amountOutstanding !== 0 && (!historic || line.docDate <= to))
+      : inPeriod
 
-  const now = today()
+  const asAt = to
   let running = format === 'open-item' ? 0 : opening
 
   const lines: StatementLine[] = source.map((line) => {
@@ -334,12 +342,24 @@ export async function buildSupplierStatement(
       credit: line.amountSigned < 0 ? -line.amountSigned : 0,
       outstanding: line.amountOutstanding,
       daysOverdue:
-        line.dueDate && line.amountOutstanding > 0 ? Math.max(daysBetween(line.dueDate, now), 0) : 0,
+        line.dueDate && line.amountOutstanding > 0
+          ? Math.max(daysBetween(line.dueDate, asAt), 0)
+          : 0,
       balance: running,
     }
   })
 
   const dueNow = round(aging.d30 + aging.d60 + aging.d90 + aging.d120, 2)
+
+  // Every posted movement up to the period end, not supplier.balance — that is
+  // today's figure and would contradict the lines above it on a past period.
+  // Allocations do not move a balance, so no reconstruction is needed here.
+  const closing = round(
+    all
+      .filter((line) => line.docDate <= to)
+      .reduce((sum, line) => round(sum + line.amountSigned, 2), 0),
+    2,
+  )
 
   return {
     format,
@@ -377,7 +397,7 @@ export async function buildSupplierStatement(
     cycle: 'monthly' as const,
     bucketLabels: cycleBucketLabels('monthly'),
     openingBalance: opening,
-    closingBalance: supplier.balance,
+    closingBalance: closing,
     lines,
     aging,
     dueNow,
@@ -403,7 +423,16 @@ function defaultFrom(to: string): string {
 export async function statementCandidates(
   siteId: number,
   opts: { includeZero?: boolean; overdueOnly?: boolean } = {},
-): Promise<{ id: number; code: string; name: string; email: string | null; balance: number }[]> {
+): Promise<
+  {
+    id: number
+    code: string
+    name: string
+    email: string | null
+    balance: number
+    cycle: StatementCycle
+  }[]
+> {
   const { listCustomers } = await import('../site/customers')
   const { items } = await listCustomers(siteId, {
     statuses: ['active', 'on_hold', 'inactive'],
@@ -417,6 +446,8 @@ export async function statementCandidates(
     name: c.name,
     email: c.email,
     balance: c.balance,
+    // So the run screen can warn when one send spans several cycles.
+    cycle: c.statementCycle,
   }))
 }
 
