@@ -1,24 +1,19 @@
-import type { CategoryTone } from '@/components/ui'
-import { SUBPAGE_LABELS } from '@/lib/nav'
+import { groupsFor, resolveGroups, type DeclaredGroup, type HubGroup } from '@/lib/hub'
+import type { SubpageHref } from '@/lib/nav'
 
 /**
  * Every setup screen, grouped by the job it does.
  *
- * This is the ONLY list of the setup screens. The sidebar used to name all
- * fourteen as well — a flat menu that said nothing about what any of them did,
- * and gave every setting two front doors that could disagree. It is now a
- * single "Setup" link to the hub this file describes, so a new setting is added
- * here and appears in the one place people look.
+ * This is the ONLY list of the setup screens. The sidebar used to name all of
+ * them as well — a flat menu that said nothing about what any of them did, and
+ * gave every setting two front doors that could disagree. It is now a single
+ * "Setup" link to the hub this file describes, so a new setting is added here
+ * and appears in the one place people look.
  *
  * Grouped by WHAT SOMEBODY IS TRYING TO DO — let a person in, decide what a
  * sale costs, get the shop's own details right — and each carries the one line
  * that says what it decides, which is what makes an unfamiliar setting
  * choosable by someone who has not opened it before.
- *
- * The `capability` on each entry mirrors the guard on the page it points at.
- * That is deliberate duplication: it hides a tile somebody may not open, but it
- * is NOT the boundary. Every one of these pages checks for itself, because a
- * hidden tile is still a URL anyone can type.
  *
  * Labels come from `SUBPAGE_LABELS` in `src/lib/nav.ts`, which the breadcrumb
  * also reads — so a screen can never be called one thing on its tile and
@@ -26,74 +21,19 @@ import { SUBPAGE_LABELS } from '@/lib/nav'
  */
 
 /**
- * A setup route. Typed off `SUBPAGE_LABELS` so a tile pointing at a screen the
- * breadcrumb has never heard of is a compile error rather than a page that
- * renders with no trail.
+ * A setup route. Narrowed from `SubpageHref` — which names every hub's screens —
+ * to the ones under /setup, so a tile pointing at a screen the breadcrumb has
+ * never heard of is a compile error, and so is one belonging to another hub.
  */
-export type SetupHref = keyof typeof SUBPAGE_LABELS
+export type SetupHref = Extract<
+  SubpageHref,
+  `/setup/${string}` | `/staff/${string}` | '/credit/levels' | `/loyalty/${string}`
+>
 
-/** A setting as written below — no label, because the href already implies it. */
-type DeclaredItem = {
-  href: SetupHref
-  /** What this screen decides, in one line. */
-  description: string
-  /** Words someone might search for that are not in the label. */
-  keywords?: string
-  icon: SetupIconName
-  /**
-   * The tile's own hue. Set per SETTING rather than inherited from the group,
-   * so a row of five is five distinguishable things rather than one colour
-   * repeated — the tile then works as an identifier when someone is scanning
-   * for the shape they used last time, which is the whole point of having one.
-   */
-  tone: CategoryTone
-  capability: string
-}
-
-/** A setting as the hub renders it, with its name resolved. */
-export type SetupItem = DeclaredItem & { label: string }
-
-type DeclaredGroup = {
-  label: string
-  /** Why these belong together — shown under the group heading. */
-  description: string
-  tone: CategoryTone
-  icon: SetupIconName
-  items: DeclaredItem[]
-}
-
-export type SetupGroup = Omit<DeclaredGroup, 'items'> & { items: SetupItem[] }
-
-/**
- * Icons are named rather than imported as components, because this module is
- * read by a server component and a Lucide component cannot cross the
- * server/client boundary as a prop. `SetupHub` maps the name back to the glyph
- * on its own side.
- */
-export type SetupIconName =
-  | 'Users'
-  | 'KeyRound'
-  | 'Store'
-  | 'Warehouse'
-  | 'Percent'
-  | 'CreditCard'
-  | 'Terminal'
-  | 'LayoutGrid'
-  | 'Hash'
-  | 'Check'
-  | 'FileText'
-  | 'Package'
-  | 'Scale'
-  | 'Database'
-  | 'Palette'
-  | 'Settings'
-  | 'ShieldCheck'
-  | 'Coins'
-
-const DECLARED: DeclaredGroup[] = [
+const DECLARED: DeclaredGroup<SetupHref>[] = [
   {
     label: 'People & access',
-    description: 'Who may sign in, and what each of them is allowed to do.',
+    description: 'Who may sign in, what they are allowed to do, and what they are paid.',
     tone: 'sky',
     icon: 'ShieldCheck',
     items: [
@@ -112,6 +52,25 @@ const DECLARED: DeclaredGroup[] = [
         icon: 'KeyRound',
         tone: 'indigo',
         capability: 'setup.users',
+      },
+      /* Pay rules and cost sit with people rather than under Staff: both are
+         configuration that decides what every figure on the staff screens comes
+         to, and neither is opened in the course of a normal week. */
+      {
+        href: '/staff/pay-rules',
+        description: 'Overtime, Sundays and public holidays — what an hour is worth.',
+        keywords: 'overtime rates wages salary hourly bcea holidays',
+        icon: 'Percent',
+        tone: 'amber',
+        capability: 'staff.cost',
+      },
+      {
+        href: '/staff/cost',
+        description: 'What each employee costs the business, once the rules are applied.',
+        keywords: 'wages salary labour cost payroll per employee',
+        icon: 'Coins',
+        tone: 'emerald',
+        capability: 'staff.cost',
       },
     ],
   },
@@ -144,6 +103,14 @@ const DECLARED: DeclaredGroup[] = [
         icon: 'Package',
         tone: 'violet',
         capability: 'setup.edit',
+      },
+      {
+        href: '/credit/levels',
+        description: 'How much credit a customer may take, and when they are stopped.',
+        keywords: 'credit limit terms account hold blocked risk',
+        icon: 'ShieldCheck',
+        tone: 'rose',
+        capability: 'customers.credit',
       },
       {
         href: '/setup/expense-categories',
@@ -212,6 +179,42 @@ const DECLARED: DeclaredGroup[] = [
     ],
   },
   {
+    /* Loyalty's own settings, which used to be three of the four rows in a
+       top-level Loyalty menu section. The members list stays in the menu under
+       Customers, because that is the screen somebody actually opens; these three
+       decide how the programme works and are set once. */
+    label: 'Loyalty',
+    description: 'How the programme rewards people, and what a point is worth.',
+    tone: 'violet',
+    icon: 'Gem',
+    items: [
+      {
+        href: '/loyalty/programme',
+        description: 'Whether points are earned, at what rate, and what they redeem for.',
+        keywords: 'points rewards earn rate redemption programme rules',
+        icon: 'Settings',
+        tone: 'violet',
+        capability: 'loyalty.view',
+      },
+      {
+        href: '/loyalty/tiers',
+        description: 'Bronze, silver, gold — what it takes to get there and what it gives.',
+        keywords: 'tiers levels vip bronze silver gold status benefits',
+        icon: 'Gem',
+        tone: 'amber',
+        capability: 'loyalty.view',
+      },
+      {
+        href: '/loyalty/cards',
+        description: 'Buy nine, get the tenth free — punch cards and what fills them.',
+        keywords: 'punch card stamps buy x get y free coffee',
+        icon: 'Stamp',
+        tone: 'orange',
+        capability: 'loyalty.view',
+      },
+    ],
+  },
+  {
     label: 'System',
     description: 'The plumbing — document numbers, databases, and whether it all adds up.',
     tone: 'slate',
@@ -253,33 +256,12 @@ const DECLARED: DeclaredGroup[] = [
   },
 ]
 
-/**
- * The catalogue, with every tile's name filled in from `SUBPAGE_LABELS`.
- *
- * Resolved here rather than typed out on each entry so that renaming a screen
- * is one edit in `nav.ts` and the tile, the breadcrumb and the search all
- * follow. A tile whose href is not in the map cannot be written — `SetupHref`
- * makes it a compile error — so the fallback is unreachable and exists only to
- * keep the type honest.
- */
-export const SETUP_GROUPS: SetupGroup[] = DECLARED.map((group) => ({
-  ...group,
-  items: group.items.map((item) => ({ ...item, label: SUBPAGE_LABELS[item.href] ?? item.href })),
-}))
+export const SETUP_GROUPS: HubGroup[] = resolveGroups(DECLARED)
 
 /** The whole catalogue flat — for searching and counting. */
-export const SETUP_ITEMS: SetupItem[] = SETUP_GROUPS.flatMap((g) => g.items)
+export const SETUP_ITEMS = SETUP_GROUPS.flatMap((g) => g.items)
 
-/**
- * The catalogue as one user sees it.
- *
- * A group disappears once every tile in it is hidden, rather than rendering an
- * empty heading — a "Money & pricing" heading over nothing reads as a broken
- * screen rather than a restricted one.
- */
-export function setupGroupsFor(granted: (capability: string) => boolean): SetupGroup[] {
-  return SETUP_GROUPS.flatMap((group) => {
-    const items = group.items.filter((item) => granted(item.capability))
-    return items.length ? [{ ...group, items }] : []
-  })
+/** The catalogue as one user sees it — empty groups dropped. */
+export function setupGroupsFor(granted: (capability: string) => boolean): HubGroup[] {
+  return groupsFor(SETUP_GROUPS, granted)
 }

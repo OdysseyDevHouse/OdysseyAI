@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronRight, HelpCircle as CircleHelp, Settings, Bell, LogOut } from '@/components/ui/icons'
-import { Button, MenuItem } from '@/components/ui'
+import { Button, ButtonLink, MenuItem } from '@/components/ui'
 import { breadcrumbFor } from '@/lib/nav'
 import StoreSwitcher, { type SwitcherSite } from './StoreSwitcher'
 import ThemeToggle from './ThemeToggle'
@@ -21,11 +21,35 @@ function IconButton({
   label,
   icon: Icon,
   onClick,
+  href,
 }: {
   label: string
   icon: typeof Bell
   onClick?: () => void
+  /** Renders a link instead of a button — for a destination rather than an action. */
+  href?: string
 }) {
+  if (href) {
+    /* The guide is a static file under public/, so it needs a real navigation
+       rather than a client-side route change — hence prefetch={false} and its
+       own tab, which also means a half-finished capture on this screen survives
+       somebody reading the help. */
+    return (
+      <ButtonLink
+        href={href}
+        target="_blank"
+        rel="noopener"
+        prefetch={false}
+        variant="bare"
+        iconOnly
+        title={label}
+        aria-label={label}
+      >
+        <Icon size={18} />
+      </ButtonLink>
+    )
+  }
+
   return (
     <Button variant="bare" iconOnly title={label} aria-label={label} onClick={onClick}>
       <Icon size={18} />
@@ -105,8 +129,10 @@ export default function TopBar({
       <div className="flex shrink-0 items-center gap-2">
         <StoreSwitcher sites={sites} currentId={currentSiteId} />
 
+        {/* The help centre moved here from a card at the foot of the sidebar,
+            which cost 90px of permanent chrome in a menu being quietened. */}
+        <IconButton label="Help" icon={CircleHelp} href="/help.html" />
         {/* Not wired up yet — present so the shell is complete. */}
-        <IconButton label="Help" icon={CircleHelp} />
         <IconButton label="Settings" icon={Settings} />
         <IconButton label="Notifications" icon={Bell} />
 

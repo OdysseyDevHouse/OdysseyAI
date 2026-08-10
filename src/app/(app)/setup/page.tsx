@@ -2,8 +2,8 @@ import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { PageHeader, PageBody } from '@/components/ui'
+import HubView from '@/components/HubView'
 import { setupGroupsFor } from './catalogue'
-import SetupHub from './SetupHub'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +44,12 @@ export default async function SetupPage({
         subtitle="Everything that decides how this shop works — in one place"
       />
       <PageBody>
-        <SetupHub groups={groups} initialSearch={q ?? ''} />
+        <HubView
+          groups={groups}
+          noun="settings"
+          emptyHint="Your role does not include access to any setup screen. An owner can grant this under Roles & permissions."
+          initialSearch={q ?? ''}
+        />
       </PageBody>
     </>
   )

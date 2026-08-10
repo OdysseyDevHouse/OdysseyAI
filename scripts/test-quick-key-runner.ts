@@ -120,10 +120,10 @@ function main() {
   )
 
   /* ── 2. NO MESSAGE NAMES THE DESK TILL ───────────────────────────────────
-     The assertion this file was written for. `/sales/new` is a redirect to `/pos` since
-     phase 7 and the screen is deleted, so any message sending a cashier to "the desk
-     till" sends them in a circle. Checked across every slug AND both connection states,
-     because the offline branch is the one nobody looks at. */
+     The assertion this file was written for. The desk till at `/sales/new` is gone —
+     the screen since phase 7, the redirect that stood in for it since — so any message
+     sending a cashier to "the desk till" sends them nowhere. Checked across every slug
+     AND both connection states, because the offline branch is the one nobody looks at. */
 
   const offenders: string[] = []
   for (const action of QUICK_KEY_ACTIONS) {

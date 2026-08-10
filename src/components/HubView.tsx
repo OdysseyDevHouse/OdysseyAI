@@ -12,28 +12,39 @@ import {
   SegmentedControl,
   ToolbarSearch,
 } from '@/components/ui'
-import type { SetupGroup, SetupIconName, SetupItem } from './catalogue'
+import type { HubGroup, HubIconName, HubItem } from '@/lib/hub'
 
 type ViewMode = 'grid' | 'list'
 
 /**
- * Everything under Setup on one screen.
+ * A whole section on one screen.
  *
- * Setup is the section people visit rarely and under pressure — a new till on a
- * Saturday, a rate change the week it takes effect. So the screen optimises for
- * FINDING rather than browsing: the search matches descriptions and keywords as
- * well as labels, because somebody looking for "vat" is not looking for a
- * screen called "Price types", and somebody looking for "pin" wants Users.
+ * This is what a section becomes once it is too big for the menu — Setup first,
+ * then Accounting and the Online Store. Those sections are visited rarely and
+ * under pressure: a new till on a Saturday, a VAT return the week it is due. So
+ * the screen optimises for FINDING rather than browsing — the search matches
+ * descriptions and keywords as well as labels, because somebody looking for
+ * "vat" is not looking for a screen called "Price types", and somebody looking
+ * for "pin" wants Users.
  *
- * The grid is the default because these fourteen entries are unfamiliar to most
- * people who open them, and a tile with its one-line description is what makes
- * an unfamiliar thing choosable. The list is for the person who already knows.
+ * The grid is the default because these entries are unfamiliar to most people
+ * who open them, and a tile with its one-line description is what makes an
+ * unfamiliar thing choosable. The list is for the person who already knows.
+ *
+ * One component for every hub, so the three cannot drift into looking like
+ * three different products.
  */
-export default function SetupHub({
+export default function HubView({
   groups,
+  noun,
+  emptyHint,
   initialSearch = '',
 }: {
-  groups: SetupGroup[]
+  groups: HubGroup[]
+  /** What these screens are called collectively, for the search box and empties. */
+  noun: string
+  /** What to tell somebody whose role grants them none of this. */
+  emptyHint: string
   /** From `?q=`, so a search begun in the sidebar carries on here. */
   initialSearch?: string
 }) {
@@ -62,8 +73,8 @@ export default function SetupHub({
     return (
       <Card>
         <EmptyState
-          title="No settings available"
-          hint="Your role does not include access to any setup screen. An owner can grant this under Roles & permissions."
+          title={`No ${noun} available`}
+          hint={emptyHint}
           icon={<Icons.Lock size={28} strokeWidth={1.75} />}
         />
       </Card>
@@ -78,15 +89,15 @@ export default function SetupHub({
           <ToolbarSearch
             value={search}
             onChange={setSearch}
-            placeholder="Search settings…"
+            placeholder={`Search ${noun}…`}
             className="w-full"
-            aria-label="Search settings"
+            aria-label={`Search ${noun}`}
           />
         </div>
 
         <div className="ml-auto">
           <SegmentedControl
-            aria-label="How to show the settings"
+            aria-label={`How to show the ${noun}`}
             value={view}
             onChange={(v) => setView(v as ViewMode)}
             options={[
@@ -127,7 +138,7 @@ export default function SetupHub({
   )
 }
 
-function matches(item: SetupItem, query: string) {
+function matches(item: HubItem, query: string) {
   return (
     item.label.toLowerCase().includes(query) ||
     item.description.toLowerCase().includes(query) ||
@@ -144,7 +155,7 @@ function matches(item: SetupItem, query: string) {
  * only boxes on the screen — nesting cards inside cards is what makes a hub
  * read as busy.
  */
-function GroupGrid({ group }: { group: SetupGroup }) {
+function GroupGrid({ group }: { group: HubGroup }) {
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
@@ -158,15 +169,15 @@ function GroupGrid({ group }: { group: SetupGroup }) {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {group.items.map((item) => (
-          <SettingTile key={item.href} item={item} />
+          <ScreenTile key={item.href} item={item} />
         ))}
       </div>
     </section>
   )
 }
 
-/** One setting as a card: what it is called, and what it decides. */
-function SettingTile({ item }: { item: SetupItem }) {
+/** One screen as a card: what it is called, and what it decides. */
+function ScreenTile({ item }: { item: HubItem }) {
   return (
     <Link
       href={item.href}
@@ -192,7 +203,7 @@ function SettingTile({ item }: { item: SetupItem }) {
 /* ── list view ─────────────────────────────────────────────────────────── */
 
 /** The same catalogue as rows — for someone who knows the name already. */
-function GroupList({ group }: { group: SetupGroup }) {
+function GroupList({ group }: { group: HubGroup }) {
   return (
     <Card>
       <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
@@ -211,7 +222,7 @@ function GroupList({ group }: { group: SetupGroup }) {
             className="group flex items-center gap-3 px-4 py-2 outline-none transition-colors hover:bg-surface-2"
           >
             <CategoryTile icon={glyph(item.icon, 15)} tone={item.tone} size="sm" />
-            <span className="min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-4 sm:flex">
+            <span className="min-w-0 flex-1 flex-col sm:flex sm:flex-row sm:items-center sm:gap-4">
               <span className="min-w-0 truncate text-sm font-medium text-ink-2 group-hover:text-ink sm:w-56">
                 {item.label}
               </span>
@@ -231,16 +242,16 @@ function GroupList({ group }: { group: SetupGroup }) {
 /* ── icons ─────────────────────────────────────────────────────────────── */
 
 /**
- * Name → glyph, resolved here rather than in the catalogue: the catalogue is
+ * Name → glyph, resolved here rather than in a catalogue: a catalogue is
  * imported by a server component, and a Lucide component cannot be serialised
  * across the boundary as a prop.
  */
-function glyph(name: SetupIconName, size = 18) {
+function glyph(name: HubIconName, size = 18) {
   const Icon = ICONS[name]
   return <Icon size={size} strokeWidth={1.7} />
 }
 
-const ICONS: Record<SetupIconName, typeof Icons.Settings> = {
+const ICONS: Record<HubIconName, typeof Icons.Settings> = {
   Users: Icons.Users,
   KeyRound: Icons.KeyRound,
   Store: Icons.Store,
@@ -259,4 +270,23 @@ const ICONS: Record<SetupIconName, typeof Icons.Settings> = {
   Settings: Icons.Settings,
   ShieldCheck: Icons.ShieldCheck,
   Coins: Icons.Coins,
+  LineChart: Icons.LineChart,
+  BarChart: Icons.BarChart,
+  Landmark: Icons.Landmark,
+  Receipt: Icons.Receipt,
+  ListOrdered: Icons.ListOrdered,
+  Lock: Icons.Lock,
+  Reverse: Icons.Reverse,
+  CloudOff: Icons.Offline,
+  Mail: Icons.Mail,
+  Truck: Icons.Truck,
+  Clock: Icons.Clock,
+  Repeat: Icons.Repeat,
+  Tag: Icons.Tag,
+  MessageSquare: Icons.MessageSquare,
+  ShoppingBag: Icons.ShoppingBag,
+  Boxes: Icons.Boxes,
+  Bell: Icons.Bell,
+  Gem: Icons.Gem,
+  Stamp: Icons.Stamp,
 }

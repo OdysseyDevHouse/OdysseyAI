@@ -47,18 +47,8 @@ const GUARD =
  *
  * /not-allowed is where every refused guard redirects TO — guarding it would
  * bounce a user between two pages forever.
- *
- * /sales/new is the retired desk till, now a bare `redirect('/pos')`. It reads
- * nothing and renders nothing, so there is no data for a capability to protect;
- * the guard that matters is the one on `/pos`, which is where the visitor lands
- * and which checks `sales.till` for itself. Duplicating it here would be worse
- * than absent: a second gate on the way to a gated screen is a second place for
- * the two to disagree about who may sell.
  */
-const OPEN_PAGES = new Set([
-  'src/app/(app)/not-allowed/page.tsx',
-  'src/app/(app)/sales/new/page.tsx',
-])
+const OPEN_PAGES = new Set(['src/app/(app)/not-allowed/page.tsx'])
 
 /**
  * API routes that are deliberately unauthenticated, each for a documented
@@ -81,6 +71,19 @@ const OPEN_ROUTES = new Set([
   // rather than nothing — a biller running wide open would let anyone bill
   // every customer in the system.
   'src/app/api/contracts/tick/route.ts',
+  /*
+   * Three more cron heartbeats, all on the same reasoning as the two above: a scheduled
+   * price change, a stale-basket sweep and a storefront publish each run with nobody
+   * signed in, so each proves itself with its own *_CRON_SECRET compared by
+   * `timingSafeEqual` and refuses every request when that variable is unset.
+   *
+   * Listed here rather than the check being loosened. Verified individually before adding
+   * — a route in this set is one somebody has read, which is the whole point of the set
+   * being explicit.
+   */
+  'src/app/api/pricing/schedules/tick/route.ts',
+  'src/app/api/store/baskets/tick/route.ts',
+  'src/app/api/storefront/publish/route.ts',
   'src/app/store-images/[token]/[imageId]/route.ts',
   'src/app/api/store-images/[token]/[imageId]/route.ts', // public storefront asset
   // The shop's OWN pictures — a front-page banner or the masthead logo — for the
