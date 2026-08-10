@@ -82,6 +82,18 @@ export type SyncRequest = {
   deviceId: string
   /** Oldest first, and at most BATCH_SIZE. */
   sales: OfflineSale[]
+  /**
+   * Returns taken offline. Posted AFTER sales, deliberately.
+   *
+   * A return and a sale are independent documents, so strictly the order does not
+   * affect either one's arithmetic. It affects the STOCK: a sale that drove a product
+   * negative and a return that puts it back read far more sensibly in the movement
+   * ledger in the order they happened, and a shop reading `stock_movements` to find out
+   * why a count is wrong should not have to reason about sync order to do it.
+   *
+   * Cancellations still come last, after both — see the sync route.
+   */
+  returns?: OfflineReturn[]
 }
 
 export type SyncSaleResult = {
@@ -106,6 +118,8 @@ export type SyncSaleResult = {
 
 export type SyncResponse = {
   results: SyncSaleResult[]
+  /** One per return sent, in the same shape and with the same retry contract. */
+  returns?: SyncReturnResult[]
   /** One per cancellation sent, so the till knows which reached the audit trail. */
   cancelled?: { saleUid: string; ok: boolean; error?: string }[]
 }
@@ -155,6 +169,108 @@ export type OutboxSale = OfflineSale & {
    * it reads a cancelled document that kept its number.
    */
   numberBurnt?: boolean
+}
+
+/* ── A return taken offline ──────────────────────────────────────────────── */
+
+/**
+ * One line of a return taken while the till could not reach the server.
+ *
+ * `unitCostExcl` is carried rather than looked up, for the same reason the online
+ * credit note copies it from the original invoice line: re-reading the product's cost
+ * at sync time would value a return at TODAY's cost and manufacture margin that was
+ * never earned. Offline the till has only its catalog's copy, which is the closest
+ * honest answer available and is recorded as what it used.
+ */
+export type OfflineReturnLine = {
+  productId: number | null
+  productCode: string | null
+  description: string
+  productType: ProductTypeId
+  departmentId: number | null
+  /** POSITIVE here. The server stores it negative — see createCreditNote. */
+  qty: number
+  unitPriceIncl: number
+  vatRatePct: number
+  unitCostExcl: number
+}
+
+/**
+ * A return rung up offline.
+ *
+ * ── WHY THERE IS NO invoiceId ─────────────────────────────────────────────
+ *
+ * This is a RETURN WITHOUT A RECEIPT — `createCreditNote`'s `invoiceId: null` case,
+ * which already exists and is already a first-class path.
+ *
+ * A receipted return deliberately is NOT supported offline, and the reason is a guard
+ * the till structurally cannot run: `creditedQtyByLine` sums every credit note ever
+ * raised against that invoice, across every till and the back office, to refuse
+ * crediting more than was sold. A till knows only about its own sales. Two tills, or a
+ * return against a sale from last week, and an offline receipted return would credit
+ * one invoice twice with nothing able to notice — and a credit note is money going out
+ * of the drawer.
+ *
+ * So the till takes the return as a no-receipt return, which reverses nothing in
+ * particular and therefore has no over-credit guard to miss. That is a real
+ * limitation, not a disguised one: the slip says "return without a receipt" and a
+ * manager can see on the exceptions screen that it was taken blind.
+ */
+export type OfflineReturn = {
+  /** UUIDv4 from the till. THE idempotency key, same contract as a sale's. */
+  returnUid: string
+  /**
+   * The number the credit note was printed under.
+   *
+   * Same rule as a sale: the customer is holding it, so the server adopts it rather
+   * than allocating a second one. Drawn from the till's OWN credit-note sequence, not
+   * the invoice one — two documents under one number is the thing uq_doc_number exists
+   * to stop, and offline there is no index to catch it.
+   */
+  documentNumber: string
+  terminalId: number | null
+  terminalCode: string | null
+  operatorUserId: number
+  operatorName: string
+  /** Who authorised it, when the operator did not hold `sales.credit_note`. */
+  authorisedByUserId: number | null
+  authorisedByName: string | null
+  shiftId: number | null
+  takenAt: string
+  documentDate: string
+  customerId: number | null
+  customerName: string | null
+  /** Required. `createCreditNote` refuses a blank one, and so does the till. */
+  reason: string
+  lines: OfflineReturnLine[]
+  /** What went back out of the drawer. Empty leaves the credit on the account. */
+  refunds: OfflineTender[]
+  /** What the till computed, for the same comparison a sale gets. */
+  claimedTotalIncl: number
+  claimedRefundTotal: number
+}
+
+export type OutboxReturn = OfflineReturn & {
+  status: OutboxStatus
+  attempts: number
+  lastError: string | null
+  syncedAt: string | null
+  cancelReason?: string | null
+  cancelledAt?: string | null
+  cancelledByUserId?: number | null
+  cancelledByName?: string | null
+  numberBurnt?: boolean
+}
+
+export type SyncReturnResult = {
+  returnUid: string
+  ok: boolean
+  documentNumber?: string
+  documentId?: number
+  exception?: string | null
+  duplicate?: boolean
+  error?: string
+  retryable?: boolean
 }
 
 /** A cancelled offline sale, on its way to the audit trail. */

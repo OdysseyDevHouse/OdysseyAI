@@ -1,10 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { siteIdForCapability } from '@/lib/auth'
 import { postOfflineSale, recordCancelledSale } from '@/lib/site/offlineSync'
+import { postOfflineReturn } from '@/lib/site/offlineReturns'
 import type {
   CancelledSale,
+  OfflineReturn,
   OfflineSale,
   SyncResponse,
+  SyncReturnResult,
   SyncSaleResult,
 } from '@/lib/posOffline/types'
 
@@ -21,9 +24,9 @@ export const dynamic = 'force-dynamic'
  * banks into exists — so it belongs on the server, where it cannot be got wrong by
  * a client that retried half a batch.
  *
- * Today it carries sales and cancellations, in that fixed order — see the comment at
- * the cancellation loop for why sales must go first. Shifts and drawer movements join
- * it as further fields on the same request rather than as further routes.
+ * Today it carries sales, then returns, then cancellations, in that fixed order — see
+ * the comment above each loop for why each sits where it does. Shifts and drawer
+ * movements join it as further fields on the same request rather than as further routes.
  *
  * ── SALES POST OLDEST FIRST, SEQUENTIALLY ─────────────────────────────────
  *
@@ -63,7 +66,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
   }
 
-  let body: { sales?: unknown; cancellations?: unknown }
+  let body: { sales?: unknown; returns?: unknown; cancellations?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -77,6 +80,14 @@ export async function POST(request: NextRequest) {
   if (sales.length > MAX_SALES) {
     return NextResponse.json(
       { error: `Send at most ${MAX_SALES} sales at a time.` },
+      { status: 400 },
+    )
+  }
+
+  const returns = Array.isArray(body?.returns) ? body.returns : []
+  if (returns.length > MAX_SALES) {
+    return NextResponse.json(
+      { error: `Send at most ${MAX_SALES} returns at a time.` },
       { status: 400 },
     )
   }
@@ -123,6 +134,35 @@ export async function POST(request: NextRequest) {
    * uid is recorded as the audit fact it is, and the sale stays on the books where
    * the customer's slip says it should be.
    */
+  /*
+   * Returns AFTER sales, BEFORE cancellations.
+   *
+   * A return and a sale are independent documents, so neither one's arithmetic depends
+   * on the other. What does depend on the order is how `stock_movements` READS: a sale
+   * that drove a product negative and a return that put it back make sense in the
+   * order they happened, and a buyer working out why a count is wrong should not have
+   * to reason about sync order to follow it.
+   *
+   * Before cancellations for the same reason sales are: a cancellation is the last
+   * word on a uid, and it must not be overtaken by the thing it cancels.
+   */
+  const returnResults: SyncReturnResult[] = []
+  for (const entry of returns as OfflineReturn[]) {
+    try {
+      returnResults.push(await postOfflineReturn(siteId, entry))
+    } catch (error) {
+      /* Retryable, exactly as for a sale: the refund already happened, so an
+         unexpected throw is our failure and not a reason to discard the record of
+         cash that has left the drawer. The claim row is what makes the retry safe. */
+      returnResults.push({
+        returnUid: (entry as OfflineReturn)?.returnUid ?? '',
+        ok: false,
+        error: error instanceof Error ? error.message : 'The return could not be posted.',
+        retryable: true,
+      })
+    }
+  }
+
   const cancelled: { saleUid: string; ok: boolean; error?: string }[] = []
   for (const entry of cancellations as CancelledSale[]) {
     try {
@@ -137,5 +177,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ results, cancelled } satisfies SyncResponse)
+  return NextResponse.json({
+    results,
+    returns: returnResults,
+    cancelled,
+  } satisfies SyncResponse)
 }
