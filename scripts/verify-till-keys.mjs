@@ -178,13 +178,31 @@ if (gated) {
    * by running this against the endpoint rather than by reading the code, which is why it
    * is asserted here and not just described in a comment.
    */
+  /*
+   * The FIELD, not the count. A shop with no keys configured legitimately ships zero of
+   * them, so `count > 0` would fail on an empty database while saying nothing about
+   * whether the slice exists — which is the actual question here.
+   */
   ok(
-    'the offline catalog ships the quick keys',
-    payload.hasQuickKeys === true && payload.count > 0,
+    'the offline catalog ships the quick keys slice',
+    payload.hasQuickKeys === true,
     payload.hasQuickKeys
-      ? `${payload.count} key(s) — an offline reload keeps its grid`
-      : 'an offline till would reload to an empty key grid',
+      ? `${payload.count} key(s) — an offline reload keeps whatever the shop configured`
+      : 'the field is absent, so an offline till reloads to an empty key grid',
   )
+
+  /*
+   * The MODE, which is what phase 6 added.
+   *
+   * A screenshot in retail proves nothing about hospitality, because the gate is behind a
+   * flag — so this asks the settings the page reads. It is the only assertion that
+   * distinguishes "the gate is built" from "the gate is reachable".
+   */
+  const mode = await evaluate(
+    `fetch('/api/pos/catalog?deviceId=' + encodeURIComponent(localStorage.getItem('ody-device-id') || ''))` +
+      `.then((r) => r.json()).then((b) => b.settings && b.settings.pos_mode)`,
+  )
+  ok('the till is told which mode the shop runs', mode === 'retail' || mode === 'hospitality', String(mode))
 } else {
   /* A till session exists, so the grid is real. */
   const grid = await evaluate([

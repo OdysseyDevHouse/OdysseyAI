@@ -83,6 +83,15 @@ export type SaleAction =
   | { type: 'DRILL'; departmentId: number }
   | { type: 'DRILL_TO'; path: number[] }
   | { type: 'SHOW_SEARCH'; term: string }
+  /**
+   * The basket now has a server document, without changing anything in it.
+   *
+   * For a table's first item: the bill is created on the server, and the reducer has to
+   * learn its id so every later save UPDATES that document rather than creating a second
+   * bill for the same table. Distinct from LOAD, which replaces the lines — here the
+   * lines are already right and only the id is new.
+   */
+  | { type: 'ATTACH_DOCUMENT'; documentId: number }
   /** A recalled draft replaces the basket wholesale. */
   | {
       type: 'LOAD'
@@ -206,6 +215,11 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
       // grid while somebody is still typing.
       if (state.catalog.kind === 'search' && state.catalog.term === action.term) return state
       return { ...state, catalog: { kind: 'search', term: action.term } }
+
+    /* Only the id. The lines are already what the server just saved, so replacing them
+       would throw away anything rung up while that round trip was in flight. */
+    case 'ATTACH_DOCUMENT':
+      return { ...state, documentId: action.documentId }
 
     case 'LOAD':
       return {

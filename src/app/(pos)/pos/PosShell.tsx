@@ -50,6 +50,9 @@ import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
 import { useSaleState } from './useSaleState'
 import { specialsFor, totalsFor, salePayloadLines } from './saleSelectors'
+import { TableGate } from './TableGate'
+import { listTablesAction, openTableAction, updateTableBillAction, askForBillAction, tablePaidAction } from './tableActions'
+import type { PosTable } from '@/lib/site/posTables'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { runQuickKey, quickKeyEnabled } from './quickKeyRunner'
 import type { QuickKeyRow } from '@/lib/quickKeys'
@@ -78,6 +81,24 @@ import type { Department } from './types'
  * reading. The rail hides below `xl` — three columns need about 1280px, and a
  * cashier on a 1024 screen is better served by a wider catalogue than by a
  * squeezed everything.
+ *
+ * ── HOSPITALITY IS A FLAG READ IN THREE PLACES, AND ONLY THREE ─────────────
+ *
+ * `hospitality` decides:
+ *
+ *   1. whether the TABLE GATE stands in front of the till (below, at the top of the
+ *      render — a waiter picks a table before there is a basket to put anything in);
+ *   2. whether the SEND TO KITCHEN key is offered (passed to SalePane);
+ *   3. whether the hospitality quick keys are enabled (passed to the runner).
+ *
+ * Everything else is mode-blind. `SaleLineCard`, `SaleTotals`, `DeptRail`, `CatalogPane`,
+ * `TenderPad`, `ProductTile` and the whole offline path do not know and must not learn:
+ * a restaurant basket is a basket, and a restaurant sale posts through exactly the same
+ * `finaliseDocument` a counter sale does.
+ *
+ * The reference POS threaded `restaurantMode` through ten thousand lines, and that is
+ * the trap this is written to avoid. **If a fourth `if (hospitality)` appears, that is
+ * the signal to reconsider the design rather than to add it.**
  */
 export default function PosShell({
   siteId,
@@ -97,6 +118,8 @@ export default function PosShell({
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
+  hospitality,
+  initialTables,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
   siteId: number
@@ -120,6 +143,10 @@ export default function PosShell({
   quickKeys: QuickKeyRow[]
   quickKeyProductNames: Record<number, string>
   quickKeyDepartmentNames: Record<number, string>
+  /** Read in THREE places only — see the docblock above. */
+  hospitality: boolean
+  /** The floor. Empty in retail, where the gate never mounts. */
+  initialTables: PosTable[]
 }) {
   const [state, dispatch] = useSaleState()
   const [pending, startTransition] = useTransition()
@@ -518,6 +545,26 @@ export default function PosShell({
         total: totals.doc.totalIncl,
       })
       dispatch({ type: 'CLEAR' })
+
+      /*
+       * The table is released by the ACT of paying, not by the screen remembering to.
+       *
+       * Keyed off the DOCUMENT rather than off `table`, so it also frees a bill somebody
+       * settled from a different till — and so a crash between finalising and this leaves
+       * a stuck table visible on the gate rather than money unaccounted for.
+       *
+       * NOT a third `if (hospitality)`: in retail no table holds the document, so this is
+       * a no-op that costs one indexed UPDATE. Guarding it would be the fourth read the
+       * docblock warns about.
+       */
+      if (table) {
+        const freed = await tablePaidAction(result.documentId).catch(() => null)
+        if (freed?.ok) setTables(freed.tables)
+        setTable(null)
+        // Back to the floor: the next thing a waiter does is serve a different table.
+        setChoosingTable(true)
+      }
+
       // The saved-sale count and any stock figures on screen are now stale.
       router.refresh()
     })
@@ -701,6 +748,139 @@ export default function PosShell({
     })
   }
 
+  /* ── The floor ──────────────────────────────────────────────────────────
+     Only in hospitality. In retail `tables` is empty, the gate never mounts, and this
+     costs one unused state slot rather than a branch through the rest of the file. */
+  const [tables, setTables] = useState<PosTable[]>(initialTables)
+  /** The table this basket belongs to, or null for a walk-in. */
+  const [table, setTable] = useState<PosTable | null>(null)
+  /** True while the waiter is choosing — the gate stands in front of the till. */
+  const [choosingTable, setChoosingTable] = useState(hospitality)
+
+  /* Re-read after anything that could have changed the floor, and on a slow tick so a
+     waiter sees another waiter's table go from open to bill-asked without reloading. A
+     restaurant floor is a SHARED screen; a retail till is not, which is why nothing
+     equivalent polls in retail. */
+  useEffect(() => {
+    if (!hospitality) return
+    const refresh = () => {
+      void listTablesAction()
+        .then((r) => {
+          if (r.ok) setTables(r.tables)
+        })
+        .catch(() => {})
+    }
+    const timer = setInterval(refresh, 20_000)
+    return () => clearInterval(timer)
+  }, [hospitality])
+
+  /**
+   * Writes the basket to the table's bill.
+   *
+   * ── WHY A TABLE'S BASKET IS SAVED AND A COUNTER'S IS NOT ──────────────────
+   *
+   * At a counter the basket lives in this component until it is paid, seconds later. A
+   * table's lives for an hour, on a screen a waiter walks away from — and the next
+   * person to look at that table may be at a different till. So it has to be on the
+   * server, or "table 6" means nothing to anybody but this browser.
+   *
+   * Called on a DEBOUNCE rather than per tap: a waiter ringing up eight items would
+   * otherwise be eight round trips, and the basket on screen is already correct — this
+   * is about making it survivable, not about making it visible.
+   */
+  const [tableSaving, setTableSaving] = useState(false)
+  const tableLines = salePayloadLines(state.lines, lineSpecials)
+
+  useEffect(() => {
+    if (!table) return
+    if (state.lines.length === 0) return
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        setTableSaving(true)
+        try {
+          if (state.documentId) {
+            const updated = await updateTableBillAction(state.documentId, {
+              customerName: table.code,
+              terminalId: terminal?.id ?? null,
+              terminalCode: terminal?.code ?? null,
+              priceStructureId,
+              lines: tableLines,
+            })
+            if (!updated.ok) {
+              toast.error(updated.error)
+              return
+            }
+            setTables(updated.tables)
+            return
+          }
+
+          /* No document yet — this is the FIRST item on a free table, which is the moment
+             the table actually becomes occupied. See openTableAction on why not at the
+             tap. */
+          const opened = await openTableAction(table.id, {
+            customerName: table.code,
+            terminalId: terminal?.id ?? null,
+            terminalCode: terminal?.code ?? null,
+            priceStructureId,
+            lines: tableLines,
+          })
+          if (!opened.ok) {
+            toast.error(opened.error)
+            /* Somebody took the table. Back to the floor rather than leaving a waiter
+               adding to a bill that will refuse every save from here on. */
+            setTable(null)
+            setChoosingTable(true)
+            return
+          }
+          /* The reducer is told the document id so every later save UPDATES rather than
+             creating a second bill for the same table. */
+          dispatch({ type: 'ATTACH_DOCUMENT', documentId: opened.documentId })
+          setTables(opened.tables)
+        } finally {
+          setTableSaving(false)
+        }
+      })()
+    }, 900)
+
+    return () => clearTimeout(timer)
+    /* Deliberately keyed on the LINES, not on `tableLines` — that array is rebuilt every
+       render, so depending on it would fire this on every keystroke elsewhere. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table?.id, state.documentId, state.lines])
+
+  /** Puts a table's existing bill on screen. */
+  function resumeTable(picked: PosTable) {
+    if (picked.documentId == null) {
+      // Free: start an empty basket against it. Nothing is written until the first
+      // item — see openTableAction on why.
+      setTable(picked)
+      setChoosingTable(false)
+      dispatch({ type: 'CLEAR' })
+      return
+    }
+    startTransition(async () => {
+      const result = await recallSaleForTillAction(picked.documentId!, priceStructureId)
+      if (!result.ok) {
+        toast.error(result.error)
+        /* The floor is stale — somebody settled it while this waiter was looking. Re-read
+           rather than leaving a tile they will tap again. */
+        const fresh = await listTablesAction().catch(() => null)
+        if (fresh?.ok) setTables(fresh.tables)
+        return
+      }
+      setTable(picked)
+      setChoosingTable(false)
+      dispatch({
+        type: 'LOAD',
+        documentId: result.documentId,
+        lines: result.lines,
+        customer: null,
+        customerName: result.customerName ?? '',
+      })
+    })
+  }
+
   /* ── Quick keys ─────────────────────────────────────────────────────────
      What the shop put on its own buttons.
 
@@ -838,9 +1018,32 @@ export default function PosShell({
         catalogAgeHours={till.catalogAgeHours}
         itemCount={state.lines.length}
         onShowOutbox={() => setShowingOutbox(true)}
+        /* The table, when there is one. A waiter needs to know which bill they are
+           adding to before they add to it — and the header is the one place on this
+           screen that is never covered by a dialog. */
+        tableLabel={table ? table.code : hospitality ? 'Walk-in' : null}
+        onChangeTable={hospitality ? () => setChoosingTable(true) : undefined}
         onExit={() => router.push('/dashboard')}
       />
 
+      {/*
+        ── HOSPITALITY READ 1 OF 3: the gate stands in FRONT of the till ──────
+        Instead of the three columns, not beside them. A waiter picks the table before
+        there is a basket to put anything in, so nothing below this needs to know
+        whether one was picked.
+      */}
+      {choosingTable ? (
+        <TableGate
+          tables={tables}
+          busy={pending}
+          onWalkIn={() => {
+            setTable(null)
+            setChoosingTable(false)
+            dispatch({ type: 'CLEAR' })
+          }}
+          onPickTable={resumeTable}
+        />
+      ) : (
       <div className="flex min-h-0 flex-1">
         <SalePane
           lines={state.lines}
@@ -896,6 +1099,7 @@ export default function PosShell({
           }
         />
       </div>
+      )}
 
       {/* Confirmed rather than immediate. Close is a 72px key beside Pay, and an
           accidental brush of it must not silently bin a basket somebody has spent

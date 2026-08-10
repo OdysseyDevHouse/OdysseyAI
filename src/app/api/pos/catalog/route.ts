@@ -144,6 +144,10 @@ export async function GET(req: NextRequest) {
       'barcode_value_divisor',
       'sales_number_scope',
       'store_number',
+      /* Which kind of till this is. Without it an offline reload would come up in RETAIL
+         on a restaurant floor — no table gate, and a waiter with no way to reach the bill
+         they left open. */
+      'pos_mode',
     ]),
     deviceId ? operatorsForDevice(siteId, deviceId) : Promise.resolve([]),
   ])

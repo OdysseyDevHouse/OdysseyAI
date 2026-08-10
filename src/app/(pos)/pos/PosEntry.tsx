@@ -8,6 +8,7 @@ import type { Special } from '@/lib/specialsEngine'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { Terminal } from '@/lib/site/terminals'
 import type { QuickKeyRow } from '@/lib/quickKeys'
+import type { PosTable } from '@/lib/site/posTables'
 import type { Department } from './types'
 
 /**
@@ -48,6 +49,8 @@ export default function PosEntry({
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
+  hospitality,
+  initialTables,
 }: {
   siteId: number
   siteName: string
@@ -75,6 +78,8 @@ export default function PosEntry({
   quickKeys: QuickKeyRow[]
   quickKeyProductNames: Record<number, string>
   quickKeyDepartmentNames: Record<number, string>
+  hospitality: boolean
+  initialTables: PosTable[]
 }) {
   /*
    * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
@@ -143,6 +148,8 @@ export default function PosEntry({
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
+      hospitality={hospitality}
+      initialTables={initialTables}
     />
   )
 }

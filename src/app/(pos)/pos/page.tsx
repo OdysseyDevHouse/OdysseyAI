@@ -4,13 +4,14 @@ import { listTerminals } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { listSaved } from '@/lib/site/salesDocuments'
 import { listPriceStructures } from '@/lib/site/lookups'
-import { getNumericSetting } from '@/lib/site/settings'
+import { getNumericSetting, getSetting } from '@/lib/site/settings'
 import { can, capabilitiesForRole } from '@/lib/site/permissions'
 import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
 import { liveSpecials } from '@/lib/site/specials'
 import { listDepartments } from '@/lib/site/departments'
 import { listQuickKeys } from '@/lib/site/quickKeys'
+import { listTables } from '@/lib/site/posTables'
 import { siteQuery } from '@/lib/siteDb'
 import PosEntry from './PosEntry'
 
@@ -53,7 +54,7 @@ export default async function PosPage() {
     ? await capabilitiesForRole(site.id, operator.roleId)
     : capabilities
 
-  const [terminals, tenders, saved, structures, cashRounding, specials, departments, quickKeys] =
+  const [terminals, tenders, saved, structures, cashRounding, specials, departments, quickKeys, posMode, tables] =
     await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
@@ -78,6 +79,11 @@ export default async function PosPage() {
          open on an empty grid — and one that lost them when the line dropped would lose
          the fastest way it has to sell. */
       listQuickKeys(site.id, 'main'),
+      /* The mode, and the floor. In retail the floor query returns nothing and the gate
+         never mounts — one query rather than a branch, because the branch would have to
+         be repeated for every consumer of the result. */
+      getSetting(site.id, 'pos_mode'),
+      listTables(site.id),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
@@ -147,6 +153,8 @@ export default async function PosPage() {
       specials={specials}
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
+      hospitality={posMode === 'hospitality'}
+      initialTables={tables}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
     />
   )

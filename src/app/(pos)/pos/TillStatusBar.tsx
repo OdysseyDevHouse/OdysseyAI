@@ -26,6 +26,8 @@ export function TillStatusBar({
   catalogAgeHours,
   itemCount,
   onShowOutbox,
+  tableLabel,
+  onChangeTable,
   onExit,
 }: {
   siteName: string
@@ -73,6 +75,16 @@ export function TillStatusBar({
   itemCount: number
   /** Opens the outbox — the answer to the question the queue chip poses. */
   onShowOutbox: () => void
+  /**
+   * Which table this basket belongs to, or null on a retail till.
+   *
+   * In the header because it is the one place on this screen never covered by a dialog,
+   * and because a waiter adding to the wrong table's bill is a mistake nobody notices
+   * until the party asks to pay.
+   */
+  tableLabel: string | null
+  /** Back to the floor. Undefined in retail, where there is no floor to go back to. */
+  onChangeTable?: () => void
   onExit: () => void
 }) {
   /* Past a few hours the prices on this till and the prices on the shelf edge may
@@ -92,6 +104,28 @@ export function TillStatusBar({
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        {/* First in the row, because it answers "which bill am I on" — the question a
+            waiter asks before any of the others. A BUTTON when there is a floor to go
+            back to, so changing table is one tap from wherever they are. */}
+        {tableLabel &&
+          (onChangeTable ? (
+            <button
+              type="button"
+              data-kit-ok
+              onClick={onChangeTable}
+              title="Back to the floor"
+              className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-brand/40 bg-brand-soft px-3.5 text-sm font-semibold text-brand hover:bg-brand-soft/70"
+            >
+              <Icons.LayoutGrid size={16} />
+              {tableLabel}
+            </button>
+          ) : (
+            <Chip>
+              <Icons.LayoutGrid size={16} className="text-muted" />
+              {tableLabel}
+            </Chip>
+          ))}
+
         {/*
          * OFFLINE, and trading.
          *
