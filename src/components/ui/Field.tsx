@@ -28,8 +28,15 @@ import { CONTROL, CONTROL_H, CONTROL_H_TOUCH, CONTROL_INVALID as INVALID } from 
 type FieldWiring = { id: string; describedBy?: string; invalid: boolean }
 const FieldContext = createContext<FieldWiring | null>(null)
 
-/** Read the wiring, letting an explicit prop at the call site win. */
-function useFieldWiring(explicitId?: string, explicitInvalid?: boolean) {
+/**
+ * Read the wiring, letting an explicit prop at the call site win.
+ *
+ * Exported so a control in its own file — Slider — is wired to a surrounding
+ * `Field` exactly as the ones in here are. It must not grow a second copy of
+ * FieldContext: two contexts means a Field-wrapped control reads the wrong one,
+ * gets no id, and its label quietly stops pointing at anything.
+ */
+export function useFieldWiring(explicitId?: string, explicitInvalid?: boolean) {
   const field = useContext(FieldContext)
   return {
     id: explicitId ?? field?.id,

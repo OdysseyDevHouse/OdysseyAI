@@ -60,6 +60,7 @@ import {
   Textarea,
   TextLink,
   TILE_SWATCHES,
+  Slider,
   SwatchPicker,
   tileClass,
   ToolbarSearch,
@@ -210,6 +211,7 @@ function FormSection() {
   // A real value, not a placeholder: the point of the demo is that zero renders
   // as 0.00 and stays that way on every machine.
   const [price, setPrice] = useState(0)
+  const [tileWidth, setTileWidth] = useState(200)
 
   return (
     <Card>
@@ -252,6 +254,44 @@ function FormSection() {
         </Field>
       </CardBody>
 
+      <Row>
+        <Spec
+          name="<Slider />"
+          note="A number chosen by feel — tile size, a zoom, a tolerance. Anything typed exactly is a NumberInput."
+        />
+        <div className="w-full max-w-sm space-y-4">
+          {/* Anchors, no hint — deliberately. The two stack into three lines of
+              grey text under one control; see the Slider docblock. */}
+          <Field label="Tile width">
+            <Slider
+              value={tileWidth}
+              onChange={setTileWidth}
+              min={110}
+              max={420}
+              step={10}
+              unit="px"
+              minLabel="Dense"
+              maxLabel="Large"
+            />
+          </Field>
+          {/* The till size, shown because it is the reason the size exists: a 4px
+              native track is unhittable on a counter touchscreen. */}
+          <Field label="At till size" hint='size="touch" — a finger, not a mouse'>
+            <Slider
+              value={tileWidth}
+              onChange={setTileWidth}
+              min={110}
+              max={420}
+              step={10}
+              unit="px"
+              size="touch"
+            />
+          </Field>
+          <Field label="Disabled">
+            <Slider value={200} onChange={() => {}} min={110} max={420} disabled unit="px" />
+          </Field>
+        </div>
+      </Row>
       <Row>
         <Spec name="<Switch />" note="On/off settings — e.g. a flag" />
         <Switch
