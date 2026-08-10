@@ -291,6 +291,7 @@ export const SUBPAGE_LABELS = {
   '/setup/locations': 'Stock locations',
   '/setup/pricing': 'Price types & VAT',
   '/setup/tender-types': 'Tender types',
+  '/setup/tips': 'Tips',
   // "Tills", not "Terminals" — it is what the screen's own heading says, and
   // what somebody in a shop calls the thing. The keyword search still has
   // "terminals" on the tile, so looking for either finds it.
@@ -413,6 +414,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/locations': 'warehouse storeroom bins branches',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/tender-types': 'cash card eft payment methods vouchers',
+  '/setup/tips': 'tips gratuity service charge tiers waiter pool',
   '/setup/terminals': 'terminals registers pos devices',
   '/setup/numbering': 'sequences document numbers prefix autocode',
   '/setup/quick-keys': 'buttons tiles favourites shortcuts till pos grid',

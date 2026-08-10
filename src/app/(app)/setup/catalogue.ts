@@ -97,6 +97,18 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/tips',
+        description: 'Service charges by bill size, and whether they apply off the floor.',
+        keywords: 'tips gratuity service charge tiers waiter pool',
+        /* `Percent` from the hub's own icon union — `HandCoins` exists in the kit but not in
+           `HubIconName`, which is a deliberately short list so a hub tile cannot name a
+           glyph the hub cannot render. A service charge is a percentage, so this reads
+           correctly rather than being a substitute. */
+        icon: 'Percent',
+        tone: 'amber',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/laybys',
         description: 'What a customer agrees to when they put something aside.',
         keywords: 'deposit cancellation fee terms instalments',
