@@ -365,12 +365,20 @@ export type ProductPick = {
  *
  * `exclude` drops the product being edited, so a recipe cannot list itself as an
  * ingredient. The save path refuses that too — this only keeps it off screen.
+ *
+ * ── PARENTS ARE NEVER OFFERED ──────────────────────────────────────────────
+ *
+ * A variant parent is a catalogue idea, not a transactional one: it holds no
+ * stock and recordMovement refuses it outright. Listing one here would let
+ * someone put "Shirt" on a recipe, a special or a purchase order and only find
+ * out at posting time, with the line already typed. The variants themselves are
+ * ordinary products and appear normally.
  */
 export async function searchProductsForPicker(
   siteId: number,
   opts: { search?: string; exclude?: number; limit?: number } = {},
 ): Promise<ProductPick[]> {
-  const where: string[] = ['p.is_archived = 0']
+  const where: string[] = ['p.is_archived = 0', 'p.has_variants = 0']
   const params: unknown[] = []
 
   if (opts.search?.trim()) {

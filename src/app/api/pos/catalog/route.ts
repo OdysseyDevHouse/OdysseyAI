@@ -277,13 +277,23 @@ async function productsSince(
   return all.filter((p) => ids.has(p.id))
 }
 
-/** Products the till should forget: archived, or no longer sold at the till. */
+/**
+ * Products the till should forget: archived, no longer sold at the till, or
+ * turned into a variant parent.
+ *
+ * The parent case is the one that MUST be here rather than only in the snapshot
+ * query. browseForTill already excludes parents, so a fresh sync never caches
+ * one — but a till that synced yesterday is holding the row from before it
+ * became a parent, and a delta only sends what changed. Without this line that
+ * till keeps a sellable copy of a product the server would refuse, and it is
+ * exactly the till running offline that cannot be told otherwise.
+ */
 async function removedSince(siteId: number, cutoff: string): Promise<number[]> {
   const rows = await siteQuery<{ id: number }>(
     siteId,
     `SELECT id FROM products
       WHERE updated_at >= ? - INTERVAL 60 SECOND
-        AND (is_archived = 1 OR visible_in_pos = 0)`,
+        AND (is_archived = 1 OR visible_in_pos = 0 OR has_variants = 1)`,
     [cutoff],
   ).catch(() => [])
   return rows.map((r) => Number(r.id))

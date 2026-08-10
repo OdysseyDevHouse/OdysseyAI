@@ -146,6 +146,12 @@ export async function searchForTill(
     `${selectProduct(costBasis)}
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
+        -- A variant parent holds no stock and recordMovement refuses it, so it
+        -- must never reach a till line. Its variants are ordinary products and
+        -- appear here normally. Not folded into visible_in_pos: that flag is
+        -- the shopkeeper's to toggle, and switching it on must not be able to
+        -- make an unsellable row sellable.
+        AND p.has_variants = 0
         AND (p.barcode = ? OR p.code LIKE ? OR p.description LIKE ?)
       ORDER BY
         -- An exact barcode or code match is what was meant; put it first.
@@ -237,6 +243,12 @@ export async function browseForTill(
     `${selectProduct(costBasis)}
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
+        -- A variant parent holds no stock and recordMovement refuses it, so it
+        -- must never reach a till line. Its variants are ordinary products and
+        -- appear here normally. Not folded into visible_in_pos: that flag is
+        -- the shopkeeper's to toggle, and switching it on must not be able to
+        -- make an unsellable row sellable.
+        AND p.has_variants = 0
         ${scope}
         ${filter}
       ORDER BY ${ranking} p.description ASC
@@ -272,7 +284,8 @@ export async function resolveScan(
   const exact = await siteQueryOne<Row>(
     siteId,
     `${selectProduct(settings.cost_basis)}
-      WHERE p.is_archived = 0 AND (p.barcode = ? OR p.code = ?) LIMIT 1`,
+      WHERE p.is_archived = 0 AND p.has_variants = 0
+        AND (p.barcode = ? OR p.code = ?) LIMIT 1`,
     [priceStructureId ?? 0, code, code],
   )
   if (exact) return mapProduct(exact)
@@ -289,7 +302,8 @@ export async function resolveScan(
   const byPlu = await siteQueryOne<Row>(
     siteId,
     `${selectProduct(settings.cost_basis)}
-      WHERE p.is_archived = 0 AND (p.code = ? OR p.barcode = ?) LIMIT 1`,
+      WHERE p.is_archived = 0 AND p.has_variants = 0
+        AND (p.code = ? OR p.barcode = ?) LIMIT 1`,
     [priceStructureId ?? 0, variable.plu, variable.plu],
   )
   if (!byPlu) return null

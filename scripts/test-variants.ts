@@ -38,6 +38,8 @@ import {
   VariantError,
 } from '../src/lib/site/productVariants'
 import { recordMovement, reconcileStock } from '../src/lib/site/stockMovements'
+import { searchProductsForPicker } from '../src/lib/site/products'
+import { browseForTill } from '../src/lib/site/tillSearch'
 
 const SITE = 1
 const ACTOR = { userId: 1, userName: 'variant-test' }
@@ -217,6 +219,26 @@ async function main() {
   ok(
     '  and the parent never appears in the report',
     !drift.some((d) => d.code === `${TAG}-SHIRT`),
+  )
+
+  /* ── 6b. A parent is offered by no picker ────────────────────────────── */
+
+  const picks = await searchProductsForPicker(SITE, { search: `${TAG}-` })
+  ok(
+    'the shared picker never offers a parent',
+    !picks.some((p) => p.id === shirt),
+    picks.map((p) => p.code).join(','),
+  )
+  ok(
+    '  but does offer its variants',
+    picks.some((p) => p.id === medium),
+  )
+
+  const tillHits = await browseForTill(SITE, { term: `${TAG}-`, limit: 50 })
+  ok(
+    'the till never offers a parent',
+    !tillHits.some((p) => p.id === shirt),
+    tillHits.map((p) => p.code).join(','),
   )
 
   /* ── 7. Inheritance ──────────────────────────────────────────────────── */
