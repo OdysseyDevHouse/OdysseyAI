@@ -11,8 +11,10 @@ import {
   type OnlineSettings,
 } from './onlineStore'
 import { accountCanCover, customerAccount } from './customerAuth'
+import { validateCode, redeemCode } from './discountCodes'
 import { liveSpecials, specialPriceFor } from './specials'
 import { storefrontImagesByIds, type StorefrontImage } from './storefrontImages'
+import { recentApprovedReviews, type ProductReview } from './productReviews'
 
 /**
  * What the PUBLIC storefront may see and do.
@@ -686,12 +688,19 @@ export async function resolveSectionContent(
     productIds?: number[]
     imageId?: number | null
     slides?: { imageId: number | null }[]
+    logoImageIds?: number[]
+    minRating?: number
+    specialId?: number | null
   }[],
 ): Promise<{
   products?: StorefrontProduct[]
   departments?: StorefrontDepartment[]
   image?: StorefrontImage | null
   slideImages?: Map<number, StorefrontImage>
+  reviews?: ProductReview[]
+  logoImages?: Map<number, StorefrontImage>
+  /** countdown: the special's real end, when it is bound to one. */
+  specialEndsAt?: string
 }[]> {
   /*
    * Every picture on the page, in ONE query.
@@ -706,11 +715,13 @@ export async function resolveSectionContent(
    * them separate would double the round trips to fetch from one table.
    */
   const imageIds = sections.flatMap((s) =>
-    s.kind === 'banner'
+    s.kind === 'banner' || s.kind === 'split'
       ? [s.imageId]
       : s.kind === 'carousel'
         ? (s.slides ?? []).map((slide) => slide.imageId)
-        : [],
+        : s.kind === 'logos'
+          ? s.logoImageIds ?? []
+          : [],
   )
   const images = await storefrontImagesByIds(
     context.siteId,
@@ -719,8 +730,50 @@ export async function resolveSectionContent(
 
   return Promise.all(
     sections.map(async (section) => {
-      if (section.kind === 'banner') {
+      // Both are one picture beside or behind words, resolved identically.
+      if (section.kind === 'banner' || section.kind === 'split') {
         return { image: section.imageId ? images.get(section.imageId) ?? null : null }
+      }
+
+      if (section.kind === 'logos') {
+        /*
+         * Only THIS section's pictures, for the same reason a carousel gets
+         * only its own: `sectionIsEmpty` counts what resolved, and handing
+         * over the page-wide map would let a strip inherit the answer for a
+         * picture belonging to somewhere else.
+         */
+        const mine = new Map<number, StorefrontImage>()
+        for (const id of section.logoImageIds ?? []) {
+          const found = images.get(id)
+          if (found) mine.set(id, found)
+        }
+        return { logoImages: mine }
+      }
+
+      if (section.kind === 'reviews') {
+        return {
+          reviews: await recentApprovedReviews(context.siteId, {
+            limit: section.maxItems ?? 6,
+            minRating: section.minRating ?? 4,
+            departmentId: section.departmentId ?? null,
+          }),
+        }
+      }
+
+      if (section.kind === 'countdown') {
+        /*
+         * A special's real end, read fresh on every request.
+         *
+         * The stored `endsAt` is only a fallback for shops not using specials.
+         * When the section names one, the SPECIAL is the truth — an owner who
+         * extends a sale by two days must not have to remember a countdown on
+         * the front page still says Friday.
+         */
+        if (!section.specialId) return {}
+        const special = (await liveSpecials(context.siteId)).find(
+          (s) => s.id === section.specialId,
+        )
+        return { specialEndsAt: special?.endsAt ?? '' }
       }
 
       if (section.kind === 'carousel') {
@@ -903,6 +956,12 @@ export type PublicOrderInput = {
   customerId?: number | null
   /** Whether the shopper asked to charge it. Only a REQUEST — see below. */
   payOnAccount?: boolean
+  /**
+   * The discount code as typed. Only a REQUEST, exactly like payOnAccount:
+   * whether it applies, and for how much, is decided here from the catalogue
+   * and the code's own rules — never from anything the browser computed.
+   */
+  discountCode?: string
 }
 
 export type PlaceOrderResult =
@@ -1017,6 +1076,49 @@ export async function placePublicOrder(
     }
   }
 
+  /*
+   * ── The discount code, re-validated from scratch ────────────────────────
+   *
+   * The browser previewed one; this is the check that decides. Everything the
+   * preview looked at — dates, limits, the minimum, whether the shopper has
+   * ordered before — is re-read here, because a preview is a suggestion and
+   * several of those facts can change between the two.
+   *
+   * A code that has become invalid REFUSES the order rather than quietly
+   * dropping the discount. Someone who typed SAVE10 and pressed a button
+   * reading "Place order · R90" must not be charged R100 without being told.
+   */
+  let discountIncl = 0
+  let freeDelivery = false
+  let discountApplied: { id: number; code: string } | null = null
+
+  if (input.discountCode?.trim()) {
+    const check = await validateCode(
+      siteId,
+      input.discountCode,
+      {
+        lines: priced.map((p) => ({
+          productId: p.productId,
+          qty: p.qty,
+          unitPriceIncl: p.unitPriceIncl,
+          onSpecial: byId.get(p.productId)?.wasPriceIncl !== null,
+          departmentId: byId.get(p.productId)?.departmentId ?? null,
+        })),
+        customerId: input.customerId ?? null,
+        contactEmail: input.contactEmail,
+      },
+    )
+    if (!check.ok) return { ok: false, error: check.error }
+    discountIncl = check.application.discountIncl
+    freeDelivery = check.application.freeDelivery
+    discountApplied = { id: check.application.code.id, code: check.application.code.code }
+  }
+
+  // Goods AFTER the discount. This is what the shopper is actually spending,
+  // so it is what a free-delivery-over-R500 threshold has to be measured
+  // against — a threshold met only before a R100 discount was not really met.
+  const discountedGoods = round(goodsTotal - discountIncl, 2)
+
   // The fee is MONEY, so it is quoted server-side against the current zones.
   // A browser-supplied one could be set to zero.
   let deliveryFee = 0
@@ -1025,14 +1127,14 @@ export async function placePublicOrder(
     const quote = await quoteDeliveryFor(
       siteId,
       { suburb: input.deliverySuburb ?? '', postcode: input.deliveryPostcode ?? '' },
-      goodsTotal,
+      discountedGoods,
     )
     if (!quote.zone || quote.belowMinimum) return { ok: false, error: quote.reason }
-    deliveryFee = quote.fee
+    deliveryFee = freeDelivery ? 0 : quote.fee
     zoneId = quote.zone.id
   }
 
-  const total = round(goodsTotal + deliveryFee, 2)
+  const total = round(discountedGoods + deliveryFee, 2)
 
   /*
    * ── Whether this goes on account is decided HERE, not by the browser ────
@@ -1075,8 +1177,9 @@ export async function placePublicOrder(
            (order_number, status_id, fulfilment, contact_name, contact_phone, contact_email,
             delivery_line1, delivery_line2, delivery_suburb, delivery_postcode, delivery_notes,
             delivery_fee_incl, zone_id, total_incl, customer_note,
-            customer_id, pay_on_account)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            customer_id, pay_on_account,
+            discount_code_id, discount_code, discount_incl)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           orderNumber,
           startStatus.id,
@@ -1102,6 +1205,9 @@ export async function placePublicOrder(
            */
           input.customerId ?? null,
           onAccount ? 1 : 0,
+          discountApplied?.id ?? null,
+          discountApplied?.code ?? '',
+          discountIncl.toFixed(4),
         ],
       )
 
@@ -1127,9 +1233,44 @@ export async function placePublicOrder(
         )
       }
 
+      /*
+       * ── Spending the code, under a row lock ─────────────────────────────
+       *
+       * Inside the SAME transaction as the order, and after the lines, so a
+       * code can never be counted without an order to show for it.
+       *
+       * redeemCode re-checks the limit against the LOCKED counter. Two
+       * shoppers redeeming the last use of a single-use code in the same
+       * instant both pass validation above — they each read uses_count = 0 —
+       * and the lock is what makes exactly one of them win.
+       *
+       * The loser is refused rather than quietly charged full price, because
+       * they pressed a button that named a discounted total.
+       */
+      if (discountApplied) {
+        const spent = await redeemCode(tx, {
+          codeId: discountApplied.id,
+          orderId,
+          customerId: input.customerId ?? null,
+          contactEmail: input.contactEmail,
+          amountIncl: discountIncl,
+        })
+        if (!spent) {
+          throw new DiscountExhausted('That code has just been fully used.')
+        }
+      }
+
       return { ok: true as const, orderId, orderNumber, total, onAccount }
     })
   } catch (error) {
+    /*
+     * The code ran out between validation and the lock. Thrown rather than
+     * returned so the whole transaction rolls back — the order must not exist
+     * at a discounted total the shop is not honouring.
+     */
+    if (error instanceof DiscountExhausted) {
+      return { ok: false, error: error.message }
+    }
     // Two shoppers checking out in the same instant can pick the same number;
     // the unique key catches it and a retry gets the next one.
     if (error instanceof Error && 'code' in error && error.code === 'ER_DUP_ENTRY') {
@@ -1138,3 +1279,11 @@ export async function placePublicOrder(
     throw error
   }
 }
+
+/**
+ * A code that was valid a moment ago and is not any more.
+ *
+ * Its own class so the catch above can tell it from a genuine failure and turn
+ * it into something a shopper can act on, rather than "something went wrong".
+ */
+class DiscountExhausted extends Error {}
