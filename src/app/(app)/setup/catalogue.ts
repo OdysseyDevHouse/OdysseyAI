@@ -78,6 +78,7 @@ export type SetupIconName =
   | 'Percent'
   | 'CreditCard'
   | 'Terminal'
+  | 'LayoutGrid'
   | 'Hash'
   | 'Check'
   | 'FileText'
@@ -182,6 +183,14 @@ const DECLARED: DeclaredGroup[] = [
         keywords: 'terminals registers pos devices',
         icon: 'Terminal',
         tone: 'sky',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/setup/quick-keys',
+        description: 'The buttons on the till — the things this shop sells most.',
+        keywords: 'quick keys buttons tiles favourites shortcuts till pos grid',
+        icon: 'LayoutGrid',
+        tone: 'violet',
         capability: 'setup.edit',
       },
       {

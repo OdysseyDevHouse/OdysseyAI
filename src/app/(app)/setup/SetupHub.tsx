@@ -248,6 +248,7 @@ const ICONS: Record<SetupIconName, typeof Icons.Settings> = {
   Percent: Icons.Percent,
   CreditCard: Icons.CreditCard,
   Terminal: Icons.Terminal,
+  LayoutGrid: Icons.LayoutGrid,
   Hash: Icons.Hash,
   Check: Icons.Check,
   FileText: Icons.FileText,

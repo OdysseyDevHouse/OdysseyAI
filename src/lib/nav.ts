@@ -307,6 +307,7 @@ export const SUBPAGE_LABELS = {
   // "terminals" on the tile, so looking for either finds it.
   '/setup/terminals': 'Tills',
   '/setup/numbering': 'Numbering',
+  '/setup/quick-keys': 'Quick keys',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
   '/setup/laybys': 'Lay-bys',
