@@ -545,6 +545,11 @@ export default function ProductForm({
                 lines={recipeLines}
                 productId={product?.id ?? null}
                 isNew={isNew}
+                isManufactured={product?.isManufactured ?? false}
+                /* Locked once there is history: flipping it would change what
+                   the product's past sales meant. updateProduct refuses it
+                   too — a disabled control is not a boundary. */
+                lockManufactured={!isNew && (product?.stockOnHand ?? 0) !== 0}
               />
             </Card>
           </div>

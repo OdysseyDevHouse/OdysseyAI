@@ -33,6 +33,11 @@ export const MOVEMENT_TYPES = [
   'adjustment',
   'transfer_in',
   'transfer_out',
+  // Making things. Separate from 'adjustment' because the one table people read
+  // to answer "what happened to this product" has to distinguish flour going
+  // into production from a stock-take correction. See manufacturing.ts.
+  'manufacture_in',
+  'manufacture_out',
 ] as const
 export type MovementType = (typeof MOVEMENT_TYPES)[number]
 
@@ -78,15 +83,30 @@ function mapMovement(r: Row): StockMovement {
  * place, and it is the only place — a second copy of this table is how a
  * returnable ends up decrementing.
  *
- *   -1  sale takes stock out       (normal, calcqty)
+ *   -1  sale takes stock out       (normal, calcqty, serial)
  *   +1  sale puts stock IN         (returnable — a deposit coming back)
- *    0  no stock is carried        (service, buyout, refer)
+ *    0  no stock is carried        (service, buyout, refer, recipe)
  *
- * `recipe` and `serial` return 0 here and are refused at capture: a recipe must
- * deduct its components and there is no recipe table yet, so silently moving
- * nothing would quietly overstate stock.
+ * ── THE ONE TYPE THAT DEPENDS ON MORE THAN THE TYPE ────────────────────────
+ *
+ * A recipe product answers this question two ways, and the product says which.
+ *
+ * By default it returns 0: selling a burger moves a patty, a bun and a slice of
+ * cheese, resolved by productComposition.ts at finalise, and moves nothing of
+ * the burger because there is no pile of burgers.
+ *
+ * A MANUFACTURED recipe (products.is_manufactured) is different. It was built
+ * ahead of time by a manufacturing order, its ingredients were consumed then,
+ * and it has a real pile of its own — so selling one takes one off that pile
+ * like any other stocked item. See manufacturing.ts.
+ *
+ * The argument is optional and defaults to false, so every existing call site
+ * keeps the behaviour it has today.
  */
-export function stockDirectionFor(productType: ProductTypeId): -1 | 0 | 1 {
+export function stockDirectionFor(
+  productType: ProductTypeId,
+  isManufactured = false,
+): -1 | 0 | 1 {
   switch (productType) {
     case 'normal':
     case 'calcqty':
@@ -97,12 +117,15 @@ export function stockDirectionFor(productType: ProductTypeId): -1 | 0 | 1 {
     // WHICH unit moved, it does not replace the movement.
     case 'serial':
       return -1
+    // A made item that is stocked behaves like a normal product: the build
+    // already took its ingredients, so the sale takes the finished unit.
+    case 'recipe':
+      return isManufactured ? -1 : 0
     case 'service':
     case 'buyout':
     // A composed product has no pile of its own — its components move instead,
     // resolved by productComposition.ts at finalise.
     case 'refer':
-    case 'recipe':
       return 0
     default:
       // An unknown type must not silently skip stock. Treat it as normal, which
@@ -111,7 +134,7 @@ export function stockDirectionFor(productType: ProductTypeId): -1 | 0 | 1 {
   }
 }
 
-/** Product types S1 can sell. The rest need tables that do not exist yet. */
+/** Whether a product type can be sold at all. Every one can, today. */
 export function canSellNow(_productType: ProductTypeId): { ok: true } | { ok: false; reason: string } {
   // Every product type sells now. What used to be refused here — recipe, refer
   // and serial — is refused per PRODUCT instead, at finalise: a recipe with no

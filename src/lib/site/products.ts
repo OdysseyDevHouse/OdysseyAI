@@ -21,6 +21,15 @@ export type Product = {
   description: string
   extraDescription: string | null
   productType: ProductTypeId
+  /**
+   * Made in batches, rather than exploded at the till.
+   *
+   * Only meaningful on a recipe product. False — the default — is the original
+   * behaviour: selling one deducts its ingredients and it carries no stock of
+   * its own. True means a manufacturing order builds it ahead of time and it
+   * has a real pile. See src/lib/site/manufacturing.ts.
+   */
+  isManufactured: boolean
 
   departmentId: number | null
   brandId: number | null
@@ -122,6 +131,7 @@ const BELOW_MINIMUM_SQL = `EXISTS (
 
 const SELECT_PRODUCT = `
   SELECT p.id, p.code, p.barcode, p.description, p.extra_description, p.product_type,
+         p.is_manufactured,
          ${BELOW_MINIMUM_SQL} AS below_minimum,
          p.department_id, p.brand_id, p.image_path, p.image_icon, p.image_color,
          p.purchase_vat_rate_id, p.selling_vat_rate_id,
@@ -156,6 +166,7 @@ function mapProduct(
     description: String(r.description),
     extraDescription: (r.extra_description as string | null) ?? null,
     productType: toProductType(r.product_type),
+    isManufactured: Number(r.is_manufactured ?? 0) === 1,
 
     departmentId: r.department_id === null ? null : Number(r.department_id),
     brandId: r.brand_id === null ? null : Number(r.brand_id),
@@ -438,6 +449,8 @@ export type ProductInput = {
   description: string
   extraDescription?: string | null
   productType?: ProductTypeId
+  /** Only meaningful on a recipe product — see Product.isManufactured. */
+  isManufactured?: boolean
   departmentId?: number | null
   brandId?: number | null
   imagePath?: string | null
@@ -641,18 +654,21 @@ export async function createProduct(
   return siteTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO products
-         (code, barcode, description, extra_description, product_type,
+         (code, barcode, description, extra_description, product_type, is_manufactured,
           department_id, brand_id, image_path, image_icon, image_color,
           purchase_vat_rate_id, selling_vat_rate_id,
           last_cost, average_cost, stock_on_hand,
           is_archived, ${PROPERTY_COLUMNS.join(', ')}, last_edit_date)
-       VALUES (?,?,?,?, ?, ?,?,?,?,?, ?,?, ?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
+       VALUES (?,?,?,?, ?,?, ?,?,?,?,?, ?,?, ?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
       [
         code,
         input.barcode?.trim() || null,
         input.description.trim(),
         sanitiseHtml(input.extraDescription) || null,
         toProductType(input.productType),
+        // Only a recipe carries this. Storing it on any other type would leave
+        // a flag that means nothing and reads as though it might.
+        toProductType(input.productType) === 'recipe' && input.isManufactured ? 1 : 0,
         input.departmentId ?? null,
         input.brandId ?? null,
         input.imagePath ?? null,
@@ -736,6 +752,38 @@ export async function updateProduct(
   )
   if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
 
+  /*
+   * "Made in batches" cannot be changed once the product has history.
+   *
+   * The flag decides what a SALE of this product moves — the finished item, or
+   * its ingredients. Flipping it does not restate the movements already
+   * written, so a product that sold ten burgers as ingredient deductions and
+   * then becomes manufactured has ten sales that mean one thing and a pile that
+   * assumes another. Nothing can reconcile that afterwards.
+   *
+   * Checked here rather than only in the form, because a server action is a
+   * public endpoint and a disabled checkbox is not a boundary.
+   */
+  const wanted = toProductType(input.productType) === 'recipe' && input.isManufactured ? 1 : 0
+  const existing = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT p.is_manufactured, p.stock_on_hand,
+            (SELECT COUNT(*) FROM stock_movements m WHERE m.product_id = p.id) AS movements
+       FROM products p WHERE p.id = ?`,
+    [id],
+  )
+  if (existing && Number(existing.is_manufactured ?? 0) !== wanted) {
+    const hasHistory = Number(existing.movements ?? 0) > 0 || toNum(existing.stock_on_hand) !== 0
+    if (hasHistory) {
+      return {
+        ok: false,
+        error:
+          'This product already has stock or movement history, so whether it is made in batches can no longer be changed. ' +
+          'Doing so would change what its past sales meant. Create a new product instead.',
+      }
+    }
+  }
+
   return siteTransaction(siteId, async (tx) => {
     /*
      * image_path and image_icon are written ONLY when the caller names them.
@@ -765,7 +813,7 @@ export async function updateProduct(
     const [res] = await tx.execute(
       `UPDATE products SET
          code = ?, barcode = ?, description = ?, extra_description = ?,
-         product_type = ?, department_id = ?, brand_id = ?,
+         product_type = ?, is_manufactured = ?, department_id = ?, brand_id = ?,
          ${imageAssignments.length ? `${imageAssignments.join(', ')},` : ''}
          image_color = ?,
          purchase_vat_rate_id = ?, selling_vat_rate_id = ?,
@@ -780,6 +828,7 @@ export async function updateProduct(
         input.description.trim(),
         sanitiseHtml(input.extraDescription) || null,
         toProductType(input.productType),
+        wanted,
         input.departmentId ?? null,
         input.brandId ?? null,
         ...imageValues,

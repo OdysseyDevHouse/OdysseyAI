@@ -8,7 +8,7 @@ import { recordMovement, stockDirectionFor } from './stockMovements'
 import { getTenderType } from './tenderTypes'
 import { isPeriodLocked } from './settings'
 import { getDocument, todayIso, type SalesDocument } from './salesDocuments'
-import { resolveComponents, type ResolvedComponent } from './productComposition'
+import { resolveComponents, explodingProducts, type ResolvedComponent } from './productComposition'
 import type { ProductTypeId } from '../productTypes'
 import { postTransaction } from './customerLedger'
 import type { Actor } from './activityLog'
@@ -224,11 +224,23 @@ export async function createCreditNote(
   // Composed products return their COMPONENTS, exactly as selling them consumed
   // components. Resolved before the transaction opens, so a recipe that has
   // since been unpicked fails before anything is written.
+  //
+  // A MANUFACTURED recipe is excluded, and must be: the sale took the finished
+  // unit off its own pile, so the credit note has to put that unit back. Giving
+  // the ingredients back instead would create stock out of nothing and leave
+  // the finished pile short. This is the same set the sale used — one
+  // definition, so the two can never disagree.
+  const exploding = await explodingProducts(
+    siteId,
+    input.lines.filter((l) => l.productId).map((l) => l.productId as number),
+  )
+
   const composed = new Map<number, ResolvedComponent[]>()
   for (const [index, line] of input.lines.entries()) {
     if (!line.productId) continue
     const type = (line.productType ?? 'normal') as ProductTypeId
     if (type !== 'recipe' && type !== 'refer') continue
+    if (!exploding.has(line.productId)) continue
 
     const resolved = await resolveComponents(siteId, line.productId, type)
     if (!resolved.ok) return { ok: false, error: `${line.description}: ${resolved.error}` }
@@ -321,7 +333,11 @@ export async function createCreditNote(
               })
             }
           } else {
-            const direction = stockDirectionFor((line.productType ?? 'normal') as never)
+            const type = (line.productType ?? 'normal') as ProductTypeId
+            const direction = stockDirectionFor(
+              type,
+              type === 'recipe' && !exploding.has(line.productId),
+            )
             if (direction !== 0) {
               await recordMovement(tx, actor, {
                 productId: line.productId,

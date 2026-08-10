@@ -409,6 +409,37 @@ export async function clearRefer(siteId: number, productId: number): Promise<Sav
   return { ok: true }
 }
 
+/**
+ * Which of these products explode into components when they sell.
+ *
+ * A `refer` always does — a six-pack is six singles and there is only one pile.
+ *
+ * A `recipe` does UNLESS it is manufactured. A manufactured recipe was built
+ * ahead of time by a manufacturing order, which already consumed its
+ * ingredients and put finished units on a pile of their own; exploding it again
+ * at the till would deduct the ingredients twice and leave the finished pile
+ * untouched. See manufacturing.ts.
+ *
+ * One query and one definition, shared by salesPosting and salesReversal — the
+ * two must agree, or a credit note returns ingredients a sale never took.
+ */
+export async function explodingProducts(
+  siteId: number,
+  productIds: readonly number[],
+): Promise<Set<number>> {
+  const ids = [...new Set(productIds)].filter((id) => id > 0)
+  if (ids.length === 0) return new Set()
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT id FROM products
+      WHERE id IN (${ids.map(() => '?').join(',')})
+        AND (product_type = 'refer' OR (product_type = 'recipe' AND is_manufactured = 0))`,
+    ids,
+  )
+  return new Set(rows.map((r) => Number(r.id)))
+}
+
 /** Products that use this one as an ingredient — shown before deleting it. */
 export async function usedInRecipes(
   siteId: number,

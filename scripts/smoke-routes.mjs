@@ -129,6 +129,7 @@ const DYNAMIC = {
   '/suppliers/[id]': 'SELECT id FROM suppliers ORDER BY id DESC LIMIT 1',
   '/suppliers/remittances/[runId]': 'SELECT id FROM supplier_payment_runs ORDER BY id DESC LIMIT 1',
   '/transfers/[id]': 'SELECT id FROM stock_transfers ORDER BY id DESC LIMIT 1',
+  '/manufacturing/[id]': 'SELECT id FROM manufacturing_orders ORDER BY id DESC LIMIT 1',
 }
 
 // ── Route discovery ─────────────────────────────────────────────────────

@@ -251,6 +251,8 @@ function readInput(form: FormData): ProductInput {
     extraDescription: String(form.get('extraDescription') ?? '') || null,
     // Narrowed rather than trusted: an unknown value falls back to 'normal'.
     productType: toProductType(form.get('productType')),
+    // Only read for a recipe; products.ts stores 0 for every other type.
+    isManufactured: flag(form, 'isManufactured'),
     departmentId: optionalId(form, 'departmentId'),
     brandId: optionalId(form, 'brandId'),
     imageColor: String(form.get('imageColor') ?? '') || null,

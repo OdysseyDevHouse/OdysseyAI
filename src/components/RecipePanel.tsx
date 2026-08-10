@@ -7,6 +7,7 @@ import {
   Combobox,
   EmptyState,
   NumberInput,
+  Switch,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_NUMERIC,
@@ -64,13 +65,26 @@ export default function RecipePanel({
   lines,
   productId,
   isNew,
+  isManufactured = false,
+  lockManufactured = false,
 }: {
   /** What this recipe holds today. Empty for a product with none yet. */
   lines: RecipeLine[]
   /** Excluded from the picker so a recipe cannot list itself. */
   productId: number | null
   isNew: boolean
+  /** Built ahead of time and stocked, rather than exploded at the till. */
+  isManufactured?: boolean
+  /**
+   * The product already has stock or movement history, so the choice is fixed.
+   *
+   * Changing it would change what past sales meant, and nothing can reconcile
+   * that afterwards — updateProduct refuses it too, because a disabled control
+   * is not a boundary.
+   */
+  lockManufactured?: boolean
 }) {
+  const [made, setMade] = useState(isManufactured)
   const [rows, setRows] = useState<Row[]>(() => lines.map(toRow))
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ProductPick[]>([])
@@ -139,10 +153,35 @@ export default function RecipePanel({
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      <p className="text-sm text-muted">
-        What one of this product is made from. Selling one deducts these ingredients from stock —
-        the made item itself never carries stock of its own.
-      </p>
+      <p className="text-sm text-muted">What one of this product is made from.</p>
+
+      {/* The switch submits through a hidden input for the same reason every
+          other switch in this form does: an off switch sends nothing at all,
+          and "absent" would be indistinguishable from "not on this form". */}
+      <input type="hidden" name="isManufactured" value={made ? '1' : '0'} />
+
+      <div className="flex items-start justify-between gap-4 rounded-card border border-border bg-surface-2 p-4">
+        <div className="flex flex-col gap-1">
+          <span className="text-sm text-ink">Made in batches</span>
+          <span className="text-sm text-muted">
+            {made
+              ? 'Build this ahead of time and carry stock of it. The ingredients come off the shelf when you build, and selling one takes a finished unit.'
+              : 'The ingredients come off the shelf at the moment of sale, and this item carries no stock of its own.'}
+          </span>
+          {lockManufactured && (
+            <span className="text-sm text-warning">
+              This cannot be changed now — the product already has stock or movement history, and
+              changing it would change what its past sales meant.
+            </span>
+          )}
+        </div>
+        <Switch
+          checked={made}
+          disabled={lockManufactured}
+          onChange={setMade}
+          ariaLabel="Made in batches"
+        />
+      </div>
 
       {isNew && (
         <p className="text-sm text-muted">

@@ -18,7 +18,7 @@ import { validateTerminalClaim } from './terminals'
 import { shiftToBankInto } from './shifts'
 import { getNumericSetting, isPeriodLocked } from './settings'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
-import { resolveComponents, type ResolvedComponent } from './productComposition'
+import { resolveComponents, explodingProducts, type ResolvedComponent } from './productComposition'
 import { checkSellable, markSold } from './serials'
 import { postTransaction, reverseTransaction } from './customerLedger'
 import type { Actor } from './activityLog'
@@ -255,10 +255,22 @@ export async function finaliseDocument(
   // Composed products (recipe, refer) move their COMPONENTS, not themselves.
   // Resolved out here, before the transaction opens, so a half-built recipe is
   // refused while nothing has moved rather than rolling back mid-sale.
+  //
+  // A MANUFACTURED recipe is excluded: it was built ahead of time and carries a
+  // pile of its own, so it falls through to the ordinary stockDirectionFor path
+  // below and the finished unit is what leaves.
+  const exploding = await explodingProducts(
+    siteId,
+    document.lines
+      .filter((l) => l.productId && (l.productType === 'recipe' || l.productType === 'refer'))
+      .map((l) => l.productId as number),
+  )
+
   const composed = new Map<number, ResolvedComponent[]>()
   for (const line of document.lines) {
     if (!line.productId) continue
     if (line.productType !== 'recipe' && line.productType !== 'refer') continue
+    if (!exploding.has(line.productId)) continue
 
     const resolved = await resolveComponents(siteId, line.productId, line.productType)
     if (!resolved.ok) return { ok: false, error: `${line.description}: ${resolved.error}` }
@@ -346,7 +358,12 @@ export async function finaliseDocument(
           continue
         }
 
-        const direction = stockDirectionFor(line.productType)
+        // A recipe line that reached here is manufactured — the exploding set
+        // above filtered out the ones that deduct components instead.
+        const direction = stockDirectionFor(
+          line.productType,
+          line.productType === 'recipe' && !exploding.has(line.productId),
+        )
         if (direction === 0) continue
 
         await recordMovement(tx, actor, {
@@ -599,7 +616,30 @@ export async function finaliseDocument(
         departmentId,
         round((revenueByDepartment.get(departmentId) ?? 0) + line.lineTotalExcl, 2),
       )
-      costOfSales = round(costOfSales + line.qty * line.unitCostExcl, 2)
+
+      /*
+       * A COMPOSED LINE COSTS WHAT WENT INTO IT.
+       *
+       * line.unitCostExcl comes from products.average_cost, which for an
+       * exploding recipe is 0.0000 — nothing was ever purchased called
+       * "burger". Using it debited cost of sales with nothing while the
+       * component movements credited stock with their real cost, so every
+       * recipe sale reported 100% gross profit and the two halves of the
+       * journal described different events.
+       *
+       * The components are already resolved above, with each one's cost on it,
+       * so the true figure costs no extra query. A MANUFACTURED recipe is not
+       * in this map and needs none of it: its build wrote a real average_cost.
+       */
+      const components = composed.get(line.id)
+      const unitCost = components
+        ? round(
+            components.reduce((sum, c) => sum + c.qtyPerUnit * c.unitCostExcl, 0),
+            4,
+          )
+        : line.unitCostExcl
+
+      costOfSales = round(costOfSales + line.qty * unitCost, 2)
     }
 
     await mirrorSale(siteId, actor, {
@@ -870,11 +910,23 @@ export async function voidDocument(
     }
   }
 
+  // A manufactured recipe carries its own pile, so voiding a sale of one has to
+  // put the finished unit back. An exploding recipe still returns 0 here and
+  // its components are not reversed — a pre-existing gap in the void path,
+  // unchanged by this.
+  const voidExploding = await explodingProducts(
+    siteId,
+    document.lines.filter((l) => l.productId).map((l) => l.productId as number),
+  )
+
   await siteTransaction(siteId, async (tx) => {
     // Reversing movements. The originals stay — an audit row is never deleted.
     for (const line of document.lines) {
       if (!line.productId) continue
-      const direction = stockDirectionFor(line.productType)
+      const direction = stockDirectionFor(
+        line.productType,
+        line.productType === 'recipe' && !voidExploding.has(line.productId),
+      )
       if (direction === 0) continue
 
       await recordMovement(tx, actor, {

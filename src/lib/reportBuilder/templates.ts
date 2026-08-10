@@ -491,6 +491,37 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: 'movementValue_sum', dir: 'asc' },
     }),
   },
+  {
+    id: 'ingredient-usage',
+    name: 'Ingredients used in production',
+    description: 'What manufacturing consumed, by product — the flour behind the bread.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'stockMovements',
+      groupFields: ['productCode', 'productDescription'],
+      columns: [{ field: '__rows' }, { field: 'qtyChange', agg: 'sum' }, { field: 'movementValue', agg: 'sum' }],
+      // manufacture_out only. The matching manufacture_in is the finished item
+      // arriving, and summing both together would net a build to roughly zero
+      // and answer nothing.
+      filters: [{ field: 'movementType', op: 'eq', value: 'manufacture_out' }],
+      sort: { key: 'movementValue_sum', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'production-output',
+    name: 'What was manufactured',
+    description: 'Finished goods built, by product, with what they cost to make.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'stockMovements',
+      groupFields: ['productCode', 'productDescription'],
+      columns: [{ field: '__rows' }, { field: 'qtyChange', agg: 'sum' }, { field: 'movementValue', agg: 'sum' }],
+      filters: [{ field: 'movementType', op: 'eq', value: 'manufacture_in' }],
+      sort: { key: 'movementValue_sum', dir: 'desc' },
+    }),
+  },
 
   /* ── Customers ───────────────────────────────────────────────────────────── */
   {
