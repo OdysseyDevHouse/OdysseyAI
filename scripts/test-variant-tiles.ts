@@ -45,6 +45,7 @@ function product(
     priceIncl,
     inStock,
     stockOnHand: inStock ? 5 : 0,
+    stockRaw: inStock ? 5 : 0,
     brand: null,
     wasPriceIncl: null,
     imageId: null,

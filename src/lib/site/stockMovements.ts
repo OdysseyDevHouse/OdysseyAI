@@ -4,6 +4,7 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb
 import { round, toNum } from '../decimals'
 import { mainLocationId, mainLocationIdTx } from './stockLocations'
 import { isParentTx } from './productVariants'
+import { heldQtyFor } from './stockHolds'
 import type { ProductTypeId } from '../productTypes'
 
 /**
@@ -516,7 +517,10 @@ export async function reservedQty(siteId: number, productId: number): Promise<nu
        ), 0) AS reserved`,
     [productId, productId],
   )
-  return toNum(row?.reserved)
+  // Online holds are added separately and tolerantly — see the note in
+  // reservedQtyFor for why they are not in the query above.
+  const held = await heldQtyFor(siteId, [productId])
+  return toNum(row?.reserved) + (held.get(productId) ?? 0)
 }
 
 /**
@@ -562,7 +566,27 @@ export async function reservedQtyFor(
     [...ids, ...ids],
   )
 
-  return new Map(rows.map((r) => [Number(r.product_id), toNum(r.reserved)]))
+  const reserved = new Map(rows.map((r) => [Number(r.product_id), toNum(r.reserved)]))
+
+  /*
+   * ── Online holds, added SEPARATELY and tolerantly ───────────────────────
+   *
+   * A third claim of the same kind as the two above — an online order awaiting
+   * acceptance has promised goods to a named shopper without moving anything
+   * (076). It is not folded into the UNION because this function is on the
+   * till's hot path, and a store that has not run 076 yet has no such table:
+   * one missing relation would turn every availability read into an error and
+   * stop the shop selling, which is far worse than the feature being absent.
+   *
+   * heldQtyFor swallows that case and yields an empty map, so an unmigrated
+   * store simply behaves as it did before holds existed.
+   */
+  const held = await heldQtyFor(siteId, ids)
+  for (const [productId, qty] of held) {
+    reserved.set(productId, (reserved.get(productId) ?? 0) + qty)
+  }
+
+  return reserved
 }
 
 export type Availability = {

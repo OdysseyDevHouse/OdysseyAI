@@ -2,9 +2,16 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { activeSiteIds } from '@/lib/sites'
 import { remindAbandonedBaskets } from '@/lib/site/basketReminder'
+import { sweepExpiredHolds } from '@/lib/site/stockHolds'
 
 /**
- * The abandoned-basket heartbeat — call this every 15–30 minutes from cron.
+ * The storefront housekeeping heartbeat — call this every 15–30 minutes.
+ *
+ * Two jobs ride it: reminding shoppers about abandoned baskets (072), and
+ * tidying expired stock holds (076). One cron entry rather than two, because
+ * two entries to configure is two chances for a shop to set up one and forget
+ * the other — and the hold sweep is pure tidying, so it has no schedule of its
+ * own to respect.
  *
  * ── WHY A SHARED SECRET AND NOT A SESSION ────────────────────────────────
  *
@@ -67,6 +74,18 @@ async function handle(request: NextRequest) {
 
   for (const siteId of siteIds) {
     try {
+      /*
+       * Expired stock holds are tidied on the SAME tick, rather than getting a
+       * heartbeat of their own. Two cron entries to configure is two chances
+       * for a shop to set up one and forget the other.
+       *
+       * It is only tidying: `expires_at` is what makes a hold stop counting,
+       * and every read enforces it — so this never running means some stale
+       * rows, not stock hidden from the shop. That is why it is safe to bolt
+       * onto a job whose real purpose is something else.
+       */
+      await sweepExpiredHolds(siteId).catch(() => 0)
+
       const result = await remindAbandonedBaskets(siteId)
       sent += result.sent
       failed += result.failed

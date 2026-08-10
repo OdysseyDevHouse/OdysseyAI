@@ -12,6 +12,7 @@ import {
 } from './onlineStore'
 import { accountCanCover, customerAccount } from './customerAuth'
 import { validateCode, redeemCode } from './discountCodes'
+import { placeHolds, heldQtyFor } from './stockHolds'
 import { liveSpecials, specialPriceFor } from './specials'
 import { storefrontImagesByIds, type StorefrontImage } from './storefrontImages'
 import { recentApprovedReviews, type ProductReview } from './productReviews'
@@ -59,6 +60,14 @@ export type StorefrontProduct = {
    * number is never in the page source for someone to read.
    */
   stockOnHand: number | null
+  /**
+   * What the shop OWNS, before holds and regardless of `showStock`.
+   *
+   * Never rendered — it exists so the order path can ask "is there enough
+   * left" without depending on a figure the shop may have chosen not to
+   * publish. `stockOnHand` is the publishing decision; this is the fact.
+   */
+  stockRaw: number
   /** The maker's name, when the shop records one. */
   brand: string | null
   /**
@@ -200,7 +209,30 @@ const PRODUCT_COLUMNS = `
   dep.name AS department_name,
   br.name AS brand_name,
   pp.selling_price_incl AS price_incl,
-  (p.stock_on_hand > 0) AS in_stock,
+  -- ── What the SHOP may promise, not what the shop owns ──────────────────
+  --
+  -- stock_on_hand less anything a placed-but-unaccepted online order is
+  -- holding (076). Two shoppers could otherwise both be told "In stock" for
+  -- the last item within the same minute, and one is disappointed at
+  -- acceptance.
+  --
+  -- A hold is LIVE only while it is unreleased and unexpired, checked here
+  -- rather than read from a status — so a hold whose window has passed stops
+  -- hiding stock immediately, even if nothing has swept it.
+  --
+  -- Correlated subqueries rather than a join: a join would multiply the
+  -- product row once per hold, and these read a handful of rows off
+  -- ix_hold_live.
+  GREATEST(p.stock_on_hand - COALESCE((
+    SELECT SUM(h.qty) FROM online_stock_holds h
+     WHERE h.product_id = p.id
+       AND h.released_at IS NULL AND h.expires_at > NOW()
+  ), 0), 0) AS sellable_qty,
+  (p.stock_on_hand - COALESCE((
+    SELECT SUM(h.qty) FROM online_stock_holds h
+     WHERE h.product_id = p.id
+       AND h.released_at IS NULL AND h.expires_at > NOW()
+  ), 0) > 0) AS in_stock,
   -- The raw figure travels; whether it reaches the browser is decided by the
   -- store's show_stock setting in mapStorefrontProduct, so a shop that does
   -- not publish stock never has the number in its page source at all.
@@ -633,9 +665,23 @@ async function withSpecials(
  * render a number it was given still ships that number in the HTML.
  */
 function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProduct {
-  const onHand = r.stock_on_hand === null || r.stock_on_hand === undefined
+  /*
+   * The SELLABLE figure, not the owned one.
+   *
+   * "Only 3 left" has to mean three a shopper can actually have. Publishing
+   * the raw stock_on_hand would count items another shopper's placed order is
+   * already holding, and the shop would be advertising goods it has promised
+   * away — which is the exact failure holds exist to prevent.
+   *
+   * Falls back to the raw figure when the sellable one is absent, so a store
+   * that has not run 076 behaves exactly as it did before.
+   */
+  const raw = r.stock_on_hand === null || r.stock_on_hand === undefined
     ? null
     : Number(r.stock_on_hand)
+  const onHand = r.sellable_qty === null || r.sellable_qty === undefined
+    ? raw
+    : Number(r.sellable_qty)
 
   return {
     id: Number(r.id),
@@ -647,6 +693,7 @@ function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProdu
     priceIncl: toNum(r.price_incl),
     inStock: !!r.in_stock,
     stockOnHand: settings.showStock ? onHand : null,
+    stockRaw: raw ?? 0,
     // Filled in by `withSpecials` after the query returns — specials are
     // loaded once per request rather than once per product.
     wasPriceIncl: null,
@@ -1043,6 +1090,18 @@ export async function placePublicOrder(
     note: string
   }[] = []
 
+  /*
+   * What is already spoken for, read ONCE for the whole basket rather than per
+   * line — a ten-line order would otherwise be ten round trips.
+   *
+   * Empty when the shop has holding switched off, so nothing is queried at all
+   * in that case.
+   */
+  const alreadyHeld =
+    settings.holdMinutes > 0
+      ? await heldQtyFor(siteId, input.lines.map((l) => Number(l.productId)))
+      : new Map<number, number>()
+
   let goodsTotal = 0
   for (const line of input.lines) {
     const product = byId.get(Number(line.productId))
@@ -1056,6 +1115,34 @@ export async function placePublicOrder(
     if (!Number.isFinite(qty) || qty <= 0 || qty > 9999) {
       return { ok: false, error: `Please check the quantity for ${product.description}.` }
     }
+
+    /*
+     * ── Is there actually enough left to promise? ─────────────────────────
+     *
+     * Only when the shop holds stock. With holding off (hold_minutes = 0) the
+     * pre-076 behaviour stands: the shop takes the order and sorts it out at
+     * acceptance, which is a deliberate choice for a business with deep stock.
+     *
+     * Checked HERE and not only in the browser, because the storefront hiding
+     * a sold-out product stops someone BROWSING to it — it does nothing about
+     * a stale tab, a resubmitted form, or two shoppers whose baskets were
+     * filled before either checked out. Without this, holds hide stock from
+     * the next shopper while still letting them order it.
+     */
+    if (settings.holdMinutes > 0) {
+      const spokenFor = alreadyHeld.get(product.id) ?? 0
+      const free = round(product.stockRaw - spokenFor, 3)
+      if (free < qty) {
+        return {
+          ok: false,
+          error:
+            free <= 0
+              ? `Sorry — ${product.description} has just sold out.`
+              : `Sorry — only ${free} of ${product.description} ${free === 1 ? 'is' : 'are'} left.`,
+        }
+      }
+    }
+
     const lineTotal = round(qty * product.priceIncl, 2)
     priced.push({
       productId: product.id,
@@ -1247,6 +1334,27 @@ export async function placePublicOrder(
        * The loser is refused rather than quietly charged full price, because
        * they pressed a button that named a discounted total.
        */
+      /*
+       * ── Hold the stock this order has claimed ───────────────────────────
+       *
+       * In the SAME transaction as the order and its lines: a hold written
+       * outside it could survive a rollback and keep goods off the shelf for
+       * an order that does not exist.
+       *
+       * It moves no stock and writes no movement — see 076. All it changes is
+       * what the storefront advertises to the NEXT shopper, which is exactly
+       * where the "both told In stock" problem was.
+       *
+       * `holdMinutes` of 0 means the shop has switched holding off, and
+       * placeHolds writes nothing at all.
+       */
+      await placeHolds(
+        tx,
+        orderId,
+        priced.map((p) => ({ productId: p.productId, qty: p.qty })),
+        settings.holdMinutes,
+      )
+
       if (discountApplied) {
         const spent = await redeemCode(tx, {
           codeId: discountApplied.id,

@@ -86,6 +86,14 @@ export type OnlineSettings = {
   /** The shop's own wording above the items. Empty means the standard line. */
   basketReminderNote: string
   /**
+   * How long a placed order holds its stock before the claim lapses.
+   *
+   * 0 switches holding off entirely — the pre-076 behaviour, and a legitimate
+   * choice for a shop with deep stock that would rather never refuse a
+   * shopper.
+   */
+  holdMinutes: number
+  /**
    * Whether departments show their picture — on the rail under the search and
    * on the "Shop by department" tiles.
    *
@@ -167,6 +175,7 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       basketReminders: false,
       basketReminderHours: 4,
       basketReminderNote: '',
+      holdMinutes: 60,
       updatedAt: null,
       updatedBy: '',
     }
@@ -196,6 +205,9 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       ? Number(row.basket_reminder_hours)
       : 4,
     basketReminderNote: String(row.basket_reminder_note ?? ''),
+    // Defaulted rather than trusted: a store that has not run 076 yet returns
+    // undefined here, and NaN would silently switch holding off.
+    holdMinutes: Number.isFinite(Number(row.hold_minutes)) ? Number(row.hold_minutes) : 60,
     updatedAt: row.updated_at instanceof Date ? row.updated_at : null,
     updatedBy: String(row.updated_by ?? ''),
   }
@@ -291,6 +303,7 @@ export async function saveOnlineSettings(
             show_stock = ?, show_photos = ?, show_brands = ?,
             show_department_images = ?,
             basket_reminders = ?, basket_reminder_hours = ?, basket_reminder_note = ?,
+            hold_minutes = ?,
             updated_by = ?
       WHERE id = 1`,
     [
@@ -316,6 +329,9 @@ export async function saveOnlineSettings(
       // upper value would silently disable the feature.
       Math.min(Math.max(Math.round(input.basketReminderHours) || 4, 1), 168),
       input.basketReminderNote.slice(0, 500),
+      // Clamped to a week. 0 is meaningful — it switches holding off — so the
+      // floor is 0 rather than 1, unlike the reminder delay above.
+      Math.min(Math.max(Math.round(input.holdMinutes) || 0, 0), 60 * 24 * 7),
       updatedBy.slice(0, 120),
     ],
   )

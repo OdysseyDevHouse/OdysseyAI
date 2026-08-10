@@ -7,6 +7,7 @@ import { getSetting } from './settings'
 import { accountCanCover, customerAccount } from './customerAuth'
 import { notifyStatusReached } from './orderNotify'
 import { getOnlineSettings, listOrderStatuses, type OrderStatus } from './onlineStore'
+import { releaseHolds } from './stockHolds'
 
 /**
  * Online orders — from a public submission to a sale.
@@ -585,6 +586,20 @@ export async function acceptOrder(
     }
   }
 
+  /*
+   * The hold has done its job — let it go.
+   *
+   * The sale above wrote real stock movements, so the goods are now accounted
+   * for as sold rather than merely claimed. Leaving the hold would subtract
+   * them from the storefront a SECOND time, hiding stock the shop still has.
+   *
+   * Swallowed rather than awaited-and-checked: the sale is written and the
+   * order is linked. Failing the acceptance now, over a bookkeeping row, would
+   * leave staff looking at an order that is both accepted and not. A hold left
+   * behind expires on its own within the window.
+   */
+  await releaseHolds(siteId, orderId, 'accepted').catch(() => {})
+
   // Accepting also MOVES the order, so it announces itself the same way a
   // manual move does. After the link above, for the same reason.
   await notifyStatusReached(siteId, orderId, landing)
@@ -677,6 +692,20 @@ export async function cancelOrder(
         order.documentId,
       ])
     }
+
+    /*
+     * Give the stock straight back.
+     *
+     * INSIDE the transaction, unlike the release on acceptance: if the
+     * cancellation rolls back the order is still live, and its claim on the
+     * goods must roll back with it. On acceptance the sale is already written
+     * by this point, so there is nothing left to undo.
+     *
+     * Without this the goods stay invisible to the storefront until the window
+     * lapses — an hour of not selling something the shop has, caused by an
+     * order it just turned down.
+     */
+    await releaseHolds(siteId, orderId, 'cancelled', tx)
   })
 
   return { ok: true }

@@ -79,6 +79,7 @@ export default function SetupForm({
     basketReminders: settings.basketReminders,
     basketReminderHours: settings.basketReminderHours,
     basketReminderNote: settings.basketReminderNote,
+    holdMinutes: settings.holdMinutes,
   })
 
   function patch(next: Partial<OnlineSettingsInput>) {
@@ -460,6 +461,41 @@ export default function SetupForm({
             label="Allow account orders"
           />
         </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup
+        title="Holding stock"
+        description="What a placed order keeps off the shelf while it waits for you."
+      >
+        <div className="flex flex-col gap-4 px-6 py-4">
+          <div className="max-w-xs">
+            <Field
+              label="Hold stock for"
+              hint="Minutes. An order keeps its items out of the shop's available count until you accept it or this lapses. 0 turns holding off."
+            >
+              <NumberInput
+                value={form.holdMinutes}
+                min={0}
+                max={10080}
+                className="w-24"
+                onChange={(e) => patch({ holdMinutes: Number(e.target.value) || 0 })}
+              />
+            </Field>
+          </div>
+
+          <Callout
+            tone="neutral"
+            title={
+              form.holdMinutes > 0
+                ? 'Nothing is taken off your stock figures'
+                : 'Two shoppers can be promised the same item'
+            }
+          >
+            {form.holdMinutes > 0
+              ? 'A hold only changes what the shop advertises. Your stock on hand, your movements and your reconciliation are untouched — the goods are still yours until you accept the order and it becomes a sale.'
+              : 'With holding off, the shop shows everything you have to every shopper. Two people can order the last one within the same minute, and you will find out when you come to accept the second.'}
+          </Callout>
+        </div>
       </SettingGroup>
 
       {/* Its own group rather than another display switch: this one sends mail
