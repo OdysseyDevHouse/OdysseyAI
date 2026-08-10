@@ -8,46 +8,31 @@ import {
   PackageOpen,
   ArrowLeftRight,
   Tag,
+  CalendarClock,
   Lightbulb,
   Factory,
   Contact,
   Package,
   PieChart,
   Settings,
-  Store,
-  Palette,
-  Wrench,
   ShoppingBag,
   Gem,
-  Stamp,
   Plus,
   Receipt,
   FileText,
   Users,
-  KeyRound,
   Undo2 as Reverse,
   ListOrdered,
   ChartColumn as BarChart,
   Mail,
   Truck,
-  CreditCard,
-  Monitor,
-  Hash,
   Coins,
-  CloudOff,
-  Check,
-  Warehouse,
-  Database,
-  MessageSquare,
-  Landmark,
   Scale,
   Percent,
-  Lock,
   Bell,
   Clock,
   CalendarRange,
   Handshake,
-  Sparkles,
   Repeat,
   type LucideIcon,
 } from 'lucide-react'
@@ -76,6 +61,8 @@ export type NavItem = {
    * link is still a URL anyone can type.
    */
   capability?: string
+  /** Words someone might search for that are not in the label. */
+  keywords?: string
 }
 
 export type NavSection = {
@@ -86,6 +73,12 @@ export type NavSection = {
   items?: NavItem[]
   built?: boolean
   capability?: string
+  /**
+   * Search synonyms for the section itself. Matters most for a hub, whose
+   * screens the menu no longer names: without these, collapsing a dozen rows
+   * into one link makes the search box worse than it was.
+   */
+  keywords?: string
 }
 
 export const NAV: NavSection[] = [
@@ -103,24 +96,49 @@ export const NAV: NavSection[] = [
       { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note' },
       { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup' },
-      /* Sales rung up with no connection. Under Sales rather than Setup because
-         it is a daily trading question — "is yesterday's offline trading on the
-         books" — not a configuration one. */
-      { label: 'Offline sales', href: '/sales/offline', icon: CloudOff, built: true, capability: 'sales.view' },
+      /* Offline sales is NOT here any more — it is a reconciliation check
+         ("is yesterday's offline trading on the books"), so it sits in the
+         accounting hub beside the other checks that catch a figure going wrong.
+         Lay-bys and Contracts stay: they are daily for the shops that use them,
+         and LEAF_LABELS below only reaches a screen the menu names. */
     ],
   },
+  /*
+   * Inventory split in two.
+   *
+   * Its eight children were two unrelated jobs sharing a word: WHAT WE SELL
+   * (products, departments, specials, instructions) and WHAT WE PHYSICALLY HAVE
+   * and how it moves (purchasing, transfers, stock takes). Different people do
+   * them, on different days. `CAPABILITY_GROUPS` in src/lib/site/permissions.ts
+   * had already made exactly this split — products / purchasing / stock — and
+   * the menu was the one taxonomy disagreeing with it.
+   */
   {
-    label: 'Inventory',
+    label: 'Products',
     icon: Table,
     items: [
       { label: 'Products', href: '/products', icon: Boxes, built: true, capability: 'products.view' },
       { label: 'Departments', href: '/departments', icon: LayoutGrid, built: true, capability: 'products.view' },
-      { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, capability: 'stock.adjust' },
+      { label: 'Specials', href: '/specials', icon: Tag, built: true, capability: 'products.edit' },
+      /* Beside Specials rather than under Setup, and for the same reason Specials
+         is here: both are prices that change themselves on a clock, and both are
+         used by a shop owner weekly. Setup → Pricing is the SHAPE of pricing —
+         which price types exist, what VAT applies — which is a different job. */
+      { label: 'Price changes', href: '/pricing-schedules', icon: CalendarClock, built: true, capability: 'products.edit' },
+      { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view' },
+      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, built: true, capability: 'products.edit' },
+    ],
+  },
+  {
+    label: 'Stock',
+    icon: PackageOpen,
+    items: [
       { label: 'Purchasing', href: '/purchasing', icon: PackageOpen, built: true, capability: 'purchasing.view' },
       { label: 'Transfers', href: '/transfers', icon: ArrowLeftRight, built: true, capability: 'stock.transfer' },
-      { label: 'Specials', href: '/specials', icon: Tag, built: true, capability: 'products.edit' },
-      { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view' },
-      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, capability: 'products.edit' },
+      { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, built: true, capability: 'stock.adjust' },
+      /* A supplier exists in this app because stock comes from one. Their age
+         analysis and remittances are money questions and sit in that hub. */
+      { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view' },
     ],
   },
   {
@@ -134,63 +152,50 @@ export const NAV: NavSection[] = [
       { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view' },
       { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view' },
       { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view' },
+      /* The members list, which is the loyalty screen anybody actually opens.
+         The programme, its tiers and the punch cards decide how it WORKS and
+         are set once, so they are in the setup hub. */
+      { label: 'Loyalty', href: '/loyalty', icon: Gem, built: true, capability: 'loyalty.view' },
     ],
   },
+  /*
+   * One link, not a group of thirteen — the same move Setup made, and for the
+   * same reasons with more force. "Unallocated", "Interest", "Write-offs" and
+   * "Periods" are exactly the screens nobody can choose between from the name
+   * alone, and /accounting had no landing page at all, so the heading opened
+   * onto nothing. The hub groups them by the question somebody arrives with.
+   *
+   * Gated on the weakest capability any tile requires, so anyone who can see a
+   * single screen gets in and the hub drops the rest.
+   */
   {
-    label: 'Suppliers',
-    icon: Package,
-    items: [
-      { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view' },
-      { label: 'Age analysis', href: '/suppliers/age-analysis', icon: BarChart, built: true, capability: 'suppliers.view' },
-      { label: 'Remittances', href: '/suppliers/remittances', icon: Mail, built: true, capability: 'purchasing.pay' },
-    ],
-  },
-  {
-    // Where the money itself lives, as opposed to what the ledgers say about
-    // it. Sits after both sub-ledgers because it reconciles against them.
     label: 'Accounting',
     icon: Scale,
-    items: [
-      // The three statements lead: they are what anyone opens this menu for,
-      // and everything below them is the machinery that produces them.
-      { label: 'Profit and loss', href: '/accounting/income-statement', icon: LineChart, built: true, capability: 'reports.financial' },
-      { label: 'Balance sheet', href: '/accounting/balance-sheet', icon: Scale, built: true, capability: 'reports.financial' },
-      { label: 'Trial balance', href: '/accounting/trial-balance', icon: BarChart, built: true, capability: 'reports.financial' },
-      { label: 'Cashbook', href: '/cashbook', icon: Landmark, built: true, capability: 'cashbook.view' },
-      // Everything the business spends that is not stock. Sits directly under
-      // the cashbook because most expenses come straight out of one.
-      { label: 'Expenses', href: '/expenses', icon: Receipt, built: true, capability: 'cashbook.view' },
-      { label: 'VAT return', href: '/accounting/vat', icon: Percent, built: true, capability: 'reports.financial' },
-      { label: 'Journals', href: '/accounting/journals', icon: FileText, built: true, capability: 'reports.financial' },
-      { label: 'Chart of accounts', href: '/accounting/accounts', icon: ListOrdered, built: true, capability: 'reports.financial' },
-      // What the business owns and uses, and the depreciation that turns it
-      // into a cost over the years it is used.
-      { label: 'Fixed assets', href: '/accounting/assets', icon: Warehouse, built: true, capability: 'reports.financial' },
-      { label: 'Unallocated', href: '/accounting/unallocated', icon: Coins, built: true, capability: 'cashbook.view' },
-      { label: 'Interest', href: '/accounting/interest', icon: Percent, built: true, capability: 'customers.credit' },
-      { label: 'Write-offs', href: '/accounting/write-offs', icon: Reverse, built: true, capability: 'customers.credit' },
-      { label: 'Periods', href: '/accounting/periods', icon: Lock, built: true, capability: 'setup.edit' },
-    ],
+    href: '/accounting',
+    built: true,
+    capability: 'cashbook.view',
+    keywords: 'money ledger books financials vat tax cashbook expenses debtors creditors',
   },
+  /*
+   * One link too. The hub already leads with built-in reports, whatever the
+   * shop has built, and their favourites. Naming "Build a report", "Generate
+   * with AI" and "Scheduled reports" here as well put three shortcuts to a hub
+   * in the menu directly beside the hub — the two-front-doors problem in
+   * miniature. The search still finds them by name via the keywords below.
+   */
   {
     label: 'Reports',
     icon: PieChart,
-    items: [
-      /* The hub leads because it is the one entry point people should learn:
-         built-in reports, whatever the shop has built, and their favourites are
-         all on it. The two below are shortcuts to the same place, kept in the
-         menu because "build a report" and "email me this" are things people go
-         looking for by name. */
-      { label: 'All reports', href: '/reports', icon: PieChart, built: true, capability: 'reports.view' },
-      { label: 'Build a report', href: '/reports/builder', icon: Table, built: true, capability: 'reports.build' },
-      { label: 'Generate with AI', href: '/reports/ask', icon: Sparkles, built: true, capability: 'reports.ai' },
-      { label: 'Scheduled reports', href: '/reports/schedules', icon: Clock, built: true, capability: 'reports.schedule' },
-    ],
+    href: '/reports',
+    built: true,
+    capability: 'reports.view',
+    keywords: 'build a report generate with ai scheduled reports email me analytics',
   },
   {
-    // Sits beside Commission because the two answer the same question from
-    // opposite ends: what the business pays a person, and what that person
-    // brought in.
+    /* Staff and Commission answered the same question from opposite ends —
+       what the business pays a person, and what that person brought in — so
+       they are one section. Pay rules and Cost per employee moved to the setup
+       hub: both are configuration that decides what the figures here come to. */
     label: 'Staff',
     icon: Users,
     items: [
@@ -200,19 +205,25 @@ export const NAV: NavSection[] = [
       { label: 'Timesheets', href: '/staff/timesheets', icon: ClipboardList, built: true, capability: 'staff.view_own' },
       { label: 'Leave', href: '/staff/leave', icon: CalendarRange, built: true, capability: 'staff.view_own' },
       { label: 'People', href: '/staff', icon: Contact, built: true, capability: 'staff.view_all' },
-      { label: 'Cost per employee', href: '/staff/cost', icon: Coins, built: true, capability: 'staff.cost' },
-      /* Last, and on staff.cost: this is configuration rather than a daily
-         screen, and it decides what every figure above it comes to. */
-      { label: 'Pay rules', href: '/staff/pay-rules', icon: Settings, built: true, capability: 'staff.cost' },
+      { label: 'Commission', href: '/commission', icon: Percent, built: true, capability: 'commission.view_own' },
     ],
   },
+  /*
+   * One link, not a group of eleven.
+   *
+   * The hub at /online-store lists every screen grouped by the job it does,
+   * with a line on each saying what it decides — which a menu could never do.
+   * Eleven rows mixing three operational screens with eight settings, in a
+   * section most shops never switch on, cost every one of them a permanent
+   * group. `SUBPAGE_LABELS` below is now the only list of them.
+   */
   {
-    label: 'Commission',
-    icon: Percent,
-    items: [
-      { label: 'Periods', href: '/commission', icon: Coins, built: true, capability: 'commission.view_own' },
-      { label: 'Rules', href: '/commission/rules', icon: Settings, built: true, capability: 'commission.edit' },
-    ],
+    label: 'Online Store',
+    icon: ShoppingBag,
+    href: '/online-store',
+    built: true,
+    capability: 'online.view',
+    keywords: 'web shop ecommerce storefront online orders discounts pages checkout',
   },
   /*
    * One link, not a group of fourteen.
@@ -227,34 +238,9 @@ export const NAV: NavSection[] = [
    * with a single setting still gets in and the hub drops the rest.
    */
   { label: 'Setup', icon: Settings, href: '/setup', built: true, capability: 'setup.view' },
-  { label: 'Job Cards', icon: Wrench, items: [] },
-  {
-    label: 'Online Store',
-    icon: ShoppingBag,
-    items: [
-      { label: 'Orders', href: '/online-store/orders', icon: Receipt, built: true, capability: 'online.view' },
-      { label: 'Products', href: '/online-store/products', icon: Package, built: true, capability: 'online.edit' },
-      { label: 'Departments', href: '/online-store/departments', icon: LayoutGrid, built: true, capability: 'online.edit' },
-      { label: 'Reviews', href: '/online-store/reviews', icon: MessageSquare, built: true, capability: 'online.view' },
-      { label: 'Order statuses', href: '/online-store/statuses', icon: ListOrdered, built: true, capability: 'online.edit' },
-      { label: 'Discount codes', href: '/online-store/discounts', icon: Tag, built: true, capability: 'online.edit' },
-      { label: 'Shopper funnel', href: '/online-store/funnel', icon: BarChart, built: true, capability: 'online.view' },
-      { label: 'Page builder', href: '/online-store/builder', icon: Palette, built: true, capability: 'online.edit' },
-      { label: 'Pages', href: '/online-store/pages', icon: FileText, built: true, capability: 'online.edit' },
-      { label: 'Payments', href: '/online-store/payments', icon: CreditCard, built: true, capability: 'online.edit' },
-      { label: 'Setup', href: '/online-store/setup', icon: Settings, built: true, capability: 'online.edit' },
-    ],
-  },
-  {
-    label: 'Loyalty',
-    icon: Gem,
-    items: [
-      { label: 'Members', href: '/loyalty', icon: Contact, built: true, capability: 'loyalty.view' },
-      { label: 'Programme', href: '/loyalty/programme', icon: Settings, built: true, capability: 'loyalty.view' },
-      { label: 'Tiers', href: '/loyalty/tiers', icon: Gem, built: true, capability: 'loyalty.view' },
-      { label: 'Punch cards', href: '/loyalty/cards', icon: Stamp, built: true, capability: 'loyalty.view' },
-    ],
-  },
+  /* Job Cards was an empty section rendering "Not built yet" — a promise the
+     menu could not keep, costing a permanent row. It comes back when it has a
+     route. */
 ]
 
 /**
@@ -286,17 +272,17 @@ export function navFor(granted: (capability: string) => boolean): NavSection[] {
 export type Crumb = { label: string; href?: string }
 
 /**
- * The name of each setup screen, keyed by its route.
+ * The name of every screen reached from a hub rather than from the menu.
  *
- * These screens are NOT in `NAV`: Setup is a single link to a hub, and the hub is where
- * they are listed. So this is the only place they are named, and everything that needs a
- * name reads it from here — the hub's tiles, the breadcrumb below, and the sidebar
+ * These screens are NOT in `NAV`: their section is a single link to a hub, and the hub is
+ * where they are listed. So this is the only place they are named, and everything that
+ * needs a name reads it from here — the hub's tiles, the breadcrumb below, and the sidebar
  * search. Renaming a screen is one edit and the three follow together.
  *
- * Written as a literal rather than derived from anything, because the hub leans on the
- * key type: `SetupHref = keyof typeof SUBPAGE_LABELS` makes a tile pointing at a screen
- * that does not exist a COMPILE ERROR rather than a page that renders with no name. A
- * `Record<string, string>` would widen the keys and silently accept a typo.
+ * Written as a literal rather than derived from anything, because each hub leans on the
+ * key type: a catalogue narrows `SubpageHref` to its own prefix, which makes a tile
+ * pointing at a screen that does not exist a COMPILE ERROR rather than a page that renders
+ * with no name. A `Record<string, string>` would widen the keys and silently accept a typo.
  */
 export const SUBPAGE_LABELS = {
   '/setup/users': 'Users',
@@ -318,7 +304,126 @@ export const SUBPAGE_LABELS = {
   '/setup/expense-categories': 'Expense categories',
   '/setup/databases': 'Site & databases',
   '/setup/style-guide': 'Style guide',
+  /* Configuration that lives under another section's route but belongs in the
+     setup hub: each is set once and decides what the daily screens above it
+     come to. The route is not moved — only where it is listed. */
+  '/staff/pay-rules': 'Pay rules',
+  '/staff/cost': 'Cost per employee',
+  '/credit/levels': 'Credit levels',
+  '/loyalty/programme': 'Loyalty programme',
+  '/loyalty/tiers': 'Loyalty tiers',
+  '/loyalty/cards': 'Punch cards',
+
+  // ── Accounting ────────────────────────────────────────────────────────
+  '/accounting/income-statement': 'Profit and loss',
+  '/accounting/balance-sheet': 'Balance sheet',
+  '/accounting/trial-balance': 'Trial balance',
+  '/accounting/vat': 'VAT return',
+  '/accounting/journals': 'Journals',
+  '/accounting/accounts': 'Chart of accounts',
+  '/accounting/assets': 'Fixed assets',
+  // Below Fixed assets rather than beside it: the breadcrumb reads
+  // "Accounting › Fixed assets › Depreciation", which is where it belongs.
+  '/accounting/assets/depreciation': 'Depreciation',
+  '/accounting/unallocated': 'Unallocated',
+  '/accounting/interest': 'Interest',
+  '/accounting/write-offs': 'Write-offs',
+  '/accounting/periods': 'Periods',
+  '/cashbook': 'Cashbook',
+  '/cashbook/import': 'Import a statement',
+  '/expenses': 'Expenses',
+  '/expenses/recurring': 'Recurring expenses',
+  '/suppliers/age-analysis': 'Supplier age analysis',
+  '/suppliers/remittances': 'Remittances',
+  '/credit/runs': 'Collection runs',
+  '/sales/offline': 'Offline sales',
+
+  // ── Online store ──────────────────────────────────────────────────────
+  '/online-store/orders': 'Orders',
+  '/online-store/products': 'Products',
+  '/online-store/departments': 'Departments',
+  '/online-store/reviews': 'Reviews',
+  '/online-store/statuses': 'Order statuses',
+  '/online-store/discounts': 'Discount codes',
+  '/online-store/funnel': 'Shopper funnel',
+  '/online-store/builder': 'Page builder',
+  '/online-store/pages': 'Pages',
+  '/online-store/payments': 'Payments',
+  '/online-store/setup': 'Store setup',
 } as const
+
+/**
+ * Any screen a hub lists. Each catalogue narrows this to its own prefix, so a
+ * tile can only point at a screen this map has named.
+ */
+export type SubpageHref = keyof typeof SUBPAGE_LABELS
+
+/**
+ * Which hub owns a screen whose ROUTE does not sit beneath it.
+ *
+ * Most hub screens live under their hub's path, and the prefix says so:
+ * /setup/tills belongs to /setup. But a hub groups by the QUESTION SOMEBODY
+ * ARRIVES WITH, not by URL, so the accounting hub lists /cashbook, /expenses
+ * and the supplier age analysis — screens whose routes are top-level or belong
+ * to another section entirely. Without this map their breadcrumb falls back to
+ * a URL prefix that does not exist, and the screen renders with no trail and no
+ * way back to the hub that sent them there.
+ *
+ * Only exceptions need an entry; a screen under its own hub is inferred.
+ */
+const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
+  '/cashbook': '/accounting',
+  '/cashbook/import': '/accounting',
+  '/expenses': '/accounting',
+  '/expenses/recurring': '/accounting',
+  '/suppliers/age-analysis': '/accounting',
+  '/suppliers/remittances': '/accounting',
+  '/credit/runs': '/accounting',
+  '/sales/offline': '/accounting',
+  '/staff/pay-rules': '/setup',
+  '/staff/cost': '/setup',
+  '/credit/levels': '/setup',
+  '/loyalty/programme': '/setup',
+  '/loyalty/tiers': '/setup',
+  '/loyalty/cards': '/setup',
+}
+
+/** The hub a screen belongs to, by route prefix unless declared otherwise. */
+export function hubFor(pathname: string): string | null {
+  const declared = SUBPAGE_OWNER[pathname as SubpageHref]
+  if (declared) return declared
+  if (!(pathname in SUBPAGE_LABELS)) return null
+  const section = NAV.find((s) => s.href && pathname.startsWith(`${s.href}/`))
+  return section?.href ?? null
+}
+
+/**
+ * Search synonyms for hub screens, keyed the same way.
+ *
+ * Nav owns this because `filterNav` lives here and a hub's screens are no
+ * longer menu entries — without synonyms, someone typing "terminals" or "till"
+ * finds nothing, because the screen is called "Tills" and is not in the menu at
+ * all. The DESCRIPTIONS stay on the catalogues: only a hub renders one, and two
+ * authored strings per screen is exactly the drift this file warns about above.
+ */
+export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
+  '/setup/users': 'staff logins pin passwords accounts sales rep',
+  '/setup/roles': 'security capabilities rights access control permissions',
+  '/setup/linked-stores': 'multi store group branches sharing',
+  '/setup/locations': 'warehouse storeroom bins branches',
+  '/setup/pricing': 'tax rates price structures markup reprice vat',
+  '/setup/tender-types': 'cash card eft payment methods vouchers',
+  '/setup/terminals': 'terminals registers pos devices',
+  '/setup/numbering': 'sequences document numbers prefix autocode',
+  '/setup/quick-keys': 'buttons tiles favourites shortcuts till pos grid',
+  '/setup/tables': 'restaurant hospitality floor sections covers waiter bills',
+  '/setup/reconciliation': 'drift integrity check invariants audit',
+  '/setup/opening-balances': 'import migration debtors creditors go live',
+  '/setup/laybys': 'deposit cancellation fee terms instalments',
+  '/setup/expense-categories': 'chart of accounts spending overheads account codes',
+  '/setup/databases': 'connection health server site details',
+  '/setup/style-guide': 'design system components reference ui kit',
+}
 
 /**
  * Does a screen below `href` — one the menu does not itself list — match?
@@ -330,9 +435,15 @@ export const SUBPAGE_LABELS = {
 export function subpageMatches(href: string, needle: string): boolean {
   const q = needle.trim().toLowerCase()
   if (!q) return false
-  return Object.entries(SUBPAGE_LABELS).some(
-    ([path, label]) => path.startsWith(`${href}/`) && label.toLowerCase().includes(q),
-  )
+  return Object.entries(SUBPAGE_LABELS).some(([path, label]) => {
+    /* Ownership, not URL prefix — the setup hub lists /staff/pay-rules and the
+       accounting hub lists /cashbook, and a prefix test would find neither. */
+    if (hubFor(path) !== href) return false
+    if (label.toLowerCase().includes(q)) return true
+    /* Synonyms too: the screen is called "Tills", and somebody looking for it
+       is as likely to type "terminal" or "register". */
+    return SUBPAGE_KEYWORDS[path as SubpageHref]?.includes(q) ?? false
+  })
 }
 
 /** Trailing crumb for a detail route, by section base path. */
@@ -350,6 +461,11 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   '/sales/orders': { new: 'New order', edit: 'Order' },
   /* A posted transfer is a record of what moved, not something anyone edits. */
   '/transfers': { new: 'New transfer', edit: 'Transfer' },
+  /* A sheet IS edited while it is being counted, but the crumb names the thing
+     rather than the action because the same screen serves a posted one. */
+  '/stock-takes': { new: 'New stock take', edit: 'Stock take' },
+  /* Likewise a posted build: the screen records what was consumed and made. */
+  '/manufacturing': { new: 'New build', edit: 'Build' },
   '/sales/laybys': { new: 'New lay-by', edit: 'Lay-by' },
   /* A contract's detail screen is a record of what it bills and what it has
      billed, not an edit form — editing is a separate route under it. */
@@ -361,24 +477,41 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
  * renders above the page and has no way to be told.
  */
 export function breadcrumbFor(pathname: string): { icon: LucideIcon; crumbs: Crumb[] } | null {
+  /* A screen a hub lists, which the menu therefore does not name. Resolved
+     BEFORE the section scan below, because a hub screen's route can sit under
+     another section entirely — /sales/offline is listed by the accounting hub,
+     and a prefix scan would file it under Sales and never reach the hub that
+     actually sent somebody there. */
+  const owner = hubFor(pathname)
+  if (owner) {
+    const section = NAV.find((s) => s.href === owner)
+    if (section) {
+      const named = SUBPAGE_LABELS as Record<string, string>
+
+      /* A hub screen can itself have a screen below it — /accounting/assets and
+         /accounting/assets/depreciation are both listed. The middle crumb is
+         whichever named screen is a proper prefix of this one, so the trail
+         reads "Accounting › Fixed assets › Depreciation" rather than skipping
+         the page the depreciation run belongs to. */
+      const parent = Object.keys(named)
+        .filter((p) => pathname.startsWith(`${p}/`) && hubFor(p) === owner)
+        .sort((a, b) => b.length - a.length)[0]
+
+      return {
+        icon: section.icon,
+        crumbs: [
+          { label: section.label, href: section.href },
+          ...(parent ? [{ label: named[parent], href: parent }] : []),
+          { label: named[pathname] },
+        ],
+      }
+    }
+  }
+
   for (const section of NAV) {
     // A section that is itself a link, e.g. Dashboard.
     if (section.href && pathname === section.href) {
       return { icon: section.icon, crumbs: [{ label: section.label }] }
-    }
-
-    /* A linked section can still have screens BELOW it that the menu does not
-       list — Setup is the case: one entry, fourteen screens, all reached from
-       the hub. Without this they render with no trail at all and no way back
-       to the hub but the browser's own button. The leaf is named from
-       SUBPAGE_LABELS, which the hub's tiles read too, so the crumb and the
-       tile can never disagree. */
-    if (section.href && pathname.startsWith(`${section.href}/`)) {
-      const label = (SUBPAGE_LABELS as Record<string, string>)[pathname]
-      return {
-        icon: section.icon,
-        crumbs: [{ label: section.label, href: section.href }, ...(label ? [{ label }] : [])],
-      }
     }
 
     /* Longest href wins, not first declared. A section can hold both /customers
@@ -419,8 +552,11 @@ export function filterNav(term: string, sections: NavSection[] = NAV): NavSectio
   const needle = term.trim().toLowerCase()
   if (!needle) return sections
 
+  const hit = (label: string, keywords?: string) =>
+    label.toLowerCase().includes(needle) || (keywords?.includes(needle) ?? false)
+
   return sections.flatMap((section) => {
-    if (section.label.toLowerCase().includes(needle)) return [section]
+    if (hit(section.label, section.keywords)) return [section]
 
     /* A linked section keeps its place if one of the screens BELOW it matches.
        Setup is the case: the menu no longer names "Tender types", so without
@@ -432,7 +568,7 @@ export function filterNav(term: string, sections: NavSection[] = NAV): NavSectio
       return [section]
     }
 
-    const items = (section.items ?? []).filter((i) => i.label.toLowerCase().includes(needle))
+    const items = (section.items ?? []).filter((i) => hit(i.label, i.keywords))
     return items.length ? [{ ...section, items }] : []
   })
 }
