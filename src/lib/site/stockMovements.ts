@@ -3,6 +3,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { mainLocationId, mainLocationIdTx } from './stockLocations'
+import { isParentTx } from './productVariants'
 import type { ProductTypeId } from '../productTypes'
 
 /**
@@ -119,6 +120,14 @@ export function canSellNow(_productType: ProductTypeId): { ok: true } | { ok: fa
   return { ok: true }
 }
 
+/**
+ * A movement that must not happen — currently only a parent product.
+ *
+ * Its own class so a caller can tell "you asked for something impossible" from
+ * a connection failure, and show the message rather than a generic apology.
+ */
+export class StockMovementError extends Error {}
+
 export type MovementInput = {
   productId: number
   movementType: MovementType
@@ -165,6 +174,21 @@ export type MovementInput = {
  * The pile is an UPSERT, not an UPDATE: the first receipt into a brand-new
  * location has no row yet, and an UPDATE would silently affect zero rows and
  * break (C) with nothing to show for it.
+ *
+ * ── A PRODUCT WITH VARIANTS CANNOT MOVE ────────────────────────────────────
+ *
+ * This function is the single gate every stock change in the application passes
+ * through, which makes it the right place — and the only necessary place — to
+ * enforce that a variant PARENT never accrues stock.
+ *
+ * A parent is a grouping row: the shopper sees one tile, the stockroom counts
+ * the children. It is excluded from reconcileStock(), so any quantity that
+ * reached it would be invisible to the report whose whole job is to prove the
+ * figures add up. Refusing here means a bug in any picker, import or till path
+ * fails loudly at the boundary instead of silently breaking invariant (A).
+ *
+ * See productVariants.ts for the rest of the rules and 070_product_variants.sql
+ * for why the parent/child split is not enforceable by the schema alone.
  */
 export async function recordMovement(
   tx: PoolConnection,
@@ -172,6 +196,15 @@ export async function recordMovement(
   input: MovementInput,
 ): Promise<number> {
   const qty = round(input.qtyChange, 3)
+
+  // The parent gate. Read inside the caller's transaction so it cannot be
+  // raced by a product becoming a parent halfway through a sale.
+  if (await isParentTx(tx, input.productId)) {
+    throw new StockMovementError(
+      'This product has variants, so stock is held on the variants rather than on it. ' +
+        'Choose a specific variant.',
+    )
+  }
 
   // Resolved inside the caller's transaction so a movement cannot straddle a
   // change of which location is main.
@@ -325,6 +358,11 @@ export async function reconcileStock(siteId: number): Promise<StockDrift[]> {
                FROM product_location_stock GROUP BY product_id
             ) l ON l.product_id = p.id
       WHERE ABS(p.stock_on_hand - COALESCE(l.total, 0)) > 0.0005
+        -- A variant parent holds no stock by design: recordMovement refuses it
+        -- and its children carry the quantity. Including it here would report
+        -- an eternal zero-versus-zero row for every group in the file, and a
+        -- report that always shows rows is one nobody reads.
+        AND p.has_variants = 0
       ORDER BY ABS(p.stock_on_hand - COALESCE(l.total, 0)) DESC`,
   )
 
