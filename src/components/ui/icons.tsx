@@ -91,6 +91,11 @@ export {
   Table2 as TableIcon,
   Columns3 as ColumnsIcon,
   Sigma,
+  // Ordering the finished rows, and the test a GROUP must pass to appear at all
+  // — a filter on the totals rather than on the records, which is a different
+  // question and so earns its own glyph.
+  ArrowUpDown as SortIcon,
+  Crosshair as TargetIcon,
   // "Generate with AI" — the wand is the action, the sparkle marks anything the
   // model produced so a generated report is never mistaken for a built one.
   Wand as Wand,

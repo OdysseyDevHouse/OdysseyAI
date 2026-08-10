@@ -6,6 +6,7 @@ import {
   Card,
   CardHeader,
   Icons,
+  SegmentedControl,
   Select,
   TableSkeleton,
   Badge,
@@ -16,6 +17,7 @@ import {
   type ReportColumn,
 } from '@/lib/reportBuilder/spec'
 import { clientOutputColumns, type ClientSource } from '@/lib/reportBuilder/clientTypes'
+import ReportChart from '../ReportChart'
 import ReportGrid from '../ReportGrid'
 import { previewReportAction } from './actions'
 
@@ -57,6 +59,8 @@ export default function PreviewPanel({
     hiddenColumns: [],
   })
 
+  const [view, setView] = useState<'table' | 'chart'>('table')
+
   // The request in flight, so a slow early response cannot overwrite a fast
   // later one — the classic way a preview ends up showing the wrong report.
   const requestRef = useRef(0)
@@ -89,6 +93,12 @@ export default function PreviewPanel({
 
   const sortable = clientOutputColumns(source, spec)
 
+  // A chart needs one label column and at least one number to plot — the same
+  // rule the finished report uses, so the preview never offers a view the real
+  // report would withhold.
+  const chartable =
+    spec.groupFields.length > 0 && state.columns.some((c) => c.numeric) && state.rows.length > 0
+
   return (
     <Card>
       <CardHeader
@@ -99,14 +109,29 @@ export default function PreviewPanel({
             : `First ${PREVIEW_ROWS} rows`
         }
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {state.loading && (
               <Badge tone="neutral">
                 <Icons.Refresh size={11} className="animate-spin" />
                 Running
               </Badge>
             )}
-            {sortable.length > 0 && (
+
+            {/* Which FORM to draw lives on the chart itself, beside its measure
+                picker — one control rather than two that can disagree. */}
+            {chartable && (
+              <SegmentedControl
+                aria-label="View as"
+                value={view}
+                onChange={(v) => setView(v as typeof view)}
+                options={[
+                  { value: 'table', label: 'Table' },
+                  { value: 'chart', label: 'Chart' },
+                ]}
+              />
+            )}
+
+            {view === 'table' && sortable.length > 0 && (
               <>
                 <Select
                   aria-label="Sort by"
@@ -167,12 +192,26 @@ export default function PreviewPanel({
               </Callout>
             </div>
           )}
-          <ReportGrid
-            columns={state.columns}
-            rows={state.rows}
-            totals={state.totals}
-            emptyHint="Nothing matched. Try a wider period, or remove a filter."
-          />
+          {view === 'chart' && chartable ? (
+            <div className="p-4">
+              <ReportChart
+                columns={state.columns}
+                rows={state.rows}
+                labelKey={spec.groupFields[0]}
+                type={spec.chartType ?? 'bar'}
+                // Persisted on the spec, so a saved report opens as the shape
+                // it was built as.
+                onTypeChange={(chartType) => onChange({ chartType })}
+              />
+            </div>
+          ) : (
+            <ReportGrid
+              columns={state.columns}
+              rows={state.rows}
+              totals={state.totals}
+              emptyHint="Nothing matched. Try a wider period, or remove a filter."
+            />
+          )}
         </>
       )}
     </Card>

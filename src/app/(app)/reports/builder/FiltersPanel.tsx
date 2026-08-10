@@ -51,10 +51,16 @@ export default function FiltersPanel({
   source,
   spec,
   onChange,
+  chrome = true,
 }: {
   source: ClientSource
   spec: CustomReportSpec
   onChange: (changes: Partial<CustomReportSpec>) => void
+  /**
+   * Off when the panel is the body of a pop-up, which supplies its own title
+   * and padding — a Card nested inside a Modal reads as a box in a box.
+   */
+  chrome?: boolean
 }) {
   const summarised = spec.groupFields.length > 0
 
@@ -83,12 +89,9 @@ export default function FiltersPanel({
     onChange({ totalFilters })
   }
 
-  return (
-    <Card>
-      <CardHeader title="Filters" description="Narrow the report down to what you want to see." />
-
-      <div className="flex flex-col gap-4 p-4 pt-0">
-        <div className="flex flex-col gap-2">
+  const body = (
+    <div className={`flex flex-col gap-4 ${chrome ? 'p-4 pt-0' : ''}`}>
+      <div className="flex flex-col gap-2">
           {spec.filters.map((filter, i) => {
             const field = findField(source, filter.field)
             if (!field) return null
@@ -284,9 +287,17 @@ export default function FiltersPanel({
                 ))}
               </Menu>
             )}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
+  )
+
+  if (!chrome) return body
+
+  return (
+    <Card>
+      <CardHeader title="Filters" description="Narrow the report down to what you want to see." />
+      {body}
     </Card>
   )
 }

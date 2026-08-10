@@ -53,10 +53,16 @@ export default function ColumnsPanel({
   source,
   spec,
   onChange,
+  chrome = true,
 }: {
   source: ClientSource
   spec: CustomReportSpec
   onChange: (changes: Partial<CustomReportSpec>) => void
+  /**
+   * Off when the panel is the body of a pop-up, which supplies its own title
+   * and padding — a Card nested inside a Modal reads as a box in a box.
+   */
+  chrome?: boolean
 }) {
   const [search, setSearch] = useState('')
   const [showCalc, setShowCalc] = useState(false)
@@ -129,18 +135,16 @@ export default function ColumnsPanel({
     onChange({ columns: spec.columns.filter((_, i) => i !== index) })
   }
 
-  return (
-    <Card>
-      <CardHeader
-        title="Columns"
-        description={
-          summarised
-            ? 'One row per group. Every other column is summarised.'
-            : 'One row per record. Add a grouping to summarise instead.'
-        }
-      />
-
-      <div className="flex flex-col gap-4 p-4 pt-0">
+  const body = (
+    <>
+      <div className={`flex flex-col gap-4 ${chrome ? 'p-4 pt-0' : ''}`}>
+        {!chrome && (
+          <p className="text-sm text-muted">
+            {summarised
+              ? 'One row per group. Every other column is summarised.'
+              : 'One row per record. Add a grouping to summarise instead.'}
+          </p>
+        )}
         {/* ── grouping ────────────────────────────────────────────────────── */}
         <Field
           label="Group by"
@@ -280,6 +284,22 @@ export default function ColumnsPanel({
           </div>
         </div>
       </div>
+    </>
+  )
+
+  if (!chrome) return body
+
+  return (
+    <Card>
+      <CardHeader
+        title="Columns"
+        description={
+          summarised
+            ? 'One row per group. Every other column is summarised.'
+            : 'One row per record. Add a grouping to summarise instead.'
+        }
+      />
+      {body}
     </Card>
   )
 }

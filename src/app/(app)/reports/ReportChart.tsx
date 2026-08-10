@@ -38,17 +38,30 @@ export default function ReportChart({
   rows,
   labelKey,
   type,
+  onTypeChange,
 }: {
   columns: ReportColumn[]
   rows: Record<string, unknown>[]
   labelKey: string
   type: ChartType
+  /**
+   * Pass this to OWN the chart shape. The builder does, because there the
+   * choice is part of the report and has to survive being saved; a report
+   * being read just flips between shapes for a moment, so it keeps the
+   * local state below and this stays undefined.
+   */
+  onTypeChange?: (type: ChartType) => void
 }) {
   const colors = useChartColors()
 
   const numericColumns = useMemo(() => columns.filter((c) => c.numeric), [columns])
   const [measure, setMeasure] = useState(() => numericColumns[0]?.key ?? '')
-  const [shape, setShape] = useState<ChartType>(type)
+  const [localShape, setLocalShape] = useState<ChartType>(type)
+
+  // Controlled by the caller, or by us — never both, which is what would let
+  // the picker and the saved spec drift apart.
+  const shape = onTypeChange ? type : localShape
+  const setShape = onTypeChange ?? setLocalShape
 
   const column = numericColumns.find((c) => c.key === measure) ?? numericColumns[0]
 
