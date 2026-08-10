@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQueryOne, siteTransaction } from '../siteDb'
+import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { assertBalanced, documentTotals, roundToCash } from '../documentMath'
 import { headroomRefusal } from '../creditRules'
@@ -277,6 +277,40 @@ export async function finaliseDocument(
     composed.set(line.id, resolved.components)
   }
 
+  /*
+   * Costs for the products an ANSWER deducts — "extra bacon" taking a rasher.
+   *
+   * Resolved out here for the same reason the components above are: reading a
+   * cost inside the transaction widens the most contended lock in the schema,
+   * and this is one query for the whole document however many answers it
+   * carries. Tolerant of the table not existing, so a site that has not run 082
+   * still posts its sales.
+   */
+  const optionProductIds = [
+    ...new Set(
+      document.lines
+        .flatMap((l) => l.instructions ?? [])
+        .map((c) => c.productId)
+        .filter((id): id is number => typeof id === 'number' && id > 0),
+    ),
+  ]
+  const optionCosts = optionProductIds.length
+    ? new Map(
+        (
+          await siteQuery<RowDataPacket & { id: number; average_cost: string | number }>(
+            siteId,
+            // `average_cost`, the same column a sale line's own unitCostExcl is
+            // taken from — a modifier's stock movement must value at the same
+            // basis as the line it hangs off, or the two disagree in the GP
+            // report about a single sale.
+            `SELECT id, average_cost FROM products
+              WHERE id IN (${optionProductIds.map(() => '?').join(',')})`,
+            optionProductIds,
+          ).catch(() => [])
+        ).map((r) => [Number(r.id), toNum(r.average_cost)]),
+      )
+    : new Map<number, number>()
+
   // Serial-tracked lines need one identified unit per item sold, checked here
   // so a sale is refused before any stock moves rather than halfway through.
   for (const line of document.lines) {
@@ -332,6 +366,43 @@ export async function finaliseDocument(
       //    the quantity — a returnable puts stock IN when sold.
       for (const line of document.lines) {
         if (!line.productId) continue
+
+        /*
+         * What the ANSWERS took off the shelf, before anything else about this
+         * line is decided.
+         *
+         * Before, deliberately: a composed line `continue`s a few lines down,
+         * and extra bacon on a recipe burger still consumes a rasher of bacon.
+         * Putting this after that jump would silently skip every modifier on
+         * every recipe product — which in a kitchen is most of the menu.
+         *
+         * These movements are IN ADDITION to whatever the line itself moves.
+         * The burger goes, and so does the bacon.
+         */
+        for (const chosen of line.instructions ?? []) {
+          if (!chosen.productId) continue
+          const taken = round(chosen.stockQtyPer * chosen.qty * line.qty, 3)
+          if (taken === 0) continue
+
+          await recordMovement(tx, actor, {
+            productId: chosen.productId,
+            movementType: line.qty > 0 ? 'sale' : 'sale_return',
+            qtyChange: -taken,
+            unitCostExcl: optionCosts.get(chosen.productId) ?? 0,
+            source: document.docType,
+            sourceDocId: document.id,
+            sourceLineId: line.id,
+            terminalId: document.terminalId,
+            shiftId,
+            // Names the parent AND the answer, so the bacon's history reads
+            // "the burger on invoice 1042 asked for two of these" rather than
+            // looking like an unexplained deduction.
+            note: `${line.productCode ?? line.description} · ${chosen.optionName} × ${chosen.qty}`.slice(
+              0,
+              190,
+            ),
+          })
+        }
 
         // A composed product has no pile of its own — selling a burger moves a
         // patty, a bun and a slice of cheese. Each movement names a REAL
