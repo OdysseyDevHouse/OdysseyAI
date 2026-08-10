@@ -75,6 +75,17 @@ export type OnlineSettings = {
   /** Whether brand names are shown and offered as a filter. */
   showBrands: boolean
   /**
+   * Whether the shop offers to save a basket and send ONE reminder about it.
+   *
+   * Off unless a shop turns it on. Emailing shoppers is a decision a business
+   * makes, not something that starts happening because a migration ran.
+   */
+  basketReminders: boolean
+  /** How long a basket sits untouched before it counts as abandoned. */
+  basketReminderHours: number
+  /** The shop's own wording above the items. Empty means the standard line. */
+  basketReminderNote: string
+  /**
    * Whether departments show their picture — on the rail under the search and
    * on the "Shop by department" tiles.
    *
@@ -153,6 +164,9 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       showPhotos: true,
       showBrands: true,
       showDepartmentImages: false,
+      basketReminders: false,
+      basketReminderHours: 4,
+      basketReminderNote: '',
       updatedAt: null,
       updatedBy: '',
     }
@@ -175,6 +189,13 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
     showPhotos: !!row.show_photos,
     showBrands: !!row.show_brands,
     showDepartmentImages: !!row.show_department_images,
+    basketReminders: !!row.basket_reminders,
+    // Defaulted rather than trusted: a store that has not run 072 yet returns
+    // undefined here, and 0 hours would make every basket instantly "abandoned".
+    basketReminderHours: Number(row.basket_reminder_hours) > 0
+      ? Number(row.basket_reminder_hours)
+      : 4,
+    basketReminderNote: String(row.basket_reminder_note ?? ''),
     updatedAt: row.updated_at instanceof Date ? row.updated_at : null,
     updatedBy: String(row.updated_by ?? ''),
   }
@@ -268,7 +289,9 @@ export async function saveOnlineSettings(
             price_structure_id = ?, lead_time_minutes = ?, min_order_incl = ?,
             blurb = ?, paid_status_id = ?, reviews_enabled = ?,
             show_stock = ?, show_photos = ?, show_brands = ?,
-            show_department_images = ?, updated_by = ?
+            show_department_images = ?,
+            basket_reminders = ?, basket_reminder_hours = ?, basket_reminder_note = ?,
+            updated_by = ?
       WHERE id = 1`,
     [
       input.isEnabled ? 1 : 0,
@@ -287,6 +310,12 @@ export async function saveOnlineSettings(
       input.showPhotos ? 1 : 0,
       input.showBrands ? 1 : 0,
       input.showDepartmentImages ? 1 : 0,
+      input.basketReminders ? 1 : 0,
+      // Clamped rather than trusted: 0 would make every basket instantly
+      // "abandoned" and chase someone who is still shopping, and an absurd
+      // upper value would silently disable the feature.
+      Math.min(Math.max(Math.round(input.basketReminderHours) || 4, 1), 168),
+      input.basketReminderNote.slice(0, 500),
       updatedBy.slice(0, 120),
     ],
   )

@@ -8,6 +8,7 @@ import { createCallbackToken } from '@/lib/callbackToken'
 import { buildCheckoutForm } from '@/lib/payfast/checkout'
 import { createIntent, getGateway } from '@/lib/site/payments'
 import { markOrderPayment } from '@/lib/site/paidOrders'
+import { markOrdered } from '@/lib/site/savedBaskets'
 import {
   placePublicOrder,
   quoteDeliveryFor,
@@ -79,6 +80,22 @@ async function trackTokenFor(siteId: number, orderId: number): Promise<string> {
     return await createOrderTrackToken({ siteId, orderId })
   } catch {
     return ''
+  }
+}
+
+/**
+ * Stop chasing a shopper who has just bought the thing.
+ *
+ * Outside the order's transaction, and swallowing its own failures: an order
+ * that succeeded must not be rolled back because a bookkeeping update on an
+ * unrelated table failed. The worst case is one reminder about a basket that
+ * was ordered — mildly embarrassing, where losing the order would not be.
+ */
+async function stopChasing(siteId: number, email: string): Promise<void> {
+  try {
+    if (email.trim()) await markOrdered(siteId, email)
+  } catch {
+    /* deliberately ignored — see above */
   }
 }
 
@@ -156,6 +173,11 @@ export async function placeOrderAction(
    * It also means a shop with no working gateway can still take account
    * orders, which is how most of them start.
    */
+  // They bought it — any saved basket of theirs stops being one to chase.
+  // Placed here rather than inside placePublicOrder's transaction so it can
+  // never be the reason an order rolls back.
+  await stopChasing(siteId, input.contactEmail)
+
   if (result.onAccount || context?.settings.paymentMode !== 'online') {
     return {
       ok: true,

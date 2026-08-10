@@ -47,6 +47,13 @@ const PUBLIC_PREFIXES = [
   // which nobody would notice until a customer mentioned they had not been
   // billed for a month.
   '/api/contracts/tick',
+  // The abandoned-basket sweep. Same reasoning and the same protection as the
+  // two ticks above: BASKET_CRON_SECRET, compared in constant time, with the
+  // route refusing every request when it is not set. Behind a cookie gate it
+  // would 307 to the login page and no shopper would ever be reminded — a
+  // failure with no symptom, because the feature's success state is also
+  // silence.
+  '/api/store/baskets/tick',
   // The landing page for an emailed "pay this invoice" link. The payer is a
   // customer, not a user of the back office, and will never have a session.
   //

@@ -76,6 +76,9 @@ export default function SetupForm({
     showPhotos: settings.showPhotos,
     showBrands: settings.showBrands,
     showDepartmentImages: settings.showDepartmentImages,
+    basketReminders: settings.basketReminders,
+    basketReminderHours: settings.basketReminderHours,
+    basketReminderNote: settings.basketReminderNote,
   })
 
   function patch(next: Partial<OnlineSettingsInput>) {
@@ -457,6 +460,66 @@ export default function SetupForm({
             label="Allow account orders"
           />
         </SettingRow>
+      </SettingGroup>
+
+      {/* Its own group rather than another display switch: this one sends mail
+          to people, which is a different kind of decision from whether a tile
+          shows a photograph. */}
+      <SettingGroup
+        title="Abandoned baskets"
+        description="Shoppers can save a basket and be reminded about it once."
+      >
+        <SettingRow
+          icon={<Icons.Mail size={18} />}
+          label="Remind shoppers about a saved basket"
+          description="Adds a “save my basket” box to the basket panel. Anyone who uses it gets ONE email if they do not come back — never a second, and never anyone who did not ask. Off by default."
+        >
+          <Switch
+            checked={form.basketReminders}
+            onChange={(next) => patch({ basketReminders: next })}
+            label="Remind shoppers about a saved basket"
+          />
+        </SettingRow>
+
+        {/* Only once the feature is on. A delay and a message for something
+            switched off are two controls that cannot do anything. */}
+        {form.basketReminders && (
+          <div className="flex flex-col gap-4 px-6 py-4">
+            <div className="max-w-xs">
+              <Field
+                label="Wait this long first"
+                hint="Hours of no activity before the reminder goes out. Too short and you chase someone who is still shopping."
+              >
+                <NumberInput
+                  value={form.basketReminderHours}
+                  min={1}
+                  max={168}
+                  className="w-24"
+                  onChange={(e) => patch({ basketReminderHours: Number(e.target.value) || 4 })}
+                />
+              </Field>
+            </div>
+
+            <Field
+              label="What the email says"
+              hint="Left empty, it says they left some shopping behind. The items, the total and the link are added for you."
+            >
+              <Textarea
+                value={form.basketReminderNote}
+                rows={2}
+                maxLength={500}
+                placeholder="e.g. Still thinking it over? Your basket is waiting."
+                onChange={(e) => patch({ basketReminderNote: e.target.value })}
+              />
+            </Field>
+
+            <Callout tone="neutral" title="This needs the reminder job running">
+              Your host must call the basket sweep on a schedule with{' '}
+              <code>BASKET_CRON_SECRET</code> set. Without it, baskets are still saved and can
+              still be recovered from a link — no reminders are sent.
+            </Callout>
+          </div>
+        )}
       </SettingGroup>
 
       <SettingGroup

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { Button, Icons } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { useCart } from './CartContext'
+import SaveBasket from './SaveBasket'
 
 /**
  * The basket, on a phone.
@@ -27,7 +28,14 @@ import { useCart } from './CartContext'
  * The order summary there IS the basket, and a floating bar over it would
  * cover the button it is trying to point at.
  */
-export default function CartBar({ token }: { token: string }) {
+export default function CartBar({
+  token,
+  offerSave = false,
+}: {
+  token: string
+  /** Whether this shop offers to save a basket and remind about it. */
+  offerSave?: boolean
+}) {
   const cart = useCart()
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
@@ -163,6 +171,11 @@ export default function CartBar({ token }: { token: string }) {
               >
                 <Button className="w-full">Checkout · {formatMoney(cart.subtotal)}</Button>
               </Link>
+
+              {/* BELOW checkout, deliberately. Saving a basket is what someone
+                  does instead of buying today, so it must never sit between
+                  the shopper and the thing they came to do. */}
+              {offerSave && <SaveBasket token={token} />}
             </div>
           </div>
         </>
