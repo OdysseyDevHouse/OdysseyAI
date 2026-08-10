@@ -294,6 +294,40 @@ export function Textarea({
   )
 }
 
+/**
+ * A textarea for CODE rather than prose — markup, a snippet, a template.
+ *
+ * A variant of Textarea rather than a `className` at the call site, per the
+ * kit's rule that controls are not restyled where they are used. Three things
+ * differ, and each is about reading code rather than sentences:
+ *
+ *   a monospace face, so indentation and tag nesting line up;
+ *   no spellcheck, because every tag name is a misspelling;
+ *   no autocorrect or capitalisation, which would rewrite the markup as typed.
+ */
+export function CodeArea({
+  invalid,
+  className = '',
+  rows = 8,
+  id,
+  ...rest
+}: Omit<ComponentProps<'textarea'>, 'className'> & { invalid?: boolean; className?: string }) {
+  const wiring = useFieldWiring(id, invalid)
+  return (
+    <textarea
+      id={wiring.id}
+      rows={rows}
+      spellCheck={false}
+      autoCorrect="off"
+      autoCapitalize="off"
+      aria-invalid={wiring.invalid || undefined}
+      aria-describedby={wiring.describedBy}
+      className={`${CONTROL} resize-y py-2 font-mono text-xs leading-relaxed ${wiring.invalid ? INVALID : ''} ${className}`}
+      {...rest}
+    />
+  )
+}
+
 /* ── Select ──────────────────────────────────────────────────────────────── */
 
 export function Select({

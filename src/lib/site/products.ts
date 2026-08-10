@@ -729,11 +729,37 @@ export async function updateProduct(
   if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
 
   return siteTransaction(siteId, async (tx) => {
+    /*
+     * image_path and image_icon are written ONLY when the caller names them.
+     *
+     * Both are owned by other screens — the photographs panel mirrors the
+     * primary picture into image_path, and the till-icon picker writes
+     * image_icon — and neither is a field on the product form. Listing them
+     * unconditionally meant every ordinary save sent `undefined ?? null` and
+     * wiped whichever one those screens had just set: upload a photo, save the
+     * product, and the till button went blank.
+     *
+     * `undefined` means "leave as it is" here, exactly as it already does for
+     * the Properties tab; an explicit null still clears the column, which is
+     * how the icon is removed.
+     */
+    const imageAssignments: string[] = []
+    const imageValues: (string | null)[] = []
+    if (input.imagePath !== undefined) {
+      imageAssignments.push('image_path = ?')
+      imageValues.push(input.imagePath)
+    }
+    if (input.imageIcon !== undefined) {
+      imageAssignments.push('image_icon = ?')
+      imageValues.push(input.imageIcon)
+    }
+
     const [res] = await tx.execute(
       `UPDATE products SET
          code = ?, barcode = ?, description = ?, extra_description = ?,
          product_type = ?, department_id = ?, brand_id = ?,
-         image_path = ?, image_icon = ?, image_color = ?,
+         ${imageAssignments.length ? `${imageAssignments.join(', ')},` : ''}
+         image_color = ?,
          purchase_vat_rate_id = ?, selling_vat_rate_id = ?,
          last_cost = ?,
          is_archived = ?,
@@ -748,8 +774,7 @@ export async function updateProduct(
         toProductType(input.productType),
         input.departmentId ?? null,
         input.brandId ?? null,
-        input.imagePath ?? null,
-        input.imageIcon ?? null,
+        ...imageValues,
         input.imageColor ?? null,
         input.purchaseVatRateId ?? null,
         input.sellingVatRateId ?? null,

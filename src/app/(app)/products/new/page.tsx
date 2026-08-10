@@ -5,7 +5,7 @@ import { linkedStores } from '@/lib/storeGroups'
 import { listGroups as listInstructionGroups } from '@/lib/site/instructions'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
 import { PageHeader } from '@/components/ui'
-import ProductForm from '../ProductForm'
+import ProductForm, { SaveProductButton } from '../ProductForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,7 +35,14 @@ export default async function NewProductPage() {
 
   return (
     <>
-      <PageHeader title="New product" subtitle="Normal product" backHref="/products" />
+      <PageHeader
+        title="New product"
+        subtitle="Normal product"
+        backHref="/products"
+        // The only Save on this screen — there is no Actions menu here, because
+        // a product that does not exist yet cannot be archived or deleted.
+        action={<SaveProductButton />}
+      />
       <div className="p-6">
         <ProductForm
           product={null}

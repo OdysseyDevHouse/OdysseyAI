@@ -19,14 +19,18 @@ import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
 import {
   MAX_IMAGES_PER_PRODUCT,
   addImage,
+  clearIcon,
+  currentIcon,
   deleteImage,
   getImage,
   listImages,
   primaryImages,
   reorderImages,
   setAltText,
+  setIcon,
   setPrimaryImage,
 } from '../src/lib/site/productImages'
+import { getProduct, updateProduct } from '../src/lib/site/products'
 import { sniffImage, storeImageUpload, readStoredFile, deleteStoredFile } from '../src/lib/uploads'
 
 const SITE = 1
@@ -265,10 +269,84 @@ async function main() {
     !(await setAltText(SITE, productId, 99_999_999, 'x')).ok,
   )
 
+  console.log('\n— The point-of-sale icon —')
+  // A different picture from the gallery above, on a different column, for a
+  // different screen. See the header of setIcon for why.
+  const iconBefore = await currentIcon(SITE, productId)
+
+  const iconSet = await setIcon(SITE, productId, asFile(PNG, 'till.png'))
+  ok('an icon is accepted', iconSet.ok, iconSet.ok ? '' : iconSet.error)
+  if (iconSet.ok) {
+    const storedName = await currentIcon(SITE, productId)
+    ok('it reads back', storedName !== null)
+    ok('and the bytes are on disk', storedName !== null && (await readStoredFile(storedName)) !== null)
+
+    // The icon must not appear in the gallery — that is the whole point of
+    // keeping it on its own column rather than as a ninth product_image.
+    ok(
+      'it does NOT join the photograph gallery',
+      !(await listImages(SITE, productId)).some((i) => i.storedName === storedName),
+    )
+
+    // Replacing must not leave the old file behind.
+    const replaced = await setIcon(SITE, productId, asFile(GIF, 'till2.gif'))
+    ok('replacing works', replaced.ok)
+    if (replaced.ok && storedName) {
+      ok('the new icon is current', (await currentIcon(SITE, productId)) !== storedName)
+      ok('the OLD file is gone', (await readStoredFile(storedName)) === null)
+    }
+
+    // The bytes are checked exactly as a photograph's are.
+    ok(
+      'an SVG renamed .png is refused as an icon',
+      !(await setIcon(SITE, productId, asFile(SVG, 'evil.png'))).ok,
+    )
+  }
+
+  /*
+   * THE REGRESSION.
+   *
+   * updateProduct used to list image_path and image_icon unconditionally, so
+   * every ordinary product save wrote `undefined ?? null` over both — upload a
+   * photo or an icon, press Save, and it silently vanished. They are now
+   * written only when the caller names them.
+   */
+  const iconNow = await currentIcon(SITE, productId)
+  const pathNow = await siteQueryOne<{ image_path: string | null }>(
+    SITE,
+    `SELECT image_path FROM products WHERE id = ?`,
+    [productId],
+  )
+  const existing = await getProduct(SITE, productId)
+  if (existing) {
+    const saved = await updateProduct(SITE, productId, {
+      code: existing.code,
+      description: existing.description,
+      // Deliberately silent about both image columns, exactly as the product
+      // form is — that is the case that used to wipe them.
+    })
+    ok('an ordinary save succeeds', saved.ok, saved.ok ? '' : saved.error)
+    ok('*** the icon SURVIVES a product save ***', (await currentIcon(SITE, productId)) === iconNow)
+    const pathAfter = await siteQueryOne<{ image_path: string | null }>(
+      SITE,
+      `SELECT image_path FROM products WHERE id = ?`,
+      [productId],
+    )
+    ok(
+      '*** the primary photograph link survives too ***',
+      (pathAfter?.image_path ?? null) === (pathNow?.image_path ?? null),
+    )
+  }
+
+  ok('the icon can be removed', (await clearIcon(SITE, productId)).ok)
+  ok('and is gone', (await currentIcon(SITE, productId)) === null)
+  ok('removing a missing icon is harmless', (await clearIcon(SITE, productId)).ok)
+
   console.log('\n— Cleanup —')
   await cleanup(productId)
-  await siteExecute(SITE, `UPDATE products SET image_path = ? WHERE id = ?`, [
+  await siteExecute(SITE, `UPDATE products SET image_path = ?, image_icon = ? WHERE id = ?`, [
     imagePathBefore?.image_path ?? null,
+    iconBefore,
     productId,
   ])
   ok('every test image removed', (await listImages(SITE, productId)).length === 0)

@@ -1,7 +1,6 @@
 'use client'
 
 import { useActionState, useState } from 'react'
-import { useFormStatus } from 'react-dom'
 import { Save } from '@/components/ui/icons'
 import RichText from '@/components/RichText'
 import DepartmentPicker from '@/components/DepartmentPicker'
@@ -10,6 +9,7 @@ import LocationStockPanel, { type LocationStockRow } from '@/components/Location
 import LinkedStoresPanel from '@/components/LinkedStoresPanel'
 import type { LinkedProductView } from '@/lib/site/productFanout'
 import ProductTypePanel from '@/components/ProductTypePanel'
+import TillTilePanel from './TillTilePanel'
 import PropertiesPanel from '@/components/PropertiesPanel'
 import InstructionsPanel from '@/components/InstructionsPanel'
 import RecipePanel from '@/components/RecipePanel'
@@ -24,14 +24,12 @@ import {
   Button,
   Callout,
   Card,
-  Checkbox,
   Field,
   Input,
   SectionTitle,
   Select,
   Tabs,
   TILE_SWATCHES,
-  tileClass,
 } from '@/components/ui'
 import {
   Info,
@@ -52,11 +50,6 @@ import type { Brand, VatRate, PriceStructure } from '@/lib/site/lookups'
 import type { Department } from '@/lib/site/departments'
 import type { CostBasis } from '@/lib/pricing'
 
-/* The image swatch block isn't a form control, so it labels itself rather than
-   using <Field>, which wires a label to an input. */
-const labelText = 'mb-1.5 block text-sm font-medium text-ink-2'
-
-
 type TabValue =
   | 'general'
   | 'properties'
@@ -74,15 +67,24 @@ const SETUP_TAB: Partial<Record<ProductTypeId, TabValue>> = {
   serial: 'serials',
 }
 
-/* Lets the Save button live outside the <form> it submits. */
+/* Lets the Save button live outside the <form> it submits — it now sits in the
+   page header, which is rendered by the page rather than nested in this tree. */
 const FORM_ID = 'product-form'
 
-function SubmitButton({ formId }: { formId: string }) {
-  const { pending } = useFormStatus()
+/**
+ * The header's Save, submitting the form below by id.
+ *
+ * Rendered by the page into <PageHeader action>, so it is a sibling of the form
+ * rather than a descendant. That rules out useFormStatus, which reads the
+ * nearest ancestor <form> and would report pending:false here forever; the
+ * button is deliberately stateless and the disabled-while-saving affordance
+ * lives with the form's own useActionState.
+ */
+export function SaveProductButton() {
   return (
-    <Button type="submit" form={formId} variant="primary" disabled={pending}>
+    <Button type="submit" form={FORM_ID} variant="primary">
       <Save size={15} />
-      {pending ? 'Saving…' : 'Save product'}
+      Save product
     </Button>
   )
 }
@@ -115,7 +117,6 @@ export default function ProductForm({
   serials,
   productSuppliers,
   suggestedCode = null,
-  rowActions,
 }: {
   product: Product | null
   /**
@@ -154,12 +155,6 @@ export default function ProductForm({
   serials: Serial[]
   /** Who this product is bought from. */
   productSuppliers: ProductSupplier[]
-  /**
-   * Buttons shown beside Save. They carry their own <form action>, so they are
-   * passed in rather than rendered here — a nested form is invalid HTML and the
-   * browser would silently drop the inner one.
-   */
-  rowActions?: React.ReactNode
 }) {
   const [state, formAction] = useActionState<ProductFormState, FormData>(saveProductAction, {
     error: null,
@@ -207,16 +202,14 @@ export default function ProductForm({
   // 1100px the form's labelled fields stretch into unreadable lines.
   return (
     <div className="flex w-full max-w-[1100px] flex-col gap-4">
-      {/* The action row sits OUTSIDE the form. Archive and delete carry their
-          own <form action>, and a nested form is invalid HTML — the browser
-          drops the inner one silently. Save reaches its form by id instead. */}
-      <div className="flex items-center gap-2">
-        <SubmitButton formId={FORM_ID} />
-        {rowActions}
-      </div>
-
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-4">
         {product && <input type="hidden" name="id" value={product.id} />}
+
+        {/* Archiving moved to the header's Actions menu, but the save path still
+            reads this field — without it every save would send nothing and
+            quietly un-archive the product. Carries the current state through
+            untouched; only the menu changes it. */}
+        {product?.isArchived && <input type="hidden" name="isArchived" value="on" />}
 
         {state.error && (
           <Callout tone="danger" title="Could not save">
@@ -321,8 +314,13 @@ export default function ProductForm({
                     maxLength={48}
                     // Editable on create, fixed afterwards: the code is how stock
                     // movements and orders refer to this product.
+                    //
+                    // readOnly, NOT disabled. A disabled input is not submitted
+                    // at all, so every edit-product save arrived with no code
+                    // and was refused with "A product code is required" — the
+                    // whole screen could not be saved. readOnly refuses the
+                    // edit but still posts the value.
                     readOnly={!isNew}
-                    disabled={!isNew}
                   />
                 </Field>
 
@@ -336,56 +334,13 @@ export default function ProductForm({
                 </Field>
               </div>
 
-              <div className="flex flex-wrap items-start gap-6">
-                <div className="flex flex-col gap-1.5">
-                  <span className={labelText}>Colour when there is no photo</span>
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`flex size-20 shrink-0 flex-col items-center justify-center rounded-card text-white ${tileClass(color)}`}
-                    >
-                      <span className="text-2xl font-semibold">{initial}</span>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        {TILE_SWATCHES.map((c) => (
-                          <button
-                            key={c.token}
-                            data-kit-ok
-                            type="button"
-                            aria-label={`Colour ${c.token}`}
-                            aria-pressed={color === c.token}
-                            onClick={() => setColor(c.token)}
-                            className={`size-6 rounded-pill border-2 transition ${c.className} ${
-                              color === c.token ? 'border-ink' : 'border-transparent'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      {/* This tile is the FALLBACK, not the photo. Photographs
-                          are uploaded further down the page — saying they were
-                          unbuilt (which was true when this was written) now
-                          contradicts the uploader sitting below it. */}
-                      <p className="max-w-64 text-xs text-muted">
-                        Shown wherever this product has no photograph. Add photographs under
-                        <span className="font-medium text-ink"> Photographs</span> below.
-                      </p>
-                    </div>
-                  </div>
-                  <input type="hidden" name="imageColor" value={color} />
-                </div>
-
-                <div className="flex flex-col gap-1 pt-6">
-                  <Checkbox
-                    name="isArchived"
-                    label="Archive product"
-                    defaultChecked={product?.isArchived ?? false}
-                  />
-                  <p className="ml-6 max-w-72 text-xs text-muted">
-                    Archived products are hidden from normal operations but remain available for
-                    reporting and historical transactions.
-                  </p>
-                </div>
-              </div>
+              <TillTilePanel
+                productId={product?.id ?? null}
+                initial={initial}
+                color={color}
+                onColorChange={setColor}
+                initialIcon={product?.imageIcon ?? null}
+              />
 
               <Field label="Extra description">
                 <RichText

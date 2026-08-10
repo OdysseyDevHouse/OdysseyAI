@@ -14,7 +14,7 @@ import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
 import { Callout, PageBody, PageHeader } from '@/components/ui'
 import { listImages } from '@/lib/site/productImages'
-import ProductForm from '../ProductForm'
+import ProductForm, { SaveProductButton } from '../ProductForm'
 import ProductImages from '../ProductImages'
 import ProductActions from './ProductActions'
 
@@ -140,12 +140,17 @@ export default async function EditProductPage({
         subtitle={product.description}
         backHref="/products"
         action={
-          <ProductActions
-            productId={product.id}
-            isArchived={product.isArchived}
-            name={product.description}
-            canDelete={can(capabilities, 'products.delete')}
-          />
+          <>
+            {/* Submits the form below by id — it is a sibling of that form, not
+                an ancestor, which is exactly what the `form` attribute is for. */}
+            <SaveProductButton />
+            <ProductActions
+              productId={product.id}
+              isArchived={product.isArchived}
+              name={product.description}
+              canDelete={can(capabilities, 'products.delete')}
+            />
+          </>
         }
       />
 

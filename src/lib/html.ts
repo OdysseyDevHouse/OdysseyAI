@@ -9,13 +9,12 @@
  * Runs on the SERVER, at save time. Client-side cleaning is cosmetic — anyone
  * can post whatever they like straight to the action.
  */
+import { ALLOWED_TAGS as ALLOWED_TAG_NAMES } from './htmlTags'
 
-const ALLOWED_TAGS = new Set([
-  'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike',
-  'ul', 'ol', 'li', 'blockquote',
-  'h1', 'h2', 'h3', 'h4',
-  'a', 'span', 'div',
-])
+// From the shared list rather than a second copy: the editor's HTML view warns
+// against the same set, and two hand-maintained lists would drift the moment
+// one of them gained a tag.
+const ALLOWED_TAGS = new Set<string>(ALLOWED_TAG_NAMES)
 
 // Only href, and only on <a>. No style/class/id — style would let a link be
 // drawn over the rest of the page, and event handlers must never survive.

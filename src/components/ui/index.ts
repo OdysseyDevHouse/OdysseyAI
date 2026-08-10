@@ -39,6 +39,7 @@ export {
   NumberInput,
   CurrencyInput,
   Textarea,
+  CodeArea,
   Select,
   Switch,
   Checkbox,
