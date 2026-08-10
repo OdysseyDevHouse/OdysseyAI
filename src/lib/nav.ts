@@ -237,6 +237,7 @@ export const NAV: NavSection[] = [
       { label: 'Departments', href: '/online-store/departments', icon: LayoutGrid, built: true, capability: 'online.edit' },
       { label: 'Reviews', href: '/online-store/reviews', icon: MessageSquare, built: true, capability: 'online.view' },
       { label: 'Order statuses', href: '/online-store/statuses', icon: ListOrdered, built: true, capability: 'online.edit' },
+      { label: 'Discount codes', href: '/online-store/discounts', icon: Tag, built: true, capability: 'online.edit' },
       { label: 'Page builder', href: '/online-store/builder', icon: Palette, built: true, capability: 'online.edit' },
       { label: 'Pages', href: '/online-store/pages', icon: FileText, built: true, capability: 'online.edit' },
       { label: 'Payments', href: '/online-store/payments', icon: CreditCard, built: true, capability: 'online.edit' },
