@@ -37,6 +37,10 @@ export type PurchaseLine = {
   departmentId: number | null
   qtyOrdered: number
   qtyReceived: number
+  /** Free units that came with it. Increase stock, not what is owed. See 090. */
+  qtyBonus: number
+  /** Everything that entered stock: received plus bonus. */
+  qtyArrived: number
   /** Still to arrive. Zero once the line is complete. */
   qtyOutstanding: number
   unitCostExcl: number
@@ -72,6 +76,9 @@ export type PurchaseDocument = {
   vatTotal: number
   totalIncl: number
   chargesExcl: number
+  /** A discount on the whole delivery, already apportioned onto the lines. */
+  discountExcl: number
+  discountPct: number
   orderedFromId: number | null
   reference: string | null
   notes: string | null
@@ -90,6 +97,9 @@ type Row = RowDataPacket & Record<string, unknown>
 function mapLine(r: Row): PurchaseLine {
   const ordered = toNum(r.qty_ordered)
   const received = toNum(r.qty_received)
+  // Absent until 090 reaches this site — toNum(undefined) is 0, which is
+  // exactly right: no bonus units, so arrived equals received.
+  const bonus = toNum(r.qty_bonus)
   return {
     id: Number(r.id),
     documentId: Number(r.document_id),
@@ -102,6 +112,10 @@ function mapLine(r: Row): PurchaseLine {
     departmentId: r.department_id === null ? null : Number(r.department_id),
     qtyOrdered: ordered,
     qtyReceived: received,
+    qtyBonus: bonus,
+    qtyArrived: round(received + bonus, 3),
+    // Against the PAID quantity: an order for 100 filled by 90 paid plus 10
+    // free is still 10 short of what was asked for.
     qtyOutstanding: round(Math.max(ordered - received, 0), 3),
     unitCostExcl: toNum(r.unit_cost_excl),
     discountPct: toNum(r.discount_pct),
@@ -139,6 +153,9 @@ function mapDocument(r: Row, lines: PurchaseLine[]): PurchaseDocument {
     vatTotal: toNum(r.vat_total),
     totalIncl: toNum(r.total_incl),
     chargesExcl: toNum(r.charges_excl),
+    // Absent until 092 reaches this site; zero is the right answer there.
+    discountExcl: toNum(r.discount_excl),
+    discountPct: toNum(r.discount_pct),
     orderedFromId: r.ordered_from_id === null ? null : Number(r.ordered_from_id),
     reference: (r.reference as string | null) ?? null,
     notes: (r.notes as string | null) ?? null,

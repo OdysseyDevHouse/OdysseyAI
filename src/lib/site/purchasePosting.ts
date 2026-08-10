@@ -54,9 +54,20 @@ export type ReceiveLineInput = {
   qtyOrdered?: number
   /** What actually arrived. Partial deliveries are the normal case. */
   qtyReceived: number
+  /**
+   * Free units — "buy 10, get 1 free".
+   *
+   * They increase what arrived but NOT what is owed, so the landed cost
+   * divides by qtyReceived + qtyBonus. Dividing by qtyReceived alone overstates
+   * the cost of every promotional buy, and a GRV is the only thing that writes
+   * average_cost, so the error blends in and compounds. See 090.
+   */
+  qtyBonus?: number
   /** Per unit, EXCLUSIVE of VAT — how a supplier invoice is written. */
   unitCostExcl: number
   discountPct?: number
+  /** An absolute discount on this line, which wins over the percentage. See 087. */
+  discountAmount?: number
   vatRatePct: number
   /**
    * The serial numbers that arrived on this line, for a serial-tracked product.
@@ -111,6 +122,17 @@ export type ReceiveInput = {
   chargesExcl?: number
   /** The same money, itemised and attributable. Preferred over chargesExcl. */
   charges?: ReceiveChargeInput[]
+  /**
+   * A discount on the whole delivery — settlement terms, a volume rebate.
+   *
+   * Apportioned across the lines by value before VAT is worked out, never
+   * subtracted from the total: a document-level figure cannot be split by VAT
+   * rate, so a mixed-rate delivery would have an unallocatable VAT amount. See
+   * rule 3 of documentMath.ts and 092.
+   */
+  discountPct?: number
+  /** An absolute discount on the whole delivery. Wins over the percentage. */
+  discountExcl?: number
   reference?: string | null
   notes?: string | null
   lines: ReceiveLineInput[]
@@ -140,6 +162,10 @@ export function chargesTotalFor(input: ReceiveInput): number {
 export function validateReceive(input: ReceiveInput): string | null {
   if (input.lines.length === 0) return 'Add at least one line.'
   if ((input.chargesExcl ?? 0) < 0) return 'Charges cannot be negative.'
+  if ((input.discountExcl ?? 0) < 0) return 'A discount cannot be negative.'
+  if ((input.discountPct ?? 0) < 0 || (input.discountPct ?? 0) > 100) {
+    return 'The discount must be between 0 and 100 percent.'
+  }
 
   for (const [index, charge] of (input.charges ?? []).entries()) {
     const where = `Charge ${index + 1}`
@@ -166,6 +192,9 @@ export function validateReceive(input: ReceiveInput): string | null {
     if ((line.discountPct ?? 0) < 0 || (line.discountPct ?? 0) > 100) {
       return `${where}: discount must be between 0 and 100 percent.`
     }
+    if (!Number.isFinite(line.qtyBonus ?? 0) || (line.qtyBonus ?? 0) < 0) {
+      return `${where}: free units cannot be negative.`
+    }
 
     // Checked here as well as inside the transaction. This catches the mistake
     // before any work starts and names the line by number; the transaction
@@ -173,11 +202,15 @@ export function validateReceive(input: ReceiveInput): string | null {
     // validateReceive, and it is also the only one holding a lock.
     if (line.productId && (line.productType ?? 'normal') === 'serial') {
       const serials = (line.serials ?? []).map((s) => s.trim()).filter(Boolean)
-      if (!Number.isInteger(line.qtyReceived)) {
+      // Against the TOTAL arriving, bonus included: a free phone is still a
+      // phone with an IMEI, and counting only the paid units would let it enter
+      // stock unserialised.
+      const arriving = round(line.qtyReceived + (line.qtyBonus ?? 0), 3)
+      if (!Number.isInteger(arriving)) {
         return `${where}: a serial-tracked product must be received in whole units.`
       }
-      if (serials.length !== line.qtyReceived) {
-        return `${where}: ${line.qtyReceived} arrived but ${serials.length} serial number${
+      if (serials.length !== arriving) {
+        return `${where}: ${arriving} arrived but ${serials.length} serial number${
           serials.length === 1 ? ' was' : 's were'
         } entered. Every unit needs one.`
       }
@@ -213,18 +246,47 @@ export async function receiveGoods(
   }
 
   // Line values BEFORE charges, so the apportionment has something to weight by.
+  // The absolute amount wins over the percentage — see 087.
   const lineValues = input.lines.map((line) => {
     const gross = round(line.qtyReceived * line.unitCostExcl, 2)
-    const discount = round(gross * ((line.discountPct ?? 0) / 100), 2)
+    const discount =
+      (line.discountAmount ?? 0) > 0
+        ? round(Math.min(line.discountAmount ?? 0, gross), 2)
+        : round(gross * ((line.discountPct ?? 0) / 100), 2)
     return round(gross - discount, 2)
   })
+
+  const subtotalBeforeDocDiscount = lineValues.reduce((sum, v) => round(sum + v, 2), 0)
+
+  // THE DOCUMENT DISCOUNT, apportioned onto the lines rather than taken off the
+  // total. Rule 3 of documentMath.ts: a document-level figure cannot be split
+  // by VAT rate, so a mixed-rate delivery would have an unallocatable VAT
+  // amount. Capped at the subtotal — a discount larger than the goods would
+  // produce negative lines and a credit nobody asked for.
+  const requestedDiscount =
+    (input.discountExcl ?? 0) > 0
+      ? round(input.discountExcl ?? 0, 2)
+      : round(subtotalBeforeDocDiscount * ((input.discountPct ?? 0) / 100), 2)
+  const documentDiscount = round(
+    Math.min(Math.max(requestedDiscount, 0), subtotalBeforeDocDiscount),
+    2,
+  )
+  const discountShares = apportionDiscount(lineValues, documentDiscount)
+
+  // What each line is actually worth once BOTH discounts have come off. This is
+  // what VAT is charged on, and what freight is weighted by.
+  const taxableValues = lineValues.map((v, i) => round(v - discountShares[i], 2))
 
   // EVERY charge lands in cost, whoever billed it — the goods cost what they
   // cost to get onto the shelf. Spread pro-rata by value: a flat split per line
   // would load a R5 packet of seasoning with the same delivery cost as a R900
   // case of stock.
+  //
+  // Weighted by the DISCOUNTED value, and apportioned AFTER the discount:
+  // freight is not reduced by the goods supplier's settlement terms, but a line
+  // that is now worth less should carry proportionally less of the delivery.
   const chargesTotal = chargesTotalFor(input)
-  const charges = apportionDiscount(lineValues, chargesTotal)
+  const charges = apportionDiscount(taxableValues, chargesTotal)
 
   // The credit side is where they part company. A charge with no supplier is
   // on the goods invoice, exactly as before; one with a supplier is a separate
@@ -240,21 +302,31 @@ export async function receiveGoods(
   const thirdPartyCharges = chargeRows.filter((c) => c.supplierId && c.amountExcl > 0)
 
   const computed = input.lines.map((line, index) => {
-    const netExcl = lineValues[index]
+    // Net of BOTH discounts. VAT is charged on this, and it is what the line
+    // stores — a GRV line should read what that line actually cost.
+    const netExcl = taxableValues[index]
     const chargeExcl = charges[index]
     const vat = round(netExcl * (line.vatRatePct / 100), 2)
+    // Everything that arrived, paid for or not. This is what enters stock and
+    // what the cost is spread over.
+    const qtyArriving = round(line.qtyReceived + (line.qtyBonus ?? 0), 3)
 
     return {
       netExcl,
       chargeExcl,
       vat,
       incl: round(netExcl + vat, 2),
+      qtyArriving,
       // What the item actually cost to get onto the shelf. Pricing off the
       // invoice cost alone quietly understates every margin it feeds.
+      //
+      // Divides by qtyArriving, NOT qtyReceived: bonus units cost nothing but
+      // are still units, so 10 paid at 100 with 1 free is 90.9091 each, not
+      // 100. Dividing by the paid quantity overstates the cost of every
+      // promotional buy — and this figure is what average_cost blends, so the
+      // error compounds with each receipt rather than showing up once. See 090.
       landedUnitCost:
-        line.qtyReceived === 0
-          ? 0
-          : round((netExcl + chargeExcl) / line.qtyReceived, 4),
+        qtyArriving === 0 ? 0 : round((netExcl + chargeExcl) / qtyArriving, 4),
     }
   })
 
@@ -279,12 +351,17 @@ export async function receiveGoods(
 
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
+      // 092 adds the document discount columns. A site it has not reached must
+      // still be able to receive: the discount is already apportioned into the
+      // lines above, so only the record of WHY the lines are lower is lost.
+      const hasDocDiscount = await columnExistsTx(tx, 'purchase_documents', 'discount_excl')
+
       const [res] = await tx.execute(
         `INSERT INTO purchase_documents
            (doc_type, status, document_date, due_date, supplier_id, supplier_code, supplier_name,
             supplier_invoice_no, user_id, user_name, subtotal_excl, vat_total, total_incl,
-            charges_excl, ordered_from_id, reference, notes)
-         VALUES ('grv','finalised',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            charges_excl, ${hasDocDiscount ? 'discount_pct, discount_excl, ' : ''}ordered_from_id, reference, notes)
+         VALUES ('grv','finalised',?,?,?,?,?,?,?,?,?,?,?,?,${hasDocDiscount ? '?,?,' : ''}?,?,?)`,
         [
           docDate,
           dueDate,
@@ -298,6 +375,9 @@ export async function receiveGoods(
           vatTotal.toFixed(4),
           totalIncl.toFixed(4),
           chargesExcl.toFixed(4),
+          ...(hasDocDiscount
+            ? [(input.discountPct ?? 0).toFixed(3), documentDiscount.toFixed(4)]
+            : []),
           input.orderId ?? null,
           input.reference?.trim() || null,
           input.notes?.trim() || null,
@@ -327,6 +407,18 @@ export async function receiveGoods(
         }
       }
 
+      // 090 adds qty_bonus. A site it has not reached must still be able to
+      // receive — the quantity arriving is what matters for stock and cost, and
+      // both are computed above rather than read back from the column.
+      const hasBonus = await columnExistsTx(tx, 'purchase_document_lines', 'qty_bonus')
+      // 087. Same reasoning — the discount is already in the line's value, so
+      // only the record of how it was expressed is lost where it is missing.
+      const hasLineDiscountAmount = await columnExistsTx(
+        tx,
+        'purchase_document_lines',
+        'discount_amount',
+      )
+
       for (const [index, line] of input.lines.entries()) {
         const c = computed[index]
 
@@ -338,10 +430,10 @@ export async function receiveGoods(
         await tx.execute(
           `INSERT INTO purchase_document_lines
              (document_id, line_number, product_id, location_id, product_code, supplier_code, description,
-              product_type, department_id, qty_ordered, qty_received, unit_cost_excl,
-              discount_pct, vat_rate_pct, line_total_excl, line_vat, line_total_incl,
-              charge_excl, landed_cost_excl)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              product_type, department_id, qty_ordered, qty_received, ${hasBonus ? 'qty_bonus, ' : ''}unit_cost_excl,
+              discount_pct, ${hasLineDiscountAmount ? 'discount_amount, ' : ''}vat_rate_pct,
+              line_total_excl, line_vat, line_total_incl, charge_excl, landed_cost_excl)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,${hasBonus ? '?,' : ''}?,?,${hasLineDiscountAmount ? '?,' : ''}?,?,?,?,?,?)`,
           [
             documentId,
             index + 1,
@@ -354,8 +446,12 @@ export async function receiveGoods(
             line.departmentId ?? null,
             round(line.qtyOrdered ?? line.qtyReceived, 3).toFixed(3),
             round(line.qtyReceived, 3).toFixed(3),
+            ...(hasBonus ? [round(line.qtyBonus ?? 0, 3).toFixed(3)] : []),
             round(line.unitCostExcl, 4).toFixed(4),
             (line.discountPct ?? 0).toFixed(3),
+            ...(hasLineDiscountAmount
+              ? [round(line.discountAmount ?? 0, 4).toFixed(4)]
+              : []),
             line.vatRatePct.toFixed(3),
             c.netExcl.toFixed(4),
             c.vat.toFixed(4),
@@ -377,11 +473,14 @@ export async function receiveGoods(
         const existingQty = toNum(current?.stock_on_hand)
         const existingCost = toNum(current?.average_cost)
 
+        // The BONUS UNITS GO ON THE SHELF TOO. Moving only the paid quantity
+        // would leave the free ones invisible to stock, and the first count
+        // would find them as an unexplained surplus.
         await recordMovement(tx, actor, {
           productId: line.productId,
           locationId,
           movementType: 'receipt',
-          qtyChange: round(line.qtyReceived, 3),
+          qtyChange: c.qtyArriving,
           unitCostExcl: c.landedUnitCost,
           source: 'grv',
           sourceDocId: documentId,
@@ -396,7 +495,9 @@ export async function receiveGoods(
           const captured = await receiveSerialsTx(tx, actor, {
             productId: line.productId,
             serials: line.serials ?? [],
-            qtyReceived: line.qtyReceived,
+            // One per unit ARRIVING — a free phone is still a phone with an
+            // IMEI, and the quantity moved above counts it.
+            qtyReceived: c.qtyArriving,
             documentId,
             locationId,
             costExcl: c.landedUnitCost,
@@ -412,10 +513,14 @@ export async function receiveGoods(
         // THE COST MOVE. Both figures, and only here:
         //   average_cost blends what was there with what arrived
         //   last_cost is simply what we just paid
+        // Blended over everything that arrived, at the cost each actually
+        // worked out to. Using the paid quantity here with a landed cost that
+        // already divided by the arriving one would weight the blend wrongly
+        // AND disagree with the stock movement written moments ago.
         const newAverage = weightedAverageCost({
           existingQty,
           existingCostExcl: existingCost,
-          receivedQty: line.qtyReceived,
+          receivedQty: c.qtyArriving,
           receivedCostExcl: c.landedUnitCost,
         })
 
@@ -443,6 +548,12 @@ export async function receiveGoods(
         }
 
         // Close off the order line this fulfils.
+        //
+        // The PAID quantity only, deliberately. An order for 100 filled by 90
+        // paid plus 10 free is still 10 short of what was ordered: the
+        // outstanding figure asks "what am I still waiting for", and a
+        // promotional freebie does not answer it. Counting bonus units here
+        // would silently close orders that the supplier has not finished.
         if (line.orderLineId) {
           await tx.execute(
             'UPDATE purchase_document_lines SET qty_received = qty_received + ? WHERE id = ?',
@@ -616,9 +727,20 @@ export async function voidReceipt(
     return { ok: false, error: 'That VAT period is locked.' }
   }
 
+  // COALESCE, not a plain column: qty_bonus arrives with 090, and a site it
+  // has not reached must still be able to void. Selected as one figure so the
+  // reversal below cannot accidentally use the paid quantity.
+  const bonusPresent = await siteQueryOne<RowDataPacket>(
+    siteId,
+    `SELECT 1 AS ok FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'purchase_document_lines'
+        AND COLUMN_NAME = 'qty_bonus' LIMIT 1`,
+  )
   const lines = await siteQuery<RowDataPacket & Record<string, unknown>>(
     siteId,
-    'SELECT id, product_id, location_id, qty_received, landed_cost_excl FROM purchase_document_lines WHERE document_id = ?',
+    `SELECT id, product_id, location_id, landed_cost_excl,
+            qty_received ${bonusPresent ? '+ COALESCE(qty_bonus, 0)' : ''} AS qty_arrived
+       FROM purchase_document_lines WHERE document_id = ?`,
     [documentId],
   )
 
@@ -641,7 +763,10 @@ export async function voidReceipt(
           // main may even have changed since the receipt was posted.
           locationId: line.location_id === null ? null : Number(line.location_id),
           movementType: 'adjustment',
-          qtyChange: round(-toNum(line.qty_received), 3),
+          // Everything that came in goes back out, bonus units included —
+          // otherwise the free stock is stranded on the shelf with no
+          // movement behind it, and the next count finds a surplus.
+          qtyChange: round(-toNum(line.qty_arrived), 3),
           unitCostExcl: toNum(line.landed_cost_excl),
           source: 'cancelled',
           sourceDocId: documentId,
@@ -759,6 +884,21 @@ function groupBySupplier(
  * receipt must still post while 088 is pending — the charge total is on the
  * document either way, and only the itemisation is lost.
  */
+/** As tableExistsTx, for a single column. Same reasoning — see 090. */
+async function columnExistsTx(
+  tx: PoolConnection,
+  table: string,
+  column: string,
+): Promise<boolean> {
+  const [rows] = await tx.execute(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+      LIMIT 1`,
+    [table, column] as never,
+  )
+  return (rows as RowDataPacket[]).length > 0
+}
+
 async function tableExistsTx(tx: PoolConnection, table: string): Promise<boolean> {
   const [rows] = await tx.execute(
     `SELECT 1 FROM information_schema.TABLES

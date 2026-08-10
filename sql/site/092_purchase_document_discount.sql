@@ -1,0 +1,40 @@
+-- A discount on the whole delivery: settlement terms, a volume rebate, a
+-- goodwill credit for a late shipment.
+--
+-- Lines have carried discount_pct since 017, and that covers "this item is
+-- cheaper". It does not cover "5% off the invoice", which is a fact about the
+-- document, not about any line on it. Keying it as a per-line percentage means
+-- the buyer doing the arithmetic themselves and the GRV no longer matching the
+-- supplier's invoice.
+--
+-- ── WHY IT IS APPORTIONED ONTO THE LINES AND NOT SUBTRACTED FROM THE TOTAL ─
+--
+-- Rule 3 of documentMath.ts, and it is not a style preference. A discount held
+-- only at document level cannot be split by VAT rate. The moment a delivery
+-- mixes a standard-rated case with a zero-rated one, the VAT on a
+-- document-level discount is unallocatable -- there is no correct single
+-- figure, and whichever one is chosen makes the VAT return wrong.
+--
+-- Apportioning first means each line carries its share, each share is taxed at
+-- that line's own rate, and the totals add up by construction.
+-- apportionDiscount() already does this and puts the rounding remainder on the
+-- largest line, so a three-line R100 discount comes to exactly R100 rather
+-- than R99.99 depending on the order the lines happen to be in.
+--
+-- ── ORDER OF OPERATIONS ──────────────────────────────────────────────────
+--
+--   line discount -> DOCUMENT DISCOUNT -> charges -> landed cost
+--
+-- Charges last, deliberately. Freight is not discounted by the goods
+-- supplier's settlement terms: a 5% early-payment discount reduces what is
+-- owed for the goods, not what the courier charged to deliver them.
+--
+-- ── BOTH COLUMNS, AND WHICH WINS ─────────────────────────────────────────
+--
+-- Same rule as the line (087) and as lineTotals() on the sales side: the
+-- ABSOLUTE AMOUNT WINS when non-zero. A supplier who writes "less R250" means
+-- R250, and storing that as a percentage of a R2,033.33 subtotal gives
+-- 12.295%, which renders back as R249.99.
+ALTER TABLE purchase_documents
+  ADD COLUMN IF NOT EXISTS discount_pct  DECIMAL(6,3)  NOT NULL DEFAULT 0.000  AFTER charges_excl,
+  ADD COLUMN IF NOT EXISTS discount_excl DECIMAL(12,4) NOT NULL DEFAULT 0.0000 AFTER discount_pct;

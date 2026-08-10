@@ -15,6 +15,7 @@ import {
   Field,
   Icons,
   Input,
+  NumberInput,
   PageBody,
   Select,
   TableToolbar,
@@ -105,6 +106,8 @@ export default function ReceiveScreen({
   const [orderId, setOrderId] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
   const [charges, setCharges] = useState<ChargeRow[]>([])
+  const [docDiscountPct, setDocDiscountPct] = useState(0)
+  const [docDiscountAmount, setDocDiscountAmount] = useState(0)
   const [lines, setLines] = useState<ReceiveLine[]>([])
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<TillProduct[]>([])
@@ -245,8 +248,13 @@ export default function ReceiveScreen({
   )
 
   const totals = useMemo(
-    () => purchaseDocumentFigures(lines, { chargesExcl: chargesTotal }),
-    [lines, chargesTotal],
+    () =>
+      purchaseDocumentFigures(lines, {
+        chargesExcl: chargesTotal,
+        discountPct: docDiscountPct,
+        discountExcl: docDiscountAmount,
+      }),
+    [lines, chargesTotal, docDiscountPct, docDiscountAmount],
   )
 
   /**
@@ -278,6 +286,8 @@ export default function ReceiveScreen({
         supplierId: Number(supplierId),
         orderId: orderId ? Number(orderId) : null,
         supplierInvoiceNo: invoiceNo || null,
+        discountPct: docDiscountPct,
+        discountExcl: docDiscountAmount,
         charges: charges
           // A blank row the user added and never filled in is not a charge.
           .filter((c) => c.description.trim() || c.amountExcl > 0)
@@ -299,6 +309,7 @@ export default function ReceiveScreen({
           departmentId: l.departmentId,
           qtyOrdered: l.qtyOrdered || l.qty,
           qtyReceived: l.qty,
+          qtyBonus: l.qtyBonus,
           unitCostExcl: l.unitCostExcl,
           discountPct: l.discountPct,
           vatRatePct: l.vatRatePct,
@@ -403,6 +414,37 @@ export default function ReceiveScreen({
               <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
             </Field>
 
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Discount on the invoice"
+            description="Settlement terms or a rebate on the whole delivery, spread across the lines."
+          />
+          <CardBody className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Percent off"
+              hint={docDiscountAmount > 0 ? 'Ignored — an amount is set.' : 'Of the goods total.'}
+            >
+              <NumberInput
+                value={docDiscountPct}
+                precision={2}
+                onChange={(e) =>
+                  setDocDiscountPct(
+                    Math.min(Math.max(Number(String(e.target.value).replace(',', '.')) || 0, 0), 100),
+                  )
+                }
+              />
+            </Field>
+            <Field label="Or an amount" hint="Wins over the percentage — what the invoice says.">
+              <CurrencyInput
+                value={docDiscountAmount}
+                onChange={(e) =>
+                  setDocDiscountAmount(Number(String(e.target.value).replace(',', '.')) || 0)
+                }
+              />
+            </Field>
           </CardBody>
         </Card>
 
@@ -518,6 +560,9 @@ export default function ReceiveScreen({
         <Card className="p-4">
           <dl className="flex flex-col gap-1.5 text-sm">
             <Row label="Goods (excl.)" value={formatMoney(totals.subtotalExcl)} />
+            {totals.discountExcl > 0 && (
+              <Row label="Discount" value={`−${formatMoney(totals.discountExcl)}`} />
+            )}
             {ownCharges > 0 && <Row label="Delivery" value={formatMoney(ownCharges)} />}
             <Row label="VAT" value={formatMoney(totals.vatTotal)} />
           </dl>
@@ -526,7 +571,10 @@ export default function ReceiveScreen({
               {carrierCharges > 0 ? 'Their invoice' : 'Invoice total'}
             </span>
             <span className="numeric text-xl font-semibold text-ink">
-              {formatMoney(round(totals.subtotalExcl + totals.vatTotal + ownCharges, 2))}
+              {/* taxableExcl, not subtotalExcl: the document discount has
+                  already come off it, and showing the pre-discount figure here
+                  would disagree with the invoice being keyed from. */}
+              {formatMoney(round(totals.taxableExcl + totals.vatTotal + ownCharges, 2))}
             </span>
           </div>
 
