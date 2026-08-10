@@ -66,6 +66,20 @@ export const SETTING_DEFAULTS = {
    */
   cashup_mode: 'terminal',
   /**
+   * What kind of till this shop runs.
+   *
+   * 'retail'      — a queue at a counter. One basket at a time, paid before the
+   *                 customer leaves. The default, so every existing store is
+   *                 untouched.
+   * 'hospitality' — tables. A basket per table, held open while people eat, paid
+   *                 at the end. The same basket and the same posting path; what
+   *                 differs is how a waiter FINDS the one they left open.
+   *
+   * Read in exactly three places on the client — see PosShell. A fourth is the
+   * signal that the flag is being threaded rather than contained.
+   */
+  pos_mode: 'retail',
+  /**
    * Lay-by cancellation fee, as a percentage of the FULL price.
    *
    * Defaults to zero deliberately. Section 62 of the Consumer Protection Act
@@ -368,6 +382,11 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       if (tolerance > 500) return 'A tolerance above 500 would hide real shortages.'
       return null
     }
+
+    case 'pos_mode':
+      return value === 'retail' || value === 'hospitality'
+        ? null
+        : "POS mode must be 'retail' or 'hospitality'."
 
     case 'cashup_mode':
       return value === 'terminal' || value === 'user'
