@@ -76,6 +76,22 @@ export type StorefrontProduct = {
    */
   imageId: number | null
   imageAlt: string
+  /**
+   * The group this product is one of, or null when it stands alone.
+   *
+   * Carried on the CHILD rather than fetched per group, because the listing
+   * already reads every child and a second query per group would be one round
+   * trip per tile. `groupVariants` below folds siblings into a single tile from
+   * exactly this.
+   */
+  variantOf: {
+    parentId: number
+    /** The shared name — what the tile is titled once siblings collapse. */
+    groupName: string
+    axis1: string
+    axis2: string
+    sort: number
+  } | null
 }
 
 export type StorefrontDepartment = {
@@ -145,10 +161,19 @@ function publishFilter(mode: OnlineSettings['publishMode']): string {
  * A product must be sellable before it can be published: not archived, a real
  * stocked line, and PRICED. An unpriced product would otherwise appear at
  * R0.00, which is an invitation rather than a listing.
+ *
+ * A variant PARENT is excluded here too, and that single line covers the
+ * catalogue, the search, a department listing and the specials row at once —
+ * which is why it belongs in the shared clause rather than in each query. The
+ * parent carries no price of its own and cannot be ordered; its children are
+ * ordinary products and appear normally. The shop collapses them back into one
+ * tile at render time (see variantGroupsFor below), so a shopper still sees a
+ * single card with a picker rather than five siblings competing in the grid.
  */
 const SELLABLE = `
   p.is_archived = 0
   AND p.product_type IN ('normal','returnable')
+  AND p.has_variants = 0
   AND pp.selling_price_incl > 0
 `
 
@@ -166,6 +191,10 @@ const SELLABLE = `
  */
 const PRODUCT_COLUMNS = `
   p.id, p.code, p.description, p.department_id,
+  -- Which group this belongs to, and where in it. NULL for the great majority
+  -- of products, which have no siblings and are drawn as a plain tile.
+  p.parent_id, p.axis_1_value, p.axis_2_value, p.variant_sort,
+  parent.description AS group_description,
   dep.name AS department_name,
   br.name AS brand_name,
   pp.selling_price_incl AS price_incl,
@@ -195,6 +224,9 @@ const PRODUCT_JOINS = `
        ))
   LEFT JOIN departments dep ON dep.id = p.department_id
   LEFT JOIN brands br ON br.id = p.brand_id
+  -- The group this product belongs to, for its shared name. LEFT because the
+  -- great majority of products have no parent at all.
+  LEFT JOIN products parent ON parent.id = p.parent_id
 `
 
 /**
@@ -299,6 +331,55 @@ export async function publishedProducts(
   )
 
   return withSpecials(context.siteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+}
+
+/**
+ * The axis labels a group's picker is titled with — 'Size', 'Colour'.
+ *
+ * Empty when the product stands alone, so the detail page can ask
+ * unconditionally and draw nothing when there is nothing to draw.
+ */
+export async function axisLabelsFor(
+  siteId: number,
+  parentId: number,
+): Promise<{ position: number; label: string }[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT position, label FROM product_variant_axes
+      WHERE product_id = ? ORDER BY position`,
+    [parentId],
+  )
+  return rows.map((r) => ({ position: Number(r.position), label: String(r.label) }))
+}
+
+/**
+ * The siblings of one product, for its detail page's picker.
+ *
+ * Reads the group directly rather than filtering a listing, because a product
+ * page knows its parent and must show every sibling — including ones a
+ * department or search filter would have excluded.
+ */
+export async function siblingsOf(
+  context: StorefrontContext,
+  product: StorefrontProduct,
+): Promise<StorefrontProduct[]> {
+  if (!product.variantOf) return []
+
+  const rows = await siteQuery<Row>(
+    context.siteId,
+    `SELECT ${PRODUCT_COLUMNS}
+     ${PRODUCT_JOINS}
+      WHERE ${SELLABLE}
+        AND ${publishFilter(context.settings.publishMode)}
+        AND p.parent_id = ?
+      ORDER BY p.variant_sort, pp.selling_price_incl`,
+    [context.settings.priceStructureId, product.variantOf.parentId],
+  )
+
+  return withSpecials(
+    context.siteId,
+    rows.map((r) => mapStorefrontProduct(r, context.settings)),
+  )
 }
 
 /** One product, but ONLY if the store actually publishes it. */
@@ -571,6 +652,16 @@ function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProdu
     // Falls back to the product's own name: an <img> with no alt is invisible
     // to a screen reader, and "" would announce nothing at all.
     imageAlt: String(r.image_alt ?? '') || String(r.description ?? ''),
+    variantOf:
+      r.parent_id === null || r.parent_id === undefined
+        ? null
+        : {
+            parentId: Number(r.parent_id),
+            groupName: String(r.group_description ?? ''),
+            axis1: String(r.axis_1_value ?? ''),
+            axis2: String(r.axis_2_value ?? ''),
+            sort: Number(r.variant_sort ?? 0),
+          },
   }
 }
 

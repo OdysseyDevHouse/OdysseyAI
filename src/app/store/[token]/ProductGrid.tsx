@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import type { StorefrontProduct } from '@/lib/site/storefront'
+import { groupVariants } from '@/lib/variantTiles'
 import { formatMoney } from '@/lib/decimals'
 import { Badge } from '@/components/ui'
 import {
@@ -63,6 +64,20 @@ export default function ProductGrid({
 }) {
   const asGrid = layout === 'grid' && showPhotos
 
+  /*
+   * ── SIBLINGS COLLAPSE INTO ONE TILE ─────────────────────────────────────
+   *
+   * Done HERE rather than in each caller because all four listings — the front
+   * page, a department, a search and the related row — render through this
+   * component, and a shirt that appeared five times in a search but once on the
+   * front page would be a shop assembled from parts.
+   *
+   * groupVariants keeps the incoming order and nominates the cheapest in-stock
+   * sibling for each group, so the caller's sort still decides position and the
+   * tile prices something a shopper can actually buy.
+   */
+  const tiles = groupVariants(products)
+
   if (asGrid) {
     /*
      * @container on the list itself, so the tile count follows the width this
@@ -76,14 +91,17 @@ export default function ProductGrid({
      */
     return (
       <ul className="@container grid grid-cols-2 items-stretch gap-3 @sm:grid-cols-3 @lg:grid-cols-4 @xl:grid-cols-5">
-        {products.map((product, i) => (
+        {tiles.map((tile, i) => (
           <Tile
-            key={product.id}
+            key={tile.product.id}
             token={token}
-            product={product}
+            product={tile.product}
+            title={tile.title}
+            variantCount={tile.siblings.length}
+            fromPrice={tile.priceVaries ? tile.fromPriceIncl : null}
             showStock={showStock}
             showBrands={showBrands}
-            review={reviews?.get(product.id)}
+            review={reviews?.get(tile.product.id)}
             // The first two are the phone's visible row, so they load eagerly
             // and everything below them waits until it is scrolled to.
             eager={i < 2}
@@ -95,14 +113,16 @@ export default function ProductGrid({
 
   return (
     <ul className="flex flex-col gap-2">
-      {products.map((product) => (
+      {tiles.map((tile) => (
         <Row
-          key={product.id}
+          key={tile.product.id}
           token={token}
-          product={product}
+          product={tile.product}
+          title={tile.title}
+          variantCount={tile.siblings.length}
           showStock={showStock}
           showPhotos={showPhotos}
-          review={reviews?.get(product.id)}
+          review={reviews?.get(tile.product.id)}
         />
       ))}
     </ul>
@@ -112,6 +132,9 @@ export default function ProductGrid({
 function Tile({
   token,
   product,
+  title,
+  variantCount,
+  fromPrice,
   showStock,
   showBrands,
   review,
@@ -119,6 +142,12 @@ function Tile({
 }: {
   token: string
   product: StorefrontProduct
+  /** The group's shared name, or this product's own description. */
+  title: string
+  /** How many siblings this tile stands for. 0 for a standalone product. */
+  variantCount: number
+  /** The lowest price in the group, only when siblings actually differ. */
+  fromPrice: number | null
   showStock: boolean
   showBrands: boolean
   review?: ReviewSummary
@@ -191,14 +220,24 @@ function Tile({
               showBrands && product.brand ? 'mt-0.5' : ''
             }`}
           >
-            {product.description}
+            {title}
           </span>
+          {/* The affordance, not the picker itself. Choosing a size on a tile
+              would need every sibling's price and stock in the listing, and
+              the shopper still has to land on the product to see which size
+              the photograph is of. */}
+          {variantCount > 1 && (
+            <span className="mt-1 block text-xs text-muted">{variantCount} options</span>
+          )}
           {review && review.count > 0 && (
             <span className="mt-1 block">
               <Stars value={review.average} count={review.count} />
             </span>
           )}
-          <span className="mt-1.5 block">
+          <span className="mt-1.5 flex items-baseline gap-1.5">
+            {/* "from" only when the siblings genuinely differ — printed over a
+                group that is all one price, it invents a choice. */}
+            {fromPrice !== null && <span className="text-xs text-muted">from</span>}
             <Price product={product} />
           </span>
         </span>
@@ -208,7 +247,26 @@ function Tile({
           the buttons sit at different heights across a row. */}
       <div className="mt-auto flex items-center gap-2 px-3 pb-3 pt-2.5">
         <span className="min-w-0 flex-1">
-          <AddControl product={product} showStock={showStock} />
+          {/*
+            A group sends the shopper to the product instead of adding.
+
+            Add on a tile is right for a product with one price and one stock
+            figure. For a group it would silently basket whichever sibling this
+            tile happens to be representing — someone pressing Add under
+            "3 options" has not told us which size they want, and finding the
+            wrong one in the basket at checkout is worse than one more tap.
+          */}
+          {variantCount > 1 ? (
+            <Link
+              href={`/store/${token}/p/${product.id}`}
+              data-kit-ok
+              className="flex h-control w-full items-center justify-center rounded-control border border-border-strong px-3 text-sm font-medium text-ink transition hover:border-brand hover:text-brand"
+            >
+              Choose
+            </Link>
+          ) : (
+            <AddControl product={product} showStock={showStock} />
+          )}
         </span>
         <FavouriteButton product={product} />
       </div>
@@ -219,12 +277,16 @@ function Tile({
 function Row({
   token,
   product,
+  title,
+  variantCount,
   showStock,
   showPhotos,
   review,
 }: {
   token: string
   product: StorefrontProduct
+  title: string
+  variantCount: number
   showStock: boolean
   showPhotos: boolean
   review?: ReviewSummary
@@ -243,15 +305,14 @@ function Row({
         <span className="min-w-0 flex-1">
           {/* One line, truncated — a row is scanned, not read. The grid tile
               clamps to two because it has the width for a second. */}
-          <span className="block truncate text-sm font-medium text-ink">
-            {product.description}
-          </span>
+          <span className="block truncate text-sm font-medium text-ink">{title}</span>
           {review && review.count > 0 && (
             <span className="mt-0.5 block">
               <Stars value={review.average} count={review.count} />
             </span>
           )}
           <span className="mt-0.5 flex flex-wrap items-center gap-2">
+            {variantCount > 1 && <span className="text-xs text-muted">from</span>}
             <span className="numeric text-sm font-medium text-ink">
               {formatMoney(product.priceIncl)}
             </span>
@@ -265,7 +326,19 @@ function Row({
         </span>
       </Link>
 
-      <AddControl product={product} showStock={showStock} compact />
+      {/* Same reasoning as the tile: a group has not been narrowed to one
+          sellable thing yet, so it navigates rather than adds. */}
+      {variantCount > 1 ? (
+        <Link
+          href={`/store/${token}/p/${product.id}`}
+          data-kit-ok
+          className="flex h-control shrink-0 items-center justify-center rounded-control border border-border-strong px-3 text-sm font-medium text-ink transition hover:border-brand hover:text-brand"
+        >
+          Choose
+        </Link>
+      ) : (
+        <AddControl product={product} showStock={showStock} compact />
+      )}
     </li>
   )
 }

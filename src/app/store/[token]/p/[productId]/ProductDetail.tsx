@@ -40,6 +40,8 @@ export default function ProductDetail({
   showBrands,
   reviewAverage,
   reviewCount,
+  siblings = [],
+  axisLabels = [],
 }: {
   token: string
   product: StorefrontProduct
@@ -48,6 +50,9 @@ export default function ProductDetail({
   showBrands: boolean
   reviewAverage: number
   reviewCount: number
+  /** Every variant in this product's group, or empty when it stands alone. */
+  siblings?: StorefrontProduct[]
+  axisLabels?: { position: number; label: string }[]
 }) {
   const [shown, setShown] = useState(0)
   const cart = useCart()
@@ -55,6 +60,36 @@ export default function ProductDetail({
   const inBasket = cart.lines.find((l) => l.productId === product.id)?.qty ?? 0
   const saving = savingPercent(product)
   const state = stockState(product, showStock)
+
+  /*
+   * ── THE PICKER IS LINKS, NOT STATE ──────────────────────────────────────
+   *
+   * Each variant is a real product with its own id, price, stock and
+   * photographs, so choosing one is a NAVIGATION to that product's page rather
+   * than a state change on this one. That keeps every URL shareable, gives the
+   * back button the meaning a shopper expects, and means the price, gallery and
+   * Add button cannot disagree with each other — they are all rendered from
+   * whichever product the page is actually for.
+   *
+   * Swapping in place would need the whole page's data client-side and would
+   * leave the address bar pointing at the size somebody did not choose.
+   *
+   * Only drawn when there is a genuine choice: one variant is a control that
+   * does nothing, exactly like the single-thumbnail case above.
+   */
+  const hasChoice = siblings.length > 1
+  const axisOne = axisLabels.find((a) => a.position === 1)?.label ?? 'Option'
+  const axisTwo = axisLabels.find((a) => a.position === 2)?.label ?? null
+
+  const values = (position: 1 | 2) => {
+    const seen: { value: string; product: StorefrontProduct }[] = []
+    for (const s of siblings) {
+      const value = position === 1 ? s.variantOf?.axis1 : s.variantOf?.axis2
+      if (!value) continue
+      if (!seen.some((e) => e.value === value)) seen.push({ value, product: s })
+    }
+    return seen
+  }
 
   /*
    * Clamped rather than trusted. This component stays mounted across a
@@ -203,6 +238,29 @@ export default function ProductDetail({
             </p>
           )}
 
+          {/* Above the Add button: the shopper picks WHICH one before they
+              decide how many. */}
+          {hasChoice && (
+            <div className="mt-5 flex flex-col gap-4">
+              <AxisPicker
+                token={token}
+                label={axisOne}
+                options={values(1)}
+                current={product.variantOf?.axis1 ?? ''}
+                showStock={showStock}
+              />
+              {axisTwo && (
+                <AxisPicker
+                  token={token}
+                  label={axisTwo}
+                  options={values(2)}
+                  current={product.variantOf?.axis2 ?? ''}
+                  showStock={showStock}
+                />
+              )}
+            </div>
+          )}
+
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <div className="min-w-[9rem] flex-1">
               <AddControl product={product} showStock={showStock} />
@@ -243,6 +301,79 @@ export default function ProductDetail({
 
 function Chevron() {
   return <Icons.ChevronRight size={14} className="shrink-0 text-muted" aria-hidden />
+}
+
+/**
+ * One row of choices — the sizes, or the colours.
+ *
+ * A sold-out variant is still SHOWN, struck through and marked, rather than
+ * hidden. A shopper looking for a large needs to learn that the shop stocks
+ * larges and has run out; silently omitting it reads as a shop that never sold
+ * them, and they leave instead of checking back.
+ */
+function AxisPicker({
+  token,
+  label,
+  options,
+  current,
+  showStock,
+}: {
+  token: string
+  label: string
+  options: { value: string; product: StorefrontProduct }[]
+  current: string
+  showStock: boolean
+}) {
+  if (options.length === 0) return null
+
+  return (
+    <div>
+      <p className="mb-2 text-sm font-medium text-ink">
+        {label}
+        {current && <span className="ml-1.5 font-normal text-muted">{current}</span>}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {options.map(({ value, product: option }) => {
+          const active = value === current
+          const soldOut = showStock && !option.inStock
+
+          if (active) {
+            /* The current choice is not a link to where you already are.
+               Rendering it as one gives a screen reader a control that goes
+               nowhere and lets a shopper "navigate" to the same page. */
+            return (
+              <span
+                key={value}
+                aria-current="true"
+                data-kit-ok
+                className="inline-flex h-control min-w-[3.5rem] items-center justify-center rounded-control border-2 border-brand bg-brand-soft px-3 text-sm font-medium text-brand"
+              >
+                {value}
+              </span>
+            )
+          }
+
+          return (
+            /* Not a kit Button: this is a navigation control that has to be a
+               real <a> for middle-click and open-in-new-tab, and it carries a
+               struck-through sold-out state no Button variant has. */
+            <Link
+              key={value}
+              href={`/store/${token}/p/${option.id}`}
+              data-kit-ok
+              className={`inline-flex h-control min-w-[3.5rem] items-center justify-center rounded-control border px-3 text-sm transition ${
+                soldOut
+                  ? 'border-border text-muted line-through hover:border-border-strong'
+                  : 'border-border-strong text-ink hover:border-brand hover:text-brand'
+              }`}
+            >
+              {value}
+            </Link>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 function TrustTile({

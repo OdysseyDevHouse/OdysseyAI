@@ -1,7 +1,13 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
-import { publishedProduct, publishedProducts, storefrontContext } from '@/lib/site/storefront'
+import {
+  axisLabelsFor,
+  publishedProduct,
+  publishedProducts,
+  siblingsOf,
+  storefrontContext,
+} from '@/lib/site/storefront'
 import { approvedReviewsFor } from '@/lib/site/productReviews'
 import { listImages } from '@/lib/site/productImages'
 import { formatMoney } from '@/lib/decimals'
@@ -75,6 +81,19 @@ export default async function ProductPage({
   // Never suggest the thing already being looked at.
   const alsoLike = related.filter((p) => p.id !== product.id).slice(0, 5)
 
+  /*
+   * The other sizes/colours of this thing, and what those axes are called.
+   *
+   * Fetched after the product because both need its parent. A standalone
+   * product costs one cheap no-op: siblingsOf returns [] without querying, and
+   * the labels are skipped entirely.
+   */
+  const siblings = await siblingsOf(context, product)
+  const axisLabels =
+    product.variantOf && siblings.length > 1
+      ? await axisLabelsFor(siteId, product.variantOf.parentId)
+      : []
+
   return (
     <div className="flex flex-col gap-10">
       <ProductDetail
@@ -85,6 +104,8 @@ export default async function ProductPage({
         showBrands={settings.showBrands}
         reviewAverage={reviews.average}
         reviewCount={reviews.count}
+        siblings={siblings}
+        axisLabels={axisLabels}
       />
 
       {settings.reviewsEnabled && (

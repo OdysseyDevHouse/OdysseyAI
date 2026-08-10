@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Button, Checkbox, EmptyState, Icons, Select } from '@/components/ui'
 import type { StorefrontProduct } from '@/lib/site/storefront'
+import { groupVariants } from '@/lib/variantTiles'
 import ProductGrid, { type ProductListLayout } from './ProductGrid'
 
 /**
@@ -107,6 +108,26 @@ export default function Catalogue({
     return out
   }, [products, brands, onSpecial, inStockOnly, sort])
 
+  /*
+   * ── COUNT AND PAGE IN TILES, NOT IN PRODUCTS ────────────────────────────
+   *
+   * A group of four sizes is four rows from the server and ONE tile on screen.
+   * Counting the rows told a shopper "showing 4 of 4 products" above a single
+   * card, and slicing them meant a page of 24 could collapse to six tiles while
+   * "Load more" claimed there was nothing left.
+   *
+   * So the fold happens here, before either, and the grid is handed tiles that
+   * are already grouped. It re-folds them harmlessly — groupVariants is
+   * idempotent over an already-grouped list — which keeps ProductGrid correct
+   * for its other three callers that pass raw products.
+   */
+  const tiles = useMemo(() => groupVariants(visible), [visible])
+  const pageTiles = useMemo(() => tiles.slice(0, shown), [tiles, shown])
+  const pageProducts = useMemo(
+    () => pageTiles.flatMap((t) => (t.siblings.length > 0 ? t.siblings : [t.product])),
+    [pageTiles],
+  )
+
   const filtered = brands.length > 0 || onSpecial || inStockOnly
   const showRail = brandFacets.length > 0 || specialCount > 0 || inStockCount > 0
 
@@ -190,9 +211,9 @@ export default function Catalogue({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted">
-            {visible.length === 0
+            {tiles.length === 0
               ? 'No products'
-              : `Showing ${Math.min(shown, visible.length)} of ${visible.length} products`}
+              : `Showing ${Math.min(shown, tiles.length)} of ${tiles.length} products`}
           </p>
 
           <div className="flex items-center gap-2">
@@ -260,7 +281,7 @@ export default function Catalogue({
           ) : (
             <ProductGrid
               token={token}
-              products={visible.slice(0, shown)}
+              products={pageProducts}
               layout={layout}
               showStock={showStock}
               showPhotos={showPhotos}
@@ -271,10 +292,10 @@ export default function Catalogue({
 
         {/* A button rather than infinite scroll, so the footer stays reachable
             and coming back from a product page does not lose your place. */}
-        {shown < visible.length && (
+        {shown < tiles.length && (
           <div className="mt-5 text-center">
             <Button variant="secondary" onClick={() => setShown((s) => s + PAGE_SIZE)}>
-              Load more products ({visible.length - shown} left)
+              Load more products ({tiles.length - shown} left)
             </Button>
           </div>
         )}
