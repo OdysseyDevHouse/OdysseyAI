@@ -10,6 +10,7 @@ import {
 import { getPublishedLayout } from '@/lib/site/storefrontLayout'
 import {
   departmentPage,
+  departmentPageFor,
   getPageSectionsFor,
   getPublishedPageLayout,
 } from '@/lib/site/storefrontPages'
@@ -65,8 +66,44 @@ export async function generateMetadata({
   const found = await resolve(token, departmentId)
   if (!found) return { title: 'Not found', robots: { index: false, follow: false } }
 
+  const { context, department } = found
+  /*
+   * The department's page may carry its own words. Only a PUBLISHED one:
+   * metadata is what a link looks like when shared, and a draft is not a thing
+   * to share — the same rule the standard-page route follows, and the reason
+   * no preview pass is read here.
+   *
+   * ── SEO DOES NOT INHERIT ─────────────────────────────────────────────────
+   *
+   * `departmentPage`, not `departmentPageFor`: an inherited page lends its
+   * SECTIONS, never its words. One title and description repeated across forty
+   * sub-departments is duplicate content — every aisle claiming to be the same
+   * page — and a shopper who shares a link to "Wine › Red" should see Red in
+   * the card, not whatever the parent was called. So a department with no page
+   * of its own falls back to its own name here, as it always did.
+   */
+  const page = await departmentPage(context.siteId, department.id)
+  const seo = page?.isPublished ? page : null
+
+  const title = seo?.seoTitle.trim() || `${department.name} · ${context.storeName}`
+  const description =
+    seo?.seoDescription.trim() ||
+    context.settings.blurb ||
+    `${department.name} — ${context.storeName}`
+
   return {
-    title: `${found.department.name} · ${found.context.storeName}`,
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: 'article',
+      // The public image route, which re-checks the store is open before
+      // serving a byte — the same one the sections themselves use.
+      ...(seo?.seoImageId
+        ? { images: [{ url: `/api/store-images/${token}/shop/${seo.seoImageId}` }] }
+        : {}),
+    },
     robots: { index: false, follow: false },
   }
 }
@@ -107,11 +144,14 @@ export default async function DepartmentPage({
   const { context, department } = found
   // The grid/list choice lives on the THEME, with the rest of the shop's
   // appearance — it is a look, not a rule about what may be sold.
-  const [products, layout, page] = await Promise.all([
+  const [products, layout, found2] = await Promise.all([
     publishedProducts(context, { departmentId: department.id, limit: MAX_PRODUCTS }),
     getPublishedLayout(context.siteId),
-    departmentPage(context.siteId, department.id),
+    // Its own page, or the nearest ancestor's that offered itself. A department
+    // with neither still gets null and renders exactly as it always has.
+    departmentPageFor(context.siteId, department.id),
   ])
+  const page = found2?.page ?? null
 
   /*
    * The department's OWN sections, if the owner built any.
@@ -132,9 +172,16 @@ export default async function DepartmentPage({
    * A preview pass can see this department's draft even when the page is
    * switched off — that is the case it exists for. Without one, an unpublished
    * department page renders nothing, exactly as before.
+   *
+   * An INHERITED page is never previewed here, only published. The draft on a
+   * parent belongs to the parent's own preview; showing it on a child would
+   * present work-in-progress as that child's settled appearance, on a page the
+   * owner did not open. `departmentPageFor` only lends published pages, so this
+   * branch is already the published one — stated rather than implied, because
+   * the alternative is a leak nobody would notice.
    */
   const shown = page
-    ? preview
+    ? preview && !found2?.inherited
       ? await getPageSectionsFor(context.siteId, page.id, preview)
       : page.isPublished
         ? { sections: await getPublishedPageLayout(context.siteId, page.id), isPreview: false }
@@ -142,7 +189,15 @@ export default async function DepartmentPage({
     : { sections: [], isPreview: false }
 
   const sections = shown.sections
-  const resolved = sections.length ? await resolveSectionContent(context, sections) : []
+  /*
+   * Anchored to THIS department, with no product — so a "More in this
+   * department" row follows the page it is on rather than a department id
+   * frozen into the layout when it was built. id 0 because there is no product
+   * to exclude; see `resolveSectionContent`.
+   */
+  const resolved = sections.length
+    ? await resolveSectionContent(context, sections, { id: 0, departmentId: department.id })
+    : []
   const content: SectionContent[] = sections.map((section, i) => ({ section, ...resolved[i] }))
 
   return (

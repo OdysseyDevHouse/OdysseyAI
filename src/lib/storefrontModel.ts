@@ -91,10 +91,22 @@ export type ProductSource = (typeof PRODUCT_SOURCES)[number]
  */
 export const PRODUCT_PAGE_SOURCES: readonly ProductSource[] = ['together', 'sameDepartment']
 
+/**
+ * `sameDepartment` reads as "the department in hand" on BOTH kinds of page.
+ *
+ * On a product page that is the department the product sits in. On a department
+ * page it is the department the page is attached to — which makes it the one
+ * rule a department page can carry that survives being copied to another
+ * department. Choosing `department` and picking Toys hard-codes Toys; the same
+ * row built this way follows whichever page it lands on.
+ *
+ * 'together' stays product-only: "often bought with this" has no meaning when
+ * there is no single "this".
+ */
 export function sourcesFor(pageKind: PageKind): readonly ProductSource[] {
-  return pageKind === 'product'
-    ? PRODUCT_SOURCES
-    : PRODUCT_SOURCES.filter((s) => !PRODUCT_PAGE_SOURCES.includes(s))
+  if (pageKind === 'product') return PRODUCT_SOURCES
+  if (pageKind === 'department') return PRODUCT_SOURCES.filter((s) => s !== 'together')
+  return PRODUCT_SOURCES.filter((s) => !PRODUCT_PAGE_SOURCES.includes(s))
 }
 
 /**
@@ -121,23 +133,71 @@ export type InfoCard = { icon: string; heading: string; text: string }
  * reasoning is right and this does not abandon it. What it does is remove the
  * need for the choice.
  *
- * Nothing here is HTML. A block names one of four shapes and a span carries
- * plain text plus three booleans; the renderer is a switch that can only emit
- * <p>, <h3>, <ul>/<li> and <strong>/<em>/<a>. There is no branch that renders
- * a tag name from data, so there is no input — however hostile — that can
- * produce one. Sanitising HTML is a thing you can get wrong; not having HTML
- * is not.
+ * Nothing here is HTML. A block names one of six shapes and a span carries
+ * plain text plus flags; the renderer is a switch that can only emit <h2>,
+ * <h3>, <p>, <ul>/<li> and <strong>/<em>/<span>/<a>. There is no branch that
+ * renders a tag name from data, so there is no input — however hostile — that
+ * can produce one. Sanitising HTML is a thing you can get wrong; not having
+ * HTML is not.
  *
- * `href` still goes through `safeLinkTarget`, because a link is the one span
- * property that reaches an attribute.
+ * ── THAT HOLDS FOR ALIGNMENT AND COLOUR TOO ──────────────────────────────
+ *
+ * Both are named choices validated against a fixed list, never values. The
+ * renderer maps a name to a full class string it wrote itself; nothing an
+ * owner types becomes a class, a style attribute or a colour. A `style="…"`
+ * field would be the same mistake as storing HTML wearing a different hat —
+ * `expression()` and `url(javascript:…)` are why CSS is not a safe thing to
+ * accept either.
+ *
+ * `href` remains the one span property that reaches an attribute, and it still
+ * goes through `safeLinkTarget`.
  */
-export const RICH_BLOCK_TYPES = ['p', 'h3', 'ul', 'ol'] as const
+export const RICH_BLOCK_TYPES = ['h2', 'h3', 'p', 'small', 'ul', 'ol'] as const
 export type RichBlockType = (typeof RICH_BLOCK_TYPES)[number]
+
+/**
+ * How a line sits in its column.
+ *
+ * Per BLOCK rather than per section, because the thing an owner actually wants
+ * is a centred heading over left-aligned paragraphs — one alignment for the
+ * whole piece would make that impossible. Absent reads as 'left', so every
+ * piece of writing saved before this existed keeps looking exactly as it did.
+ *
+ * 'justify' is deliberately not offered: justified text in a narrow column
+ * opens rivers of whitespace, and the column here is `max-w-prose`.
+ */
+export const RICH_ALIGNS = ['left', 'center', 'right'] as const
+export type RichAlign = (typeof RICH_ALIGNS)[number]
+
+/**
+ * What colour a span is, as a NAMED ROLE rather than a value.
+ *
+ * ── WHY NOT A COLOUR PICKER ──────────────────────────────────────────────
+ *
+ * The same reasoning `SECTION_TONES` gives, and it applies harder to text: a
+ * free hex field is how a shop ends up with pale grey on white that nobody can
+ * read, or a red that fights the brand on every other screen. These names map
+ * to the theme's own tokens, so they stay legible in light AND dark — which a
+ * stored `#333333` cannot do, because it is the same colour on both.
+ *
+ * It also means a shop that changes its brand colour changes its writing with
+ * it, rather than leaving last season's blue hard-coded on the about page.
+ *
+ * 'default' is the absence of a choice, not a colour — it renders as the body
+ * text colour the section already uses.
+ */
+export const RICH_COLOURS = ['default', 'brand', 'muted', 'success', 'warning', 'danger'] as const
+export type RichColour = (typeof RICH_COLOURS)[number]
 
 export type RichSpan = {
   text: string
   bold?: boolean
   italic?: boolean
+  /**
+   * The role this span's colour plays. Absent reads as 'default' — see
+   * RICH_COLOURS on why this is a name and never a value.
+   */
+  colour?: RichColour
   /** Validated by safeLinkTarget. Empty means this span is not a link. */
   href?: string
 }
@@ -145,15 +205,21 @@ export type RichSpan = {
 export type RichBlock = {
   type: RichBlockType
   /**
-   * For 'p' and 'h3', the spans of one paragraph. For 'ul' and 'ol', each
-   * ITEM is its own block — a list is consecutive blocks of the same type,
-   * not a block holding items.
+   * For the paragraph-ish types, the spans of one paragraph. For 'ul' and
+   * 'ol', each ITEM is its own block — a list is consecutive blocks of the
+   * same type, not a block holding items.
    *
    * Flat rather than nested because the alternative is a tree with two depths
    * to normalise and two ways to be malformed, to express something the
    * renderer can reconstruct by grouping. See `groupRichBlocks`.
+   *
+   * SEVERAL spans is the normal case, not the exception: "call us on 021 555
+   * 0000" with only the number bold is three spans. The editor splits and
+   * re-joins them as the owner selects text; see `applyToSelection`.
    */
   spans: RichSpan[]
+  /** How this line sits. Absent reads as 'left'. */
+  align?: RichAlign
 }
 
 /**
@@ -446,7 +512,7 @@ export const SECTION_HINT: Record<SectionKind, string> = {
   countdown: 'A ticking clock — “sale ends in…”.',
   cards: 'Your own tiles — delivery info, opening hours, anything.',
   text: 'A note to shoppers — delivery days, a holiday message.',
-  richtext: 'Headings, bold, lists and links. For a longer page.',
+  richtext: 'Headings, bold, colour, alignment, lists and links. For a longer page.',
   signup: 'Collect email addresses, with permission on the record.',
   testimonial: 'Quotes you write yourself, not from the review queue.',
   logos: 'Brands you stock, or badges you have earned.',
@@ -476,6 +542,28 @@ export const SOURCE_HINT: Record<ProductSource, string> = {
   together:
     'Worked out from real baskets over the last 90 days. Empty until this product has sold alongside something.',
   sameDepartment: 'Other products from whichever department this one is in.',
+}
+
+/**
+ * The label and hint for one rule, on the page actually being edited.
+ *
+ * `sameDepartment` is the only rule that means two different things: on a
+ * product page it is "the department this product is in", on a department page
+ * it is "this department". One wording covering both would be vague on both,
+ * and the owner is choosing here — this is the moment the words have to be
+ * exact.
+ */
+export function describeSource(
+  source: ProductSource,
+  pageKind: PageKind,
+): { label: string; hint: string } {
+  if (source === 'sameDepartment' && pageKind === 'department') {
+    return {
+      label: 'Everything in this department',
+      hint: 'Follows the department this page is attached to, so the row stays right if you build the same page for another department.',
+    }
+  }
+  return { label: SOURCE_LABEL[source], hint: SOURCE_HINT[source] }
 }
 
 /**
@@ -742,18 +830,215 @@ export function isScheduledNow(
  */
 export function groupRichBlocks(
   blocks: RichBlock[],
-): { type: RichBlockType; items: RichBlock[] }[] {
-  const out: { type: RichBlockType; items: RichBlock[] }[] = []
+): { type: RichBlockType; align: RichAlign; items: RichBlock[] }[] {
+  const out: { type: RichBlockType; align: RichAlign; items: RichBlock[] }[] = []
   for (const block of blocks) {
+    const align = block.align ?? 'left'
     const last = out[out.length - 1]
     const isList = block.type === 'ul' || block.type === 'ol'
-    if (isList && last && last.type === block.type) {
+    /*
+     * Alignment breaks a run as surely as a change of type does.
+     *
+     * A <ul> carries its alignment once, on the list — so folding a centred
+     * item in beside left-aligned ones would have to drop one of the two
+     * choices, and the owner would see their centring silently ignored. A run
+     * that changes alignment becomes two lists, which is what was asked for.
+     */
+    if (isList && last && last.type === block.type && last.align === align) {
       last.items.push(block)
       continue
     }
-    out.push({ type: block.type, items: [block] })
+    out.push({ type: block.type, align, items: [block] })
   }
   return out
+}
+
+/** Do two spans differ in any way other than their text? */
+export function sameRichFormatting(a: RichSpan, b: RichSpan): boolean {
+  return (
+    (a.bold === true) === (b.bold === true) &&
+    (a.italic === true) === (b.italic === true) &&
+    (a.colour ?? 'default') === (b.colour ?? 'default') &&
+    (a.href ?? '') === (b.href ?? '')
+  )
+}
+
+/**
+ * Neighbouring spans that look identical, folded back into one. Empty spans go.
+ *
+ * ── WHY THIS IS NOT COSMETIC ─────────────────────────────────────────────
+ *
+ * Formatting a SELECTION splits a span into up to three. Bold a word, un-bold
+ * it, bold it again and the block accumulates fragments that render
+ * identically — and `MAX_RICH_SPANS` is 20, enforced by truncation. Without
+ * this, an afternoon of ordinary editing silently drops the end of a
+ * paragraph, which is the worst kind of data loss: invisible until published.
+ *
+ * It also keeps the "unsaved changes" check honest. The builder compares JSON,
+ * so two spellings of the same paragraph would read as an edit that no amount
+ * of saving clears — the same trap `normaliseSections` documents about key
+ * order.
+ *
+ * Runs on WRITE as well as in the editor, because a draft is untrusted and a
+ * hand-made payload can arrive pre-fragmented.
+ */
+export function mergeAdjacentSpans(block: RichBlock): RichBlock {
+  const out: RichSpan[] = []
+  for (const span of block.spans) {
+    // A zero-length span is invisible but still counts against the cap.
+    if (span.text === '') continue
+    const last = out[out.length - 1]
+    if (last && sameRichFormatting(last, span)) {
+      last.text = `${last.text}${span.text}`.slice(0, MAX_SPAN_TEXT)
+      continue
+    }
+    out.push({ ...span })
+  }
+  /*
+   * One empty span rather than none for a block that has been emptied: the
+   * editor reads `spans[0]` for the textarea's value, and a block with no
+   * spans at all would render an uncontrolled input. `richBlockHasText` still
+   * reports it as empty, so it never reaches the shop.
+   */
+  return { ...block, spans: out.length ? out : [{ text: '' }] }
+}
+
+/**
+ * Apply a formatting change to ONE RANGE of a block's text.
+ *
+ * ── WHY THE MODEL AND NOT THE EDITOR ─────────────────────────────────────
+ *
+ * This is the whole of selection formatting, and it is fiddly in the way that
+ * off-by-one bugs love: three-way splits, ranges that span several spans,
+ * ranges that land exactly on a boundary. Living here it can be tested against
+ * plain data, with no textarea and no browser — which is the difference
+ * between "it looked right when I clicked it" and knowing.
+ *
+ * `from` and `to` are offsets into the block's PLAIN TEXT — what
+ * `richBlockText` returns, and exactly what a textarea reports for its
+ * selection. That is the contract: the editor never has to know how the text
+ * is divided into spans, and this never has to know about the DOM.
+ *
+ * A collapsed range (from === to) is a no-op rather than an error: it is what
+ * a click with no drag produces, and the editor calls this on every toolbar
+ * press.
+ */
+export function applyToSelection(
+  block: RichBlock,
+  from: number,
+  to: number,
+  changes: Partial<Omit<RichSpan, 'text'>>,
+): RichBlock {
+  const start = Math.max(0, Math.min(from, to))
+  const end = Math.min(richBlockText(block).length, Math.max(from, to))
+  if (start >= end) return block
+
+  const out: RichSpan[] = []
+  let cursor = 0
+
+  for (const span of block.spans) {
+    const spanStart = cursor
+    const spanEnd = cursor + span.text.length
+    cursor = spanEnd
+
+    // Entirely outside the selection — kept exactly as it was.
+    if (spanEnd <= start || spanStart >= end) {
+      out.push(span)
+      continue
+    }
+
+    /*
+     * Split into up to three: the part before the selection, the selected
+     * part with the change applied, and the part after. Either end may be
+     * empty when the selection lines up with a boundary, and mergeAdjacentSpans
+     * drops those — which is why this does not need to check.
+     */
+    const localStart = Math.max(0, start - spanStart)
+    const localEnd = Math.min(span.text.length, end - spanStart)
+
+    out.push({ ...span, text: span.text.slice(0, localStart) })
+    out.push({ ...span, ...changes, text: span.text.slice(localStart, localEnd) })
+    out.push({ ...span, text: span.text.slice(localEnd) })
+  }
+
+  return mergeAdjacentSpans({ ...block, spans: out })
+}
+
+/**
+ * Replace a block's whole text, keeping the formatting that still applies.
+ *
+ * ── THE PROBLEM THIS SOLVES ──────────────────────────────────────────────
+ *
+ * The editor is a plain textarea over a block that may hold several formatted
+ * spans. Typing gives back one flat string with no idea which parts were bold
+ * — so the naive `spans: [{ text }]` throws away every piece of formatting in
+ * the paragraph the moment the owner fixes a typo. That is not a limitation an
+ * owner would report; it is one they would just find infuriating.
+ *
+ * So the common edit is handled precisely: text inserted or removed in ONE
+ * place, which is what typing, pasting and deleting a selection all are. The
+ * unchanged head and tail keep their spans and the change is absorbed by
+ * whichever span it landed in.
+ *
+ * The head/tail scan compares CODE UNITS, so an emoji or an accented character
+ * edited mid-paragraph can in principle shift a boundary by one unit. The
+ * result is still valid — every span keeps its flags and the text is exactly
+ * what was typed — so the worst case is one character taking its neighbour's
+ * formatting, not corruption.
+ */
+export function replaceBlockText(block: RichBlock, text: string): RichBlock {
+  const before = richBlockText(block)
+  if (text === before) return block
+
+  // Cleared entirely — nothing to carry over, and one empty span is the shape
+  // the editor expects.
+  if (text === '') return { ...block, spans: [{ text: '' }] }
+
+  // How much of the start and end survived untouched.
+  let head = 0
+  const maxHead = Math.min(before.length, text.length)
+  while (head < maxHead && before[head] === text[head]) head++
+
+  let tail = 0
+  const maxTail = Math.min(before.length, text.length) - head
+  while (tail < maxTail && before[before.length - 1 - tail] === text[text.length - 1 - tail]) tail++
+
+  const removedEnd = before.length - tail
+  const inserted = text.slice(head, text.length - tail)
+
+  const out: RichSpan[] = []
+  let cursor = 0
+  let placed = false
+
+  for (const span of block.spans) {
+    const spanStart = cursor
+    const spanEnd = cursor + span.text.length
+    cursor = spanEnd
+
+    const keptStart = span.text.slice(0, Math.max(0, Math.min(span.text.length, head - spanStart)))
+    const keptEnd = span.text.slice(
+      Math.max(0, Math.min(span.text.length, removedEnd - spanStart)),
+    )
+
+    /*
+     * The inserted text joins the FIRST span the change touches, so typing at
+     * the end of a bold word extends the bold rather than starting a plain
+     * run — which is what every editor does and what a writer expects.
+     */
+    const takesInsert = !placed && spanEnd >= head
+    if (takesInsert) placed = true
+
+    const merged = `${keptStart}${takesInsert ? inserted : ''}${keptEnd}`
+    if (merged !== '') out.push({ ...span, text: merged })
+  }
+
+  // Every span was dropped — the change replaced the lot — so the new text
+  // becomes one span carrying the first span's formatting.
+  if (!placed || out.length === 0) {
+    return { ...block, spans: [{ ...(block.spans[0] ?? {}), text }] }
+  }
+
+  return mergeAdjacentSpans({ ...block, spans: out })
 }
 
 /** Does this rich block carry any words at all? */
@@ -1344,32 +1629,62 @@ export function normaliseSections(input: unknown): HomeSection[] {
     if (kind === 'richtext') {
       /*
        * Every block's type is checked against the known list and every span is
-       * reduced to text plus three flags. Nothing here can carry a tag name,
-       * so nothing downstream can render one — see RichBlock.
+       * reduced to text plus named flags. Nothing here can carry a tag name, a
+       * class or a colour VALUE, so nothing downstream can render one — see
+       * RichBlock.
+       *
+       * Alignment and colour are checked the same way and fall back to the
+       * neutral choice, which fails SAFE in the way that matters: an
+       * unrecognised colour renders as ordinary body text, never as something
+       * invisible against the background.
        */
       section.blocks = (Array.isArray(s.blocks) ? s.blocks : [])
         .slice(0, MAX_RICH_BLOCKS)
         .map((raw) => {
           const block = (raw ?? {}) as Record<string, unknown>
           const type = String(block.type ?? 'p')
+          const align = String(block.align ?? 'left')
           return {
             type: (RICH_BLOCK_TYPES as readonly string[]).includes(type)
               ? (type as RichBlockType)
               : 'p',
-            spans: (Array.isArray(block.spans) ? block.spans : [])
-              .slice(0, MAX_RICH_SPANS)
-              .map((rawSpan) => {
-                const span = (rawSpan ?? {}) as Record<string, unknown>
-                const href = safeLinkTarget(span.href).slice(0, 300)
-                return {
-                  text: String(span.text ?? '').slice(0, MAX_SPAN_TEXT),
-                  bold: span.bold === true,
-                  italic: span.italic === true,
-                  // Written unconditionally so the key order is stable — see
-                  // this function's header on why that matters.
-                  href,
-                }
-              }),
+            /*
+             * MERGED FIRST, CAPPED SECOND.
+             *
+             * The other way round loses words: a paragraph that arrives as 40
+             * identical fragments — which ordinary editing produces, and which
+             * merges down to one span — would be truncated to 20 and lose its
+             * second half before anything looked at whether the pieces were
+             * distinct. The cap exists to bound how many DIFFERENT runs of
+             * formatting one paragraph holds, and that question can only be
+             * answered after merging.
+             */
+            spans: mergeAdjacentSpans({
+              type: 'p',
+              spans: (Array.isArray(block.spans) ? block.spans : [])
+                // A generous bound before the merge, so a hostile payload of a
+                // million fragments is not walked in full.
+                .slice(0, MAX_RICH_BLOCKS * MAX_RICH_SPANS)
+                .map((rawSpan) => {
+                  const span = (rawSpan ?? {}) as Record<string, unknown>
+                  const href = safeLinkTarget(span.href).slice(0, 300)
+                  const colour = String(span.colour ?? 'default')
+                  return {
+                    text: String(span.text ?? '').slice(0, MAX_SPAN_TEXT),
+                    bold: span.bold === true,
+                    italic: span.italic === true,
+                    // Written unconditionally so the key order is stable — see
+                    // this function's header on why that matters.
+                    colour: (RICH_COLOURS as readonly string[]).includes(colour)
+                      ? (colour as RichColour)
+                      : 'default',
+                    href,
+                  }
+                }),
+            }).spans.slice(0, MAX_RICH_SPANS),
+            align: (RICH_ALIGNS as readonly string[]).includes(align)
+              ? (align as RichAlign)
+              : 'left',
           }
         })
     }
@@ -1627,6 +1942,17 @@ export function kindsFor(pageKind: PageKind): readonly SectionKind[] {
      * A restriction rather than a warning because the alternative is a page
      * that looks fine in the builder and reads as a mistake on the shop.
      */
+    /*
+     * A DEPARTMENT page already sits under a department heading, with that
+     * department's products drawn beneath it by the route itself. A department
+     * grid there offers the shopper every OTHER aisle at the top of the aisle
+     * they just walked into — a way out of the page rather than a way through
+     * it. The shop's front page is where that grid belongs.
+     *
+     * Everything else stays available: a banner explaining the aisle, a row of
+     * picks, a note about delivery all read fine above a product grid.
+     */
+    if (pageKind === 'department' && kind === 'categories') return false
     if (pageKind === 'product') {
       return (
         kind === 'products' ||

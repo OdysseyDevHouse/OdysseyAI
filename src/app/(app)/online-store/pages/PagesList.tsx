@@ -50,13 +50,20 @@ import {
 export default function PagesList({
   pages,
   departments,
+  departmentPaths,
   storePath,
   storeOpen,
   images,
 }: {
   pages: StorefrontPage[]
-  /** Departments with no page yet — the only ones worth offering. */
-  departments: { id: number; name: string }[]
+  /**
+   * Departments with no page yet — the only ones worth offering. Sub-departments
+   * included on the same terms as top-level ones, each carrying the full path
+   * it is known by.
+   */
+  departments: { id: number; name: string; path: string; depth: number }[]
+  /** Full path per department that already has a page, keyed by department id. */
+  departmentPaths: Record<number, string>
   storePath: string
   storeOpen: boolean
   /** The shop's picture library, for the share-image picker. */
@@ -72,7 +79,15 @@ export default function PagesList({
 
   const standard = pages.filter((p) => p.kind === 'standard')
   const home = pages.find((p) => p.kind === 'home') ?? null
-  const departmentPages = pages.filter((p) => p.kind === 'department')
+  // By path, so a parent sits above its own children rather than wherever the
+  // insertion order happened to put it.
+  const departmentPages = pages
+    .filter((p) => p.kind === 'department')
+    .sort((a, b) =>
+      (departmentPaths[a.departmentId ?? 0] ?? a.title).localeCompare(
+        departmentPaths[b.departmentId ?? 0] ?? b.title,
+      ),
+    )
   const productPageRow = pages.find((p) => p.kind === 'product') ?? null
 
   function toggle(page: StorefrontPage, field: 'isPublished' | 'showInNav', value: boolean) {
@@ -184,7 +199,7 @@ export default function PagesList({
         <Card>
           <CardHeader
             title="Department pages"
-            description="Sections shown above the products in one department."
+            description="Sections shown above the products in one department. Sub-departments can have their own, arranged differently from the department above them."
           />
           <CardBody className="flex flex-col gap-2">
             {departmentPages.map((page) => (
@@ -194,6 +209,7 @@ export default function PagesList({
                 busy={busy}
                 storePath={storePath}
                 storeOpen={storeOpen}
+                departmentPath={page.departmentId ? departmentPaths[page.departmentId] : undefined}
                 onToggle={toggle}
                 onEdit={() => setEditing(page)}
                 onRemove={() => setRemoving(page)}
@@ -266,6 +282,7 @@ function PageRow({
   busy,
   storePath,
   storeOpen,
+  departmentPath,
   index,
   count,
   onMove,
@@ -277,6 +294,8 @@ function PageRow({
   busy: boolean
   storePath: string
   storeOpen: boolean
+  /** The full path of the department this page is attached to, if any. */
+  departmentPath?: string
   index?: number
   count?: number
   onMove?: (index: number, by: number) => void
@@ -285,8 +304,17 @@ function PageRow({
   onRemove?: () => void
 }) {
   const isHome = page.kind === 'home'
+  /*
+   * A department page IS reachable — /c/<id> — and hiding the link meant the
+   * one page kind an owner most wants to check was the one they had to find by
+   * browsing the shop. A product page still has no single URL to point at.
+   */
   const href =
-    page.kind === 'standard' ? `${storePath}/page/${page.slug}` : storePath
+    page.kind === 'standard'
+      ? `${storePath}/page/${page.slug}`
+      : page.kind === 'department' && page.departmentId
+        ? `${storePath}/c/${page.departmentId}`
+        : storePath
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-control bg-surface-2 px-4 py-3">
@@ -305,7 +333,11 @@ function PageRow({
               ? 'The page shoppers land on'
               : page.kind === 'product'
                 ? 'Shown below every product'
-                : 'Shown above this department’s products'}
+                : /* The full path, so two pages both called "Red" are told
+                     apart, and the extra clause when it lends itself down. */
+                  `Above ${departmentPath || 'this department'}’s products${
+                    page.appliesToChildren ? ', and its sub-departments’' : ''
+                  }`}
         </p>
       </div>
 
@@ -383,7 +415,7 @@ function PageRow({
 
         {/* Only when a shopper could actually open it — a link to a page the
             shop would 404 on is worse than no link. */}
-        {storeOpen && (isHome || page.isPublished) && page.kind !== 'department' && (
+        {storeOpen && (isHome || page.isPublished) && page.kind !== 'product' && (
           <a href={href} target="_blank" rel="noreferrer">
             <Button variant="ghost" size="sm" iconOnly aria-label={`View “${page.title}”`} title="View">
               <Icons.ExternalLink size={14} />
@@ -418,7 +450,7 @@ function AddPageDialog({
   onClose,
   onCreated,
 }: {
-  departments: { id: number; name: string }[]
+  departments: { id: number; name: string; path: string; depth: number }[]
   hasProductPage: boolean
   takenSlugs: string[]
   onClose: () => void
@@ -515,12 +547,22 @@ function AddPageDialog({
         </Field>
 
         {kind === 'department' && (
-          <Field label="Which department">
+          <Field
+            label="Which department"
+            hint="Sub-departments get their own page too — arrange each one differently if you want."
+          >
             <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
               <option value="">Choose a department</option>
               {departments.map((d) => (
+                /*
+                 * Indented by depth and labelled with the full path, because
+                 * "Red" alone is ambiguous the moment a shop sells both wine
+                 * and paint. Non-breaking spaces: a <option> collapses ordinary
+                 * runs of whitespace, so leading spaces would simply vanish.
+                 */
                 <option key={d.id} value={d.id}>
-                  {d.name}
+                  {'  '.repeat(d.depth)}
+                  {d.path}
                 </option>
               ))}
             </Select>
@@ -590,6 +632,7 @@ function EditPageDialog({
   const [seoTitle, setSeoTitle] = useState(page.seoTitle)
   const [seoDescription, setSeoDescription] = useState(page.seoDescription)
   const [seoImageId, setSeoImageId] = useState<number | null>(page.seoImageId)
+  const [appliesToChildren, setAppliesToChildren] = useState(page.appliesToChildren)
 
   const effectiveSlug = safeSlug(slug)
   const problem = page.kind === 'standard' ? slugProblem(effectiveSlug, takenSlugs) : ''
@@ -601,6 +644,7 @@ function EditPageDialog({
         // Only a standard page has one to change — see savePageSettings on why
         // the front page's address is not editable.
         ...(page.kind === 'standard' ? { slug: effectiveSlug } : {}),
+        ...(page.kind === 'department' ? { appliesToChildren } : {}),
         seoTitle,
         seoDescription,
         seoImageId,
@@ -638,6 +682,29 @@ function EditPageDialog({
         <Field label="Name">
           <Input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
         </Field>
+
+        {/*
+          Off by default, and per page. A shop that wants each sub-department
+          arranged its own way simply builds them; a shop with forty of them and
+          one banner to say turns this on once. Either way a sub-department with
+          a page of its own always wins over an inherited one, which is the part
+          worth stating here rather than leaving to be discovered.
+        */}
+        {page.kind === 'department' && (
+          <Field
+            label="Sub-departments"
+            hint="A sub-department with its own page always uses that instead."
+          >
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <Switch
+                checked={appliesToChildren}
+                onChange={setAppliesToChildren}
+                ariaLabel="Also show this page on sub-departments"
+              />
+              Also show these sections on sub-departments
+            </label>
+          </Field>
+        )}
 
         {page.kind === 'standard' && (
           <Field

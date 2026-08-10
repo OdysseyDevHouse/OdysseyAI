@@ -818,12 +818,16 @@ export async function resolveSectionContent(
     specialId?: number | null
   }[],
   /**
-   * The product a PRODUCT page is about, when this is one.
+   * What the page is ABOUT, when it is about one thing.
    *
-   * Passed in rather than looked up: the product page already fetched it to
-   * render the thing itself, and a second query for the same row on every
-   * request would be pure waste. Absent everywhere else, and the two rules
-   * that need it resolve to nothing without it.
+   * A product page passes the product; a department page passes the department
+   * with `id: 0`, since there is no product to exclude and no basket history to
+   * read — only a department for `sameDepartment` to follow. Everywhere else
+   * it is absent and the rules that need it resolve to nothing.
+   *
+   * Passed in rather than looked up: both callers already fetched this to
+   * render the page's own heading, and a second query for the same row on
+   * every request would be pure waste.
    */
   anchor?: { id: number; departmentId: number | null },
 ): Promise<{
@@ -945,24 +949,28 @@ export async function resolveSectionContent(
           return { products: await popularProducts(context, limit) }
         }
         /*
-         * The two PRODUCT-PAGE rules. Both need an anchor, and both correctly
+         * The two ANCHORED rules. Both need an anchor, and both correctly
          * resolve to nothing without one — a cross-sell row on a page with no
          * product is not an error, it is a rule that does not apply. The
-         * builder hides these sources off a product page (see `sourcesFor`),
-         * so reaching here without an anchor means a layout saved before the
-         * page kind changed.
+         * builder hides these sources off the pages that cannot supply one
+         * (see `sourcesFor`), so reaching here without an anchor means a layout
+         * saved before the page kind changed.
          */
         if (section.source === 'together') {
-          if (!anchor) return { products: [] }
+          // Product pages only: a department has no basket history of its own.
+          if (!anchor?.id) return { products: [] }
           return { products: await boughtTogether(context, anchor.id, limit) }
         }
         if (section.source === 'sameDepartment') {
           if (!anchor?.departmentId) return { products: [] }
           const siblings = await publishedProducts(context, {
             departmentId: anchor.departmentId,
-            // One extra, because the anchor itself is almost certainly in its
-            // own department and is filtered out below — without the spare, a
-            // row of eight would quietly show seven.
+            /*
+             * One extra, because a PRODUCT page's anchor is almost certainly in
+             * its own department and is filtered out below — without the spare,
+             * a row of eight would quietly show seven. A DEPARTMENT page anchors
+             * with id 0, so nothing is filtered and the slice drops the spare.
+             */
             limit: limit + 1,
           })
           return { products: siblings.filter((p) => p.id !== anchor.id).slice(0, limit) }

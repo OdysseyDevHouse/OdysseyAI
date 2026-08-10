@@ -53,6 +53,7 @@ import {
   deletePage,
   deleteSavedSection,
   departmentPage,
+  departmentPageFor,
   discardPageDraft,
   getPage,
   listSavedSections,
@@ -81,17 +82,39 @@ import {
   BRAND_SWATCHES,
   SECTION_KINDS,
   announcementShowing,
+  applyToSelection,
   brandColourProblem,
   contrastRatio,
   groupRichBlocks,
   kindsFor,
   pageWarnings,
+  replaceBlockText,
+  richBlockHasText,
+  richBlockText,
   safeDateTime,
   safeFontKey,
   safeSlug,
   slugProblem,
   sourcesFor,
+  describeSource,
+  SOURCE_LABEL,
+  type RichBlock,
 } from '../src/lib/storefrontModel'
+// The live resolver, so "this department" is asserted against real products
+// rather than against the model agreeing with itself.
+import {
+  publishedDepartments,
+  publishedProducts,
+  resolveSectionContent,
+  storefrontContext,
+} from '../src/lib/site/storefront'
+// The shop is opened for the resolver assertions and put back afterwards.
+import {
+  getOnlineSettings,
+  listDepartmentVisibility,
+  saveOnlineSettings,
+  setDepartmentVisibility,
+} from '../src/lib/site/onlineStore'
 
 const SITE = 1
 let fails = 0
@@ -645,6 +668,116 @@ async function main() {
   ok('a list after a paragraph starts a new list', grouped[3].items.length === 1)
 
   /*
+   * ── ALIGNMENT AND COLOUR ARE NAMES, NEVER VALUES ──────────────────────
+   *
+   * The same property the block type has, asserted the same way: whatever
+   * arrives, what is STORED is one of a fixed list. A style attribute or a
+   * class reaching the page would be storing HTML by another name.
+   */
+  const richStyled = normaliseSections([
+    {
+      kind: 'richtext',
+      id: 'r',
+      blocks: [
+        { type: 'p', align: 'expression(alert(1))', spans: [{ text: 'x', colour: '#ff0000' }] },
+        { type: 'h2', align: 'center', spans: [{ text: 'y', colour: 'brand' }] },
+      ],
+    },
+  ])[0].blocks!
+  ok('a junk alignment becomes left', richStyled[0].align === 'left', String(richStyled[0].align))
+  ok('a raw colour value never persists', richStyled[0].spans[0].colour === 'default', String(richStyled[0].spans[0].colour))
+  ok('a real alignment is kept', richStyled[1].align === 'center')
+  ok('a named colour is kept', richStyled[1].spans[0].colour === 'brand')
+  ok('the new heading level is kept', richStyled[1].type === 'h2')
+
+  // A run of list items that changes alignment must NOT fold — a <ul> carries
+  // one alignment, so folding would silently drop the owner's choice.
+  const groupedAlign = groupRichBlocks([
+    { type: 'ul', align: 'left', spans: [{ text: 'one' }] },
+    { type: 'ul', align: 'center', spans: [{ text: 'two' }] },
+  ])
+  ok('a list that changes alignment splits', groupedAlign.length === 2, `${groupedAlign.length}`)
+
+  /*
+   * ── SELECTION FORMATTING ──────────────────────────────────────────────
+   *
+   * Offsets are into the block's plain text, which is what a textarea reports.
+   * The three-way split is where off-by-one bugs live, so the boundaries are
+   * asserted explicitly rather than just the happy middle.
+   */
+  const plain: RichBlock = { type: 'p', spans: [{ text: 'call us on 021 555 0000' }] }
+  const bolded = applyToSelection(plain, 11, 23, { bold: true })
+  ok('formatting a selection splits the span', bolded.spans.length === 2, `${bolded.spans.length}`)
+  ok('the unselected part is untouched', bolded.spans[0].text === 'call us on ' && !bolded.spans[0].bold)
+  ok('the selected part carries the change', bolded.spans[1].text === '021 555 0000' && bolded.spans[1].bold === true)
+  ok('and the text survives whole', richBlockText(bolded) === 'call us on 021 555 0000')
+
+  const midway = applyToSelection(plain, 5, 7, { italic: true })
+  ok('a selection inside one span makes three', midway.spans.length === 3, `${midway.spans.length}`)
+  ok('the middle is the selection', midway.spans[1].text === 'us')
+  ok('nothing is lost mid-split', richBlockText(midway) === 'call us on 021 555 0000')
+
+  const collapsed = applyToSelection(plain, 4, 4, { bold: true })
+  ok('a click with no selection changes nothing', richBlockText(collapsed) === richBlockText(plain) && collapsed.spans.length === 1)
+
+  // Across a boundary: the change must reach both spans and not just the first.
+  const twoSpans: RichBlock = { type: 'p', spans: [{ text: 'red ' }, { text: 'blue', bold: true }] }
+  const across = applyToSelection(twoSpans, 2, 6, { colour: 'brand' })
+  ok('a selection spanning two spans colours both', across.spans.filter((s) => s.colour === 'brand').length === 2)
+  ok('and keeps the bold that was already there', across.spans.some((s) => s.bold && s.colour === 'brand'))
+  ok('with the text intact', richBlockText(across) === 'red blue')
+
+  /*
+   * Fragmentation is the failure that matters: MAX_RICH_SPANS is enforced by
+   * TRUNCATION, so a block that accumulates identical neighbours silently
+   * loses its tail. Formatting and unformatting must return to one span.
+   */
+  let churned: RichBlock = plain
+  for (let i = 0; i < 12; i++) {
+    churned = applyToSelection(churned, 5, 7, { bold: true })
+    churned = applyToSelection(churned, 5, 7, { bold: false })
+  }
+  ok('repeated formatting does not fragment a block', churned.spans.length === 1, `${churned.spans.length} spans`)
+  ok('and the words are all still there', richBlockText(churned) === 'call us on 021 555 0000')
+
+  // The same merge runs on WRITE, because a hand-made payload can arrive
+  // pre-fragmented and would otherwise eat the cap.
+  const preFragmented = normaliseSections([
+    {
+      kind: 'richtext',
+      id: 'r',
+      blocks: [{ type: 'p', spans: Array.from({ length: 40 }, () => ({ text: 'a' })) }],
+    },
+  ])[0].blocks![0]
+  ok('identical spans are merged on write', preFragmented.spans.length === 1, `${preFragmented.spans.length}`)
+  ok('and nothing was truncated away', richBlockText(preFragmented).length === 40, `${richBlockText(preFragmented).length}`)
+
+  /*
+   * ── TYPING KEEPS THE FORMATTING ───────────────────────────────────────
+   *
+   * The editor is a flat textarea over a formatted block. Losing every span on
+   * each keystroke is the bug an owner would never report and would hate.
+   */
+  const formatted: RichBlock = {
+    type: 'p',
+    spans: [{ text: 'Open ' }, { text: 'Monday', bold: true }, { text: ' to Friday' }],
+  }
+  const typed = replaceBlockText(formatted, 'Open Monday to Friday!')
+  ok('typing at the end keeps the bold', typed.spans.some((s) => s.bold && s.text === 'Monday'), JSON.stringify(typed.spans))
+  ok('and the new text is there', richBlockText(typed) === 'Open Monday to Friday!')
+
+  const trimmed = replaceBlockText(formatted, 'Open Monday to Fri')
+  ok('deleting from the end keeps the bold', trimmed.spans.some((s) => s.bold && s.text === 'Monday'))
+  ok('and shortens the tail', richBlockText(trimmed) === 'Open Monday to Fri')
+
+  const insertedHead = replaceBlockText(formatted, 'We are Open Monday to Friday')
+  ok('typing at the start keeps the bold', insertedHead.spans.some((s) => s.bold && s.text === 'Monday'))
+  ok('and the head is the new text', richBlockText(insertedHead) === 'We are Open Monday to Friday')
+
+  ok('clearing a block leaves one empty span', replaceBlockText(formatted, '').spans.length === 1)
+  ok('and it reports as empty', !richBlockHasText(replaceBlockText(formatted, '')))
+
+  /*
    * A video id lands inside a URL the renderer builds, so the character filter
    * IS the validation — it must make a second host unrepresentable.
    */
@@ -1142,6 +1275,204 @@ async function main() {
   // A department with no page returns nothing rather than an empty page — the
   // difference between "renders as it always did" and "renders blank".
   ok('a department with no page has none', (await departmentPage(SITE, 999999)) === null)
+
+  /*
+   * ── A DEPARTMENT PAGE FOLLOWS ITS OWN DEPARTMENT ────────────────────────
+   *
+   * The rule that makes a department page portable. 'department' freezes an id
+   * into the layout, so the same page built for another department shows the
+   * first one's products; 'sameDepartment' reads the department off the page
+   * being rendered. The resolver is asserted against a REAL department below,
+   * because the model agreeing with itself proves nothing about what a shopper
+   * sees.
+   */
+  console.log('\n— A department page follows its own department —')
+
+  const deptSources = sourcesFor('department')
+  ok('a department page offers "this department"', deptSources.includes('sameDepartment'))
+  ok('but not "often bought with this"', !deptSources.includes('together'))
+  ok('a standard page offers neither', !sourcesFor('standard').includes('sameDepartment'))
+  ok('a product page still offers both', sourcesFor('product').includes('together'))
+
+  // A department grid inside a department is a way OUT of the aisle. The rest
+  // of the kit stays available.
+  ok('no department grid inside a department page', !kindsFor('department').includes('categories'))
+  ok('but a banner is still offered', kindsFor('department').includes('banner'))
+  ok('and the front page keeps its grid', kindsFor('home').includes('categories'))
+
+  ok(
+    'the wording says "this department" on a department page',
+    describeSource('sameDepartment', 'department').label === 'Everything in this department',
+  )
+  ok(
+    'and still says "the same department" on a product page',
+    describeSource('sameDepartment', 'product').label === SOURCE_LABEL.sameDepartment,
+  )
+
+  /*
+   * The live resolver, against real products.
+   *
+   * The shop is OPENED for this and put back exactly as it was — a dev site
+   * normally has the storefront switched off, and skipping the assertion there
+   * would mean the half that actually matters never runs. Same approach as
+   * test-storefront.ts, including restoring which departments were published.
+   */
+  const shopBefore = await getOnlineSettings(SITE)
+  const { updatedAt: _su, updatedBy: _sb, ...shopBase } = shopBefore
+  const deptsOnBefore = (await listDepartmentVisibility(SITE))
+    .filter((d) => d.showOnline)
+    .map((d) => d.id)
+
+  const anyDept = (await listDepartmentVisibility(SITE)).find((d) => d.parentId === null) ?? null
+  if (anyDept) await setDepartmentVisibility(SITE, anyDept.id, true)
+  await saveOnlineSettings(
+    SITE,
+    { ...shopBase, isEnabled: true, publishMode: 'departments' },
+    'test',
+  )
+
+  const storeContext = await storefrontContext(SITE)
+  const publishedDepts = storeContext ? await publishedDepartments(storeContext) : []
+  const subject = publishedDepts.find((d) => d.productCount > 0) ?? null
+
+  if (!storeContext || !subject) {
+    console.log('SKIP  no published department with products on this site')
+  } else {
+    const row = [{ kind: 'products', source: 'sameDepartment', maxItems: 4 }]
+
+    // Anchored, the way the department route and the builder preview both call
+    // it: id 0 because a department has no product to exclude.
+    const anchored = await resolveSectionContent(storeContext, row, {
+      id: 0,
+      departmentId: subject.id,
+    })
+    const got = anchored[0]?.products ?? []
+    ok(`"this department" fills the row on ${subject.name}`, got.length > 0, String(got.length))
+    ok('it honours the limit', got.length <= 4)
+
+    // The bug this rule exists to prevent: every product really is in that
+    // department's branch, not merely some published product.
+    const branch = await publishedProducts(storeContext, { departmentId: subject.id, limit: 500 })
+    const inBranch = new Set(branch.map((p) => p.id))
+    ok(
+      'and every product really is in that department',
+      got.every((p) => inBranch.has(p.id)),
+      `${got.filter((p) => inBranch.has(p.id)).length} of ${got.length}`,
+    )
+
+    // id 0 must not eat a product. A product page filters its own anchor out of
+    // the siblings; a department page has nothing to filter, so the spare row
+    // fetched for that purpose has to be trimmed rather than returned.
+    const wanted = Math.min(4, branch.length)
+    ok('the spare fetched for a product page is trimmed', got.length === wanted, `${got.length} vs ${wanted}`)
+
+    // Unanchored — a front page — the rule correctly draws nothing rather than
+    // spilling the catalogue.
+    const loose = await resolveSectionContent(storeContext, row)
+    ok('and resolves to nothing with no anchor', (loose[0]?.products ?? []).length === 0)
+  }
+
+  // Put the shop back exactly as it was found, open or closed. A test that
+  // leaves a dev storefront switched on is a test nobody runs twice.
+  for (const d of await listDepartmentVisibility(SITE)) {
+    const was = deptsOnBefore.includes(d.id)
+    if (d.showOnline !== was) await setDepartmentVisibility(SITE, d.id, was)
+  }
+  await saveOnlineSettings(SITE, shopBase, 'test')
+  ok('the shop is left as it was found', (await getOnlineSettings(SITE)).isEnabled === shopBefore.isEnabled)
+
+  /*
+   * ── SUB-DEPARTMENTS ─────────────────────────────────────────────────────
+   *
+   * Two separate claims, and they pull in opposite directions: a child must be
+   * able to have a page entirely its own, AND a parent must be able to lend
+   * one to a branch. The rule that reconciles them is that an own page always
+   * wins — asserted here, because getting it backwards would silently override
+   * work an owner did deliberately.
+   */
+  console.log('\n— Sub-departments —')
+
+  const tree = await listDepartmentVisibility(SITE)
+  const child = tree.find((d) => d.parentId !== null) ?? null
+  const parentOfChild = child ? tree.find((d) => d.id === child.parentId) ?? null : null
+
+  if (!child || !parentOfChild) {
+    console.log('SKIP  this site has no sub-department')
+  } else {
+    // Both created and deleted here, so the assertions do not depend on what
+    // this site happens to have.
+    const madeParent = await createPage(SITE, {
+      kind: 'department',
+      title: 'zz parent',
+      slug: '',
+      departmentId: parentOfChild.id,
+    })
+    ok('a page can be made for a parent department', madeParent.ok)
+
+    const madeChild = await createPage(SITE, {
+      kind: 'department',
+      title: 'zz child',
+      slug: '',
+      departmentId: child.id,
+    })
+    ok('and a separate one for a sub-department', madeChild.ok)
+
+    if (madeParent.ok && madeChild.ok) {
+      // A child's own page is its own row, editable independently — the thing
+      // "make the children editable as well" actually asks for.
+      await savePageDraft(SITE, madeChild.id, [
+        { id: 'c1', kind: 'text', title: 'Child only', enabled: true, bodyText: 'child' },
+      ] as any)
+      await publishPageDraft(SITE, madeChild.id, 'test')
+      await savePageDraft(SITE, madeParent.id, [
+        { id: 'p1', kind: 'text', title: 'Parent only', enabled: true, bodyText: 'parent' },
+      ] as any)
+      await publishPageDraft(SITE, madeParent.id, 'test')
+
+      const childOwn = await getPublishedPageLayout(SITE, madeChild.id)
+      const parentOwn = await getPublishedPageLayout(SITE, madeParent.id)
+      ok('the two layouts are independent', childOwn[0]?.title !== parentOwn[0]?.title,
+        `${childOwn[0]?.title} vs ${parentOwn[0]?.title}`)
+
+      // Inheritance is OFF by default, so nothing changes for a shop that has
+      // not asked for it.
+      ok('a new page does not apply to children', (await getPage(SITE, madeParent.id))!.appliesToChildren === false)
+
+      await savePageSettings(SITE, madeParent.id, { isPublished: true, appliesToChildren: true })
+      ok('the switch saves', (await getPage(SITE, madeParent.id))!.appliesToChildren === true)
+
+      // The load-bearing rule: the child has its OWN page, so the parent's must
+      // not win even though it now lends itself down.
+      const forChild = await departmentPageFor(SITE, child.id)
+      ok('a sub-department with its own page keeps it', forChild?.page.id === madeChild.id)
+      ok('and it is not marked inherited', forChild?.inherited === false)
+
+      // With the child's own page gone, the parent's is what applies.
+      ok('the child page can be deleted', (await deletePage(SITE, madeChild.id)).ok)
+      const inherited = await departmentPageFor(SITE, child.id)
+      ok('then the parent lends its page down', inherited?.page.id === madeParent.id)
+      ok('and it is marked inherited', inherited?.inherited === true)
+
+      // Switched off again, the child goes back to having nothing — a shop that
+      // opts out gets exactly the old behaviour.
+      await savePageSettings(SITE, madeParent.id, { appliesToChildren: false })
+      ok('turning it off stops the inheritance', (await departmentPageFor(SITE, child.id)) === null)
+
+      // An UNPUBLISHED lender never applies: `departmentPageFor` filters on
+      // is_published, so a parent being drafted cannot leak onto its children.
+      await savePageSettings(SITE, madeParent.id, { isPublished: false, appliesToChildren: true })
+      ok('an unpublished parent lends nothing', (await departmentPageFor(SITE, child.id)) === null)
+
+      ok('the parent page can be deleted', (await deletePage(SITE, madeParent.id)).ok)
+    }
+
+    // Whatever happened above, leave no test pages behind.
+    for (const id of [madeParent.ok ? madeParent.id : 0, madeChild.ok ? madeChild.id : 0]) {
+      if (id && (await getPage(SITE, id))) await deletePage(SITE, id)
+    }
+    ok('no test department pages left behind',
+      !(await listPages(SITE)).some((p) => p.title.startsWith('zz ')))
+  }
 
   ok('a page can be deleted', (await deletePage(SITE, pageId)).ok)
   ok('and is then unreachable', (await publishedPageBySlug(SITE, 'zz-test-delivery')) === null)
