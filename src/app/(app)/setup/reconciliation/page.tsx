@@ -1,24 +1,40 @@
 import { requireCapability } from '@/lib/auth'
 import { reconcileStock } from '@/lib/site/stockMovements'
+import { reconcileTransfers } from '@/lib/site/stockTransfers'
+import { reconcileManufacturing } from '@/lib/site/manufacturing'
 import { reconcileBalances } from '@/lib/site/customerLedger'
 import { reconcileSupplierBalances } from '@/lib/site/supplierLedger'
 import { reconcileAging } from '@/lib/site/aging'
 import { listSequences, verifySequence } from '@/lib/site/sequences'
 import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
-import { StockDriftTable, BalanceDriftTable, SequenceTable } from './DriftTables'
+import {
+  StockDriftTable,
+  TransferDriftTable,
+  BuildDriftTable,
+  BalanceDriftTable,
+  SequenceTable,
+} from './DriftTables'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * Does the system still add up?
  *
- * Four invariants, each of which SHOULD always return nothing:
+ * Six invariants, each of which SHOULD always return nothing:
  *
  *   stock_on_hand      = Σ stock_movements.qty_change
+ *   a posted transfer line = the two movements it wrote, out and in
+ *   a posted build's lines = the manufacture movements it wrote
  *   customers.balance  = Σ customer_transactions.amount_signed
  *   suppliers.balance  = Σ supplier_transactions.amount_signed
  *   every issued document number resolves to a document
+ *
+ * The two DOCUMENT checks catch what the stock check cannot. A transfer that
+ * wrote only its "out" half, or a build that consumed its ingredients and never
+ * received the finished goods, leaves every product individually consistent
+ * with its own movements — so the stock table stays clean and says nothing,
+ * while the document claims something that did not happen.
  *
  * A row here is a bug in a posting path, never rounding — both sides of every
  * comparison are DECIMAL and no float is involved anywhere. That is why this
@@ -32,13 +48,16 @@ export default async function ReconciliationPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('setup.edit')
 
-  const [stock, customers, suppliers, aging, sequences] = await Promise.all([
-    reconcileStock(siteId),
-    reconcileBalances(siteId),
-    reconcileSupplierBalances(siteId),
-    reconcileAging(siteId),
-    listSequences(siteId),
-  ])
+  const [stock, transfers, builds, customers, suppliers, aging, sequences] =
+    await Promise.all([
+      reconcileStock(siteId),
+      reconcileTransfers(siteId),
+      reconcileManufacturing(siteId),
+      reconcileBalances(siteId),
+      reconcileSupplierBalances(siteId),
+      reconcileAging(siteId),
+      listSequences(siteId),
+    ])
 
   const checks = await Promise.all(sequences.map((s) => verifySequence(siteId, s.docType)))
   const missingNumbers = checks.filter((c) => c.missing > 0)
@@ -53,7 +72,12 @@ export default async function ReconciliationPage() {
   // outside the app — so it is reported separately rather than colouring the
   // whole page red.
   const ledgersClean =
-    stock.length === 0 && customers.length === 0 && suppliers.length === 0 && aging.ok
+    stock.length === 0 &&
+    transfers.length === 0 &&
+    builds.length === 0 &&
+    customers.length === 0 &&
+    suppliers.length === 0 &&
+    aging.ok
   const clean = ledgersClean && missingNumbers.length === 0
 
   return (
@@ -74,9 +98,9 @@ export default async function ReconciliationPage() {
           }
         >
           {clean
-            ? 'Stock, both ledgers, the age analysis and every document number all agree.'
+            ? 'Stock, transfers, builds, both ledgers, the age analysis and every document number all agree.'
             : ledgersClean
-              ? 'Stock and both ledgers are correct. The numbering gap below usually means documents were removed directly in the database.'
+              ? 'Stock, the documents that move it and both ledgers are correct. The numbering gap below usually means documents were removed directly in the database.'
               : 'The differences below are bugs in a posting path, not rounding — every figure compared here is a DECIMAL.'}
         </Callout>
 
@@ -91,6 +115,34 @@ export default async function ReconciliationPage() {
               description="products.stock_on_hand against the sum of every movement ever recorded."
             />
             <StockDriftTable rows={byDrift(stock)} />
+          </Card>
+        )}
+
+        {transfers.length === 0 ? (
+          <Callout tone="success" title="Transfers">
+            Every posted transfer moved the same quantity out as it moved in.
+          </Callout>
+        ) : (
+          <Card>
+            <CardHeader
+              title="Transfers"
+              description="Each posted line against the two movements it must write. One half without the other leaves the piles disagreeing with the site total."
+            />
+            <TransferDriftTable rows={transfers} />
+          </Card>
+        )}
+
+        {builds.length === 0 ? (
+          <Callout tone="success" title="Manufacturing">
+            Every posted build consumed and produced exactly what it says it did.
+          </Callout>
+        ) : (
+          <Card>
+            <CardHeader
+              title="Manufacturing"
+              description="Each posted build against the movements it wrote — the ingredients it consumed, and the finished goods it received."
+            />
+            <BuildDriftTable rows={builds} />
           </Card>
         )}
 

@@ -62,6 +62,142 @@ export function StockDriftTable({ rows }: { rows: StockDriftRow[] }) {
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.productId} />
 }
 
+type BuildDriftRow = {
+  orderId: number
+  documentNumber: string | null
+  productId: number
+  productCode: string | null
+  expected: number
+  moved: number
+}
+
+/**
+ * Posted builds whose movements do not match what the build says it did.
+ *
+ * One row can mean either half of a build drifted: an ingredient whose
+ * manufacture_out does not equal what the line consumed, or a finished quantity
+ * whose manufacture_in does not equal what was built. Both name the product, so
+ * which half it is reads off the row.
+ */
+export function BuildDriftTable({ rows }: { rows: BuildDriftRow[] }) {
+  const columns: Column<BuildDriftRow>[] = [
+    {
+      key: 'build',
+      header: 'Build',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/manufacturing/${r.orderId}`}>
+          {r.documentNumber ?? `#${r.orderId}`}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'product',
+      header: 'Product',
+      sortable: true,
+      sortValue: (r) => r.productCode ?? '',
+      cell: (r) => (
+        <TextLink href={`/products/${r.productId}`}>{r.productCode ?? `#${r.productId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'expected',
+      header: 'Build says',
+      numeric: true,
+      cell: (r) => formatQty(r.expected),
+    },
+    {
+      key: 'moved',
+      header: 'Movements say',
+      numeric: true,
+      cell: (r) => formatQty(r.moved),
+    },
+    {
+      key: 'drift',
+      header: 'Difference',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => Math.abs(r.expected - r.moved),
+      cell: (r) => <Badge tone="danger">{formatQty(r.expected - r.moved)}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.orderId}-${r.productId}`} />
+}
+
+type TransferDriftRow = {
+  transferId: number
+  documentNumber: string | null
+  productId: number
+  productCode: string | null
+  expected: number
+  movedOut: number
+  movedIn: number
+}
+
+/**
+ * Posted transfer lines whose two halves do not match the line.
+ *
+ * A transfer writes EXACTLY two movements per line — out of the source, into
+ * the destination — so both are shown. A row where only one half is wrong is
+ * the signature this table exists to catch: it breaks invariant (C) while
+ * leaving (A) intact, so the stock table above stays clean and says nothing.
+ */
+export function TransferDriftTable({ rows }: { rows: TransferDriftRow[] }) {
+  const columns: Column<TransferDriftRow>[] = [
+    {
+      key: 'transfer',
+      header: 'Transfer',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/transfers/${r.transferId}`}>
+          {r.documentNumber ?? `#${r.transferId}`}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'product',
+      header: 'Product',
+      sortable: true,
+      sortValue: (r) => r.productCode ?? '',
+      cell: (r) => (
+        <TextLink href={`/products/${r.productId}`}>{r.productCode ?? `#${r.productId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'expected',
+      header: 'Line says',
+      numeric: true,
+      cell: (r) => formatQty(r.expected),
+    },
+    {
+      key: 'out',
+      header: 'Moved out',
+      numeric: true,
+      cell: (r) => (
+        <span className={Math.abs(r.expected - r.movedOut) > 0.0005 ? 'text-danger' : undefined}>
+          {formatQty(r.movedOut)}
+        </span>
+      ),
+    },
+    {
+      key: 'in',
+      header: 'Moved in',
+      numeric: true,
+      cell: (r) => (
+        <span className={Math.abs(r.expected - r.movedIn) > 0.0005 ? 'text-danger' : undefined}>
+          {formatQty(r.movedIn)}
+        </span>
+      ),
+    },
+  ]
+  return (
+    <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.transferId}-${r.productId}`} />
+  )
+}
+
+
 type BalanceDriftRow = {
   id: number
   code: string
