@@ -15,6 +15,8 @@ import { formatMoney } from '@/lib/decimals'
 import { Stars } from '../../ShopBits'
 import ProductGrid from '../../ProductGrid'
 import TrackEvent from '../../TrackEvent'
+import RememberView from '../../RememberView'
+import RecentlyViewed from '../../RecentlyViewed'
 import ProductDetail from './ProductDetail'
 import ReviewForm from './ReviewForm'
 
@@ -146,6 +148,11 @@ export default async function ProductPage({
           looking at something. */}
       <TrackEvent token={token} kind="view" productId={product.id} />
 
+      {/* Writes this product into the browser's own trail. Separate from the
+          funnel event above: that one is the shop's measurement, this one is
+          the shopper's history, and neither should depend on the other. */}
+      <RememberView token={token} productId={product.id} />
+
       <ProductDetail
         token={token}
         product={product}
@@ -202,6 +209,22 @@ export default async function ProductPage({
           />
         </section>
       )}
+
+      {/* LAST on the page, and below the suggestions.
+          "You may also like" is the shop making a case for something new;
+          this is the shopper's own trail back to something they had already
+          decided was interesting. The new thing gets the better position. */}
+      <RecentlyViewed
+        token={token}
+        title="Recently viewed"
+        exclude={product.id}
+        display={{
+          layout: 'grid',
+          showStock: settings.showStock,
+          showPhotos: settings.showPhotos,
+          showBrands: settings.showBrands,
+        }}
+      />
     </div>
   )
 }

@@ -41,3 +41,13 @@ export async function recordEventAction(
 
   await recordEvent(siteId, { kind, sessionKey: key, productId })
 }
+
+/*
+ * Resolving "recently viewed" ids to products lives in `wishlistProductsAction`
+ * (actions.ts), not here.
+ *
+ * That action is already "resolve these ids through the shop's publish rules,
+ * dropping anything not for sale", which is exactly the question this row asks.
+ * A second action doing the same thing would be a second place for the publish
+ * rules to be forgotten.
+ */

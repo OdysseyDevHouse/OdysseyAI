@@ -156,6 +156,16 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
  * button tells them the till is broken.
  */
 const NOT_WIRED: Record<string, string> = {
+  /*
+   * The ENGINE for an offline return exists and is tested (offlineReturns.ts,
+   * test-offline-returns), but the screen a cashier would drive it from does not yet.
+   * This message stays until it does — saying "returns work offline" while the only
+   * route to one is the back office would be worse than saying nothing.
+   *
+   * When the screen lands, the offline branch takes a no-receipt return only: a till
+   * cannot run the over-credit guard, so a RECEIPTED return stays a back-office job
+   * even then. See the header of offlineReturns.ts.
+   */
   refund: 'Refunds are done from Returns in the back office, where the original sale can be found.',
   'save-as-order': 'Saving as an order is on the desk till for now.',
   'save-as-layby': 'Starting a lay-by is on the desk till for now.',
