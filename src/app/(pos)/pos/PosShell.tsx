@@ -12,6 +12,8 @@ import {
   searchOffline,
   browseOffline,
   storedQuickKeys,
+  storedPendingPrices,
+  storedInstructions,
 } from '@/lib/posOffline/catalog'
 import {
   parkOffline,
@@ -22,7 +24,13 @@ import {
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
 import { offlineBlockedProduct, offlineBlockedTender } from '@/lib/offlineCapability'
 import type { Special } from '@/lib/specialsEngine'
+import {
+  pendingPriceIndex,
+  resolvedFromIndex,
+  type PendingSchedule,
+} from '@/lib/priceSchedules'
 import type { TillProduct } from '@/lib/site/tillSearch'
+import type { TillInstructionGroup } from '@/lib/site/instructions'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { Terminal } from '@/lib/site/terminals'
 import type { BasketLine } from '@/lib/basket'
@@ -48,6 +56,7 @@ import { CustomerModal } from './CustomerModal'
 import { SavedSalesModal, type SavedEntry } from './SavedSalesModal'
 import { OutboxModal } from './OutboxModal'
 import { LineEditModal } from './LineEditModal'
+import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
 import { useSaleState } from './useSaleState'
@@ -64,6 +73,7 @@ import {
   splitTableAction,
 } from './tableActions'
 import type { PosTable } from '@/lib/site/posTables'
+import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import { SplitBillModal, type SplitLine } from './SplitBillModal'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { TileSizeModal } from './TileSizeModal'
@@ -129,11 +139,14 @@ export default function PosShell({
   canVoid,
   savedCount,
   specials,
+  pendingPrices: pendingPricesProp,
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
   hospitality,
   initialTables,
+  floorRooms,
+  floorFeatures,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
   siteId: number
@@ -153,6 +166,14 @@ export default function PosShell({
      its button's badge. Typed now so the server page's contract is settled. */
   savedCount: number
   specials: Special[]
+  /**
+   * Approved price changes that have not happened yet, moments unevaluated.
+   *
+   * Shipped with the page for the same reason the quick keys are — so a till
+   * that reloads with no network still holds them — and applied against this
+   * machine's own clock, so six o'clock means six o'clock here.
+   */
+  pendingPrices: PendingSchedule[]
   /** The shop's own till buttons. Shipped with the page so they survive the line dropping. */
   quickKeys: QuickKeyRow[]
   quickKeyProductNames: Record<number, string>
@@ -161,6 +182,9 @@ export default function PosShell({
   hospitality: boolean
   /** The floor. Empty in retail, where the gate never mounts. */
   initialTables: PosTable[]
+  /** The DRAWN floor, if a manager built one. Empty means the gate uses the grid. */
+  floorRooms: FloorRoom[]
+  floorFeatures: FloorFeature[]
 }) {
   const [state, dispatch] = useSaleState()
   const [pending, startTransition] = useTransition()
@@ -194,6 +218,41 @@ export default function PosShell({
    */
   const [savedTally, setSavedTally] = useState(savedCount)
   const [editing, setEditing] = useState<BasketLine | null>(null)
+
+  /**
+   * The product being asked about, if any. Null closes the dialog.
+   *
+   * Same shape as `editing` above, and for the same reason: one nullable piece
+   * of state is easier to reason about than an open flag beside a payload that
+   * may or may not match it.
+   */
+  const [asking, setAsking] = useState<{
+    product: TillProduct
+    qty: number
+    groups: number[]
+  } | null>(null)
+
+  /**
+   * The questions this till can ask.
+   *
+   * Read from storage unconditionally, unlike the pending prices above: there is
+   * no server prop to compare against, because the library arrives only in the
+   * catalogue. An empty one is the ordinary state of a shop that asks nothing.
+   */
+  const [instructions, setInstructions] = useState<{
+    byId: Map<number, TillInstructionGroup>
+    byProduct: Record<number, number[]>
+  }>({ byId: new Map(), byProduct: {} })
+
+  useEffect(() => {
+    let cancelled = false
+    void storedInstructions(siteId).then((held) => {
+      if (!cancelled) setInstructions({ byId: held.byId, byProduct: held.byProduct })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [siteId])
   const [receipt, setReceipt] = useState<{
     number: string
     change: number
@@ -267,17 +326,72 @@ export default function PosShell({
   // rather than flashing on every load.
   const unclaimed = device !== null && terminal === undefined
 
-  /* ── Specials, re-checked as the clock moves ───────────────────────────
+  /*
+   * ── WHERE THE PENDING CHANGES COME FROM ──────────────────────────────
+   *
+   * The props on a render that had a network, and IndexedDB on one that did
+   * not — the same fallback the quick keys use further down, for the same
+   * reason: a till that reloads with the line down must still change its
+   * prices at six.
+   *
+   * With ONE difference that matters. An empty `quickKeys` prop means the
+   * render had no server; an empty `pendingPrices` is the ordinary case, since
+   * most days a shop has nothing scheduled. So "props are empty, read storage"
+   * cannot be the rule here, or a cancelled change would go on applying itself
+   * forever. The quick keys are the tell instead: they arrive in the same
+   * render, and a shop that has set any up never legitimately has none.
+   */
+  const [heldPrices, setHeldPrices] = useState<PendingSchedule[] | null>(null)
+  useEffect(() => {
+    if (quickKeys.length > 0) return
+    let cancelled = false
+    void storedPendingPrices(siteId).then((held) => {
+      if (!cancelled) setHeldPrices(held)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [siteId, quickKeys.length])
+
+  const pendingPrices =
+    quickKeys.length > 0 ? pendingPricesProp : (heldPrices ?? pendingPricesProp)
+
+  /* ── Specials and scheduled prices, re-checked as the clock moves ──────
      A basket can sit open while a window opens or closes, so this ticks as well
      as recomputing on every change. A slip that kept a price the shop stopped
      offering ten minutes ago is a slip the till and the shelf edge disagree
-     about. */
+     about.
+
+     A scheduled price change is the same kind of event — something that becomes
+     true while a till is simply sitting there — so it rides the same tick. */
   const [clock, setClock] = useState(() => Date.now())
   useEffect(() => {
-    if (specials.length === 0) return
+    if (specials.length === 0 && pendingPrices.length === 0) return
     const timer = setInterval(() => setClock(Date.now()), 30_000)
     return () => clearInterval(timer)
-  }, [specials.length])
+  }, [specials.length, pendingPrices.length])
+
+  /*
+   * What every product costs right now, after any scheduled change that is due.
+   *
+   * Built ONCE per tick rather than searched per line: a whole-catalogue change
+   * carries thousands of entries and this recomputes on every keystroke.
+   *
+   * Thirty seconds of granularity means a six o'clock change can be up to
+   * half a minute late on a till nobody is touching. On one being used, every
+   * keypress rebuilds it — so in practice the first sale after six is already
+   * at the new price.
+   */
+  const priceIndex = useMemo(
+    () => pendingPriceIndex(pendingPrices, new Date(clock)),
+    [pendingPrices, clock],
+  )
+
+  /** The price to charge for a product, scheduled change included. */
+  const priceFor = useCallback(
+    (product: TillProduct) => resolvedFromIndex(product, priceStructureId, priceIndex),
+    [priceIndex, priceStructureId],
+  )
 
   /*
    * SPECIALS DO NOT APPLY TO A RETURN.
@@ -397,7 +511,22 @@ export default function PosShell({
         return
       }
     }
-    dispatch({ type: 'ADD', product, qty })
+
+    /*
+     * If this product has questions, ask them before the line exists.
+     *
+     * Every way of adding a product converges here — a tile, the department
+     * rail, a quick key, a scanner — so this one check covers all of them. Put
+     * anywhere else it would cover one path and quietly miss the others, and the
+     * one it missed would be the scanner, which is most of a shop's volume.
+     */
+    const asks = product.id === null ? [] : (instructions.byProduct[product.id] ?? [])
+    if (asks.length > 0) {
+      setAsking({ product, qty, groups: asks })
+      return
+    }
+
+    dispatch({ type: 'ADD', product, qty, resolvedIncl: priceFor(product) })
   }
 
   /**
@@ -1283,6 +1412,8 @@ export default function PosShell({
       {choosingTable ? (
         <TableGate
           tables={tables}
+          rooms={floorRooms}
+          features={floorFeatures}
           busy={pending}
           onWalkIn={() => {
             setTable(null)
@@ -1345,6 +1476,7 @@ export default function PosShell({
             dispatch({ type: 'SHOW_KEYS' })
           }}
           onPick={add}
+          priceFor={priceFor}
           quickKeys={
             <QuickKeyPanel
               keys={keysToShow}
@@ -1513,6 +1645,31 @@ export default function PosShell({
           setEditing(null)
         }}
       />
+
+      {/* Only mounted while a product is being asked about, so its state starts
+          fresh each time — a modal kept alive would carry the last burger's
+          answers onto the next one. */}
+      {asking && (
+        <InstructionsModal
+          product={asking.product}
+          qty={asking.qty}
+          groups={asking.groups}
+          byId={instructions.byId}
+          basePriceIncl={priceFor(asking.product)}
+          onCancel={() => setAsking(null)}
+          onConfirm={(chosen, note) => {
+            dispatch({
+              type: 'ADD_WITH_INSTRUCTIONS',
+              product: asking.product,
+              qty: asking.qty,
+              resolvedIncl: priceFor(asking.product),
+              instructions: chosen,
+              note,
+            })
+            setAsking(null)
+          }}
+        />
+      )}
 
       <ReceiptModal
         open={receipt !== null && !voiding}
