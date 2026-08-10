@@ -540,6 +540,23 @@ export type SequenceCheck = {
 /** Which table a document type lives in. Sales and purchasing are separate. */
 const PURCHASE_TYPES = new Set(['purchase_order', 'grv', 'supplier_return'])
 
+/**
+ * Document types that live in neither sales_documents nor purchase_documents.
+ *
+ * Without an entry here a type defaults to sales_documents, where its numbers do
+ * not exist — so every one it ever issued is reported as MISSING, which is the
+ * one figure this function exists to prove is zero. A stock take is the first
+ * such type; anything else with its own table needs a line here too.
+ *
+ * Each table must carry document_number, id and a status whose void value is
+ * 'cancelled', which is what the counting query below assumes.
+ */
+const OWN_TABLE_TYPES: Record<string, string> = {
+  stock_take: 'stock_takes',
+  stock_transfer: 'stock_transfers',
+  manufacturing_order: 'manufacturing_orders',
+}
+
 export async function verifySequence(
   siteId: number,
   docType: string,
@@ -559,7 +576,9 @@ export async function verifySequence(
   // Purchasing has its own documents table — the two sides of the trade face
   // opposite ways and were deliberately not merged. Checking the wrong one
   // would report every purchase number as missing.
-  const table = PURCHASE_TYPES.has(docType) ? 'purchase_documents' : 'sales_documents'
+  const table =
+    OWN_TABLE_TYPES[docType] ??
+    (PURCHASE_TYPES.has(docType) ? 'purchase_documents' : 'sales_documents')
 
   /*
    * Counting is scoped to the run being checked, and the discriminator is the
@@ -584,16 +603,25 @@ export async function verifySequence(
     )
   }
 
+  /*
+   * A type with its OWN table needs no doc_type predicate, and must not be given
+   * one: stock_takes has no such column, because the whole table is one type.
+   * Filtering on it would not narrow the count, it would fail the query.
+   */
+  const ownTable = OWN_TABLE_TYPES[docType] !== undefined
+
   const where =
-    `doc_type = ? AND document_number IS NOT NULL` +
+    (ownTable ? 'document_number IS NOT NULL' : 'doc_type = ? AND document_number IS NOT NULL') +
     (table === 'sales_documents'
       ? perTill
         ? ' AND LEFT(document_number, CHAR_LENGTH(?)) = ?'
         : " AND INSTR(document_number, '_') = 0"
       : '')
-  const params: (string | number)[] = perTill
-    ? [docType, numberPrefix!, numberPrefix!]
-    : [docType]
+  const params: (string | number)[] = ownTable
+    ? []
+    : perTill
+      ? [docType, numberPrefix!, numberPrefix!]
+      : [docType]
 
   const row = await siteQueryOne<Row>(
     siteId,

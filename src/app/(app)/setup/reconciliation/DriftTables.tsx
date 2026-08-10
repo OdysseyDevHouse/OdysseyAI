@@ -62,6 +62,75 @@ export function StockDriftTable({ rows }: { rows: StockDriftRow[] }) {
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.productId} />
 }
 
+type StockTakeDriftRow = {
+  stockTakeId: number
+  documentNumber: string | null
+  productId: number
+  productCode: string | null
+  expected: number
+  moved: number
+}
+
+/**
+ * Posted count lines whose variance does not match the movement it wrote.
+ *
+ * Shaped differently from the stock table above because the comparison is
+ * different: this is not "a stored total against a computed one" but "what the
+ * sheet says it wrote against what the ledger actually received". A half-written
+ * post is the failure it exists to catch.
+ */
+export function StockTakeDriftTable({ rows }: { rows: StockTakeDriftRow[] }) {
+  const columns: Column<StockTakeDriftRow>[] = [
+    {
+      key: 'sheet',
+      header: 'Stock take',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/stock-takes/${r.stockTakeId}`}>
+          {r.documentNumber ?? `#${r.stockTakeId}`}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'product',
+      header: 'Product',
+      sortable: true,
+      sortValue: (r) => r.productCode ?? '',
+      cell: (r) => (
+        <TextLink href={`/products/${r.productId}`}>{r.productCode ?? `#${r.productId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'expected',
+      header: 'Line says',
+      numeric: true,
+      cell: (r) => formatQty(r.expected),
+    },
+    {
+      key: 'moved',
+      header: 'Movements say',
+      numeric: true,
+      cell: (r) => formatQty(r.moved),
+    },
+    {
+      key: 'drift',
+      header: 'Difference',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => Math.abs(r.expected - r.moved),
+      cell: (r) => <Badge tone="danger">{formatQty(r.expected - r.moved)}</Badge>,
+    },
+  ]
+  return (
+    <DataTable
+      columns={columns}
+      rows={rows}
+      getRowKey={(r) => `${r.stockTakeId}-${r.productId}`}
+    />
+  )
+}
+
 type BuildDriftRow = {
   orderId: number
   documentNumber: string | null
@@ -196,7 +265,6 @@ export function TransferDriftTable({ rows }: { rows: TransferDriftRow[] }) {
     <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.transferId}-${r.productId}`} />
   )
 }
-
 
 type BalanceDriftRow = {
   id: number

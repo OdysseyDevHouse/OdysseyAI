@@ -814,6 +814,164 @@ export async function markTransferred(
   return { ok: true }
 }
 
+export type CountSerialsResult =
+  | { ok: true; missing: number; found: number }
+  | { ok: false; error: string }
+
+/**
+ * Reconciles the serials in one room against what a stock take actually found.
+ *
+ * ── WHY A COUNT CANNOT JUST MOVE A QUANTITY ────────────────────────────────
+ *
+ * Invariant (S1), from 027: the number of in_stock serials equals the quantity
+ * on hand. Post a serial product down by one and ten serial rows still claim to
+ * be sitting on a shelf holding nine units — the exact drift reconcileSerials()
+ * exists to catch. So a serial line counts UNITS, by number, and this turns that
+ * list into the same three outcomes the shelf itself presents:
+ *
+ *   · scanned and on file    — present, nothing to do
+ *   · on file, NOT scanned   — missing. Written off, quantity -1.
+ *   · scanned, not on file   — found. Taken into stock, quantity +1.
+ *
+ * ── THE ONE CASE IT REFUSES ────────────────────────────────────────────────
+ *
+ * A serial scanned on the shelf that the system says was SOLD. The count is
+ * right and the sale record is wrong, and no adjustment fixes that: silently
+ * resurrecting it would leave a sold document pointing at a unit back in stock.
+ * It is reported so somebody credits the sale, which is the actual repair.
+ *
+ * Returns the counts rather than the quantity delta — the caller already knows
+ * the delta, and what it needs from here is whether the units agree with it.
+ */
+export async function countSerialsTx(
+  tx: PoolConnection,
+  actor: Actor,
+  input: {
+    productId: number
+    locationId: number
+    /** Every serial found on the shelf, as scanned. */
+    scanned: readonly string[]
+    stockTakeId: number
+    /** Names the line in any refusal, so the message points at a row on screen. */
+    lineLabel: string
+  },
+): Promise<CountSerialsResult> {
+  const cleaned = input.scanned.map((s) => s.trim()).filter((s) => s.length > 0)
+  if (new Set(cleaned).size !== cleaned.length) {
+    return { ok: false, error: `${input.lineLabel}: the same serial number was scanned twice.` }
+  }
+
+  // Everything the system believes is in this room, locked so a concurrent sale
+  // cannot move a unit between this read and the writes below.
+  const [onFileRows] = await tx.execute(
+    `SELECT id, serial, status, location_id FROM product_serials
+      WHERE product_id = ? AND status = 'in_stock' AND location_id = ?
+      FOR UPDATE`,
+    [input.productId, input.locationId] as never,
+  )
+  const onFile = (onFileRows as Row[]).map((r) => ({
+    id: Number(r.id),
+    serial: String(r.serial),
+  }))
+  const onFileByserial = new Map(onFile.map((s) => [s.serial.toLowerCase(), s]))
+  const scannedSet = new Set(cleaned.map((s) => s.toLowerCase()))
+
+  // A scanned unit the system does not have in this room: either genuinely new,
+  // or on file under another status. Checked before anything is written.
+  const strangers = cleaned.filter((s) => !onFileByserial.has(s.toLowerCase()))
+  const resurrect: string[] = []
+  const newUnits: string[] = []
+
+  if (strangers.length > 0) {
+    const [elsewhereRows] = await tx.execute(
+      `SELECT id, serial, status FROM product_serials
+        WHERE product_id = ? AND serial IN (${strangers.map(() => '?').join(',')})
+        FOR UPDATE`,
+      [input.productId, ...strangers] as never,
+    )
+    const elsewhere = new Map(
+      (elsewhereRows as Row[]).map((r) => [String(r.serial).toLowerCase(), String(r.status)]),
+    )
+
+    const sold = strangers.filter((s) => elsewhere.get(s.toLowerCase()) === 'sold')
+    if (sold.length > 0) {
+      return {
+        ok: false,
+        error:
+          `${input.lineLabel}: serial ${sold.slice(0, 3).join(', ')}${sold.length > 3 ? ` and ${sold.length - 3} more` : ''} ` +
+          `${sold.length === 1 ? 'is' : 'are'} on the shelf but recorded as SOLD. The count is right and the sale is not — ` +
+          'credit the sale first, rather than counting the unit back into stock.',
+      }
+    }
+
+    for (const s of strangers) {
+      if (elsewhere.has(s.toLowerCase())) resurrect.push(s)
+      else newUnits.push(s)
+    }
+  }
+
+  const missing = onFile.filter((s) => !scannedSet.has(s.serial.toLowerCase()))
+
+  // ── Writes ───────────────────────────────────────────────────────────────
+
+  for (const unit of missing) {
+    // location_id goes NULL with the status, matching writeOffSerial: a unit
+    // that is not there is not in a room, and leaving it pointing at one would
+    // have the per-location reconciliation expect a pile that excludes it.
+    await tx.execute(
+      "UPDATE product_serials SET status = 'written_off', location_id = NULL, note = ? WHERE id = ?",
+      [`Not found on stock take #${input.stockTakeId}`, unit.id] as never,
+    )
+    await tx.execute(
+      `INSERT INTO serial_movements (serial_id, action, document_id, user_id, user_name, note)
+       VALUES (?, 'written_off', ?, ?, ?, ?)`,
+      [
+        unit.id,
+        input.stockTakeId,
+        actor.userId,
+        actor.userName.slice(0, 120),
+        'Not found when counted',
+      ] as never,
+    )
+  }
+
+  // A unit on file under another status that has turned up on the shelf —
+  // written off and then located, most often. Returned to stock rather than
+  // duplicated, so its history stays one row.
+  for (const serial of resurrect) {
+    const [rows] = await tx.execute(
+      'SELECT id FROM product_serials WHERE product_id = ? AND serial = ? LIMIT 1',
+      [input.productId, serial] as never,
+    )
+    const id = Number((rows as Row[])[0]?.id)
+    if (!id) continue
+    await tx.execute(
+      "UPDATE product_serials SET status = 'in_stock', location_id = ?, note = ? WHERE id = ?",
+      [input.locationId, `Found on stock take #${input.stockTakeId}`, id] as never,
+    )
+    await tx.execute(
+      `INSERT INTO serial_movements (serial_id, action, document_id, to_location_id, user_id, user_name, note)
+       VALUES (?, 'adjusted', ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.stockTakeId,
+        input.locationId,
+        actor.userId,
+        actor.userName.slice(0, 120),
+        'Found when counted',
+      ] as never,
+    )
+  }
+
+  if (newUnits.length > 0) {
+    await insertSerialsTx(tx, actor, input.productId, newUnits, {
+      locationId: input.locationId,
+    })
+  }
+
+  return { ok: true, missing: missing.length, found: resurrect.length + newUnits.length }
+}
+
 /** Takes a serial permanently out — lost, stolen or scrapped. */
 export async function writeOffSerial(
   siteId: number,

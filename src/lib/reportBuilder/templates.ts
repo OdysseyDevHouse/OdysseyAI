@@ -478,6 +478,54 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    id: 'shrinkage-by-product',
+    name: 'Shrinkage by product',
+    /*
+     * Counted stock only — source = 'stock_take'.
+     *
+     * The wider "Stock adjustments" template below covers every adjustment,
+     * which includes the ones a document VOID writes. Those are corrections to
+     * paperwork, not stock that walked, and mixing them in is what makes a
+     * shrinkage figure impossible to act on. This one answers the question a
+     * business actually asks after a count: what is going missing, and what is
+     * it costing.
+     *
+     * Sorted by value ascending, so the worst write-off is the first row.
+     */
+    description: 'What counting found missing, by product — the losses worth acting on.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'stockMovements',
+      groupFields: ['productCode', 'productDescription'],
+      columns: [
+        { field: '__rows' },
+        { field: 'qtyChange', agg: 'sum' },
+        { field: 'movementValue', agg: 'sum' },
+      ],
+      filters: [{ field: 'source', op: 'eq', value: 'stock_take' }],
+      sort: { key: 'movementValue_sum', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'shrinkage-by-department',
+    name: 'Shrinkage by department',
+    description: 'Where stock is going missing — the aisle to count next.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'stockMovements',
+      groupFields: ['productDepartment'],
+      columns: [
+        { field: '__rows' },
+        { field: 'qtyChange', agg: 'sum' },
+        { field: 'movementValue', agg: 'sum' },
+      ],
+      filters: [{ field: 'source', op: 'eq', value: 'stock_take' }],
+      sort: { key: 'movementValue_sum', dir: 'asc' },
+    }),
+  },
+  {
     id: 'stock-adjustments',
     name: 'Stock adjustments',
     description: 'Write-offs and corrections only — the movements a person chose to make.',

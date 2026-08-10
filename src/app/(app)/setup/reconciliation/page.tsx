@@ -1,5 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { reconcileStock } from '@/lib/site/stockMovements'
+import { reconcileStockTakes } from '@/lib/site/stockTakes'
 import { reconcileTransfers } from '@/lib/site/stockTransfers'
 import { reconcileManufacturing } from '@/lib/site/manufacturing'
 import { reconcileBalances } from '@/lib/site/customerLedger'
@@ -10,6 +11,7 @@ import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
 import {
   StockDriftTable,
+  StockTakeDriftTable,
   TransferDriftTable,
   BuildDriftTable,
   BalanceDriftTable,
@@ -21,16 +23,17 @@ export const dynamic = 'force-dynamic'
 /**
  * Does the system still add up?
  *
- * Six invariants, each of which SHOULD always return nothing:
+ * Seven invariants, each of which SHOULD always return nothing:
  *
  *   stock_on_hand      = Σ stock_movements.qty_change
+ *   a posted count line's variance = the adjustment it wrote
  *   a posted transfer line = the two movements it wrote, out and in
  *   a posted build's lines = the manufacture movements it wrote
  *   customers.balance  = Σ customer_transactions.amount_signed
  *   suppliers.balance  = Σ supplier_transactions.amount_signed
  *   every issued document number resolves to a document
  *
- * The two DOCUMENT checks catch what the stock check cannot. A transfer that
+ * The three DOCUMENT checks catch what the stock check cannot. A transfer that
  * wrote only its "out" half, or a build that consumed its ingredients and never
  * received the finished goods, leaves every product individually consistent
  * with its own movements — so the stock table stays clean and says nothing,
@@ -48,9 +51,10 @@ export default async function ReconciliationPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('setup.edit')
 
-  const [stock, transfers, builds, customers, suppliers, aging, sequences] =
+  const [stock, stockTakes, transfers, builds, customers, suppliers, aging, sequences] =
     await Promise.all([
       reconcileStock(siteId),
+      reconcileStockTakes(siteId),
       reconcileTransfers(siteId),
       reconcileManufacturing(siteId),
       reconcileBalances(siteId),
@@ -73,6 +77,7 @@ export default async function ReconciliationPage() {
   // whole page red.
   const ledgersClean =
     stock.length === 0 &&
+    stockTakes.length === 0 &&
     transfers.length === 0 &&
     builds.length === 0 &&
     customers.length === 0 &&
@@ -98,7 +103,7 @@ export default async function ReconciliationPage() {
           }
         >
           {clean
-            ? 'Stock, transfers, builds, both ledgers, the age analysis and every document number all agree.'
+            ? 'Stock, counts, transfers, builds, both ledgers, the age analysis and every document number all agree.'
             : ledgersClean
               ? 'Stock, the documents that move it and both ledgers are correct. The numbering gap below usually means documents were removed directly in the database.'
               : 'The differences below are bugs in a posting path, not rounding — every figure compared here is a DECIMAL.'}
@@ -115,6 +120,20 @@ export default async function ReconciliationPage() {
               description="products.stock_on_hand against the sum of every movement ever recorded."
             />
             <StockDriftTable rows={byDrift(stock)} />
+          </Card>
+        )}
+
+        {stockTakes.length === 0 ? (
+          <Callout tone="success" title="Stock takes">
+            Every posted count wrote exactly the movements its lines claim.
+          </Callout>
+        ) : (
+          <Card>
+            <CardHeader
+              title="Stock takes"
+              description="Each posted line's variance against the adjustment it produced. A gap means a count posted only part of itself."
+            />
+            <StockTakeDriftTable rows={stockTakes} />
           </Card>
         )}
 
