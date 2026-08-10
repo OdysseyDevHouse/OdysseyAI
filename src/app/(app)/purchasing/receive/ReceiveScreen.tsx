@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
@@ -8,32 +8,34 @@ import {
   Card,
   CardBody,
   CardHeader,
+  ColumnPicker,
   Combobox,
   CurrencyInput,
   EmptyState,
   Field,
   Icons,
   Input,
-  NumberInput,
   PageBody,
   Select,
+  TableToolbar,
   useToast,
   type ComboboxOption,
-  TABLE,
-  TABLE_HEAD_ROW,
-  TABLE_NUMERIC,
-  TABLE_ROW,
-  TABLE_TD,
-  TABLE_TD_INPUT,
-  TABLE_TH,
 } from '@/components/ui'
-import { formatMoney, formatQty, round } from '@/lib/decimals'
-import { apportionDiscount, weightedAverageCost } from '@/lib/documentMath'
+import { formatMoney, formatQty } from '@/lib/decimals'
+import { useColumnPrefs } from '@/lib/useColumnPrefs'
 import type { TillProduct } from '@/lib/site/tillSearch'
+import PurchaseLineGrid, {
+  PURCHASE_COLUMNS,
+  PURCHASE_COLUMN_IDS,
+  RECEIVE_DEFAULT_COLUMNS,
+  type GridLine,
+} from '../PurchaseLineGrid'
+import { purchaseDocumentFigures } from '../purchaseLine'
 import {
   searchProductsForPurchaseAction,
   receiveGoodsAction,
   loadOrderAction,
+  productPositionsAction,
 } from '../actions'
 
 /**
@@ -48,21 +50,17 @@ import {
 
 type StockLocationOption = { id: number; code: string; name: string; isMain: boolean }
 
-type ReceiveLine = {
-  key: string
+/**
+ * A line on this delivery.
+ *
+ * GridLine carries everything the shared grid needs — quantities, costs,
+ * discounts, the pricing figures. What is added here is what only receiving
+ * cares about: the order line being fulfilled, and the serial numbers that
+ * arrived with the goods.
+ */
+type ReceiveLine = GridLine & {
   orderLineId?: number | null
-  productId: number | null
-  productCode: string | null
-  supplierCode: string
-  description: string
-  productType: string
   departmentId: number | null
-  qtyOrdered: number
-  qtyReceived: number
-  unitCostExcl: number
-  vatRatePct: number
-  /** Which stock room this line's goods go into. Per line, not per delivery. */
-  locationId: number | null
   /**
    * One serial per unit, for a serial-tracked product. Empty on every other
    * line and never sent for them.
@@ -70,15 +68,13 @@ type ReceiveLine = {
   serials: string[]
   /** Manufacturer expiry, applied to every serial captured on this line. */
   warrantyUntil: string
-  /** For the preview — what the product's cost is right now. */
-  currentAverage: number
-  currentStock: number
 }
 
 export default function ReceiveScreen({
   suppliers,
   openOrders,
   defaultVatRate,
+  sellingVatRate,
   locations,
 }: {
   suppliers: { id: number; code: string; name: string; terms: number }[]
@@ -90,6 +86,9 @@ export default function ReceiveScreen({
     documentDate: string
   }[]
   defaultVatRate: number
+  /** Sales VAT, for the margin columns — a product can carry a different rate
+      on the way out from the one it carries on the way in. */
+  sellingVatRate: number
   /** Active stock locations. Always at least one — the main location. */
   locations: StockLocationOption[]
 }) {
@@ -108,8 +107,19 @@ export default function ReceiveScreen({
   const [searching, setSearching] = useState(false)
   const [pending, startTransition] = useTransition()
 
+  const columns = useColumnPrefs(
+    'odyssey.purchasing.receive.columns',
+    RECEIVE_DEFAULT_COLUMNS,
+    PURCHASE_COLUMN_IDS,
+  )
+
   const toast = useToast()
   const router = useRouter()
+
+  /** One line changed. The grid hands back only what moved. */
+  function patchLine(key: string, patch: Partial<GridLine>) {
+    setLines((current) => current.map((l) => (l.key === key ? { ...l, ...patch } : l)))
+  }
 
   const ordersForSupplier = openOrders.filter(
     (o) => !supplierId || o.supplierId === Number(supplierId),
@@ -139,6 +149,15 @@ export default function ReceiveScreen({
       if (!order) return
 
       setSupplierId(String(order.supplierId))
+
+      // Where these products stand NOW. The order snapshotted a cost when it
+      // was raised — possibly weeks ago — and never knew the stock figure, so
+      // without this the cost and margin previews would all read zero.
+      const positions = await productPositionsAction(
+        order.lines.map((l) => l.productId).filter((id): id is number => id !== null),
+      )
+      const positionFor = new Map(positions.map((p) => [p.productId, p]))
+
       setLines(
         order.lines
           .filter((l) => l.qtyOutstanding > 0)
@@ -154,14 +173,18 @@ export default function ReceiveScreen({
             qtyOrdered: l.qtyOrdered,
             // Defaults to what is still outstanding — the common case is that
             // everything ordered has arrived.
-            qtyReceived: l.qtyOutstanding,
+            qty: l.qtyOutstanding,
+            qtyBonus: 0,
             unitCostExcl: l.unitCostExcl,
+            discountPct: l.discountPct,
+            discountAmount: 0,
             vatRatePct: l.vatRatePct,
             locationId: mainLocationId,
             serials: [],
             warrantyUntil: '',
-            currentAverage: 0,
-            currentStock: 0,
+            currentAverage: positionFor.get(l.productId ?? -1)?.averageCost ?? 0,
+            currentStock: positionFor.get(l.productId ?? -1)?.stockOnHand ?? 0,
+            sellIncl: positionFor.get(l.productId ?? -1)?.sellIncl ?? 0,
           })),
       )
     })
@@ -179,8 +202,11 @@ export default function ReceiveScreen({
         productType: product.productType,
         departmentId: product.departmentId,
         qtyOrdered: 0,
-        qtyReceived: 1,
+        qty: 1,
+        qtyBonus: 0,
         unitCostExcl: product.costExcl,
+        discountPct: 0,
+        discountAmount: 0,
         vatRatePct: defaultVatRate,
         // Inherits whatever the previous line used, so allocating a whole
         // delivery to the warehouse is one choice rather than one per line.
@@ -189,31 +215,20 @@ export default function ReceiveScreen({
         warrantyUntil: '',
         currentAverage: product.costExcl,
         currentStock: product.stockOnHand,
+        sellIncl: product.priceIncl,
       },
     ])
     setQuery('')
     setOptions([])
   }
 
-  const totals = useMemo(() => {
-    const values = lines.map((l) => round(l.qtyReceived * l.unitCostExcl, 2))
-    const spread = apportionDiscount(values, round(charges, 2))
-    const subtotal = values.reduce((s, v) => round(s + v, 2), 0)
-    const vat = lines.reduce(
-      (s, l, i) => round(s + values[i] * (l.vatRatePct / 100), 2),
-      0,
-    )
-    return {
-      values,
-      spread,
-      subtotal,
-      vat,
-      total: round(subtotal + charges + vat, 2),
-      landed: lines.map((l, i) =>
-        l.qtyReceived === 0 ? 0 : round((values[i] + spread[i]) / l.qtyReceived, 4),
-      ),
-    }
-  }, [lines, charges])
+  // Every figure on the delivery, from the one place that computes them. The
+  // grid re-derives each line from the same function, so what a row shows and
+  // what the summary adds up can never disagree.
+  const totals = useMemo(
+    () => purchaseDocumentFigures(lines, { chargesExcl: charges }),
+    [lines, charges],
+  )
 
   function submit() {
     startTransition(async () => {
@@ -231,9 +246,10 @@ export default function ReceiveScreen({
           description: l.description,
           productType: l.productType,
           departmentId: l.departmentId,
-          qtyOrdered: l.qtyOrdered || l.qtyReceived,
-          qtyReceived: l.qtyReceived,
+          qtyOrdered: l.qtyOrdered || l.qty,
+          qtyReceived: l.qty,
           unitCostExcl: l.unitCostExcl,
+          discountPct: l.discountPct,
           vatRatePct: l.vatRatePct,
           // Only for the lines that carry them, so an ordinary receipt posts
           // exactly the payload it always did.
@@ -261,13 +277,13 @@ export default function ReceiveScreen({
   const serialGaps = lines.filter(
     (l) =>
       l.productType === 'serial' &&
-      (l.serials.length !== l.qtyReceived || !Number.isInteger(l.qtyReceived)),
+      (l.serials.length !== l.qty + l.qtyBonus || !Number.isInteger(l.qty + l.qtyBonus)),
   )
 
   const ready =
     supplierId !== '' &&
     lines.length > 0 &&
-    lines.every((l) => l.qtyReceived > 0) &&
+    lines.every((l) => l.qty > 0) &&
     serialGaps.length === 0
 
   const comboOptions: ComboboxOption<TillProduct>[] = options.map((p) => ({
@@ -352,6 +368,14 @@ export default function ReceiveScreen({
           <CardHeader
             title="What arrived"
             description="Costs are exclusive of VAT — how a supplier invoice is written."
+            action={
+              <ColumnPicker
+                columns={PURCHASE_COLUMNS}
+                visible={columns.visible}
+                onChange={columns.setVisible}
+                onReset={columns.reset}
+              />
+            }
           />
           <CardBody className="flex flex-col gap-3">
             <Combobox
@@ -397,220 +421,33 @@ export default function ReceiveScreen({
               icon={<Icons.PackageOpen size={22} />}
             />
           ) : (
-            /* A table, not stacked field grids: quantities, costs and line
-               totals each form a column, so a delivery can be checked against
-               the invoice line by line. Live inputs justify hand-building it —
-               it wears the shared TABLE_* skin so it cannot drift. */
-            <div className="overflow-x-auto">
-              <table className={TABLE}>
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th scope="col" className={TABLE_TH}>
-                      Item
-                    </th>
-                    <th scope="col" className={`${TABLE_TH} w-24 text-right`}>
-                      Received
-                    </th>
-                    <th scope="col" className={`${TABLE_TH} w-32 text-right`}>
-                      Unit cost (excl.)
-                    </th>
-                    <th scope="col" className={`${TABLE_TH} w-28`}>
-                      Their code
-                    </th>
-                    {/* Only when there is a choice to make. A single-location
-                        site would get a select with one option in it. */}
-                    {multiLocation && (
-                      <th scope="col" className={`${TABLE_TH} w-24`}>
-                        Into
-                      </th>
-                    )}
-                    <th scope="col" className={`${TABLE_TH} text-right`}>
-                      Line total
-                    </th>
-                    <th scope="col" className={`${TABLE_TH} w-px`} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((line, index) => {
-                    const landed = totals.landed[index]
-                    // What this receipt will do to the cost every future margin
-                    // is measured against.
-                    const newAverage = weightedAverageCost({
-                      existingQty: line.currentStock,
-                      existingCostExcl: line.currentAverage,
-                      receivedQty: line.qtyReceived,
-                      receivedCostExcl: landed,
-                    })
-                    const moved = line.currentAverage > 0 && newAverage !== line.currentAverage
-                    const span = multiLocation ? 7 : 6
-
-                    return (
-                      <Fragment key={line.key}>
-                        <tr className={TABLE_ROW}>
-                          <td className={TABLE_TD}>
-                            <div className="text-ink">{line.description}</div>
-                            <div className="text-xs text-muted">
-                              {line.productCode}
-                              {line.qtyOrdered > 0 && (
-                                <span className="ml-2">{formatQty(line.qtyOrdered)} ordered</span>
-                              )}
-                            </div>
-                            {/* The cost preview — the reason this screen exists. */}
-                            {line.productId && (
-                              <p className="mt-0.5 text-xs">
-                                <span className="numeric text-ink-2">
-                                  Landed {formatMoney(landed)}
-                                </span>{' '}
-                                <span className="text-muted">per unit · </span>
-                                {moved ? (
-                                  <span className="text-muted">
-                                    average cost{' '}
-                                    <span className="numeric">
-                                      {formatMoney(line.currentAverage)}
-                                    </span>{' '}
-                                    →{' '}
-                                    <span
-                                      className={`numeric ${
-                                        newAverage > line.currentAverage
-                                          ? 'text-warning'
-                                          : 'text-success'
-                                      }`}
-                                    >
-                                      {formatMoney(newAverage)}
-                                    </span>
-                                  </span>
-                                ) : (
-                                  <span className="text-muted">
-                                    average cost becomes{' '}
-                                    <span className="numeric">{formatMoney(newAverage)}</span>
-                                  </span>
-                                )}
-                              </p>
-                            )}
-                          </td>
-                          <td className={`${TABLE_TD_INPUT} w-24`}>
-                            <Field
-                              error={line.qtyReceived <= 0 ? 'Quantity needed.' : undefined}
-                            >
-                              <NumberInput
-                                value={line.qtyReceived}
-                                precision={3}
-                                aria-label={`Quantity of ${line.description} received`}
-                                onChange={(e) =>
-                                  setLines((c) =>
-                                    c.map((l) =>
-                                      l.key === line.key
-                                        ? { ...l, qtyReceived: Number(e.target.value) || 0 }
-                                        : l,
-                                    ),
-                                  )
-                                }
-                              />
-                            </Field>
-                          </td>
-                          <td className={`${TABLE_TD_INPUT} w-32`}>
-                            <CurrencyInput
-                              value={line.unitCostExcl}
-                              aria-label={`Unit cost of ${line.description}, excluding VAT`}
-                              onChange={(e) =>
-                                setLines((c) =>
-                                  c.map((l) =>
-                                    l.key === line.key
-                                      ? {
-                                          ...l,
-                                          unitCostExcl:
-                                            Number(String(e.target.value).replace(',', '.')) || 0,
-                                        }
-                                      : l,
-                                  ),
-                                )
-                              }
-                            />
-                          </td>
-                          <td className={`${TABLE_TD_INPUT} w-28`}>
-                            <Input
-                              value={line.supplierCode}
-                              aria-label={`Supplier's code for ${line.description}`}
-                              onChange={(e) =>
-                                setLines((c) =>
-                                  c.map((l) =>
-                                    l.key === line.key ? { ...l, supplierCode: e.target.value } : l,
-                                  ),
-                                )
-                              }
-                            />
-                          </td>
-                          {multiLocation && (
-                            <td className={`${TABLE_TD_INPUT} w-24`}>
-                              <Select
-                                value={line.locationId === null ? '' : String(line.locationId)}
-                                aria-label={`Location for ${line.description}`}
-                                onChange={(e) =>
-                                  setLines((c) =>
-                                    c.map((l) =>
-                                      l.key === line.key
-                                        ? { ...l, locationId: Number(e.target.value) || null }
-                                        : l,
-                                    ),
-                                  )
-                                }
-                              >
-                                {locations.map((loc) => (
-                                  <option key={loc.id} value={loc.id}>
-                                    {loc.code}
-                                  </option>
-                                ))}
-                              </Select>
-                            </td>
-                          )}
-                          <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                            <div className="text-ink">{formatMoney(totals.values[index])}</div>
-                            {charges > 0 && (
-                              <div className="text-xs text-muted">
-                                +{formatMoney(totals.spread[index])} charges
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-1.5">
-                            <Button
-                              variant="bare"
-                              size="sm"
-                              iconOnly
-                              aria-label={`Remove ${line.description}`}
-                              onClick={() => setLines((c) => c.filter((l) => l.key !== line.key))}
-                            >
-                              <Icons.Close size={15} />
-                            </Button>
-                          </td>
-                        </tr>
-
-                        {/* Serial capture, for the lines that need it. Rendered
-                            inline rather than behind a dialog: the delivery
-                            note is in the receiver's hand now, and a modal per
-                            line would make a ten-line delivery ten
-                            interruptions. Its badge marks each short line. */}
-                        {line.productType === 'serial' && (
-                          <tr className={TABLE_ROW}>
-                            <td colSpan={span} className={TABLE_TD}>
-                              <SerialCapture
-                                serials={line.serials}
-                                warrantyUntil={line.warrantyUntil}
-                                qtyReceived={line.qtyReceived}
-                                onChange={(patch) =>
-                                  setLines((c) =>
-                                    c.map((l) => (l.key === line.key ? { ...l, ...patch } : l)),
-                                  )
-                                }
-                              />
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <PurchaseLineGrid
+              lines={lines}
+              visible={columns.visible}
+              mode="receive"
+              locations={locations}
+              documentDiscounts={totals.lines.map((l) => l.documentDiscountExcl)}
+              charges={totals.lines.map((l) => l.chargeExcl)}
+              sellingVatPct={sellingVatRate}
+              onPatch={patchLine}
+              onRemove={(key) => setLines((c) => c.filter((l) => l.key !== key))}
+              /* Serial capture, for the lines that need it. Rendered inline
+                 rather than behind a dialog: the delivery note is in the
+                 receiver's hand now, and a modal per line would make a
+                 ten-line delivery ten interruptions. */
+              renderAfterRow={(line) => {
+                const l = lines.find((x) => x.key === line.key)
+                if (!l || l.productType !== 'serial') return null
+                return (
+                  <SerialCapture
+                    serials={l.serials}
+                    warrantyUntil={l.warrantyUntil}
+                    qtyReceived={l.qty + l.qtyBonus}
+                    onChange={(patch) => patchLine(l.key, patch as Partial<GridLine>)}
+                  />
+                )
+              }}
+            />
           )}
         </Card>
       </div>
@@ -618,14 +455,14 @@ export default function ReceiveScreen({
       <div className="flex flex-col gap-4">
         <Card className="p-4">
           <dl className="flex flex-col gap-1.5 text-sm">
-            <Row label="Goods (excl.)" value={formatMoney(totals.subtotal)} />
-            {charges > 0 && <Row label="Delivery" value={formatMoney(charges)} />}
-            <Row label="VAT" value={formatMoney(totals.vat)} />
+            <Row label="Goods (excl.)" value={formatMoney(totals.subtotalExcl)} />
+            {charges > 0 && <Row label="Delivery" value={formatMoney(totals.chargesExcl)} />}
+            <Row label="VAT" value={formatMoney(totals.vatTotal)} />
           </dl>
           <div className="mt-3 flex items-baseline justify-between border-t border-border pt-3">
             <span className="font-medium text-ink">Invoice total</span>
             <span className="numeric text-xl font-semibold text-ink">
-              {formatMoney(totals.total)}
+              {formatMoney(totals.totalIncl)}
             </span>
           </div>
         </Card>

@@ -30,6 +30,7 @@ import {
   MiniStat,
   LinkSegmentedControl,
   LinkSelect,
+  ColumnPicker,
   Menu,
   MenuItem,
   MenuSeparator,
@@ -112,6 +113,7 @@ export default function StyleGuidePage() {
         <TileSwatchSection />
         <ToastSection />
         <MenuSection />
+        <ColumnPickerSection />
         <TabsSection />
         <TableControlsSection />
         <DataTableSection />
@@ -692,6 +694,39 @@ function MenuSection() {
             Delete
           </MenuItem>
         </Menu>
+      </CardBody>
+    </Card>
+  )
+}
+
+function ColumnPickerSection() {
+  const [visible, setVisible] = useState(new Set(['cost', 'markup']))
+  const columns = [
+    { id: 'item', label: 'Item', locked: true, group: 'Always' },
+    { id: 'qty', label: 'Quantity', group: 'Always', locked: true },
+    { id: 'cost', label: 'Unit cost', group: 'Cost' },
+    { id: 'landed', label: 'Landed cost', group: 'Cost' },
+    { id: 'markup', label: 'Markup %', group: 'Pricing' },
+    { id: 'gp', label: 'GP %', group: 'Pricing' },
+  ]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Column picker"
+        description="<ColumnPicker /> — for a table too wide to show at once. Multi-select, so unlike <Menu> it stays open while columns are ticked. Locked columns show ticked and disabled rather than hidden."
+      />
+      <CardBody className="flex items-center gap-3">
+        <ColumnPicker
+          columns={columns}
+          visible={visible}
+          onChange={setVisible}
+          onReset={() => setVisible(new Set(['cost', 'markup']))}
+          align="left"
+        />
+        <span className="text-sm text-muted">
+          Showing: {['item', 'qty', ...visible].join(', ')}
+        </span>
       </CardBody>
     </Card>
   )

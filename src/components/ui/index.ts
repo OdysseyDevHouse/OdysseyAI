@@ -91,6 +91,7 @@ export {
   ToolbarSearch,
   type SegmentedOption,
 } from './TableToolbar'
+export { ColumnPicker, type ColumnOption } from './ColumnPicker'
 export { Pagination } from './Pagination'
 export { FilterBar, FilterChip } from './FilterBar'
 export { BulkActionBar } from './BulkActionBar'

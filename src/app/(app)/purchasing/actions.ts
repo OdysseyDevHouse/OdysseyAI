@@ -7,6 +7,7 @@ import {
   issueOrder,
   cancelOrder,
   getPurchaseDocument,
+  productPositions,
   type OrderInput,
 } from '@/lib/site/purchaseDocuments'
 import { receiveGoods, voidReceipt, type ReceiveInput } from '@/lib/site/purchasePosting'
@@ -109,6 +110,27 @@ export async function loadOrderAction(id: number) {
   const ctx = await actorForOrThrow('purchasing.view')
   const { siteId } = ctx
   return getPurchaseDocument(siteId, id)
+}
+
+/**
+ * Where these products stand right now — stock, cost and shelf price.
+ *
+ * The line grid previews what a delivery does to average cost and margin, and
+ * that needs the position BEFORE the receipt. A line pulled off a purchase
+ * order carries none of it: the order snapshotted a cost when it was raised,
+ * which may be weeks old, and never knew the stock figure at all.
+ *
+ * One query for the whole order rather than one per line — a fifty-line
+ * delivery would otherwise open fifty round trips as the screen loads.
+ */
+export async function productPositionsAction(productIds: number[]) {
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
+
+  const ids = [...new Set(productIds.filter((id) => Number.isInteger(id) && id > 0))]
+  if (ids.length === 0) return []
+
+  return productPositions(siteId, ids)
 }
 
 /* ── Supplier returns ────────────────────────────────────────────────────── */

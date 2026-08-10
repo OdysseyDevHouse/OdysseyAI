@@ -24,6 +24,10 @@ export default async function ReceivePage() {
   // Purchase VAT, not sales VAT — a product can carry a different rate on the
   // way in from the one it carries on the way out.
   const purchaseVat = defaultVat(vatRates, 'purchase') ?? defaultVat(vatRates, 'sales')
+  // And the way out, for the margin columns: markup and GP compare a cost to a
+  // SELLING price, and taking the purchase rate off a shelf price would
+  // misstate both wherever the two rates differ.
+  const salesVat = defaultVat(vatRates, 'sales') ?? purchaseVat
 
   return (
     <>
@@ -48,6 +52,7 @@ export default async function ReceivePage() {
           documentDate: o.documentDate,
         }))}
         defaultVatRate={purchaseVat?.rate ?? 0}
+        sellingVatRate={salesVat?.rate ?? 0}
         locations={locations.map((l) => ({
           id: l.id,
           code: l.code,

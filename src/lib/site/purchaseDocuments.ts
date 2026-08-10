@@ -244,6 +244,67 @@ export async function openOrders(siteId: number, supplierId?: number) {
   return rows.map((r) => mapDocument(r, []))
 }
 
+/**
+ * Where a set of products stands right now.
+ *
+ * The purchasing line grid previews what a delivery will do to average cost and
+ * to margin, and both need the position BEFORE the receipt. A line pulled off a
+ * purchase order carries neither: the order snapshotted a cost when it was
+ * raised, which may be weeks stale, and never knew the stock figure at all.
+ *
+ * The default price structure, because that is the shelf price — the figure a
+ * buyer is deciding whether the delivery still supports.
+ */
+export type ProductPosition = {
+  productId: number
+  stockOnHand: number
+  averageCost: number
+  lastCost: number
+  sellIncl: number
+  productType: string
+}
+
+export async function productPositions(
+  siteId: number,
+  productIds: readonly number[],
+): Promise<ProductPosition[]> {
+  if (productIds.length === 0) return []
+
+  // Inlined rather than bound: these are integers filtered by the caller, and
+  // a bound IN list of variable length needs the placeholders built anyway.
+  const ids = productIds.filter((id) => Number.isInteger(id) && id > 0)
+  if (ids.length === 0) return []
+
+  // The default structure resolved to ONE id first. Joining on is_default
+  // directly would multiply every product row if a site ever had two rows
+  // flagged default — the column carries no unique key to prevent it.
+  const structure = await siteQueryOne<Row>(
+    siteId,
+    'SELECT id FROM price_structures WHERE is_default = 1 ORDER BY position, id LIMIT 1',
+  )
+  const structureId = structure ? Number(structure.id) : 0
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT p.id, p.stock_on_hand, p.average_cost, p.last_cost, p.product_type,
+            COALESCE(pp.selling_price_incl, 0) AS selling_price_incl
+       FROM products p
+       LEFT JOIN product_prices pp
+              ON pp.product_id = p.id AND pp.price_structure_id = ?
+      WHERE p.id IN (${ids.map(() => '?').join(',')})`,
+    [structureId, ...ids],
+  )
+
+  return rows.map((r) => ({
+    productId: Number(r.id),
+    stockOnHand: toNum(r.stock_on_hand),
+    averageCost: toNum(r.average_cost),
+    lastCost: toNum(r.last_cost),
+    sellIncl: toNum(r.selling_price_incl),
+    productType: String(r.product_type ?? 'normal'),
+  }))
+}
+
 /* ── Orders ──────────────────────────────────────────────────────────────── */
 
 export type OrderLineInput = {
