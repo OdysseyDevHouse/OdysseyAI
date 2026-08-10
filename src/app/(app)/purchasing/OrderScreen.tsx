@@ -154,6 +154,7 @@ export default function OrderScreen({
         vatRatePct: defaultVatRate,
         locationId: null,
         currentAverage: product.costExcl,
+        lastCost: product.costExcl,
         currentStock: product.stockOnHand,
         sellIncl: product.priceIncl,
       },

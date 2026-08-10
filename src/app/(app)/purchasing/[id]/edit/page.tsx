@@ -93,6 +93,7 @@ export default async function EditOrderPage({
             vatRatePct: l.vatRatePct,
             locationId: null,
             currentAverage: positionFor.get(l.productId ?? -1)?.averageCost ?? 0,
+            lastCost: positionFor.get(l.productId ?? -1)?.lastCost ?? 0,
             currentStock: positionFor.get(l.productId ?? -1)?.stockOnHand ?? 0,
             sellIncl: positionFor.get(l.productId ?? -1)?.sellIncl ?? 0,
           })),

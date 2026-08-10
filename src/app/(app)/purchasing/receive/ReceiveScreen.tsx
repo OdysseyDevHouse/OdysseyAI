@@ -92,6 +92,7 @@ export default function ReceiveScreen({
   defaultVatRate,
   sellingVatRate,
   initialOrderId,
+  costWarnPct = 0,
   draft,
   locations,
 }: {
@@ -109,6 +110,8 @@ export default function ReceiveScreen({
   sellingVatRate: number
   /** An order to open against, from "Receive" on an issued order. */
   initialOrderId?: number | null
+  /** Percentage a cost may move before a line says so. Zero switches it off. */
+  costWarnPct?: number
   /** A draft being reopened. Everything below starts from it. */
   draft?: {
     id: number
@@ -133,6 +136,13 @@ export default function ReceiveScreen({
   const [supplierId, setSupplierId] = useState(draft ? String(draft.supplierId) : '')
   const [orderId, setOrderId] = useState(draft?.orderId ? String(draft.orderId) : '')
   const [invoiceNo, setInvoiceNo] = useState(draft?.supplierInvoiceNo ?? '')
+  /**
+   * What their invoice says the whole delivery comes to, VAT included.
+   *
+   * Zero means "not given", and the check is skipped — receiving against a
+   * delivery note with no prices on it is a real and common case.
+   */
+  const [invoiceTotal, setInvoiceTotal] = useState(0)
   const [charges, setCharges] = useState<ChargeRow[]>(draft?.charges ?? [])
   const [docDiscountPct, setDocDiscountPct] = useState(draft?.discountPct ?? 0)
   const [docDiscountAmount, setDocDiscountAmount] = useState(draft?.discountExcl ?? 0)
@@ -257,6 +267,7 @@ export default function ReceiveScreen({
             serials: [],
             warrantyUntil: '',
             currentAverage: positionFor.get(l.productId ?? -1)?.averageCost ?? 0,
+            lastCost: positionFor.get(l.productId ?? -1)?.lastCost ?? 0,
             currentStock: positionFor.get(l.productId ?? -1)?.stockOnHand ?? 0,
             sellIncl: positionFor.get(l.productId ?? -1)?.sellIncl ?? 0,
           })),
@@ -296,6 +307,9 @@ export default function ReceiveScreen({
         serials: [],
         warrantyUntil: '',
         currentAverage: product.costExcl,
+        // The search path has no separate last cost; costExcl already follows
+        // the site cost basis, so it is the same comparison a buyer makes.
+        lastCost: product.costExcl,
         currentStock: product.stockOnHand,
         sellIncl: product.priceIncl,
       },
@@ -348,6 +362,15 @@ export default function ReceiveScreen({
   )
 
   /**
+   * What the GOODS supplier is owed, which is what their invoice shows.
+   *
+   * A carrier's separate invoice is not on the page being checked, so it must
+   * not be in the figure compared against it.
+   */
+  const ourTotal = round(totals.taxableExcl + totals.vatTotal + ownCharges, 2)
+  const invoiceVariance = invoiceTotal > 0 ? round(ourTotal - invoiceTotal, 2) : 0
+
+  /**
    * The payload, built once and used by both saving and posting.
    *
    * Shared deliberately: a draft that serialises differently from the receipt
@@ -359,6 +382,8 @@ export default function ReceiveScreen({
       supplierId: Number(supplierId),
       orderId: orderId ? Number(orderId) : null,
       supplierInvoiceNo: invoiceNo || null,
+      // Zero means not given: posting must stay possible without the invoice.
+      supplierInvoiceTotal: invoiceTotal > 0 ? invoiceTotal : null,
       discountPct: docDiscountPct,
       discountExcl: docDiscountAmount,
       charges: charges
@@ -520,6 +545,31 @@ export default function ReceiveScreen({
               <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
             </Field>
 
+            {/* The single best guard in the module. Typed from the bottom of
+                the page in their hand; the receipt is refused if the lines do
+                not tie to it. Left blank when receiving against a delivery
+                note that carries no prices. */}
+            <Field
+              label="Their invoice total (incl.)"
+              hint={
+                invoiceTotal > 0
+                  ? undefined
+                  : 'Optional — but it catches a mis-keyed cost before it reaches the ledger.'
+              }
+              error={
+                invoiceTotal > 0 && Math.abs(invoiceVariance) > 0.1
+                  ? `Out by ${formatMoney(Math.abs(invoiceVariance))} — the lines come to ${formatMoney(ourTotal)}.`
+                  : undefined
+              }
+            >
+              <CurrencyInput
+                value={invoiceTotal}
+                onChange={(e) =>
+                  setInvoiceTotal(Number(String(e.target.value).replace(',', '.')) || 0)
+                }
+              />
+            </Field>
+
           </CardBody>
         </Card>
 
@@ -651,6 +701,7 @@ export default function ReceiveScreen({
             documentDiscounts={totals.lines.map((l) => l.documentDiscountExcl)}
             charges={totals.lines.map((l) => l.chargeExcl)}
             sellingVatPct={sellingVatRate}
+            costWarnPct={costWarnPct}
             onPatch={patchLine}
             onRemove={(key) => setLines((c) => c.filter((l) => l.key !== key))}
             /* Serial capture, for the lines that need it. Rendered inline

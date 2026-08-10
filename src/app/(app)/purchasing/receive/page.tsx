@@ -8,6 +8,7 @@ import {
 } from '@/lib/site/purchaseDocuments'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { listLocations } from '@/lib/site/stockLocations'
+import { getNumericSetting } from '@/lib/site/settings'
 import { PageHeader } from '@/components/ui'
 import ReceiveScreen from './ReceiveScreen'
 
@@ -55,6 +56,9 @@ export default async function ReceivePage({
   // SELLING price, and taking the purchase rate off a shelf price would
   // misstate both wherever the two rates differ.
   const salesVat = defaultVat(vatRates, 'sales') ?? purchaseVat
+  // Read here rather than in the client: a threshold the browser could set is
+  // not a control. Zero switches the warning off entirely.
+  const costWarnPct = await getNumericSetting(siteId, 'purchase_cost_change_warn_pct')
 
   return (
     <>
@@ -80,6 +84,7 @@ export default async function ReceivePage({
         }))}
         defaultVatRate={purchaseVat?.rate ?? 0}
         sellingVatRate={salesVat?.rate ?? 0}
+        costWarnPct={costWarnPct}
         // Arrives from "Receive" on an issued order. Validated against the
         // open list rather than trusted: the id comes from a URL, and one that
         // names a closed or foreign order must simply be ignored.
@@ -122,6 +127,7 @@ export default async function ReceivePage({
                     // overnight, and the cost preview must reflect where the
                     // product stands NOW, not when it was put down.
                     currentAverage: pos?.averageCost ?? 0,
+                    lastCost: pos?.lastCost ?? 0,
                     currentStock: pos?.stockOnHand ?? 0,
                     sellIncl: pos?.sellIncl ?? 0,
                   }

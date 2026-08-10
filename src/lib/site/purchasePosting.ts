@@ -7,7 +7,7 @@ import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
 import { mainLocationIdTx } from './stockLocations'
 import { receiveSerialsTx, removeReceivedSerialsTx } from './serials'
-import { isPeriodLocked } from './settings'
+import { isPeriodLocked, getSetting } from './settings'
 import { postSupplierTransaction } from './supplierLedger'
 import { dueDateFor } from './ledger'
 import type { Actor } from './activityLog'
@@ -141,6 +141,20 @@ export type ReceiveInput = {
   discountPct?: number
   /** An absolute discount on the whole delivery. Wins over the percentage. */
   discountExcl?: number
+  /**
+   * What the supplier's invoice says the whole delivery comes to, INCLUSIVE
+   * of VAT — the figure printed at the bottom of the page in their hand.
+   *
+   * When given, the receipt is REFUSED if the keyed lines do not tie to it
+   * within the site's tolerance. That is the single best guard in the module:
+   * a transposed 91 for 19, a line keyed twice, a case cost entered as a unit
+   * cost — all of them reach the ledger silently otherwise, and are found when
+   * the supplier queries the payment weeks later.
+   *
+   * Optional, because receiving against a delivery note with no prices on it
+   * is a real and common case.
+   */
+  supplierInvoiceTotal?: number | null
   reference?: string | null
   notes?: string | null
   lines: ReceiveLineInput[]
@@ -602,6 +616,34 @@ export async function receiveGoods(
     2,
   )
   const totalIncl = round(subtotalExcl + goodsSupplierCharges + vatTotal + ownChargeVat, 2)
+
+  // ── DOES IT TIE TO THEIR INVOICE? ────────────────────────────────────────
+  //
+  // Checked here, after every figure is computed and BEFORE anything is
+  // written. A receipt that does not agree with the document it was keyed from
+  // is a keying error nine times in ten, and the tenth is a genuine dispute
+  // that should be settled with the supplier rather than posted and forgotten.
+  //
+  // Compared against what the GOODS supplier is owed, not the whole delivery
+  // cost: a courier's separate invoice is not on the page being checked.
+  if (input.supplierInvoiceTotal !== null && input.supplierInvoiceTotal !== undefined) {
+    const claimed = round(input.supplierInvoiceTotal, 2)
+    const tolerance = Math.abs(
+      toNum(await getSetting(siteId, 'purchase_invoice_tolerance'), 0.1),
+    )
+    const out = round(totalIncl - claimed, 2)
+
+    if (Math.abs(out) > tolerance) {
+      const over = out > 0
+      return {
+        ok: false,
+        error:
+          `The lines come to ${totalIncl.toFixed(2)} but their invoice says ` +
+          `${claimed.toFixed(2)} — ${Math.abs(out).toFixed(2)} ${over ? 'more' : 'less'} than ` +
+          `they are charging. Check the quantities and costs, or the invoice total.`,
+      }
+    }
+  }
 
   const dueDate = dueDateFor('invoice', docDate, Number(supplier.payment_terms_days ?? 30))
 

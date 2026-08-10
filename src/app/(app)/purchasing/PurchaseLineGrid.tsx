@@ -68,6 +68,15 @@ export type GridLine = PurchaseLineValues & {
   /** The product's position now, for the cost preview. */
   currentAverage: number
   currentStock: number
+  /**
+   * What was paid LAST time, which is what a cost change is measured against.
+   *
+   * Not the average: that is a blend across every receipt ever, so a product
+   * bought at 10 for a year and now offered at 30 would show a mild drift
+   * rather than the tripling it is. The last invoice is the comparison a buyer
+   * actually makes.
+   */
+  lastCost: number
   /** Shelf price, VAT inclusive. Editable here so a delivery can be repriced. */
   sellIncl: number
 }
@@ -157,6 +166,7 @@ export default function PurchaseLineGrid({
   documentDiscounts,
   charges,
   sellingVatPct,
+  costWarnPct = 0,
   onPatch,
   onRemove,
   renderAfterRow,
@@ -171,6 +181,15 @@ export default function PurchaseLineGrid({
   /** Each line's share of freight, from purchaseDocumentFigures. */
   charges: number[]
   sellingVatPct: number
+  /**
+   * Percentage a unit cost may move from the last one paid before the line
+   * says so. Zero switches it off.
+   *
+   * A note, never a block: prices genuinely move, and a buyer who knows the
+   * supplier put 30% on is better placed than a setting. It exists so that
+   * R1,000 keyed for R100 is noticed while the invoice is still in hand.
+   */
+  costWarnPct?: number
   onPatch: (key: string, patch: Partial<GridLine>) => void
   onRemove: (key: string) => void
   /** Serial capture, rendered under its line. */
@@ -470,6 +489,15 @@ export default function PurchaseLineGrid({
             // leave an empty <tr> behind on every other one.
             const extra = renderAfterRow?.(line)
 
+            // Against the LAST cost paid, not the average — see the field's
+            // own note. Only where there is a previous cost to compare with: a
+            // product never bought before has not "changed" price.
+            const costShift =
+              costWarnPct > 0 && line.lastCost > 0 && line.unitCostExcl > 0
+                ? round(((line.unitCostExcl - line.lastCost) / line.lastCost) * 100, 1)
+                : 0
+            const costWarned = Math.abs(costShift) >= costWarnPct
+
             return (
               <Fragment key={line.key}>
                 <tr className={TABLE_ROW}>
@@ -486,6 +514,22 @@ export default function PurchaseLineGrid({
                         </span>
                       )}
                     </div>
+
+                    {/* The cost moved. Shown on the line rather than as a
+                        banner, because a fifty-line delivery with three
+                        surprises needs to say WHICH three. A rise is the
+                        warning case; a fall is worth seeing but is good news,
+                        so it wears the calmer tone. */}
+                    {costWarned && (
+                      <div
+                        className={`mt-0.5 text-xs ${
+                          costShift > 0 ? 'text-warning' : 'text-success'
+                        }`}
+                      >
+                        {costShift > 0 ? '↑' : '↓'} {Math.abs(costShift)}% on the last cost of{' '}
+                        <span className="numeric">{formatMoney(line.lastCost)}</span>
+                      </div>
+                    )}
                   </td>
 
                   {shown.map((id) => (
