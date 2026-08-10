@@ -18,6 +18,7 @@ export {
   CONTROL_H,
   CONTROL_H_TOUCH,
   CONTROL_INVALID,
+  EDIT_COLUMN,
   MODAL_PANEL,
   MODAL_SIZE,
   type ModalSize,
@@ -65,6 +66,7 @@ export {
 export { SwatchPicker } from './SwatchPicker'
 export { Badge, type BadgeTone } from './Badge'
 export { Callout, type CalloutTone } from './Callout'
+export { SettingsHint } from './SettingsHint'
 export {
   CategoryTile,
   CATEGORY_TONES,
@@ -118,3 +120,4 @@ export { Sparkline } from './Sparkline'
 export { ToastProvider, useToast } from './Toast'
 
 export * as Icons from './icons'
+export { HUB_ICONS, hubGlyph } from './hubIcons'

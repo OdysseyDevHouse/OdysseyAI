@@ -9,6 +9,7 @@ import {
   BulkActionBar,
   Button,
   Callout,
+  SettingsHint,
   Card,
   CardBody,
   CardHeader,
@@ -111,6 +112,7 @@ export default function StyleGuidePage() {
         <FieldGroupSection />
         <BadgeSection />
         <CalloutSection />
+        <SettingsHintSection />
         <StatsSection />
         <SummarySection />
         <IdentitySection />
@@ -136,6 +138,7 @@ export default function StyleGuidePage() {
         <EmptyStateSection />
         <SkeletonSection />
         <ChartSection />
+        <LayoutSection />
         <TokensSection />
       </PageBody>
     </>
@@ -522,8 +525,30 @@ function CalloutSection() {
           142 statements sent, none failed.
         </Callout>
         <Callout tone="brand">
-          Lay-bys are held for 60 days by default. Change the period under Setup → Lay-bys.
+          Posting is blocked until the February period is reopened.
         </Callout>
+      </CardBody>
+    </Card>
+  )
+}
+
+function SettingsHintSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Settings hint"
+        description="<SettingsHint href> — “the rule behind this number is set over there”. Quieter than a Callout on purpose: nothing is wrong, so it must not read as a warning. The screen's name comes from nav.ts, never typed at the call site."
+      />
+      <CardBody className="flex flex-col gap-3">
+        <SettingsHint href="/setup/laybys">
+          Deposit, duration and the cancellation fee are set in
+        </SettingsHint>
+        <SettingsHint href="/staff/pay-rules">
+          Overtime, Sunday and public-holiday rates come from
+        </SettingsHint>
+        <SettingsHint href="/online-store/setup">
+          Delivery charges and whether the shop is live are set in
+        </SettingsHint>
       </CardBody>
     </Card>
   )
@@ -875,6 +900,29 @@ function TableControlsSection() {
               />
               <ToolbarSearch value={search} onChange={setSearch} />
             </TableToolbar>
+          </div>
+        </div>
+
+        <div>
+          <Spec
+            name="<TableToolbar inCard />"
+            note="For a toolbar that is a band inside a Card, above a table. Takes the card gutter and a rule; its controls line up with the column headings below. Without inCard the bar is free-standing and unpadded — right for a row sitting in a PageBody above a separate Card."
+          />
+          <div className="mt-2">
+            <Card>
+              <TableToolbar
+                inCard
+                actions={
+                  <Button variant="primary">
+                    <Icons.Plus size={16} />
+                    New
+                  </Button>
+                }
+              >
+                <ToolbarSearch value={search} onChange={setSearch} />
+              </TableToolbar>
+              <DataTable rows={PRODUCTS} columns={PRODUCT_COLUMNS} getRowKey={(p) => p.id} />
+            </Card>
           </div>
         </div>
       </CardBody>
@@ -1239,6 +1287,13 @@ function CategoryTileSection() {
   )
 }
 
+/**
+ * The till's three surfaces, side by side.
+ *
+ * Shown together rather than in three places because their whole design argument is
+ * that they are ONE set: same disc, same radius, same border, same press. Split across
+ * the page they would drift, which is exactly what happened on the POS this replaces.
+ */
 /** One key's drawn artwork, at the size the till draws it. */
 function KeyArt({ slug }: { slug: string }) {
   const art = quickKeyArt({ actionSlug: slug })
@@ -1430,6 +1485,36 @@ const TOKENS = [
   { name: 'warning', swatch: 'bg-warning', note: 'Needs attention' },
   { name: 'danger', swatch: 'bg-danger', note: 'Destructive / blocked' },
 ]
+
+function LayoutSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Layout widths"
+        description="Shared in src/components/ui/styles.ts. A record's panels must agree on where the page ends."
+      />
+      <CardBody className="p-0">
+        <Row>
+          <Spec name="EDIT_COLUMN" note="Max width of an editing screen — 1100px" />
+          <div className="min-w-0 flex-1">
+            {/* Scaled down so the proportion reads inside a demo card: the point
+                is that stacked panels END in the same place, not the pixel value. */}
+            <div className="flex flex-col gap-2">
+              <div className="h-8 w-[70%] rounded-control border border-border bg-surface-2" />
+              <div className="h-8 w-[70%] rounded-control border border-border bg-surface-2" />
+              <div className="h-8 w-[70%] rounded-control border border-border bg-surface-2" />
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              A form, a variants panel and a photographs gallery are separate siblings on the
+              product screen. Each wears this, so the right edge runs straight instead of stepping
+              in and out down the page.
+            </p>
+          </div>
+        </Row>
+      </CardBody>
+    </Card>
+  )
+}
 
 function TokensSection() {
   return (
