@@ -10,25 +10,22 @@ import type { CategoryTone } from './CategoryTile'
  * Written out in full rather than built as `bg-cat-${tone}` — Tailwind scans source
  * text, so an interpolated class is never emitted and the bar renders invisible.
  */
-const EDGE: Record<CategoryTone, string> = {
-  indigo: 'bg-cat-indigo',
-  violet: 'bg-cat-violet',
-  emerald: 'bg-cat-emerald',
-  amber: 'bg-cat-amber',
-  sky: 'bg-cat-sky',
-  rose: 'bg-cat-rose',
-  teal: 'bg-cat-teal',
-  orange: 'bg-cat-orange',
-  slate: 'bg-cat-slate',
-}
-
 /**
- * The hairline round a row that has an edge, in the same hue.
+ * A row's colour, as its BORDER rather than as a bar drawn on top of it.
  *
- * Held at 30% so it reads as the bar's own outline continuing round the row rather
- * than as a second, competing line: a department at full strength on all four sides
- * is a box shouting for attention, and a rail of twelve of them is twelve boxes all
- * shouting. The bar stays solid because that is the part meant to be found.
+ * `border-l-*` at full strength with the other three sides at 30%: the leading edge
+ * is the part meant to be found across a scrolling rail, and a department at full
+ * strength on all four sides is a box shouting for attention — a rail of twelve is
+ * twelve boxes all shouting.
+ *
+ * Being a real border is what curves the bar's INNER edge. Border-radius tapers a
+ * border from both sides, so the colour narrows into the corners exactly as the card
+ * does; an absolutely-positioned span can only round the two outer corners and leaves
+ * a hard vertical line facing the text.
+ *
+ * Written out in full rather than built as `border-cat-${tone}` — Tailwind scans
+ * source text, so an interpolated class is never emitted and the row renders with no
+ * colour at all.
  */
 const EDGE_BORDER: Record<CategoryTone, string> = {
   indigo: 'border-cat-indigo/30',
@@ -40,6 +37,25 @@ const EDGE_BORDER: Record<CategoryTone, string> = {
   teal: 'border-cat-teal/30',
   orange: 'border-cat-orange/30',
   slate: 'border-cat-slate/30',
+}
+
+/**
+ * The leading edge alone, at full strength.
+ *
+ * Separate from the map above so the SELECTED row can take the brand's hairline on
+ * three sides and still keep its department's colour on the fourth — a row must not
+ * change identity by being chosen.
+ */
+const EDGE_LEAD: Record<CategoryTone, string> = {
+  indigo: 'border-l-cat-indigo',
+  violet: 'border-l-cat-violet',
+  emerald: 'border-l-cat-emerald',
+  amber: 'border-l-cat-amber',
+  sky: 'border-l-cat-sky',
+  rose: 'border-l-cat-rose',
+  teal: 'border-l-cat-teal',
+  orange: 'border-l-cat-orange',
+  slate: 'border-l-cat-slate',
 }
 
 /**
@@ -103,36 +119,34 @@ export function TouchRow({
       onClick={onClick}
       disabled={disabled}
       className={`relative flex w-full items-center gap-3 overflow-hidden rounded-card border py-3 pr-3 text-left transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50 ${
-        /* The edge is drawn INSIDE the row, so the content is pushed clear of it
-           rather than sitting on top. Without an edge the leading padding is the
-           plain p-3 every other row in the app uses. */
-        edge ? 'pl-4' : 'pl-3'
+        /* The bar is the row's own LEFT BORDER, not a rectangle laid over it.
+           That is what curves its inner edge: a border follows border-radius on
+           both sides, so the colour tapers into the corners exactly as the card
+           does, where an absolutely-positioned span can only round the outer two
+           and leaves a hard vertical line facing the text.
+
+           border-l-4 against border on the other three — thin, as in the
+           reference. Less leading padding to compensate, so the icon sits the
+           same distance from the colour as it would from a plain hairline. */
+        edge ? 'border-l-4 pl-2.5' : 'pl-3'
       } ${
-        /* `active` still wins: which row is CHOSEN has to be legible at a glance, and
-           a brand-blue outline says that where a slightly stronger department hue
-           would just look like another department. */
+        /* `active` still wins on the surrounding hairline and the fill: which row is
+           CHOSEN has to be legible at a glance, and a brand-blue tint says that where
+           a slightly stronger department hue would just look like another department.
+           The LEADING edge stays the department's own, so a row does not change
+           identity by being selected — hence EDGE_BORDER trailing here too, whose
+           border-l-* wins over border-brand/40 by being the more specific side. */
         tone === 'active'
-          ? 'border-brand/40 bg-brand-soft'
+          ? `border-brand/40 bg-brand-soft ${edge ? EDGE_LEAD[edge] : ''}`
           : edge
-            ? `${EDGE_BORDER[edge]} bg-surface hover:border-brand/50`
+            ? /* No hover:border-brand here. It would repaint all four sides and take
+                 the department's leading edge with it — the row would lose its colour
+                 at the moment a finger is on it, which is the moment it most needs to
+                 be the one you aimed at. The press animation is the feedback instead. */
+              `${EDGE_BORDER[edge]} ${EDGE_LEAD[edge]} bg-surface`
             : 'border-border bg-surface hover:border-brand/50'
       } ${className}`}
     >
-      {/* aria-hidden: the colour repeats what the title already says, and a screen
-          reader announcing it would be noise.
-
-          Flush to the leading edge, not inset. It was inset by a pixel back when the
-          hairline was grey and needed to stay visible beside the bar; now that the
-          border carries the SAME hue, that pixel is just the row's white background
-          showing through as a seam between two pieces of one colour. Painting over
-          the border here loses nothing — it is the same colour underneath. */}
-      {edge && (
-        <span
-          aria-hidden
-          className={`absolute -left-px inset-y-[-1px] w-2 rounded-l-card ${EDGE[edge]}`}
-        />
-      )}
-
       {icon}
 
       <span className="min-w-0 flex-1">
