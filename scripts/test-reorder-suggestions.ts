@@ -17,6 +17,7 @@ import { reorderSuggestions, reorderBySupplier } from '../src/lib/site/reorderSu
 import { saveOrder, issueOrder } from '../src/lib/site/purchaseDocuments'
 import { receiveGoods } from '../src/lib/site/purchasePosting'
 import { createSupplier } from '../src/lib/site/suppliers'
+import { reconcileStock } from '../src/lib/site/stockMovements'
 import { toNum } from '../src/lib/decimals'
 
 const SITE = 1
@@ -382,6 +383,50 @@ async function main() {
     '*** negative stock proposes enough to get back to max: 50 + 5 ***',
     out.find((s) => s.productId === negative)?.suggested === 55,
     String(out.find((s) => s.productId === negative)?.suggested),
+  )
+
+  // ── Clean up ────────────────────────────────────────────────────────────
+  //
+  // These fixtures set stock_on_hand DIRECTLY, without the movements that
+  // would normally justify it — that is the point, since a suggestion has to
+  // be tested against arbitrary positions. But reconcileStock() checks the two
+  // against each other site-wide, so leaving them behind makes
+  // test-purchasing's global invariant fail for reasons that have nothing to
+  // do with it. Test litter that fakes a failure in another suite is worse
+  // than no test at all.
+  //
+  // Movements are deleted first (FK is RESTRICT on products), and the products
+  // only where nothing real has attached itself to them since.
+  console.log('\n── Clean up ──')
+  const made = await siteQuery<any>(
+    SITE,
+    `SELECT id FROM products WHERE code LIKE ?`,
+    [`RO%${stamp}`],
+  )
+  const ids = made.map((r: any) => Number(r.id))
+  let removed = 0
+  for (const id of ids) {
+    try {
+      await siteExecute(SITE, 'DELETE FROM stock_movements WHERE product_id = ?', [id])
+      await siteExecute(SITE, 'DELETE FROM product_location_stock WHERE product_id = ?', [id])
+      await siteExecute(SITE, 'DELETE FROM product_suppliers WHERE product_id = ?', [id])
+      await siteExecute(SITE, 'DELETE FROM products WHERE id = ?', [id])
+      removed++
+    } catch {
+      /* A product the receipt above attached a GRV line to cannot be deleted —
+         RESTRICT, correctly. Its stock and movements agree, so it does not
+         drift; leaving it is harmless. */
+    }
+  }
+  ok(`fixtures cleaned up (${removed} of ${ids.length})`, true)
+
+  const leftDrifting = (await reconcileStock(SITE)).filter((d) =>
+    String(d.code).includes(stamp),
+  )
+  ok(
+    '*** this run leaves NO stock drift behind for other suites ***',
+    leftDrifting.length === 0,
+    JSON.stringify(leftDrifting),
   )
 
   console.log(`\n${fails === 0 ? 'All good.' : `${fails} FAILED`}\n`)
