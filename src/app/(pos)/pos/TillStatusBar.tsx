@@ -28,6 +28,7 @@ export function TillStatusBar({
   onShowOutbox,
   tableLabel,
   onChangeTable,
+  onSizeTiles,
   onExit,
 }: {
   siteName: string
@@ -85,6 +86,8 @@ export function TillStatusBar({
   tableLabel: string | null
   /** Back to the floor. Undefined in retail, where there is no floor to go back to. */
   onChangeTable?: () => void
+  /** Opens the tile-size dialog. Omitted where there is nothing to size. */
+  onSizeTiles?: () => void
   onExit: () => void
 }) {
   /* Past a few hours the prices on this till and the prices on the shelf edge may
@@ -220,6 +223,22 @@ export function TillStatusBar({
         </Chip>
 
         <Clock />
+
+        {/* Icon-only, and next to Exit rather than beside the sale controls: tile
+            size is set when a till is commissioned and then never, so it has to be
+            findable without competing with anything used during a sale. */}
+        {onSizeTiles && (
+          <Button
+            variant="ghost"
+            size="touch"
+            iconOnly
+            onClick={onSizeTiles}
+            aria-label="Tile size"
+            title="Tile size"
+          >
+            <Icons.LayoutGrid size={18} />
+          </Button>
+        )}
 
         <Button variant="ghost" size="touch" onClick={onExit}>
           <Icons.LogOut size={18} />

@@ -17,6 +17,7 @@ import type { TillProduct } from '@/lib/site/tillSearch'
 import type { CatalogView } from './useSaleState'
 import type { Department } from './types'
 import { childDepartments, departmentTrail, hasChildren } from './saleSelectors'
+import { useTileSizeValue } from '@/lib/posOffline/useTileSize'
 
 /**
  * The right-hand pane: how a cashier finds a product that is not in their hand.
@@ -212,6 +213,7 @@ function DepartmentLevel({
   onPick: (product: TillProduct) => void
 }) {
   const current = path[path.length - 1] ?? null
+  const tiles = useTileSizeValue()
   const children = childDepartments(departments, current)
 
   /*
@@ -238,7 +240,7 @@ function DepartmentLevel({
   }
 
   return (
-    <TileGrid tileWidth={190}>
+    <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
       {children.map((d) => (
         <ProductTile
           key={`d${d.id}`}
@@ -270,6 +272,7 @@ function Results({
   searching: boolean
   onPick: (product: TillProduct) => void
 }) {
+  const tiles = useTileSizeValue()
   if (searching && products.length === 0) return <TileSkeleton />
   if (products.length === 0) {
     return (
@@ -281,7 +284,7 @@ function Results({
     )
   }
   return (
-    <TileGrid tileWidth={190}>
+    <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
       {products.map((p) => (
         <ProductTileFor key={p.id} product={p} onPick={onPick} />
       ))}
@@ -319,8 +322,11 @@ function ProductTileFor({
 }
 
 function TileSkeleton() {
+  /* The same size as the real grid, deliberately: a skeleton at a different tile
+     size makes every tile visibly jump the moment the products arrive. */
+  const tiles = useTileSizeValue()
   return (
-    <TileGrid tileWidth={190}>
+    <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
       {Array.from({ length: 8 }).map((_, i) => (
         <Skeleton key={i} className="h-full w-full rounded-card" />
       ))}

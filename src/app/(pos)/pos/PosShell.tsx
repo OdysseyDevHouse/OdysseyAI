@@ -55,6 +55,8 @@ import { TableGate } from './TableGate'
 import { listTablesAction, openTableAction, updateTableBillAction, askForBillAction, tablePaidAction } from './tableActions'
 import type { PosTable } from '@/lib/site/posTables'
 import { QuickKeyPanel } from './QuickKeyPanel'
+import { TileSizeModal } from './TileSizeModal'
+import { TileSizeContext, useTileSize } from '@/lib/posOffline/useTileSize'
 import { runQuickKey, quickKeyEnabled } from './quickKeyRunner'
 import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { Department } from './types'
@@ -162,6 +164,10 @@ export default function PosShell({
   const [pickingCustomer, setPickingCustomer] = useState(false)
   const [showingSaved, setShowingSaved] = useState(false)
   const [showingOutbox, setShowingOutbox] = useState(false)
+  const [sizingTiles, setSizingTiles] = useState(false)
+  /* Per-machine, from localStorage, applied after mount — a counter screen's useful
+     tile size is a property of that screen, not of the shop. See useTileSize. */
+  const tileSize = useTileSize()
   /*
    * How many baskets are parked, for the badge.
    *
@@ -1035,7 +1041,7 @@ export default function PosShell({
   )
 
   return (
-    <>
+    <TileSizeContext.Provider value={tileSize.size}>
       <TillStatusBar
         siteName={siteName}
         operatorName={operatorName}
@@ -1059,6 +1065,7 @@ export default function PosShell({
            screen that is never covered by a dialog. */
         tableLabel={table ? table.code : hospitality ? 'Walk-in' : null}
         onChangeTable={hospitality ? () => setChoosingTable(true) : undefined}
+        onSizeTiles={() => setSizingTiles(true)}
         onExit={() => router.push('/dashboard')}
       />
 
@@ -1302,6 +1309,17 @@ export default function PosShell({
         onClose={() => setVoiding(false)}
         onVoid={voidSale}
       />
-    </>
+
+      {/* Tile sizing. A dialog rather than sliders on the surface: it is set once
+          when a till is commissioned and then never again, and two permanent
+          sliders would cost basket width on every sale to serve that one moment. */}
+      <TileSizeModal
+        open={sizingTiles}
+        size={tileSize.size}
+        onChange={tileSize.setSize}
+        onReset={tileSize.reset}
+        onClose={() => setSizingTiles(false)}
+      />
+    </TileSizeContext.Provider>
   )
 }
