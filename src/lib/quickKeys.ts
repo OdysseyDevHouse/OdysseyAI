@@ -173,7 +173,7 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
   {
     slug: 'online-orders',
     label: 'Online orders',
-    icon: 'ShoppingBag',
+    icon: 'ShoppingCart',
     capability: 'online.view',
     hint: 'Orders waiting to be picked or collected.',
   },
@@ -189,7 +189,7 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
   {
     slug: 'save-as-order',
     label: 'Save as order',
-    icon: 'ClipboardList',
+    icon: 'ListOrdered',
     capability: 'sales.edit',
     hint: 'Turns the basket into a sales order, reserving the stock.',
   },
@@ -240,7 +240,7 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
   {
     slug: 'send-to-kitchen',
     label: 'Send to kitchen',
-    icon: 'Factory',
+    icon: 'Send',
     capability: 'sales.till',
     hospitalityOnly: true,
     hint: 'Sends the ordered items through to be made.',

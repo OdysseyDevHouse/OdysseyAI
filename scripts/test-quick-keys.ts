@@ -16,6 +16,8 @@
  *     uq_slot cannot help, because MySQL treats the NULL parent_id as distinct.
  *   · an unknown capability or a hex colour refused rather than coerced.
  */
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { siteExecute, siteQuery } from '../src/lib/siteDb'
 import {
   listQuickKeys,
@@ -29,6 +31,7 @@ import {
 } from '../src/lib/site/quickKeys'
 import { quickKeySig, actionForSlug, QUICK_KEY_ACTIONS, topLevelKeys, groupMembers } from '../src/lib/quickKeys'
 
+const ROOT = path.resolve(import.meta.dirname, '..')
 const SITE = 1
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -60,6 +63,35 @@ async function main() {
   ok('every action slug is unique', new Set(slugs).size === slugs.length)
   ok('every action names a capability', QUICK_KEY_ACTIONS.every((a) => !!a.capability))
   ok('every action names an icon', QUICK_KEY_ACTIONS.every((a) => !!a.icon))
+
+  /*
+   * ── EVERY ICON NAME IS ONE THE KIT ACTUALLY HAS ────────────────────────
+   *
+   * `icon` is a plain string, so `tsc` cannot check it — and a name the kit does not
+   * export renders NOTHING, silently. Three of them were wrong when this test was added
+   * (ShoppingBag, ClipboardList, Factory), which is exactly how long a typo survives
+   * when nothing looks.
+   *
+   * Read as SOURCE rather than imported: `icons.tsx` pulls in lucide-react, which needs
+   * a React runtime this test has no business booting — the same reason
+   * test-permissions scans nav.ts as text.
+   */
+  const iconSrc = await readFile(path.join(ROOT, 'src', 'components', 'ui', 'icons.tsx'), 'utf8')
+  const exported = new Set(
+    [...iconSrc.matchAll(/^\s*(?:([A-Z][A-Za-z0-9]*)\s+as\s+)?([A-Z][A-Za-z0-9]*),\s*$/gm)].map(
+      (m) => m[2],
+    ),
+  )
+  ok('the kit icon list was parsed', exported.size > 50, `${exported.size} icons`)
+
+  const unknownIcons = [...new Set(QUICK_KEY_ACTIONS.map((a) => a.icon))].filter(
+    (name) => !exported.has(name),
+  )
+  ok(
+    '*** every quick-key icon exists in the kit ***',
+    unknownIcons.length === 0,
+    unknownIcons.join(', ') || 'a missing name renders no glyph, silently',
+  )
   ok('every action has a hint for the designer', QUICK_KEY_ACTIONS.every((a) => a.hint.length > 10))
   ok(
     'void-sale needs sales.till, NOT sales.void',
