@@ -52,6 +52,13 @@ export type QuickKeyHandlers = {
   addProduct: (productId: number) => void
   /** Opens the outbox, which is also where a cash-up warning lives. */
   showOutbox: () => void
+  /**
+   * Switches the pane into return mode. CLEARS the basket — see SET_RETURNING.
+   *
+   * Not "open the refund pad": there is nothing to credit until the cashier has scanned
+   * what came back, so the key does what the Sale/Return toggle does.
+   */
+  startReturn: () => void
   /** Navigates the browser, for the screens that live in the back office. */
   navigate: (href: string) => void
   /** Says something to the cashier. Used for every refusal. */
@@ -80,6 +87,8 @@ export type RunContext = {
    * customer first" rather than a flat refusal.
    */
   hasCustomer: boolean
+  /** True when the basket is already a return, so the refund key does not re-clear it. */
+  returning: boolean
 }
 
 /**
@@ -119,6 +128,23 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       : handlers.say('Tap the line whose price you want to change.', 'info'),
 
   'credit-sale': ({ handlers }) => handlers.pickCustomer(),
+
+  /*
+   * Switches the pane into return mode rather than opening anything.
+   *
+   * A key that jumped straight to a refund pad would be a refund with no lines — there
+   * is nothing to credit until the cashier has scanned what came back. So the key does
+   * what a cashier would otherwise do with the Sale/Return toggle, and the basket they
+   * then build is credited by the same Refund button.
+   *
+   * Says so when already in return mode rather than silently re-clearing: SET_RETURNING
+   * empties the basket, and a key that wiped a half-scanned return because somebody
+   * pressed it twice would be worse than one that did nothing.
+   */
+  refund: ({ handlers, returning }) =>
+    returning
+      ? handlers.say('Already taking a return — scan what is coming back.', 'info')
+      : handlers.startReturn(),
 
   /* The outbox is where "can I cash up yet" is answered — it shows what is still
      waiting to send, and closeShift's expected figure is wrong until it is empty. */
@@ -194,17 +220,6 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
  * button tells them the till is broken.
  */
 const NOT_WIRED: Record<string, string> = {
-  /*
-   * The ENGINE for an offline return exists and is tested (offlineReturns.ts,
-   * test-offline-returns), but the screen a cashier would drive it from does not yet.
-   * This message stays until it does — saying "returns work offline" while the only
-   * route to one is the back office would be worse than saying nothing.
-   *
-   * When the screen lands, the offline branch takes a no-receipt return only: a till
-   * cannot run the over-credit guard, so a RECEIPTED return stays a back-office job
-   * even then. See the header of offlineReturns.ts.
-   */
-  refund: 'Refunds are done from Returns in the back office, where the original sale can be found.',
   /*
    * These two still say "the desk till", and unlike the voucher and points keys that is
    * still TRUE in substance — orders and lay-bys were never ported. But the desk till

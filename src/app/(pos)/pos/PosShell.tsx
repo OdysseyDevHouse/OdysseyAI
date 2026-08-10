@@ -1145,6 +1145,7 @@ export default function PosShell({
           })
         },
         showOutbox: () => setShowingOutbox(true),
+        startReturn: () => dispatch({ type: 'SET_RETURNING', returning: true }),
         navigate: (href: string) => router.push(href),
         say: (message: string, tone: 'info' | 'error') =>
           tone === 'error' ? toast.error(message) : toast.info(message),
@@ -1166,6 +1167,7 @@ export default function PosShell({
       hasSelection: state.selectedKey !== null,
       hasLines: state.lines.length > 0,
       hasCustomer: state.customer !== null,
+      returning: state.returning,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.lines, state.selectedKey, state.customer, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid],

@@ -47,6 +47,7 @@ function recorder() {
     pickCustomer: () => calls.push({ name: 'pickCustomer' }),
     showSaved: () => calls.push({ name: 'showSaved' }),
     showOutbox: () => calls.push({ name: 'showOutbox' }),
+    startReturn: () => calls.push({ name: 'startReturn' }),
     undo: () => calls.push({ name: 'undo' }),
   } as unknown as QuickKeyHandlers
   return { calls, handlers }
@@ -64,6 +65,7 @@ function ctxFor(
     hasSelection: true,
     hasLines: true,
     hasCustomer: true,
+    returning: false,
     ...over,
   } as RunContext
 }
@@ -184,6 +186,31 @@ function main() {
       JSON.stringify(offline),
     )
   }
+
+  /* ── 4b. The refund key switches the MODE, it does not open a pad ─────────
+     There is nothing to credit until the cashier has scanned what came back, so a key
+     that jumped to a refund pad would open it on an empty basket. */
+
+  const refund = press('refund')
+  ok(
+    'the refund key starts a return',
+    refund.some((c) => c.name === 'startReturn'),
+    JSON.stringify(refund),
+  )
+  /* Pressed twice, it must NOT re-clear: SET_RETURNING empties the basket, so a key that
+     wiped a half-scanned return because somebody double-tapped it would be worse than one
+     that did nothing. */
+  const refundAgain = press('refund', { returning: true })
+  ok(
+    '*** and pressing it again does NOT wipe a half-scanned return ***',
+    refundAgain.every((c) => c.name !== 'startReturn'),
+    JSON.stringify(refundAgain),
+  )
+  ok(
+    '  it says so instead',
+    refundAgain.some((c) => c.name === 'say'),
+    JSON.stringify(refundAgain),
+  )
 
   /* ── 5. A missing capability refuses before anything happens ─────────────── */
 
