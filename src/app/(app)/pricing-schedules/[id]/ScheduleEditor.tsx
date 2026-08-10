@@ -24,7 +24,6 @@ import {
   TABLE_HEAD_ROW,
   TABLE_NUMERIC,
   TABLE_TD,
-  TABLE_TD_INPUT,
   TABLE_TH,
   TABLE_ROW,
 } from '@/components/ui'
@@ -59,7 +58,15 @@ import type { Schedule, ScheduleLine } from '@/lib/site/priceSchedules'
  * read — and the flat view is offered instead.
  */
 
-const PAGE_SIZE = 100
+/**
+ * How many rows are on screen before "show more".
+ *
+ * Fifty rather than a page-ful: a whole-catalogue change is tens of thousands of
+ * lines, and nobody reads it top to bottom — they search for the product they
+ * came to change. The search box above is the real way through this table, so
+ * the list only has to be long enough to browse a menu-sized change in one go.
+ */
+const PAGE_SIZE = 50
 
 type Structure = { id: number; name: string }
 
@@ -362,7 +369,10 @@ export default function ScheduleEditor({
                     {pivoted ? (
                       usedStructures.map((s) => (
                         <th key={s.id} className={`${TABLE_TH} ${TABLE_NUMERIC}`}>
-                          {s.name}
+                          {/* "now → new" rather than the price type alone: the cell
+                              holds both figures side by side, and a bare name
+                              leaves the left-hand number unexplained. */}
+                          {s.name} <span className="text-faint">now → new</span>
                         </th>
                       ))
                     ) : (
@@ -594,25 +604,30 @@ function PriceCell({
     )
   }
 
+  /* On ONE line, not stacked. A stacked cell doubles the row height, and this
+     table is scrolled through looking for a product across tens of thousands of
+     rows — every row of padding is a row somebody has to scroll past. */
   return (
-    <span className="flex flex-col items-end gap-0.5">
-      <CurrencyInput
-        className={TABLE_TD_INPUT}
-        value={value}
-        onChange={(e) => setValue(Number(e.target.value.replace(',', '.')) || 0)}
-        onBlur={() => onCommit(value)}
-        disabled={busy}
-      />
-      <span className="flex items-center gap-1.5 text-xs">
-        <span className="numeric text-muted">
-          {old === null ? 'was nothing' : `was ${formatMoney(old)}`}
-        </span>
+    <span className="flex items-center justify-end gap-2">
+      <span className="flex items-baseline gap-1.5 text-xs">
+        <span className="numeric text-muted">{old === null ? '—' : formatMoney(old)}</span>
         {moved !== null && Math.abs(moved) >= 0.05 && (
           <span className={`numeric ${moved > 0 ? 'text-success' : 'text-danger'}`}>
             {moved > 0 ? '+' : ''}
-            {moved.toFixed(1)}%
+            {moved.toFixed(0)}%
           </span>
         )}
+      </span>
+      {/* Boxed to the width of a price. Left to fill the column it becomes a
+          huge empty field with the figures it is meant to be compared against
+          squeezed against the far edge. */}
+      <span className="w-28 shrink-0">
+        <CurrencyInput
+          value={value}
+          onChange={(e) => setValue(Number(e.target.value.replace(',', '.')) || 0)}
+          onBlur={() => onCommit(value)}
+          disabled={busy}
+        />
       </span>
     </span>
   )
