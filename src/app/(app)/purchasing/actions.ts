@@ -27,6 +27,7 @@ import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { availableSerials } from '@/lib/site/serials'
 import { searchForTill, browseForTill } from '@/lib/site/tillSearch'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
+import { pricesFor } from '@/lib/site/supplierPrices'
 import { listSuppliers } from '@/lib/site/suppliers'
 
 export type PurchaseResult = { ok: true; id: number; message: string } | { ok: false; error: string }
@@ -179,6 +180,28 @@ export async function purchaseDepartmentsAction(): Promise<
     id: department.id,
     name: department.name,
     depth,
+  }))
+}
+
+/**
+ * What this supplier has agreed to charge for these products, today.
+ *
+ * Used when a product is added to an order, and when the supplier on an order
+ * is changed: the same product from two suppliers is two different prices, and
+ * an order that kept the first one would go out wrong.
+ */
+export async function agreedPricesAction(supplierId: number, productIds: number[]) {
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
+  if (!supplierId || productIds.length === 0) return []
+
+  const prices = await pricesFor(siteId, supplierId, productIds)
+  return [...prices.values()].map((p) => ({
+    productId: p.productId,
+    costExcl: p.costExcl,
+    packSize: p.packSize,
+    effectiveFrom: p.effectiveFrom,
+    listReference: p.listReference,
   }))
 }
 
