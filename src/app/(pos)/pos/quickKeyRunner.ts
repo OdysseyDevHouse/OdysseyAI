@@ -72,6 +72,14 @@ export type RunContext = {
   hasSelection: boolean
   /** True when the basket has anything in it. */
   hasLines: boolean
+  /**
+   * True when a customer is attached.
+   *
+   * Needed by the points key: a loyalty standing is looked up per customer, so an
+   * unattached basket has no balance to spend and the useful message is "attach the
+   * customer first" rather than a flat refusal.
+   */
+  hasCustomer: boolean
 }
 
 /**
@@ -146,6 +154,36 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
     online
       ? handlers.navigate('/cashbook')
       : handlers.say('Taking a payment against an account needs the connection.', 'info'),
+
+  /*
+   * ── VOUCHERS AND POINTS LIVE ON THE TENDER PAD ──────────────────────────
+   *
+   * Both of these used to sit in NOT_WIRED saying "use the desk till" — and that
+   * instruction became WRONG twice over: loyalty was ported onto this pad in phase 7,
+   * and the desk till was deleted in the same phase. A cashier following it would go
+   * looking for a screen that redirects them straight back here.
+   *
+   * They are not routed to the pad directly because a tender only means something
+   * against a basket that is ready to pay, and the pad opens from Pay for exactly that
+   * reason. So these say where the thing is and what it needs first — which is the
+   * useful half of a key that cannot act on its own.
+   */
+  'redeem-voucher': ({ handlers, online }) =>
+    online
+      ? handlers.say('Tap Pay — voucher codes are entered on the payment screen.', 'info')
+      : handlers.say('Vouchers need the connection. Take another payment method.', 'info'),
+
+  /* Points need a CUSTOMER as well as a connection: the standing is looked up per
+     customer, so an unattached basket has no balance to spend. Saying which one is
+     missing beats a generic refusal. */
+  'loyalty-payment': ({ handlers, online, hasCustomer }) => {
+    if (!online) {
+      return handlers.say('Paying with points needs the connection.', 'info')
+    }
+    return hasCustomer
+      ? handlers.say('Tap Pay — points show as a payment method on the payment screen.', 'info')
+      : handlers.say('Attach the customer first, then their points show up under Pay.', 'info')
+  },
 }
 
 /**
@@ -167,10 +205,15 @@ const NOT_WIRED: Record<string, string> = {
    * even then. See the header of offlineReturns.ts.
    */
   refund: 'Refunds are done from Returns in the back office, where the original sale can be found.',
-  'save-as-order': 'Saving as an order is on the desk till for now.',
-  'save-as-layby': 'Starting a lay-by is on the desk till for now.',
-  'redeem-voucher': 'Vouchers are not on this till yet — use the desk till.',
-  'loyalty-payment': 'Paying with points is not on this till yet — use the desk till.',
+  /*
+   * These two still say "the desk till", and unlike the voucher and points keys that is
+   * still TRUE in substance — orders and lay-bys were never ported. But the desk till
+   * itself is gone (phase 7), so the wording points at a screen that no longer exists.
+   * Reworded to name the back office, which is where /sales/orders and /sales/laybys
+   * actually live.
+   */
+  'save-as-order': 'Turning a basket into an order is done from Orders in the back office.',
+  'save-as-layby': 'Starting a lay-by is done from Lay-bys in the back office.',
 }
 
 /**

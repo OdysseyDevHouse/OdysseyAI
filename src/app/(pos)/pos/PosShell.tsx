@@ -1014,9 +1014,10 @@ export default function PosShell({
       online: till.online,
       hasSelection: state.selectedKey !== null,
       hasLines: state.lines.length > 0,
+      hasCustomer: state.customer !== null,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.lines, state.selectedKey, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid],
+    [state.lines, state.selectedKey, state.customer, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid],
   )
 
   const customerLabel = state.customer?.name ?? (state.customerName.trim() || null)
