@@ -3,6 +3,11 @@
   "site": 1,
   "results": [
     {
+      "route": "/accounting",
+      "url": "/accounting",
+      "state": "pass"
+    },
+    {
       "route": "/accounting/accounts",
       "url": "/accounting/accounts",
       "state": "pass"
@@ -59,7 +64,7 @@
     },
     {
       "route": "/accounting/journals/[id]",
-      "url": "/accounting/journals/2731",
+      "url": "/accounting/journals/4057",
       "state": "pass"
     },
     {
@@ -159,12 +164,12 @@
     },
     {
       "route": "/customers/[id]",
-      "url": "/customers/13226",
+      "url": "/customers/13850",
       "state": "pass"
     },
     {
       "route": "/customers/[id]/statement",
-      "url": "/customers/13226/statement",
+      "url": "/customers/13850/statement",
       "state": "pass"
     },
     {
@@ -268,8 +273,28 @@
       "state": "pass"
     },
     {
+      "route": "/manufacturing",
+      "url": "/manufacturing",
+      "state": "pass"
+    },
+    {
+      "route": "/manufacturing/[id]",
+      "state": "skip",
+      "detail": "no rows in the source table"
+    },
+    {
+      "route": "/manufacturing/new",
+      "url": "/manufacturing/new",
+      "state": "pass"
+    },
+    {
       "route": "/not-allowed",
       "url": "/not-allowed",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store",
+      "url": "/online-store",
       "state": "pass"
     },
     {
@@ -283,8 +308,23 @@
       "state": "pass"
     },
     {
+      "route": "/online-store/discounts",
+      "url": "/online-store/discounts",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/funnel",
+      "url": "/online-store/funnel",
+      "state": "pass"
+    },
+    {
       "route": "/online-store/orders",
       "url": "/online-store/orders",
+      "state": "pass"
+    },
+    {
+      "route": "/online-store/pages",
+      "url": "/online-store/pages",
       "state": "pass"
     },
     {
@@ -323,13 +363,23 @@
       "state": "pass"
     },
     {
+      "route": "/pricing-schedules",
+      "url": "/pricing-schedules",
+      "state": "pass"
+    },
+    {
+      "route": "/pricing-schedules/[id]",
+      "state": "skip",
+      "detail": "no id source configured"
+    },
+    {
       "route": "/products",
       "url": "/products",
       "state": "pass"
     },
     {
       "route": "/products/[id]",
-      "url": "/products/43757",
+      "url": "/products/45183",
       "state": "pass"
     },
     {
@@ -344,17 +394,32 @@
     },
     {
       "route": "/purchasing/[id]",
-      "url": "/purchasing/5506",
+      "url": "/purchasing/5945",
+      "state": "pass"
+    },
+    {
+      "route": "/purchasing/[id]/edit",
+      "url": "/purchasing/5945/edit",
       "state": "pass"
     },
     {
       "route": "/purchasing/[id]/return",
-      "url": "/purchasing/5506/return",
+      "url": "/purchasing/5945/return",
+      "state": "pass"
+    },
+    {
+      "route": "/purchasing/new",
+      "url": "/purchasing/new",
       "state": "pass"
     },
     {
       "route": "/purchasing/receive",
       "url": "/purchasing/receive",
+      "state": "pass"
+    },
+    {
+      "route": "/purchasing/suggest",
+      "url": "/purchasing/suggest",
       "state": "pass"
     },
     {
@@ -389,12 +454,12 @@
     },
     {
       "route": "/sales/[id]",
-      "url": "/sales/110442",
+      "url": "/sales/112111",
       "state": "pass"
     },
     {
       "route": "/sales/[id]/credit",
-      "url": "/sales/110442/credit",
+      "url": "/sales/112111/credit",
       "state": "pass"
     },
     {
@@ -429,7 +494,7 @@
     },
     {
       "route": "/sales/invoicing/[id]",
-      "url": "/sales/invoicing/110442",
+      "url": "/sales/invoicing/112111",
       "state": "pass"
     },
     {
@@ -445,11 +510,6 @@
     {
       "route": "/sales/laybys/[id]/print",
       "url": "/sales/laybys/43/print",
-      "state": "pass"
-    },
-    {
-      "route": "/sales/new",
-      "url": "/sales/new",
       "state": "pass"
     },
     {
@@ -528,6 +588,11 @@
       "state": "pass"
     },
     {
+      "route": "/setup/quick-keys",
+      "url": "/setup/quick-keys",
+      "state": "pass"
+    },
+    {
       "route": "/setup/reconciliation",
       "url": "/setup/reconciliation",
       "state": "pass"
@@ -540,6 +605,11 @@
     {
       "route": "/setup/style-guide",
       "url": "/setup/style-guide",
+      "state": "pass"
+    },
+    {
+      "route": "/setup/tables",
+      "url": "/setup/tables",
       "state": "pass"
     },
     {
@@ -593,18 +663,33 @@
       "state": "pass"
     },
     {
+      "route": "/stock-takes",
+      "url": "/stock-takes",
+      "state": "pass"
+    },
+    {
+      "route": "/stock-takes/[id]",
+      "url": "/stock-takes/19",
+      "state": "pass"
+    },
+    {
+      "route": "/stock-takes/new",
+      "url": "/stock-takes/new",
+      "state": "pass"
+    },
+    {
       "route": "/suppliers",
       "url": "/suppliers",
       "state": "pass"
     },
     {
       "route": "/suppliers/[id]",
-      "url": "/suppliers/1241",
+      "url": "/suppliers/1493",
       "state": "pass"
     },
     {
       "route": "/suppliers/[id]/statement",
-      "url": "/suppliers/1241/statement",
+      "url": "/suppliers/1493/statement",
       "state": "pass"
     },
     {
