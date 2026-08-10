@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
-import { getGroup, listOptions } from '@/lib/site/instructions'
+import { getGroup, listGroups, listOptions } from '@/lib/site/instructions'
+import { storefrontImagesByIds } from '@/lib/site/storefrontImages'
 import { listProducts } from '@/lib/site/products'
 import { Callout, PageBody, PageHeader } from '@/components/ui'
 import InstructionForm from '../InstructionForm'
@@ -31,6 +32,15 @@ export default async function EditInstructionPage({
   const options = await listOptions(siteId, groupId, true)
   const { items } = await listProducts(siteId, { limit: 500 })
 
+  // Every other instruction, for the "then ask" picker. Inactive ones are left
+  // out: revealing a question the till will not ask is a dead end.
+  const groups = await listGroups(siteId)
+
+  // Only the group's own thumbnail is resolved here. An option's picture is
+  // fetched by its picker when the row is opened — pre-loading one per row
+  // would be a query for pictures nobody has scrolled to.
+  const images = await storefrontImagesByIds(siteId, group.imageId ? [group.imageId] : [])
+
   return (
     <>
       <PageHeader
@@ -46,6 +56,8 @@ export default async function EditInstructionPage({
           group={group}
           options={options}
           products={items.map((p) => ({ id: p.id, code: p.code, description: p.description }))}
+          groups={groups.map((g) => ({ id: g.id, name: g.name }))}
+          groupImage={(group.imageId && images.get(group.imageId)) || null}
           rowActions={
             <DeleteInstructionButton
               id={group.id}

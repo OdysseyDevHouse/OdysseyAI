@@ -21,6 +21,14 @@ function num(form: FormData, key: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
+/** A form field that may legitimately be empty, meaning "nothing chosen". */
+function optionalId(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const n = Number(trimmed)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 function readGroup(form: FormData): GroupInput {
   return {
     name: String(form.get('name') ?? ''),
@@ -28,9 +36,16 @@ function readGroup(form: FormData): GroupInput {
     isRequired: String(form.get('isRequired') ?? '') === '1',
     minChoices: num(form, 'minChoices'),
     maxChoices: num(form, 'maxChoices'),
+    imageId: optionalId(String(form.get('imageId') ?? '')),
     sortOrder: num(form, 'sortOrder'),
     isActive: String(form.get('isActive') ?? '1') === '1',
   }
+}
+
+/** A whole number from a form field, falling back when it is blank or junk. */
+function count(raw: unknown, fallback: number): number {
+  const n = Number(String(raw ?? '').replace(/,/g, '').trim())
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback
 }
 
 /**
@@ -38,6 +53,15 @@ function readGroup(form: FormData): GroupInput {
  * so on — because the row count is not known until the user has finished adding
  * rows. FormData preserves their order, so index i of each array belongs to the
  * same row.
+ *
+ * ── WHY THE REVEALED GROUPS ARE ONE COMMA-SEPARATED FIELD ───────────────────
+ *
+ * Every other column here is one value per row, which is what makes the parallel
+ * arrays line up. The groups an answer goes on to ask are a LIST per row, and a
+ * second dimension breaks that: `optionReveals` as a repeated field would give
+ * seven entries across three rows with nothing to say which row each belonged
+ * to. One hidden field per row holding "4,9" keeps every array the same length
+ * and the index meaning the same thing in all of them.
  */
 function readOptions(form: FormData): (OptionInput & { id?: number })[] {
   const ids = form.getAll('optionId')
@@ -46,12 +70,20 @@ function readOptions(form: FormData): (OptionInput & { id?: number })[] {
   const products = form.getAll('optionProduct')
   const quantities = form.getAll('optionQuantity')
   const defaults = form.getAll('optionDefault')
+  const maxQtys = form.getAll('optionMaxQty')
+  const minQtys = form.getAll('optionMinQty')
+  const defaultQtys = form.getAll('optionDefaultQty')
+  const images = form.getAll('optionImage')
+  const kitchen = form.getAll('optionKitchen')
+  const receipt = form.getAll('optionReceipt')
+  const reveals = form.getAll('optionReveals')
 
   const options: (OptionInput & { id?: number })[] = []
 
   for (let i = 0; i < names.length; i++) {
     const name = String(names[i] ?? '').trim()
     // A blank name is an empty row the user never filled in, not an error.
+    // `continue` rather than a filter, so `i` keeps indexing every array above.
     if (!name) continue
 
     const rawId = String(ids[i] ?? '').trim()
@@ -68,6 +100,21 @@ function readOptions(form: FormData): (OptionInput & { id?: number })[] {
       // Checkboxes submit their row index as the value, so an unticked row
       // sends nothing and cannot be confused with the row before it.
       isDefault: defaults.map(String).includes(String(i)),
+      maxQty: count(maxQtys[i], 1),
+      minQty: count(minQtys[i], 0),
+      defaultQty: count(defaultQtys[i], 0),
+      imageId: optionalId(String(images[i] ?? '')),
+      // Sent as an explicit 1/0 per row rather than as a checkbox, because an
+      // unticked box sends NOTHING and "the user turned kitchen printing off"
+      // would be indistinguishable from "this field never reached the form".
+      // The two must not be confused: one means the cook should not see this
+      // answer, the other would silently drop it off the ticket.
+      printsOnKitchen: String(kitchen[i] ?? '1') === '1',
+      printsOnReceipt: String(receipt[i] ?? '1') === '1',
+      revealsGroupIds: String(reveals[i] ?? '')
+        .split(',')
+        .map((part) => optionalId(part))
+        .filter((id): id is number => id !== null),
       sortOrder: i,
     })
   }
