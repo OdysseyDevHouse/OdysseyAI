@@ -11,6 +11,9 @@ import {
 import { NOTIFY_KIND_LABEL, type OrderStatus } from './onlineStore'
 import { getOrder } from './onlineOrders'
 import { publicSiteName } from '../sites'
+import { createPublicStoreToken } from '../publicStoreToken'
+import { createOrderTrackToken } from '../orderTrackToken'
+import { absoluteUrl } from '../appUrl'
 
 /**
  * Telling a customer their order has moved.
@@ -52,7 +55,14 @@ export function messageFor(
  */
 function standardBody(
   kind: Exclude<OrderStatus['notifyKind'], ''>,
-  values: { firstName: string; orderNumber: string; storeName: string; total: string },
+  values: {
+    firstName: string
+    orderNumber: string
+    storeName: string
+    total: string
+    /** Absolute "follow your order" URL, or null when there is no public address. */
+    trackLink: string | null
+  },
 ): string {
   const greeting = values.firstName ? `Hi ${values.firstName},` : 'Hi,'
   const line = {
@@ -62,7 +72,44 @@ function standardBody(
     cancelled: `Your order ${values.orderNumber} has been cancelled.`,
   }[kind]
 
-  return `${greeting}\n\n${line}\n\nTotal: ${values.total}\n\nKind regards,\n${values.storeName}`
+  /*
+   * Not offered on a cancelled order. There is nothing left to follow, and a
+   * "see how it's going" link under "your order has been cancelled" reads as
+   * though the shop has not noticed.
+   */
+  const follow =
+    values.trackLink && kind !== 'cancelled'
+      ? `\n\nFollow your order:\n${values.trackLink}`
+      : ''
+
+  return `${greeting}\n\n${line}\n\nTotal: ${values.total}${follow}\n\nKind regards,\n${values.storeName}`
+}
+
+/**
+ * The absolute "follow your order" URL, or null when one cannot be built.
+ *
+ * Two tokens, because the route needs both: the STORE token says which shop's
+ * storefront this is (and is the same eternal one printed on till slips), and
+ * the TRACK token names one order and expires. Neither alone is enough — see
+ * orderTrackToken.ts.
+ *
+ * Null rather than a guess when APP_URL is unset. Every caller treats that as
+ * "leave the link out", which is why this can never put localhost in a
+ * customer's inbox.
+ */
+async function orderTrackLink(siteId: number, orderId: number): Promise<string | null> {
+  try {
+    const [storeToken, trackToken] = await Promise.all([
+      createPublicStoreToken(siteId),
+      createOrderTrackToken({ siteId, orderId }),
+    ])
+    return absoluteUrl(`/store/${storeToken}/o/${trackToken}`)
+  } catch {
+    // Signing needs SESSION_SECRET. A store with none configured still gets
+    // its email — without a link — rather than an exception thrown from the
+    // middle of a status change.
+    return null
+  }
 }
 
 /** The items, as a table. The one merge field whose value is markup. */
@@ -115,6 +162,16 @@ export async function composeStatusEmail(
   const firstName = order.contactName.trim().split(/\s+/)[0] ?? ''
   const to = order.contactEmail.trim()
 
+  /*
+   * The "follow your order" link.
+   *
+   * Empty string when the app has no configured public address, so a shop
+   * whose template uses {{track_link}} gets an email with the line missing
+   * rather than one pointing at localhost — which would look real, sit in a
+   * customer's inbox forever, and never work.
+   */
+  const trackLink = await orderTrackLink(siteId, order.id)
+
   if (message.kind === 'template') {
     const values: Record<string, string> = {
       order_number: order.orderNumber,
@@ -131,6 +188,7 @@ export async function composeStatusEmail(
       payment: order.payOnAccount ? 'On account' : 'Pay on collection',
       customer_note: order.customerNote,
       store_name: storeName,
+      track_link: trackLink ?? '',
     }
 
     // Sanitised AGAIN after rendering. A merge value cannot introduce markup
@@ -155,6 +213,7 @@ export async function composeStatusEmail(
     orderNumber: order.orderNumber,
     storeName,
     total: formatMoney(order.totalIncl),
+    trackLink,
   })
   return {
     to,

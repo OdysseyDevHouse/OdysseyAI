@@ -2,6 +2,7 @@
 
 import { headers } from 'next/headers'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { createOrderTrackToken } from '@/lib/orderTrackToken'
 import { getCustomerSession } from '@/lib/customerSession'
 import { createCallbackToken } from '@/lib/callbackToken'
 import { buildCheckoutForm } from '@/lib/payfast/checkout'
@@ -65,11 +66,38 @@ export async function quoteDeliveryAction(
   }
 }
 
+/**
+ * A tracking token, or '' when one cannot be signed.
+ *
+ * Never throws: this is called on the success path of an order that has
+ * already been written, and failing to mint a convenience link must not turn a
+ * placed order into an error the shopper sees. The confirmation page simply
+ * omits the link.
+ */
+async function trackTokenFor(siteId: number, orderId: number): Promise<string> {
+  try {
+    return await createOrderTrackToken({ siteId, orderId })
+  } catch {
+    return ''
+  }
+}
+
 export type PlaceResult =
   | {
       ok: true
       orderNumber: string
       total: number
+      /**
+       * A signed link to follow this order, minted HERE rather than derived
+       * from the order number on the confirmation page.
+       *
+       * The done page deliberately reads nothing from the database, because an
+       * order number alone is short and sequential — looking one up by number
+       * would let anyone read anyone's order by counting. This token names one
+       * order, is signed, and expires; it can only be produced by the request
+       * that actually placed the order.
+       */
+      trackToken?: string
       /**
        * Present when the shop takes payment online: the form the browser must
        * POST to the gateway. Absent means pay-on-collection, and the shopper
@@ -129,7 +157,12 @@ export async function placeOrderAction(
    * orders, which is how most of them start.
    */
   if (result.onAccount || context?.settings.paymentMode !== 'online') {
-    return { ok: true, orderNumber: result.orderNumber, total: result.total }
+    return {
+      ok: true,
+      orderNumber: result.orderNumber,
+      total: result.total,
+      trackToken: await trackTokenFor(siteId, result.orderId),
+    }
   }
 
   // ── Pay online ────────────────────────────────────────────────────────
@@ -144,6 +177,7 @@ export async function placeOrderAction(
       ok: true,
       orderNumber: result.orderNumber,
       total: result.total,
+      trackToken: await trackTokenFor(siteId, result.orderId),
     }
   }
 
@@ -166,7 +200,12 @@ export async function placeOrderAction(
     itemName: `Order ${result.orderNumber}`,
     itemDescription: `${lines.length} item${lines.length === 1 ? '' : 's'} from ${context.storeName}`,
     // Neither of these proves payment — only the notify URL does.
-    returnUrl: `${origin}/store/${token}/done?order=${encodeURIComponent(result.orderNumber)}&total=${result.total}`,
+    //
+    // The track token rides along so someone coming back from the gateway gets
+    // the same "follow your order" link as someone who paid on collection.
+    // It is signed and names one order, so a URL is no more exposure than the
+    // email that will carry the same link.
+    returnUrl: `${origin}/store/${token}/done?order=${encodeURIComponent(result.orderNumber)}&total=${result.total}&t=${encodeURIComponent(await trackTokenFor(siteId, result.orderId))}`,
     cancelUrl: `${origin}/store/${token}/checkout`,
     notifyUrl: `${origin}/api/payments/payfast/${callback}`,
     buyerName: input.contactName,

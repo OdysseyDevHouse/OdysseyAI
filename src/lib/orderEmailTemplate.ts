@@ -44,6 +44,18 @@ export const MERGE_FIELDS: MergeField[] = [
   { token: 'payment', label: 'How it is being paid' },
   { token: 'customer_note', label: 'Their note to you' },
   { token: 'store_name', label: 'Your shop name' },
+  /*
+   * The link that lets a shopper follow the order without an account.
+   *
+   * Plain TEXT, not html — it is inserted as a URL and escaped like any other
+   * value. Making it markup would mean building an anchor here, and `items` is
+   * deliberately the only field whose value is trusted as markup.
+   *
+   * Empty when the app has no configured public address, so a template using
+   * it degrades to an email with no link rather than one pointing at
+   * localhost — see appUrl.ts.
+   */
+  { token: 'track_link', label: 'Link to follow the order' },
 ]
 
 const HTML_FIELDS = new Set(MERGE_FIELDS.filter((f) => f.html).map((f) => f.token))

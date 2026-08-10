@@ -225,8 +225,12 @@ export default function Checkout({
         return
       }
 
+      // The track token rides to the confirmation page so a guest gets a
+      // "follow your order" link without an account. Omitted when signing
+      // failed — the page then shows the order number alone, as before.
+      const track = result.trackToken ? `&t=${encodeURIComponent(result.trackToken)}` : ''
       router.push(
-        `/store/${token}/done?order=${encodeURIComponent(result.orderNumber)}&total=${result.total}`,
+        `/store/${token}/done?order=${encodeURIComponent(result.orderNumber)}&total=${result.total}${track}`,
       )
     })
   }
