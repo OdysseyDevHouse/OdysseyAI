@@ -27,6 +27,7 @@ import {
   Mail,
   Truck,
   Coins,
+  HandCoins,
   Scale,
   Percent,
   Bell,
@@ -93,9 +94,14 @@ export const NAV: NavSection[] = [
       { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view' },
       { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view' },
       { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view' },
+      { label: 'Reservations', href: '/sales/reservations', icon: CalendarClock, built: true, capability: 'reservations.view', keywords: 'bookings table diary covers restaurant seating guests' },
       { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note' },
       { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup' },
+      /* Paying tips out, beside the cash-up rather than under Setup: it happens at the end
+         of a shift, by whoever counts the drawer, and shares that capability. Setup → Tips
+         is the other half — what a bill is CHARGED, which is configuration. */
+      { label: 'Tips', href: '/sales/tips', icon: HandCoins, built: true, capability: 'sales.cashup' },
       /* Offline sales is NOT here any more — it is a reconciliation check
          ("is yesterday's offline trading on the books"), so it sits in the
          accounting hub beside the other checks that catch a figure going wrong.

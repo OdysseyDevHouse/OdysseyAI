@@ -24,6 +24,10 @@ import {
   recordServiceChargeRemoval,
   serviceChargeForBill,
   tipsOwed,
+  tipsEarned,
+  payTipsOut,
+  splitPoolOut,
+  listPayouts,
   type TenderForTips,
 } from '../src/lib/site/tips'
 import { siteTransaction } from '../src/lib/siteDb'
@@ -650,6 +654,200 @@ async function main() {
       await siteExecute(SITE, 'DELETE FROM document_sequences WHERE terminal_id = ?', [terminalId])
       await siteExecute(SITE, 'DELETE FROM terminals WHERE id = ?', [terminalId])
     }
+  }
+
+  /* ── 10. Paying tips out ───────────────────────────────────────────────────
+     The property this section exists for: PAYING TWICE MUST BE IMPOSSIBLE. `tipsOwed`
+     filters on `payout_id IS NULL`, so the same tips cannot appear in a second envelope —
+     and that is worth asserting rather than reading, because the failure is invisible in
+     the data afterwards. Both figures look right; the money is just gone twice. */
+
+  {
+    const day = new Date().toISOString().slice(0, 10)
+    const range = { from: day, to: day }
+
+    /* Three tips on one finalised sale: two for a named waiter, one for the pool. `draft`
+       is already finalised by section 8, so these hang off a real document. */
+    const WAITER = 27      // Nomsa Dlamini — a REAL user, because tip_payouts.user_id has an FK
+    await siteExecute(
+      SITE,
+      `INSERT INTO sales_tips (document_id, tender_type_id, shift_id, amount, source, user_id, user_name)
+       VALUES (?,?,NULL,?, 'declared', ?, 'Nomsa Dlamini'),
+              (?,?,NULL,?, 'declared', ?, 'Nomsa Dlamini'),
+              (?,?,NULL,?, 'service',  NULL, '')`,
+      [
+        draft.id, cash.id, '30.0000', WAITER,
+        draft.id, cash.id, '20.0000', WAITER,
+        draft.id, cash.id, '45.0000',
+      ],
+    )
+
+    const owedBefore = await tipsOwed(SITE, range)
+    const mine = owedBefore.find((r) => r.userId === WAITER)
+    const pool = owedBefore.find((r) => r.userId === null)
+    ok('the waiter is owed the sum of their tips', mine?.total === 50, `R${mine?.total} over ${mine?.count} tips`)
+    ok('and the pool is listed separately', (pool?.total ?? 0) >= 45, `R${pool?.total}`)
+
+    /* ── Paying out ── */
+    const paid = await payTipsOut(SITE, ACTOR, {
+      userId: WAITER,
+      userName: 'Nomsa Dlamini',
+      range,
+      method: 'cash',
+      note: 'Tips test envelope',
+    })
+    ok('a payout succeeds', paid.ok === true, paid.ok ? `R${paid.amount}` : paid.error)
+    ok(
+      '  for the amount the tips add up to, not a figure passed in',
+      paid.ok && paid.amount === 50,
+      paid.ok ? String(paid.amount) : '',
+    )
+
+    const owedAfter = await tipsOwed(SITE, range)
+    ok(
+      '*** once paid, those tips are NO LONGER OWED ***',
+      owedAfter.find((r) => r.userId === WAITER) === undefined,
+      JSON.stringify(owedAfter.filter((r) => r.userId === WAITER)),
+    )
+    /* The other half of the same property: paying does not ERASE what was earned. A screen
+       that answered "earned" with the owed figure would tell a waiter they earned nothing. */
+    const earned = await tipsEarned(SITE, range)
+    ok(
+      '  but they still show as EARNED',
+      earned.find((r) => r.userId === WAITER)?.total === 50,
+      String(earned.find((r) => r.userId === WAITER)?.total),
+    )
+
+    const again = await payTipsOut(SITE, ACTOR, {
+      userId: WAITER,
+      userName: 'Nomsa Dlamini',
+      range,
+      method: 'cash',
+    })
+    ok(
+      '*** and PAYING THEM AGAIN IS REFUSED ***',
+      again.ok === false && /no unpaid tips/i.test(again.ok === false ? again.error : ''),
+      again.ok ? 'PAID TWICE' : again.error,
+    )
+
+    /* ── The pool split ── */
+    const poolTotal = (await tipsOwed(SITE, range)).find((r) => r.userId === null)?.total ?? 0
+
+    const short = await splitPoolOut(SITE, ACTOR, {
+      range,
+      method: 'cash',
+      shares: [{ userId: WAITER, userName: 'Nomsa Dlamini', amount: round(poolTotal - 5, 2) }],
+    })
+    ok(
+      '*** a split that does not add up to the pool is REFUSED ***',
+      short.ok === false,
+      short.ok ? 'ACCEPTED A SHORT SPLIT' : short.error,
+    )
+    const long = await splitPoolOut(SITE, ACTOR, {
+      range,
+      method: 'cash',
+      shares: [{ userId: WAITER, userName: 'Nomsa Dlamini', amount: round(poolTotal + 5, 2) }],
+    })
+    ok('  and so is one that pays out more than the pool', long.ok === false, long.ok ? 'OVERPAID' : long.error)
+
+    const half = round(poolTotal / 2, 2)
+    const split = await splitPoolOut(SITE, ACTOR, {
+      range,
+      method: 'cash',
+      shares: [
+        { userId: WAITER, userName: 'Nomsa Dlamini', amount: half },
+        { userId: 28, userName: 'Tiaan Bryson', amount: round(poolTotal - half, 2) },
+      ],
+    })
+    ok('an exact split succeeds', split.ok === true, split.ok ? `R${split.amount}` : split.error)
+    ok('  writing one payout per person', split.ok && split.payoutIds.length === 2)
+    ok(
+      '*** and the pool is settled ONCE, so it cannot be split again ***',
+      (await tipsOwed(SITE, range)).find((r) => r.userId === null) === undefined,
+    )
+
+    const payouts = await listPayouts(SITE, range)
+    const shares = payouts.filter((p) => p.fromPool)
+    ok(
+      '  a pool share says where it came from, not that they earned it',
+      shares.length === 2 && shares.every((s) => s.fromPool),
+      JSON.stringify(shares.map((s) => `${s.userName}:${s.amount}:pool=${s.fromPool}`)),
+    )
+    ok(
+      '  and the envelope names who handed it over',
+      payouts.every((p) => p.paidByName.length > 0),
+      payouts.map((p) => p.paidByName).join(','),
+    )
+
+    /* ── Reversal ──
+       ON DELETE SET NULL, not CASCADE. Deleting a payout must return its tips to OWED, not
+       delete the record that a customer left money. This is the assertion that would catch
+       the FK being written the other way round — where undoing a payment destroys the tips. */
+    const first = payouts.find((p) => !p.fromPool)
+    if (first) {
+      await siteExecute(SITE, 'DELETE FROM tip_payouts WHERE id = ?', [first.id])
+      const back = await tipsOwed(SITE, range)
+      ok(
+        '*** reversing a payout returns its tips to OWED, and does not delete them ***',
+        back.find((r) => r.userId === WAITER)?.total === 50,
+        String(back.find((r) => r.userId === WAITER)?.total),
+      )
+      const stillThere = await siteQueryOne<any>(
+        SITE,
+        'SELECT COUNT(*) AS n FROM sales_tips WHERE user_id = ?',
+        [WAITER],
+      )
+      ok('  the tip rows survive the payout being deleted', toNum(stillThere?.n) === 2, String(stillThere?.n))
+    }
+
+    /* ── Two managers, one button ──
+       MEASURED, because this is the failure that bit offline returns: four concurrent
+       requests carrying one return produced THREE credit notes, and a customer was refunded
+       R46 with R138 on the books. The shape is identical here — read a total, write a
+       payout — so it is asserted rather than assumed. `FOR UPDATE` is what makes the three
+       losers block and then find nothing unpaid, instead of all four paying the same money. */
+    {
+      const racers = await Promise.all(
+        [1, 2, 3, 4].map(() =>
+          payTipsOut(SITE, { userId: 1, userName: 'Tips race' }, {
+            userId: WAITER,
+            userName: 'Nomsa Dlamini',
+            range,
+            method: 'cash',
+          }).catch((e: Error) => ({ ok: false as const, error: `THREW: ${e.message}` })),
+        ),
+      )
+      const winners = racers.filter((r) => r.ok)
+      ok(
+        '*** FOUR managers pressing Pay at once produce ONE envelope ***',
+        winners.length === 1,
+        `${winners.length} winner(s): ${racers.map((r) => (r.ok ? `R${r.amount}` : 'refused')).join(', ')}`,
+      )
+      const envelopes = await siteQuery<any>(
+        SITE,
+        "SELECT amount FROM tip_payouts WHERE paid_by_name = 'Tips race'",
+      )
+      ok(
+        '  and exactly one payout row, for the full amount, not four',
+        envelopes.length === 1 && toNum(envelopes[0]?.amount) === 50,
+        `${envelopes.length} row(s) totalling R${envelopes.reduce((s: number, e: any) => s + toNum(e.amount), 0)}`,
+      )
+      await siteExecute(SITE, "DELETE FROM tip_payouts WHERE paid_by_name = 'Tips race'")
+    }
+
+    ok(
+      'an unknown payment method is refused',
+      (await payTipsOut(SITE, ACTOR, {
+        userId: WAITER,
+        userName: 'Nomsa Dlamini',
+        range,
+        method: 'bitcoin' as never,
+      })).ok === false,
+    )
+
+    await siteExecute(SITE, 'DELETE FROM tip_payouts WHERE paid_by_name = ?', [ACTOR.userName])
+    await siteExecute(SITE, 'DELETE FROM sales_tips WHERE user_id IN (?,?)', [WAITER, 28])
+    await siteExecute(SITE, "DELETE FROM sales_tips WHERE document_id = ? AND source = 'service'", [draft.id])
   }
 
   /* ── Clean up ───────────────────────────────────────────────────────────── */
