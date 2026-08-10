@@ -23,6 +23,26 @@ const EDGE: Record<CategoryTone, string> = {
 }
 
 /**
+ * The hairline round a row that has an edge, in the same hue.
+ *
+ * Held at 30% so it reads as the bar's own outline continuing round the row rather
+ * than as a second, competing line: a department at full strength on all four sides
+ * is a box shouting for attention, and a rail of twelve of them is twelve boxes all
+ * shouting. The bar stays solid because that is the part meant to be found.
+ */
+const EDGE_BORDER: Record<CategoryTone, string> = {
+  indigo: 'border-cat-indigo/30',
+  violet: 'border-cat-violet/30',
+  emerald: 'border-cat-emerald/30',
+  amber: 'border-cat-amber/30',
+  sky: 'border-cat-sky/30',
+  rose: 'border-cat-rose/30',
+  teal: 'border-cat-teal/30',
+  orange: 'border-cat-orange/30',
+  slate: 'border-cat-slate/30',
+}
+
+/**
  * A full-width, touch-sized row that is a button.
  *
  * The kit's `Button` is one line of centred label; this is the other shape a till
@@ -88,9 +108,14 @@ export function TouchRow({
            plain p-3 every other row in the app uses. */
         edge ? 'pl-4' : 'pl-3'
       } ${
+        /* `active` still wins: which row is CHOSEN has to be legible at a glance, and
+           a brand-blue outline says that where a slightly stronger department hue
+           would just look like another department. */
         tone === 'active'
           ? 'border-brand/40 bg-brand-soft'
-          : 'border-border bg-surface hover:border-brand/50'
+          : edge
+            ? `${EDGE_BORDER[edge]} bg-surface hover:border-brand/50`
+            : 'border-border bg-surface hover:border-brand/50'
       } ${className}`}
     >
       {/* aria-hidden: the colour repeats what the title already says, and a screen
