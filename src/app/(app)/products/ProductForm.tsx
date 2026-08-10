@@ -24,6 +24,7 @@ import {
   Button,
   Callout,
   Card,
+  EDIT_COLUMN,
   Field,
   Input,
   SectionTitle,
@@ -198,10 +199,10 @@ export default function ProductForm({
 
   const initial = (description.trim()[0] ?? '?').toUpperCase()
 
-  // Capped rather than full-bleed: the pricing tables are wide, but past about
-  // 1100px the form's labelled fields stretch into unreadable lines.
+  // EDIT_COLUMN, not a literal: the variants and photographs panels below this
+  // form are separate siblings on the page and have to match it exactly.
   return (
-    <div className="flex w-full max-w-[1100px] flex-col gap-4">
+    <div className={`flex ${EDIT_COLUMN} flex-col gap-4`}>
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-4">
         {product && <input type="hidden" name="id" value={product.id} />}
 

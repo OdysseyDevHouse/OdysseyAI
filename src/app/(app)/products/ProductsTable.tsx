@@ -7,6 +7,7 @@ import {
   Badge,
   ButtonLink,
   DataTable,
+  Icons,
   RowTile,
   TextLink,
   type Column,
@@ -38,6 +39,8 @@ export default function ProductsTable({
   costBasis,
   showCost,
   empty,
+  groupHrefs,
+  parentNames,
 }: {
   items: ProductRow[]
   /** Department id -> its full path, resolved on the server. */
@@ -45,13 +48,34 @@ export default function ProductsTable({
   costBasis: 'last' | 'average'
   showCost: boolean
   empty: Empty
+  /**
+   * Parent id -> where clicking that group goes, built on the server.
+   *
+   * A map rather than a function because this is a client component and the
+   * URL helpers are server-side, exactly as departmentPaths is.
+   */
+  groupHrefs: Record<number, string>
+  /**
+   * Parent id -> description, for the children a search turned up.
+   *
+   * A search un-collapses groups (see listProducts), so "Large" on its own is
+   * ambiguous across a catalogue. The parent's name restores the context the
+   * collapsed list would otherwise have given.
+   */
+  parentNames: Record<number, string>
 }) {
+  /** Where a row leads: its group if it is a parent, else its own edit form. */
+  const rowHref = (p: ProductRow) =>
+    (p.hasVariants ? groupHrefs[p.id] : null) ?? `/products/${p.id}`
+
   const columns: Column<ProductRow>[] = [
     {
       key: 'code',
       header: 'Code',
       sortable: true,
-      cell: (p) => <TextLink href={`/products/${p.id}`}>{p.code}</TextLink>,
+      // A parent's code is not orderable or scannable, so it points at the
+      // group rather than at an edit form for a row nobody transacts against.
+      cell: (p) => <TextLink href={rowHref(p)}>{p.code}</TextLink>,
       sortValue: (p) => p.code,
     },
     {
@@ -59,9 +83,24 @@ export default function ProductsTable({
       header: 'Product',
       sortable: true,
       cell: (p) => (
-        <Link href={`/products/${p.id}`} className="flex items-center gap-2.5 hover:text-brand">
+        <Link href={rowHref(p)} className="flex items-center gap-2.5 hover:text-brand">
           <RowTile label={p.description} token={p.imageColor} />
           <span className="min-w-0 truncate text-ink">{p.description}</span>
+          {/* The badge is the whole point of collapsing: it says this one row
+              stands for several products, and that it can be opened. */}
+          {p.hasVariants && (
+            <Badge tone="brand">
+              {p.variantCount} variant{p.variantCount === 1 ? '' : 's'}
+            </Badge>
+          )}
+          {/* Only when a search has un-collapsed the groups. Inside a group the
+              page header already names the parent, and repeating it on all
+              twenty rows is noise under a heading that just said it. */}
+          {p.parentId !== null && parentNames[p.parentId] && (
+            <span className="min-w-0 shrink truncate text-xs text-muted">
+              in {parentNames[p.parentId]}
+            </span>
+          )}
           {p.isArchived && <Badge>Archived</Badge>}
         </Link>
       ),
@@ -86,8 +125,15 @@ export default function ProductsTable({
       header: costBasis === 'last' ? 'Last cost' : 'Avg cost',
       numeric: true,
       sortable: true,
-      cell: (p) => <span className="text-muted">{formatMoney(p.cost.effective)}</span>,
-      sortValue: (p) => p.cost.effective,
+      // A parent is never bought, so its cost columns are zeros that mean
+      // "not applicable". Rendering them as R0.00 would read as free.
+      cell: (p) =>
+        p.hasVariants ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <span className="text-muted">{formatMoney(p.cost.effective)}</span>
+        ),
+      sortValue: (p) => (p.hasVariants ? -1 : p.cost.effective),
     },
     {
       key: 'price',
@@ -95,6 +141,9 @@ export default function ProductsTable({
       numeric: true,
       sortable: true,
       cell: (p) => {
+        // Variants price separately — that is the commonest reason to have
+        // them — so a group has no single shelf price to show.
+        if (p.hasVariants) return <span className="text-faint">—</span>
         const price = defaultPrice(p)
         return price ? (
           <span className="text-ink">{formatMoney(price.sellIncl)}</span>
@@ -102,7 +151,7 @@ export default function ProductsTable({
           <span className="text-faint">—</span>
         )
       },
-      sortValue: (p) => defaultPrice(p)?.sellIncl ?? -1,
+      sortValue: (p) => (p.hasVariants ? -1 : defaultPrice(p)?.sellIncl ?? -1),
     },
     {
       key: 'gp',
@@ -112,6 +161,9 @@ export default function ProductsTable({
       // Selling below cost is the exception the eye must catch; a healthy
       // margin is just a number.
       cell: (p) => {
+        // No cost and no price means no margin — and a -100% danger badge on
+        // every group would drown the real ones.
+        if (p.hasVariants) return <span className="text-faint">—</span>
         const price = defaultPrice(p)
         if (!price) return <span className="text-faint">—</span>
         return price.gp < 0 ? (
@@ -120,7 +172,7 @@ export default function ProductsTable({
           <span className="text-muted">{price.gp.toFixed(1)}%</span>
         )
       },
-      sortValue: (p) => defaultPrice(p)?.gp ?? -1e9,
+      sortValue: (p) => (p.hasVariants ? -1e9 : defaultPrice(p)?.gp ?? -1e9),
     },
     {
       key: 'stock',
@@ -130,6 +182,8 @@ export default function ProductsTable({
       // State gets a form, not just a value: 0 and 142 read identically in a
       // grey column at scanning speed. Out of stock is a danger badge, below
       // minimum a warning one; normal stock stays a plain tabular figure.
+      // On a group this is the total across its variants, so it answers the
+      // question the row is actually asked: is there any of this shirt left.
       cell: (p) =>
         p.stockOnHand <= 0 ? (
           <Badge tone="danger">Out of stock</Badge>
@@ -147,17 +201,29 @@ export default function ProductsTable({
       columns={columns.filter((c) => showCost || (c.key !== 'cost' && c.key !== 'gp'))}
       rows={items}
       getRowKey={(p) => p.id}
-      actions={(p) => (
-        <ButtonLink
-          href={`/products/${p.id}`}
-          variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label={`Edit ${p.description}`}
-        >
-          <Pencil size={14} />
-        </ButtonLink>
-      )}
+      actions={(p) =>
+        p.hasVariants ? (
+          <ButtonLink
+            href={rowHref(p)}
+            variant="ghost"
+            size="sm"
+            iconOnly
+            aria-label={`Show the ${p.variantCount} variants of ${p.description}`}
+          >
+            <Icons.ChevronRight size={14} />
+          </ButtonLink>
+        ) : (
+          <ButtonLink
+            href={`/products/${p.id}`}
+            variant="ghost"
+            size="sm"
+            iconOnly
+            aria-label={`Edit ${p.description}`}
+          >
+            <Pencil size={14} />
+          </ButtonLink>
+        )
+      }
       actionsOnHover
       empty={empty}
     />

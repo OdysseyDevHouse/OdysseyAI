@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Badge,
   Button,
@@ -56,6 +56,35 @@ type Draft = {
 }
 
 const SAVE_DELAY = 700
+
+/**
+ * What a variant's description says that its heading and axes do not.
+ *
+ * A child is nearly always described as "<parent> <axis>" — "Cotton Shirt
+ * Large" under a "Cotton Shirt" heading on a row already labelled "Large". Shown
+ * whole, every row in the group repeats two things the eye has just read, and
+ * the size — the only word that matters on a shelf — is the least prominent
+ * thing in the cell.
+ *
+ * So the parent's words and the axis values are removed and whatever REMAINS is
+ * shown. Usually nothing, which is the point. A child genuinely described in its
+ * own terms ("Cotton Shirt Large — factory second") keeps that remainder, so
+ * nothing a person deliberately typed is ever hidden.
+ */
+function residualDescription(line: StockTakeLine): string {
+  const words = new Set(
+    [line.parentDescription ?? '', line.axis1, line.axis2]
+      .join(' ')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean),
+  )
+  return line.description
+    .split(/\s+/)
+    .filter((word) => !words.has(word.toLowerCase()))
+    .join(' ')
+    .trim()
+}
 
 export default function CountSheet({
   takeId,
@@ -195,7 +224,19 @@ export default function CountSheet({
     const term = search.trim().toLowerCase()
     return lines.filter((line) => {
       if (term) {
-        const haystack = `${line.productCode ?? ''} ${line.description}`.toLowerCase()
+        // The parent's name and the axis values are searchable too: on a sheet
+        // someone types "shirt" to reach the shirts, and the variants are what
+        // is actually on it — matching only their own descriptions would answer
+        // "nothing on this sheet" about forty rows of shirts.
+        const haystack = [
+          line.productCode ?? '',
+          line.description,
+          line.parentDescription ?? '',
+          line.axis1,
+          line.axis2,
+        ]
+          .join(' ')
+          .toLowerCase()
         if (!haystack.includes(term)) return false
       }
       if (filter === 'uncounted') return (drafts[line.id]?.text ?? '').trim() === ''
@@ -258,6 +299,7 @@ export default function CountSheet({
   return (
     <>
       <TableToolbar
+        inCard
         actions={
           <>
             <SegmentedControl
@@ -355,118 +397,167 @@ export default function CountSheet({
               </tr>
             </thead>
             <tbody>
-              {visible.map((line) => {
+              {visible.map((line, index) => {
                 const draft = drafts[line.id]
                 const counted = countedFor(line)
                 const variance = varianceFor(line)
                 const isUncounted = (draft?.text ?? '').trim() === ''
 
-                return (
-                  <tr key={line.id} className="border-b border-border last:border-0">
-                    <td className={`${TABLE_TD} whitespace-nowrap text-ink-2`}>
-                      {line.productCode ?? '—'}
-                    </td>
-                    <td className={TABLE_TD}>
-                      <span className="text-ink">{line.description}</span>
-                      {line.lineMode === 'recount' && (
-                        <Badge tone="warning" className="ml-2">
-                          Recount
-                        </Badge>
-                      )}
+                /* A group's variants sit consecutively (buildSheetLines orders
+                   them that way), so the heading goes in when the parent
+                   changes. Computed off the VISIBLE list rather than all
+                   lines, or filtering to "uncounted" would strand a heading
+                   above nothing, or drop it from the rows that remain. */
+                const previous = index > 0 ? visible[index - 1] : null
+                const startsGroup =
+                  line.parentId !== null && line.parentId !== previous?.parentId
 
-                      {/* A serial line counts individual units, so the units
-                          themselves live in the row. Each is removable, because
-                          the commonest correction on a shelf is scanning the
-                          wrong box. */}
-                      {line.productType === 'serial' && (
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          {(serials[line.id] ?? []).map((s) => (
-                            <span
-                              key={s}
-                              className="inline-flex items-center gap-1 rounded-pill bg-surface-2 px-2 py-0.5 text-xs text-ink-2"
-                            >
-                              {s}
-                              {!readOnly && (
-                                <button
-                                  type="button"
-                                  onClick={() => void toggleSerial(line, s, true)}
-                                  aria-label={`Remove ${s}`}
-                                  className="text-faint hover:text-danger"
-                                >
-                                  <Icons.Close size={12} />
-                                </button>
-                              )}
+                return (
+                  <Fragment key={line.id}>
+                    {startsGroup && (
+                      /* One shelf, one heading. Without it five sizes of the
+                         same shirt read as five unrelated products, and the
+                         counter has no way to see they belong together — which
+                         is exactly when a size gets counted twice or skipped. */
+                      <tr className="border-b border-border bg-surface-2">
+                        <td colSpan={5} className="px-4 py-1.5">
+                          <span className="text-sm font-medium text-ink">
+                            {line.parentDescription}
+                          </span>
+                          <span className="ml-2 text-xs text-muted">
+                            {visible.filter((l) => l.parentId === line.parentId).length} variants
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                    <tr className="border-b border-border last:border-0">
+                      <td className={`${TABLE_TD} whitespace-nowrap text-ink-2`}>
+                        {line.productCode ?? '—'}
+                      </td>
+                      <td className={TABLE_TD}>
+                        {/* Under a heading the row is one variant OF that shirt,
+                            so it shows ONLY what tells it apart — "Large · Blue".
+                            The parent's name is in the heading directly above, and
+                            repeating it per row ("Large  Blue Cotton Shirt Large")
+                            buries the one word the counter is scanning for.
+
+                            Whatever the description adds BEYOND the parent's name
+                            still shows, so a child described in its own terms is
+                            not silently hidden. */}
+                        {line.parentId !== null && (line.axis1 || line.axis2) ? (
+                          <>
+                            <span className="pl-4 font-medium text-ink">
+                              {[line.axis1, line.axis2].filter(Boolean).join(' · ')}
                             </span>
-                          ))}
-                          {!readOnly && (
-                            <Input
-                              size="md"
-                              placeholder="Scan a unit"
-                              aria-label={`Scan a serial number for ${line.description}`}
-                              onKeyDown={(e) => {
-                                if (e.key !== 'Enter') return
-                                e.preventDefault()
-                                const el = e.target as HTMLInputElement
-                                void toggleSerial(line, el.value)
-                                el.value = ''
-                              }}
-                              className="h-control-sm w-40 text-xs"
-                            />
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
-                      {formatQty(line.snapshotQty)}
-                    </td>
-                    <td className={`${TABLE_TD_INPUT} ${TABLE_NUMERIC} w-32`}>
-                      {/* A serial line is counted by scanning units, not by
-                          typing a number — so its quantity is shown, never
-                          entered. The two can then never disagree. */}
-                      {line.productType === 'serial' ? (
-                        <span className={serialCount(line) === 0 ? 'text-faint' : 'text-ink'}>
-                          {serialCount(line) === 0 ? '—' : serialCount(line)}
-                        </span>
-                      ) : readOnly ? (
-                        <span className="text-ink">
-                          {line.countedQty === null ? '—' : formatQty(line.countedQty)}
-                        </span>
-                      ) : (
-                        <Input
-                          ref={(el) => {
-                            inputs.current[line.id] = el
-                          }}
-                          value={draft?.text ?? ''}
-                          onChange={(e) => change(line.id, e.target.value)}
-                          onBlur={() => commit(line.id)}
-                          onKeyDown={(e) => {
-                            if (e.key !== 'Enter') return
-                            e.preventDefault()
-                            commit(line.id)
-                            advance(line.id)
-                          }}
-                          inputMode="decimal"
-                          aria-label={`Counted quantity for ${line.description}`}
-                          // An uncounted line reads as a prompt, a counted one as
-                          // a value. This is the whole zero-versus-blank contract.
-                          placeholder="—"
-                          className={`text-right ${isUncounted ? 'text-faint' : 'text-ink'}`}
-                        />
-                      )}
-                    </td>
-                    <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                      {counted === null ? (
-                        <span className="text-faint">—</span>
-                      ) : Math.abs(variance ?? 0) < 0.0005 ? (
-                        <span className="text-muted">0</span>
-                      ) : (
-                        <span className={(variance ?? 0) < 0 ? 'text-danger' : 'text-success'}>
-                          {(variance ?? 0) > 0 ? '+' : ''}
-                          {formatQty(variance ?? 0)}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
+                            {residualDescription(line) && (
+                              <span className="ml-2 text-xs text-muted">
+                                {residualDescription(line)}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-ink">{line.description}</span>
+                        )}
+                        {line.lineMode === 'recount' && (
+                          <Badge tone="warning" className="ml-2">
+                            Recount
+                          </Badge>
+                        )}
+
+                        {/* A serial line counts individual units, so the units
+                            themselves live in the row. Each is removable, because
+                            the commonest correction on a shelf is scanning the
+                            wrong box. */}
+                        {line.productType === 'serial' && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            {(serials[line.id] ?? []).map((s) => (
+                              <span
+                                key={s}
+                                className="inline-flex items-center gap-1 rounded-pill bg-surface-2 px-2 py-0.5 text-xs text-ink-2"
+                              >
+                                {s}
+                                {!readOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void toggleSerial(line, s, true)}
+                                    aria-label={`Remove ${s}`}
+                                    className="text-faint hover:text-danger"
+                                  >
+                                    <Icons.Close size={12} />
+                                  </button>
+                                )}
+                              </span>
+                            ))}
+                            {!readOnly && (
+                              <Input
+                                size="md"
+                                placeholder="Scan a unit"
+                                aria-label={`Scan a serial number for ${line.description}`}
+                                onKeyDown={(e) => {
+                                  if (e.key !== 'Enter') return
+                                  e.preventDefault()
+                                  const el = e.target as HTMLInputElement
+                                  void toggleSerial(line, el.value)
+                                  el.value = ''
+                                }}
+                                className="h-control-sm w-40 text-xs"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
+                        {formatQty(line.snapshotQty)}
+                      </td>
+                      <td className={`${TABLE_TD_INPUT} ${TABLE_NUMERIC} w-32`}>
+                        {/* A serial line is counted by scanning units, not by
+                            typing a number — so its quantity is shown, never
+                            entered. The two can then never disagree. */}
+                        {line.productType === 'serial' ? (
+                          <span className={serialCount(line) === 0 ? 'text-faint' : 'text-ink'}>
+                            {serialCount(line) === 0 ? '—' : serialCount(line)}
+                          </span>
+                        ) : readOnly ? (
+                          <span className="text-ink">
+                            {line.countedQty === null ? '—' : formatQty(line.countedQty)}
+                          </span>
+                        ) : (
+                          <Input
+                            ref={(el) => {
+                              inputs.current[line.id] = el
+                            }}
+                            value={draft?.text ?? ''}
+                            onChange={(e) => change(line.id, e.target.value)}
+                            onBlur={() => commit(line.id)}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter') return
+                              e.preventDefault()
+                              commit(line.id)
+                              advance(line.id)
+                            }}
+                            inputMode="decimal"
+                            aria-label={`Counted quantity for ${line.description}`}
+                            // An uncounted line reads as a prompt, a counted one as
+                            // a value. This is the whole zero-versus-blank contract.
+                            placeholder="—"
+                            className={`text-right ${isUncounted ? 'text-faint' : 'text-ink'}`}
+                          />
+                        )}
+                      </td>
+                      <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                        {counted === null ? (
+                          <span className="text-faint">—</span>
+                        ) : Math.abs(variance ?? 0) < 0.0005 ? (
+                          <span className="text-muted">0</span>
+                        ) : (
+                          <span className={(variance ?? 0) < 0 ? 'text-danger' : 'text-success'}>
+                            {(variance ?? 0) > 0 ? '+' : ''}
+                            {formatQty(variance ?? 0)}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  </Fragment>
                 )
               })}
             </tbody>
