@@ -122,9 +122,50 @@ async function goto(p) {
   return evaluate('location.pathname')
 }
 
+/**
+ * An account linked to more than one site must choose one before any app route
+ * will render, so signing in is not finished until this has run. Two shapes to
+ * handle: the dialog that opens over the login screen after signing in, and the
+ * standalone /select-site page that guards still redirect to. SMOKE_SITE picks
+ * by name or code; the default is the first store listed.
+ */
+async function chooseStoreIfAsked() {
+  const onPage = (await evaluate('location.pathname')).startsWith('/select-site')
+  const inDialog = await evaluate(`!!document.querySelector('dialog[open]')`)
+  if (!onPage && !inDialog) return
+
+  const wanted = process.env.SMOKE_SITE
+  const clicked = await evaluate(
+    [
+      '(() => {',
+      // Scope to the dialog when there is one, so the login form behind it
+      // cannot be mistaken for a store row.
+      '  const root = document.querySelector("dialog[open]") || document',
+      '  const rows = [...root.querySelectorAll("a[href], button")]',
+      '    .filter((el) => (el.textContent || "").trim().length > 0)',
+      '    .filter((el) => !/sign out|cancel/i.test(el.textContent))',
+      '  const want = ' + JSON.stringify(wanted || ''),
+      '  const hit = want',
+      '    ? rows.find((el) => el.textContent.toLowerCase().includes(want.toLowerCase()))',
+      '    : rows[0]',
+      '  if (!hit) return null',
+      '  hit.click()',
+      '  return hit.textContent.replace(/\\s+/g, " ").trim()',
+      '})()',
+    ].join('\n'),
+  )
+  if (!clicked) throw new Error('a store had to be chosen but no store row was found')
+  for (let i = 0; i < 120; i++) {
+    await sleep(500)
+    const p = await evaluate('location.pathname')
+    if (!p.startsWith('/select-site') && p !== '/') return
+  }
+  throw new Error('picking a store did not open it')
+}
+
 async function signIn() {
   const at = await goto('/')
-  if (at !== '/' && !at.startsWith('/login')) return
+  if (at !== '/' && !at.startsWith('/login')) return chooseStoreIfAsked()
   for (let i = 0; i < 40; i++) {
     if (await evaluate(`!!document.querySelector('input[name="email"]')`)) break
     await sleep(500)
@@ -142,7 +183,10 @@ async function signIn() {
   })()`)
   for (let i = 0; i < 120; i++) {
     const p = await evaluate('location.pathname')
-    if (p !== '/' && !p.startsWith('/login')) return
+    if (p !== '/' && !p.startsWith('/login')) return chooseStoreIfAsked()
+    // A multi-store account never navigates: the picker opens in place, so
+    // waiting for the path to change would time out on a working sign-in.
+    if (await evaluate(`!!document.querySelector('dialog[open]')`)) return chooseStoreIfAsked()
     await sleep(500)
   }
   throw new Error('could not sign in')

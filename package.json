@@ -19,6 +19,7 @@
     "dist": "npm run build:desktop && electron-builder --win --publish never",
     "test:math": "tsx scripts/test-document-math.ts",
     "test:navigation": "tsx scripts/test-navigation.ts",
+    "probe:page-score": "tsx scripts/probe-page-score.ts",
     "test:sequences": "tsx --conditions=react-server --env-file=.env scripts/test-sequences.ts",
     "test": "npm run test:math && npm run test:navigation && npm run test:sequences && npm run test:posting && npm run test:invoicing && npm run test:account-sales && npm run test:account-types && npm run test:laybys && npm run test:credit-notes && npm run test:void && npm run test:cashup && npm run test:purchasing && npm run test:locations && npm run test:transfers && npm run test:sales-orders && npm run test:composition && npm run test:manufacturing && npm run test:serials && npm run test:grv-serials && npm run test:supplier-returns && npm run test:product-setup && npm run test:sales-edit && npm run test:opening-balances && npm run test:statement-periods && npm run test:statements && npm run test:statement-runs && npm run test:payment-runs && npm run test:party-records && npm run test:dashboard && npm run test:online-store && npm run test:online-orders && npm run test:online-content && npm run test:storefront && npm run test:payments && npm run test:builder && npm run test:product-images && npm run test:customer-accounts && npm run test:order-statuses && npm run test:specials && npm run test:price-schedules && npm run test:price-schedule-run && npm run test:contract-model && npm run test:contracts",
     "test:users": "tsx --conditions=react-server --env-file=.env scripts/test-users-pins.ts",
@@ -34,6 +35,9 @@
     "test:purchase-bonus": "tsx --conditions=react-server --env-file=.env scripts/test-purchase-bonus.ts",
     "test:purchase-discount": "tsx --conditions=react-server --env-file=.env scripts/test-purchase-discount.ts",
     "test:reorder-suggestions": "tsx --conditions=react-server --env-file=.env scripts/test-reorder-suggestions.ts",
+    "test:purchase-drafts": "tsx --conditions=react-server --env-file=.env scripts/test-purchase-drafts.ts",
+    "test:purchase-guards": "tsx --conditions=react-server --env-file=.env scripts/test-purchase-guards.ts",
+    "test:supplier-prices": "tsx --conditions=react-server --env-file=.env scripts/test-supplier-prices.ts",
     "test:purchase-orders": "tsx --conditions=react-server --env-file=.env scripts/test-purchase-orders.ts",
     "test:purchasing": "tsx --conditions=react-server --env-file=.env scripts/test-purchasing.ts",
     "test:statement-runs": "tsx --conditions=react-server --env-file=.env scripts/test-statement-runs.ts",
@@ -67,6 +71,7 @@
     "test:void": "tsx --conditions=react-server --env-file=.env scripts/test-void.ts",
     "test:account-types": "tsx --conditions=react-server --env-file=.env scripts/test-account-types.ts",
     "test:laybys": "tsx --conditions=react-server --env-file=.env scripts/test-laybys.ts",
+    "test:reservations": "tsx --conditions=react-server --env-file=.env scripts/test-reservations.ts",
     "test:locations": "tsx --conditions=react-server --env-file=.env scripts/test-locations.ts",
     "test:party-records": "tsx --conditions=react-server --env-file=.env scripts/test-party-records.ts",
     "test:transfers": "tsx --conditions=react-server --env-file=.env scripts/test-transfers.ts",
@@ -107,7 +112,8 @@
     "test:tip-math": "tsx scripts/test-tip-math.ts",
     "test:tips": "tsx --conditions=react-server --env-file=.env scripts/test-tips.ts",
     "test:pos-floor": "tsx --conditions=react-server --env-file=.env scripts/test-pos-floor.ts",
-    "test:pos-split": "tsx --conditions=react-server --env-file=.env scripts/test-pos-split.ts"
+    "test:pos-split": "tsx --conditions=react-server --env-file=.env scripts/test-pos-split.ts",
+    "test:rich-paste": "tsx scripts/test-rich-paste.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",
