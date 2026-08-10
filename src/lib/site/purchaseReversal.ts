@@ -120,7 +120,10 @@ export async function returnableLines(siteId: number, grvId: number) {
     return {
       ...line,
       alreadyReturned: already,
-      returnable: round(Math.max(line.qtyReceived - already, 0), 3),
+      // Against what ARRIVED, bonus included: a free unit is physically on the
+      // shelf and can be faulty like any other, so it must be returnable. It
+      // carries a landed cost of its own, so the credit is still right.
+      returnable: round(Math.max(line.qtyArrived - already, 0), 3),
     }
   })
 }

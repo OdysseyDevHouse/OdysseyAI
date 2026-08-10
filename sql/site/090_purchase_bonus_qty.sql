@@ -1,0 +1,37 @@
+-- Free units on a purchase line. "Buy 10, get 1 free."
+--
+-- Until now the only way to record a promotional buy was to fake the unit
+-- cost: receive 11 at 90.91 instead of 10 at 100 plus 1 free. That puts a
+-- number on the line that is not the number on the supplier's invoice, so the
+-- GRV stops agreeing with the document it was keyed from, and every query
+-- about what was actually paid per unit gets the wrong answer.
+--
+-- ── THE RULE, AND IT IS THE WHOLE REASON THIS COLUMN EXISTS ──────────────
+--
+-- Bonus units increase what ARRIVED but not what is OWED:
+--
+--   stock movement   = qty_received + qty_bonus     <- more units on the shelf
+--   line value       = qty_received x unit_cost     <- bonus contributes nothing
+--   landed unit cost = (net + charges) / (qty_received + qty_bonus)
+--
+-- That last line is the one to get right. Dividing by qty_received alone
+-- overstates the cost of every promotional buy, and because a GRV is the only
+-- thing that writes products.average_cost, the error is BLENDED IN and
+-- compounds with every subsequent receipt. It does not throw, it does not
+-- reconcile short -- it just quietly prices next quarter's GP report wrong.
+--
+-- Worked, on 10 at R100 with 1 free:
+--   owed             = R1000, exactly what the invoice says
+--   units in         = 11
+--   landed each      = 1000 / 11 = R90.9091
+--   average cost     = blended at 90.9091, not at 100
+--
+-- ── SERIALS ──────────────────────────────────────────────────────────────
+--
+-- A serial-tracked line needs one serial per unit ARRIVING, bonus included: a
+-- free phone is still a phone with an IMEI. The validation counts against
+-- qty_received + qty_bonus for exactly that reason -- otherwise the free unit
+-- enters stock with no serial and the two figures disagree with nothing to say
+-- which is right.
+ALTER TABLE purchase_document_lines
+  ADD COLUMN IF NOT EXISTS qty_bonus DECIMAL(12,3) NOT NULL DEFAULT 0.000 AFTER qty_received;
