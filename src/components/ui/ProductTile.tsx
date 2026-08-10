@@ -3,6 +3,9 @@
 import type { ReactNode } from 'react'
 import { CategoryTile, type CategoryTone } from './CategoryTile'
 import { isShortTile } from './TileGrid'
+/* The same edge the department rail wears — see EDGE_RING in styles.ts. Shared so a
+   tile grid and the rail beside it cannot drift apart. */
+import { EDGE_RING, EDGE_LEAD } from './styles'
 
 /**
  * A tile on the till — a product, a department, a quick key.
@@ -26,6 +29,7 @@ export function ProductTile({
   tone,
   image,
   chevron = false,
+  edge,
   tileHeight = 150,
   selected = false,
   disabled = false,
@@ -47,6 +51,15 @@ export function ProductTile({
    * that never arrives.
    */
   chevron?: boolean
+  /**
+   * A colour down the leading edge, matching the department rail's rows.
+   *
+   * Usually the same tone as the disc, so the two are one identifier rather than two
+   * decorations. Left off where a grid is all one kind of thing — an edge on every
+   * tile of a single department is decoration, and that is what makes colour stop
+   * meaning anything elsewhere.
+   */
+  edge?: CategoryTone
   tileHeight?: number
   selected?: boolean
   disabled?: boolean
@@ -97,8 +110,21 @@ export function ProductTile({
       onClick={onClick}
       disabled={disabled}
       className={`flex h-full min-w-0 rounded-card border bg-surface text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
-        selected ? 'border-brand bg-brand-soft' : 'border-border hover:border-brand/50'
-      } ${short ? 'items-center gap-3 px-3 py-2' : 'flex-col gap-2.5 p-3.5'}`}
+        selected
+          ? /* Selected takes the brand fill and hairline, but keeps its own leading
+               edge: being chosen must not change which product a tile reads as. */
+            `border-brand bg-brand-soft ${edge ? EDGE_LEAD[edge] : ''}`
+          : edge
+            ? /* No hover:border-brand with an edge — as one declaration it repaints
+                 all four sides and takes the leading colour with it, so the tile
+                 would lose its identity exactly when a finger is on it. */
+              `${EDGE_RING[edge]} ${EDGE_LEAD[edge]}`
+            : 'border-border hover:border-brand/50'
+      } ${edge ? 'border-l-4' : ''} ${
+        short
+          ? `items-center gap-3 py-2 pr-3 ${edge ? 'pl-2.5' : 'pl-3'}`
+          : `flex-col gap-2.5 py-3.5 pr-3.5 ${edge ? 'pl-3' : 'pl-3.5'}`
+      }`}
     >
       {glyph}
 

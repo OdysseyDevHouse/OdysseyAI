@@ -59,6 +59,7 @@ export {
   TILE_GRADIENTS,
   TILE_NONE,
   tileClass,
+  toneForTileToken,
   type TileSwatch,
 } from './tiles'
 export { SwatchPicker } from './SwatchPicker'

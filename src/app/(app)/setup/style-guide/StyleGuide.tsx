@@ -64,6 +64,7 @@ import {
   TILE_SWATCHES,
   TileGrid,
   toneForId,
+  toneForTileToken,
   TouchRow,
   ProductTile,
   Slider,
@@ -1259,11 +1260,15 @@ function TillTileSection() {
             {/* The real till art, resolved the way the till resolves it — a demo drawn
                 with stand-in glyphs would not show that the pictures and their discs
                 agree, which is the part worth checking. */}
+            {/* `edge` carries the colour the SHOP chose for the key — here shown as
+                the tile-* tokens a manager picks in the designer. A key with none
+                stored simply has no edge, as "Void sale" shows. */}
             <ActionTile
               title="Cash up"
               hint="Counts the drawer and closes the shift."
               icon={<KeyArt slug="cashup" />}
               tone={quickKeyArt({ actionSlug: 'cashup' })?.tone}
+              edge={toneForTileToken('tile-2') ?? undefined}
               onClick={() => {}}
             />
             <ActionTile
@@ -1271,16 +1276,16 @@ function TillTileSection() {
               hint="6 keys"
               icon={<KeyArt slug="supervisor" />}
               tone={quickKeyArt({ actionSlug: 'supervisor' })?.tone}
+              edge={toneForTileToken('tile-1') ?? undefined}
               chevron
               corner={<Icons.KeyRound size={13} />}
               onClick={() => {}}
             />
             <ActionTile
               title="Void sale"
-              hint="Clears the basket. Nothing has posted."
+              hint="No colour stored — so no edge."
               icon={<KeyArt slug="void-sale" />}
               tone={quickKeyArt({ actionSlug: 'void-sale' })?.tone}
-              disabled
               onClick={() => {}}
             />
           </TileGrid>
@@ -1296,12 +1301,14 @@ function TillTileSection() {
               price="R 55.00"
               icon={<Icons.Package size={20} />}
               tone={toneForId(3)}
+              edge={toneForId(3)}
               onClick={() => {}}
             />
             <ProductTile
               title="Frozen Foods"
               icon={<Icons.Tag size={20} />}
               tone={toneForId(5)}
+              edge={toneForId(5)}
               chevron
               onClick={() => {}}
             />

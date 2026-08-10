@@ -4,59 +4,10 @@ import type { ReactNode } from 'react'
 import { ChevronRight } from './icons'
 import type { CategoryTone } from './CategoryTile'
 
-/**
- * The coloured bar down a row's leading edge.
- *
- * Written out in full rather than built as `bg-cat-${tone}` — Tailwind scans source
- * text, so an interpolated class is never emitted and the bar renders invisible.
- */
-/**
- * A row's colour, as its BORDER rather than as a bar drawn on top of it.
- *
- * `border-l-*` at full strength with the other three sides at 30%: the leading edge
- * is the part meant to be found across a scrolling rail, and a department at full
- * strength on all four sides is a box shouting for attention — a rail of twelve is
- * twelve boxes all shouting.
- *
- * Being a real border is what curves the bar's INNER edge. Border-radius tapers a
- * border from both sides, so the colour narrows into the corners exactly as the card
- * does; an absolutely-positioned span can only round the two outer corners and leaves
- * a hard vertical line facing the text.
- *
- * Written out in full rather than built as `border-cat-${tone}` — Tailwind scans
- * source text, so an interpolated class is never emitted and the row renders with no
- * colour at all.
- */
-const EDGE_BORDER: Record<CategoryTone, string> = {
-  indigo: 'border-cat-indigo/30',
-  violet: 'border-cat-violet/30',
-  emerald: 'border-cat-emerald/30',
-  amber: 'border-cat-amber/30',
-  sky: 'border-cat-sky/30',
-  rose: 'border-cat-rose/30',
-  teal: 'border-cat-teal/30',
-  orange: 'border-cat-orange/30',
-  slate: 'border-cat-slate/30',
-}
-
-/**
- * The leading edge alone, at full strength.
- *
- * Separate from the map above so the SELECTED row can take the brand's hairline on
- * three sides and still keep its department's colour on the fourth — a row must not
- * change identity by being chosen.
- */
-const EDGE_LEAD: Record<CategoryTone, string> = {
-  indigo: 'border-l-cat-indigo',
-  violet: 'border-l-cat-violet',
-  emerald: 'border-l-cat-emerald',
-  amber: 'border-l-cat-amber',
-  sky: 'border-l-cat-sky',
-  rose: 'border-l-cat-rose',
-  teal: 'border-l-cat-teal',
-  orange: 'border-l-cat-orange',
-  slate: 'border-l-cat-slate',
-}
+/* The edge lives in styles.ts, shared with ProductTile and ActionTile — see the note
+   on EDGE_RING for why it is a border rather than a bar drawn on top, and why only
+   the leading side is at full strength. */
+import { EDGE_RING, EDGE_LEAD } from './styles'
 
 /**
  * A full-width, touch-sized row that is a button.
@@ -134,7 +85,7 @@ export function TouchRow({
            CHOSEN has to be legible at a glance, and a brand-blue tint says that where
            a slightly stronger department hue would just look like another department.
            The LEADING edge stays the department's own, so a row does not change
-           identity by being selected — hence EDGE_BORDER trailing here too, whose
+           identity by being selected — hence EDGE_LEAD trailing here too, whose
            border-l-* wins over border-brand/40 by being the more specific side. */
         tone === 'active'
           ? `border-brand/40 bg-brand-soft ${edge ? EDGE_LEAD[edge] : ''}`
@@ -143,7 +94,7 @@ export function TouchRow({
                  the department's leading edge with it — the row would lose its colour
                  at the moment a finger is on it, which is the moment it most needs to
                  be the one you aimed at. The press animation is the feedback instead. */
-              `${EDGE_BORDER[edge]} ${EDGE_LEAD[edge]} bg-surface`
+              `${EDGE_RING[edge]} ${EDGE_LEAD[edge]} bg-surface`
             : 'border-border bg-surface hover:border-brand/50'
       } ${className}`}
     >

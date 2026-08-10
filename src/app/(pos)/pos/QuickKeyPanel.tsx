@@ -1,7 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { ActionTile, Button, EmptyState, Icons, TileGrid, toneForId } from '@/components/ui'
+import {
+  ActionTile,
+  Button,
+  EmptyState,
+  Icons,
+  TileGrid,
+  toneForId,
+  toneForTileToken,
+} from '@/components/ui'
 import {
   actionForSlug,
   groupMembers,
@@ -183,6 +191,11 @@ function KeyButton({
       hint={hint}
       icon={icon}
       tone={art ? art.tone : toneForId(keyRow.id)}
+      /* The colour the SHOP chose for this key, not the one derived from its art.
+         A manager who set a key green expects a green edge, and a key with no
+         colour stored simply gets none — an edge invented for it would look like a
+         choice nobody made. */
+      edge={toneForTileToken(keyRow.colourToken) ?? undefined}
       tileHeight={tileHeight}
       chevron={keyRow.kind === 'group'}
       disabled={!enabled}
