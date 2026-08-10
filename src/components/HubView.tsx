@@ -11,8 +11,9 @@ import {
   Icons,
   SegmentedControl,
   ToolbarSearch,
+  hubGlyph as glyph,
 } from '@/components/ui'
-import type { HubGroup, HubIconName, HubItem } from '@/lib/hub'
+import type { HubGroup, HubItem } from '@/lib/hub'
 
 type ViewMode = 'grid' | 'list'
 
@@ -167,7 +168,7 @@ function GroupGrid({ group }: { group: HubGroup }) {
         <Badge tone="neutral">{group.items.length}</Badge>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {group.items.map((item) => (
           <ScreenTile key={item.href} item={item} />
         ))}
@@ -241,52 +242,6 @@ function GroupList({ group }: { group: HubGroup }) {
 
 /* ── icons ─────────────────────────────────────────────────────────────── */
 
-/**
- * Name → glyph, resolved here rather than in a catalogue: a catalogue is
- * imported by a server component, and a Lucide component cannot be serialised
- * across the boundary as a prop.
- */
-function glyph(name: HubIconName, size = 18) {
-  const Icon = ICONS[name]
-  return <Icon size={size} strokeWidth={1.7} />
-}
-
-const ICONS: Record<HubIconName, typeof Icons.Settings> = {
-  Users: Icons.Users,
-  KeyRound: Icons.KeyRound,
-  Store: Icons.Store,
-  Warehouse: Icons.Warehouse,
-  Percent: Icons.Percent,
-  CreditCard: Icons.CreditCard,
-  Terminal: Icons.Terminal,
-  LayoutGrid: Icons.LayoutGrid,
-  Hash: Icons.Hash,
-  Check: Icons.Check,
-  FileText: Icons.FileText,
-  Package: Icons.Package,
-  Scale: Icons.Scale,
-  Database: Icons.Database,
-  Palette: Icons.Palette,
-  Settings: Icons.Settings,
-  ShieldCheck: Icons.ShieldCheck,
-  Coins: Icons.Coins,
-  LineChart: Icons.LineChart,
-  BarChart: Icons.BarChart,
-  Landmark: Icons.Landmark,
-  Receipt: Icons.Receipt,
-  ListOrdered: Icons.ListOrdered,
-  Lock: Icons.Lock,
-  Reverse: Icons.Reverse,
-  CloudOff: Icons.Offline,
-  Mail: Icons.Mail,
-  Truck: Icons.Truck,
-  Clock: Icons.Clock,
-  Repeat: Icons.Repeat,
-  Tag: Icons.Tag,
-  MessageSquare: Icons.MessageSquare,
-  ShoppingBag: Icons.ShoppingBag,
-  Boxes: Icons.Boxes,
-  Bell: Icons.Bell,
-  Gem: Icons.Gem,
-  Stamp: Icons.Stamp,
-}
+/* The name → glyph map moved to the kit (components/ui/hubIcons.tsx): the global
+   search palette renders catalogue rows too, and two copies of a 37-entry map is
+   two things to update when a catalogue names a new icon. */
