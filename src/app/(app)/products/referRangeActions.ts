@@ -2,7 +2,15 @@
 
 import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
-import { createReferRange, type ReferRangeInput } from '@/lib/site/referRange'
+import {
+  createReferRange,
+  referChain,
+  addReferRung,
+  removeReferRung,
+  type ReferRangeInput,
+  type AddRungInput,
+  type ChainRung,
+} from '@/lib/site/referRange'
 
 /**
  * The refer wizard's one action.
@@ -25,4 +33,58 @@ export async function createReferRangeAction(
 
   revalidatePath('/products')
   return result
+}
+
+/*
+ * The Refer tab's own actions.
+ *
+ * The panel edits a chain rather than filling in a field, so it saves itself
+ * the way Variants and Serials do — adding a pack size CREATES A PRODUCT, and
+ * that cannot wait for the form's Save button. Each one re-reads the chain
+ * afterwards so the panel and the database cannot disagree after a partial
+ * failure.
+ */
+
+export async function referChainAction(
+  productId: number,
+): Promise<{ ok: true; chain: ChainRung[] } | { ok: false; error: string }> {
+  const ctx = await actorFor('products.view')
+  if ('ok' in ctx) return ctx
+  return { ok: true, chain: await referChain(ctx.siteId, productId) }
+}
+
+export async function addReferRungAction(
+  input: AddRungInput,
+  /**
+   * Which rung's screen we are on.
+   *
+   * The chain has to come back marked for THAT product, not for the one just
+   * created — otherwise adding a case from the six-pack's screen relabels the
+   * case as "This product" and the panel disagrees with the page it is on.
+   */
+  viewingId: number,
+): Promise<{ ok: true; chain: ChainRung[] } | { ok: false; error: string }> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await addReferRung(ctx.siteId, input)
+  if (!result.ok) return result
+
+  revalidatePath('/products')
+  return { ok: true, chain: await referChain(ctx.siteId, viewingId) }
+}
+
+export async function removeReferRungAction(
+  productId: number,
+  /** Which rung's screen we are on, so the chain comes back for THAT one. */
+  viewingId: number,
+): Promise<{ ok: true; chain: ChainRung[] } | { ok: false; error: string }> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await removeReferRung(ctx.siteId, productId)
+  if (!result.ok) return result
+
+  revalidatePath('/products')
+  return { ok: true, chain: await referChain(ctx.siteId, viewingId) }
 }

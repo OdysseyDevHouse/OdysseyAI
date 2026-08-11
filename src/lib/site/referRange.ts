@@ -151,6 +151,355 @@ export function planRange(
   return { ok: true, factors }
 }
 
+/* ── Reading and editing one chain, a rung at a time ──────────────────────
+ *
+ * The wizard above builds a whole range at once. This half is the other way
+ * people work: open the six-pack, add the case above it, then the pallet next
+ * month. Same chain, same arithmetic, one rung at a time.
+ */
+
+export type ChainRung = {
+  productId: number
+  code: string
+  description: string
+  productType: string
+  /** How many of the rung BELOW one of these is. 0 at the bottom. */
+  factor: number
+  /** In base units — 6 for a six-pack of singles, 24 for a case. */
+  packSize: number
+  method: ReferMethod | null
+  stockOnHand: number
+  averageCost: number
+  /** True for the product whose screen this is. */
+  isCurrent: boolean
+  /**
+   * Other packs that ALSO draw on this rung, which the ladder above does not
+   * pass through.
+   *
+   * The chain is a ladder by intent but the schema only forbids a product
+   * having two targets, not a target having two products. A case and a
+   * shrink-wrap both pointing at the six-pack is a fork, and the walk up can
+   * only follow one branch. Naming the others is the difference between a
+   * panel that is incomplete and one that lies — without this the user
+   * unlinks a pack they were never shown.
+   */
+  alsoDrawnOnBy: { productId: number; code: string; description: string; factor: number }[]
+}
+
+/**
+ * The whole ladder a product sits on, bottom rung first.
+ *
+ * Walks DOWN to the base following product_refers, then back UP collecting
+ * everything that refers to each rung in turn. A product in the middle of a
+ * chain therefore sees the same list whichever rung was opened, which is the
+ * point: the ladder is one thing, not three screens.
+ *
+ * Depth-capped like resolveComponents, so a cycle built before the guards
+ * existed reports what it can rather than hanging.
+ */
+export async function referChain(siteId: number, productId: number): Promise<ChainRung[]> {
+  const MAX = 8
+
+  // Down to the base.
+  let baseId = productId
+  for (let i = 0; i < MAX; i++) {
+    const row = await siteQueryOne<Row>(
+      siteId,
+      'SELECT target_id FROM product_refers WHERE product_id = ?',
+      [baseId],
+    )
+    const next = row ? Number(row.target_id) : 0
+    if (!next || next === baseId) break
+    baseId = next
+  }
+
+  // Back up. Ordered by factor so the smallest pack is always the next rung,
+  // matching what referBreakdown opens first.
+  const ids = [baseId]
+  for (let i = 0; i < MAX; i++) {
+    const row = await siteQueryOne<Row>(
+      siteId,
+      `SELECT product_id FROM product_refers
+        WHERE target_id = ? ORDER BY factor ASC, product_id ASC LIMIT 1`,
+      [ids[ids.length - 1]],
+    )
+    const next = row ? Number(row.product_id) : 0
+    if (!next || ids.includes(next)) break
+    ids.push(next)
+  }
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand, p.average_cost,
+            f.factor, f.method
+       FROM products p
+       LEFT JOIN product_refers f ON f.product_id = p.id
+      WHERE p.id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  )
+  const byId = new Map(rows.map((r) => [Number(r.id), r]))
+
+  // Everything pointing at any rung, so a fork can be named rather than
+  // silently dropped by the single-branch walk above.
+  const dependants = await siteQuery<Row>(
+    siteId,
+    `SELECT f.product_id, f.target_id, f.factor, p.code, p.description
+       FROM product_refers f
+       JOIN products p ON p.id = f.product_id
+      WHERE f.target_id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  )
+
+  // Pack size is the running product of the factors, which is what a person
+  // means by "a case of 24" — the stored factor is only 4.
+  let packSize = 1
+  return ids.map((id, index) => {
+    const r = byId.get(id)
+    const factor = index === 0 ? 0 : Number(r?.factor ?? 0)
+    if (index > 0) packSize = round(packSize * factor, 3)
+
+    const onLadder = ids[index + 1]
+    const forks = dependants
+      .filter((d) => Number(d.target_id) === id && Number(d.product_id) !== onLadder)
+      .map((d) => ({
+        productId: Number(d.product_id),
+        code: String(d.code ?? ''),
+        description: String(d.description ?? ''),
+        factor: Number(d.factor ?? 0),
+      }))
+
+    return {
+      alsoDrawnOnBy: forks,
+      productId: id,
+      code: String(r?.code ?? ''),
+      description: String(r?.description ?? ''),
+      productType: String(r?.product_type ?? 'normal'),
+      factor,
+      packSize,
+      method: index === 0 ? null : ((r?.method as ReferMethod) ?? 'subtract'),
+      stockOnHand: Number(r?.stock_on_hand ?? 0),
+      averageCost: Number(r?.average_cost ?? 0),
+      isCurrent: id === productId,
+    }
+  })
+}
+
+export type AddRungInput = {
+  /** The rung the new one sits directly on top of. */
+  belowId: number
+  /** Link this existing product instead of creating one. */
+  productId?: number | null
+  code?: string | null
+  description?: string | null
+  barcode?: string | null
+  /** In BASE units, the way a person says it: 24 for a case of singles. */
+  packSize: number
+  packDescription?: string | null
+  costExcl?: number
+  method: ReferMethod
+}
+
+/**
+ * Adds one pack size directly above an existing rung.
+ *
+ * The pack size is given in base units and converted here, because that is the
+ * only sane thing to type: a case is "24", not "4 six-packs". Whether it
+ * divides evenly is checked for the same reason planRange checks it.
+ */
+export async function addReferRung(
+  siteId: number,
+  input: AddRungInput,
+): Promise<{ ok: true; productId: number } | { ok: false; error: string }> {
+  const chain = await referChain(siteId, input.belowId)
+  const below = chain.find((r) => r.productId === input.belowId)
+  if (!below) return { ok: false, error: 'That product is no longer there.' }
+
+  const basePack = below.packSize || 1
+  if (!Number.isFinite(input.packSize) || input.packSize <= basePack) {
+    return {
+      ok: false,
+      error: `The pack size must be more than ${basePack}, which is what one ${below.description || 'of the one below'} holds.`,
+    }
+  }
+
+  const factor = round(input.packSize / basePack, 3)
+  if (Math.abs(factor - Math.round(factor)) > 0.0005) {
+    return {
+      ok: false,
+      error: `${input.packSize} is not a whole number of ${basePack}s, so it could not be broken down. Use a pack size that divides evenly.`,
+    }
+  }
+
+  // Linking something that already exists: no product to create, just the link.
+  if (input.productId) {
+    if (input.productId === input.belowId) {
+      return { ok: false, error: 'A product cannot refer to itself.' }
+    }
+    if (chain.some((r) => r.productId === input.productId)) {
+      return { ok: false, error: 'That product is already on this chain.' }
+    }
+
+    const existing = await siteQueryOne<Row>(
+      siteId,
+      'SELECT id, product_type FROM products WHERE id = ?',
+      [input.productId],
+    )
+    if (!existing) return { ok: false, error: 'That product is no longer there.' }
+
+    const alreadyLinked = await siteQueryOne<Row>(
+      siteId,
+      'SELECT product_id FROM product_refers WHERE product_id = ?',
+      [input.productId],
+    )
+    if (alreadyLinked) {
+      return {
+        ok: false,
+        error: 'That product already refers to something else. Unlink it first.',
+      }
+    }
+
+    return siteTransaction(siteId, async (tx) => {
+      // It has to BE a refer product to carry a link — saveRefer refuses
+      // otherwise, and so does the sale path.
+      await tx.execute("UPDATE products SET product_type = 'refer', pack_size = ? WHERE id = ?", [
+        input.packSize.toFixed(3),
+        input.productId,
+      ] as never)
+      await tx.execute(
+        `INSERT INTO product_refers (product_id, target_id, factor, method)
+              VALUES (?,?,?,?)
+         ON DUPLICATE KEY UPDATE
+           target_id = VALUES(target_id), factor = VALUES(factor), method = VALUES(method)`,
+        [input.productId, input.belowId, factor.toFixed(3), input.method] as never,
+      )
+      await ensureBaseIsStockedTx(tx, chain[0].productId)
+      return { ok: true as const, productId: input.productId as number }
+    })
+  }
+
+  // Otherwise create one.
+  const code = await resolveMasterCode(siteId, 'product', input.code)
+  if (!code) return { ok: false, error: 'A product code is needed.' }
+
+  const clash = await siteQueryOne<Row>(siteId, 'SELECT id FROM products WHERE code = ? LIMIT 1', [
+    code,
+  ])
+  if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
+
+  const barcode = input.barcode?.trim() || ''
+  if (barcode) {
+    const taken = await barcodeClashes(siteId, [barcode], [])
+    if (taken.size > 0) {
+      return { ok: false, error: `Barcode ${barcode} is already on product ${[...taken.values()][0]}.` }
+    }
+  }
+
+  const description =
+    input.description?.trim() || `${chain[0].description} × ${input.packSize}`
+
+  const productInput: ProductInput = {
+    code,
+    description,
+    barcode: barcode || null,
+    productType: 'refer',
+    packSize: input.packSize,
+    packDescription: input.packDescription ?? undefined,
+    lastCost: input.costExcl ?? 0,
+  }
+
+  const invalid = validateProduct(productInput)
+  if (invalid) return { ok: false, error: invalid }
+
+  // Inherited from the rung below, for the reason variants inherit them: a
+  // pack in a different department from its own single is always a mistake.
+  const inherit = await siteQueryOne<Row>(
+    siteId,
+    `SELECT department_id, brand_id, purchase_vat_rate_id, selling_vat_rate_id
+       FROM products WHERE id = ?`,
+    [input.belowId],
+  )
+  productInput.departmentId = (inherit?.department_id as number) ?? null
+  productInput.brandId = (inherit?.brand_id as number) ?? null
+  productInput.purchaseVatRateId = (inherit?.purchase_vat_rate_id as number) ?? undefined
+  productInput.sellingVatRateId = (inherit?.selling_vat_rate_id as number) ?? undefined
+
+  const vat = await resolveVat(siteId, productInput)
+
+  return siteTransaction(siteId, async (tx) => {
+    const id = await insertProductTx(tx, { ...productInput, code }, vat)
+    await tx.execute(
+      `INSERT INTO product_refers (product_id, target_id, factor, method)
+            VALUES (?,?,?,?)`,
+      [id, input.belowId, factor.toFixed(3), input.method] as never,
+    )
+    await ensureBaseIsStockedTx(tx, chain[0].productId)
+    return { ok: true as const, productId: id }
+  })
+}
+
+/**
+ * Takes a rung off the chain.
+ *
+ * Whatever sat above it is re-pointed at whatever sat below, with the factors
+ * multiplied together, so removing the six-pack from single ← six ← case
+ * leaves single ← case at factor 24. Deleting the link alone would strand the
+ * case pointing at nothing.
+ */
+export async function removeReferRung(
+  siteId: number,
+  productId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const chain = await referChain(siteId, productId)
+  const index = chain.findIndex((r) => r.productId === productId)
+  if (index < 0) return { ok: false, error: 'That product is not on this chain.' }
+  if (index === 0) {
+    return {
+      ok: false,
+      error: 'The base product is what the chain is counted in. Remove the pack sizes above it first.',
+    }
+  }
+
+  const above = chain[index + 1]
+  const below = chain[index - 1]
+
+  return siteTransaction(siteId, async (tx) => {
+    if (above) {
+      // The rung above closes the gap, keeping the same number of base units.
+      const merged = round(above.factor * chain[index].factor, 3)
+      await tx.execute('UPDATE product_refers SET target_id = ?, factor = ? WHERE product_id = ?', [
+        below.productId,
+        merged.toFixed(3),
+        above.productId,
+      ] as never)
+    }
+    await tx.execute('DELETE FROM product_refers WHERE product_id = ?', [productId] as never)
+    return { ok: true as const }
+  })
+}
+
+/**
+ * The base of a chain must not be a dangling refer.
+ *
+ * Same rule createReferRange applies, for the same reason: a refer product
+ * with nothing under it is refused by resolveComponents on every sale.
+ */
+async function ensureBaseIsStockedTx(
+  tx: import('mysql2/promise').PoolConnection,
+  baseId: number,
+): Promise<void> {
+  const [rows] = (await tx.execute(
+    `SELECT p.product_type, f.product_id AS linked
+       FROM products p
+       LEFT JOIN product_refers f ON f.product_id = p.id
+      WHERE p.id = ? FOR UPDATE`,
+    [baseId] as never,
+  )) as unknown as [Row[]]
+  const base = rows[0]
+  if (base && String(base.product_type) === 'refer' && !base.linked) {
+    await tx.execute("UPDATE products SET product_type = 'normal' WHERE id = ?", [baseId] as never)
+  }
+}
+
 /** Products already using any of these barcodes, so the caller can refuse. */
 async function barcodeClashes(
   siteId: number,

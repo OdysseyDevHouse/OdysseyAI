@@ -15,14 +15,17 @@ import {
   createProduct,
   updateProduct,
   setArchived,
+  setDerivedCost,
   deleteProduct,
   propertyColumnMap,
+  bulkUpdateProducts,
   type ProductInput,
+  type ProductBulkChange,
+  type ProductBulkResult,
 } from '@/lib/site/products'
 import {
   saveRecipe,
-  saveRefer,
-  clearRefer,
+  compositionCost,
   type RecipeInput,
 } from '@/lib/site/productComposition'
 import {
@@ -358,19 +361,34 @@ export async function saveProductAction(
   if (productType === 'recipe') {
     const recipe = await saveRecipe(siteId, result.id, readRecipe(form))
     if (!recipe.ok) return { error: recipe.error }
+
+    /*
+     * The stored cost of a recipe is DERIVED, never accepted from the post.
+     *
+     * The form shows it read-only and submits it, but a server action is a
+     * public endpoint and a read-only input is not a boundary — the posted
+     * figure could say anything. Recomputing from the lines that were just
+     * saved also fixes the honest case: an ingredient repriced since this page
+     * loaded, so the browser's total was stale before it was sent.
+     *
+     * compositionCost() is the same function the till charges a sale at, so the
+     * catalogue and the GP report cannot disagree about what a burger cost.
+     * Null means the lines could not be resolved — leave the existing figure
+     * rather than writing a zero over it.
+     */
+    const cost = await compositionCost(siteId, result.id, 'recipe').catch(() => null)
+    if (cost !== null) await setDerivedCost(siteId, result.id, cost)
   }
 
-  if (productType === 'refer') {
-    const targetRaw = String(form.get('referTarget') ?? '').trim()
-    if (targetRaw) {
-      const refer = await saveRefer(siteId, result.id, Number(targetRaw), num(form, 'referFactor'))
-      if (!refer.ok) return { error: refer.error }
-      // An empty target is the panel saying "unlinked", which is distinct from
-      // the field being absent because the tab never rendered.
-    } else if (form.get('referTarget') !== null) {
-      await clearRefer(siteId, result.id)
-    }
-  }
+  /*
+   * Refer links are NOT saved here any more.
+   *
+   * The Refer tab edits a whole chain and adding a pack size creates a
+   * product, so it saves itself through referRangeActions the way Variants and
+   * Serials do — see ReferPanel.tsx. This form never carries referTarget, and
+   * a branch here reading a field nothing submits would look live while doing
+   * nothing, which is worse than its absence.
+   */
 
   // This store's own database is now saved. Everything below concerns the OTHER
   // linked stores, and must never turn a successful save into a failed one — a
@@ -470,4 +488,25 @@ export async function deleteProductAction(form: FormData): Promise<void> {
   }
 
   redirect('/products?deleted=1')
+}
+
+/**
+ * Applies one bulk change to the selected products.
+ *
+ * Returns the result rather than redirecting, exactly as the customer and
+ * supplier bulk actions do, so the list can toast "38 updated, 2 skipped —
+ * ABC-1, ABC-2" instead of bouncing the user to a page that says nothing.
+ */
+export async function bulkUpdateProductsAction(
+  ids: number[],
+  change: ProductBulkChange,
+): Promise<ProductBulkResult> {
+  // Deleting is its own capability, not a stronger flavour of editing — the
+  // same split deleteProductAction makes, for the same reason.
+  const ctx = await actorForOrThrow(change.kind === 'delete' ? 'products.delete' : 'products.edit')
+  const { siteId } = ctx
+
+  const result = await bulkUpdateProducts(siteId, ids, change)
+  revalidatePath('/products')
+  return result
 }

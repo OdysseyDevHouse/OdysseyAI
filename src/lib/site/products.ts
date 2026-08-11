@@ -95,6 +95,14 @@ export type Product = {
   fixedPriceScale: boolean
   expiresInDays: number
 
+  /**
+   * When the row was first written. Never changes.
+   *
+   * Distinct from lastEditDate, which is when a PERSON last saved the product —
+   * "added this month" and "touched this month" are different questions, and
+   * the product list offers a sort for each.
+   */
+  createdAt: Date | null
   lastEditDate: Date | null
   lastPurchaseDate: Date | null
   lastSoldDate: Date | null
@@ -207,6 +215,7 @@ const SELECT_PRODUCT = `
          p.pack_weight, p.weight_description, p.pack_size, p.pack_description,
          p.length_mm, p.width_mm, p.height_mm, p.prep_time_minutes,
          p.scale_item, p.label_scale_item, p.fixed_price_scale, p.expires_in_days,
+         p.created_at,
          p.last_edit_date, p.last_purchase_date, p.last_sold_date, p.last_adjust_date,
          pv.rate AS purchase_vat_rate, sv.rate AS selling_vat_rate
     FROM products p
@@ -279,6 +288,7 @@ function mapProduct(
     fixedPriceScale: !!r.fixed_price_scale,
     expiresInDays: Number(r.expires_in_days ?? 0),
 
+    createdAt: (r.created_at as Date | null) ?? null,
     lastEditDate: (r.last_edit_date as Date | null) ?? null,
     lastPurchaseDate: (r.last_purchase_date as Date | null) ?? null,
     lastSoldDate: (r.last_sold_date as Date | null) ?? null,
@@ -338,10 +348,26 @@ function rowToPrice(raw: Record<string, unknown>) {
   }
 }
 
+/**
+ * What the catalogue can be ordered by.
+ *
+ * 'description' and 'code' are the two ways a person names a product; 'created'
+ * and 'edited' are the two ways they ask "what changed". Kept as a closed union
+ * because the value reaches an ORDER BY — see SORT_COLUMNS.
+ */
+export type ProductSort = 'description' | 'code' | 'created' | 'edited'
+
 export type ProductListOptions = {
   search?: string
   departmentIds?: number[]
   brandId?: number
+  /**
+   * Only products of these kinds — the type filter on the list screen.
+   *
+   * An array rather than a single id so the screen can later offer more than
+   * one at a time without another signature change.
+   */
+  productTypes?: readonly ProductTypeId[]
   includeArchived?: boolean
   belowMinimum?: boolean
   /**
@@ -369,8 +395,26 @@ export type ProductListOptions = {
    * the children carry their parent's name on screen for context.
    */
   collapseVariants?: boolean
+  /** Defaults to 'description' — the order the catalogue has always been in. */
+  sort?: ProductSort
+  direction?: 'asc' | 'desc'
   limit?: number
   offset?: number
+}
+
+/**
+ * The sort keys, mapped to SQL. Interpolated into the ORDER BY, so this lookup
+ * is what keeps a URL parameter out of the query — nothing else may reach it.
+ *
+ * `created` and `edited` COALESCE to a floor rather than sorting NULLs wherever
+ * MySQL puts them: last_edit_date is null on a product nobody has re-saved, and
+ * "never edited" belongs at the old end of the list, not silently first.
+ */
+const SORT_COLUMNS: Record<ProductSort, string> = {
+  description: 'p.description',
+  code: 'p.code',
+  created: 'p.created_at',
+  edited: "COALESCE(p.last_edit_date, '1000-01-01')",
 }
 
 export async function listProducts(
@@ -409,6 +453,25 @@ export async function listProducts(
     where.push('p.brand_id = ?')
     params.push(opts.brandId)
   }
+  /* A variant PARENT stands for its children, so it is matched on THEIRS.
+     Testing the parent's own product_type would drop a whole group of serial
+     products because the grouping row itself was left as 'normal'; keeping
+     every parent regardless would put all forty groups under a "Service"
+     filter. So a group survives when any live child matches — which is exactly
+     what the row on screen is claiming. */
+  if (opts.productTypes?.length) {
+    const list = opts.productTypes.map(() => '?').join(',')
+    where.push(`(
+      CASE WHEN p.has_variants = 1
+           THEN EXISTS (SELECT 1 FROM products child
+                         WHERE child.parent_id = p.id
+                           AND child.is_archived = 0
+                           AND child.product_type IN (${list}))
+           ELSE p.product_type IN (${list})
+      END
+    )`)
+    params.push(...opts.productTypes, ...opts.productTypes)
+  }
   /*
    * "Running low" is a question about a ROOM, not about the business.
    *
@@ -427,12 +490,20 @@ export async function listProducts(
    * Inside a group, the picker's own order — sizes are not alphabetical.
    *
    * Small/Medium/Large sorted by description reads Large, Medium, Small, which
-   * is exactly the ordering variant_sort exists to override. Everywhere else
-   * the catalogue stays sorted by description.
+   * is exactly the ordering variant_sort exists to override. That order is the
+   * group's own and is NOT overridable by the sort argument: the list of sizes
+   * under one shirt has a right order, and it is not A to Z.
+   *
+   * Everywhere else the caller chooses, defaulting to description ascending —
+   * what the catalogue has always been. `p.id` breaks ties so that paging is
+   * stable: without it two products created in the same second can swap places
+   * between page 1 and page 2, and one of them is then never seen.
    */
+  const column = SORT_COLUMNS[opts.sort ?? 'description']
+  const direction = opts.direction === 'desc' ? 'DESC' : 'ASC'
   const orderSql = opts.parentId
     ? 'ORDER BY p.variant_sort, p.axis_1_value, p.axis_2_value, p.id'
-    : 'ORDER BY p.description ASC'
+    : `ORDER BY ${column} ${direction}, p.id ASC`
 
   const [rows, countRow, basis] = await Promise.all([
     siteQuery<ProductRow>(
@@ -649,7 +720,7 @@ export function validateProduct(input: ProductInput): string | null {
 }
 
 /** VAT defaults, so a product is never saved with no rate at all. */
-async function resolveVat(
+export async function resolveVat(
   siteId: number,
   input: ProductInput,
 ): Promise<{ purchase: number | null; selling: number | null }> {
@@ -771,6 +842,30 @@ export async function createProduct(
   const vat = await resolveVat(siteId, input)
 
   return siteTransaction(siteId, async (tx) => {
+    const id = await insertProductTx(tx, { ...input, code }, vat)
+    return { ok: true as const, id }
+  })
+}
+
+/**
+ * The INSERT half of createProduct, in a transaction the caller already owns.
+ *
+ * Split out for the refer wizard, which creates a whole pack range — single,
+ * six-pack, case — and must not leave half a range behind if the third one
+ * fails. createProduct opens its own transaction, so N of them cannot be made
+ * atomic by nesting; this can.
+ *
+ * The caller owns everything createProduct does around this: resolving the
+ * code, validating, checking for a clash, and resolving the VAT rates. Those
+ * all read rather than write, so they belong outside the transaction and the
+ * wizard does them for every row before opening one.
+ */
+export async function insertProductTx(
+  tx: PoolConnection,
+  input: ProductInput & { code: string },
+  vat: { purchase: number | null; selling: number | null },
+): Promise<number> {
+  {
     const [res] = await tx.execute(
       `INSERT INTO products
          (code, barcode, description, extra_description, product_type, is_manufactured,
@@ -780,7 +875,7 @@ export async function createProduct(
           is_archived, ${PROPERTY_COLUMNS.join(', ')}, last_edit_date)
        VALUES (?,?,?,?, ?,?, ?,?,?,?,?, ?,?, ?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
       [
-        code,
+        input.code,
         input.barcode?.trim() || null,
         input.description.trim(),
         sanitiseHtml(input.extraDescription) || null,
@@ -851,8 +946,8 @@ export async function createProduct(
       }
     }
 
-    return { ok: true as const, id }
-  })
+    return id
+  }
 }
 
 export async function updateProduct(
@@ -975,6 +1070,36 @@ export async function updateProduct(
   }).catch((err) => ({ ok: false as const, error: (err as Error).message }))
 }
 
+/**
+ * Writes a composed product's cost, worked out from what it is made of.
+ *
+ * Its own right rather than part of updateProduct, which deliberately refuses
+ * to write average_cost at all: for a purchased product that figure is a
+ * consequence of the purchases, and letting a form overwrite it would falsify
+ * stock valuation.
+ *
+ * A recipe product is the one case where that reasoning inverts. Nothing was
+ * ever bought called "burger", so there are no purchases for an average to be a
+ * consequence OF — its stored cost is 0 forever, and every report that reads it
+ * shows a 100% margin. The sum of the ingredients is the only true cost it has,
+ * so BOTH columns are set to it: last_cost so the form and price list agree,
+ * average_cost so a site priced on the average basis reads the same number.
+ *
+ * Callers pass a figure from compositionCost(), which is what the till charges
+ * a sale at. Do not call this with anything a browser supplied.
+ */
+export async function setDerivedCost(
+  siteId: number,
+  id: number,
+  costExcl: number,
+): Promise<void> {
+  await siteExecute(
+    siteId,
+    'UPDATE products SET last_cost = ?, average_cost = ? WHERE id = ?',
+    [costExcl.toFixed(4), costExcl.toFixed(4), id],
+  )
+}
+
 export async function setArchived(
   siteId: number,
   id: number,
@@ -1009,14 +1134,17 @@ export type DeleteProductResult =
  * silently doing something other than what was asked.
  */
 export async function deleteProduct(siteId: number, id: number): Promise<DeleteProductResult> {
-  const counts = await siteQueryOne<RowDataPacket & { lines: number; movements: number }>(
+  // NOT aliased `lines`: LINES is a reserved word in MariaDB (LOAD DATA ...
+  // LINES TERMINATED BY), so an unquoted alias is a syntax error and delete
+  // fails on every product.
+  const counts = await siteQueryOne<RowDataPacket & { sale_lines: number; movements: number }>(
     siteId,
-    `SELECT (SELECT COUNT(*) FROM sales_document_lines WHERE product_id = ?) AS lines,
+    `SELECT (SELECT COUNT(*) FROM sales_document_lines WHERE product_id = ?) AS sale_lines,
             (SELECT COUNT(*) FROM stock_movements      WHERE product_id = ?) AS movements`,
     [id, id],
   )
 
-  const lines = Number(counts?.lines ?? 0)
+  const lines = Number(counts?.sale_lines ?? 0)
   const movements = Number(counts?.movements ?? 0)
 
   if (lines > 0 || movements > 0) {
@@ -1036,4 +1164,367 @@ export async function deleteProduct(siteId: number, id: number): Promise<DeleteP
   // Never sold, never moved: safe to remove outright. product_prices cascades.
   await siteExecute(siteId, 'DELETE FROM products WHERE id = ?', [id])
   return { ok: true, archived: false }
+}
+
+/* ── Bulk operations ─────────────────────────────────────────────────────── */
+
+/**
+ * What a bulk action did, and what it refused to do.
+ *
+ * Mirrors customers' BulkResult deliberately — same shape, same reasoning:
+ * "38 updated, 2 skipped" with no list of which two, and why, is worse than
+ * not offering the action at all.
+ */
+export type ProductBulkResult = {
+  updated: number
+  skipped: { id: number; code: string; name: string; reason: string }[]
+}
+
+/**
+ * Every bulk change the product list offers.
+ *
+ * One member per action in the bulk options dialog, and the `kind` doubles as
+ * that dialog's option key — so an action can never be offered on screen
+ * without a change behind it to apply.
+ */
+export type ProductBulkChange =
+  /* ── The product itself ── */
+  | { kind: 'department'; departmentId: number | null }
+  | { kind: 'brand'; brandId: number | null }
+  | { kind: 'instructionGroup'; groupId: number; mode: 'add' | 'remove' }
+  | { kind: 'color'; imageColor: string | null }
+  | { kind: 'sellingVat'; vatRateId: number | null }
+  | { kind: 'purchaseVat'; vatRateId: number | null }
+  /* ── Properties ── */
+  | { kind: 'visibleInPos'; value: boolean }
+  | { kind: 'showOnline'; value: boolean }
+  | { kind: 'changeDescription'; value: boolean }
+  | { kind: 'askPriceAtSale'; value: boolean }
+  | { kind: 'allowFractions'; value: boolean }
+  | { kind: 'scaleItem'; value: boolean }
+  | { kind: 'labelScaleItem'; value: boolean }
+  | { kind: 'maxDiscountPct'; value: number }
+  | { kind: 'expiresInDays'; value: number }
+  | { kind: 'packSize'; value: number }
+  | { kind: 'packDescription'; value: string }
+  | { kind: 'packWeight'; value: number }
+  | { kind: 'weightDescription'; value: string }
+  | { kind: 'priceCalc'; value: PriceCalcId }
+  /* ── Reorder levels: per LOCATION, never site-wide (see migration 028). ── */
+  | { kind: 'minLevel'; locationId: number; value: number }
+  | { kind: 'maxLevel'; locationId: number; value: number }
+  /* ── Lifecycle ── */
+  | { kind: 'archive'; archived: boolean }
+  | { kind: 'delete' }
+
+/** The row bulk needs to decide and report — far cheaper than SELECT_PRODUCT. */
+type BulkRow = RowDataPacket & {
+  id: number
+  code: string
+  description: string
+  is_archived: number
+  variant_count: number
+}
+
+/**
+ * Applies one change to many products.
+ *
+ * Same contract as bulkUpdateCustomers: validate the change ONCE, load the
+ * rows, partition them into permitted and refused, then write the permitted
+ * set in a single statement inside a transaction. A blind
+ * `UPDATE ... WHERE id IN (...)` would happily set a scale flag on a variant
+ * parent that holds no stock, and per-row updates would leave a half-applied
+ * change behind on the first failure.
+ */
+export async function bulkUpdateProducts(
+  siteId: number,
+  ids: readonly number[],
+  change: ProductBulkChange,
+): Promise<ProductBulkResult> {
+  const unique = [...new Set(ids)].filter((id) => Number.isFinite(id) && id > 0)
+  if (unique.length === 0) return { updated: 0, skipped: [] }
+
+  const invalid = validateProductBulk(change)
+  if (invalid) {
+    return {
+      updated: 0,
+      skipped: unique.map((id) => ({ id, code: '', name: '', reason: invalid })),
+    }
+  }
+
+  const placeholders = unique.map(() => '?').join(',')
+  const rows = await siteQuery<BulkRow>(
+    siteId,
+    `SELECT p.id, p.code, p.description, p.is_archived,
+            ${VARIANT_COUNT_SQL} AS variant_count
+       FROM products p
+      WHERE p.id IN (${placeholders})`,
+    unique,
+  )
+
+  const permitted: BulkRow[] = []
+  const skipped: ProductBulkResult['skipped'] = []
+
+  for (const row of rows) {
+    const refusal = refuseProductBulk(row, change)
+    if (refusal) {
+      skipped.push({ id: Number(row.id), code: row.code, name: row.description, reason: refusal })
+    } else {
+      permitted.push(row)
+    }
+  }
+
+  // An id that matched no row was deleted between the list render and the
+  // action — report it rather than silently counting it as done.
+  for (const id of unique) {
+    if (!rows.some((r) => Number(r.id) === id)) {
+      skipped.push({ id, code: '', name: '', reason: 'No longer exists.' })
+    }
+  }
+
+  if (permitted.length === 0) return { updated: 0, skipped }
+
+  const idList = permitted.map((r) => Number(r.id))
+
+  // Three kinds do not write a products column, so they never reach the SET
+  // clause: delete has its own archive-instead rule, instruction groups are a
+  // join table, and reorder levels live on product_location_stock.
+  if (change.kind === 'delete') return bulkDeleteProducts(siteId, permitted, skipped)
+  if (change.kind === 'instructionGroup') {
+    return bulkInstructionGroup(siteId, idList, change, skipped)
+  }
+  if (change.kind === 'minLevel' || change.kind === 'maxLevel') {
+    return bulkStockLevel(siteId, idList, change, skipped)
+  }
+
+  const { sql, params } = productBulkSetClause(change)
+  const idPlaceholders = idList.map(() => '?').join(',')
+
+  await siteTransaction(siteId, async (tx) => {
+    // last_edit_date moves because a PERSON made this change — that is exactly
+    // what distinguishes it from updated_at, which a stock movement also touches.
+    await tx.execute(
+      `UPDATE products SET ${sql}, last_edit_date = NOW() WHERE id IN (${idPlaceholders})`,
+      [...params, ...idList] as never,
+    )
+  })
+
+  return { updated: idList.length, skipped }
+}
+
+/** Why this product cannot take this change. Null means it can. */
+function refuseProductBulk(row: BulkRow, change: ProductBulkChange): string | null {
+  const isParent = Number(row.variant_count) > 0
+
+  if (isParent) {
+    // A variant parent is a catalogue heading: it holds no stock and is never
+    // sold directly, so a per-unit setting on it would be quietly meaningless.
+    const perUnit: ProductBulkChange['kind'][] = [
+      'scaleItem',
+      'labelScaleItem',
+      'minLevel',
+      'maxLevel',
+      'packSize',
+      'packWeight',
+    ]
+    if (perUnit.includes(change.kind)) return 'It is a variant parent and holds no stock.'
+    if (change.kind === 'delete') return 'It has variants — delete those first.'
+  }
+
+  if (change.kind === 'archive' && change.archived && Number(row.is_archived) === 1) {
+    return 'Already archived.'
+  }
+
+  return null
+}
+
+/** Whether the change itself makes sense, before any row is loaded. */
+function validateProductBulk(change: ProductBulkChange): string | null {
+  switch (change.kind) {
+    case 'maxDiscountPct':
+      if (change.value < 0 || change.value > 100) return 'Max discount must be between 0 and 100%.'
+      return null
+    case 'expiresInDays':
+      if (change.value < 0 || change.value > 3650) return 'Expiry must be between 0 and 3650 days.'
+      return null
+    case 'minLevel':
+    case 'maxLevel':
+      if (!Number.isFinite(change.locationId) || change.locationId <= 0) {
+        return 'Choose a stock location.'
+      }
+      if (change.value < 0) return 'A reorder level cannot be negative.'
+      return null
+    case 'packSize':
+    case 'packWeight':
+      if (change.value < 0) return 'This cannot be negative.'
+      return null
+    case 'packDescription':
+    case 'weightDescription':
+      if (change.value.trim().length > 24) return 'Description must be 24 characters or fewer.'
+      return null
+    case 'instructionGroup':
+      if (!Number.isFinite(change.groupId) || change.groupId <= 0) {
+        return 'Choose an instruction group.'
+      }
+      return null
+    default:
+      return null
+  }
+}
+
+function productBulkSetClause(change: ProductBulkChange): { sql: string; params: unknown[] } {
+  switch (change.kind) {
+    case 'department':
+      return { sql: 'department_id = ?', params: [change.departmentId] }
+    case 'brand':
+      return { sql: 'brand_id = ?', params: [change.brandId] }
+    case 'color':
+      return { sql: 'image_color = ?', params: [change.imageColor] }
+    case 'sellingVat':
+      return { sql: 'selling_vat_rate_id = ?', params: [change.vatRateId] }
+    case 'purchaseVat':
+      return { sql: 'purchase_vat_rate_id = ?', params: [change.vatRateId] }
+    case 'visibleInPos':
+      return { sql: 'visible_in_pos = ?', params: [change.value ? 1 : 0] }
+    case 'showOnline':
+      return { sql: 'show_online = ?', params: [change.value ? 1 : 0] }
+    case 'changeDescription':
+      return { sql: 'change_description = ?', params: [change.value ? 1 : 0] }
+    case 'askPriceAtSale':
+      return { sql: 'ask_price_at_sale = ?', params: [change.value ? 1 : 0] }
+    case 'allowFractions':
+      return { sql: 'allow_fractions = ?', params: [change.value ? 1 : 0] }
+    case 'scaleItem':
+      return { sql: 'scale_item = ?', params: [change.value ? 1 : 0] }
+    case 'labelScaleItem':
+      return { sql: 'label_scale_item = ?', params: [change.value ? 1 : 0] }
+    case 'maxDiscountPct':
+      return { sql: 'max_discount_pct = ?', params: [change.value.toFixed(3)] }
+    case 'expiresInDays':
+      return { sql: 'expires_in_days = ?', params: [Math.trunc(change.value)] }
+    case 'packSize':
+      return { sql: 'pack_size = ?', params: [change.value.toFixed(3)] }
+    case 'packDescription':
+      return { sql: 'pack_description = ?', params: [change.value.trim() || 'None'] }
+    case 'packWeight':
+      return { sql: 'pack_weight = ?', params: [change.value.toFixed(4)] }
+    case 'weightDescription':
+      return { sql: 'weight_description = ?', params: [change.value.trim() || 'Kg'] }
+    case 'priceCalc':
+      return { sql: 'price_calc = ?', params: [toPriceCalc(change.value)] }
+    case 'archive':
+      return { sql: 'is_archived = ?', params: [change.archived ? 1 : 0] }
+    default:
+      // Unreachable: delete, instruction groups and reorder levels are handled
+      // before this point. Throwing keeps the switch honest if one is added.
+      throw new Error(`No SET clause for bulk change: ${(change as ProductBulkChange).kind}`)
+  }
+}
+
+/**
+ * Adds or removes one instruction group across the selection.
+ *
+ * A join table, so this is INSERT IGNORE / DELETE rather than an UPDATE.
+ * Adding appends after each product's existing groups rather than renumbering,
+ * because a bulk change must not reshuffle an order someone set per product.
+ */
+async function bulkInstructionGroup(
+  siteId: number,
+  ids: number[],
+  change: Extract<ProductBulkChange, { kind: 'instructionGroup' }>,
+  skipped: ProductBulkResult['skipped'],
+): Promise<ProductBulkResult> {
+  const placeholders = ids.map(() => '?').join(',')
+
+  await siteTransaction(siteId, async (tx) => {
+    if (change.mode === 'remove') {
+      await tx.execute(
+        `DELETE FROM product_instruction_groups
+          WHERE group_id = ? AND product_id IN (${placeholders})`,
+        [change.groupId, ...ids] as never,
+      )
+      return
+    }
+
+    // INSERT IGNORE so re-adding a group a product already has is a no-op
+    // rather than a duplicate-key error that fails the whole batch.
+    await tx.execute(
+      `INSERT IGNORE INTO product_instruction_groups (product_id, group_id, sort_order)
+       SELECT p.id, ?, COALESCE(
+                (SELECT MAX(x.sort_order) + 1
+                   FROM product_instruction_groups x
+                  WHERE x.product_id = p.id), 0)
+         FROM products p
+        WHERE p.id IN (${placeholders})`,
+      [change.groupId, ...ids] as never,
+    )
+  })
+
+  return { updated: ids.length, skipped }
+}
+
+/**
+ * Sets one reorder level, for one location, across the selection.
+ *
+ * Levels live on product_location_stock rather than products — see
+ * 028_drop_product_levels.sql, which dropped the site-wide columns because a
+ * warehouse and a shop floor need different reorder points. A product with no
+ * row for that location gets one, so setting a level on a newly added room
+ * works instead of silently updating nothing.
+ */
+async function bulkStockLevel(
+  siteId: number,
+  ids: number[],
+  change: Extract<ProductBulkChange, { kind: 'minLevel' | 'maxLevel' }>,
+  skipped: ProductBulkResult['skipped'],
+): Promise<ProductBulkResult> {
+  const column = change.kind === 'minLevel' ? 'min_stock' : 'max_stock'
+  const value = change.value.toFixed(3)
+
+  await siteTransaction(siteId, async (tx) => {
+    // Row by row because each INSERT targets a different product/location pair
+    // and the selection is a page of 50, not a catalogue-wide sweep.
+    for (const id of ids) {
+      await tx.execute(
+        `INSERT INTO product_location_stock (product_id, location_id, ${column})
+              VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE ${column} = VALUES(${column})`,
+        [id, change.locationId, value] as never,
+      )
+    }
+  })
+
+  return { updated: ids.length, skipped }
+}
+
+/**
+ * Deletes the selection, archiving anything that has history.
+ *
+ * Reuses deleteProduct rather than restating its rule: a product that has been
+ * sold or moved keeps its documents readable and comes off the till instead.
+ * Each of those is reported as skipped with that reason, so the count never
+ * claims a delete that was really an archive.
+ */
+async function bulkDeleteProducts(
+  siteId: number,
+  rows: BulkRow[],
+  skipped: ProductBulkResult['skipped'],
+): Promise<ProductBulkResult> {
+  let deleted = 0
+
+  for (const row of rows) {
+    const result = await deleteProduct(siteId, Number(row.id))
+    if (result.ok && result.archived) {
+      skipped.push({
+        id: Number(row.id),
+        code: row.code,
+        name: row.description,
+        reason: 'Has history — archived instead of deleted.',
+      })
+    } else {
+      deleted++
+    }
+  }
+
+  return { updated: deleted, skipped }
 }

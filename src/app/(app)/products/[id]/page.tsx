@@ -8,13 +8,15 @@ import { linkedStores } from '@/lib/storeGroups'
 import { shareSettingsFor } from '@/lib/site/shareSettings'
 import { readLinkedProducts } from '@/lib/site/productFanout'
 import { listGroups as listInstructionGroups, groupsForProduct } from '@/lib/site/instructions'
-import { listRecipe, getRefer } from '@/lib/site/productComposition'
+import { listRecipe } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
-import { Callout, EDIT_COLUMN, PageBody, PageHeader } from '@/components/ui'
+import { Callout, PageBody, PageHeader } from '@/components/ui'
 import { listImages } from '@/lib/site/productImages'
 import { variantStanding } from '@/lib/site/productVariants'
+import { suggestedMasterCode } from '@/lib/site/masterCodes'
+import { referChain } from '@/lib/site/referRange'
 import ProductForm, { SaveProductButton } from '../ProductForm'
 import ProductImages from '../ProductImages'
 import VariantsPanel from '../VariantsPanel'
@@ -79,13 +81,15 @@ export default async function EditProductPage({
   // The setup each product type needs. Only fetched for the type that uses it —
   // a normal product has no ingredient list to read — and each is tolerant of
   // its table not existing yet, so an unmigrated store still edits products.
-  const [recipeLines, referLink, serials, productSuppliers, images] = await Promise.all([
+  const [recipeLines, referChainRows, serials, productSuppliers, images, autoCode] = await Promise.all([
     product.productType === 'recipe'
       ? listRecipe(siteId, product.id).catch(() => [])
       : Promise.resolve([]),
+    // The whole ladder, not just this rung's own link: the Refer tab edits the
+    // chain and shows every pack size whichever one was opened.
     product.productType === 'refer'
-      ? getRefer(siteId, product.id).catch(() => null)
-      : Promise.resolve(null),
+      ? referChain(siteId, product.id).catch(() => [])
+      : Promise.resolve([]),
     product.productType === 'serial'
       ? listSerials(siteId, { productId: product.id, limit: 200 })
           .then((r) => r.items)
@@ -95,6 +99,13 @@ export default async function EditProductPage({
     // Tolerant like its neighbours: an unmigrated store still edits products,
     // it simply has no gallery yet.
     listImages(siteId, product.id).catch(() => []),
+    // Whether the refer wizard may leave a product code blank. A site without
+    // auto-numbering must be told up front rather than at Create.
+    product.productType === 'refer'
+      ? suggestedMasterCode(siteId, 'product')
+          .then((c) => c !== null)
+          .catch(() => false)
+      : Promise.resolve(false),
   ])
 
   // Same tolerance: a store that has not run 070 yet has no parent_id column,
@@ -183,33 +194,35 @@ export default async function EditProductPage({
           instructionGroups={instructionGroups}
           attachedInstructions={attachedInstructions}
           recipeLines={recipeLines}
-          referLink={referLink}
+          referChain={referChainRows}
+          autoCode={autoCode}
           serials={serials}
           productSuppliers={productSuppliers}
           // Archive and delete live in the header's Actions menu — Save stays
           // the one primary on this screen.
+          //
+          // Handed to the form rather than rendered after it: both belong to
+          // the General tab, and as siblings they showed under Properties,
+          // Recipe and every other tab as well. The form places them inside
+          // General but still outside <form>, which each of them needs.
+          generalExtras={
+            <>
+              {/* Above the gallery, deliberately. Variants change what this
+                  product IS — whether it can be sold at all — so it outranks
+                  merchandising. */}
+              <VariantsPanel
+                productId={product.id}
+                productDescription={product.description}
+                initialGroup={variants.group}
+                isChildOf={variants.parent}
+              />
+
+              {/* Images upload immediately and individually, so they are not
+                  part of the product's save at all. */}
+              <ProductImages productId={product.id} initial={images} />
+            </>
+          }
         />
-
-        {/* Both panels are siblings of the form rather than children of it, so
-            they carry the form's own width themselves — without EDIT_COLUMN they
-            ran to the window edge while everything above them stopped at 1100px,
-            and the right edge of the page stepped in and out down the screen. */}
-        <div className={`flex ${EDIT_COLUMN} flex-col gap-5`}>
-          {/* Above the gallery and below the form, both deliberately. Variants
-              change what this product IS — whether it can be sold at all — so it
-              outranks merchandising; but it saves on its own, so it sits outside
-              the form like the images do. */}
-          <VariantsPanel
-            productId={product.id}
-            productDescription={product.description}
-            initialGroup={variants.group}
-            isChildOf={variants.parent}
-          />
-
-          {/* Below the form rather than inside it: images upload immediately and
-              individually, so they are not part of the product's save at all. */}
-          <ProductImages productId={product.id} initial={images} />
-        </div>
       </PageBody>
     </>
   )

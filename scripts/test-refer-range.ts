@@ -9,7 +9,13 @@
  *   npm run test:refer-range
  */
 import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
-import { planRange, createReferRange } from '../src/lib/site/referRange'
+import {
+  planRange,
+  createReferRange,
+  referChain,
+  addReferRung,
+  removeReferRung,
+} from '../src/lib/site/referRange'
 import { getRefer } from '../src/lib/site/productComposition'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { toNum } from '../src/lib/decimals'
@@ -164,6 +170,92 @@ async function main() {
   ok('a range can be built on top of an existing chain', onTop.ok, onTop.ok ? '' : onTop.error)
   ok('*** and the existing link underneath it is untouched ***',
     (await getRefer(SITE, six))?.targetId === single && (await typeOf(six)) === 'refer')
+
+  // ── The chain, a rung at a time (the Refer tab)
+  console.log('\n── One rung at a time ──')
+
+  const chain = await referChain(SITE, six)
+  ok('*** the whole ladder is readable from ANY rung ***', chain.length === 3,
+    chain.map((r) => r.code).join(' -> '))
+  ok('  bottom rung first', chain[0].productId === single)
+  ok('  and it knows which one you are looking at',
+    chain.find((r) => r.isCurrent)?.productId === six)
+  ok('*** pack size is in BASE units, not the stored factor ***',
+    chain[1].packSize === 6 && chain[2].packSize === 24,
+    `six=${chain[1].packSize} case=${chain[2].packSize}`)
+  ok('  while the factor stays relative', chain[2].factor === 4, String(chain[2].factor))
+
+  /*
+   * The 96 added earlier ALSO draws on the six-pack, so the six-pack is a
+   * fork. The walk up can only follow one branch, so the other has to be
+   * reported — a pack the panel never shows is a pack nobody can fix.
+   */
+  const forked = chain.find((r) => r.productId === six)
+  ok('*** a second pack drawing on the same rung is REPORTED, not hidden ***',
+    forked?.alsoDrawnOnBy.some((o) => o.code === `RG${stamp}-496`) ?? false,
+    JSON.stringify(forked?.alsoDrawnOnBy.map((o) => o.code)))
+  ok('  and the ladder itself is not double-counted',
+    chain[2].alsoDrawnOnBy.length === 0)
+
+  // Adding a pack size on top, creating the product as we go.
+  const added = await addReferRung(SITE, {
+    belowId: box,
+    code: `RG${stamp}-48`,
+    description: 'Range pallet',
+    packSize: 48,
+    method: 'normal',
+  })
+  ok('*** a pack size can be added from the rung below it ***', added.ok,
+    added.ok ? '' : added.error)
+
+  const grown = await referChain(SITE, six)
+  ok('  the ladder grew', grown.length === 4, String(grown.length))
+  ok('*** 48 base units above a 24 stores factor 2 ***',
+    grown[3].factor === 2 && grown[3].packSize === 48,
+    `factor=${grown[3].factor} pack=${grown[3].packSize}`)
+
+  // Linking one that already exists.
+  const loose = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, 'Loose pack', 'normal', 0, 0, 5, 1)`, [`RG${stamp}-96`])
+  const linked = await addReferRung(SITE, {
+    belowId: added.ok ? added.productId : 0,
+    productId: loose.insertId,
+    packSize: 96,
+    method: 'normal',
+  })
+  ok('*** an existing product can be linked in as a pack size ***', linked.ok,
+    linked.ok ? '' : linked.error)
+  ok('  and it becomes a refer product', (await typeOf(loose.insertId)) === 'refer',
+    await typeOf(loose.insertId))
+
+  ok('a pack size that does not divide evenly is refused',
+    !(await addReferRung(SITE, { belowId: six, packSize: 10, code: `RG${stamp}-x`, method: 'normal' })).ok)
+  ok('a pack size smaller than the one below is refused',
+    !(await addReferRung(SITE, { belowId: box, packSize: 2, code: `RG${stamp}-y`, method: 'normal' })).ok)
+  ok('a product already on the chain cannot be added again',
+    !(await addReferRung(SITE, { belowId: box, productId: six, packSize: 48, method: 'normal' })).ok)
+
+  /*
+   * Removing a middle rung has to CLOSE THE GAP. Deleting the link alone would
+   * strand everything above it pointing at nothing.
+   */
+  const removed = await removeReferRung(SITE, box)
+  ok('*** a middle rung can be removed ***', removed.ok, removed.ok ? '' : removed.error)
+
+  // Was single -> six -> 24 -> 48 -> 96; the 24 came out and the rest closed
+  // up behind it.
+  const closed = await referChain(SITE, six)
+  ok('  the removed rung is gone, the rest stay',
+    closed.length === 4 && !closed.some((r) => r.productId === box),
+    closed.map((r) => r.code).join(' -> '))
+  const pallet = closed.find((r) => r.code === `RG${stamp}-48`)
+  ok('*** the gap CLOSED: the pallet now draws on the six-pack ***',
+    pallet?.factor === 8, `factor=${pallet?.factor}`)
+  ok('*** and it still holds the same 48 base units ***', pallet?.packSize === 48,
+    String(pallet?.packSize))
+
+  ok('the base rung cannot be removed', !(await removeReferRung(SITE, single)).ok)
 
   // ── Refusals leave nothing behind
   console.log('\n── Refusals ──')

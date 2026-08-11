@@ -70,7 +70,7 @@ export default async function NewProductPage() {
           // the insert has given it one; serials wait for the save, because
           // they are units of stock rather than a description of the product.
           recipeLines={[]}
-          referLink={null}
+          referChain={[]}
           serials={[]}
           productSuppliers={[]}
         />

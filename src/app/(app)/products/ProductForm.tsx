@@ -14,10 +14,12 @@ import PropertiesPanel from '@/components/PropertiesPanel'
 import InstructionsPanel from '@/components/InstructionsPanel'
 import RecipePanel from '@/components/RecipePanel'
 import ReferPanel from '@/components/ReferPanel'
+import ReferWizard from '@/components/ReferWizard'
 import SerialsPanel from '@/components/SerialsPanel'
 import ProductSuppliersPanel from '@/components/ProductSuppliersPanel'
 import type { InstructionGroup } from '@/lib/site/instructions'
-import type { RecipeLine, ReferLink } from '@/lib/site/productComposition'
+import type { RecipeLine } from '@/lib/site/productComposition'
+import type { ChainRung } from '@/lib/site/referRange'
 import type { Serial } from '@/lib/site/serials'
 import type { ProductSupplier } from '@/lib/site/productSuppliers'
 import {
@@ -114,17 +116,33 @@ export default function ProductForm({
   instructionGroups,
   attachedInstructions,
   recipeLines,
-  referLink,
+  referChain,
   serials,
   productSuppliers,
   suggestedCode = null,
+  autoCode = false,
+  generalExtras = null,
 }: {
   product: Product | null
+  /**
+   * Panels that belong to the General tab but save on their own — variants and
+   * the photo gallery.
+   *
+   * Passed in rather than rendered here because both are server-composed, and
+   * placed by this component rather than by the page because otherwise they sit
+   * BELOW the tab strip on every tab: switching to Properties or Recipe still
+   * showed the gallery underneath, which reads as though it belongs to whatever
+   * tab is open. They stay OUTSIDE <form> — each carries its own form elements
+   * and the browser drops a nested one.
+   */
+  generalExtras?: React.ReactNode
   /**
    * Pre-filled code for a new product, or null when auto-numbering is off.
    * A suggestion only — see lib/site/masterCodes.ts.
    */
   suggestedCode?: string | null
+  /** Whether this site numbers products automatically — the refer wizard asks. */
+  autoCode?: boolean
   departments: Department[]
   brands: Brand[]
   vatRates: VatRate[]
@@ -151,7 +169,8 @@ export default function ProductForm({
   /** The ingredient list, for a recipe product. Empty otherwise. */
   recipeLines: RecipeLine[]
   /** What a refer product draws its stock from, or null. */
-  referLink: ReferLink | null
+  /** The whole pack ladder this product sits on, bottom rung first. */
+  referChain: ChainRung[]
   /** The individual units of a serial product. Empty otherwise. */
   serials: Serial[]
   /** Who this product is bought from. */
@@ -192,6 +211,35 @@ export default function ProductForm({
     product?.productType ?? DEFAULT_PRODUCT_TYPE,
   )
 
+  /*
+   * What one of a recipe product costs to make.
+   *
+   * Held here rather than in either panel because it crosses two tabs: the
+   * Recipe tab owns the ingredient list that produces it, and the Pricing panel
+   * on General shows it and prices against it. Seeded from the saved lines so
+   * the figure is right on first paint, then kept current by RecipePanel as
+   * rows are edited — change a quantity and the margin moves before you save.
+   */
+  const [recipeCost, setRecipeCost] = useState(() =>
+    recipeLines.reduce((sum, l) => sum + l.qty * (1 + l.wastagePct / 100) * l.unitCostExcl, 0),
+  )
+
+  // Only a recipe derives its cost. A refer product points at another product
+  // and takes its cost from the target at posting time, but that is one link
+  // rather than a sum and the cost box is not how it is set.
+  const derivedCost = productType === 'recipe' ? recipeCost : null
+
+  // The refer wizard builds a whole pack range around this product. Only
+  // reachable once it is saved, because the range chains onto its id.
+  const [wizardOpen, setWizardOpen] = useState(false)
+
+  // The rate the wizard prices against, so its markup column agrees with the
+  // Pricing panel's. This product's own rate, or the site default.
+  const sellingVatPercent =
+    vatRates.find((v) => v.id === product?.sellingVatRateId)?.rate ??
+    vatRates.find((v) => v.vatType === 'sales' && v.isDefault)?.rate ??
+    0
+
   const defaultPrices: Record<number, number> = {}
   for (const s of structures) {
     defaultPrices[s.id] = product?.prices.find((p) => p.priceStructureId === s.id)?.sellIncl ?? 0
@@ -199,8 +247,9 @@ export default function ProductForm({
 
   const initial = (description.trim()[0] ?? '?').toUpperCase()
 
-  // EDIT_COLUMN, not a literal: the variants and photographs panels below this
-  // form are separate siblings on the page and have to match it exactly.
+  // EDIT_COLUMN, not a literal: this wrapper is what gives the whole screen its
+  // width, including the self-saving panels in `generalExtras` that sit after
+  // the form but inside this div.
   return (
     <div className={`flex ${EDIT_COLUMN} flex-col gap-4`}>
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-4">
@@ -283,7 +332,7 @@ export default function ProductForm({
         <div className={tab === 'general' ? 'flex flex-col gap-4' : 'hidden'}>
           {/* ── Product overview ─────────────────────────────────────────── */}
           <Card>
-            <SectionTitle icon={<Info size={16} />}>Product overview</SectionTitle>
+            <SectionTitle tone="brand" icon={<Info size={16} />}>Product overview</SectionTitle>
             <div className="flex flex-col gap-5 p-6">
               <Field label="Description *">
                 <Input
@@ -374,7 +423,7 @@ export default function ProductForm({
 
           {/* ── Departments ──────────────────────────────────────────────── */}
           <Card>
-            <SectionTitle icon={<LayoutGrid size={16} />}>Departments</SectionTitle>
+            <SectionTitle tone="brand" icon={<LayoutGrid size={16} />}>Departments</SectionTitle>
             <div className="flex flex-col gap-4 p-6">
               {departments.length === 0 ? (
                 <p className="text-sm text-muted">
@@ -417,6 +466,9 @@ export default function ProductForm({
             linkedLines={linkedLines}
             sharesCost={sharesCost}
             sharesSelling={sharesSelling}
+            /* A recipe's cost is the sum of its ingredients, not a typed
+               figure — see the note on recipeCost above. */
+            derivedCost={derivedCost}
           />
 
           {/* ── Inventory ────────────────────────────────────────────────────
@@ -425,7 +477,7 @@ export default function ProductForm({
               is exactly the figure that hides 57 units sitting in a back
               warehouse. Stock lives in rooms; a store is the outer grouping. */}
           <Card>
-            <SectionTitle icon={<Warehouse size={16} />}>Inventory</SectionTitle>
+            <SectionTitle tone="brand" icon={<Warehouse size={16} />}>Inventory</SectionTitle>
             <LocationStockPanel
               isNew={isNew}
               stores={[
@@ -463,7 +515,7 @@ export default function ProductForm({
 
           {/* ── Product type ─────────────────────────────────────────────── */}
           <Card>
-            <SectionTitle icon={<Shapes size={16} />}>Product type</SectionTitle>
+            <SectionTitle tone="brand" icon={<Shapes size={16} />}>Product type</SectionTitle>
             <ProductTypePanel
               defaultValue={product?.productType ?? DEFAULT_PRODUCT_TYPE}
               onChange={setProductType}
@@ -516,7 +568,7 @@ export default function ProductForm({
             inputs, and dropping them would detach every instruction on save. */}
         <div className={tab === 'instructions' ? 'flex flex-col gap-4' : 'hidden'}>
           <Card>
-            <SectionTitle icon={<Lightbulb size={16} />}>Instructions</SectionTitle>
+            <SectionTitle tone="brand" icon={<Lightbulb size={16} />}>Instructions</SectionTitle>
             <InstructionsPanel
               groups={instructionGroups}
               attached={attachedInstructions}
@@ -529,7 +581,7 @@ export default function ProductForm({
             and dropping them would unlink every supplier on save. */}
         <div className={tab === 'suppliers' ? 'flex flex-col gap-4' : 'hidden'}>
           <Card>
-            <SectionTitle icon={<Truck size={16} />}>Suppliers</SectionTitle>
+            <SectionTitle tone="brand" icon={<Truck size={16} />}>Suppliers</SectionTitle>
             <ProductSuppliersPanel links={productSuppliers} />
           </Card>
         </div>
@@ -541,7 +593,7 @@ export default function ProductForm({
         {productType === 'recipe' && (
           <div className={tab === 'recipe' ? 'flex flex-col gap-4' : 'hidden'}>
             <Card>
-              <SectionTitle icon={<Shapes size={16} />}>Recipe</SectionTitle>
+              <SectionTitle tone="brand" icon={<Shapes size={16} />}>Recipe</SectionTitle>
               <RecipePanel
                 lines={recipeLines}
                 productId={product?.id ?? null}
@@ -551,6 +603,9 @@ export default function ProductForm({
                    the product's past sales meant. updateProduct refuses it
                    too — a disabled control is not a boundary. */
                 lockManufactured={!isNew && (product?.stockOnHand ?? 0) !== 0}
+                /* Feeds the Pricing panel on the General tab, so editing an
+                   ingredient here moves the cost and margin there. */
+                onCostChange={setRecipeCost}
               />
             </Card>
           </div>
@@ -560,8 +615,33 @@ export default function ProductForm({
         {productType === 'refer' && (
           <div className={tab === 'refer' ? 'flex flex-col gap-4' : 'hidden'}>
             <Card>
-              <SectionTitle icon={<ArrowLeftRight size={16} />}>Refer</SectionTitle>
-              <ReferPanel link={referLink} productId={product?.id ?? null} isNew={isNew} />
+              <SectionTitle
+                tone="brand"
+                icon={<ArrowLeftRight size={16} />}
+                action={
+                  !isNew && (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setWizardOpen(true)}>
+                      Build a pack range
+                    </Button>
+                  )
+                }
+              >
+                Refer
+              </SectionTitle>
+              {/* Self-saving: adding a pack size creates a product, which
+                  cannot wait for the form's Save button. */}
+              {product ? (
+                <ReferPanel
+                  productId={product.id}
+                  initialChain={referChain}
+                  autoCode={autoCode}
+                  onOpenWizard={() => setWizardOpen(true)}
+                />
+              ) : (
+                <p className="p-6 text-sm text-muted">
+                  Save the product first, then set up the pack sizes it is sold in.
+                </p>
+              )}
             </Card>
           </div>
         )}
@@ -571,7 +651,7 @@ export default function ProductForm({
         {isLinked && (
           <div className={tab === 'linked' ? 'flex flex-col gap-4' : 'hidden'}>
             <Card>
-              <SectionTitle icon={<Store size={16} />}>Linked stores</SectionTitle>
+              <SectionTitle tone="brand" icon={<Store size={16} />}>Linked stores</SectionTitle>
               <LinkedStoresPanel
                 stores={linkedStores}
                 currentSiteId={currentSiteId}
@@ -588,6 +668,39 @@ export default function ProductForm({
 
       </form>
 
+      {/* OUTSIDE the form, like every other self-saving panel here: the wizard
+          carries its own inputs and commits its own transaction, and nesting a
+          dialog's fields inside this form would submit them with the product. */}
+      {product && (
+        <ReferWizard
+          open={wizardOpen}
+          onClose={() => setWizardOpen(false)}
+          vatPercent={sellingVatPercent}
+          autoCode={autoCode}
+          base={{
+            productId: product.id,
+            description: product.description,
+            code: product.code,
+            barcode: product.barcode ?? '',
+            costExcl: product.lastCost,
+            sellIncl: defaultPrices[structures.find((s) => s.isDefault)?.id ?? 0] ?? 0,
+            departmentId: product.departmentId,
+            brandId: product.brandId,
+            purchaseVatRateId: product.purchaseVatRateId,
+            sellingVatRateId: product.sellingVatRateId,
+          }}
+        />
+      )}
+
+      {/* ── General tab, continued ───────────────────────────────────────── */}
+      {/* Variants and photographs. Rendered after </form> for the same reason
+          Serials is — both save on their own and carry their own form elements
+          — but hidden with the General tab, because they are part of it. Left
+          outside the tab they rendered under every tab at once. */}
+      {generalExtras && (
+        <div className={tab === 'general' ? 'flex flex-col gap-4' : 'hidden'}>{generalExtras}</div>
+      )}
+
       {/* ── Serials ──────────────────────────────────────────────────────── */}
       {/* OUTSIDE the form on purpose. Serials commit on their own — a unit of
           stock must not be lost because an unrelated field failed validation —
@@ -596,7 +709,7 @@ export default function ProductForm({
       {productType === 'serial' && (
         <div className={tab === 'serials' ? 'flex flex-col gap-4' : 'hidden'}>
           <Card>
-            <SectionTitle icon={<Barcode size={16} />}>Serial numbers</SectionTitle>
+            <SectionTitle tone="brand" icon={<Barcode size={16} />}>Serial numbers</SectionTitle>
             <SerialsPanel
               serials={serials}
               productId={product?.id ?? null}
