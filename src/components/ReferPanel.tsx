@@ -7,23 +7,39 @@ import {
   EmptyState,
   Field,
   NumberInput,
+  Select,
   type ComboboxOption,
 } from '@/components/ui'
 import { Trash, ArrowRight } from '@/components/ui/icons'
-import type { ReferLink } from '@/lib/site/productComposition'
+import type { ReferLink, ReferMethod } from '@/lib/site/productComposition'
 import type { ProductPick } from '@/lib/site/products'
 import { searchProductsAction } from '@/app/(app)/products/pickerActions'
 
 /**
- * The product a refer product actually draws its stock from.
+ * The product a refer product is linked to, and what that link does to stock.
  *
- * A six-pack IS six singles. There is one pile of stock, counted in singles,
- * and selling a six-pack takes six off it — so a refer product never carries
- * stock of its own and the factor is how many of the target one of these is.
+ * The factor is always "how many of the target one of these is" — a six-pack
+ * linked to a single has a factor of 6. What differs is where the stock sits,
+ * and that is the METHOD (see 103_refer_methods.sql):
  *
- * 1:1, so this submits two plain fields rather than a row set. Clearing the
+ *   subtract  one pile, counted in singles. Selling a six-pack takes six off
+ *             it and the six-pack itself never carries stock.
+ *   normal    every pack size has its own pile. Selling a single when there
+ *             are none breaks a six-pack open to make six.
+ *
+ * 1:1, so this submits three plain fields rather than a row set. Clearing the
  * link submits an empty referTarget, which the action reads as "unlink".
+ *
+ * For building a whole range at once — single, six-pack and case together —
+ * see ReferWizard.tsx.
  */
+
+const METHOD_HINT: Record<ReferMethod, string> = {
+  subtract:
+    'Only the linked product holds stock. Receiving 10 of these adds the factor × 10 to it, and selling one takes the factor off it.',
+  normal:
+    'This pack holds its own stock. Receiving 10 gives you 10 of these, and selling the linked product when it runs out breaks one of these open.',
+}
 
 const money = (n: number) =>
   n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -57,6 +73,7 @@ export default function ReferPanel({
       : null,
   )
   const [factor, setFactor] = useState(link?.factor ?? 1)
+  const [method, setMethod] = useState<ReferMethod>(link?.method ?? 'subtract')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ProductPick[]>([])
   const [searching, startSearch] = useTransition()
@@ -90,6 +107,7 @@ export default function ReferPanel({
           would leave a link the user deliberately removed in place. */}
       <input type="hidden" name="referTarget" value={target?.id ?? ''} />
       <input type="hidden" name="referFactor" value={factor} />
+      <input type="hidden" name="referMethod" value={method} />
 
       {!target ? (
         <>
@@ -155,17 +173,41 @@ export default function ReferPanel({
             </Button>
           </div>
 
-          <p className="text-sm text-muted">
-            Selling one deducts{' '}
-            <span className="numeric font-medium text-ink">
-              {factor.toLocaleString('en-ZA')}
-            </span>{' '}
-            of {target.description}, at a cost of{' '}
-            <span className="numeric font-medium text-ink">
-              {money(factor * target.unitCostExcl)}
-            </span>
-            .
-          </p>
+          <div className="max-w-md">
+            <Field label="Refer method" hint={METHOD_HINT[method]}>
+              <Select
+                value={method}
+                onChange={(e) => setMethod(e.target.value as ReferMethod)}
+                aria-label="Refer method"
+              >
+                <option value="subtract">Subtract pack — the linked product holds the stock</option>
+                <option value="normal">Normal refers — this pack holds its own stock</option>
+              </Select>
+            </Field>
+          </div>
+
+          {method === 'subtract' ? (
+            <p className="text-sm text-muted">
+              Selling one deducts{' '}
+              <span className="numeric font-medium text-ink">
+                {factor.toLocaleString('en-ZA')}
+              </span>{' '}
+              of {target.description}, at a cost of{' '}
+              <span className="numeric font-medium text-ink">
+                {money(factor * target.unitCostExcl)}
+              </span>
+              .
+            </p>
+          ) : (
+            <p className="text-sm text-muted">
+              Selling one takes one of these off the shelf. When {target.description} runs out,
+              one of these is broken open to make{' '}
+              <span className="numeric font-medium text-ink">
+                {factor.toLocaleString('en-ZA')}
+              </span>{' '}
+              of it.
+            </p>
+          )}
         </>
       )}
     </div>
