@@ -1,5 +1,5 @@
 import { groupsFor, resolveGroups, type DeclaredGroup, type HubGroup } from '@/lib/hub'
-import type { SubpageHref } from '@/lib/nav'
+import { SETUP_ELSEWHERE, type SubpageHref } from '@/lib/nav'
 
 /**
  * Every setup screen, grouped by the job it does.
@@ -22,13 +22,25 @@ import type { SubpageHref } from '@/lib/nav'
 
 /**
  * A setup route. Narrowed from `SubpageHref` — which names every hub's screens —
- * to the ones under /setup, so a tile pointing at a screen the breadcrumb has
- * never heard of is a compile error, and so is one belonging to another hub.
+ * so a tile pointing at a screen the breadcrumb has never heard of is a compile
+ * error.
+ *
+ * Three kinds of route qualify. Screens under /setup itself; configuration that
+ * lives under another section's route but is OWNED here, per `SUBPAGE_OWNER`
+ * (pay rules, commission rules, the loyalty programme); and the screens in
+ * `SETUP_ELSEWHERE` — settings this hub lists but leaves in the module that
+ * owns them, so their breadcrumb still reads "Online Store › Store setup".
  */
-export type SetupHref = Extract<
-  SubpageHref,
-  `/setup/${string}` | `/staff/${string}` | '/credit/levels' | `/loyalty/${string}`
->
+export type SetupHref =
+  | Extract<
+      SubpageHref,
+      | `/setup/${string}`
+      | `/staff/${string}`
+      | '/credit/levels'
+      | '/commission/rules'
+      | `/loyalty/${string}`
+    >
+  | (typeof SETUP_ELSEWHERE)[number]
 
 const DECLARED: DeclaredGroup<SetupHref>[] = [
   {
@@ -72,6 +84,16 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'emerald',
         capability: 'staff.cost',
       },
+      /* The other half of what a person is paid, and until now reachable only
+         from /commission by somebody who already knew it was there. */
+      {
+        href: '/commission/rules',
+        description: 'Who earns commission, on what they sell, and at what rate.',
+        keywords: 'commission rates rules percentage sales rep earnings targets',
+        icon: 'Percent',
+        tone: 'rose',
+        capability: 'commission.edit',
+      },
     ],
   },
   {
@@ -94,6 +116,18 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         keywords: 'cash card eft payment methods vouchers',
         icon: 'CreditCard',
         tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/setup/tips',
+        description: 'Service charges by bill size, and whether they apply off the floor.',
+        keywords: 'tips gratuity service charge tiers waiter pool',
+        /* `Percent` from the hub's own icon union — `HandCoins` exists in the kit but not in
+           `HubIconName`, which is a deliberately short list so a hub tile cannot name a
+           glyph the hub cannot render. A service charge is a percentage, so this reads
+           correctly rather than being a substitute. */
+        icon: 'Percent',
+        tone: 'amber',
         capability: 'setup.edit',
       },
       {
@@ -211,6 +245,98 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Stamp',
         tone: 'orange',
         capability: 'loyalty.view',
+      },
+    ],
+  },
+  /*
+   * The two groups below are CROSS-REFERENCES — every tile in them opens a
+   * screen this hub does not own, listed here because this is where somebody
+   * looks for a setting. Their breadcrumbs still read "Online Store › …" and
+   * "Accounting › …", which is why they are not in `SUBPAGE_OWNER`. See
+   * `SETUP_ELSEWHERE` in src/lib/nav.ts for why being in two hubs is safe.
+   *
+   * Each `capability` mirrors the guard on the page itself — checked against
+   * the real `requireCapability` call, not guessed, because a tile gated on a
+   * capability the page does not use hides a screen from somebody who can
+   * open it.
+   */
+  {
+    label: 'Selling online',
+    description: 'The web shop’s own switches — kept with the store, listed here too.',
+    tone: 'sky',
+    icon: 'ShoppingBag',
+    items: [
+      {
+        href: '/online-store/setup',
+        description: 'The name, the domain, delivery charges, and whether the shop is live.',
+        keywords: 'domain url delivery fees shipping open closed launch go live web shop',
+        icon: 'Settings',
+        tone: 'sky',
+        capability: 'online.edit',
+      },
+      {
+        href: '/online-store/payments',
+        description: 'How shoppers may pay, and the gateway that takes the money.',
+        keywords: 'payfast yoco ozow gateway card eft checkout',
+        icon: 'CreditCard',
+        tone: 'indigo',
+        capability: 'online.edit',
+      },
+      {
+        href: '/online-store/statuses',
+        description: 'The steps an order moves through, from paid to collected.',
+        keywords: 'workflow stages pipeline packing shipped fulfilment',
+        icon: 'ListOrdered',
+        tone: 'teal',
+        capability: 'online.edit',
+      },
+      {
+        href: '/online-store/discounts',
+        description: 'Codes a shopper can type at checkout, and what each takes off.',
+        keywords: 'promo coupon voucher promotion sale code',
+        icon: 'Tag',
+        tone: 'rose',
+        capability: 'online.edit',
+      },
+    ],
+  },
+  {
+    label: 'Accounting & posting',
+    description: 'Where figures land in the ledger, and when the books are closed.',
+    tone: 'indigo',
+    icon: 'Scale',
+    items: [
+      {
+        href: '/accounting/accounts',
+        description: 'The ledger accounts everything posts to, and what each is for.',
+        keywords: 'chart of accounts ledger codes general ledger',
+        icon: 'Landmark',
+        tone: 'indigo',
+        capability: 'reports.financial',
+      },
+      {
+        href: '/accounting/periods',
+        description: 'Close a month so nobody can post into it after the fact.',
+        keywords: 'period lock close month year end freeze',
+        icon: 'Lock',
+        tone: 'amber',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/expenses/recurring',
+        description: 'Rent, subscriptions — the costs that repeat without being asked.',
+        keywords: 'standing order repeating monthly rent subscription',
+        icon: 'Repeat',
+        tone: 'violet',
+        capability: 'cashbook.edit',
+      },
+      {
+        href: '/reports/schedules',
+        description: 'Reports that email themselves — to whom, and how often.',
+        keywords: 'scheduled email me automatic recurring report delivery',
+        icon: 'Mail',
+        tone: 'emerald',
+        capability: 'reports.schedule',
       },
     ],
   },

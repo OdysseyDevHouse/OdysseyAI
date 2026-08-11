@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Loyalty</title>
+  <rect x="8.5" y="9.5" width="31" height="30" rx="2.6" fill="#DCE6F7"/>
+  <rect x="10.8" y="11.8" width="26.4" height="23.6" rx="2" fill="#FFFFFF"/>
+  <rect x="13.2" y="14" width="21.6" height="4.8" rx="1.6" fill="#2563EB"/>
+  <path d="M20.40 20.40L22.27 24.82L27.06 25.24L23.43 28.38L24.51 33.06L20.40 30.58L16.29 33.06L17.37 28.38L13.74 25.24L18.53 24.82Z" fill="#2563EB"/>
+  <rect x="28.4" y="22" width="6.4" height="2.4" rx="1.2" fill="#93C5FD"/>
+  <rect x="28.4" y="26.4" width="6.4" height="2.4" rx="1.2" fill="#93C5FD"/>
+  <rect x="28.4" y="30.8" width="6.4" height="2.4" rx="1.2" fill="#93C5FD"/>
+  <rect x="10.8" y="35.4" width="26.4" height="4" rx="1.5" fill="#C7DAF6"/>
+</svg>

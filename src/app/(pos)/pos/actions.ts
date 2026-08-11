@@ -4,6 +4,7 @@ import { actorForOrThrow } from '@/lib/auth'
 import { listSaved, getDocument, recallDocument } from '@/lib/site/salesDocuments'
 import { getTillProduct } from '@/lib/site/tillSearch'
 import { siteQuery } from '@/lib/siteDb'
+import { recordServiceChargeRemoval } from '@/lib/site/tips'
 import type { BasketLine } from '@/lib/basket'
 
 /**
@@ -213,4 +214,35 @@ export async function recallSaleForTillAction(
       }
     }),
   }
+}
+
+/**
+ * Records that a manager removed a forced service charge.
+ *
+ * ── WHY THIS IS ITS OWN ACTION AND NOT PART OF THE FINALISE ────────────────
+ *
+ * The removal is a fact worth keeping even when the sale is not completed. A manager who
+ * takes a charge off a bill and then voids it still took it off, and a shop looking at who
+ * removes service charges — which is the whole reason a forced charge is removable at all
+ * — wants that visible. Folding it into `finaliseSaleAction` would record only the removals
+ * that happened to end in a sale.
+ *
+ * `sales.discount_override`, re-checked here rather than trusted from the screen that
+ * offered the button: a server action is a public endpoint, and the only capability check
+ * that counts is the one a client cannot skip. A waiter calling this directly gets nothing.
+ */
+export async function recordServiceChargeWaivedAction(
+  documentId: number | null,
+  amount: number,
+): Promise<{ ok: boolean }> {
+  const { siteId, actor } = await actorForOrThrow('sales.discount_override')
+  await recordServiceChargeRemoval(siteId, actor, {
+    documentId,
+    amount,
+    /* No free-text reason from the till. The pad has no room for one mid-sale, and a
+       forced-and-empty box collects "asdf" — the name, the amount and the moment are the
+       facts that make the pattern visible, and those are all recorded. */
+    reason: 'Removed at the till',
+  })
+  return { ok: true }
 }

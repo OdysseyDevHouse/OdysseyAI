@@ -12,6 +12,7 @@ import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { PosTable } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import type { VisitType } from '@/lib/site/visitTypes'
+import type { ServiceTier } from '@/lib/tipMath'
 import type { Department } from './types'
 
 /**
@@ -58,6 +59,8 @@ export default function PosEntry({
   floorRooms,
   floorFeatures,
   visitTypes = [],
+  serviceTiers,
+  tipsTablesOnly,
 }: {
   siteId: number
   siteName: string
@@ -94,6 +97,9 @@ export default function PosEntry({
   floorFeatures: FloorFeature[]
   /** Active visit types, for the table gate's filter. */
   visitTypes?: VisitType[]
+  /** Tips config. Relayed unchanged — this component owns sign-in, not pricing. */
+  serviceTiers: ServiceTier[]
+  tipsTablesOnly: boolean
 }) {
   /*
    * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
@@ -168,6 +174,8 @@ export default function PosEntry({
       floorRooms={floorRooms}
       floorFeatures={floorFeatures}
       visitTypes={visitTypes}
+      serviceTiers={serviceTiers}
+      tipsTablesOnly={tipsTablesOnly}
     />
   )
 }

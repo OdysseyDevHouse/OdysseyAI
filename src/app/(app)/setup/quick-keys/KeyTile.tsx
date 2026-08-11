@@ -1,8 +1,9 @@
 'use client'
 
 import { useDraggable, useDroppable } from '@dnd-kit/core'
-import { Icons, tileClass } from '@/components/ui'
+import { CategoryTile, Icons, toneForId } from '@/components/ui'
 import { actionForSlug, quickKeyLabel, type QuickKeyRow } from '@/lib/quickKeys'
+import { quickKeyArt, quickKeyArtSrc } from '@/lib/quickKeyArt'
 
 /**
  * One key on the designer's canvas — draggable, and a drop target at the same time.
@@ -68,6 +69,10 @@ export function KeyTile({
 
   const action = keyRow.kind === 'action' ? actionForSlug(keyRow.actionSlug) : null
   const Glyph = glyphFor(keyRow.icon || action?.icon || (isGroup ? 'Shapes' : 'Sparkles'))
+  /* The same art, resolved the same way, as the till. A manager arranging keys must be
+     looking at what the cashier will see — a canvas of flat glyphs beside a till of
+     drawn icons is two screens disagreeing about the same row. */
+  const art = quickKeyArt({ actionSlug: keyRow.actionSlug, icon: keyRow.icon })
 
   return (
     <div
@@ -90,27 +95,34 @@ export function KeyTile({
         {...listeners}
         onClick={onSelect}
         aria-pressed={selected}
-        className={`relative flex size-24 flex-col items-center justify-center gap-1 overflow-hidden rounded-card border-2 px-1 text-center transition ${tileClass(
-          keyRow.colourToken,
-        )} ${
+        className={`relative flex size-24 flex-col items-center justify-center gap-1.5 overflow-hidden rounded-card border-2 bg-surface px-1 text-center shadow-card transition ${
           intent === 'into'
             ? 'border-brand ring-2 ring-brand'
             : selected
               ? 'border-ink'
-              : 'border-transparent'
+              : 'border-border'
         } ${dragging || isDragging ? 'opacity-40' : ''} ${
           keyRow.isHidden ? 'opacity-50 grayscale' : ''
         }`}
       >
-        <Glyph size={22} className="text-white" />
-        <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-white">
+        <CategoryTile
+          icon={
+            art ? (
+              <img src={quickKeyArtSrc(art.file)} alt="" className="h-6 w-6" />
+            ) : (
+              <Glyph size={18} />
+            )
+          }
+          tone={art ? art.tone : toneForId(keyRow.id)}
+        />
+        <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-ink">
           {label}
         </span>
 
         {/* A folder says how many are inside, because a group with nothing in it is
             worth noticing and an empty one looks identical otherwise. */}
         {isGroup && (
-          <span className="absolute right-1 top-1 rounded-pill bg-ink/40 px-1.5 text-[10px] font-bold text-white">
+          <span className="absolute right-1 top-1 rounded-pill bg-surface-2 px-1.5 text-[10px] font-bold text-muted">
             {memberCount}
           </span>
         )}
@@ -118,12 +130,12 @@ export function KeyTile({
         {/* Both matter to a manager reading the canvas: a key needing a PIN, and one
             put away for the season. */}
         {keyRow.requireAuth && (
-          <span className="absolute left-1 top-1 text-white/90">
+          <span className="absolute left-1 top-1 text-muted">
             <Icons.KeyRound size={12} />
           </span>
         )}
         {keyRow.isHidden && (
-          <span className="absolute bottom-1 left-1 text-white/90">
+          <span className="absolute bottom-1 left-1 text-muted">
             <Icons.Offline size={12} />
           </span>
         )}

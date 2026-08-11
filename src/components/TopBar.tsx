@@ -22,24 +22,28 @@ function IconButton({
   icon: Icon,
   onClick,
   href,
+  internal = false,
 }: {
   label: string
   icon: typeof Bell
   onClick?: () => void
   /** Renders a link instead of a button — for a destination rather than an action. */
   href?: string
+  /**
+   * A route inside the app rather than a static file, so it soft-navigates in
+   * this tab. The help guide is the other kind and stays the default: it lives
+   * under public/, needs a real page load, and opens in its own tab so a
+   * half-finished capture on this screen survives somebody reading it.
+   */
+  internal?: boolean
 }) {
   if (href) {
-    /* The guide is a static file under public/, so it needs a real navigation
-       rather than a client-side route change — hence prefetch={false} and its
-       own tab, which also means a half-finished capture on this screen survives
-       somebody reading the help. */
     return (
       <ButtonLink
         href={href}
-        target="_blank"
-        rel="noopener"
-        prefetch={false}
+        target={internal ? undefined : '_blank'}
+        rel={internal ? undefined : 'noopener'}
+        prefetch={internal ? undefined : false}
         variant="bare"
         iconOnly
         title={label}
@@ -132,8 +136,11 @@ export default function TopBar({
         {/* The help centre moved here from a card at the foot of the sidebar,
             which cost 90px of permanent chrome in a menu being quietened. */}
         <IconButton label="Help" icon={CircleHelp} href="/help.html" />
-        {/* Not wired up yet — present so the shell is complete. */}
-        <IconButton label="Settings" icon={Settings} />
+        {/* Straight to the hub, not a menu of shortcuts. The sidebar already
+            has a Setup row, so a dropdown here would be a THIRD front door to
+            the same screens — the problem src/lib/nav.ts records solving when
+            the menu stopped naming all fourteen. */}
+        <IconButton label="Settings" icon={Settings} href="/setup" internal />
         <IconButton label="Notifications" icon={Bell} />
 
         <div ref={menuRef} className="relative">

@@ -28,5 +28,17 @@ export async function selectSiteAction(form: FormData): Promise<void> {
   const token = await createSessionToken({ ...session, siteId: site.id })
   await setSessionCookie(token)
 
-  redirect('/dashboard')
+  // Where they were headed before login interrupted them. Relative paths only,
+  // for the same reason as on the login form: anything else turns this action
+  // into an open redirect. `/login` and `/select-site` are excluded so a stale
+  // value can't bounce them straight back here.
+  const next = String(form.get('next') ?? '')
+  const isSafe =
+    next.startsWith('/') &&
+    !next.startsWith('//') &&
+    next !== '/' &&
+    !next.startsWith('/login') &&
+    !next.startsWith('/select-site')
+
+  redirect(isSafe ? next : '/dashboard')
 }

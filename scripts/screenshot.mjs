@@ -202,6 +202,54 @@ if (!submitted) {
 }
 
 await sleep(4500)
+
+// STAYING ON '/' IS NOT A FAILURE ANY MORE.
+//
+// An account with more than one store used to be redirected to a /select-site
+// page; it now gets a dialog OVER the login card, so the path is still '/' long
+// after the credentials were accepted. Checking the path alone reported "Sign-in
+// failed: no message shown" for a login that had in fact worked — the giveaway
+// being that the account's failed_attempts never moved off zero.
+//
+// So the dialog is checked first: if it is open, sign-in succeeded and the only
+// thing left is to choose a store.
+const pickerOpen = () =>
+  evaluate(`(() => {
+     const dialog = document.querySelector('dialog[open]')
+     if (!dialog) return false
+     return /choose a store|select which one/i.test(dialog.innerText || '')
+   })()`)
+
+if (await pickerOpen()) {
+  const wanted = process.env.SHOT_SITE
+  const chose = await evaluate(
+    [
+      '(() => {',
+      '  const dialog = document.querySelector("dialog[open]")',
+      '  const rows = [...dialog.querySelectorAll("button, a[href]")]',
+      '    .filter((el) => (el.textContent || "").trim().length > 0)',
+      '    .filter((el) => !/cancel|sign out/i.test(el.textContent))',
+      '  const want = ' + JSON.stringify(wanted || ''),
+      '  const hit = want',
+      '    ? rows.find((el) => el.textContent.toLowerCase().includes(want.toLowerCase()))',
+      '    : rows[0]',
+      '  if (!hit) return null',
+      '  hit.click()',
+      '  return hit.textContent.replace(/\\s+/g, " ").trim()',
+      '})()',
+    ].join('\n'),
+  )
+  if (!chose) {
+    console.error(
+      'The store picker opened but held no store to choose' +
+        (wanted ? ` matching SHOT_SITE="${wanted}"` : ''),
+    )
+    process.exit(1)
+  }
+  await sleep(4000)
+  console.log('chose store:', chose, '->', await evaluate('location.pathname'))
+}
+
 const landed = await evaluate('location.pathname')
 if (landed === '/' || landed.startsWith('/login')) {
   const message = await evaluate(
@@ -211,6 +259,43 @@ if (landed === '/' || landed.startsWith('/login')) {
   process.exit(1)
 }
 console.log('signed in, landed on', landed)
+
+// ── Choose a store ──────────────────────────────────────────────────────
+// An account with access to more than one site lands on /select-site, and every
+// app route redirects back there until one is picked. Without this the script
+// happily wrote three PNGs of the store picker and reported success — the shots
+// looked like a screen that renders, so the bug was in the verification tool
+// rather than in the page being verified.
+//
+// SHOT_SITE picks by name or code; the default is the first store listed.
+if ((await evaluate('location.pathname')).startsWith('/select-site')) {
+  const wanted = process.env.SHOT_SITE
+  const clicked = await evaluate(
+    [
+      '(() => {',
+      '  const rows = [...document.querySelectorAll("a[href], button")]',
+      '    .filter((el) => (el.textContent || "").trim().length > 0)',
+      '    .filter((el) => !/sign out/i.test(el.textContent))',
+      '  const want = ' + JSON.stringify(wanted || ''),
+      '  const hit = want',
+      '    ? rows.find((el) => el.textContent.toLowerCase().includes(want.toLowerCase()))',
+      '    : rows[0]',
+      '  if (!hit) return null',
+      '  hit.click()',
+      '  return hit.textContent.replace(/\\s+/g, " ").trim()',
+      '})()',
+    ].join('\n'),
+  )
+  if (!clicked) {
+    console.error(
+      'Landed on /select-site but found no store to choose' +
+        (wanted ? ` matching SHOT_SITE="${wanted}"` : ''),
+    )
+    process.exit(1)
+  }
+  await sleep(3500)
+  console.log('chose store:', clicked, '->', await evaluate('location.pathname'))
+}
 
 // ── Shoot ───────────────────────────────────────────────────────────────
 // SHOT_CLICK="Finalise" clicks the button with that label before capturing, so
@@ -318,7 +403,37 @@ for (const p of paths) {
   )
   await sleep(400)
 
-  const { data } = await send('Page.captureScreenshot', { format: 'png' }, sessionId)
+  // SHOT_CLIP="Till tiles" crops to the CARD containing that text, so one
+  // component can be looked at closely instead of hunting for it in a
+  // 12,000px capture of the style guide. Silently falls back to the whole page
+  // when nothing matches — a missing crop should not lose the screenshot.
+  const CLIP = process.env.SHOT_CLIP
+  const clip = CLIP
+    ? await evaluate(
+        `(() => {
+           const wanted = ${JSON.stringify(CLIP)}.trim().toLowerCase()
+           const el = [...document.querySelectorAll('section, article, div')]
+             .filter((n) => (n.innerText || '').trim().toLowerCase().includes(wanted))
+             // The smallest element still containing the text WOULD be the
+             // obvious pick, but on a card whose heading repeats the name that
+             // is the heading itself — a crop of the title and nothing under
+             // it. Take the smallest that still contains a control instead,
+             // which is the card rather than its header.
+             .filter((n) => n.querySelector('button, input, table, img, a'))
+             .sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height)[0]
+           if (!el) return null
+           const r = el.getBoundingClientRect()
+           return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height, scale: 1 }
+         })()`,
+      )
+    : null
+  if (CLIP && !clip) console.warn(`  (nothing matching "${CLIP}" on ${p} — capturing the page)`)
+
+  const { data } = await send(
+    'Page.captureScreenshot',
+    clip ? { format: 'png', clip } : { format: 'png' },
+    sessionId,
+  )
   await send('Emulation.clearDeviceMetricsOverride', {}, sessionId)
   const name = (p.replace(/^\//, '').replace(/[^\w.-]+/g, '-') || 'root') + '.png'
   const file = path.join(OUT, name)

@@ -29,6 +29,28 @@ export function categoryTone(category: string): CategoryTone {
   return CATEGORY_TONE[category] ?? 'slate'
 }
 
+/**
+ * What each category answers, in one line.
+ *
+ * The hub's group headings carry these for the same reason Setup's and
+ * Accounting's do: a heading that only names a category tells somebody who has
+ * not run any of these reports nothing about which one to open. A category with
+ * no entry simply renders without a line, rather than with a made-up one.
+ */
+const CATEGORY_DESCRIPTION: Record<string, string> = {
+  Sales: 'What was sold, by whom, and what it came to.',
+  Stock: 'What is on hand, what moved, and what is running out.',
+  Customers: 'Who buys, who owes, and how long they take to pay.',
+  Suppliers: 'What was bought in, from whom, and what it cost.',
+  Money: 'Takings, expenses and what the day added up to.',
+  Operations: 'How the shop ran — shifts, tills and who did what.',
+  Saved: 'Reports this shop built or had generated.',
+}
+
+export function categoryDescription(category: string): string {
+  return CATEGORY_DESCRIPTION[category] ?? ''
+}
+
 export function categoryIcon(category: string, size = 18): ReactNode {
   switch (category) {
     case 'Sales':

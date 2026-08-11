@@ -51,21 +51,27 @@ import {
   SECTION_HINT,
   SECTION_LABEL,
   kindsFor,
-  SOURCE_HINT,
-  SOURCE_LABEL,
+  describeSource,
   describeLayoutChanges,
+  applyToSelection,
   isScheduledNow,
   normaliseSections,
   pageWarnings,
+  replaceBlockText,
+  richBlockText,
   sectionName,
   sourcesFor,
   shopToday,
+  RICH_ALIGNS,
+  RICH_COLOURS,
   type BannerSlide,
   type HomeSection,
   type LayoutChange,
   type PagePreset,
+  type RichAlign,
   type RichBlock,
   type RichBlockType,
+  type RichColour,
   type RichSpan,
   type SectionKind,
   type StorefrontTheme,
@@ -73,6 +79,7 @@ import {
   // The pure model, NOT lib/site/storefrontLayout — importing the server
   // module here would pull the database layer into the browser bundle.
 } from '@/lib/storefrontModel'
+import { blocksFromPastedText, parsePastedHtml } from '@/lib/richTextPaste'
 import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefront'
 import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { PageVersion, SavedSection, StorefrontPage } from '@/lib/site/storefrontPages'
@@ -1378,7 +1385,7 @@ export default function Builder({
                   <>
                     <Field
                       label="Fill this row with"
-                      hint={SOURCE_HINT[selected.source ?? 'manual']}
+                      hint={describeSource(selected.source ?? 'manual', page.kind).hint}
                     >
                       <Select
                         value={selected.source ?? 'manual'}
@@ -1388,7 +1395,7 @@ export default function Builder({
                       >
                         {sourcesFor(page.kind).map((source) => (
                           <option key={source} value={source}>
-                            {SOURCE_LABEL[source]}
+                            {describeSource(source, page.kind).label}
                           </option>
                         ))}
                       </Select>
@@ -3132,11 +3139,46 @@ function videoIdFrom(input: string, provider: 'youtube' | 'vimeo'): string {
  * takes payments. Parsing it back into blocks means writing the sanitiser we
  * were avoiding.
  *
- * So each block is a textarea with a type beside it. Bold, italic and links
- * apply to a WHOLE block rather than to a selection — which is the honest
- * limitation of this shape, and covers what a shop page actually needs: a
- * heading, some paragraphs, a bulleted list, the odd link.
+ * So each block is a textarea with a type beside it.
+ *
+ * ── FORMATTING FOLLOWS THE SELECTION ─────────────────────────────────────
+ *
+ * Bold, italic, colour and links apply to whatever is SELECTED in the
+ * textarea, falling back to the whole line when nothing is. That is what makes
+ * "call us on 021 555 0000" with only the number bold possible, and it is the
+ * one thing the block-at-a-time version could not do.
+ *
+ * A textarea reports its selection as two offsets into plain text, and
+ * `applyToSelection` takes exactly that — so this component never has to know
+ * how a block is divided into spans, and the splitting logic stays testable
+ * without a browser.
+ *
+ * Alignment and size stay per BLOCK, because that is what they are: half a
+ * centred paragraph is not a thing.
  */
+const ALIGN_LABEL: Record<RichAlign, string> = {
+  left: 'Left',
+  center: 'Centred',
+  right: 'Right',
+}
+
+/**
+ * The colours in the owner's words, not the token's.
+ *
+ * "Brand colour" rather than "brand" because the point is that it follows the
+ * shop — an owner who reads "your shop's colour" understands that changing the
+ * brand changes this, which is exactly the property that makes named colours
+ * better than a picker.
+ */
+const COLOUR_LABEL: Record<RichColour, string> = {
+  default: 'Normal colour',
+  brand: 'Your shop’s colour',
+  muted: 'Grey',
+  success: 'Green',
+  warning: 'Amber',
+  danger: 'Red',
+}
+
 function RichTextEditor({
   blocks,
   onChange,
@@ -3144,18 +3186,131 @@ function RichTextEditor({
   blocks: RichBlock[]
   onChange: (blocks: RichBlock[]) => void
 }) {
-  /** One span per block — see the header on why formatting is per block. */
+  /*
+   * Which block is focused and what is selected inside it.
+   *
+   * Held in state rather than read on demand because the toolbar buttons take
+   * focus when clicked, and by the time onClick runs the textarea's own
+   * selection has already collapsed. Recording it as it changes is what makes
+   * the buttons act on what the owner actually highlighted.
+   */
+  const [focused, setFocused] = useState<number | null>(null)
+  const [range, setRange] = useState<{ from: number; to: number }>({ from: 0, to: 0 })
+
+  const trackSelection = (index: number, el: HTMLTextAreaElement) => {
+    setFocused(index)
+    setRange({ from: el.selectionStart, to: el.selectionEnd })
+  }
+
+  /** The first span of a block — what an empty selection reads its state from. */
   const spanOf = (block: RichBlock): RichSpan => block.spans[0] ?? { text: '' }
 
-  const edit = (index: number, changes: Partial<RichSpan>) =>
+  /**
+   * The span the toolbar should show as active.
+   *
+   * With a selection that is the span the selection STARTS in, so highlighting
+   * a bold word lights the bold button. With no selection it is the first
+   * span, which is the whole line's formatting when the line is uniform.
+   */
+  const activeSpan = (block: RichBlock, index: number): RichSpan => {
+    if (focused !== index || range.from === range.to) return spanOf(block)
+    let cursor = 0
+    for (const span of block.spans) {
+      const end = cursor + span.text.length
+      if (range.from < end) return span
+      cursor = end
+    }
+    return spanOf(block)
+  }
+
+  /**
+   * Apply a formatting change to the selection, or to the whole line when
+   * there is none.
+   *
+   * Falling back to the whole line matters: pressing B with the cursor parked
+   * somewhere is what an owner does when they mean "make this line bold", and
+   * doing nothing would read as a broken button.
+   */
+  const format = (index: number, changes: Partial<Omit<RichSpan, 'text'>>) =>
     onChange(
-      blocks.map((b, i) =>
-        i === index ? { ...b, spans: [{ ...spanOf(b), ...changes }] } : b,
-      ),
+      blocks.map((b, i) => {
+        if (i !== index) return b
+        const whole = richBlockText(b).length
+        const selected = focused === index && range.from !== range.to
+        return applyToSelection(b, selected ? range.from : 0, selected ? range.to : whole, changes)
+      }),
     )
+
+  /** Typing — keeps the formatting of whatever was not edited. */
+  const retype = (index: number, text: string) =>
+    onChange(blocks.map((b, i) => (i === index ? replaceBlockText(b, text) : b)))
 
   const setType = (index: number, type: RichBlockType) =>
     onChange(blocks.map((b, i) => (i === index ? { ...b, type } : b)))
+
+  const setAlign = (index: number, align: RichAlign) =>
+    onChange(blocks.map((b, i) => (i === index ? { ...b, align } : b)))
+
+  /**
+   * What the last paste left out, so it can be said out loud.
+   *
+   * Null until something is actually dropped. Silently truncating a pasted
+   * document is the same class of invisible loss the span cap once had — the
+   * owner sees writing that looks complete and finds out when a customer does.
+   */
+  const [pasteNote, setPasteNote] = useState<string | null>(null)
+
+  /**
+   * Pasting from Word, Google Docs or a web page.
+   *
+   * ── WHY THIS IS NOT A SANITISER ───────────────────────────────────────
+   *
+   * The clipboard's HTML is PARSED and converted to blocks, then thrown away.
+   * Nothing it contained is stored and nothing unrecognised is passed through
+   * — see richTextPaste.ts. This is the one way to accept pasted formatting
+   * that does not walk back the decision RichBlock documents.
+   *
+   * The pasted blocks REPLACE the block that was pasted into when it is empty,
+   * and are inserted after it when it is not. Replacing a line someone had
+   * already written would be a destructive surprise; leaving an empty one
+   * behind is just litter.
+   */
+  const paste = (index: number, event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const html = event.clipboardData.getData('text/html')
+    const plain = event.clipboardData.getData('text/plain')
+
+    // Nothing worth converting — let the browser do its ordinary thing, which
+    // types the text into the textarea and keeps the caret where it should be.
+    if (!html.trim() && !plain.includes('\n')) return
+
+    const result = html.trim() ? parsePastedHtml(html) : blocksFromPastedText(plain)
+    if (result.blocks.length === 0) return
+
+    event.preventDefault()
+
+    const target = blocks[index]
+    const targetEmpty = !richBlockText(target ?? { type: 'p', spans: [] }).trim()
+    const next = [...blocks]
+    next.splice(targetEmpty ? index : index + 1, targetEmpty ? 1 : 0, ...result.blocks)
+
+    const overflow = Math.max(0, next.length - MAX_RICH_BLOCKS)
+    onChange(next.slice(0, MAX_RICH_BLOCKS))
+
+    /*
+     * Counted in BLOCKS, and called "lines" because that is what the editor
+     * below calls them — every row in this panel is one. It is deliberately
+     * not what the preview appears to show: three bullets are three lines
+     * here and one list there, and the number has to match the thing the
+     * owner is about to scroll through.
+     */
+    const kept = result.blocks.length - Math.min(result.blocks.length, overflow)
+    const lost = result.dropped + overflow
+    setPasteNote(
+      lost > 0
+        ? `Pasted ${kept} lines. ${lost} more did not fit — ${MAX_RICH_BLOCKS} is the most one of these can hold.`
+        : `Pasted ${kept} lines. Colours are not carried over — set them here.`,
+    )
+  }
 
   const move = (index: number, by: number) => {
     const to = index + by
@@ -3168,8 +3323,25 @@ function RichTextEditor({
 
   return (
     <div className="flex flex-col gap-3">
+      {/*
+        Said once, at the top, because "you can paste a whole document in here"
+        is not something anybody would guess from a list of textareas — and
+        retyping a page out of Word is exactly what this section is for.
+      */}
+      <Callout tone="neutral" title="Paste from Word or Google Docs">
+        Headings, bold, lists and links come across. Colours do not — pick those here.
+      </Callout>
+
+      {pasteNote && (
+        <Callout tone="neutral" title="Pasted">
+          {pasteNote}
+        </Callout>
+      )}
+
       {blocks.map((block, index) => {
-        const span = spanOf(block)
+        const span = activeSpan(block, index)
+        const align = block.align ?? 'left'
+        const hasSelection = focused === index && range.from !== range.to
         return (
           <div key={index} className="flex flex-col gap-2 rounded-control bg-surface-2 p-3">
             <div className="flex items-center gap-2">
@@ -3179,8 +3351,10 @@ function RichTextEditor({
                 className="w-36"
                 onChange={(e) => setType(index, e.target.value as RichBlockType)}
               >
-                <option value="p">Paragraph</option>
+                <option value="h2">Big heading</option>
                 <option value="h3">Heading</option>
+                <option value="p">Paragraph</option>
+                <option value="small">Small print</option>
                 <option value="ul">Bullet</option>
                 <option value="ol">Numbered</option>
               </Select>
@@ -3192,8 +3366,8 @@ function RichTextEditor({
                   iconOnly
                   aria-label="Bold"
                   aria-pressed={Boolean(span.bold)}
-                  title="Bold"
-                  onClick={() => edit(index, { bold: !span.bold })}
+                  title={hasSelection ? 'Bold the selected words' : 'Bold this line'}
+                  onClick={() => format(index, { bold: !span.bold })}
                 >
                   <span className="text-sm font-bold">B</span>
                 </Button>
@@ -3203,8 +3377,8 @@ function RichTextEditor({
                   iconOnly
                   aria-label="Italic"
                   aria-pressed={Boolean(span.italic)}
-                  title="Italic"
-                  onClick={() => edit(index, { italic: !span.italic })}
+                  title={hasSelection ? 'Italicise the selected words' : 'Italicise this line'}
+                  onClick={() => format(index, { italic: !span.italic })}
                 >
                   <span className="text-sm italic">I</span>
                 </Button>
@@ -3242,24 +3416,91 @@ function RichTextEditor({
               </div>
             </div>
 
+            {/*
+              Alignment and colour on their own row, because the row above is
+              already full and these two are the controls an owner hunts for.
+            */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center" role="group" aria-label="How this line sits">
+                {RICH_ALIGNS.map((option) => (
+                  <Button
+                    key={option}
+                    variant={align === option ? 'secondary' : 'ghost'}
+                    size="sm"
+                    iconOnly
+                    aria-label={ALIGN_LABEL[option]}
+                    aria-pressed={align === option}
+                    title={ALIGN_LABEL[option]}
+                    onClick={() => setAlign(index, option)}
+                  >
+                    {option === 'left' ? (
+                      <Icons.AlignLeft size={14} />
+                    ) : option === 'center' ? (
+                      <Icons.AlignCenter size={14} />
+                    ) : (
+                      <Icons.AlignRight size={14} />
+                    )}
+                  </Button>
+                ))}
+              </div>
+
+              <Select
+                value={span.colour ?? 'default'}
+                aria-label={hasSelection ? 'Colour of the selected words' : 'Colour of this line'}
+                className="w-40"
+                onChange={(e) => format(index, { colour: e.target.value as RichColour })}
+              >
+                {RICH_COLOURS.map((option) => (
+                  <option key={option} value={option}>
+                    {COLOUR_LABEL[option]}
+                  </option>
+                ))}
+              </Select>
+
+              {/*
+                Said only while something is selected, because that is the
+                moment the buttons mean something different from what they did
+                a second ago — and a permanent hint is one nobody reads.
+              */}
+              {hasSelection && (
+                <p className="text-xs text-muted">Applies to the selected words.</p>
+              )}
+            </div>
+
             <Textarea
-              value={span.text}
-              rows={block.type === 'h3' ? 1 : 3}
+              value={richBlockText(block)}
+              rows={block.type === 'h2' || block.type === 'h3' ? 1 : 3}
               maxLength={MAX_SPAN_TEXT}
               aria-label="What it says"
-              placeholder={block.type === 'h3' ? 'A heading' : 'Write here'}
-              onChange={(e) => edit(index, { text: e.target.value })}
+              placeholder={
+                block.type === 'h2' || block.type === 'h3' ? 'A heading' : 'Write here'
+              }
+              onChange={(e) => {
+                retype(index, e.target.value)
+                trackSelection(index, e.target)
+              }}
+              /*
+               * Both events, deliberately: `onSelect` covers dragging and
+               * double-clicking, `onKeyUp` covers shift+arrow. Missing either
+               * leaves the toolbar acting on a stale range, which is worse
+               * than not having selection formatting at all — it silently
+               * formats the wrong words.
+               */
+              onSelect={(e) => trackSelection(index, e.currentTarget)}
+              onKeyUp={(e) => trackSelection(index, e.currentTarget)}
+              onFocus={(e) => trackSelection(index, e.currentTarget)}
+              onPaste={(e) => paste(index, e)}
             />
 
             <Field
-              label="Link this line to"
+              label={hasSelection ? 'Link the selected words to' : 'Link this line to'}
               hint="Optional. A full https:// link, or a page of your own shop."
             >
               <Input
                 value={span.href ?? ''}
                 maxLength={300}
                 placeholder="https://…"
-                onChange={(e) => edit(index, { href: e.target.value })}
+                onChange={(e) => format(index, { href: e.target.value })}
               />
             </Field>
 

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Float topup</title>
+  <ellipse cx="20" cy="34" rx="11.5" ry="4.3" fill="#E8991F"/><rect x="8.5" y="29" width="23.0" height="5" fill="#E8991F"/><ellipse cx="20" cy="29" rx="11.5" ry="4.3" fill="#F5B942" stroke="#FFFFFF" stroke-width="1.5"/>
+  <ellipse cx="20" cy="26" rx="11.5" ry="4.3" fill="#E8991F"/><rect x="8.5" y="21" width="23.0" height="5" fill="#E8991F"/><ellipse cx="20" cy="21" rx="11.5" ry="4.3" fill="#F5B942" stroke="#FFFFFF" stroke-width="1.5"/>
+  <ellipse cx="20" cy="18" rx="11.5" ry="4.3" fill="#E8991F"/><rect x="8.5" y="13" width="23.0" height="5" fill="#E8991F"/><ellipse cx="20" cy="13" rx="11.5" ry="4.3" fill="#F5B942" stroke="#FFFFFF" stroke-width="1.5"/>
+  <circle cx="37" cy="34" r="11.3" fill="#FFFFFF"/><circle cx="37" cy="34" r="9" fill="#F5A623"/>
+  <path d="M37 29.6v8.8M32.6 34h8.8" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round"/>
+</svg>

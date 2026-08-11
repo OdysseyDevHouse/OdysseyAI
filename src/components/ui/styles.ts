@@ -226,3 +226,71 @@ export const CONTROL_H_TOUCH = 'h-touch text-base'
 export const CONTROL_INVALID =
   'border-danger hover:border-danger focus:border-danger ' +
   'focus:shadow-[inset_0_0_0_1px_var(--color-danger)]'
+
+/**
+ * How wide an editing screen is allowed to get.
+ *
+ * Capped rather than full-bleed: the pricing tables are wide, but past about
+ * 1100px a form's labelled fields stretch into lines the eye loses its place in
+ * halfway across a 4K monitor.
+ *
+ * Shared because a record's panels must AGREE. The product screen stacks a form,
+ * a variants panel and a photographs gallery down one page; when only the form
+ * carried the cap, the two panels below ran to the window edge and the right
+ * edge of the page zig-zagged. Anything stacked as part of one record wears this.
+ */
+export const EDIT_COLUMN = 'w-full max-w-[1100px]'
+
+/* ── The till's coloured edge ─────────────────────────────────────────────── */
+
+/**
+ * A surface's colour, carried as its BORDER rather than as a bar drawn on top.
+ *
+ * Shared by every till surface that has an identity worth colour-coding — the
+ * department rail's rows, the product tiles, the quick keys. One definition because
+ * the three sit on screen together: a rail whose edge curves and a tile grid whose
+ * edge does not is the drift the kit exists to prevent.
+ *
+ * Full strength on the LEADING edge, 30% on the other three. The leading edge is the
+ * part found across a scrolling grid; a tile at full strength on all four sides is a
+ * box shouting for attention, and twenty are twenty boxes all shouting.
+ *
+ * Being a real border is what curves the bar's inner side: border-radius tapers a
+ * border from both ends, so the colour narrows into the corners exactly as the card
+ * does. An absolutely-positioned span can only round the two outer corners and leaves
+ * a hard vertical line facing the text.
+ *
+ * Class strings written out in full and never interpolated — Tailwind scans source
+ * text, so a computed `border-cat-${tone}` is not emitted and the edge renders as
+ * nothing at all.
+ */
+export const EDGE_RING: Record<string, string> = {
+  indigo: 'border-cat-indigo/30',
+  violet: 'border-cat-violet/30',
+  emerald: 'border-cat-emerald/30',
+  amber: 'border-cat-amber/30',
+  sky: 'border-cat-sky/30',
+  rose: 'border-cat-rose/30',
+  teal: 'border-cat-teal/30',
+  orange: 'border-cat-orange/30',
+  slate: 'border-cat-slate/30',
+}
+
+/**
+ * The leading edge alone, at full strength.
+ *
+ * Separate from the ring so a SELECTED surface can take the brand's hairline on three
+ * sides and still keep its own colour on the fourth — being chosen must not change
+ * which department or product a surface reads as.
+ */
+export const EDGE_LEAD: Record<string, string> = {
+  indigo: 'border-l-cat-indigo',
+  violet: 'border-l-cat-violet',
+  emerald: 'border-l-cat-emerald',
+  amber: 'border-l-cat-amber',
+  sky: 'border-l-cat-sky',
+  rose: 'border-l-cat-rose',
+  teal: 'border-l-cat-teal',
+  orange: 'border-l-cat-orange',
+  slate: 'border-l-cat-slate',
+}

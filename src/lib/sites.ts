@@ -118,12 +118,6 @@ export async function getSiteForUser(userId: number, siteId: number): Promise<Si
   return row ? mapSite(row) : null
 }
 
-/** The site to drop a user into at sign-in: their default, else the first. */
-export async function defaultSiteForUser(userId: number): Promise<Site | null> {
-  const sites = await listSitesForUser(userId)
-  return sites[0] ?? null
-}
-
 /**
  * The shop's public name, for the storefront header.
  *

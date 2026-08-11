@@ -12,7 +12,7 @@ import { listRecipe, getRefer } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
-import { Callout, PageBody, PageHeader } from '@/components/ui'
+import { Callout, EDIT_COLUMN, PageBody, PageHeader } from '@/components/ui'
 import { listImages } from '@/lib/site/productImages'
 import { variantStanding } from '@/lib/site/productVariants'
 import ProductForm, { SaveProductButton } from '../ProductForm'
@@ -190,20 +190,26 @@ export default async function EditProductPage({
           // the one primary on this screen.
         />
 
-        {/* Above the gallery and below the form, both deliberately. Variants
-            change what this product IS — whether it can be sold at all — so it
-            outranks merchandising; but it saves on its own, so it sits outside
-            the form like the images do. */}
-        <VariantsPanel
-          productId={product.id}
-          productDescription={product.description}
-          initialGroup={variants.group}
-          isChildOf={variants.parent}
-        />
+        {/* Both panels are siblings of the form rather than children of it, so
+            they carry the form's own width themselves — without EDIT_COLUMN they
+            ran to the window edge while everything above them stopped at 1100px,
+            and the right edge of the page stepped in and out down the screen. */}
+        <div className={`flex ${EDIT_COLUMN} flex-col gap-5`}>
+          {/* Above the gallery and below the form, both deliberately. Variants
+              change what this product IS — whether it can be sold at all — so it
+              outranks merchandising; but it saves on its own, so it sits outside
+              the form like the images do. */}
+          <VariantsPanel
+            productId={product.id}
+            productDescription={product.description}
+            initialGroup={variants.group}
+            isChildOf={variants.parent}
+          />
 
-        {/* Below the form rather than inside it: images upload immediately and
-            individually, so they are not part of the product's save at all. */}
-        <ProductImages productId={product.id} initial={images} />
+          {/* Below the form rather than inside it: images upload immediately and
+              individually, so they are not part of the product's save at all. */}
+          <ProductImages productId={product.id} initial={images} />
+        </div>
       </PageBody>
     </>
   )

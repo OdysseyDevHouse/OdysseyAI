@@ -131,7 +131,7 @@ export default async function ExpensesPage({
         <Card>
           <CardHeader title="Expenses" description="Newest first." />
 
-          <TableToolbar className="border-b border-border px-6 py-3">
+          <TableToolbar inCard>
             <LinkSegmentedControl
               aria-label="Expense status"
               value={status ?? 'all'}

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Card</title>
+  <rect x="4.5" y="11" width="39" height="26" rx="4" fill="#1E6DF5"/>
+  <rect x="9.5" y="16" width="7.8" height="6" rx="1.7" fill="#FFFFFF"/>
+  <path d="M31.2 17.3a3.4 3.4 0 0 1 0 4.6" stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+  <path d="M33.7 15.3a6.4 6.4 0 0 1 0 8.6" stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+  <path d="M36.2 13.3a9.4 9.4 0 0 1 0 12.6" stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+  <rect x="9.5" y="28.8" width="6" height="3.3" rx="1.65" fill="#FFFFFF"/>
+  <rect x="17.3" y="28.8" width="6" height="3.3" rx="1.65" fill="#FFFFFF"/>
+  <rect x="25.1" y="28.8" width="13.4" height="3.3" rx="1.65" fill="#FFFFFF"/>
+</svg>

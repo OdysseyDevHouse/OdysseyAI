@@ -55,6 +55,13 @@ export const CAPABILITY_GROUPS = [
       // them with nobody in the loop. That is a different decision, and a shop
       // should be able to let a clerk maintain contracts without granting it.
       { key: 'contracts.auto_send', label: 'Let a contract bill and send itself', hint: 'Turn on automatic invoicing, which posts and emails with no review.' },
+      // Separate from sales.view/sales.edit deliberately. Tonight's book is
+      // worked by front-of-house — the person on the phone and the one seating
+      // parties — and that is not the same person who may raise an invoice. A
+      // shop should be able to let a host run the door without also granting
+      // them the sales ledger.
+      { key: 'reservations.view', label: 'View reservations', hint: 'Open the booking diary and see tonight’s tables.' },
+      { key: 'reservations.edit', label: 'Take and manage bookings', hint: 'Confirm, seat and cancel bookings, and take one over the phone.' },
     ],
   },
   {

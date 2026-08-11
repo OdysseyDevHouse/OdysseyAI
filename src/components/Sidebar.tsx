@@ -4,13 +4,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PanelLeft, Search, ChevronDown } from '@/components/ui/icons'
-import { Button, Input } from '@/components/ui'
+import { Button } from '@/components/ui'
+import GlobalSearch from '@/components/GlobalSearch'
 import {
   NAV,
-  filterNav,
   hubFor,
   navFor,
-  subpageMatches,
   type NavItem,
   type NavSection,
 } from '@/lib/nav'
@@ -89,7 +88,10 @@ function sectionForPath(pathname: string, sections: NavSection[] = NAV): string 
 export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwner: boolean }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
-  const [term, setTerm] = useState('')
+  /* The global search palette. The sidebar owns it because the sidebar has
+     already resolved which sections this user may see, and the palette searches
+     exactly those — see `visible` below. */
+  const [searchOpen, setSearchOpen] = useState(false)
 
   /* Declared before the open-section state below, which matches paths against
      it: a section this user cannot see must never be the one that opens.
@@ -176,10 +178,31 @@ export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwn
     })
   }
 
-  const sections = useMemo(() => filterNav(term, visible), [term, visible])
-  // While searching, show every matching section expanded — collapsed groups
-  // would hide the very results the search just found.
-  const searching = term.trim().length > 0
+  /**
+   * Ctrl+K — or ⌘K on a Mac — from anywhere in the app.
+   *
+   * On `window` rather than the sidebar, because the point is that it works while
+   * somebody is halfway down a product list with focus in a table. Bound here
+   * anyway: the sidebar is rendered once by the layout and already holds the
+   * palette's state, so a second component to own one shortcut would be a second
+   * thing that can disagree about whether it is open.
+   *
+   * "/" is deliberately NOT bound. This app is full of text fields, and a shop
+   * owner typing a customer's address would open a search palette mid-word.
+   */
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'k' && event.key !== 'K') return
+      if (!event.ctrlKey && !event.metaKey) return
+      // Not preventing the browser's own Ctrl+K when a modifier we don't own is
+      // also held — Ctrl+Shift+K is a devtools shortcut in several browsers.
+      if (event.shiftKey || event.altKey) return
+      event.preventDefault()
+      setSearchOpen((v) => !v)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const toggleSection = (label: string) =>
     setOpen((prev) => {
@@ -245,36 +268,67 @@ export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwn
         </Button>
       </div>
 
-      {!collapsed && (
-        <div className="px-3 pb-3">
-          <Input
-            type="search"
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            placeholder="Search pages, reports, settings"
-            aria-label="Search navigation"
-            icon={<Search size={15} />}
-          />
-        </div>
-      )}
+      {/*
+        A BUTTON that opens the palette, not a field that filters the menu.
+
+        It looks like an input because that is what it does — you click it and
+        type — but it cannot be one: the results are pages AND customers AND
+        products, and there is nowhere in a 256px rail to show them. Filtering the
+        menu in place could only ever find the menu's own rows, which is why
+        searching "gratuity" used to find nothing and searching a customer's name
+        found nothing at all.
+
+        data-kit-ok: an input-shaped button. Neither a Button variant (all of
+        which are controls with their own chrome) nor an Input (which would take
+        the keystrokes here instead of in the palette) is this thing.
+      */}
+      <div className="px-3 pb-3">
+        <button
+          data-kit-ok
+          type="button"
+          onClick={() => setSearchOpen(true)}
+          title="Search everything (Ctrl+K)"
+          aria-label="Search everything"
+          className={`flex h-control w-full items-center rounded-control border border-border-strong bg-surface text-sm text-faint transition hover:border-brand/50 ${
+            collapsed ? 'justify-center px-0' : 'gap-2 px-3'
+          }`}
+        >
+          <Search size={15} className="shrink-0" />
+          {!collapsed && (
+            <>
+              <span className="flex-1 truncate text-left">Search</span>
+              {/* The shortcut, shown rather than hidden in a tooltip — it is the
+                  fastest way in and nobody discovers it otherwise. */}
+              <kbd className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted">
+                Ctrl K
+              </kbd>
+            </>
+          )}
+        </button>
+      </div>
+
+      <GlobalSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        sections={visible}
+      />
+
 
       {/* `overflow-y-auto` also clips horizontally, which would cut a flyout off
           at the rail's edge. The collapsed rail is 9 icon rows and never needs
           to scroll, so it drops the clipping and lets the panel escape. */}
       <nav className={`flex-1 px-2 pb-2 ${collapsed ? 'overflow-visible' : 'overflow-y-auto'}`}>
-        {sections.length === 0 && !collapsed && (
-          <p className="px-3 py-6 text-center text-xs text-muted">Nothing matches “{term}”.</p>
-        )}
-
-        {sections.map((section) => (
+        {/* The whole menu, always. It is no longer filtered by anything: search
+            happens in the palette, so the menu's job is only to be the menu —
+            which means it never rearranges itself under somebody mid-click. */}
+        {visible.map((section) => (
           <SectionRow
             key={section.label}
             section={section}
             collapsed={collapsed}
-            expanded={searching || open === section.label}
+            expanded={open === section.label}
             onToggle={() => toggleSection(section.label)}
             isActive={isActive}
-            term={term}
           />
         ))}
       </nav>
@@ -292,15 +346,12 @@ function SectionRow({
   expanded,
   onToggle,
   isActive,
-  term,
 }: {
   section: NavSection
   collapsed: boolean
   expanded: boolean
   onToggle: () => void
   isActive: (href: string) => boolean
-  /** The live search term, so a hub row can carry it through. */
-  term: string
 }) {
   const Icon = section.icon
   const hasChildren = (section.items?.length ?? 0) > 0
@@ -337,17 +388,12 @@ function SectionRow({
 
   // A section that is itself a destination — Dashboard, and every hub.
   if (section.href) {
-    /* This row survived the search only because a screen BELOW it matched — a
-       hub, whose screens the menu no longer lists. Hand the term over so the
-       hub opens filtered to what was actually being looked for, rather than
-       showing everything and making them type it a second time. The href the
-       highlight compares against is untouched. */
-    const carry = term.trim() && !hasChildren && subpageMatches(section.href, term)
-    const href = carry ? `${section.href}?q=${encodeURIComponent(term.trim())}` : section.href
-
+    /* Plain href, no query string. The palette links straight to the screen
+       somebody picked, so a hub no longer has to be opened pre-filtered as a
+       consolation prize for the search not being able to name its contents. */
     return (
       <Link
-        href={href}
+        href={section.href}
         title={collapsed ? section.label : undefined}
         aria-current={selfActive ? 'page' : undefined}
         className={`${rowClass} ${collapsed ? 'justify-center px-0' : ''}`}

@@ -39,6 +39,15 @@ export type TillProduct = {
   askPriceAtSale: boolean
   allowFractions: boolean
   maxDiscountPct: number
+  /**
+   * The swatch a manager chose for this product, as a `tile-*` token — null when
+   * none was picked, which is nearly always.
+   *
+   * Null rather than a default so the till can tell "chosen" from "never set" and
+   * fall back to the department's colour. Handing back a swatch nobody picked would
+   * make the fallback impossible to distinguish from a real choice.
+   */
+  imageColor: string | null
   /** Quantity parsed out of a weighed-goods barcode, if the scan carried one. */
   scannedQty?: number
   /** Price parsed out of a value-embedded barcode, if the scan carried one. */
@@ -67,6 +76,9 @@ function mapProduct(r: Row): TillProduct {
     askPriceAtSale: !!r.ask_price_at_sale,
     allowFractions: !!r.allow_fractions,
     maxDiscountPct: toNum(r.max_discount_pct),
+    /* Empty string normalised to null: a cleared colour picker writes '' rather than
+       NULL, and the two mean the same thing to everything downstream. */
+    imageColor: (r.image_color as string | null) || null,
   }
 }
 
@@ -79,7 +91,7 @@ function mapProduct(r: Row): TillProduct {
 function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
-           p.ask_price_at_sale, p.allow_fractions, p.max_discount_pct,
+           p.ask_price_at_sale, p.allow_fractions, p.max_discount_pct, p.image_color,
            -- Stock the counter can actually hand over: the MAIN pile, not the
            -- site total. Goods in a back warehouse are owned but not sellable
            -- here until someone carries them across, and a till that offered

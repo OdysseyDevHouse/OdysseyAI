@@ -45,16 +45,23 @@ export function DeptRail({
         </p>
       ) : (
         <div className="till-pane flex flex-1 flex-col gap-2 overflow-y-auto p-2.5">
-          {top.map((d) => (
-            <TouchRow
-              key={d.id}
-              tone={activeId === d.id ? 'active' : 'default'}
-              icon={<CategoryTile icon={<Icons.Tag size={18} />} tone={toneForId(d.id)} size="lg" />}
-              title={d.name}
-              showChevron={false}
-              onClick={() => onPick(d.id)}
-            />
-          ))}
+          {top.map((d) => {
+            /* One tone, read once and spent on both the edge and the disc. Two calls
+               would be two chances for them to drift apart, and a row whose bar and
+               disc disagree reads as a rendering fault rather than a colour code. */
+            const tone = toneForId(d.id)
+            return (
+              <TouchRow
+                key={d.id}
+                tone={activeId === d.id ? 'active' : 'default'}
+                edge={tone}
+                icon={<CategoryTile icon={<Icons.Tag size={18} />} tone={tone} size="lg" />}
+                title={d.name}
+                showChevron={false}
+                onClick={() => onPick(d.id)}
+              />
+            )
+          })}
         </div>
       )}
     </nav>

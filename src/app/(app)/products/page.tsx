@@ -3,7 +3,8 @@ import { Pencil, Plus } from '@/components/ui/icons'
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import ProductsTable from './ProductsTable'
-import { listProducts } from '@/lib/site/products'
+import { listProducts, getProduct } from '@/lib/site/products'
+import { getGroup } from '@/lib/site/productVariants'
 import { getCostBasis } from '@/lib/site/lookups'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
 import { formatMoney, formatQty } from '@/lib/decimals'
@@ -49,6 +50,7 @@ export default async function ProductsPage({
     low?: string
     department?: string
     page?: string
+    group?: string
   }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
@@ -56,6 +58,13 @@ export default async function ProductsPage({
   const showCost = can(capabilities, 'products.cost')
   const params = await searchParams
   const { q, archived, low, department } = params
+
+  /* Which variant group is open, if any. A group id that is not a parent falls
+     back to the whole catalogue rather than showing an empty list — the URL is
+     typeable, and a product can stop being a parent while a tab sits open. */
+  const groupId = Number(params.group)
+  const openGroup =
+    Number.isFinite(groupId) && groupId > 0 ? await getGroup(siteId, groupId) : null
 
   const [departments, costBasis] = await Promise.all([
     listDepartments(siteId, true),
@@ -76,9 +85,26 @@ export default async function ProductsPage({
     includeArchived: archived === '1',
     belowMinimum: low === '1',
     departmentIds: filterIds,
+    parentId: openGroup ? openGroup.parentId : undefined,
     limit: PAGE_SIZE,
     offset: offsetFor(page, PAGE_SIZE),
   })
+
+  /* The parent names for whichever children are on screen — a search
+     un-collapses groups, and "Large" alone does not say large what. Resolved
+     here rather than joined into every product row, because outside a search
+     there are usually none to resolve.
+
+     Skipped INSIDE a group: the page header already names the parent there, so
+     tagging all twenty rows "in Cotton Shirt" repeats what was just read. */
+  const parentIds = openGroup
+    ? []
+    : [...new Set(items.map((p) => p.parentId).filter((id): id is number => !!id))]
+  const parentNames: Record<number, string> = Object.fromEntries(
+    (await Promise.all(parentIds.map((id) => getProduct(siteId, id))))
+      .filter((p): p is NonNullable<typeof p> => !!p)
+      .map((p) => [p.id, p.description]),
+  )
 
   const filterLabel = filterIds ? departmentPath(departments, departmentId) : null
 
@@ -97,6 +123,20 @@ export default async function ProductsPage({
      rarely a page of the new one, and landing on an empty list reads as "no
      matches" when there are plenty. */
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
+
+  /* Opening a group keeps the department filter and the slice — the question
+     "which of these are below minimum" survives the click — but drops the
+     search, which is what un-collapsed the groups in the first place.
+
+     Built here as a plain id -> href map rather than passed as a function:
+     ProductsTable is a client component and the URL helpers are server-side,
+     so a function prop could not cross the boundary — the same reasoning that
+     makes departmentPaths a map. */
+  const groupHrefs: Record<number, string> = Object.fromEntries(
+    items
+      .filter((p) => p.hasVariants)
+      .map((p) => [p.id, filterHref({ group: String(p.id), q: null })]),
+  )
 
   /* The picker lists every department by full path, sorted by that path so a
      sub-department sits under its parent rather than wherever sort_order left
@@ -153,14 +193,36 @@ export default async function ProductsPage({
 
   return (
     <>
+      {/* Inside a group the screen is about ONE product, so it says so and
+          offers the way back out. The variant axes are named in the subtitle —
+          "Size · Colour" tells the reader what the rows below differ by. */}
       <PageHeader
-        title="Products"
-        subtitle={`${total} product${total === 1 ? '' : 's'}${archived === '1' ? ', including archived' : ''}`}
+        title={openGroup ? openGroup.parentDescription : 'Products'}
+        subtitle={
+          openGroup
+            ? `${total} variant${total === 1 ? '' : 's'}` +
+              (openGroup.axes.length
+                ? ` by ${openGroup.axes.map((a) => a.label).join(' · ')}`
+                : '')
+            : `${total} product${total === 1 ? '' : 's'}${archived === '1' ? ', including archived' : ''}`
+        }
         action={
-          <PrimaryLink href="/products/new">
-            <Plus size={15} />
-            New product
-          </PrimaryLink>
+          openGroup ? (
+            <div className="flex items-center gap-2">
+              <ButtonLink variant="secondary" href={filterHref({ group: null })}>
+                All products
+              </ButtonLink>
+              <PrimaryLink href={`/products/${openGroup.parentId}`}>
+                <Pencil size={15} />
+                Edit group
+              </PrimaryLink>
+            </div>
+          ) : (
+            <PrimaryLink href="/products/new">
+              <Plus size={15} />
+              New product
+            </PrimaryLink>
+          )
         }
       />
 
@@ -223,6 +285,8 @@ export default async function ProductsPage({
             costBasis={costBasis}
             showCost={showCost}
             empty={empty}
+            groupHrefs={groupHrefs}
+            parentNames={parentNames}
           />
 
           <Pagination

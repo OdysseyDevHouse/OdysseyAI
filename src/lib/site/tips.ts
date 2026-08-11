@@ -1,7 +1,7 @@
 import 'server-only'
 import type { PoolConnection } from 'mysql2/promise'
-import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
+import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { splitOverTender, serviceChargeFor, tipsInDrawer, type ServiceTier } from '../tipMath'
 import { getSetting } from './settings'
@@ -306,8 +306,48 @@ export type TipsOwed = {
  * The POOL comes back as a row with `userId: null` rather than being omitted — a manager
  * dividing the pool needs to see its size, and a report that silently dropped it would
  * make pooled tips look like money that had evaporated.
+ *
+ * ── OWED MEANS UNSETTLED, NOT EARNED ──────────────────────────────────────
+ *
+ * `payout_id IS NULL` is the filter, and it is what makes this figure safe to pay from.
+ * Without it the same tips reappear every time last week's range is re-opened, and a
+ * manager paying from the screen pays twice with nothing in the data able to notice.
+ *
+ * A shop that wants what somebody EARNED over a period — for a payslip, or to settle an
+ * argument — wants `tipsEarned` below instead. Two questions, deliberately two functions:
+ * one figure serving both is the figure that gets paid out twice.
  */
 export async function tipsOwed(
+  siteId: number,
+  range: { from: string; to: string },
+): Promise<TipsOwed[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT t.user_id, COALESCE(NULLIF(t.user_name, ''), 'Pool') AS user_name,
+            SUM(t.amount) AS total, COUNT(*) AS n
+       FROM sales_tips t
+       JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
+      WHERE d.document_date BETWEEN ? AND ?
+        AND t.payout_id IS NULL
+      GROUP BY t.user_id, user_name
+      ORDER BY total DESC`,
+    [range.from, range.to],
+  )
+  return rows.map((r) => ({
+    userId: r.user_id === null ? null : Number(r.user_id),
+    userName: r.user_id === null ? 'Pool' : String(r.user_name ?? ''),
+    total: toNum(r.total),
+    count: Number(r.n ?? 0),
+  }))
+}
+
+/**
+ * Tips by person over a date range REGARDLESS of whether they have been paid.
+ *
+ * What somebody earned, which is a different question from what they are owed and must not
+ * be answered by the same figure — see `tipsOwed`.
+ */
+export async function tipsEarned(
   siteId: number,
   range: { from: string; to: string },
 ): Promise<TipsOwed[]> {
@@ -327,5 +367,258 @@ export async function tipsOwed(
     userName: r.user_id === null ? 'Pool' : String(r.user_name ?? ''),
     total: toNum(r.total),
     count: Number(r.n ?? 0),
+  }))
+}
+
+/* ── Paying them out ─────────────────────────────────────────────────────── */
+
+export type PayoutMethod = 'cash' | 'wages' | 'transfer' | 'other'
+
+export type TipPayout = {
+  id: number
+  userId: number | null
+  userName: string
+  amount: number
+  method: PayoutMethod
+  fromPool: boolean
+  note: string | null
+  paidByName: string
+  paidAt: string
+  tipCount: number
+}
+
+export type PayoutResult = { ok: true; payoutId: number; amount: number } | { ok: false; error: string }
+
+const METHODS: readonly PayoutMethod[] = ['cash', 'wages', 'transfer', 'other']
+
+/**
+ * Hands one person's outstanding tips over, and marks exactly those tips settled.
+ *
+ * ── WHY THE TIPS ARE SELECTED INSIDE THE TRANSACTION, AND LOCKED ───────────
+ *
+ * The amount and the settling are ONE fact. Reading the total on the screen and then
+ * writing a payout for that number is a race with the till: a tip taken between the two
+ * is either paid and not marked, or marked and not paid, depending which way it lands.
+ * So the rows are chosen and stamped here, under `FOR UPDATE`, and the payout's amount is
+ * their SUM rather than anything the caller passed — the caller cannot hand over a figure
+ * that disagrees with the tips it settles, because it does not get to name one.
+ *
+ * A second manager pressing the same button at the same moment therefore finds no
+ * outstanding rows and is told so, rather than writing a second envelope for the same money.
+ */
+export async function payTipsOut(
+  siteId: number,
+  actor: Actor,
+  input: {
+    /** Whose tips. `null` IS the pool — see `reassignTip` for the same convention. */
+    userId: number | null
+    userName: string
+    range: { from: string; to: string }
+    method: PayoutMethod
+    note?: string
+    /**
+     * Attribute a POOL share to a person while settling the pool's own rows.
+     *
+     * A pool split pays named people out of `user_id IS NULL` tips, so the payout says who
+     * received it while `from_pool` says where it came from. Without this the history reads
+     * as though they earned it directly, which is the one thing a pooled tip did not do.
+     */
+    creditTo?: { userId: number | null; userName: string } | null
+  },
+): Promise<PayoutResult> {
+  if (!METHODS.includes(input.method)) return { ok: false, error: 'Unknown payment method.' }
+
+  return siteTransaction(siteId, async (tx) => {
+    const [rows] = await tx.query<Row[]>(
+      `SELECT t.id, t.amount
+         FROM sales_tips t
+         JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
+        WHERE d.document_date BETWEEN ? AND ?
+          AND t.payout_id IS NULL
+          AND ${input.userId === null ? 't.user_id IS NULL' : 't.user_id = ?'}
+        FOR UPDATE`,
+      input.userId === null
+        ? [input.range.from, input.range.to]
+        : [input.range.from, input.range.to, input.userId],
+    )
+    if (rows.length === 0) {
+      return { ok: false as const, error: 'There are no unpaid tips for that person in this period.' }
+    }
+
+    const amount = round(
+      rows.reduce((sum, r) => round(sum + toNum(r.amount), 2), 0),
+      2,
+    )
+    const credited = input.creditTo ?? { userId: input.userId, userName: input.userName }
+    const [res] = await tx.execute<ResultSetHeader>(
+      `INSERT INTO tip_payouts
+         (user_id, user_name, amount, method, from_pool, note, paid_by, paid_by_name)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [
+        credited.userId,
+        credited.userName.slice(0, 120),
+        amount.toFixed(4),
+        input.method,
+        input.userId === null ? 1 : 0,
+        input.note?.trim().slice(0, 200) || null,
+        actor.userId,
+        actor.userName.slice(0, 120),
+      ],
+    )
+    const payoutId = res.insertId
+
+    await tx.query('UPDATE sales_tips SET payout_id = ? WHERE id IN (?)', [
+      payoutId,
+      rows.map((r) => Number(r.id)),
+    ])
+    return { ok: true as const, payoutId, amount }
+  })
+}
+
+export type PoolShare = { userId: number; userName: string; amount: number }
+
+/**
+ * Splits the pool across named staff, in ONE transaction.
+ *
+ * Each share becomes its own payout marked `from_pool`, and the pool's tip rows are settled
+ * once — by the first share — so the total paid out cannot exceed the pool.
+ *
+ * ── WHY ONE TRANSACTION AND NOT N CALLS TO payTipsOut ─────────────────────
+ *
+ * Because the second call would find the rows already settled by the first and refuse,
+ * paying one person and nobody else. The split is one decision and has to commit as one.
+ *
+ * The shares must sum to the pool exactly. A short split would leave money marked paid that
+ * nobody received; a long one would pay out money that was never taken. Neither is
+ * recoverable from the data afterwards, so both are refused here rather than warned about.
+ */
+export async function splitPoolOut(
+  siteId: number,
+  actor: Actor,
+  input: {
+    range: { from: string; to: string }
+    method: PayoutMethod
+    shares: PoolShare[]
+    note?: string
+  },
+): Promise<{ ok: true; payoutIds: number[]; amount: number } | { ok: false; error: string }> {
+  if (!METHODS.includes(input.method)) return { ok: false, error: 'Unknown payment method.' }
+  if (input.shares.length === 0) return { ok: false, error: 'Choose who the pool is being split between.' }
+  if (input.shares.some((s) => !(s.amount > 0))) {
+    return { ok: false, error: 'Every share must be more than nothing.' }
+  }
+
+  return siteTransaction(siteId, async (tx) => {
+    const [rows] = await tx.query<Row[]>(
+      `SELECT t.id, t.amount
+         FROM sales_tips t
+         JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
+        WHERE d.document_date BETWEEN ? AND ?
+          AND t.payout_id IS NULL
+          AND t.user_id IS NULL
+        FOR UPDATE`,
+      [input.range.from, input.range.to],
+    )
+    if (rows.length === 0) {
+      return { ok: false as const, error: 'The pool has nothing unpaid in this period.' }
+    }
+
+    const pool = round(
+      rows.reduce((sum, r) => round(sum + toNum(r.amount), 2), 0),
+      2,
+    )
+    const allocated = round(
+      input.shares.reduce((sum, s) => round(sum + s.amount, 2), 0),
+      2,
+    )
+    if (allocated !== pool) {
+      return {
+        ok: false as const,
+        error: `The shares add up to ${allocated.toFixed(2)} but the pool is ${pool.toFixed(2)}.`,
+      }
+    }
+
+    const payoutIds: number[] = []
+    for (const share of input.shares) {
+      const [res] = await tx.execute<ResultSetHeader>(
+        `INSERT INTO tip_payouts
+           (user_id, user_name, amount, method, from_pool, note, paid_by, paid_by_name)
+         VALUES (?,?,?,?,1,?,?,?)`,
+        [
+          share.userId,
+          share.userName.slice(0, 120),
+          round(share.amount, 2).toFixed(4),
+          input.method,
+          input.note?.trim().slice(0, 200) || null,
+          actor.userId,
+          actor.userName.slice(0, 120),
+        ],
+      )
+      payoutIds.push(res.insertId)
+    }
+
+    /* Settled against the FIRST share's payout. The pool's tips belong to the split as a
+       whole and there is no honest way to divide row-level ownership between the shares;
+       what matters is that they are settled exactly once, by a payout that exists. */
+    await tx.query('UPDATE sales_tips SET payout_id = ? WHERE id IN (?)', [
+      payoutIds[0],
+      rows.map((r) => Number(r.id)),
+    ])
+    return { ok: true as const, payoutIds, amount: pool }
+  })
+}
+
+/** Payouts already made in a period, newest first, for the "paid" half of the screen. */
+export async function listPayouts(
+  siteId: number,
+  range: { from: string; to: string },
+): Promise<TipPayout[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT p.id, p.user_id, p.user_name, p.amount, p.method, p.from_pool, p.note,
+            p.paid_by_name, p.paid_at,
+            (SELECT COUNT(*) FROM sales_tips t WHERE t.payout_id = p.id) AS tip_count
+       FROM tip_payouts p
+      WHERE DATE(p.paid_at) BETWEEN ? AND ?
+      ORDER BY p.paid_at DESC, p.id DESC`,
+    [range.from, range.to],
+  )
+  return rows.map((r) => ({
+    id: Number(r.id),
+    userId: r.user_id === null ? null : Number(r.user_id),
+    userName: String(r.user_name ?? ''),
+    amount: toNum(r.amount),
+    method: String(r.method ?? 'cash') as PayoutMethod,
+    fromPool: Number(r.from_pool ?? 0) === 1,
+    note: r.note === null ? null : String(r.note),
+    paidByName: String(r.paid_by_name ?? ''),
+    paidAt: String(r.paid_at ?? ''),
+    tipCount: Number(r.tip_count ?? 0),
+  }))
+}
+
+/** The individual tips behind one person's outstanding total — what makes up the envelope. */
+export async function outstandingTipsFor(
+  siteId: number,
+  userId: number | null,
+  range: { from: string; to: string },
+): Promise<{ id: number; amount: number; source: TipSource; documentNumber: string; date: string }[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT t.id, t.amount, t.source, d.document_number, d.document_date
+       FROM sales_tips t
+       JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
+      WHERE d.document_date BETWEEN ? AND ?
+        AND t.payout_id IS NULL
+        AND ${userId === null ? 't.user_id IS NULL' : 't.user_id = ?'}
+      ORDER BY d.document_date DESC, t.id DESC`,
+    userId === null ? [range.from, range.to] : [range.from, range.to, userId],
+  )
+  return rows.map((r) => ({
+    id: Number(r.id),
+    amount: toNum(r.amount),
+    source: String(r.source ?? 'manual') as TipSource,
+    documentNumber: String(r.document_number ?? ''),
+    date: String(r.document_date ?? ''),
   }))
 }

@@ -240,6 +240,130 @@ async function main() {
     await page.getByRole('menuitem', { name: 'A paragraph' }).first().click()
     ok('a new section appears', (await sectionCount(page)) === countBefore + 1)
 
+    /*
+     * ── FORMATTING FOLLOWS THE SELECTION ──────────────────────────────────
+     *
+     * The model tests already prove `applyToSelection` splits spans correctly.
+     * What they CANNOT prove is that the textarea's selection reaches it — the
+     * toolbar takes focus when clicked, which collapses the selection, and the
+     * whole feature rests on having recorded the range before that happens.
+     * That is a browser fact, so it is asserted in a browser.
+     */
+    console.log('\n— Formatted writing —')
+    await page.getByRole('button', { name: 'Add a section' }).first().click()
+    await page.getByRole('menuitem', { name: 'Formatted writing' }).first().click()
+
+    const writing = page.getByLabel('What it says').and(page.locator(':visible')).first()
+    await writing.fill('call us on 021 555 0000')
+
+    /*
+     * Selected with the KEYBOARD, not with setSelectionRange.
+     *
+     * React's onSelect is a synthetic event, and a hand-dispatched
+     * `new Event('select')` does not drive it — the selection moves and React
+     * never hears. Shift+End is what a person's fingers do, it produces the
+     * real event, and it is the only version of this test that proves anything
+     * about the feature rather than about the harness.
+     */
+    await writing.click()
+    await page.keyboard.press('Home')
+    for (let i = 0; i < 11; i++) await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('Shift+End')
+
+    await page.getByRole('button', { name: 'Bold' }).and(page.locator(':visible')).first().click()
+
+    // Read the DRAFT back rather than the preview markup: this is the thing
+    // that gets published, and it is where a lost span would actually hurt.
+    let blocks = null
+    for (let i = 0; i < 30 && !blocks; i++) {
+      await page.waitForTimeout(300)
+      const [[row]] = await conn.query(
+        `SELECT layout_draft FROM storefront_pages WHERE kind = 'home'`,
+      )
+      const draft = JSON.parse(row?.layout_draft ?? '[]')
+      const rich = draft.find((s) => s.kind === 'richtext' && s.blocks?.length)
+      const spans = rich?.blocks?.[0]?.spans ?? []
+      if (spans.length > 1) blocks = spans
+    }
+
+    ok('bolding a selection splits the line', Array.isArray(blocks) && blocks.length === 2, JSON.stringify(blocks))
+    if (blocks) {
+      ok('the words before the selection stay plain', blocks[0].text === 'call us on ' && !blocks[0].bold)
+      ok('and only the selected words are bold', blocks[1].text === '021 555 0000' && blocks[1].bold === true)
+    }
+
+    // Alignment is per block and must reach the draft the same way.
+    await page.getByRole('button', { name: 'Centred' }).and(page.locator(':visible')).first().click()
+    let centred = false
+    for (let i = 0; i < 30 && !centred; i++) {
+      await page.waitForTimeout(300)
+      const [[row]] = await conn.query(
+        `SELECT layout_draft FROM storefront_pages WHERE kind = 'home'`,
+      )
+      const draft = JSON.parse(row?.layout_draft ?? '[]')
+      const rich = draft.find((s) => s.kind === 'richtext' && s.blocks?.length)
+      centred = rich?.blocks?.[0]?.align === 'center'
+    }
+    ok('centring a line reaches the draft', centred)
+
+    /*
+     * ── PASTING FROM A DOCUMENT ───────────────────────────────────────────
+     *
+     * test-rich-paste.ts proves the CONVERTER against real Word and Docs
+     * payloads. What it cannot prove is that a real paste event carries
+     * text/html to it and that the result reaches the draft — which is the
+     * half that involves React, the clipboard and a server action.
+     *
+     * The clipboard is written through a paste event carrying a DataTransfer,
+     * because Chrome will not let a headless page write text/html to the real
+     * clipboard without a permission prompt.
+     */
+    console.log('\n— Pasting a document —')
+    const pasted = await page.evaluate(() => {
+      const area = [...document.querySelectorAll('textarea')].find(
+        (t) => t.getAttribute('aria-label') === 'What it says',
+      )
+      if (!area) return 'no textarea'
+      const dt = new DataTransfer()
+      dt.setData(
+        'text/html',
+        '<b style="font-weight:normal"><h2 style="text-align:center">Our story</h2>' +
+          '<p><span style="font-weight:400">Baking since </span><span style="font-weight:700">1994</span></p>' +
+          '<ul><li>Sourdough</li><li>Rye</li></ul></b>',
+      )
+      area.focus()
+      area.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+      return 'dispatched'
+    })
+    ok('the paste event reached the editor', pasted === 'dispatched', pasted)
+
+    let pastedBlocks = null
+    for (let i = 0; i < 30 && !pastedBlocks; i++) {
+      await page.waitForTimeout(300)
+      const [[row]] = await conn.query(
+        `SELECT layout_draft FROM storefront_pages WHERE kind = 'home'`,
+      )
+      const draft = JSON.parse(row?.layout_draft ?? '[]')
+      const rich = draft.find((s) => s.kind === 'richtext' && (s.blocks?.length ?? 0) > 2)
+      if (rich) pastedBlocks = rich.blocks
+    }
+
+    ok('a pasted document reaches the draft', Array.isArray(pastedBlocks), JSON.stringify(pastedBlocks)?.slice(0, 120))
+    if (pastedBlocks) {
+      const kinds = pastedBlocks.map((b) => b.type).join(',')
+      ok('the heading came across as a heading', kinds.includes('h2'), kinds)
+      ok('and it kept its centring', pastedBlocks.some((b) => b.type === 'h2' && b.align === 'center'))
+      ok('the list items came across as list items', pastedBlocks.filter((b) => b.type === 'ul').length === 2, kinds)
+      ok(
+        'bold survived the round trip',
+        pastedBlocks.some((b) => b.spans.some((s) => s.bold && s.text.includes('1994'))),
+      )
+      ok(
+        'and the Google-Docs wrapper did not bold everything',
+        pastedBlocks.some((b) => b.spans.some((s) => !s.bold && s.text.trim())),
+      )
+    }
+
     console.log('\n— Nothing threw along the way —')
     ok('no page errors', problems.length === 0, problems.slice(0, 2).join(' | '))
   } finally {

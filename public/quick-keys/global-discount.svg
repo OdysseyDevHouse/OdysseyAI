@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Global discount</title>
+  <g transform="translate(3.4 -3.2) scale(0.80)"><path d="M6 3a3 3 0 0 0-3 3v13.76a3 3 0 0 0 .88 2.12l21 21a3 3 0 0 0 4.24 0l13.76-13.76a3 3 0 0 0 0-4.24l-21-21A3 3 0 0 0 19.76 3Z" fill="#FB8494"/></g>
+  <g transform="translate(-1.4 2.2) scale(0.885)">
+  <path d="M6 3a3 3 0 0 0-3 3v13.76a3 3 0 0 0 .88 2.12l21 21a3 3 0 0 0 4.24 0l13.76-13.76a3 3 0 0 0 0-4.24l-21-21A3 3 0 0 0 19.76 3Z" fill="#F4556A"/>
+  <circle cx="12.6" cy="12.6" r="3.5" fill="#FFFFFF"/>
+  </g>
+  <g transform="translate(20.8 23.0) rotate(-18) scale(1.330)" stroke="#FFFFFF" fill="none" stroke-linecap="round"><circle cx="-3.7" cy="-3.7" r="2.6" stroke-width="2.3"/><circle cx="3.7" cy="3.7" r="2.6" stroke-width="2.3"/><path d="M4.9-6.3-4.9 6.3" stroke-width="2.6"/></g>
+</svg>

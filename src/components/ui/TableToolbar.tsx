@@ -11,25 +11,57 @@ import { CONTROL, CONTROL_H } from './styles'
  * The bar that sits above a list: filters and search on the left, actions on
  * the right. Use TableToolbar rather than hand-rolling a flex row, so every
  * list screen has the same rhythm and control heights.
+ *
+ * ── WHERE THE PADDING COMES FROM ──────────────────────────────────────────
+ *
+ * A toolbar sits in one of two places, and they want opposite things:
+ *
+ *   · INSIDE A CARD, directly above a table. It is a band of the card, so it
+ *     needs the card's own gutter and a rule under it — and that gutter must
+ *     be `px-4`, the same as TABLE_TD, or the search box hangs off the edge of
+ *     the column headings below it. Pass `inCard`.
+ *   · FREE-STANDING IN A PageBody, above a separate Card. It is its own row on
+ *     the page and takes no padding at all. That is the default.
+ *
+ * `inCard` exists because the in-card case used to be a class string copied
+ * from screen to screen, and a screen that forgot it — or typed `px-6` — was a
+ * toolbar visibly out of line with its own table. Spelling the intent instead
+ * of the spacing makes the aligned version the easy one to write.
  */
 export function TableToolbar({
   children,
   actions,
+  inCard = false,
   className = '',
 }: {
   /** Left side — segmented control, search, filter selects. */
   children?: ReactNode
   /** Right side — Export, New, and friends. */
   actions?: ReactNode
+  /**
+   * The toolbar is a band inside a Card with content beneath it: take the
+   * card gutter and a dividing rule. Leave it off for a free-standing row.
+   */
+  inCard?: boolean
   className?: string
 }) {
   return (
-    <div className={`flex flex-wrap items-center justify-between gap-3 ${className}`}>
+    <div
+      className={`flex flex-wrap items-center justify-between gap-3 ${
+        inCard ? TOOLBAR_IN_CARD : ''
+      } ${className}`}
+    >
       <div className="flex flex-wrap items-center gap-2">{children}</div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
   )
 }
+
+/**
+ * The in-card band. `px-4` matches TABLE_TD so the toolbar's controls line up
+ * with the column headings underneath them.
+ */
+const TOOLBAR_IN_CARD = 'border-b border-border px-4 py-3.5'
 
 export type SegmentedOption<T extends string> = {
   value: T

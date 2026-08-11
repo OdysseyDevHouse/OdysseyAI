@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Reprint invoice</title>
+  <path d="M7 6.5a3 3 0 0 1 3-3h13.3L34 14.2v20.3a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3Z" fill="#2563EB"/>
+  <path d="M23.3 3.5 34 14.2h-7.7a3 3 0 0 1-3-3Z" fill="#93C5FD"/>
+  <rect x="11.5" y="11" width="10" height="2.9" rx="1.45" fill="#FFFFFF"/>
+  <rect x="11.5" y="17" width="18" height="2.9" rx="1.45" fill="#FFFFFF"/>
+  <rect x="11.5" y="23" width="18" height="2.9" rx="1.45" fill="#FFFFFF"/>
+  <rect x="11.5" y="29" width="11" height="2.9" rx="1.45" fill="#FFFFFF"/>
+  <path d="M29.86 37.69A6.4 6.4 0 1 1 42.54 37.69" stroke="#FFFFFF" stroke-width="5.0" stroke-linecap="round" fill="none"/><path d="M41.29 46.60L36.34 33.29L49.71 35.16Z" fill="#FFFFFF"/><path d="M42.54 35.91A6.4 6.4 0 1 1 29.86 35.91" stroke="#FFFFFF" stroke-width="5.0" stroke-linecap="round" fill="none"/><path d="M31.11 27.00L36.06 40.31L22.69 38.44Z" fill="#FFFFFF"/><path d="M29.86 37.69A6.4 6.4 0 1 1 42.54 37.69" stroke="#2563EB" stroke-width="2.6" stroke-linecap="round" fill="none"/><path d="M41.89 42.33L39.32 35.40L46.27 36.38Z" fill="#2563EB"/><path d="M42.54 35.91A6.4 6.4 0 1 1 29.86 35.91" stroke="#2563EB" stroke-width="2.6" stroke-linecap="round" fill="none"/><path d="M30.51 31.27L33.08 38.20L26.13 37.22Z" fill="#2563EB"/>
+</svg>

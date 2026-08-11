@@ -219,17 +219,24 @@ export function TenderPad({
 
   const payable = round(Math.max(0, roundedTotal - voucherCredit), 2)
 
-  const check = useMemo(() => {
-    // flatMap rather than map+filter: it drops unmatched entries without needing
-    // a type predicate to convince TypeScript they are gone.
-    const lines = taken.flatMap((t) => {
-      const type = tenders.find((x) => x.id === t.tenderTypeId)
-      return type ? [{ tender: type, amount: t.amount, reference: t.reference ?? null }] : []
-    })
-    return checkTenders(lines, payable, hasCustomer)
-  }, [taken, tenders, payable, hasCustomer])
-
-  const owed = round(payable - taken.reduce((sum, t) => sum + t.amount, 0), 2)
+  /*
+   * The RAW excess, computed here rather than taken from `check.change`.
+   *
+   * `checkTenders` and `planTips` would otherwise depend on each other: the check needs to
+   * know how much of an over-tender is a tip before it decides whether the rest is an
+   * error, and the plan needs the excess. Deriving the excess directly breaks the loop —
+   * it is just what was handed over minus what was owed, and neither function is needed to
+   * work that out.
+   *
+   * MEASURED bug this fixes: a R2 000 card payment on a R1 888.04 bill showed
+   * "Over-tendered by 111.96, but only 0.00 can give change" at the same time as showing
+   * the tip, because the check ran first, errored, and left `change` at zero — so the plan
+   * had nothing to claim.
+   */
+  const rawExcess = round(
+    Math.max(0, taken.reduce((sum, t) => sum + t.amount, 0) - payable),
+    2,
+  )
 
   /*
    * ── TIPS ──────────────────────────────────────────────────────────────────
@@ -245,7 +252,7 @@ export function TenderPad({
   const plan = useMemo(
     () =>
       planTips({
-        totalExcess: check.change,
+        totalExcess: rawExcess,
         tenders: taken.flatMap((t) => {
           const type = tenders.find((x) => x.id === t.tenderTypeId)
           return type
@@ -266,8 +273,28 @@ export function TenderPad({
             ? { tenderTypeId: taken[0].tenderTypeId, amount: serviceCharge }
             : null,
       }),
-    [check.change, taken, tenders, declared, serviceCharge],
+    [rawExcess, taken, tenders, declared, serviceCharge],
   )
+
+  /* What the plan claims of the excess, for the check above. Zero on a refusal, so a
+     refused plan cannot silently suppress a real change error. */
+  const plannedTipsFromExcess = plan.ok
+    ? round(plan.tips.filter((t) => t.source !== 'service').reduce((s2, t) => s2 + t.amount, 0), 2)
+    : 0
+
+  const check = useMemo(() => {
+    // flatMap rather than map+filter: it drops unmatched entries without needing
+    // a type predicate to convince TypeScript they are gone.
+    const lines = taken.flatMap((t) => {
+      const type = tenders.find((x) => x.id === t.tenderTypeId)
+      return type ? [{ tender: type, amount: t.amount, reference: t.reference ?? null }] : []
+    })
+    /* The tip total is passed in, so an excess a tender legitimately keeps is not also
+       reported as an unpayable change demand. */
+    return checkTenders(lines, payable, hasCustomer, plannedTipsFromExcess)
+  }, [taken, tenders, payable, hasCustomer, plannedTipsFromExcess])
+
+  const owed = round(payable - taken.reduce((sum, t) => sum + t.amount, 0), 2)
 
   const tipTotal = plan.ok ? round(plan.tips.reduce((s, t) => s + t.amount, 0), 2) : 0
   /* What the drawer actually hands back, AFTER tips. Showing `check.change` here would

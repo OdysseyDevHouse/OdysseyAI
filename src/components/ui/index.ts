@@ -18,6 +18,7 @@ export {
   CONTROL_H,
   CONTROL_H_TOUCH,
   CONTROL_INVALID,
+  EDIT_COLUMN,
   MODAL_PANEL,
   MODAL_SIZE,
   type ModalSize,
@@ -59,11 +60,13 @@ export {
   TILE_GRADIENTS,
   TILE_NONE,
   tileClass,
+  toneForTileToken,
   type TileSwatch,
 } from './tiles'
 export { SwatchPicker } from './SwatchPicker'
 export { Badge, type BadgeTone } from './Badge'
 export { Callout, type CalloutTone } from './Callout'
+export { SettingsHint } from './SettingsHint'
 export {
   CategoryTile,
   CATEGORY_TONES,
@@ -106,6 +109,7 @@ export { PinPad } from './PinPad'
    globals.css and the .till-surface rules at the foot of it. */
 export { TileGrid, SHORT_TILE_MAX, isShortTile } from './TileGrid'
 export { ProductTile } from './ProductTile'
+export { ActionTile } from './ActionTile'
 export { NumPad, NumPadDisplay, numPadValue } from './NumPad'
 export { TouchRow } from './TouchRow'
 export { ExpandingCard } from './ExpandingCard'
@@ -116,3 +120,4 @@ export { Sparkline } from './Sparkline'
 export { ToastProvider, useToast } from './Toast'
 
 export * as Icons from './icons'
+export { HUB_ICONS, hubGlyph } from './hubIcons'

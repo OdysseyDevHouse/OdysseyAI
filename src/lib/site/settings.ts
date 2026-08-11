@@ -54,6 +54,37 @@ export const SETTING_DEFAULTS = {
   barcode_value_divisor: '100',
   /** How far a drawer may be out before an explanation is required at cash-up. */
   cashup_variance_tolerance: '5.00',
+
+  /* ── Receiving guards ──────────────────────────────────────────────────
+     Two checks at the moment a GRV is posted. Both are about the same thing:
+     a receipt is the ONLY act that writes average_cost, and a keying error
+     here is silent — it does not throw, it just prices next quarter's GP
+     report wrong. */
+
+  /**
+   * How far the keyed lines may differ from the supplier's invoice total
+   * before the receipt is refused.
+   *
+   * Small on purpose. This catches a transposed 91 for 19, a line entered
+   * twice, a case cost keyed as a unit cost — the errors that otherwise reach
+   * the ledger and are found when the supplier queries the payment. Cents of
+   * tolerance because a supplier's own rounding can differ from ours by one.
+   *
+   * Only applies when a total is actually given: receiving without the invoice
+   * in hand stays possible, and is the common case for a delivery note.
+   */
+  purchase_invoice_tolerance: '0.10',
+
+  /**
+   * Percentage a unit cost may move from the last one paid before the screen
+   * warns.
+   *
+   * A WARNING, never a refusal: prices genuinely move, and a buyer who knows
+   * the supplier put 30% on is better placed than this setting. It exists so
+   * that R1,000 keyed for R100 is noticed while the invoice is still in hand
+   * rather than in next month's margin report. Zero switches it off.
+   */
+  purchase_cost_change_warn_pct: '20',
   /**
    * What a cash-up reconciles.
    *

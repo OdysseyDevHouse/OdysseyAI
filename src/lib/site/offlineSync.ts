@@ -361,6 +361,20 @@ export async function postOfflineSale(
     customerId: sale.customerId ?? null,
     documentNumber: sale.documentNumber,
     shiftId: sale.shiftId ?? null,
+    /*
+     * The tips the SLIP said, passed straight through.
+     *
+     * Not recomputed here, and that is deliberate on both counts. The service-charge tiers
+     * may have been edited between the sale and the sync, so re-deriving would reprice a
+     * bill the customer has already settled. And the declared split is a person's decision
+     * about cash already handed over — nothing at sync time can reconstruct which R10 of a
+     * R50 excess was meant as a tip.
+     *
+     * Undefined on a sale queued before tips existed, which `planTips` treats as no tips —
+     * so an old outbox row posts exactly as it always would have.
+     */
+    declaredTips: sale.declaredTips,
+    serviceCharge: sale.serviceCharge,
   })
 
   if (!posted.ok) {

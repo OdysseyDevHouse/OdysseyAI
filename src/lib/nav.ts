@@ -27,6 +27,7 @@ import {
   Mail,
   Truck,
   Coins,
+  HandCoins,
   Scale,
   Percent,
   Bell,
@@ -63,6 +64,19 @@ export type NavItem = {
   capability?: string
   /** Words someone might search for that are not in the label. */
   keywords?: string
+  /**
+   * What the screen does, in one line — shown under its name in the global
+   * search palette.
+   *
+   * The menu itself never renders this; a sidebar row is a word, not a sentence.
+   * It exists because a search RESULT has to be choosable by somebody who has
+   * not opened the screen before, and a bare label often is not: "Collections"
+   * and "Promises to pay" mean nothing until you know they are about chasing
+   * overdue accounts. The hub screens get this from their catalogue, which is
+   * where a hub's own tiles read it; a menu item has no catalogue, so it says so
+   * here.
+   */
+  description?: string
 }
 
 export type NavSection = {
@@ -73,6 +87,8 @@ export type NavSection = {
   items?: NavItem[]
   built?: boolean
   capability?: string
+  /** As on NavItem — one line for the search palette, never for the menu. */
+  description?: string
   /**
    * Search synonyms for the section itself. Matters most for a hub, whose
    * screens the menu no longer names: without these, collapsing a dozen rows
@@ -82,20 +98,25 @@ export type NavSection = {
 }
 
 export const NAV: NavSection[] = [
-  { label: 'Dashboard', icon: Home, href: '/dashboard', built: true, capability: 'dashboard.view' },
+  { label: 'Dashboard', icon: Home, href: '/dashboard', built: true, capability: 'dashboard.view', description: 'How the shop is trading today' },
   {
     label: 'Sales',
     icon: LineChart,
     items: [
-      { label: 'New sale', href: '/pos', icon: Plus, built: true, capability: 'sales.till' },
-      { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.edit' },
-      { label: 'Documents', href: '/sales', icon: Receipt, built: true, capability: 'sales.view' },
-      { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view' },
-      { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view' },
-      { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view' },
-      { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view' },
-      { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note' },
-      { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup' },
+      { label: 'New sale', href: '/pos', icon: Plus, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
+      { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.edit', description: 'Capture and finalise an invoice' },
+      { label: 'Documents', href: '/sales', icon: Receipt, built: true, capability: 'sales.view', description: 'Every sale, invoice and credit note' },
+      { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view', description: 'What customers have ordered but not yet taken' },
+      { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view', description: 'Prices offered, and what became of them' },
+      { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view', description: 'Goods put aside and paid off over time' },
+      { label: 'Reservations', href: '/sales/reservations', icon: CalendarClock, built: true, capability: 'reservations.view', keywords: 'bookings table diary covers restaurant seating guests', description: 'Tonight’s book — who is coming and where they sit' },
+      { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view', description: 'Agreements that bill themselves on a schedule' },
+      { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note', description: 'Take goods back and credit the customer' },
+      { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup', description: 'Count a drawer and close off a shift' },
+      /* Paying tips out, beside the cash-up rather than under Setup: it happens at the end
+         of a shift, by whoever counts the drawer, and shares that capability. Setup → Tips
+         is the other half — what a bill is CHARGED, which is configuration. */
+      { label: 'Tips', href: '/sales/tips', icon: HandCoins, built: true, capability: 'sales.cashup', description: 'What was collected, and paying it out to staff' },
       /* Offline sales is NOT here any more — it is a reconciliation check
          ("is yesterday's offline trading on the books"), so it sits in the
          accounting hub beside the other checks that catch a figure going wrong.
@@ -117,45 +138,45 @@ export const NAV: NavSection[] = [
     label: 'Products',
     icon: Table,
     items: [
-      { label: 'Products', href: '/products', icon: Boxes, built: true, capability: 'products.view' },
-      { label: 'Departments', href: '/departments', icon: LayoutGrid, built: true, capability: 'products.view' },
-      { label: 'Specials', href: '/specials', icon: Tag, built: true, capability: 'products.edit' },
+      { label: 'Products', href: '/products', icon: Boxes, built: true, capability: 'products.view', description: 'Everything the shop sells, and what it costs' },
+      { label: 'Departments', href: '/departments', icon: LayoutGrid, built: true, capability: 'products.view', description: 'How the product file is grouped and reported on' },
+      { label: 'Specials', href: '/specials', icon: Tag, built: true, capability: 'products.edit', description: 'Promotional prices that start and end on a date' },
       /* Beside Specials rather than under Setup, and for the same reason Specials
          is here: both are prices that change themselves on a clock, and both are
          used by a shop owner weekly. Setup → Pricing is the SHAPE of pricing —
          which price types exist, what VAT applies — which is a different job. */
-      { label: 'Price changes', href: '/pricing-schedules', icon: CalendarClock, built: true, capability: 'products.edit' },
-      { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view' },
-      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, built: true, capability: 'products.edit' },
+      { label: 'Price changes', href: '/pricing-schedules', icon: CalendarClock, built: true, capability: 'products.edit', description: 'New prices approved now to take effect later' },
+      { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view', description: 'The questions a till asks when an item is sold' },
+      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, built: true, capability: 'products.edit', description: 'Build stock from a recipe of other stock' },
     ],
   },
   {
     label: 'Stock',
     icon: PackageOpen,
     items: [
-      { label: 'Purchasing', href: '/purchasing', icon: PackageOpen, built: true, capability: 'purchasing.view' },
-      { label: 'Transfers', href: '/transfers', icon: ArrowLeftRight, built: true, capability: 'stock.transfer' },
-      { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, built: true, capability: 'stock.adjust' },
+      { label: 'Purchasing', href: '/purchasing', icon: PackageOpen, built: true, capability: 'purchasing.view', description: 'Order stock and receive it against the order' },
+      { label: 'Transfers', href: '/transfers', icon: ArrowLeftRight, built: true, capability: 'stock.transfer', description: 'Move stock between locations or stores' },
+      { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, built: true, capability: 'stock.adjust', description: 'Count what is on the shelf and correct the books' },
       /* A supplier exists in this app because stock comes from one. Their age
          analysis and remittances are money questions and sit in that hub. */
-      { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view' },
+      { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view', description: 'Who the shop buys from, and what it owes them' },
     ],
   },
   {
     label: 'Customers',
     icon: Contact,
     items: [
-      { label: 'Customers', href: '/customers', icon: Contact, built: true, capability: 'customers.view' },
-      { label: 'Age analysis', href: '/customers/age-analysis', icon: BarChart, built: true, capability: 'customers.view' },
+      { label: 'Customers', href: '/customers', icon: Contact, built: true, capability: 'customers.view', description: 'Accounts, contact details and history' },
+      { label: 'Age analysis', href: '/customers/age-analysis', icon: BarChart, built: true, capability: 'customers.view', description: 'Who owes what, and how overdue it is' },
       /* Directly after the age analysis: that screen says what is overdue,
          this one is where somebody does something about it. */
-      { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view' },
-      { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view' },
-      { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view' },
+      { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view', description: 'Chase overdue accounts and record the outcome' },
+      { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view', description: 'What a customer undertook to pay, and by when' },
+      { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view', description: 'Send account statements out to customers' },
       /* The members list, which is the loyalty screen anybody actually opens.
          The programme, its tiers and the punch cards decide how it WORKS and
          are set once, so they are in the setup hub. */
-      { label: 'Loyalty', href: '/loyalty', icon: Gem, built: true, capability: 'loyalty.view' },
+      { label: 'Loyalty', href: '/loyalty', icon: Gem, built: true, capability: 'loyalty.view', description: 'Members, their points and what they have earned' },
     ],
   },
   /*
@@ -175,6 +196,7 @@ export const NAV: NavSection[] = [
     built: true,
     capability: 'cashbook.view',
     keywords: 'money ledger books financials vat tax cashbook expenses debtors creditors',
+    description: 'The books — ledgers, VAT, expenses and the bank',
   },
   /*
    * One link too. The hub already leads with built-in reports, whatever the
@@ -190,6 +212,7 @@ export const NAV: NavSection[] = [
     built: true,
     capability: 'reports.view',
     keywords: 'build a report generate with ai scheduled reports email me analytics',
+    description: 'Built-in reports, your own, and ones you schedule',
   },
   {
     /* Staff and Commission answered the same question from opposite ends —
@@ -201,11 +224,11 @@ export const NAV: NavSection[] = [
     items: [
       /* The clock leads: it is the screen somebody opens every morning, while
          People is opened when a person joins or their terms change. */
-      { label: 'Clock in and out', href: '/staff/clock', icon: Clock, built: true, capability: 'staff.clock' },
-      { label: 'Timesheets', href: '/staff/timesheets', icon: ClipboardList, built: true, capability: 'staff.view_own' },
-      { label: 'Leave', href: '/staff/leave', icon: CalendarRange, built: true, capability: 'staff.view_own' },
-      { label: 'People', href: '/staff', icon: Contact, built: true, capability: 'staff.view_all' },
-      { label: 'Commission', href: '/commission', icon: Percent, built: true, capability: 'commission.view_own' },
+      { label: 'Clock in and out', href: '/staff/clock', icon: Clock, built: true, capability: 'staff.clock', description: 'Start and end a shift on the floor' },
+      { label: 'Timesheets', href: '/staff/timesheets', icon: ClipboardList, built: true, capability: 'staff.view_own', description: 'Hours worked, and approving them for pay' },
+      { label: 'Leave', href: '/staff/leave', icon: CalendarRange, built: true, capability: 'staff.view_own', description: 'Requests, balances and who is away when' },
+      { label: 'People', href: '/staff', icon: Contact, built: true, capability: 'staff.view_all', description: 'Everyone who works here and their terms' },
+      { label: 'Commission', href: '/commission', icon: Percent, built: true, capability: 'commission.view_own', description: 'What each person earned on what they sold' },
     ],
   },
   /*
@@ -224,6 +247,7 @@ export const NAV: NavSection[] = [
     built: true,
     capability: 'online.view',
     keywords: 'web shop ecommerce storefront online orders discounts pages checkout',
+    description: 'The public shop — orders, pages and what it sells',
   },
   /*
    * One link, not a group of fourteen.
@@ -237,7 +261,7 @@ export const NAV: NavSection[] = [
    * `setup.view` gates it: the weakest capability any tile requires, so anyone
    * with a single setting still gets in and the hub drops the rest.
    */
-  { label: 'Setup', icon: Settings, href: '/setup', built: true, capability: 'setup.view' },
+  { label: 'Setup', icon: Settings, href: '/setup', built: true, capability: 'setup.view', description: 'How this shop is configured, from tills to VAT' },
   /* Job Cards was an empty section rendering "Not built yet" — a promise the
      menu could not keep, costing a permanent row. It comes back when it has a
      route. */
@@ -291,6 +315,7 @@ export const SUBPAGE_LABELS = {
   '/setup/locations': 'Stock locations',
   '/setup/pricing': 'Price types & VAT',
   '/setup/tender-types': 'Tender types',
+  '/setup/tips': 'Tips',
   // "Tills", not "Terminals" — it is what the screen's own heading says, and
   // what somebody in a shop calls the thing. The keyword search still has
   // "terminals" on the tile, so looking for either finds it.
@@ -298,6 +323,7 @@ export const SUBPAGE_LABELS = {
   '/setup/numbering': 'Numbering',
   '/setup/quick-keys': 'Quick keys',
   '/setup/tables': 'Tables',
+  '/setup/reservations': 'Reservations',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
   '/setup/laybys': 'Lay-bys',
@@ -313,6 +339,11 @@ export const SUBPAGE_LABELS = {
   '/loyalty/programme': 'Loyalty programme',
   '/loyalty/tiers': 'Loyalty tiers',
   '/loyalty/cards': 'Punch cards',
+  /* Commission rules had no entry here at all — no tile, no breadcrumb, no
+     search — reachable only by somebody already standing on /commission who
+     knew to look. It decides what every figure on that screen comes to, which
+     is the same job as pay rules, so it is listed in the same place. */
+  '/commission/rules': 'Commission rules',
 
   // ── Accounting ────────────────────────────────────────────────────────
   '/accounting/income-statement': 'Profit and loss',
@@ -350,6 +381,13 @@ export const SUBPAGE_LABELS = {
   '/online-store/pages': 'Pages',
   '/online-store/payments': 'Payments',
   '/online-store/setup': 'Store setup',
+
+  // ── Reports ───────────────────────────────────────────────────────────
+  /* The reports hub renders its own catalogue and does not read this map, so
+     this is here for the setup hub's cross-reference and the breadcrumb — a
+     schedule is configuration ("email me the sales summary every Monday")
+     that somebody looks for under settings as readily as under reports. */
+  '/reports/schedules': 'Scheduled reports',
 } as const
 
 /**
@@ -386,7 +424,43 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
   '/loyalty/programme': '/setup',
   '/loyalty/tiers': '/setup',
   '/loyalty/cards': '/setup',
+  /* Beside pay rules, for the same reason: it is set once and decides what
+     every figure on /commission comes to. It had no owner at all before, so
+     its breadcrumb fell through to a prefix that is not a hub and the screen
+     rendered with no trail and no way back. */
+  '/commission/rules': '/setup',
 }
+
+/**
+ * Settings the setup hub SHOWS but does not OWN.
+ *
+ * The hub is meant to be the one place somebody looks for a setting, and about
+ * a dozen live under another section: the online store's own switches, the
+ * accounting period lock, scheduled reports. Moving them is wrong — each is
+ * genuinely part of its module and its own hub lists it — and so is claiming
+ * them in `SUBPAGE_OWNER`, which would rewrite the breadcrumb and strand the
+ * screen away from the hub it belongs to. "Store setup" reached from the online
+ * store must still read "Online Store › Store setup".
+ *
+ * So the setup hub lists them as CROSS-REFERENCES: a tile that goes to the real
+ * screen, in the real module, whose trail stays that module's. Being listed in
+ * two hubs is the point — this is the second front door, and unlike the
+ * sidebar's it cannot disagree with the first, because both read one label.
+ *
+ * Membership is here rather than in the catalogue so `hubFor` stays the single
+ * answer to "who owns this" and the catalogue cannot quietly claim a screen by
+ * listing it.
+ */
+export const SETUP_ELSEWHERE = [
+  '/online-store/setup',
+  '/online-store/statuses',
+  '/online-store/payments',
+  '/online-store/discounts',
+  '/accounting/accounts',
+  '/accounting/periods',
+  '/expenses/recurring',
+  '/reports/schedules',
+] as const satisfies readonly SubpageHref[]
 
 /** The hub a screen belongs to, by route prefix unless declared otherwise. */
 export function hubFor(pathname: string): string | null {
@@ -413,16 +487,37 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/locations': 'warehouse storeroom bins branches',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/tender-types': 'cash card eft payment methods vouchers',
+  '/setup/tips': 'tips gratuity service charge tiers waiter pool',
   '/setup/terminals': 'terminals registers pos devices',
   '/setup/numbering': 'sequences document numbers prefix autocode',
   '/setup/quick-keys': 'buttons tiles favourites shortcuts till pos grid',
   '/setup/tables': 'restaurant hospitality floor sections covers waiter bills',
+  '/setup/reservations': 'bookings diary online booking form opening hours sittings covers restaurant',
   '/setup/reconciliation': 'drift integrity check invariants audit',
   '/setup/opening-balances': 'import migration debtors creditors go live',
   '/setup/laybys': 'deposit cancellation fee terms instalments',
   '/setup/expense-categories': 'chart of accounts spending overheads account codes',
   '/setup/databases': 'connection health server site details',
   '/setup/style-guide': 'design system components reference ui kit',
+  /* Configuration under another section's route. Without these, somebody who
+     types "commission" or "overtime" into the sidebar gets nothing back for
+     the screens that actually decide those figures. */
+  '/staff/pay-rules': 'overtime rates wages salary hourly bcea holidays sunday',
+  '/staff/cost': 'wages salary labour cost payroll per employee',
+  '/commission/rules': 'commission rates rules percentage sales rep earnings targets',
+  '/credit/levels': 'credit limit terms account hold blocked risk dunning reminders',
+  '/loyalty/programme': 'points rewards earn rate redemption programme rules',
+  '/loyalty/tiers': 'tiers levels vip bronze silver gold status benefits',
+  '/loyalty/cards': 'punch card stamps buy x get y free coffee',
+  /* Settings the setup hub cross-references — see SETUP_ELSEWHERE. */
+  '/online-store/setup': 'domain url delivery fees shipping open closed launch go live web shop',
+  '/online-store/statuses': 'workflow stages pipeline packing shipped fulfilment',
+  '/online-store/payments': 'payfast yoco ozow gateway card eft checkout',
+  '/online-store/discounts': 'promo coupon voucher promotion sale code',
+  '/accounting/accounts': 'chart of accounts ledger codes general ledger',
+  '/accounting/periods': 'period lock close month year end freeze',
+  '/expenses/recurring': 'standing order repeating monthly rent subscription',
+  '/reports/schedules': 'scheduled email me automatic recurring report delivery',
 }
 
 /**

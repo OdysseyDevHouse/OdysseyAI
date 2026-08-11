@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Void sale</title>
+  <path d="M12 9.6h24v29.6L33.00 36.60L30.00 39.20L27.00 36.60L24.00 39.20L21.00 36.60L18.00 39.20L15.00 36.60L12.00 39.20Z" fill="#FBD5DA"/>
+  <rect x="12" y="6.4" width="24" height="3.6" rx="1.8" fill="#F4556A"/>
+  <rect x="16" y="14.5" width="12" height="2.7" rx="1.35" fill="#F4556A"/>
+  <rect x="16" y="20" width="16" height="2.7" rx="1.35" fill="#F4556A"/>
+  <rect x="16" y="25.5" width="16" height="2.7" rx="1.35" fill="#F4556A"/>
+  <rect x="16" y="31" width="9" height="2.7" rx="1.35" fill="#F4556A"/>
+  <circle cx="36.5" cy="36.5" r="11.3" fill="#FFFFFF"/><circle cx="36.5" cy="36.5" r="9" fill="#DC2626"/>
+  <path d="M32.90 32.90L40.10 40.10M40.10 32.90L32.90 40.10" stroke="#FFFFFF" stroke-width="3.0" stroke-linecap="round"/>
+</svg>

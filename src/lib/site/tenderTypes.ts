@@ -137,6 +137,8 @@ export type TenderInput = {
   allowsChange?: boolean
   allowsSplit?: boolean
   allowsRefund?: boolean
+  tipOnOverTender?: boolean
+  tipInDrawer?: boolean
   requiresReference?: boolean
   referenceLabel?: string | null
   roundsToCashDenomination?: boolean
@@ -200,6 +202,21 @@ function columns(input: TenderInput): unknown[] {
     input.allowsChange ? 1 : 0,
     input.allowsSplit === false ? 0 : 1,
     input.allowsRefund === false ? 0 : 1,
+    /*
+     * POSITIONAL, and these two must sit exactly where `tip_on_over_tender` and
+     * `tip_in_drawer` appear in COLUMN_LIST — immediately after allows_refund.
+     *
+     * I added them to COLUMN_LIST first (for the SELECT) and not here, which left 22
+     * columns against 20 values. MySQL reports that as "Malformed communication packet",
+     * an error naming neither the column nor the count — the same trap `customers.ts`
+     * already carries a warning about. The placeholder count is DERIVED from COLUMN_LIST,
+     * so the two lists must be read together every time either changes.
+     */
+    input.tipOnOverTender ? 1 : 0,
+    /* Defaults ON: the common case is cash, and a tip in the drawer that nothing expects
+       leaves the count over. Forced OFF for an account tender, whose tip is charged to a
+       debtor and never reaches the till. */
+    input.postsToDebtor || input.tipInDrawer === false ? 0 : 1,
     input.requiresReference ? 1 : 0,
     input.requiresReference ? (input.referenceLabel?.trim() || 'Reference') : null,
     input.roundsToCashDenomination ? 1 : 0,
@@ -220,6 +237,17 @@ const COLUMN_LIST = `code, name, posts_to_debtor, requires_customer, counts_as_d
                      requires_reference, reference_label, rounds_to_cash_denomination,
                      min_amount, max_amount, surcharge_pct, integration_key,
                      icon, color, position, is_active`
+
+/**
+ * The same columns as `col = ?`, for the UPDATE.
+ *
+ * Derived so the INSERT and the UPDATE cannot disagree about either the columns or their
+ * ORDER — `columns()` is positional, so a SET clause listing them differently would write
+ * every value into the wrong field while succeeding silently.
+ */
+const SET_CLAUSE = COLUMN_LIST.split(',')
+  .map((c) => `${c.trim()} = ?`)
+  .join(', ')
 
 export async function createTenderType(siteId: number, input: TenderInput): Promise<SaveResult> {
   const invalid = validateTender(input)
@@ -274,13 +302,18 @@ export async function updateTenderType(
 
   await siteExecute(
     siteId,
-    `UPDATE tender_types SET
-       code = ?, name = ?, posts_to_debtor = ?, requires_customer = ?, counts_as_drawer_cash = ?,
-       opens_cash_drawer = ?, allows_change = ?, allows_split = ?, allows_refund = ?,
-       requires_reference = ?, reference_label = ?, rounds_to_cash_denomination = ?,
-       min_amount = ?, max_amount = ?, surcharge_pct = ?, integration_key = ?,
-       icon = ?, color = ?, position = ?, is_active = ?
-     WHERE id = ?`,
+    /*
+     * DERIVED from COLUMN_LIST, not written out again.
+     *
+     * There used to be a third hand-maintained list here, and adding the two tip columns
+     * proved exactly why that is a trap: COLUMN_LIST and `columns()` were updated, this
+     * SET clause was not, and the UPDATE went out with 20 assignments against 22 values.
+     * MySQL reports that as "Malformed communication packet" — an error naming neither the
+     * column nor the count, which sends you looking at the driver. `customers.ts` carries
+     * a warning about the identical bug; deriving it means only two lists remain and they
+     * sit next to each other.
+     */
+    `UPDATE tender_types SET ${SET_CLAUSE} WHERE id = ?`,
     [...columns(effective), id],
   )
   return { ok: true, id }
