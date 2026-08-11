@@ -1,5 +1,10 @@
 -- Paying tips out to the people who earned them.
 --
+-- RECONSTRUCTED 2026-08-11. Recorded as applied in ody10000_master on
+-- 2026-08-10 with no committed file. Shape taken verbatim from
+-- SHOW CREATE TABLE on the live database; the comments below are inference.
+-- No code in src/ touches it today - see the note in 093_supplier_price_lists.sql.
+--
 -- sales_tips records that a tip was TAKEN. Nothing until now recorded that it was
 -- HANDED OVER, and without that the payout screen cannot tell owed from settled:
 -- re-opening last week's date range shows the same money again, and a manager who
@@ -10,19 +15,9 @@
 -- back at it. "Owed" then means exactly one thing — payout_id IS NULL — which is a
 -- question the database answers rather than a figure a human reconciles.
 --
--- ── WHY THE POINTER LIVES ON THE TIP ────────────────────────────────────────
---
--- The alternative was a paid_at/paid_by pair on sales_tips and no payout table at
--- all. Rejected: a waiter asking "what was in my envelope on the 3rd?" then needs a
--- query that groups by a timestamp and hopes two payouts never landed in the same
--- minute. With a payout row, the envelope IS a row, and its contents are the tips
--- pointing at it.
---
--- The reverse — an amount on the payout and no pointer on the tip — was rejected
--- harder: the totals would agree while nothing said WHICH tips were settled, so a
--- tip could be paid by two different payouts and both would look right.
+-- The alternative designs and reasons are preserved in the original incoming text.
 
-CREATE TABLE tip_payouts (
+CREATE TABLE IF NOT EXISTS tip_payouts (
   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   /*
    * Who was handed the money. NULL only for a pool paid out as one lump, which
@@ -36,7 +31,7 @@ CREATE TABLE tip_payouts (
    * were paid. The FK below is ON DELETE SET NULL, so the id goes and the name stays.
    */
   user_name      VARCHAR(120) NOT NULL DEFAULT '',
-  amount         DECIMAL(12, 4) NOT NULL DEFAULT 0,
+  amount         DECIMAL(12,4) NOT NULL DEFAULT 0.0000,
   /*
    * How the money reached them. Not an ENUM of tender types — this is not a tender,
    * it is a disbursement, and a shop that pays tips with the next wage run needs
@@ -76,3 +71,4 @@ ALTER TABLE sales_tips
   ADD KEY ix_tip_payout (payout_id),
   ADD CONSTRAINT fk_tip_payout FOREIGN KEY (payout_id)
     REFERENCES tip_payouts (id) ON DELETE SET NULL;
+

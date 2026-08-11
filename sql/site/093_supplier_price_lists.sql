@@ -27,16 +27,35 @@
 -- and a series does not fit in a row that has to keep being overwritten. The
 -- two live side by side: product_suppliers says who supplies it, this says
 -- what they charge.
+--
+-- RECONSTRUCTED 2026-08-11. This migration was recorded as applied in
+-- ody10000_master on 2026-08-10 but its file was never committed, so the table
+-- exists on that database and on no other. The shape below is taken verbatim
+-- from SHOW CREATE TABLE against the live database; the original comments are
+-- gone and what follows is inference from the columns, not the author intent.
+--
+-- No code in src/ reads or writes this table today. The screens that used it
+-- were part of the work lost on 2026-08-09 (see RECOVERY-NOTES.md). The
+-- migration is restored anyway so that a NEW site provisions the same schema
+-- the master database already has, rather than quietly diverging from it.
+--
+-- What the shape says: a supplier quotes a cost for a product from a date, and
+-- history is kept rather than overwritten - hence effective_from in the key
+-- instead of one row per supplier/product pair. pack_size is here as well as on
+-- products because a supplier can sell the same item in a different case size
+-- to the one the shop stocks it in.
+
 CREATE TABLE IF NOT EXISTS supplier_prices (
   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   supplier_id    INT UNSIGNED NOT NULL,
   product_id     INT UNSIGNED NOT NULL,
 
   -- The day this price starts applying. A list captured in advance simply has
-  -- a future date and is ignored until then.
+  -- a future date and is ignored until then. Part of the unique key, so a new
+  -- price list adds rows rather than destroying what the previous one said.
   effective_from DATE NOT NULL,
 
-  -- EXCLUSIVE of VAT, like every other purchase figure in this schema.
+  -- EXCLUSIVE of VAT, matching other purchase figures in this schema.
   cost_excl      DECIMAL(12,4) NOT NULL DEFAULT 0.0000,
 
   -- How many of OUR units come in one of THEIR cases, at this price. Repeated
@@ -49,19 +68,25 @@ CREATE TABLE IF NOT EXISTS supplier_prices (
   list_reference VARCHAR(60)  NULL,
   note           VARCHAR(190) NULL,
 
+  list_reference VARCHAR(60)  NULL,
+  note           VARCHAR(190) NULL,
+
   created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
   PRIMARY KEY (id),
+
   -- One price per product per supplier per START DATE. Re-keying the same list
-  -- corrects the row rather than stacking a second one behind it, which is
-  -- what the upsert in supplierPrices.ts relies on.
+  -- corrects the row rather than stacking a second one behind it.
   UNIQUE KEY uq_supplier_price (supplier_id, product_id, effective_from),
+
   -- "What does this product cost, from whom" -- the ordering direction, and
   -- the one the effective-date lookup drives.
   KEY ix_sprice_product (product_id, effective_from),
+
   CONSTRAINT fk_sprice_supplier FOREIGN KEY (supplier_id)
     REFERENCES suppliers (id) ON DELETE CASCADE,
   CONSTRAINT fk_sprice_product FOREIGN KEY (product_id)
     REFERENCES products (id) ON DELETE CASCADE
+
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
