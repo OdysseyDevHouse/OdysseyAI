@@ -74,6 +74,8 @@
     "test:dashboard": "tsx --conditions=react-server --env-file=.env scripts/test-dashboard.ts",
     "test:online-store": "tsx --conditions=react-server --env-file=.env scripts/test-online-store.ts",
     "test:online-orders": "tsx --conditions=react-server --env-file=.env scripts/test-online-orders.ts",
+    "seed:menu": "tsx --conditions=react-server --env-file=.env scripts/seed-menu.ts",
+    "seed:menu:wipe": "tsx --conditions=react-server --env-file=.env scripts/seed-menu.ts 1 --wipe",
     "seed:stress": "node --env-file=.env scripts/seed-stress.mjs",
     "seed:stress:small": "node --env-file=.env scripts/seed-stress.mjs 1 --docs=100000 --grvs=2000 --orders=2000",
     "seed:stress:medium": "node --env-file=.env scripts/seed-stress.mjs 1 --docs=1000000 --grvs=10000 --orders=10000",
