@@ -179,6 +179,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/adjustment-reasons',
+        description: 'Why stock was written on or off. What a loss report groups by.',
+        keywords: 'write off shrinkage damage breakage wastage expired codes',
+        icon: 'SlidersHorizontal',
+        tone: 'teal',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/terminals',
         description: 'Which register rang up a sale, and which machine is which.',
         keywords: 'terminals registers pos devices',

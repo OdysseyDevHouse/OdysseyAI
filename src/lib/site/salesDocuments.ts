@@ -22,6 +22,16 @@ export const DOC_TYPES = ['quote', 'sales_order', 'invoice', 'credit_sale'] as c
 export type SalesDocType = (typeof DOC_TYPES)[number]
 
 /**
+ * Where a document was captured.
+ *
+ * Not the same question as `terminalId`, which is only ever "which machine".
+ * A back-office invoice captured on a machine claimed to a till records that
+ * till AND stays 'back_office': it numbers from the shared run, and a lapsed
+ * till claim does not stop it posting. Migration 099 has the reasoning.
+ */
+export type DocumentOrigin = 'till' | 'back_office'
+
+/**
  * A document's state.
  *
  * There is no 'void'. A posted document that is undone is CANCELLED — the two
@@ -133,6 +143,7 @@ export type SalesDocument = {
   userName: string
   terminalId: number | null
   terminalCode: string | null
+  origin: DocumentOrigin
   subtotalExcl: number
   vatTotal: number
   discountTotal: number
@@ -258,6 +269,7 @@ function mapDocument(r: Row, lines: SalesLine[]): SalesDocument {
     userName: String(r.user_name ?? ''),
     terminalId: r.terminal_id === null ? null : Number(r.terminal_id),
     terminalCode: (r.terminal_code as string | null) ?? null,
+    origin: (r.origin as DocumentOrigin | null) ?? 'till',
     subtotalExcl: toNum(r.subtotal_excl),
     vatTotal: toNum(r.vat_total),
     discountTotal: toNum(r.discount_total),
@@ -497,6 +509,11 @@ export type DocumentInput = {
   priceStructureId?: number | null
   terminalId?: number | null
   terminalCode?: string | null
+  /**
+   * Set on the INSERT only — a document does not change where it was captured.
+   * Omitted means 'till', which is every caller that existed before 099.
+   */
+  origin?: DocumentOrigin
   reference?: string | null
   notes?: string | null
   /**
@@ -576,9 +593,9 @@ export async function createBlankInvoice(
   const result = await siteExecute(
     siteId,
     `INSERT INTO sales_documents
-       (doc_type, status, document_date, user_id, user_name,
+       (doc_type, status, document_date, user_id, user_name, origin,
         subtotal_excl, vat_total, discount_total, total_incl)
-     VALUES ('invoice','draft',?,?,?,0,0,0,0)`,
+     VALUES ('invoice','draft',?,?,?,'back_office',0,0,0,0)`,
     [todayIso(), actor.userId, actor.userName.slice(0, 120)],
   )
 
@@ -663,10 +680,10 @@ export async function saveDraft(
         `INSERT INTO sales_documents
            (doc_type, status, document_date, customer_id, customer_name, customer_vat_no,
             customer_phone, customer_address, price_structure_id, user_id, user_name,
-            terminal_id, terminal_code, reference, notes,
+            terminal_id, terminal_code, origin, reference, notes,
             offline_sale_uid, offline_taken_at,
             subtotal_excl, vat_total, discount_total, total_incl)
-         VALUES (?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           input.docType,
           documentDate,
@@ -680,6 +697,7 @@ export async function saveDraft(
           actor.userName.slice(0, 120),
           input.terminalId ?? null,
           input.terminalCode ?? null,
+          input.origin ?? 'till',
           input.reference?.trim() || null,
           input.notes?.trim() || null,
           input.offlineSaleUid ?? null,

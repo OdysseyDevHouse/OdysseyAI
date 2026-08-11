@@ -1,14 +1,26 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+
 /**
  * Sparkline — a trend, at the size of a word.
  *
  * Deliberately NOT a Recharts instance. A KPI strip renders six of these at
- * once, and six chart engines to draw six 28px shapes is a lot of machinery
+ * once, and six chart engines to draw six small shapes is a lot of machinery
  * for a line with no axes, no ticks and no tooltip. This is one <svg> and a
  * path string, so a tile costs nothing to render.
  *
  * It carries no axis and no scale on purpose: a sparkline answers "which way,
  * and how steadily", never "how much". The number it sits under answers that.
+ *
+ * The line is drawn lit — a marker at each reading and a halo of the line's own
+ * colour underneath. The halo is what carries it on the dark surface, where a
+ * 1.5px stroke otherwise disappears into the card; `--chart-glow` drops it to a
+ * whisper in light mode, where the same halo would read as a smudge.
  */
+
+/** Room for a marker and its halo, so neither is clipped by the viewBox. */
+const INSET = 4
 
 /**
  * A smooth path through the points, as a Catmull-Rom spline converted to cubic
@@ -37,7 +49,7 @@ function smoothPath(points: ReadonlyArray<readonly [number, number]>): string {
 export function Sparkline({
   values,
   color,
-  height = 28,
+  height = 44,
   className = '',
 }: {
   values: number[]
@@ -46,56 +58,95 @@ export function Sparkline({
    * than read here so a strip of tiles can each take a different ramp entry.
    */
   color: string
+  /**
+   * The height it draws at, given room. It is a CEILING, not a fixed size: the
+   * box is capped to its parent, so a sparkline in a tile that has run short of
+   * space shrinks rather than spilling past the card and being clipped.
+   */
   height?: number
   className?: string
 }) {
-  const W = 100
-  const H = height
+  /* The box is MEASURED rather than stretched. The old version drew into a
+     fixed 100-unit viewBox with preserveAspectRatio="none", which is fine for a
+     bare line but turns every marker into an ellipse and every halo into a
+     horizontal smear. Drawing at the real pixel size keeps circles round and
+     the blur even, and costs one observer per tile. */
+  const boxRef = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState({ width: 0, height })
+  useEffect(() => {
+    const node = boxRef.current
+    if (!node) return
+    const observer = new ResizeObserver(([entry]) =>
+      setBox({ width: entry.contentRect.width, height: entry.contentRect.height }),
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+
+  const { width } = box
+  const H = box.height
+
   const points = values.filter((v) => Number.isFinite(v))
 
-  // One point is not a trend. Hold the height so a tile with no data is the
-  // same size as its neighbours and the row does not go ragged.
-  if (points.length < 2) return <div style={{ height: H }} className={className} />
+  // One point is not a trend, and a box of zero width has nothing to draw into
+  // (the first frame, before the observer reports). Hold the height either way,
+  // so a tile with no data is the same size as its neighbours and the row does
+  // not go ragged.
+  const drawable = points.length >= 2 && width > 0 && H > INSET * 2
 
   const max = Math.max(...points)
   const min = Math.min(...points)
   // A flat series has no span to divide by; 1 puts the line through the middle.
   const span = max - min || 1
-  const stepX = W / (points.length - 1)
-  const y = (v: number) => H - ((v - min) / span) * (H - 2) - 1
+  const stepX = drawable ? (width - INSET * 2) / (points.length - 1) : 0
+  const y = (v: number) => H - INSET - ((v - min) / span) * (H - INSET * 2)
 
-  const coords = points.map((v, i) => [i * stepX, y(v)] as const)
+  const coords = points.map((v, i) => [INSET + i * stepX, y(v)] as const)
   const line = smoothPath(coords)
-  const area = `${line} L${W},${H} L0,${H} Z`
-  // Unique per colour so two tiles never share a gradient definition.
-  const gradientId = `spark-${color.replace(/[^a-z0-9]/gi, '')}`
+
+  /* Markers only when they can be told apart. At a month's worth of readings in
+     a tile this narrow they would run into one another and read as a thick
+     line, which is worse than no markers at all — so past that density the
+     line carries the trend on its own. */
+  const showDots = stepX >= 9
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      className={`block w-full ${className}`}
-      style={{ height: H }}
-      aria-hidden
+    /* maxHeight is what makes `height` a ceiling: in a tile that has run out of
+       room the box shrinks with its parent instead of overflowing it. Against a
+       parent of auto height — the Style Guide, a table cell — the percentage
+       resolves to nothing and the plain height stands. */
+    <div
+      ref={boxRef}
+      className={`w-full ${className}`}
+      style={{ height, maxHeight: '100%' }}
     >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity={0.22} />
-          <stop offset="100%" stopColor={color} stopOpacity={0} />
-        </linearGradient>
-      </defs>
-      <path d={area} fill={`url(#${gradientId})`} />
-      <path
-        d={line}
-        fill="none"
-        stroke={color}
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        /* The viewBox is stretched non-uniformly to fill the tile; without this
-           the stroke stretches with it and the line goes lumpy. */
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+      {drawable && (
+        <svg
+          width={width}
+          height={H}
+          viewBox={`0 0 ${width} ${H}`}
+          className="block overflow-visible"
+          style={{
+            /* The halo, in the line's own colour at the strength the theme
+               asks for. A CSS drop-shadow rather than an SVG filter because the
+               viewBox is 1:1 with the box here, so it blurs evenly and needs no
+               <defs> in a component that renders six times over. */
+            filter: `drop-shadow(0 0 3px color-mix(in srgb, ${color} calc(var(--chart-glow) * 100%), transparent))`,
+          }}
+          aria-hidden
+        >
+          <path
+            d={line}
+            fill="none"
+            stroke={color}
+            strokeWidth={1.75}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          {showDots &&
+            coords.map(([cx, cy], i) => <circle key={i} cx={cx} cy={cy} r={2} fill={color} />)}
+        </svg>
+      )}
+    </div>
   )
 }

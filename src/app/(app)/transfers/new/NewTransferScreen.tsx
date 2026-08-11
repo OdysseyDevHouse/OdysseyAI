@@ -16,20 +16,35 @@ import {
   Input,
   NumberInput,
   PageBody,
+  SegmentedControl,
   Select,
   useToast,
   type ComboboxOption,
 } from '@/components/ui'
 import { formatQty } from '@/lib/decimals'
 import type { TillProduct } from '@/lib/site/tillSearch'
+import type { StoreOption } from '@/lib/site/storeTransfers'
 import {
   postTransferAction,
+  dispatchToStoreAction,
   searchProductsForTransferAction,
   locationStockAction,
   serialsInLocationAction,
 } from '../actions'
 
 type LocationOption = { id: number; code: string; name: string; isMain: boolean }
+
+/**
+ * Where the stock is going.
+ *
+ *   location  another room here — posts both halves at once, nothing in transit
+ *   store     another site entirely — leaves here, sits in transit, and only
+ *             lands when that store confirms what turned up
+ *
+ * They are the same capture and two genuinely different documents, which is why
+ * the choice is made once at the top rather than inferred from the destination.
+ */
+type DestinationKind = 'location' | 'store'
 
 type TransferLine = {
   key: string
@@ -63,14 +78,29 @@ type TransferLine = {
  * makes someone think there are 60 available when 57 of them are in another
  * building.
  */
-export default function NewTransferScreen({ locations }: { locations: LocationOption[] }) {
+export default function NewTransferScreen({
+  locations,
+  stores,
+}: {
+  locations: LocationOption[]
+  /** Linked stores that share a product file. Empty for a standalone shop. */
+  stores: StoreOption[]
+}) {
   const main = locations.find((l) => l.isMain) ?? locations[0]
   const other = locations.find((l) => l.id !== main.id) ?? locations[0]
+
+  // A shop with one room and a linked sibling can only be sending to the
+  // sibling, so that is what it opens on rather than an impossible default.
+  const canMoveInternally = locations.length > 1
+  const [destKind, setDestKind] = useState<DestinationKind>(
+    canMoveInternally || stores.length === 0 ? 'location' : 'store',
+  )
 
   // Defaults to warehouse → shop rather than the reverse: stock arrives in a
   // back room and moves to where it is sold far more often than the other way.
   const [fromId, setFromId] = useState<number>(other.id)
   const [toId, setToId] = useState<number>(main.id)
+  const [toStoreId, setToStoreId] = useState<number>(stores[0]?.siteId ?? 0)
   const [reference, setReference] = useState('')
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<TransferLine[]>([])
@@ -176,43 +206,74 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
     setOptions([])
   }
 
+  const toStore = destKind === 'store'
+
   const overdrawn = lines.filter(
     (l) => l.availableAtSource !== null && l.qty > l.availableAtSource,
   )
-  const sameLocation = fromId === toId
+  const sameLocation = !toStore && fromId === toId
   // A serialised line is ready when its ticks and its quantity agree — which
   // they always do here, since the quantity IS the tick count. The check is
   // kept so the button cannot enable on a line with nothing ticked.
   const unpickedSerials = lines.filter((l) => l.isSerial && l.chosen.length === 0)
+  /*
+   * Serial units cannot cross databases yet: they live in this site's
+   * product_serials, and handing them over means writing them off here and
+   * creating them there. dispatchToStore refuses it, so the screen refuses it
+   * first, by name, rather than letting somebody build the document.
+   */
+  const serialsToStore = toStore ? lines.filter((l) => l.isSerial) : []
+
   const ready =
     lines.length > 0 &&
     !sameLocation &&
     overdrawn.length === 0 &&
-    unpickedSerials.length === 0 &&
+    serialsToStore.length === 0 &&
+    (toStore ? toStoreId > 0 : unpickedSerials.length === 0) &&
     lines.every((l) => l.qty > 0)
 
   function submit() {
     startTransition(async () => {
-      const result = await postTransferAction({
-        fromLocationId: fromId,
-        toLocationId: toId,
-        reference: reference || null,
-        note: note || null,
-        lines: lines.map((l) => ({
-          productId: l.productId,
-          productCode: l.productCode,
-          description: l.description,
-          qty: l.qty,
-          unitCostExcl: l.unitCostExcl,
-          serialIds: l.isSerial ? l.chosen : undefined,
-        })),
-      })
+      const result = toStore
+        ? await dispatchToStoreAction({
+            toSiteId: toStoreId,
+            fromLocationId: fromId,
+            reference: reference || null,
+            note: note || null,
+            lines: lines.map((l) => ({
+              productId: l.productId,
+              productCode: l.productCode,
+              description: l.description,
+              qty: l.qty,
+              unitCostExcl: l.unitCostExcl,
+            })),
+          })
+        : await postTransferAction({
+            fromLocationId: fromId,
+            toLocationId: toId,
+            reference: reference || null,
+            note: note || null,
+            lines: lines.map((l) => ({
+              productId: l.productId,
+              productCode: l.productCode,
+              description: l.description,
+              qty: l.qty,
+              unitCostExcl: l.unitCostExcl,
+              serialIds: l.isSerial ? l.chosen : undefined,
+            })),
+          })
 
       if (!result.ok) {
         toast.error(result.error)
         return
       }
-      toast.success(`${result.documentNumber} posted — the stock has moved.`)
+      toast.success(
+        toStore
+          ? `${result.documentNumber} dispatched — the stock is in transit until ${
+              stores.find((s) => s.siteId === toStoreId)?.name ?? 'that store'
+            } receives it.`
+          : `${result.documentNumber} posted — the stock has moved.`,
+      )
       router.push(`/transfers/${result.id}`)
     })
   }
@@ -233,7 +294,28 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
       <div className="grid gap-4 lg:grid-cols-3">
       <div className="flex flex-col gap-4 lg:col-span-2">
         <Card>
-          <CardHeader title="Where it moves" description="Out of one location, into another." />
+          <CardHeader
+            title="Where it moves"
+            description={
+              toStore
+                ? 'Out of a location here, onto the truck. It stays on this store’s books until the other one confirms it.'
+                : 'Out of one location, into another.'
+            }
+            action={
+              // Only offered when there is genuinely a choice. A standalone shop
+              // has no stores to send to, and the control would be a dead end.
+              stores.length > 0 ? (
+                <SegmentedControl<DestinationKind>
+                  value={destKind}
+                  onChange={setDestKind}
+                  options={[
+                    { value: 'location', label: 'To a location' },
+                    { value: 'store', label: 'To a store' },
+                  ]}
+                />
+              ) : undefined
+            }
+          />
           <CardBody className="grid gap-4 sm:grid-cols-2">
             <Field label="From">
               <Select value={String(fromId)} onChange={(e) => setFromId(Number(e.target.value))}>
@@ -245,23 +327,38 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
               </Select>
             </Field>
 
-            <Field
-              label="To"
-              error={
-                sameLocation
-                  ? 'Stock cannot move to where it already is — choose a different location.'
-                  : undefined
-              }
-            >
-              <Select value={String(toId)} onChange={(e) => setToId(Number(e.target.value))}>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.code} — {l.name}
-                    {l.isMain ? ' (main)' : ''}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            {toStore ? (
+              <Field label="To store" hint="Matched by product code, so both stores must use the same codes.">
+                <Select
+                  value={String(toStoreId)}
+                  onChange={(e) => setToStoreId(Number(e.target.value))}
+                >
+                  {stores.map((s) => (
+                    <option key={s.siteId} value={s.siteId}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <Field
+                label="To"
+                error={
+                  sameLocation
+                    ? 'Stock cannot move to where it already is — choose a different location.'
+                    : undefined
+                }
+              >
+                <Select value={String(toId)} onChange={(e) => setToId(Number(e.target.value))}>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code} — {l.name}
+                      {l.isMain ? ' (main)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
 
             <Field label="Reference" hint="Optional — a delivery note or vehicle.">
               <Input value={reference} onChange={(e) => setReference(e.target.value)} maxLength={60} />
@@ -430,7 +527,11 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
           <div className="flex items-center gap-2 text-sm">
             <span className="text-ink-2">{fromLocation?.code}</span>
             <Icons.ArrowLeftRight size={14} className="text-faint" />
-            <span className="text-ink">{toLocation?.code}</span>
+            <span className="text-ink">
+              {toStore
+                ? (stores.find((s) => s.siteId === toStoreId)?.name ?? 'another store')
+                : toLocation?.code}
+            </span>
           </div>
           <div className="mt-3 flex items-baseline justify-between border-t border-border pt-3">
             <span className="font-medium text-ink">Units moving</span>
@@ -441,17 +542,37 @@ export default function NewTransferScreen({ locations }: { locations: LocationOp
           </p>
         </Card>
 
-        {/* No footnote restating why the button is off: the location clash and
-            an overdrawn line are already marked on their own fields. */}
+        {/* The one refusal that is NOT marked on a field, because it is about
+            the product rather than anything typed on the line. */}
+        {serialsToStore.length > 0 && (
+          <Card className="p-3">
+            <p className="text-xs text-danger-ink">
+              {serialsToStore.map((l) => l.productCode).join(', ')}{' '}
+              {serialsToStore.length === 1 ? 'is' : 'are'} serial-tracked, which cannot be sent
+              between stores yet. Remove {serialsToStore.length === 1 ? 'it' : 'them'}, or send to a
+              location here instead.
+            </p>
+          </Card>
+        )}
+
+        {/* No footnote restating why else the button is off: the location clash
+            and an overdrawn line are already marked on their own fields. */}
         <Button variant="primary" disabled={!ready || pending} onClick={submit}>
           <Icons.ArrowLeftRight size={16} />
-          {pending ? 'Posting…' : 'Post the transfer'}
+          {pending
+            ? toStore
+              ? 'Dispatching…'
+              : 'Posting…'
+            : toStore
+              ? 'Dispatch to the store'
+              : 'Post the transfer'}
         </Button>
 
         <Card className="p-3">
           <p className="text-xs text-muted">
-            A transfer does not change what the business owns, or what anything cost — it changes
-            only which location holds it. The till sells from the main location.
+            {toStore
+              ? 'The stock leaves the location now and sits in transit — still owned here, and still on this store’s books — until the other store confirms what arrived. It only lands on their shelf when they do.'
+              : 'A transfer does not change what the business owns, or what anything cost — it changes only which location holds it. The till sells from the main location.'}
           </p>
         </Card>
       </div>

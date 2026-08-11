@@ -31,6 +31,7 @@ export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
   FileText: Icons.FileText,
   Package: Icons.Package,
   Scale: Icons.Scale,
+  SlidersHorizontal: Icons.SlidersHorizontal,
   Database: Icons.Database,
   Palette: Icons.Palette,
   Settings: Icons.Settings,

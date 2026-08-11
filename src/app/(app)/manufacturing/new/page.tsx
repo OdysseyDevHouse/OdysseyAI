@@ -12,7 +12,7 @@ export default async function NewBuildPage() {
   const { siteId } = await requireCapability('products.edit')
 
   const [locations, buildable] = await Promise.all([
-    listLocations(siteId, false),
+    listLocations(siteId, false, true),
     listManufacturableProducts(siteId),
   ])
 

@@ -14,7 +14,7 @@ export default async function SuggestPage() {
     listSuppliers(siteId, { statuses: ['active'], limit: 200 }),
     // Active only: there is no point proposing stock for a room that has been
     // closed, even though one may still hold stock from before.
-    listLocations(siteId, false),
+    listLocations(siteId, false, true),
   ])
 
   const main = locations.find((l) => l.isMain) ?? locations[0]

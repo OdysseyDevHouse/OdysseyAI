@@ -2,6 +2,8 @@ import 'server-only'
 import { siteQueryOne } from '../siteDb'
 import { getSettings, setSetting } from './settings'
 import { formatNumber, SITE_SEQUENCE, type NumberSegments } from './sequences'
+// Type only — erased at compile time, so this stays a leaf module at runtime.
+import type { DocumentOrigin } from './salesDocuments'
 
 /**
  * Which numbering scheme a store uses, and how a till's number is composed.
@@ -125,15 +127,25 @@ export async function setNumberScope(siteId: number, scope: NumberScope): Promis
  *   · the store is on site-wide numbering;
  *   · the document is not an invoice (a credit note, quote or order still
  *     numbers from the shared run);
- *   · the sale has no terminal, which is every invoice captured in the back
- *     office. Those did not come from a register and must not claim to.
+ *   · the sale has no terminal;
+ *   · the document was captured in the back office. Those did not come from a
+ *     register and must not claim to — even though they now RECORD the till
+ *     they were captured on, so the sale can be attributed to a machine and an
+ *     operator. Recording a till and numbering from it are separate questions,
+ *     and this is the one place that could confuse them: before migration 099
+ *     "has no terminal" was how a back-office invoice was recognised, and once
+ *     those started carrying a terminal_id that test would have quietly moved
+ *     every back-office invoice onto a till's run — changing numbers customers
+ *     already hold. `origin` is the explicit answer.
  */
 export async function numberSegmentsFor(
   siteId: number,
   docType: string,
   terminalId: number | null,
+  origin: DocumentOrigin = 'till',
 ): Promise<{ terminalId: number; segments: NumberSegments } | null> {
-  if (docType !== 'invoice' || terminalId == null || terminalId === SITE_SEQUENCE) return null
+  if (docType !== 'invoice' || origin !== 'till') return null
+  if (terminalId == null || terminalId === SITE_SEQUENCE) return null
 
   const config = await numberingConfig(siteId)
   if (config.scope !== 'terminal') return null

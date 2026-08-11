@@ -29,6 +29,7 @@ import {
   Coins,
   HandCoins,
   Scale,
+  SlidersHorizontal,
   Percent,
   Bell,
   Clock,
@@ -157,6 +158,9 @@ export const NAV: NavSection[] = [
       { label: 'Purchasing', href: '/purchasing', icon: PackageOpen, built: true, capability: 'purchasing.view', description: 'Order stock and receive it against the order' },
       { label: 'Transfers', href: '/transfers', icon: ArrowLeftRight, built: true, capability: 'stock.transfer', description: 'Move stock between locations or stores' },
       { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, built: true, capability: 'stock.adjust', description: 'Count what is on the shelf and correct the books' },
+      /* Sits beside stock takes because it answers the same question from the
+         other end: a count discovers a variance, an adjustment declares one. */
+      { label: 'Adjustments', href: '/adjustments', icon: SlidersHorizontal, built: true, capability: 'stock.adjust', keywords: 'write off write-off shrinkage damage breakage wastage expired spoiled scrap', description: 'Write stock on or off with a reason, without counting the location' },
       /* A supplier exists in this app because stock comes from one. Their age
          analysis and remittances are money questions and sit in that hub. */
       { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view', description: 'Who the shop buys from, and what it owes them' },
@@ -313,6 +317,7 @@ export const SUBPAGE_LABELS = {
   '/setup/roles': 'Roles & permissions',
   '/setup/linked-stores': 'Linked stores',
   '/setup/locations': 'Stock locations',
+  '/setup/adjustment-reasons': 'Adjustment reasons',
   '/setup/pricing': 'Price types & VAT',
   '/setup/tender-types': 'Tender types',
   '/setup/tips': 'Tips',
@@ -485,6 +490,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/roles': 'security capabilities rights access control permissions',
   '/setup/linked-stores': 'multi store group branches sharing',
   '/setup/locations': 'warehouse storeroom bins branches',
+  '/setup/adjustment-reasons': 'write off shrinkage damage breakage wastage codes',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/tender-types': 'cash card eft payment methods vouchers',
   '/setup/tips': 'tips gratuity service charge tiers waiter pool',
@@ -556,6 +562,9 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   '/sales/orders': { new: 'New order', edit: 'Order' },
   /* A posted transfer is a record of what moved, not something anyone edits. */
   '/transfers': { new: 'New transfer', edit: 'Transfer' },
+  /* A draft adjustment IS edited, but the same screen serves a posted one, so
+     the crumb names the thing rather than the action. */
+  '/adjustments': { new: 'New adjustment', edit: 'Adjustment' },
   /* A sheet IS edited while it is being counted, but the crumb names the thing
      rather than the action because the same screen serves a posted one. */
   '/stock-takes': { new: 'New stock take', edit: 'Stock take' },

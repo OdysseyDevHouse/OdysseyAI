@@ -12,7 +12,7 @@ export default async function NewStockTakePage() {
   const { siteId } = await requireCapability('stock.adjust')
 
   const [locations, departments, suppliers] = await Promise.all([
-    listLocations(siteId, false),
+    listLocations(siteId, false, true),
     listDepartments(siteId),
     listSuppliers(siteId, { limit: 500 }),
   ])

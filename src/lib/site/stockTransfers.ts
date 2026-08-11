@@ -38,7 +38,21 @@ import type { Actor } from './activityLog'
  * but it is a record of what the stock was worth, not a repricing.
  */
 
-export type TransferStatus = 'draft' | 'posted' | 'cancelled'
+/**
+ * `in_transit` and `received` belong to STORE transfers only — see 101 and
+ * storeTransfers.ts. They are in this union because they share the table, and
+ * every screen that renders a status has to be able to name them.
+ */
+export type TransferStatus = 'draft' | 'posted' | 'in_transit' | 'received' | 'cancelled'
+
+/**
+ * Which kind of transfer a row is.
+ *
+ *   internal  between two locations here, written by postTransfer below
+ *   out       dispatched to another store, written by storeTransfers.ts
+ *   in        received from another store, written by storeTransfers.ts
+ */
+export type TransferDirection = 'internal' | 'out' | 'in'
 
 export type TransferLine = {
   id: number
@@ -46,6 +60,16 @@ export type TransferLine = {
   productCode: string | null
   description: string
   qty: number
+  /**
+   * What actually arrived, on a STORE transfer.
+   *
+   * Null on an internal one, where the goods arrive the instant they leave, and
+   * on a dispatch nobody has answered yet. A number below `qty` is a short
+   * delivery — the difference never reached anyone and the sending store wears
+   * it. Carried onto the document so that loss is readable months later, not
+   * only in the movement ledger.
+   */
+  qtyReceived: number | null
   unitCostExcl: number
 }
 
@@ -53,10 +77,17 @@ export type StockTransfer = {
   id: number
   documentNumber: string | null
   documentDate: string
-  fromLocationId: number
+  direction: TransferDirection
+  /** The other store, on a store transfer. Null on an internal one. */
+  peerSiteName: string | null
+  /**
+   * Null on an INBOUND store transfer: the goods came out of another database
+   * entirely, and there is no local room that they left.
+   */
+  fromLocationId: number | null
   fromLocationCode: string
   fromLocationName: string
-  toLocationId: number
+  toLocationId: number | null
   toLocationCode: string
   toLocationName: string
   status: TransferStatus
@@ -78,10 +109,12 @@ function mapTransfer(r: Row, lines: TransferLine[] = []): StockTransfer {
     id: Number(r.id),
     documentNumber: (r.document_number as string | null) ?? null,
     documentDate: String(r.document_date).slice(0, 10),
-    fromLocationId: Number(r.from_location_id),
+    direction: (String(r.direction ?? 'internal') as TransferDirection),
+    peerSiteName: (r.peer_site_name as string | null) ?? null,
+    fromLocationId: r.from_location_id === null ? null : Number(r.from_location_id),
     fromLocationCode: String(r.from_code ?? ''),
     fromLocationName: String(r.from_name ?? ''),
-    toLocationId: Number(r.to_location_id),
+    toLocationId: r.to_location_id === null ? null : Number(r.to_location_id),
     toLocationCode: String(r.to_code ?? ''),
     toLocationName: String(r.to_name ?? ''),
     status: String(r.status) as TransferStatus,
@@ -96,8 +129,16 @@ function mapTransfer(r: Row, lines: TransferLine[] = []): StockTransfer {
   }
 }
 
+/*
+ * LEFT JOIN on both locations, not INNER.
+ *
+ * An INBOUND store transfer has no local source room — the goods came out of
+ * another database — so from_location_id is genuinely NULL. An inner join would
+ * not merely blank the column, it would drop the whole row, and every transfer
+ * received from another store would silently vanish from this list.
+ */
 const SELECT_TRANSFER = `
-  SELECT t.id, t.document_number, t.document_date,
+  SELECT t.id, t.document_number, t.document_date, t.direction, t.peer_site_name,
          t.from_location_id, t.to_location_id, t.status, t.reference, t.note,
          t.posted_at, t.cancel_reason, t.user_name,
          f.code AS from_code, f.name AS from_name,
@@ -105,21 +146,37 @@ const SELECT_TRANSFER = `
          (SELECT COUNT(*)             FROM stock_transfer_lines l WHERE l.transfer_id = t.id) AS line_count,
          (SELECT COALESCE(SUM(l.qty),0) FROM stock_transfer_lines l WHERE l.transfer_id = t.id) AS total_qty
     FROM stock_transfers t
-    JOIN stock_locations f ON f.id = t.from_location_id
-    JOIN stock_locations g ON g.id = t.to_location_id
+    LEFT JOIN stock_locations f ON f.id = t.from_location_id
+    LEFT JOIN stock_locations g ON g.id = t.to_location_id
 `
 
 export async function listTransfers(
   siteId: number,
-  opts: { status?: TransferStatus | 'all'; limit?: number } = {},
+  opts: {
+    status?: TransferStatus | 'all'
+    /** 'all' includes store transfers in both directions alongside internal ones. */
+    direction?: TransferDirection | 'all'
+    limit?: number
+  } = {},
 ): Promise<StockTransfer[]> {
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500)
-  const where = opts.status && opts.status !== 'all' ? 'WHERE t.status = ?' : ''
-  const params = opts.status && opts.status !== 'all' ? [opts.status] : []
+
+  const where: string[] = []
+  const params: unknown[] = []
+  if (opts.status && opts.status !== 'all') {
+    where.push('t.status = ?')
+    params.push(opts.status)
+  }
+  if (opts.direction && opts.direction !== 'all') {
+    where.push('t.direction = ?')
+    params.push(opts.direction)
+  }
 
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_TRANSFER} ${where} ORDER BY t.document_date DESC, t.id DESC LIMIT ${limit}`,
+    `${SELECT_TRANSFER}
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY t.document_date DESC, t.id DESC LIMIT ${limit}`,
     params,
   )
   return rows.map((r) => mapTransfer(r))
@@ -131,7 +188,7 @@ export async function getTransfer(siteId: number, id: number): Promise<StockTran
 
   const lineRows = await siteQuery<Row>(
     siteId,
-    `SELECT id, product_id, product_code, description, qty, unit_cost_excl
+    `SELECT id, product_id, product_code, description, qty, qty_received, unit_cost_excl
        FROM stock_transfer_lines WHERE transfer_id = ? ORDER BY line_number ASC, id ASC`,
     [id],
   )
@@ -144,6 +201,7 @@ export async function getTransfer(siteId: number, id: number): Promise<StockTran
       productCode: (l.product_code as string | null) ?? null,
       description: String(l.description),
       qty: toNum(l.qty),
+      qtyReceived: l.qty_received === null ? null : toNum(l.qty_received),
       unitCostExcl: toNum(l.unit_cost_excl),
     })),
   )
@@ -406,6 +464,23 @@ export async function voidTransfer(
   if (transfer.status === 'cancelled') return { ok: false, error: 'That transfer is already void.' }
   if (transfer.status !== 'posted') return { ok: false, error: 'Only a posted transfer can be voided.' }
 
+  /*
+   * A store transfer is not reversible from here. Its two halves live in two
+   * databases, so putting the goods back is a recall (before receipt) or a
+   * fresh transfer the other way (after) — both of which storeTransfers.ts
+   * owns. Reversing only this side would leave the pair contradicting itself.
+   */
+  if (transfer.direction !== 'internal') {
+    return {
+      ok: false,
+      error: 'This transfer went to another store. Recall it from the dispatch, or send the goods back.',
+    }
+  }
+  if (transfer.fromLocationId === null || transfer.toLocationId === null) {
+    return { ok: false, error: 'That transfer is missing a location and cannot be reversed.' }
+  }
+  const { fromLocationId, toLocationId } = transfer
+
   if (await isPeriodLocked(siteId, transfer.documentDate)) {
     return { ok: false, error: 'That VAT period is locked.' }
   }
@@ -418,7 +493,7 @@ export async function voidTransfer(
              FROM product_location_stock
             WHERE product_id = ? AND location_id = ?
             FOR UPDATE`,
-          [line.productId, transfer.toLocationId] as never,
+          [line.productId, toLocationId] as never,
         )
         const available = toNum((rows as Row[])[0]?.on_hand)
         if (available < line.qty) {
@@ -433,7 +508,7 @@ export async function voidTransfer(
         // Exactly the original pair, reversed.
         await recordMovement(tx, actor, {
           productId: line.productId,
-          locationId: transfer.toLocationId,
+          locationId: toLocationId,
           movementType: 'transfer_out',
           qtyChange: -line.qty,
           unitCostExcl: line.unitCostExcl,
@@ -444,7 +519,7 @@ export async function voidTransfer(
 
         await recordMovement(tx, actor, {
           productId: line.productId,
-          locationId: transfer.fromLocationId,
+          locationId: fromLocationId,
           movementType: 'transfer_in',
           qtyChange: line.qty,
           unitCostExcl: line.unitCostExcl,
@@ -462,15 +537,15 @@ export async function voidTransfer(
              JOIN product_serials s ON s.id = sm.serial_id
             WHERE sm.document_id = ? AND sm.action = 'transferred'
               AND sm.to_location_id = ? AND s.product_id = ?`,
-          [transfer.id, transfer.toLocationId, line.productId] as never,
+          [transfer.id, toLocationId, line.productId] as never,
         )
         const serialIds = (movedRows as Row[]).map((r) => Number(r.serial_id))
 
         if (serialIds.length > 0) {
           const back = await markTransferred(tx, actor, {
             serialIds,
-            fromLocationId: transfer.toLocationId,
-            toLocationId: transfer.fromLocationId,
+            fromLocationId: toLocationId,
+            toLocationId: fromLocationId,
             transferId: transfer.id,
           })
           if (!back.ok) throw new Error(back.error)

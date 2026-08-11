@@ -46,7 +46,7 @@ export default async function ReceivePage({
     listVatRates(siteId),
     // Active only: goods cannot be received into a location that has been
     // closed, even though one may still hold stock from before.
-    listLocations(siteId, false),
+    listLocations(siteId, false, true),
   ])
 
   // Purchase VAT, not sales VAT — a product can carry a different rate on the

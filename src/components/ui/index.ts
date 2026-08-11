@@ -115,7 +115,7 @@ export { TouchRow } from './TouchRow'
 export { ExpandingCard } from './ExpandingCard'
 export { Combobox, type ComboboxOption } from './Combobox'
 export { DateRangeField, type DateRange } from './DateRangeField'
-export { useChartColors, ChartTooltip, type ChartColors } from './charts'
+export { useChartColors, ChartTooltip, ChartGlow, type ChartColors } from './charts'
 export { Sparkline } from './Sparkline'
 export { ToastProvider, useToast } from './Toast'
 

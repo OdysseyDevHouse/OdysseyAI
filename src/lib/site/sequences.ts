@@ -554,6 +554,7 @@ const PURCHASE_TYPES = new Set(['purchase_order', 'grv', 'supplier_return'])
 const OWN_TABLE_TYPES: Record<string, string> = {
   stock_take: 'stock_takes',
   stock_transfer: 'stock_transfers',
+  stock_adjustment: 'stock_adjustments',
   manufacturing_order: 'manufacturing_orders',
 }
 

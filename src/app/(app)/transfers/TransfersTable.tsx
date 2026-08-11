@@ -5,14 +5,20 @@ import { Badge, DataTable, Icons, type Column } from '@/components/ui'
 import { formatQty } from '@/lib/decimals'
 import type { StockTransfer, TransferStatus } from '@/lib/site/stockTransfers'
 
-const STATUS_TONE: Record<TransferStatus, 'success' | 'neutral' | 'danger'> = {
+const STATUS_TONE: Record<TransferStatus, 'success' | 'neutral' | 'danger' | 'warning'> = {
   posted: 'success',
+  received: 'success',
+  // The one state that is waiting on somebody: goods on a truck, on this
+  // store's books, and not yet confirmed by the other end.
+  in_transit: 'warning',
   draft: 'neutral',
   cancelled: 'danger',
 }
 
 const STATUS_LABEL: Record<TransferStatus, string> = {
   posted: 'Posted',
+  received: 'Received',
+  in_transit: 'In transit',
   draft: 'Draft',
   cancelled: 'Cancelled',
 }
@@ -44,16 +50,43 @@ export default function TransfersTable({ transfers }: { transfers: StockTransfer
     {
       key: 'route',
       header: 'Moved',
-      // The route IS the transfer — reading it left to right is the fastest
-      // way to answer "where did that stock go".
+      /*
+       * The route IS the transfer — reading it left to right is the fastest way
+       * to answer "where did that stock go".
+       *
+       * A store transfer names the STORE on the far end rather than a location
+       * code, because the far end is in another database and its room names
+       * mean nothing here. An inbound one has no local source at all, so the
+       * left side is the store it came from.
+       */
+      cell: (t) => {
+        const left = t.direction === 'in' ? (t.peerSiteName ?? 'Another store') : t.fromLocationCode
+        const right = t.direction === 'out' ? (t.peerSiteName ?? 'Another store') : t.toLocationCode
+        return (
+          <span className="flex items-center gap-1.5">
+            <span className="text-ink-2">{left || '—'}</span>
+            <Icons.ArrowLeftRight size={13} className="text-faint" />
+            <span className="text-ink">{right || '—'}</span>
+          </span>
+        )
+      },
+      sortValue: (t) =>
+        `${t.direction === 'in' ? (t.peerSiteName ?? '') : t.fromLocationCode}→${
+          t.direction === 'out' ? (t.peerSiteName ?? '') : t.toLocationCode
+        }`,
+    },
+    {
+      key: 'kind',
+      header: 'Kind',
+      // Worth its own column rather than being inferred from the route: a
+      // reader scanning for "what did we send to Northgate" should not have to
+      // recognise which of the two names is a store.
       cell: (t) => (
-        <span className="flex items-center gap-1.5">
-          <span className="text-ink-2">{t.fromLocationCode}</span>
-          <Icons.ArrowLeftRight size={13} className="text-faint" />
-          <span className="text-ink">{t.toLocationCode}</span>
+        <span className="text-muted">
+          {t.direction === 'internal' ? 'Internal' : t.direction === 'out' ? 'To store' : 'From store'}
         </span>
       ),
-      sortValue: (t) => `${t.fromLocationCode}→${t.toLocationCode}`,
+      sortValue: (t) => t.direction,
     },
     {
       key: 'lines',

@@ -355,3 +355,120 @@ export function SequenceTable({ checks }: { checks: SequenceCheck[] }) {
   ]
   return <DataTable columns={columns} rows={checks} getRowKey={(c) => c.docType} />
 }
+
+type AdjustmentDriftRow = {
+  adjustmentId: number
+  documentNumber: string | null
+  productId: number
+  productCode: string | null
+  expected: number
+  moved: number
+}
+
+/**
+ * Posted adjustment lines whose movement does not match the line.
+ *
+ * One movement per line here, not two — an adjustment is deliberately one-sided,
+ * because the business genuinely owns more or less than it did. So there is a
+ * single figure to compare rather than an out and an in.
+ */
+export function AdjustmentDriftTable({ rows }: { rows: AdjustmentDriftRow[] }) {
+  const columns: Column<AdjustmentDriftRow>[] = [
+    {
+      key: 'adjustment',
+      header: 'Adjustment',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/adjustments/${r.adjustmentId}`}>
+          {r.documentNumber ?? `#${r.adjustmentId}`}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'product',
+      header: 'Product',
+      sortable: true,
+      sortValue: (r) => r.productCode ?? '',
+      cell: (r) => (
+        <TextLink href={`/products/${r.productId}`}>{r.productCode ?? `#${r.productId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'expected',
+      header: 'Line says',
+      numeric: true,
+      cell: (r) => formatQty(r.expected),
+    },
+    {
+      key: 'moved',
+      header: 'Actually moved',
+      numeric: true,
+      cell: (r) => (
+        <span className={Math.abs(r.expected - r.moved) > 0.0005 ? 'text-danger' : undefined}>
+          {formatQty(r.moved)}
+        </span>
+      ),
+    },
+  ]
+  return (
+    <DataTable
+      columns={columns}
+      rows={rows}
+      getRowKey={(r) => `${r.adjustmentId}-${r.productId}`}
+    />
+  )
+}
+
+type StoreTransferDriftRow = {
+  transferId: number
+  documentNumber: string | null
+  peerSiteName: string | null
+  dispatchedAt: Date | string | null
+  totalQty: number
+  problem: string
+}
+
+/**
+ * Dispatches to other stores that have not completed.
+ *
+ * Unlike every other table here, a row is not necessarily a BUG — a truck that
+ * left yesterday is simply still on the road. The `problem` column says which
+ * kind it is, because the two need very different responses: one needs chasing,
+ * the other means the goods are counted twice across the group until somebody
+ * settles the dispatch.
+ */
+export function StoreTransferDriftTable({ rows }: { rows: StoreTransferDriftRow[] }) {
+  const columns: Column<StoreTransferDriftRow>[] = [
+    {
+      key: 'transfer',
+      header: 'Dispatch',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/transfers/${r.transferId}`}>
+          {r.documentNumber ?? `#${r.transferId}`}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'store',
+      header: 'To store',
+      sortable: true,
+      sortValue: (r) => r.peerSiteName ?? '',
+      cell: (r) => <span className="text-ink-2">{r.peerSiteName ?? '—'}</span>,
+    },
+    {
+      key: 'qty',
+      header: 'Units',
+      numeric: true,
+      cell: (r) => formatQty(r.totalQty),
+    },
+    {
+      key: 'problem',
+      header: 'What is wrong',
+      cell: (r) => <span className="text-muted">{r.problem}</span>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.transferId} />
+}

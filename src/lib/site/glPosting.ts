@@ -536,6 +536,99 @@ export async function mirrorStockTake(
   })
 }
 
+export type StockAdjustmentMirror = {
+  adjustmentId: number
+  documentNumber: string | null
+  documentDate: string
+  /**
+   * Signed, and NET, exactly like a count: negative is stock written off.
+   *
+   * A document that writes ten off and two on has moved the balance sheet by
+   * eight units of value, and posting the gross figures would inflate both
+   * sides of the P&L with offsetting noise.
+   */
+  varianceValue: number
+  /** True for the reversal written when a posted adjustment is cancelled. */
+  isReversal?: boolean
+}
+
+/**
+ * The journal behind a deliberate write-on or write-off.
+ *
+ *   Stock written OFF (damaged, stolen, expired):
+ *     DEBIT  stock adjustments   the value that walked
+ *     CREDIT stock control       the asset that is not there
+ *
+ *   Stock written ON is the same entry reversed.
+ *
+ * ── THE SAME ACCOUNT AS A STOCK TAKE, DELIBERATELY ─────────────────────────
+ *
+ * 081 mapped `stock_adjustment` to account 5100 for counts, and this posts to
+ * the same place rather than asking for an account of its own. That is the
+ * correct answer and not a shortcut: stock lost and found by counting and stock
+ * written off on purpose are the same expense, and splitting them would make
+ * "what did we lose this year" a question needing two figures added together.
+ *
+ * The REASON is what separates them, and it lives on the document where it can
+ * be reported on without multiplying the chart of accounts.
+ *
+ * ── FAIL-SOFT, LIKE A COUNT AND UNLIKE A GRV ───────────────────────────────
+ *
+ * The movements are already committed by the time this runs, and the stock
+ * genuinely moved whether or not anybody has mapped an account for it. So an
+ * unmapped account loses the JOURNAL, never the adjustment; the gap surfaces in
+ * ledgerHealth().
+ */
+export async function mirrorStockAdjustment(
+  siteId: number,
+  actor: Actor,
+  input: StockAdjustmentMirror,
+): Promise<MirrorResult> {
+  const sign = input.isReversal ? -1 : 1
+  const label = `${input.isReversal ? 'Stock adjustment reversal' : 'Stock adjustment'} ${input.documentNumber ?? `#${input.adjustmentId}`}`
+
+  return attempt(siteId, actor, label, async () => {
+    const variance = round(sign * input.varianceValue, 2)
+
+    // A document that netted to nothing in value has nothing to say. Posting an
+    // all-zero journal would burn a batch number to record that nothing changed.
+    if (variance === 0) throw new Error('The adjustment has no value to post.')
+
+    const [stockAccount, adjustmentAccount] = await Promise.all([
+      mapped(siteId, 'stock_control'),
+      mapped(siteId, 'stock_adjustment'),
+    ])
+    if (!stockAccount || !adjustmentAccount) {
+      throw new Error('The stock control or stock adjustment account is not mapped.')
+    }
+
+    const lines: JournalLineInput[] = [
+      {
+        accountId: stockAccount,
+        amount: variance,
+        description: variance > 0 ? 'Stock written on' : 'Stock written off',
+      },
+      {
+        accountId: adjustmentAccount,
+        amount: round(-variance, 2),
+        description: variance > 0 ? 'Stock surplus' : 'Stock shortfall',
+      },
+    ]
+
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.documentDate,
+        description: label,
+        reference: input.documentNumber,
+        source: input.isReversal ? 'stock_adjust_cancel' : 'stock_adjustment',
+        sourceDocId: input.adjustmentId,
+        lines,
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
 /* ── Expenses ────────────────────────────────────────────────────────────── */
 
 export type ExpenseMirror = {

@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  Area,
-  AreaChart,
   CartesianGrid,
   Cell,
+  Line,
+  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { ChartTooltip, EmptyState, Icons, useChartColors } from '@/components/ui'
+import { ChartGlow, ChartTooltip, EmptyState, Icons, useChartColors } from '@/components/ui'
 import type { DayBucket, HourBucket, TenderBucket } from '@/lib/site/salesDashboard'
 import { money, moneyShort, percent, dayLabel, hourLabel } from './format'
 
@@ -27,7 +27,7 @@ import { money, moneyShort, percent, dayLabel, hourLabel } from './format'
  * exact.
  */
 
-/** Shared axis/grid setup, so the two area charts cannot drift apart. */
+/** Shared axis/grid setup, so the two line charts cannot drift apart. */
 function axisProps(colors: ReturnType<typeof useChartColors>) {
   return {
     stroke: colors.axis,
@@ -38,19 +38,36 @@ function axisProps(colors: ReturnType<typeof useChartColors>) {
 }
 
 /**
- * One area chart, used for both the per-day and per-hour series.
+ * Density past which the per-reading markers are dropped.
+ *
+ * A marker at every point is the whole look, but only while the points are far
+ * enough apart to be separate objects. A year of daily readings at this width
+ * puts them a few pixels apart, where they stop reading as data and start
+ * reading as a fat, lumpy line — so beyond this the line carries it alone.
+ */
+const MAX_DOTS = 40
+
+/**
+ * One line chart, used for both the per-day and per-hour series.
  *
  * They differ only in their labels and tick density, and having written them
  * twice in the original it is clear they should have been one component: every
  * styling fix had to be made in both places.
+ *
+ * Drawn as a lit line — a marker at each reading, a halo of the line's own
+ * colour underneath — rather than as a filled area. The fill was decoration:
+ * with a single series there is nothing to compare the shaded mass against, and
+ * on the dark surface the gradient muddied the bottom of the card. The markers
+ * do earn their place: they show where a reading actually is, so a flat stretch
+ * reads as several equal days rather than as one long segment.
  */
-function TurnoverArea({
+function TurnoverLine({
   rows,
-  gradientId,
+  glowId,
   tickInterval,
 }: {
   rows: { label: string; turnover: number }[]
-  gradientId: string
+  glowId: string
   tickInterval?: number
 }) {
   const colors = useChartColors()
@@ -58,12 +75,9 @@ function TurnoverArea({
 
   return (
     <ResponsiveContainer width="100%" height="100%" minHeight={200}>
-      <AreaChart data={rows} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+      <LineChart data={rows} margin={{ top: 10, right: 14, bottom: 4, left: 4 }}>
         <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={colors.brand} stopOpacity={0.25} />
-            <stop offset="100%" stopColor={colors.brand} stopOpacity={0} />
-          </linearGradient>
+          <ChartGlow id={glowId} strength={colors.glow} />
         </defs>
         {/* Horizontal rules only. Vertical gridlines on a time series add ink
             without adding an answer — the x labels already mark the columns. */}
@@ -81,17 +95,23 @@ function TurnoverArea({
             />
           )}
         />
-        <Area
+        <Line
           type="monotone"
           dataKey="turnover"
           name="Turnover"
           stroke={colors.brand}
           strokeWidth={2}
-          fill={`url(#${gradientId})`}
-          dot={false}
-          activeDot={{ r: 4 }}
+          filter={`url(#${glowId})`}
+          /* The markers glow with the line rather than sitting flat on top of
+             it — the same filter, so the two can never drift apart. */
+          dot={
+            rows.length <= MAX_DOTS
+              ? { r: 2.5, fill: colors.brand, stroke: 'none', filter: `url(#${glowId})` }
+              : false
+          }
+          activeDot={{ r: 4.5, stroke: colors.surface, strokeWidth: 2 }}
         />
-      </AreaChart>
+      </LineChart>
     </ResponsiveContainer>
   )
 }
@@ -112,7 +132,7 @@ export function TurnoverPerDayChart({ data }: { data: DayBucket[] }) {
   // what fits a half-width card without rotating the text.
   const tickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
 
-  return <TurnoverArea rows={rows} gradientId="perDayFill" tickInterval={tickInterval} />
+  return <TurnoverLine rows={rows} glowId="perDayGlow" tickInterval={tickInterval} />
 }
 
 export function SalesPerHourChart({ data }: { data: HourBucket[] }) {
@@ -129,7 +149,7 @@ export function SalesPerHourChart({ data }: { data: HourBucket[] }) {
   const rows = data.map((d) => ({ label: hourLabel(d.hour), turnover: d.turnover }))
   // Every second hour — 24 labels do not fit, and a two-hourly scale is still
   // precise enough to see when the shop is busy.
-  return <TurnoverArea rows={rows} gradientId="perHourFill" tickInterval={1} />
+  return <TurnoverLine rows={rows} glowId="perHourGlow" tickInterval={1} />
 }
 
 /**

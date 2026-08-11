@@ -24,34 +24,46 @@ type KpiDef = {
   tone: number
   icon: ReactNode
   value: (k: SalesKpis) => ReactNode
-  /**
-   * A second figure shown under the headline, for a number that qualifies it
-   * and is never read apart from it.
-   */
-  note?: (k: SalesKpis) => string
   /** The raw metric behind the comparison delta. */
   metric: (k: SalesKpis) => number
   series: SeriesKey
 }
 
+/*
+ * Six tiles, one figure each.
+ *
+ * Turnover incl/excl and sales/items-per-sale were briefly paired onto shared
+ * tiles to save room. They are back apart because a figure riding under another
+ * one is second-class: it gets no comparison against last month, no trend line
+ * of its own, and cannot be hidden by a store that never looks at it — which is
+ * the whole point of every KPI being its own widget.
+ *
+ * The pairs still read together, because the layout keeps them side by side:
+ * the two turnovers open the first row, and the second row is the shape of a
+ * basket — how many, how big, how full.
+ */
 export const KPI_DEFS: KpiDef[] = [
   {
     id: 'turnoverIncl',
-    label: 'Turnover',
+    label: 'Turnover incl',
     tone: 0,
     icon: <Icons.Money size={18} />,
-    // Both turnovers on one tile, the same way gross profit carries its margin
-    // below. They are two readings of one number — the gap between them is
-    // just VAT — so side by side they answer "what did we take, and what of
-    // that is ours" at a glance. On separate tiles the pair cost two of six
-    // slots to say almost the same thing, and the reader had to look across
-    // the row to compare them.
-    //
-    // Incl leads because it is the figure a shop owner quotes and the one that
-    // reconciles against the till; excl is the secondary reading.
+    // "Turnover" alone was fine while this was the only one; with the excl
+    // reading beside it, an unlabelled tile is the ambiguous one.
     value: (k) => money(k.turnoverIncl),
-    note: (k) => `${money(k.turnoverExcl)} excl`,
     metric: (k) => k.turnoverIncl,
+    series: 'turnover',
+  },
+  {
+    id: 'turnoverExcl',
+    label: 'Turnover excl',
+    tone: 1,
+    // A second money glyph rather than the same one twice: the tiles are two
+    // readings of one number, and identical icons would say they are the same
+    // number.
+    icon: <Icons.Coins size={18} />,
+    value: (k) => money(k.turnoverExcl),
+    metric: (k) => k.turnoverExcl,
     series: 'turnover',
   },
   {
@@ -78,15 +90,7 @@ export const KPI_DEFS: KpiDef[] = [
     label: 'Sales',
     tone: 3,
     icon: <Icons.Receipt size={18} />,
-    // How many baskets, and how full each one was. Both describe the same
-    // transactions from either end, and the second only means anything given
-    // the first — 5.6 items per sale reads very differently across 20 sales
-    // than across 685. Keeping them together is what makes that legible.
-    //
-    // The count leads: it is the harder number, and the average is derived
-    // from it.
     value: (k) => count(k.saleCount),
-    note: (k) => `${decimal(k.avgItemsPerSale)} items each`,
     metric: (k) => k.saleCount,
     series: 'count',
   },
@@ -98,6 +102,18 @@ export const KPI_DEFS: KpiDef[] = [
     value: (k) => money(k.avgSaleValue),
     metric: (k) => k.avgSaleValue,
     series: 'turnover',
+  },
+  {
+    id: 'avgItemsPerSale',
+    label: 'Items per sale',
+    tone: 5,
+    icon: <Icons.Boxes size={18} />,
+    // Sits last, beside the two figures it only means anything next to: 5.6
+    // items reads very differently across 20 sales than across 685, and the
+    // row puts all three in one glance.
+    value: (k) => decimal(k.avgItemsPerSale),
+    metric: (k) => k.avgItemsPerSale,
+    series: 'count',
   },
 ]
 
@@ -114,15 +130,14 @@ export const KPI_BY_ID = new Map(KPI_DEFS.map((d) => [d.id, d]))
  * Measured on the rendered string, so "R821 674.90 (35.5%)" — gross profit
  * with its margin — is counted at its real length rather than its value's.
  *
- * Calibrated against the tile's real width: four to a row makes one ~305px at
- * a 1600px viewport and ~255px at 1366px, leaving ~273px and ~223px inside the
- * padding. The tabular `numeric` face advances about 0.6em per character, so
- * at 24px a string of 15 needs ~216px and still fits the narrow case, while 19
- * characters — "R860 025.54 (36.5%)", the longest a tile produces — needs
- * ~205px at 18px. Hence the steps below.
- *
- * Measured on the rendered string, so gross profit is counted with its margin
- * rather than at the value's own length.
+ * Calibrated against the tile's real width, and kept even though three to a row
+ * now gives one ~413px at a 1600px viewport and ~333px at 1366px — wide enough
+ * that nothing steps down at all. The tabular `numeric` face advances about
+ * 0.6em per character, so the longest figure a tile produces, the 19 of
+ * "R860 025.54 (36.5%)", needs ~274px at 24px and clears both. The steps stay
+ * because the tiles are laid out by fraction, not by pixels: a narrow window,
+ * or a row that ever goes back to more tiles across, has to show its numbers
+ * whole rather than wrap them. They simply no longer fire at three to a row.
  */
 function valueSize(value: ReactNode): string {
   const length = String(
@@ -219,14 +234,6 @@ export function KpiTile({
         {def.value(kpis)}
       </div>
 
-      {/* Sits directly under the headline so the two read as one pair, not as
-          a figure and an afterthought further down the tile. */}
-      {def.note && (
-        <div className={`numeric text-sm font-semibold text-muted ${loading ? 'opacity-40' : ''}`}>
-          {def.note(kpis)}
-        </div>
-      )}
-
       {/* The comparison wraps rather than truncating. "vs same period in July
           2026" clipped to "vs same …" tells the reader nothing, and the tile
           has room for a second line. `title` still carries the full text for a
@@ -252,9 +259,24 @@ export function KpiTile({
       </div>
 
       {/* Pinned to the bottom of the tile; any spare cell height falls below
-          the value, not between the value and its trend. */}
-      <div className="mt-auto pt-2.5">
-        <Sparkline values={series} color={color} />
+          the value, not between the value and its trend.
+
+          The bottom padding is not decoration: the card clips, and without it
+          the halo under the line — and the marker on the lowest reading — would
+          be sliced off by the card's edge.
+
+          It shrinks rather than overflowing, because the tile's height is the
+          user's — a comparison label that wraps to a second line, or a layout
+          saved at a shorter height, takes it out of the chart. Giving up chart
+          height is much better than the card clipping it. */}
+      <div className="mt-auto min-h-0 shrink pt-3 pb-3">
+        {/* A CEILING, not a size. At the default three-row tile there is no
+            76px to be had and the chart settles at about 32 — a proper
+            sparkline on a tile this wide. What it buys is the tile the user
+            drags taller: the chart grows into the room instead of leaving a
+            dead band across the middle of the card, and stops at 76 rather than
+            becoming a full chart with no axis. */}
+        <Sparkline values={series} color={color} height={76} />
       </div>
     </div>
   )

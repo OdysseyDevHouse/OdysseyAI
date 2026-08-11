@@ -2,6 +2,8 @@ import { requireCapability } from '@/lib/auth'
 import { reconcileStock } from '@/lib/site/stockMovements'
 import { reconcileStockTakes } from '@/lib/site/stockTakes'
 import { reconcileTransfers } from '@/lib/site/stockTransfers'
+import { reconcileAdjustments } from '@/lib/site/stockAdjustments'
+import { reconcileStoreTransfers } from '@/lib/site/storeTransfers'
 import { reconcileManufacturing } from '@/lib/site/manufacturing'
 import { reconcileBalances } from '@/lib/site/customerLedger'
 import { reconcileSupplierBalances } from '@/lib/site/supplierLedger'
@@ -13,6 +15,8 @@ import {
   StockDriftTable,
   StockTakeDriftTable,
   TransferDriftTable,
+  AdjustmentDriftTable,
+  StoreTransferDriftTable,
   BuildDriftTable,
   BalanceDriftTable,
   SequenceTable,
@@ -51,17 +55,29 @@ export default async function ReconciliationPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('setup.edit')
 
-  const [stock, stockTakes, transfers, builds, customers, suppliers, aging, sequences] =
-    await Promise.all([
-      reconcileStock(siteId),
-      reconcileStockTakes(siteId),
-      reconcileTransfers(siteId),
-      reconcileManufacturing(siteId),
-      reconcileBalances(siteId),
-      reconcileSupplierBalances(siteId),
-      reconcileAging(siteId),
-      listSequences(siteId),
-    ])
+  const [
+    stock,
+    stockTakes,
+    transfers,
+    adjustments,
+    storeTransfers,
+    builds,
+    customers,
+    suppliers,
+    aging,
+    sequences,
+  ] = await Promise.all([
+    reconcileStock(siteId),
+    reconcileStockTakes(siteId),
+    reconcileTransfers(siteId),
+    reconcileAdjustments(siteId),
+    reconcileStoreTransfers(siteId),
+    reconcileManufacturing(siteId),
+    reconcileBalances(siteId),
+    reconcileSupplierBalances(siteId),
+    reconcileAging(siteId),
+    listSequences(siteId),
+  ])
 
   const checks = await Promise.all(sequences.map((s) => verifySequence(siteId, s.docType)))
   const missingNumbers = checks.filter((c) => c.missing > 0)
@@ -75,10 +91,20 @@ export default async function ReconciliationPage() {
   // document number is a different kind of problem — it means rows were removed
   // outside the app — so it is reported separately rather than colouring the
   // whole page red.
+  /*
+   * A dispatch still on the road is NOT a drift — it is a lorry. Only the
+   * unsettled kind counts against the books: those goods are on two stores at
+   * once, which is a real figure being wrong right now.
+   */
+  const unsettled = storeTransfers.filter((t) => t.kind === 'unsettled')
+  const stillOut = storeTransfers.filter((t) => t.kind === 'stale')
+
   const ledgersClean =
     stock.length === 0 &&
     stockTakes.length === 0 &&
     transfers.length === 0 &&
+    adjustments.length === 0 &&
+    unsettled.length === 0 &&
     builds.length === 0 &&
     customers.length === 0 &&
     suppliers.length === 0 &&
@@ -148,6 +174,46 @@ export default async function ReconciliationPage() {
               description="Each posted line against the two movements it must write. One half without the other leaves the piles disagreeing with the site total."
             />
             <TransferDriftTable rows={transfers} />
+          </Card>
+        )}
+
+        {adjustments.length === 0 ? (
+          <Callout tone="success" title="Stock adjustments">
+            Every posted adjustment moved exactly what its lines claim.
+          </Callout>
+        ) : (
+          <Card>
+            <CardHeader
+              title="Stock adjustments"
+              description="Each posted line against the single movement it must write. An adjustment is one-sided by design, so there is one figure to agree rather than two."
+            />
+            <AdjustmentDriftTable rows={adjustments} />
+          </Card>
+        )}
+
+        {unsettled.length === 0 ? (
+          <Callout tone="success" title="Store transfers">
+            No dispatch is being counted by two stores at once.
+          </Callout>
+        ) : (
+          <Card>
+            <CardHeader
+              title="Store transfers"
+              description="Dispatches the receiving store has already taken while this one still holds them in transit. The goods are counted twice until each is settled — open the dispatch and press “Check with” to finish it."
+            />
+            <StoreTransferDriftTable rows={unsettled} />
+          </Card>
+        )}
+
+        {/* Informational, and deliberately not part of "does it add up": goods
+            genuinely on a truck are exactly where the books say they are. */}
+        {stillOut.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Still on the road"
+              description="Dispatched a while ago and not yet confirmed by the receiving store. Not a drift — these goods are correctly on this store's books — but somebody should chase them."
+            />
+            <StoreTransferDriftTable rows={stillOut} />
           </Card>
         )}
 

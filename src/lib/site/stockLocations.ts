@@ -29,6 +29,12 @@ export type StockLocation = {
   name: string
   /** Where sales come from, and where anything unallocated lands. Exactly one. */
   isMain: boolean
+  /**
+   * The van, not a room: goods dispatched to another store and not yet
+   * received. Written only by storeTransfers.ts, and hidden from every picker —
+   * nobody sells from a truck, counts one, or transfers into one by hand.
+   */
+  isTransit: boolean
   isActive: boolean
   address: string | null
   note: string | null
@@ -47,6 +53,7 @@ function mapLocation(r: Row): StockLocation {
     code: String(r.code),
     name: String(r.name),
     isMain: !!r.is_main,
+    isTransit: !!r.is_transit,
     isActive: !!r.is_active,
     address: (r.address as string | null) ?? null,
     note: (r.note as string | null) ?? null,
@@ -66,7 +73,7 @@ function mapLocation(r: Row): StockLocation {
  * deletion.
  */
 const SELECT_LOCATION = `
-  SELECT l.id, l.code, l.name, l.is_main, l.is_active, l.address, l.note, l.sort_order,
+  SELECT l.id, l.code, l.name, l.is_main, l.is_transit, l.is_active, l.address, l.note, l.sort_order,
          (SELECT COUNT(*) FROM product_location_stock pls
            WHERE pls.location_id = l.id AND pls.stock_on_hand <> 0) AS product_count,
          (SELECT COUNT(*) FROM stock_movements m
@@ -74,14 +81,28 @@ const SELECT_LOCATION = `
     FROM stock_locations l
 `
 
+/**
+ * Every location, newest rules first.
+ *
+ * `excludeTransit` is what a PICKER wants and what a report does not. The
+ * transit location is a real pile with real movements — the reconciliation and
+ * the stock valuation must see it, or the figures stop adding up — but nobody
+ * sells from a truck, counts one, or transfers into one by hand. So the default
+ * is to include it, and every screen that offers a choice passes true.
+ */
 export async function listLocations(
   siteId: number,
   includeInactive = true,
+  excludeTransit = false,
 ): Promise<StockLocation[]> {
+  const where: string[] = []
+  if (!includeInactive) where.push('l.is_active = 1')
+  if (excludeTransit) where.push('l.is_transit = 0')
+
   const rows = await siteQuery<Row>(
     siteId,
     `${SELECT_LOCATION}
-      ${includeInactive ? '' : 'WHERE l.is_active = 1'}
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY l.is_main DESC, l.sort_order ASC, l.code ASC`,
   )
   return rows.map(mapLocation)
@@ -143,6 +164,45 @@ export async function mainLocationIdTx(tx: PoolConnection): Promise<number> {
   if (!row) {
     throw new Error(
       'This site has no main stock location. Run sql/site/025_stock_locations.sql before posting stock.',
+    )
+  }
+  return Number(row.id)
+}
+
+/**
+ * The pile that means "on the road", inside a caller's open transaction.
+ *
+ * A dispatch to another store writes goods here and a receipt takes them out
+ * again, so it is resolved on `tx` for the same reason main is: a transfer must
+ * not straddle a change to which row carries the flag.
+ *
+ * Throws rather than returning null. 101_store_transfers.sql seeds one for
+ * every site, so reaching this means the migration has not run — and a dispatch
+ * that silently invented a location would break invariant (C) with nothing to
+ * show for it. Failing loudly beats writing movements nobody can trace.
+ */
+export async function transitLocationIdTx(tx: PoolConnection): Promise<number> {
+  const [rows] = await tx.execute(
+    'SELECT id FROM stock_locations WHERE is_transit = 1 ORDER BY id ASC LIMIT 1',
+  )
+  const row = (rows as Row[])[0]
+  if (!row) {
+    throw new Error(
+      'This site has no in-transit stock location. Run sql/site/101_store_transfers.sql before dispatching to another store.',
+    )
+  }
+  return Number(row.id)
+}
+
+/** Same, outside a transaction — for reads and for pre-flight checks. */
+export async function transitLocationId(siteId: number): Promise<number> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    'SELECT id FROM stock_locations WHERE is_transit = 1 ORDER BY id ASC LIMIT 1',
+  )
+  if (!row) {
+    throw new Error(
+      'This site has no in-transit stock location. Run sql/site/101_store_transfers.sql before dispatching to another store.',
     )
   }
   return Number(row.id)
@@ -277,6 +337,18 @@ export async function setMainLocation(siteId: number, id: number): Promise<SaveR
   if (!target.isActive) {
     return { ok: false, error: `${target.name} is deactivated. Activate it before making it main.` }
   }
+  /*
+   * The main location is where the till sells from. Pointing that at the van
+   * would have the counter promise goods that are on a motorway, and would put
+   * every unallocated movement — every sale — into a pile that exists only to
+   * be emptied by the receiving store.
+   */
+  if (target.isTransit) {
+    return {
+      ok: false,
+      error: `${target.name} holds goods on their way to another store, so it cannot be the location sales come from.`,
+    }
+  }
   if (target.isMain) return { ok: true, id }
 
   await siteTransaction(siteId, async (tx) => {
@@ -307,6 +379,19 @@ export async function deleteLocation(siteId: number, id: number): Promise<Delete
       ok: false,
       error:
         'The main location cannot be deleted. Make another location the main one first, then delete this.',
+    }
+  }
+
+  /*
+   * Refused even when empty. The pile is empty precisely when nothing is on the
+   * road, which is most of the time — so the check below would let it be
+   * deleted on any quiet afternoon, and the next dispatch would fail on a
+   * location the migration created and a user removed.
+   */
+  if (location.isTransit) {
+    return {
+      ok: false,
+      error: `${location.name} is where goods sit while they travel between stores. It is managed by the system and cannot be deleted.`,
     }
   }
 

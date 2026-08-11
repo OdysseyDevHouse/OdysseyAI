@@ -13,6 +13,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  ChartGlow,
   ChartTooltip,
   Checkbox,
   ColourInput,
@@ -1448,10 +1449,41 @@ function ChartSection() {
         <Spec name="<Sparkline />" note="A trend at the size of a word — KPI tiles, table rows" />
         <div className="flex flex-1 flex-wrap items-center gap-6">
           {colors.series.slice(0, 3).map((color) => (
-            <div key={color} className="w-32">
+            <div key={color} className="w-40">
               <Sparkline values={series} color={color} />
             </div>
           ))}
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<ChartGlow />"
+          note="The halo under a plotted line. Put it in a chart's <defs> and point the line at it with filter=url(#id). Strength comes from --chart-glow, so light mode gets a whisper and dark a real glow."
+        />
+        <div className="flex flex-1 items-center gap-6">
+          <svg width={180} height={44} className="overflow-visible" aria-hidden>
+            <defs>
+              <ChartGlow id="styleGuideGlow" strength={colors.glow} />
+            </defs>
+            <g filter="url(#styleGuideGlow)">
+              <path
+                d="M6,36 C30,34 40,20 62,22 C84,24 92,32 114,26 C136,20 148,8 174,8"
+                fill="none"
+                stroke={colors.series[0]}
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+              {[
+                [6, 36],
+                [62, 22],
+                [114, 26],
+                [174, 8],
+              ].map(([cx, cy]) => (
+                <circle key={cx} cx={cx} cy={cy} r={2.5} fill={colors.series[0]} />
+              ))}
+            </g>
+          </svg>
+          <code className="font-mono text-xs text-muted">colors.glow</code>
         </div>
       </Row>
       <Row>

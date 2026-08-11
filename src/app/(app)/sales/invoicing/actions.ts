@@ -10,6 +10,7 @@ import {
   type LineInput,
 } from '@/lib/site/salesDocuments'
 import { finaliseDocument } from '@/lib/site/salesPosting'
+import { terminalForDevice } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import {
   getTillCustomer,
@@ -51,6 +52,17 @@ export type InvoicePayload = {
   /** The customer's own order number, shown as "Invoice order number". */
   reference: string | null
   notes: string | null
+  /**
+   * Which MACHINE is capturing, not which till.
+   *
+   * The screen never picks a till and cannot name one: it sends the browser's
+   * own device id and the server turns that into a terminal. That is the whole
+   * point of sending the device rather than a terminalId — a posted invoice
+   * says which register it was captured on, and nothing a client can send
+   * decides that. Null on a browser that has never been claimed to a till,
+   * which is the ordinary state of a back-office PC and not an error.
+   */
+  deviceId: string | null
   lines: InvoiceLinePayload[]
 }
 
@@ -122,6 +134,25 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
   )
   if (refused) return { ok: false, error: refused }
 
+  /*
+   * Which till this invoice was captured on, resolved from the machine.
+   *
+   * Nobody is asked. The device id the browser sent is matched against the
+   * terminal claimed to it — the same lookup the till and the clock-in screen
+   * use — so an invoice captured at a register is attributed to that register
+   * and the operator who is signed in, without a picker to get wrong.
+   *
+   * Re-resolved on every save rather than pinned when the draft was started, so
+   * an invoice begun on one machine and finished on another names the one that
+   * actually finished it. Finalising saves first, so this is the machine that
+   * posted it.
+   *
+   * An unclaimed back-office PC resolves to null and the invoice carries no
+   * till, exactly as before. It stays 'back_office' either way, which is what
+   * keeps it on the shared number run — see migration 099.
+   */
+  const terminal = payload.deviceId ? await terminalForDevice(siteId, payload.deviceId) : null
+
   const result = await saveDraft(
     siteId,
     actor,
@@ -131,6 +162,9 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
       customerId: payload.customerId,
       customerName: payload.customerName,
       priceStructureId: payload.priceStructureId,
+      terminalId: terminal?.id ?? null,
+      terminalCode: terminal?.code ?? null,
+      origin: 'back_office',
       reference: payload.reference,
       notes: payload.notes,
       lines: toLineInputs(payload.lines),

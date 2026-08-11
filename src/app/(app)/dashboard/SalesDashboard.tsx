@@ -285,7 +285,9 @@ export function SalesDashboard() {
 
               // A KPI tile is its own card, so it gets no Card chrome. In edit
               // mode the whole tile is the drag handle — it has no header to
-              // grab.
+              // grab. That does not swallow the resize corner: the grid's own
+              // drag cancels on `.react-resizable-handle`, so the handle inside
+              // this element still resizes rather than dragging.
               if (kpi) {
                 return (
                   <div

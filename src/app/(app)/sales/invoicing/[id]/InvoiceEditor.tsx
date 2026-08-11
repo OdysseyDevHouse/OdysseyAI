@@ -34,6 +34,7 @@ import {
   TABLE_TH,
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
+import { deviceId } from '@/lib/deviceId'
 import { documentTotals, lineTotals } from '@/lib/documentMath'
 import {
   computeSpecials,
@@ -156,6 +157,20 @@ export default function InvoiceEditor({
   const toast = useToast()
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+
+  /*
+   * This machine, so a saved invoice records the till it was captured on.
+   *
+   * Read after mount because `deviceId()` returns null during SSR by design —
+   * it reads the desktop shell's machine id or localStorage, neither of which
+   * exists on the server. The value is sent as-is and the SERVER decides which
+   * terminal it belongs to; nothing here picks a till, and there is no control
+   * for one. Null until the effect runs, which only matters for a save fired in
+   * the first frame — and that save would have carried no till before this
+   * existed either.
+   */
+  const [device, setDevice] = useState<string | null>(null)
+  useEffect(() => setDevice(deviceId()), [])
 
   const [customerId, setCustomerId] = useState(document.customerId)
   const [customerName, setCustomerName] = useState(document.customerName ?? '')
@@ -436,6 +451,7 @@ export default function InvoiceEditor({
   function payload(): InvoicePayload {
     return {
       documentId: document.id,
+      deviceId: device,
       customerId,
       customerName: customerName.trim() || null,
       priceStructureId,

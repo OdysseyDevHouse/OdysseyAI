@@ -433,7 +433,12 @@ export async function finaliseDocument(
      It reads `settings` and `terminals`, and the numbering statement runs while
      holding the most contended lock in the schema — two extra queries in there
      would widen it for every till. Null for anything that is not a till invoice. */
-  const numbering = await numberSegmentsFor(siteId, document.docType, document.terminalId ?? null)
+  const numbering = await numberSegmentsFor(
+    siteId,
+    document.docType,
+    document.terminalId ?? null,
+    document.origin,
+  )
 
   // Rand of this basket paid for by a value voucher. Set inside the
   // transaction, read after it commits to keep that slice out of the earn
@@ -1022,7 +1027,13 @@ async function finaliseGuards(siteId: number, document: SalesDocument): Promise<
   }
 
   // A deactivated till stops working on its next sale, not at the next sign-in.
-  if (document.terminalId) {
+  //
+  // Only for a sale that came FROM that till. A back-office invoice records the
+  // machine it was captured on as attribution, and that is not a claim to be
+  // trading through it: someone finishing an invoice on a laptop whose till
+  // registration was released this morning is not a till failure, and refusing
+  // to post it would strand real work behind a setup screen.
+  if (document.origin === 'till' && document.terminalId) {
     const terminal = await validateTerminalClaim(siteId, document.terminalId)
     if (!terminal) return 'This till is no longer registered. Re-register it in Setup → Tills.'
   }

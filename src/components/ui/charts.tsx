@@ -30,6 +30,13 @@ export type ChartColors = {
   muted: string
   success: string
   danger: string
+  /**
+   * How hard the halo under a plotted line reads, 0–1. Not a colour: the halo
+   * is always the series' own colour, and this only says how much of it
+   * survives the blur. Dark mode carries far more of it than light — see
+   * `--chart-glow` in globals.css.
+   */
+  glow: number
 }
 
 /** The token names behind each entry, so the list lives in exactly one place. */
@@ -57,6 +64,14 @@ const FALLBACK: ChartColors = {
   muted: '#667085',
   success: '#17a34a',
   danger: '#dc2626',
+  glow: 0.3,
+}
+
+/** `--chart-glow` as a usable 0–1 number; anything odd falls back. */
+function glowStrength(raw: string): number {
+  const value = Number.parseFloat(raw)
+  if (!Number.isFinite(value)) return FALLBACK.glow
+  return Math.min(1, Math.max(0, value))
 }
 
 function readTokens(): ChartColors {
@@ -74,6 +89,10 @@ function readTokens(): ChartColors {
     muted: read('--color-muted', FALLBACK.muted),
     success: read('--color-success', FALLBACK.success),
     danger: read('--color-danger', FALLBACK.danger),
+    // A number rather than a colour, so it can drive an SVG filter's alpha.
+    // An unparseable token would put NaN into a filter and blank every line on
+    // the dashboard, so it falls back — but a deliberate 0 (glow off) is kept.
+    glow: glowStrength(read('--chart-glow', String(FALLBACK.glow))),
   }
 }
 
@@ -110,6 +129,44 @@ export function useChartColors(): ChartColors {
   }, [])
 
   return colors
+}
+
+/**
+ * The halo that sits under a plotted line, as an SVG filter.
+ *
+ * Render it inside a chart's `<defs>` and point the line (and its dots) at it
+ * with `filter="url(#id)"`. It blurs whatever it is given, dims the blur to
+ * `strength`, and paints the original back on top — so the halo is always the
+ * line's own colour and nothing here has to name one.
+ *
+ * A filter rather than a CSS `drop-shadow` because the shadow would have to be
+ * given an explicit colour, and there is one line colour per tile.
+ */
+export function ChartGlow({
+  id,
+  strength,
+  blur = 3,
+}: {
+  id: string
+  /** Normally `useChartColors().glow`. */
+  strength: number
+  blur?: number
+}) {
+  return (
+    /* The region is padded well past the source box: a filter clips to its own
+       area, and a halo drawn tight to the path would be sliced off square. */
+    <filter id={id} x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation={blur} result="blurred" />
+      <feComponentTransfer in="blurred" result="halo">
+        <feFuncA type="linear" slope={strength} />
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode in="halo" />
+        {/* The crisp line goes back on top, so the glow never softens it. */}
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  )
 }
 
 /**

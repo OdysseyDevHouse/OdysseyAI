@@ -38,6 +38,7 @@ export type HubIconName =
   | 'FileText'
   | 'Package'
   | 'Scale'
+  | 'SlidersHorizontal'
   | 'Database'
   | 'Palette'
   | 'Settings'

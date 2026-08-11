@@ -418,6 +418,11 @@ const UNLINKED: Record<string, string> = {
   '/departments/new': 'reached from the department list',
   '/instructions/new': 'reached from the instruction list',
   '/transfers/new': 'reached from the transfer list',
+  /* Deliveries from other stores live in the SENDING store until somebody
+     confirms them, so this is a queue reached from the transfer list rather
+     than a section of its own. */
+  '/transfers/inbound': 'reached from the transfer list',
+  '/adjustments/new': 'reached from the adjustment list',
   '/stock-takes/new': 'reached from the stock take list',
   '/manufacturing/new': 'reached from the manufacturing list',
   '/expenses/new': 'reached from the expense list',

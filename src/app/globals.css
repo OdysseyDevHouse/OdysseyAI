@@ -105,6 +105,18 @@
   --color-chart-grid: #eaecf0;
   --color-chart-axis: #98a2b3;
 
+  /* How hard the halo under a plotted line reads, 0–1. It is a strength and
+     not a colour, because the halo is always the SERIES' own colour — this
+     only says how much of it survives the blur.
+
+     Light and dark want genuinely different amounts. On a white card a strong
+     halo reads as a printing fault: the line looks smudged rather than lit, so
+     it is kept to a whisper that only softens the edge. On the dark surface
+     the same line has no contrast to spare, and the halo is what makes it look
+     drawn in light rather than in ink — so dark carries more than twice as
+     much. */
+  --chart-glow: 0.3;
+
   /* --- Category accents --------------------------------------------------
      A hue per SUBJECT — sales, stock, customers — used only for the small
      icon tile that identifies a group of things.
@@ -247,6 +259,9 @@
     --color-chart-grid: #262c35;
     --color-chart-axis: #6b7686;
 
+    /* A real halo here — see the note on the light value. */
+    --chart-glow: 0.7;
+
     /* Category accents, lifted for dark. The tints become translucent rather
        than a fixed colour so a tile sits correctly on either surface. */
     --color-cat-indigo: #818cf8;
@@ -319,6 +334,9 @@
 
   --color-chart-grid: #262c35;
   --color-chart-axis: #6b7686;
+
+  /* A real halo here — see the note on the light value. */
+  --chart-glow: 0.7;
 
   /* Category accents, lifted for dark. The tints become translucent rather
      than a fixed colour so a tile sits correctly on either surface. */
