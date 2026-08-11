@@ -11,6 +11,7 @@ import { getDocument, todayIso, type SalesDocument } from './salesDocuments'
 import { resolveComponents, explodingProducts, type ResolvedComponent } from './productComposition'
 import type { ProductTypeId } from '../productTypes'
 import { postTransaction } from './customerLedger'
+import { requireSalesReason } from './salesReasons'
 import type { Actor } from './activityLog'
 
 /**
@@ -57,7 +58,27 @@ export type CreditNoteInput = {
   invoiceId: number | null
   customerId?: number | null
   customerName?: string | null
-  reason: string
+  /**
+   * Which of the shop's return reasons this is. Required, and what every
+   * report groups by.
+   */
+  reasonId: number
+  /**
+   * The detail that never fits a code. Optional, and only offered by the till
+   * for reasons whose `allowsNote` says the code does not speak for itself.
+   */
+  note?: string | null
+  /**
+   * A caption prefixed to the stored text — "No receipt", say. The reason
+   * itself is the code, so this carries only what the code cannot.
+   */
+  reasonPrefix?: string | null
+  /**
+   * Accepts a retired reason. Only for the paths where the SYSTEM chose the
+   * code rather than a person — an invoice correction must not start failing
+   * because a site tidied its returns list.
+   */
+  allowRetiredReason?: boolean
   lines: CreditLineInput[]
   terminalId?: number | null
   terminalCode?: string | null
@@ -131,8 +152,28 @@ export async function createCreditNote(
   actor: Actor,
   input: CreditNoteInput,
 ): Promise<CreditNoteResult> {
-  if (!input.reason?.trim()) return { ok: false, error: 'Give a reason for the credit.' }
+  // Resolved before anything else: the id came from a client — a till, a form,
+  // or an offline payload replayed hours later — and one from the void list
+  // would satisfy the foreign key while labelling the return with the wrong
+  // vocabulary.
+  const chosen = await requireSalesReason(
+    siteId,
+    'return',
+    input.reasonId,
+    input.allowRetiredReason === true,
+  )
+  if (!chosen.ok) return { ok: false, error: chosen.error }
   if (input.lines.length === 0) return { ok: false, error: 'Choose at least one line to credit.' }
+
+  // What a person reads on the ledger, the audit row and the credit note. The
+  // code alone is terse and the note alone loses the grouping, so the stored
+  // text is both — which is also what keeps internal_note meaningful for every
+  // reader that predates the codes.
+  const note = input.note?.trim() ?? ''
+  const prefix = input.reasonPrefix?.trim() ?? ''
+  const reason = [prefix ? `${prefix}:` : '', chosen.reason.name, note ? `— ${note}` : '']
+    .filter(Boolean)
+    .join(' ')
 
   let invoice: SalesDocument | null = null
 
@@ -253,8 +294,9 @@ export async function createCreditNote(
         `INSERT INTO sales_documents
            (doc_type, status, document_date, customer_id, customer_name, customer_vat_no,
             user_id, user_name, terminal_id, terminal_code, reverses_id,
-            subtotal_excl, vat_total, discount_total, total_incl, notes, internal_note)
-         VALUES ('credit_sale','finalised',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            subtotal_excl, vat_total, discount_total, total_incl, notes, internal_note,
+            return_reason_id)
+         VALUES ('credit_sale','finalised',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           docDate,
           customerId,
@@ -270,7 +312,8 @@ export async function createCreditNote(
           totals.discountTotal.toFixed(4),
           totals.totalIncl.toFixed(4),
           invoice ? `Credit of ${invoice.documentNumber}` : 'Return without a receipt',
-          input.reason.trim().slice(0, 400),
+          reason.slice(0, 400),
+          chosen.reason.id,
         ] as never,
       )
       const documentId = (res as { insertId: number }).insertId
@@ -334,9 +377,13 @@ export async function createCreditNote(
             }
           } else {
             const type = (line.productType ?? 'normal') as ProductTypeId
+            // Carries a pile of its own: a manufactured recipe, or a
+            // normal-method refer. Either way the PACK comes back, not its
+            // contents — and a returned case is never re-closed, because the
+            // shop cannot un-open one. See referBreakdown.ts.
             const direction = stockDirectionFor(
               type,
-              type === 'recipe' && !exploding.has(line.productId),
+              (type === 'recipe' || type === 'refer') && !exploding.has(line.productId),
             )
             if (direction !== 0) {
               await recordMovement(tx, actor, {
@@ -383,7 +430,7 @@ export async function createCreditNote(
          VALUES (?, 'credit_sale', ?, ?, ?)`,
         [
           documentId,
-          `${documentNumber} · ${totals.totalIncl.toFixed(2)}${invoice ? ` · credits ${invoice.documentNumber}` : ' · no receipt'} · ${input.reason.trim()}`,
+          `${documentNumber} · ${totals.totalIncl.toFixed(2)}${invoice ? ` · credits ${invoice.documentNumber}` : ' · no receipt'} · ${reason}`,
           actor.userId,
           actor.userName.slice(0, 120),
         ] as never,
@@ -406,8 +453,8 @@ export async function createCreditNote(
           docDate,
           docNumber: posted.documentNumber,
           description: invoice
-            ? `Credit of ${invoice.documentNumber} — ${input.reason.trim()}`
-            : `Credit note — ${input.reason.trim()}`,
+            ? `Credit of ${invoice.documentNumber} — ${reason}`
+            : `Credit note — ${reason}`,
           source: 'sale',
           sourceDocId: posted.documentId,
           // Applies to the oldest open invoice unless someone allocates it by

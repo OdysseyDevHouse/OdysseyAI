@@ -78,6 +78,11 @@ export function offlineBlockedTender(tender: {
  *     that walk, and guessing the components would post the wrong stock movements
  *     for goods that have already left the shop.
  *
+ *     A NORMAL-METHOD refer is blocked for a second, stronger reason: selling one
+ *     may BREAK A LARGER PACK OPEN, and which pack to open depends on live stock
+ *     at every level of the chain. Two tills offline would each decide to open the
+ *     last case. See referBreakdown.ts and 103_refer_methods.sql.
+ *
  * `normal`, `returnable`, `service`, `buyout` and `calcqty` all sell offline, which
  * is nearly everything in nearly every shop.
  */

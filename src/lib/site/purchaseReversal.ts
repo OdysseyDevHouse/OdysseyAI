@@ -9,6 +9,12 @@ import { postSupplierTransaction } from './supplierLedger'
 import { returnSerialsToSupplierTx } from './serials'
 import { getPurchaseDocument } from './purchaseDocuments'
 import type { Actor } from './activityLog'
+import type { ProductTypeId } from '../productTypes'
+import {
+  explodingProducts,
+  resolveComponents,
+  type ResolvedComponent,
+} from './productComposition'
 
 /**
  * Supplier returns — sending goods back after the day they were received.
@@ -224,6 +230,34 @@ export async function createSupplierReturn(
 
   if (totalIncl <= 0) return { ok: false, error: 'A return must be worth more than nothing.' }
 
+  /*
+   * The mirror of the receipt's explosion. A subtract-pack case went onto the
+   * shelf as 24 singles, so returning it has to take 24 singles off — sending
+   * the case back would deduct a pile that never existed and leave the singles
+   * behind. Same definition as purchasePosting, so the two can never disagree
+   * about what a pack means.
+   */
+  const exploding = await explodingProducts(
+    siteId,
+    input.lines.filter((l) => l.productId).map((l) => l.productId as number),
+  )
+
+  const composed = new Map<number, ResolvedComponent[]>()
+  for (const [index, line] of input.lines.entries()) {
+    if (!line.productId) continue
+    if (!exploding.has(line.productId)) continue
+
+    const resolved = await resolveComponents(
+      siteId,
+      line.productId,
+      (line.productType ?? 'normal') as ProductTypeId,
+    )
+    if (!resolved.ok) {
+      return { ok: false, error: `${line.description}: ${resolved.error}` }
+    }
+    composed.set(index, resolved.components)
+  }
+
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
       const [res] = await tx.execute(
@@ -288,6 +322,32 @@ export async function createSupplierReturn(
         )
 
         if (!line.productId) continue
+
+        // A subtract-pack line takes its TARGET back off the shelf, at the
+        // per-unit cost the receipt put it on at. Returning one case of 24
+        // removes 24 singles.
+        const components = composed.get(index)
+        if (components) {
+          for (const component of components) {
+            const qty = round(line.qtyReturned * component.qtyPerUnit, 3)
+            if (qty === 0) continue
+
+            await recordMovement(tx, actor, {
+              productId: component.productId,
+              locationId,
+              movementType: 'adjustment',
+              qtyChange: -qty,
+              unitCostExcl:
+                component.qtyPerUnit === 0
+                  ? 0
+                  : round(line.unitCostExcl / component.qtyPerUnit, 4),
+              source: 'supplier_return',
+              sourceDocId: documentId,
+              note: `Return of ${grv.documentNumber} × ${component.qtyPerUnit}`.slice(0, 190),
+            })
+          }
+          continue
+        }
 
         // Stock leaves the pile it was received into. Defaulting to main would
         // take it off the shop floor for goods sitting in the warehouse,

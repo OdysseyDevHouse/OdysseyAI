@@ -13,6 +13,7 @@ import {
 } from './sequences'
 import { numberSegmentsFor } from './numbering'
 import { recordMovement, stockDirectionFor, canSellNow } from './stockMovements'
+import { ensureStock } from './referBreakdown'
 import { getTenderType, getTenderByCode, checkTenders, type TenderType } from './tenderTypes'
 import { validateTerminalClaim } from './terminals'
 import { shiftToBankInto } from './shifts'
@@ -23,6 +24,7 @@ import { writeTips } from './tips'
 import { planTips } from '../tipMath'
 import { getNumericSetting, isPeriodLocked } from './settings'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
+import { requireSalesReason } from './salesReasons'
 import { resolveComponents, explodingProducts, type ResolvedComponent } from './productComposition'
 import { checkSellable, markSold } from './serials'
 import { postTransaction, reverseTransaction } from './customerLedger'
@@ -515,13 +517,40 @@ export async function finaliseDocument(
           continue
         }
 
-        // A recipe line that reached here is manufactured — the exploding set
-        // above filtered out the ones that deduct components instead.
-        const direction = stockDirectionFor(
-          line.productType,
-          line.productType === 'recipe' && !exploding.has(line.productId),
-        )
+        /*
+         * A line that reached here carries a pile of its own. Two types can:
+         * a MANUFACTURED recipe, built ahead of time, and a NORMAL-METHOD
+         * refer, a pack the shop physically owns. The exploding set above
+         * filtered out the ones that deduct something else instead.
+         */
+        const carriesOwnStock =
+          (line.productType === 'recipe' || line.productType === 'refer') &&
+          !exploding.has(line.productId)
+
+        const direction = stockDirectionFor(line.productType, carriesOwnStock)
         if (direction === 0) continue
+
+        /*
+         * Break a larger pack open if this one has run out.
+         *
+         * Selling a single with none on the shelf opens a six-pack; if there
+         * are no six-packs either, it opens a case first. Done BEFORE the sale
+         * movement below so the single is on the shelf to be sold, and inside
+         * this transaction so the whole lot rolls back together.
+         *
+         * Only on the way OUT. A credit note (qty < 0) puts stock back and has
+         * nothing to break open — and it must never re-close a case, because
+         * the shop cannot un-open one either.
+         */
+        if (line.productType === 'refer' && carriesOwnStock && line.qty > 0) {
+          await ensureStock(tx, actor, line.productId, line.qty, {
+            source: document.docType,
+            sourceDocId: document.id,
+            sourceLineId: line.id,
+            terminalId: document.terminalId,
+            shiftId,
+          })
+        }
 
         await recordMovement(tx, actor, {
           productId: line.productId,
@@ -1079,6 +1108,18 @@ async function creditRefusal(
 export type VoidResult = { ok: true } | { ok: false; error: string }
 
 /**
+ * What the person voiding said, and why.
+ *
+ * The code is what a report groups by and is required. The note is the detail
+ * that never fits a code, is optional, and is only offered for reasons whose
+ * `allowsNote` says the code does not speak for itself.
+ */
+export type VoidReasonInput = {
+  reasonId: number
+  note?: string | null
+}
+
+/**
  * Voids a finalised document — same trading day only.
  *
  * Keeps its number and all its lines. A void is not a deletion: the number must
@@ -1093,9 +1134,20 @@ export async function voidDocument(
   siteId: number,
   actor: Actor,
   documentId: number,
-  reason: string,
+  input: VoidReasonInput,
 ): Promise<VoidResult> {
-  if (!reason?.trim()) return { ok: false, error: 'Give a reason for the void.' }
+  // Resolved before anything else: the id came from a client, and one from the
+  // returns list would satisfy the foreign key while labelling the void with
+  // the wrong vocabulary.
+  const chosen = await requireSalesReason(siteId, 'void', input.reasonId)
+  if (!chosen.ok) return { ok: false, error: chosen.error }
+
+  // The narration a person reads. The code alone is terse on a ledger line, and
+  // the note alone loses the grouping — so the stored text is both, and it is
+  // what the free-text column keeps holding for every reader that predates the
+  // codes.
+  const note = input.note?.trim() ?? ''
+  const reason = note ? `${chosen.reason.name} — ${note}` : chosen.reason.name
 
   const document = await getDocument(siteId, documentId)
   if (!document) return { ok: false, error: 'That document no longer exists.' }
@@ -1131,7 +1183,7 @@ export async function voidDocument(
       siteId,
       actor,
       ledgerEntry,
-      `Void of ${document.documentNumber}: ${reason.trim()}`,
+      `Void of ${document.documentNumber}: ${reason}`,
     )
     if (!reversal.ok) {
       return {
@@ -1141,22 +1193,65 @@ export async function voidDocument(
     }
   }
 
-  // A manufactured recipe carries its own pile, so voiding a sale of one has to
-  // put the finished unit back. An exploding recipe still returns 0 here and
-  // its components are not reversed — a pre-existing gap in the void path,
-  // unchanged by this.
+  /*
+   * What each line took off the shelf, so the void can put exactly that back.
+   *
+   * A product that carries its own pile — a manufactured recipe, a
+   * normal-method refer — returns the unit itself. One that explodes took its
+   * COMPONENTS, and until now the void reversed nothing for it: the parent
+   * returned 0 from stockDirectionFor and the components were never mirrored,
+   * so every void of a burger or a subtract-pack six-pack leaked stock.
+   *
+   * Resolved out here, before the transaction, for the same reason finalise
+   * resolves it there: a broken setup is refused while nothing has moved.
+   * Unlike finalise this cannot refuse the whole operation — a void must
+   * always be possible, or a bad refer link would trap a document forever — so
+   * an unresolvable line falls back to reversing the parent, which is what it
+   * did before.
+   */
   const voidExploding = await explodingProducts(
     siteId,
     document.lines.filter((l) => l.productId).map((l) => l.productId as number),
   )
 
+  const voidComposed = new Map<number, ResolvedComponent[]>()
+  for (const line of document.lines) {
+    if (!line.productId) continue
+    if (!voidExploding.has(line.productId)) continue
+
+    const resolved = await resolveComponents(siteId, line.productId, line.productType)
+    if (resolved.ok) voidComposed.set(line.id, resolved.components)
+  }
+
   await siteTransaction(siteId, async (tx) => {
     // Reversing movements. The originals stay — an audit row is never deleted.
     for (const line of document.lines) {
       if (!line.productId) continue
+
+      // The mirror of the explosion at finalise: what the components gave up,
+      // they get back. Same quantities, same costs, opposite sign.
+      const components = voidComposed.get(line.id)
+      if (components) {
+        for (const component of components) {
+          await recordMovement(tx, actor, {
+            productId: component.productId,
+            movementType: 'sale_return',
+            qtyChange: round(line.qty * component.qtyPerUnit, 3),
+            unitCostExcl: component.unitCostExcl,
+            source: 'cancelled',
+            sourceDocId: document.id,
+            sourceLineId: line.id,
+            terminalId: document.terminalId,
+            note: `Void of ${document.documentNumber}`,
+          })
+        }
+        continue
+      }
+
       const direction = stockDirectionFor(
         line.productType,
-        line.productType === 'recipe' && !voidExploding.has(line.productId),
+        (line.productType === 'recipe' || line.productType === 'refer') &&
+          !voidExploding.has(line.productId),
       )
       if (direction === 0) continue
 
@@ -1224,15 +1319,16 @@ export async function voidDocument(
 
     await tx.execute(
       `UPDATE sales_documents
-          SET status = 'cancelled', cancel_reason = ?, cancelled_at = NOW(), cancelled_by_user_id = ?
+          SET status = 'cancelled', cancel_reason = ?, cancel_reason_id = ?,
+              cancelled_at = NOW(), cancelled_by_user_id = ?
         WHERE id = ?`,
-      [reason.trim().slice(0, 190), actor.userId, document.id] as never,
+      [reason.slice(0, 190), chosen.reason.id, actor.userId, document.id] as never,
     )
 
     await tx.execute(
       `INSERT INTO document_audit (document_id, action, detail, user_id, user_name)
        VALUES (?, 'cancelled', ?, ?, ?)`,
-      [document.id, reason.trim().slice(0, 400), actor.userId, actor.userName.slice(0, 120)] as never,
+      [document.id, reason.slice(0, 400), actor.userId, actor.userName.slice(0, 120)] as never,
     )
   })
 

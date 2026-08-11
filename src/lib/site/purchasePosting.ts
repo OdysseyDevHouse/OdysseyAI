@@ -5,12 +5,18 @@ import { round, toNum } from '../decimals'
 import { apportionDiscount, weightedAverageCost } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
+import {
+  explodingProducts,
+  resolveComponents,
+  type ResolvedComponent,
+} from './productComposition'
 import { mainLocationIdTx } from './stockLocations'
 import { receiveSerialsTx, removeReceivedSerialsTx } from './serials'
 import { isPeriodLocked, getSetting } from './settings'
 import { postSupplierTransaction } from './supplierLedger'
 import { dueDateFor } from './ledger'
 import type { Actor } from './activityLog'
+import type { ProductTypeId } from '../productTypes'
 
 /**
  * Receiving goods — the moment stock and cost both move.
@@ -600,6 +606,52 @@ export async function receiveGoods(
     }
   })
 
+  /*
+   * ── RECEIVING A PACK ─────────────────────────────────────────────────────
+   *
+   * A refer line means one of two things, and the method on the link decides
+   * which. See 103_refer_methods.sql.
+   *
+   *   normal    the pack is real. Ten cases received are ten cases owned, and
+   *             the movement below names the case itself. That is what this
+   *             loop already did, and it becomes correct by no longer being an
+   *             accident.
+   *
+   *   subtract  the pack is a label on a pile of singles. Ten cases of 24 are
+   *             240 singles, and the case carries nothing. Receiving against
+   *             the case itself would strand the quantity on a product whose
+   *             stockDirectionFor is 0 — nothing could ever sell it down, no
+   *             stock take would count it, and it would sit there forever.
+   *             THAT IS THE BUG THIS FIXES.
+   *
+   * resolveComponents() gives the target and the FULL chain factor, so a case
+   * that refers to a six-pack that refers to a single resolves straight to 24
+   * singles in one step.
+   *
+   * Resolved before the transaction opens, so a broken refer setup is refused
+   * while nothing has moved.
+   */
+  const exploding = await explodingProducts(
+    siteId,
+    input.lines.filter((l) => l.productId).map((l) => l.productId as number),
+  )
+
+  const composed = new Map<number, ResolvedComponent[]>()
+  for (const [index, line] of input.lines.entries()) {
+    if (!line.productId) continue
+    if (!exploding.has(line.productId)) continue
+
+    const resolved = await resolveComponents(
+      siteId,
+      line.productId,
+      (line.productType ?? 'normal') as ProductTypeId,
+    )
+    if (!resolved.ok) {
+      return { ok: false, error: `${line.description}: ${resolved.error}` }
+    }
+    composed.set(index, resolved.components)
+  }
+
   const subtotalExcl = computed.reduce((sum, c) => round(sum + c.netExcl, 2), 0)
   const vatTotal = computed.reduce((sum, c) => round(sum + c.vat, 2), 0)
   // The document's charge figure is the WHOLE delivery cost, because that is
@@ -818,6 +870,71 @@ export async function receiveGoods(
         )
 
         if (!line.productId) continue
+
+        /*
+         * A subtract-pack line puts its TARGET on the shelf, not itself.
+         *
+         * Ten cases of 24 become 240 singles at a twenty-fourth of the landed
+         * cost each. Dividing the cost is not optional: receiving 240 singles
+         * at the cost of a case would value the shelf at 24× what was paid and
+         * poison every GP figure that touches the product.
+         *
+         * The document line above still records the CASE — a GRV has to print
+         * what the supplier actually delivered.
+         */
+        const components = composed.get(index)
+        if (components) {
+          for (const component of components) {
+            const qty = round(c.qtyArriving * component.qtyPerUnit, 3)
+            if (qty === 0) continue
+
+            const unitCost =
+              component.qtyPerUnit === 0
+                ? 0
+                : round(c.landedUnitCost / component.qtyPerUnit, 4)
+
+            const [beforeComponent] = await tx.execute(
+              'SELECT stock_on_hand, average_cost FROM products WHERE id = ? FOR UPDATE',
+              [component.productId] as never,
+            )
+            const componentRow = (beforeComponent as RowDataPacket[])[0]
+
+            await recordMovement(tx, actor, {
+              productId: component.productId,
+              locationId,
+              movementType: 'receipt',
+              qtyChange: qty,
+              unitCostExcl: unitCost,
+              source: 'grv',
+              sourceDocId: documentId,
+              // Names the pack, so the single's history reads "came in as a
+              // case" rather than looking like an unexplained surplus.
+              note: `${line.productCode ?? line.description} × ${component.qtyPerUnit}`.slice(0, 190),
+            })
+
+            const componentAverage = weightedAverageCost({
+              existingQty: toNum(componentRow?.stock_on_hand),
+              existingCostExcl: toNum(componentRow?.average_cost),
+              receivedQty: qty,
+              receivedCostExcl: unitCost,
+            })
+
+            await tx.execute(
+              'UPDATE products SET average_cost = ?, last_cost = ?, last_purchase_date = NOW() WHERE id = ?',
+              [componentAverage.toFixed(4), unitCost.toFixed(4), component.productId] as never,
+            )
+          }
+
+          // Close off the order line this fulfils, then skip the single-product
+          // path below — the pack itself holds nothing.
+          if (line.orderLineId) {
+            await tx.execute(
+              'UPDATE purchase_document_lines SET qty_received = qty_received + ? WHERE id = ?',
+              [round(line.qtyReceived, 3).toFixed(3), line.orderLineId] as never,
+            )
+          }
+          continue
+        }
 
         // Read the position BEFORE the movement — the average has to blend
         // against what was there, not against what it is about to become.

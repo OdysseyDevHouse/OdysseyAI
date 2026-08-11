@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
 import { round, toNum } from '../decimals'
+import { stockedReferSql } from './productComposition'
 
 /**
  * What to order, and why.
@@ -103,6 +104,11 @@ export type ReorderSuggestion = {
  * list whose whole value is that every row deserves attention. Variant PARENTS
  * are excluded for the same reason recordMovement refuses them: they hold no
  * stock of their own.
+ *
+ * A refer product is missing here for the same reason, with ONE exception:
+ * under the normal method the pack is what the buyer actually orders — nobody
+ * orders single bottles from a brewery, they order cases. stockedReferSql()
+ * adds those back. See 103_refer_methods.sql.
  */
 const STOCKED_TYPES = ['normal', 'returnable', 'serial', 'calcqty'] as const
 
@@ -131,7 +137,7 @@ export async function reorderSuggestions(
   const where: string[] = [
     'p.is_archived = 0',
     'p.has_variants = 0',
-    `p.product_type IN (${STOCKED_TYPES.map(() => '?').join(',')})`,
+    `(p.product_type IN (${STOCKED_TYPES.map(() => '?').join(',')}) OR ${stockedReferSql('p')})`,
   ]
   params.push(...STOCKED_TYPES)
 

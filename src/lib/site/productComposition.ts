@@ -50,6 +50,17 @@ export type RecipeLine = {
   stockOnHand: number
 }
 
+/**
+ * How a refer link moves stock.
+ *
+ *   subtract — the pack carries no pile. Selling one deducts `factor` of the
+ *              target, and receiving one adds `factor` of the target. All
+ *              stock lives at the bottom of the chain.
+ *   normal   — the pack carries its OWN pile. Selling the target when it is
+ *              empty breaks one of these open instead. See referBreakdown.ts.
+ */
+export type ReferMethod = 'normal' | 'subtract'
+
 export type ReferLink = {
   productId: number
   targetId: number
@@ -57,6 +68,7 @@ export type ReferLink = {
   targetDescription: string
   targetType: ProductTypeId
   factor: number
+  method: ReferMethod
   unitCostExcl: number
   /** The target's stock, in the target's own units. */
   targetStockOnHand: number
@@ -102,7 +114,7 @@ export async function listRecipe(siteId: number, parentId: number): Promise<Reci
 export async function getRefer(siteId: number, productId: number): Promise<ReferLink | null> {
   const row = await siteQueryOne<Row>(
     siteId,
-    `SELECT f.product_id, f.target_id, f.factor,
+    `SELECT f.product_id, f.target_id, f.factor, f.method,
             p.code, p.description, p.product_type, p.average_cost, p.stock_on_hand
        FROM product_refers f
        JOIN products p ON p.id = f.target_id
@@ -118,6 +130,9 @@ export async function getRefer(siteId: number, productId: number): Promise<Refer
     targetDescription: String(row.description),
     targetType: String(row.product_type) as ProductTypeId,
     factor: toNum(row.factor),
+    // A site that has not run 103 yet returns undefined here, and the
+    // behaviour it should keep is the one it already has.
+    method: row.method === 'normal' ? 'normal' : 'subtract',
     unitCostExcl: toNum(row.average_cost),
     targetStockOnHand: toNum(row.stock_on_hand),
   }
@@ -368,10 +383,11 @@ export async function saveRefer(
   productId: number,
   targetId: number,
   factor: number,
+  method: ReferMethod = 'subtract',
 ): Promise<SaveResult> {
   const product = await siteQueryOne<Row>(
     siteId,
-    'SELECT id, product_type FROM products WHERE id = ?',
+    'SELECT id, product_type, stock_on_hand FROM products WHERE id = ?',
     [productId],
   )
   if (!product) return { ok: false, error: 'That product no longer exists.' }
@@ -390,12 +406,34 @@ export async function saveRefer(
     return { ok: false, error: 'The factor must be more than zero — it is how many of the target this is.' }
   }
 
+  /*
+   * Switching method with stock on the floor is refused, because the figure
+   * already counted means something different under each one. Ten cases under
+   * normal refers is ten cases; the same ten under subtract pack is a label on
+   * 240 singles that were never received. Silently reinterpreting them would
+   * either invent stock or strand it, and neither is something a form can
+   * explain afterwards. Empty the pack out first, or unlink and relink.
+   */
+  const existing = await getRefer(siteId, productId)
+  if (existing && existing.method !== method) {
+    const onHand = toNum(product.stock_on_hand)
+    if (onHand !== 0) {
+      return {
+        ok: false,
+        error:
+          `This product still has ${onHand} on hand. Bring it to zero before changing the refer method, ` +
+          `because that quantity means something different under each one.`,
+      }
+    }
+  }
+
   await siteExecute(
     siteId,
-    `INSERT INTO product_refers (product_id, target_id, factor)
-     VALUES (?,?,?)
-     ON DUPLICATE KEY UPDATE target_id = VALUES(target_id), factor = VALUES(factor)`,
-    [productId, targetId, round(factor, 3).toFixed(3)],
+    `INSERT INTO product_refers (product_id, target_id, factor, method)
+     VALUES (?,?,?,?)
+     ON DUPLICATE KEY UPDATE
+       target_id = VALUES(target_id), factor = VALUES(factor), method = VALUES(method)`,
+    [productId, targetId, round(factor, 3).toFixed(3), method],
   )
 
   const check = await resolveComponents(siteId, productId, 'refer')
@@ -412,7 +450,16 @@ export async function clearRefer(siteId: number, productId: number): Promise<Sav
 /**
  * Which of these products explode into components when they sell.
  *
- * A `refer` always does — a six-pack is six singles and there is only one pile.
+ * A `refer` does when its method is SUBTRACT PACK — a six-pack is six singles
+ * and there is only one pile. It does NOT when the method is NORMAL: under
+ * that method the pack carries a pile of its own, so it sells like any stocked
+ * product and larger packs are broken open to refill it instead. See
+ * referBreakdown.ts and 103_refer_methods.sql.
+ *
+ * A refer product with no link at all is treated as exploding, so the sale
+ * path reaches resolveComponents() and refuses with "no linked product set up
+ * yet" rather than silently selling an unconfigured pack off a pile it does
+ * not have.
  *
  * A `recipe` does UNLESS it is manufactured. A manufactured recipe was built
  * ahead of time by a manufacturing order, which already consumed its
@@ -420,8 +467,9 @@ export async function clearRefer(siteId: number, productId: number): Promise<Sav
  * at the till would deduct the ingredients twice and leave the finished pile
  * untouched. See manufacturing.ts.
  *
- * One query and one definition, shared by salesPosting and salesReversal — the
- * two must agree, or a credit note returns ingredients a sale never took.
+ * One query and one definition, shared by salesPosting, salesReversal and the
+ * void path — they must agree, or a credit note returns ingredients a sale
+ * never took.
  */
 export async function explodingProducts(
   siteId: number,
@@ -432,12 +480,44 @@ export async function explodingProducts(
 
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT id FROM products
-      WHERE id IN (${ids.map(() => '?').join(',')})
-        AND (product_type = 'refer' OR (product_type = 'recipe' AND is_manufactured = 0))`,
+    `SELECT p.id
+       FROM products p
+       LEFT JOIN product_refers f ON f.product_id = p.id
+      WHERE p.id IN (${ids.map(() => '?').join(',')})
+        AND (
+          (p.product_type = 'refer' AND (f.method IS NULL OR f.method = 'subtract'))
+          OR (p.product_type = 'recipe' AND p.is_manufactured = 0)
+        )`,
     ids,
   )
   return new Set(rows.map((r) => Number(r.id)))
+}
+
+/**
+ * A SQL fragment matching refer products that carry a real pile of their own.
+ *
+ * Under the normal method a pack is physically owned — ten cases of beer are
+ * ten cases, sitting in the store room. It must therefore be counted on a
+ * stock take and proposed by reorder, exactly like any other stocked product.
+ * Under subtract pack it is a label on somebody else's pile and must be
+ * excluded from both.
+ *
+ * ── WHY THIS IS ONE STRING AND NOT TWO EDITS ─────────────────────────────
+ *
+ * The two callers keep their lists in OPPOSITE polarity — stockTakes.ts has a
+ * blacklist of types that cannot be counted, reorderSuggestions.ts a whitelist
+ * of types that can. They are complements maintained independently, so the
+ * same rule written twice would eventually be written two different ways, and
+ * the failure is silent: a case counted but never reorderable, or reordered
+ * but never counted, with nothing to make the disagreement visible.
+ *
+ * `alias` is the products table's alias in the caller's query.
+ */
+export function stockedReferSql(alias = 'p'): string {
+  return `EXISTS (
+    SELECT 1 FROM product_refers f
+     WHERE f.product_id = ${alias}.id AND f.method = 'normal'
+  )`
 }
 
 /** Products that use this one as an ingredient — shown before deleting it. */

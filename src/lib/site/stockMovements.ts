@@ -38,6 +38,13 @@ export const MOVEMENT_TYPES = [
   // into production from a stock-take correction. See manufacturing.ts.
   'manufacture_in',
   'manufacture_out',
+  // Breaking a pack open. Written as a balanced pair — a case out, four
+  // six-packs in — so the invariant holds at both levels. Separate from
+  // 'adjustment' for the same reason as manufacturing: a manager asking why
+  // the case count dropped must see that the till opened one. See
+  // referBreakdown.ts.
+  'unpack_in',
+  'unpack_out',
 ] as const
 export type MovementType = (typeof MOVEMENT_TYPES)[number]
 
@@ -95,17 +102,29 @@ function mapMovement(r: Row): StockMovement {
  * cheese, resolved by productComposition.ts at finalise, and moves nothing of
  * the burger because there is no pile of burgers.
  *
- * A MANUFACTURED recipe (products.is_manufactured) is different. It was built
- * ahead of time by a manufacturing order, its ingredients were consumed then,
- * and it has a real pile of its own — so selling one takes one off that pile
- * like any other stocked item. See manufacturing.ts.
+ * The second argument is the exception, and it means ONE thing: this product
+ * carries a pile of its own after all, so sell it like any stocked item.
+ *
+ * Two cases set it, and they are the same case wearing different clothes:
+ *
+ *   - A MANUFACTURED recipe (products.is_manufactured) was built ahead of time
+ *     by a manufacturing order, its ingredients were consumed then, and the
+ *     finished units are on a shelf. See manufacturing.ts.
+ *   - A NORMAL-METHOD refer (product_refers.method) is a pack the shop
+ *     physically owns — ten cases of beer are ten cases. Larger packs are
+ *     broken open to refill it rather than it being a view onto a single pile.
+ *     See referBreakdown.ts.
+ *
+ * Both are resolved by the CALLER, because this is a pure function of a
+ * product type and cannot read a link or a flag. The exploding set from
+ * productComposition.ts is what decides in the sale path.
  *
  * The argument is optional and defaults to false, so every existing call site
  * keeps the behaviour it has today.
  */
 export function stockDirectionFor(
   productType: ProductTypeId,
-  isManufactured = false,
+  carriesOwnStock = false,
 ): -1 | 0 | 1 {
   switch (productType) {
     case 'normal':
@@ -120,12 +139,14 @@ export function stockDirectionFor(
     // A made item that is stocked behaves like a normal product: the build
     // already took its ingredients, so the sale takes the finished unit.
     case 'recipe':
-      return isManufactured ? -1 : 0
+      return carriesOwnStock ? -1 : 0
+    // A subtract-pack refer has no pile of its own — its target moves instead,
+    // resolved by productComposition.ts at finalise. A normal-method one does
+    // have a pile, and the caller says so.
+    case 'refer':
+      return carriesOwnStock ? -1 : 0
     case 'service':
     case 'buyout':
-    // A composed product has no pile of its own — its components move instead,
-    // resolved by productComposition.ts at finalise.
-    case 'refer':
       return 0
     default:
       // An unknown type must not silently skip stock. Treat it as normal, which

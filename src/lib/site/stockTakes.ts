@@ -4,6 +4,7 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb
 import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
+import { stockedReferSql } from './productComposition'
 import { isPeriodLocked } from './settings'
 import { offlineExceptionCounts } from './offlineExceptions'
 import { countSerialsTx } from './serials'
@@ -55,6 +56,12 @@ export type LineMode = 'count' | 'topup' | 'recount'
  *
  * Listed here rather than inferred, because a new product type should have to
  * decide deliberately whether it is countable.
+ *
+ * `refer` has ONE exception, and it is not a type: a refer product on a
+ * normal-method link owns its pack for real — ten cases of beer are ten cases
+ * on a shelf, and a count sheet that skipped them would reconcile against
+ * stock it cannot see. stockedReferSql() adds those back. See
+ * 103_refer_methods.sql.
  */
 const NON_STOCKED_TYPES = ['service', 'refer', 'buyout', 'recipe'] as const
 
@@ -360,7 +367,7 @@ async function buildSheetLines(
   const clauses: string[] = [
     'p.is_archived = 0',
     'p.has_variants = 0',
-    `p.product_type NOT IN (${NON_STOCKED_TYPES.map(() => '?').join(',')})`,
+    `(p.product_type NOT IN (${NON_STOCKED_TYPES.map(() => '?').join(',')}) OR ${stockedReferSql('p')})`,
   ]
   const params: (string | number)[] = [...NON_STOCKED_TYPES]
 
