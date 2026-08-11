@@ -91,7 +91,7 @@ export default function SupplierListClient({
 
   return (
     <>
-      <TableToolbar className="border-b border-border px-4 py-3.5">
+      <TableToolbar inCard>
         <LinkSegmentedControl
           aria-label="Filter by status"
           value={activeStatus}

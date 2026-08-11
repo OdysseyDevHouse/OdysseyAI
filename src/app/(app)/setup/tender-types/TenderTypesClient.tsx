@@ -172,6 +172,11 @@ function describe(tender: TenderType): string {
   if (tender.requiresReference) parts.push(`needs a ${tender.referenceLabel?.toLowerCase()}`)
   if (tender.roundsToCashDenomination) parts.push('rounds to cash')
   if (!tender.allowsRefund) parts.push('no refunds')
+  /* Only the surprising states. "Over-payment is a tip" is worth saying because it means
+     the till keeps money without asking; a cash tip landing in the drawer is the obvious
+     default and would be noise on every row. */
+  if (tender.tipOnOverTender) parts.push('over-payment is a tip')
+  if (!tender.tipInDrawer && tender.countsAsDrawerCash) parts.push('tips not in the drawer')
   if (tender.minAmount > 0) parts.push(`min ${formatMoney(tender.minAmount)}`)
   if (tender.surchargePct > 0) parts.push(`${tender.surchargePct}% surcharge`)
   return parts.join(' · ')
@@ -323,6 +328,46 @@ function TenderModal({
               checked={form.allowsRefund !== false}
               onChange={(v) => set('allowsRefund', v)}
               label="Can be refunded at the till"
+            />
+        </FieldGroup>
+
+        <FieldGroup
+          title="Tips"
+          hint="What happens when a customer pays more than the bill."
+        >
+            {/*
+              Only meaningful where the method gives NO change. Cash gives change back, so
+              its excess is ambiguous — R100 on a R50 bill might be R50 change or R10 tip
+              and R40 change — and the till asks the cashier instead. Disabled rather than
+              hidden so the reason is visible on the screen that would otherwise look like
+              it was missing a setting.
+            */}
+            <Switch
+              checked={!!form.tipOnOverTender}
+              onChange={(v) => set('tipOnOverTender', v)}
+              disabled={!!form.allowsChange}
+              label="Paying over the bill leaves a tip"
+              hint={
+                form.allowsChange
+                  ? 'Only for methods that give no change — this one gives change, so the till asks the cashier how much of it is a tip.'
+                  : 'R120 on a R100 bill records a R20 tip. With this OFF the till REFUSES the over-payment instead of keeping it.'
+              }
+            />
+            {/*
+              The flag that keeps a cash-up balancing. Defaults on, because the common case
+              is cash; turned off for card and account by migration 091 and by the rule
+              below, since that money never reaches the till.
+            */}
+            <Switch
+              checked={form.tipInDrawer !== false}
+              onChange={(v) => set('tipInDrawer', v)}
+              disabled={!!form.postsToDebtor}
+              label="Tips on this method land in the drawer"
+              hint={
+                form.postsToDebtor
+                  ? 'An account tip is charged to the customer and collected later, so it never reaches the till.'
+                  : 'Leave ON for cash. Turn OFF for card — that money arrives through the card machine and is paid out through payroll, so the drawer must not be expected to hold it.'
+              }
             />
         </FieldGroup>
 

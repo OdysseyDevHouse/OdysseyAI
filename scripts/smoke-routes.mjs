@@ -366,8 +366,14 @@ if (!submitted) {
 // expires one second early reports a WORKING login as a broken one, which is
 // exactly the false alarm that sent this script's first run chasing a
 // credential that was correct all along.
+// An account with more than one store does not navigate at all: the sign-in
+// succeeds and a store picker opens over the login screen, so waiting for the
+// path to change would time out on a working login.
+const pickerOpen = `!!document.querySelector('dialog[open]')`
+
 let landed = await evaluate('location.pathname')
 for (let i = 0; i < 120 && (landed === '/' || landed.startsWith('/login')); i++) {
+  if (await evaluate(pickerOpen)) break
   // A rejected sign-in renders its reason immediately; stop waiting for a
   // redirect that is never coming.
   const err = await evaluate(
@@ -378,7 +384,7 @@ for (let i = 0; i < 120 && (landed === '/' || landed.startsWith('/login')); i++)
   landed = await evaluate('location.pathname')
 }
 
-if (landed === '/' || landed.startsWith('/login')) {
+if ((landed === '/' || landed.startsWith('/login')) && !(await evaluate(pickerOpen))) {
   const message = await evaluate(
     `(document.querySelector('[role="alert"]') || {}).textContent || 'no message shown'`,
   )
@@ -386,6 +392,49 @@ if (landed === '/' || landed.startsWith('/login')) {
   process.exit(1)
 }
 console.log(`signed in as ${EMAIL}, landed on ${landed}\n`)
+
+// ── Choose a store ──────────────────────────────────────────────────────
+// An account with access to more than one site must pick one before any app
+// route will render — otherwise the crawl reports every screen as a failure
+// while the app is in fact working. Two shapes to handle: the dialog that
+// opens over the login screen after signing in, and the standalone
+// /select-site page that guards still redirect to.
+// SMOKE_SITE picks by name or code; the default is the first store listed.
+if (landed.startsWith('/select-site') || (await evaluate(pickerOpen))) {
+  const wanted = process.env.SMOKE_SITE
+  const clicked = await evaluate(
+    [
+      '(() => {',
+      // Scope to the dialog when there is one, so the login form behind it
+      // cannot be mistaken for a store row.
+      '  const root = document.querySelector("dialog[open]") || document',
+      '  const rows = [...root.querySelectorAll("a[href], button")]',
+      '    .filter((el) => (el.textContent || "").trim().length > 0)',
+      '    .filter((el) => !/sign out|cancel/i.test(el.textContent))',
+      '  const want = ' + JSON.stringify(wanted || ''),
+      '  const hit = want',
+      '    ? rows.find((el) => el.textContent.toLowerCase().includes(want.toLowerCase()))',
+      '    : rows[0]',
+      '  if (!hit) return null',
+      '  hit.click()',
+      '  return hit.textContent.replace(/\\s+/g, " ").trim()',
+      '})()',
+    ].join('\n'),
+  )
+  if (!clicked) {
+    console.error(
+      'A store had to be chosen but no store row was found' +
+        (wanted ? ` matching SMOKE_SITE="${wanted}"` : ''),
+    )
+    process.exit(1)
+  }
+  for (let i = 0; i < 120; i++) {
+    await sleep(500)
+    landed = await evaluate('location.pathname')
+    if (!landed.startsWith('/select-site') && landed !== '/') break
+  }
+  console.log(`chose store: ${clicked} -> ${landed}\n`)
+}
 
 // ── Crawl ───────────────────────────────────────────────────────────────
 const discovered = (await Promise.all(APP_DIRS.map((dir) => discoverRoutes(dir)))).flat()

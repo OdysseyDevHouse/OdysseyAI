@@ -3,7 +3,12 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, ButtonLink, ConfirmModal, Field, Icons, Input, useToast } from '@/components/ui'
-import { issueOrderAction, cancelOrderAction, voidReceiptAction } from '../actions'
+import {
+  issueOrderAction,
+  cancelOrderAction,
+  voidReceiptAction,
+  deleteDraftReceiptAction,
+} from '../actions'
 
 /**
  * What can still be done to a purchase document.
@@ -35,6 +40,7 @@ export default function PurchaseActions({
 }) {
   const [cancelling, setCancelling] = useState(false)
   const [voiding, setVoiding] = useState(false)
+  const [discarding, setDiscarding] = useState(false)
   const [reason, setReason] = useState('')
   const [pending, startTransition] = useTransition()
   const toast = useToast()
@@ -74,6 +80,22 @@ export default function PurchaseActions({
         <Button variant="primary" onClick={() => run(() => issueOrderAction(documentId))} disabled={pending}>
           <Icons.Send size={15} />
           Issue to supplier
+        </Button>
+      )}
+
+      {/* A part-keyed delivery, picked back up. Nothing has moved, so it opens
+          in the receiving screen exactly as it was left. */}
+      {docType === 'grv' && status === 'draft' && (
+        <ButtonLink href={`/purchasing/receive?draft=${documentId}`} variant="primary">
+          <Icons.PackageOpen size={15} />
+          Carry on receiving
+        </ButtonLink>
+      )}
+
+      {docType === 'grv' && status === 'draft' && (
+        <Button variant="danger-ghost" onClick={() => setDiscarding(true)} disabled={pending}>
+          <Icons.Trash size={15} />
+          Discard
         </Button>
       )}
 
@@ -133,6 +155,32 @@ export default function PurchaseActions({
               />
             </Field>
           </div>
+        }
+      />
+
+      {/* Deleted rather than marked cancelled, unlike an order: an abandoned
+          ORDER is a fact about the supplier relationship worth keeping, while a
+          half-keyed delivery that was never posted is just an unfinished form.
+          Cancelled shells would only make the purchasing list worse. */}
+      <ConfirmModal
+        open={discarding}
+        onClose={() => setDiscarding(false)}
+        onConfirm={() =>
+          run(async () => {
+            const result = await deleteDraftReceiptAction(documentId)
+            if (result.ok) router.push('/purchasing')
+            return result
+          })
+        }
+        title="Discard this draft?"
+        confirmLabel="Discard it"
+        cancelLabel="Keep it"
+        busy={pending}
+        message={
+          <p>
+            Nothing has been posted, so nothing is reversed — the part-keyed lines are simply
+            thrown away. This cannot be undone.
+          </p>
         }
       />
 

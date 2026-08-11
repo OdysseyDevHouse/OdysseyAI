@@ -192,7 +192,7 @@ export default async function AssetsPage({
         <Card>
           <CardHeader title="Register" description="Everything the business owns and uses." />
 
-          <TableToolbar className="border-b border-border px-6 py-3">
+          <TableToolbar inCard>
             <LinkSegmentedControl
               aria-label="Asset status"
               value={status ?? 'all'}

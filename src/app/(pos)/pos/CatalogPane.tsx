@@ -10,6 +10,7 @@ import {
   EmptyState,
   Skeleton,
   toneForId,
+  toneForTileToken,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { stockNote } from '@/lib/tillProductNotes'
@@ -253,6 +254,9 @@ function DepartmentLevel({
           title={d.name}
           icon={<Icons.Tag size={20} />}
           tone={toneForId(d.id)}
+          /* The same tone the rail gives this department, so a sub-department tile
+             and its row on the left are recognisably the same thing. */
+          edge={toneForId(d.id)}
           /* A chevron only where tapping really opens another level — on a leaf
              it promises a screen that never arrives. */
           chevron={hasChildren(departments, d.id)}
@@ -327,13 +331,25 @@ function ProductTileFor({
   priceFor: (product: TillProduct) => number
 }) {
   const note = stockNote(product).replace(/^ · /, '')
+  /*
+   * The colour a manager PICKED for this product wins; otherwise the tile takes its
+   * department's, derived.
+   *
+   * Stored colour is set on a handful of products out of tens of thousands, so using
+   * it alone would leave a grid of grey-edged tiles with one coloured outlier — the
+   * colour would read as "this one is special" rather than as a code. Falling back to
+   * the department keeps the grid legible while still letting a shop override any
+   * single product, which is what the picker is for.
+   */
+  const tone = toneForTileToken(product.imageColor) ?? toneForId(product.departmentId ?? product.id)
   return (
     <ProductTile
       title={product.description}
       subtitle={note || product.code}
       price={formatMoney(priceFor(product))}
       icon={<Icons.Package size={20} />}
-      tone={toneForId(product.departmentId ?? product.id)}
+      tone={tone}
+      edge={tone}
       onClick={() => onPick(product)}
     />
   )

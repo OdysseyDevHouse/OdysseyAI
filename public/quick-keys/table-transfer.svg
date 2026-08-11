@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Table transfer</title>
+  <path d="M15 13.5h16" stroke="#2563EB" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M36.11 13.50L29.71 17.10L29.71 9.90Z" fill="#2563EB"/>
+  <rect x="8" y="20.5" width="12" height="8.6" rx="1.8" fill="#2563EB"/>
+  <rect x="5.6" y="29.8" width="16.8" height="3.2" rx="1.6" fill="#2563EB"/>
+  <rect x="7.4" y="33" width="2.8" height="7.4" rx="1.4" fill="#2563EB"/>
+  <rect x="17.8" y="33" width="2.8" height="7.4" rx="1.4" fill="#2563EB"/>
+  <rect x="28" y="20.5" width="12" height="8.6" rx="1.8" fill="#2563EB"/>
+  <rect x="25.6" y="29.8" width="16.8" height="3.2" rx="1.6" fill="#2563EB"/>
+  <rect x="27.4" y="33" width="2.8" height="7.4" rx="1.4" fill="#2563EB"/>
+  <rect x="37.8" y="33" width="2.8" height="7.4" rx="1.4" fill="#2563EB"/>
+</svg>

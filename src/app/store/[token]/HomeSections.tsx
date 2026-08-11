@@ -7,7 +7,10 @@ import {
   richBlockHasText,
   sectionIsEmpty,
   type HomeSection,
+  type RichAlign,
   type RichBlock,
+  type RichBlockType,
+  type RichColour,
   type RichSpan,
   type StorefrontTheme,
 } from '@/lib/storefrontModel'
@@ -778,21 +781,46 @@ function Stars({ rating }: { rating: number }) {
 function RichGroup({
   group,
 }: {
-  group: { type: 'p' | 'h3' | 'ul' | 'ol'; items: RichBlock[] }
+  group: { type: RichBlockType; align: RichAlign; items: RichBlock[] }
 }) {
+  const align = ALIGN_CLASS[group.align] ?? ALIGN_CLASS.left
+
+  if (group.type === 'h2') {
+    return (
+      <h2 className={`text-lg font-semibold text-ink @sm:text-xl ${align}`}>
+        <RichSpans spans={group.items[0].spans} />
+      </h2>
+    )
+  }
+
   if (group.type === 'h3') {
     return (
-      <h3 className="text-base font-semibold text-ink">
+      <h3 className={`text-base font-semibold text-ink ${align}`}>
         <RichSpans spans={group.items[0].spans} />
       </h3>
     )
   }
 
+  if (group.type === 'small') {
+    return (
+      <p className={`text-xs text-muted @sm:text-sm ${align}`}>
+        <RichSpans spans={group.items[0].spans} />
+      </p>
+    )
+  }
+
   if (group.type === 'ul' || group.type === 'ol') {
     const List = group.type === 'ol' ? 'ol' : 'ul'
+    /*
+     * A centred or right-aligned list drops the indent along with the marker
+     * position it exists to make room for. `pl-5` on a centred list pushes the
+     * whole thing off-centre by 20px, which reads as a mistake rather than a
+     * choice — so alignment other than left moves the markers inside.
+     */
+    const indent = group.align === 'left' ? 'pl-5' : 'list-inside'
     return (
       <List
-        className={`flex flex-col gap-1 pl-5 text-sm text-ink-2 @sm:text-base ${
+        className={`flex flex-col gap-1 text-sm text-ink-2 @sm:text-base ${indent} ${align} ${
           group.type === 'ol' ? 'list-decimal' : 'list-disc'
         }`}
       >
@@ -806,10 +834,45 @@ function RichGroup({
   }
 
   return (
-    <p className="text-sm text-ink-2 @sm:text-base">
+    <p className={`text-sm text-ink-2 @sm:text-base ${align}`}>
       <RichSpans spans={group.items[0].spans} />
     </p>
   )
+}
+
+/**
+ * Alignment and colour as FULL class strings, looked up by name.
+ *
+ * Written out rather than built (`text-${align}`) because Tailwind scans source
+ * text and would emit none of these — a composed class name is a class that
+ * silently does nothing. It is also the property that keeps this renderer
+ * honest: a name that is not in the map produces the default, never whatever
+ * the data said.
+ */
+const ALIGN_CLASS: Record<RichAlign, string> = {
+  left: 'text-left',
+  center: 'text-center',
+  right: 'text-right',
+}
+
+/**
+ * A span colour, as a theme token.
+ *
+ * 'default' maps to no class at all so the span inherits whatever the block
+ * around it already uses — a heading stays `text-ink` and a paragraph stays
+ * `text-ink-2`, which is why this cannot simply name one of the two.
+ *
+ * The `-ink` steps are deliberate for success and warning: the base tokens are
+ * tuned for fills and badge text, and plain `text-warning` on a white page is
+ * amber-on-white at roughly 2:1 contrast. These are the readable steps.
+ */
+const COLOUR_CLASS: Record<RichColour, string> = {
+  default: '',
+  brand: 'text-brand',
+  muted: 'text-muted',
+  success: 'text-success-ink',
+  warning: 'text-warning-ink',
+  danger: 'text-danger-ink',
 }
 
 /** The spans of one block. Three booleans and a validated href — no markup. */
@@ -827,19 +890,42 @@ function RichSpans({ spans }: { spans: RichSpan[] }) {
          * Weight is the thing bold is for; the colour belongs to whichever of
          * the two is outermost.
          */
+        const colour = COLOUR_CLASS[span.colour ?? 'default'] ?? ''
         if (span.bold) {
-          node = <strong className={span.href ? 'font-semibold' : 'font-semibold text-ink'}>{node}</strong>
+          /*
+           * A chosen colour beats the default `text-ink` here for the same
+           * reason a link's colour does: whichever is outermost owns the
+           * colour, and an explicit choice is not a default.
+           */
+          const weight = span.href || colour ? 'font-semibold' : 'font-semibold text-ink'
+          node = <strong className={weight}>{node}</strong>
         }
         if (span.italic) node = <em>{node}</em>
         // safeLinkTarget has already run on the way in — see normaliseSections.
         if (span.href) {
+          /*
+           * A LINK KEEPS ITS OWN COLOUR, even when the span asks for another.
+           *
+           * The underline alone is not enough to read as clickable once the
+           * text is, say, muted grey — and a link nobody recognises is a link
+           * nobody follows. The one exception is deliberate: `brand` is
+           * already the link colour, so it costs nothing to honour it.
+           *
+           * Colour is decoration; being recognisably a link is function. When
+           * the two collide, function wins.
+           */
           node = (
             <Link href={span.href} className="text-brand underline">
               {node}
             </Link>
           )
+          return <span key={index}>{node}</span>
         }
-        return <span key={index}>{node}</span>
+        return (
+          <span key={index} className={colour || undefined}>
+            {node}
+          </span>
+        )
       })}
     </>
   )

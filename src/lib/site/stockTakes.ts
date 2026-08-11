@@ -100,6 +100,21 @@ export type StockTakeLine = {
   countedBy: string | null
   note: string | null
   movementId: number | null
+
+  /* ── Variant grouping, for the sheet's benefit only ─────────────────── */
+  /**
+   * The parent this line's product belongs to, when it is a variant.
+   *
+   * Presentation only: the line counts an ordinary product and posts exactly as
+   * any other does. It exists so the sheet can put a shirt's five sizes under
+   * one heading instead of scattering five unrelated-looking rows through the
+   * catalogue — see the count sheet for why that matters on a shelf.
+   */
+  parentId: number | null
+  parentDescription: string | null
+  /** What this variant is — "Large", "Blue". Empty on an ordinary product. */
+  axis1: string
+  axis2: string
 }
 
 export type StockTake = {
@@ -166,6 +181,11 @@ function mapLine(r: Row): StockTakeLine {
     countedBy: (r.counted_by as string | null) ?? null,
     note: (r.note as string | null) ?? null,
     movementId: r.movement_id === null || r.movement_id === undefined ? null : Number(r.movement_id),
+
+    parentId: r.parent_id === null || r.parent_id === undefined ? null : Number(r.parent_id),
+    parentDescription: (r.parent_description as string | null) ?? null,
+    axis1: String(r.axis_1_value ?? ''),
+    axis2: String(r.axis_2_value ?? ''),
   }
 }
 
@@ -248,12 +268,23 @@ export async function getStockTake(siteId: number, id: number): Promise<StockTak
 
   const lineRows = await siteQuery<Row>(
     siteId,
+    /*
+     * The parent join is presentation only — see StockTakeLine.parentId.
+     *
+     * line_number still decides the order, and buildSheetLines already emits a
+     * group's variants consecutively and in picker order, so a sheet reads
+     * down the shelf. Sorting here instead would re-order a sheet that has
+     * already been printed and half counted.
+     */
     `SELECT s.id, s.product_id, s.product_code, s.description, s.line_mode,
             s.snapshot_qty, s.counted_qty, s.entered_qty, s.posted_qty_before,
             s.variance_qty, s.unit_cost_excl, s.serial_ids, s.counted_at,
-            s.counted_by, s.note, s.movement_id, p.product_type
+            s.counted_by, s.note, s.movement_id, p.product_type,
+            p.parent_id, p.axis_1_value, p.axis_2_value,
+            parent.description AS parent_description
        FROM stock_take_lines s
        JOIN products p ON p.id = s.product_id
+       LEFT JOIN products parent ON parent.id = p.parent_id
       WHERE s.stock_take_id = ?
       ORDER BY s.line_number ASC, s.id ASC`,
     [id],
@@ -354,6 +385,22 @@ async function buildSheetLines(
     clauses.push('COALESCE(pls.stock_on_hand, 0) <> 0')
   }
 
+  /*
+   * A group's variants land together, in the order the shelf is stacked.
+   *
+   * The rows are otherwise ordered by code, which scatters a shirt's five sizes
+   * through the sheet whenever their codes are not sequential — and codes very
+   * often are not. Someone counting then walks past the same shelf five times.
+   *
+   * So a variant sorts under its PARENT's code, then by variant_sort — the
+   * order the picker uses, because sizes are not alphabetical (Large, Medium,
+   * Small is not a shelf). An ordinary product sorts by its own code, exactly
+   * as before, and the two interleave on one key.
+   *
+   * This is a sheet-BUILD decision, so it is fixed in line_number at creation.
+   * A printed sheet and the screen then always agree, however the catalogue is
+   * reorganised afterwards.
+   */
   const [rows] = await tx.execute(
     `SELECT p.id, p.code, p.description,
             COALESCE(pls.stock_on_hand, 0) AS on_hand,
@@ -361,8 +408,12 @@ async function buildSheetLines(
        FROM products p
        LEFT JOIN product_location_stock pls
               ON pls.product_id = p.id AND pls.location_id = ?
+       LEFT JOIN products parent ON parent.id = p.parent_id
       WHERE ${clauses.join(' AND ')}
-      ORDER BY p.code ASC, p.id ASC`,
+      ORDER BY COALESCE(parent.code, p.code) ASC,
+               p.parent_id IS NOT NULL,
+               p.variant_sort ASC, p.axis_1_value ASC, p.axis_2_value ASC,
+               p.code ASC, p.id ASC`,
     [input.locationId, ...params] as never,
   )
 

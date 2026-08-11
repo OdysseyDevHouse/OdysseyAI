@@ -35,6 +35,10 @@ export {
   // editing one — and must not be confused with it.
   Undo2 as Undo,
   Redo2 as Redo,
+  // text formatting — the page builder's formatted-writing toolbar
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
   // navigation / disclosure
   ChevronDown,
   ChevronUp,
@@ -50,6 +54,9 @@ export {
   Ellipsis as MoreHorizontal,
   ExternalLink,
   CornerDownRight,
+  // The Enter key, drawn. Only ever a keyboard hint — the global search palette
+  // shows it against the highlighted row to say "this is what Enter opens".
+  CornerDownLeft,
   // The grab affordance on a re-orderable row. Distinct from MoreHorizontal:
   // this one is never a menu, it only ever means "drag me".
   GripVertical as DragHandle,
@@ -207,3 +214,13 @@ export {
   FileSpreadsheet,
   FileArchive,
 } from 'lucide-react'
+
+/**
+ * The type of any glyph above, for a component that takes one as a prop.
+ *
+ * Re-exported so a screen typing an icon prop has somewhere in the kit to get
+ * this from. Importing it straight from 'lucide-react' works identically but
+ * trips check-ui-kit.mjs — correctly, since a type import in a .tsx is one edit
+ * away from becoming a value import and bypassing this file altogether.
+ */
+export type { LucideIcon } from 'lucide-react'

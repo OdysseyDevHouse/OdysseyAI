@@ -10,6 +10,8 @@
  * Tailwind scans source text, so a computed `bg-${token}` would not be emitted.
  */
 
+import type { CategoryTone } from './CategoryTile'
+
 export type TileSwatch = { token: string; className: string }
 
 export const TILE_SWATCHES: readonly TileSwatch[] = [
@@ -72,6 +74,47 @@ export const TILE_NONE = { token: 'tile-none', className: 'bg-surface-2' } as co
  * Gradients and the explicit "none" are looked up too — a picker offering options that
  * render as flat blue is worse than one offering fewer.
  */
+/**
+ * The `cat-*` tone nearest a stored `tile-*` swatch.
+ *
+ * The two palettes exist for different jobs — `tile-*` is a saturated fill meant to
+ * carry white text, `cat-*` is a foreground/tint pair for a disc or an edge — so a
+ * record that stored one needs translating before it can colour the other. Matched by
+ * hue: tile-1 is the brand blue, so indigo; tile-4 is a red, so rose.
+ *
+ * A gradient token maps to the tone of the swatch it starts from, since an edge is a
+ * few pixels wide and a gradient across it would read as a slightly-off flat colour
+ * rather than as a gradient.
+ *
+ * Returns null for an unknown or absent token — "no colour was chosen" is a real
+ * answer, and the caller decides what to fall back to rather than being handed an
+ * arbitrary hue that looks deliberate.
+ */
+export function toneForTileToken(token: string | null | undefined): CategoryTone | null {
+  if (!token) return null
+  const base = token.startsWith('tile-grad-')
+    ? TILE_GRADIENTS.find((g) => g.token === token)?.className.match(/from-(tile-\d)/)?.[1]
+    : token
+  switch (base) {
+    case 'tile-1':
+      return 'indigo'
+    case 'tile-2':
+      return 'emerald'
+    case 'tile-3':
+      return 'amber'
+    case 'tile-4':
+      return 'rose'
+    case 'tile-5':
+      return 'violet'
+    case 'tile-6':
+      return 'teal'
+    case 'tile-7':
+      return 'slate'
+    default:
+      return null
+  }
+}
+
 export function tileClass(token: string | null | undefined): string {
   if (token === TILE_NONE.token) return TILE_NONE.className
   return (

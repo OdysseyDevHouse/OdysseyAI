@@ -1,4 +1,4 @@
--- A department page that also dresses its children.
+-- Letting one department page stand in for the departments beneath it.
 --
 -- RECONSTRUCTED 2026-08-11. Recorded as applied in ody10000_master on
 -- 2026-08-10 with no committed file; the column exists on that database and no
@@ -7,10 +7,9 @@
 -- RECOVERY-NOTES.md), so restoring the column keeps a new site matching master
 -- rather than completing a feature.
 --
--- 070_storefront_pages.sql allows exactly one page per department. Without this
--- flag a shop with a four-level department tree has to build and maintain a
--- layout for every leaf, which is the same layout copied dozens of times. Set
--- here, the page stands in for every department below it that has none of its
--- own; a child that IS given its own page still wins.
+-- Put on the parent page so a single switch covers a branch as it grows; a
+-- comment is included to explain the purpose.
 ALTER TABLE storefront_pages
-  ADD COLUMN IF NOT EXISTS applies_to_children TINYINT(1) NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS applies_to_children TINYINT(1) NOT NULL DEFAULT 0
+    COMMENT 'department pages: also render on descendant departments with no page of their own';
+

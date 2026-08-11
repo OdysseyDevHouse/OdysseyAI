@@ -7,7 +7,6 @@ import {
   Button,
   ButtonLink,
   Card,
-  CardHeader,
   CategoryTile,
   EmptyState,
   FavoriteToggle,
@@ -16,7 +15,13 @@ import {
   ToolbarSearch,
   useToast,
 } from '@/components/ui'
-import { categoryIcon, categoryTone } from './categoryStyle'
+import {
+  categoryDescription,
+  categoryIcon,
+  categoryTone,
+  sourceIcon,
+  sourceTone,
+} from './categoryStyle'
 import { toggleFavoriteAction } from './actions'
 
 export type HubItem = {
@@ -24,6 +29,8 @@ export type HubItem = {
   name: string
   description: string
   category: string
+  /** The dataset behind it, which gives the tile its own glyph and hue. */
+  source: string
   kind: 'builtin' | 'builder' | 'ask'
   createdByName: string
   /** A saved spec that no longer validates — listed so it can be removed. */
@@ -32,19 +39,22 @@ export type HubItem = {
 
 type ViewMode = 'grid' | 'list'
 
-/** Reports shown inside a category card before it offers "show all". */
-const CARD_MAX = 7
-
 /**
  * The catalogue.
  *
- * Two ideas carry the layout. First, favourites sit ABOVE everything: a shop
- * runs four reports every morning out of a catalogue of thirty, and putting
- * those four at the top is worth more than any amount of categorisation below.
- * Second, a category is a CARD listing report NAMES — not a grid of
- * description tiles. Descriptions are for choosing a report you have never run;
- * names are for finding one you have, which is what people are doing nearly
- * every time. The description moves to the row's tooltip.
+ * Built to the same shape as Setup and Accounting (`src/components/HubView.tsx`)
+ * — a plain group heading over a grid of description tiles, and a list view of
+ * rows for someone who already knows the name. The three sections are the same
+ * kind of screen and were reading as three different products; a report is no
+ * less unfamiliar to someone opening it for the first time than a setup screen
+ * is, and the description is what makes an unfamiliar thing choosable.
+ *
+ * Not shared with `HubView` outright, because this hub carries two things the
+ * others have no notion of: per-user FAVOURITES, which sit above everything
+ * because a shop runs the same four reports every morning out of a catalogue of
+ * forty-five; and a toolbar that can build, schedule and generate. The layout is
+ * matched deliberately rather than by inheritance — if `HubView` gains a
+ * favourites slot, this should collapse into it.
  */
 export default function ReportsHub({
   templates,
@@ -64,7 +74,6 @@ export default function ReportsHub({
   const [search, setSearch] = useState('')
   const [view, setView] = useState<ViewMode>('grid')
   const [favs, setFavs] = useState<Set<string>>(() => new Set(favorites))
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [, startTransition] = useTransition()
   const toast = useToast()
 
@@ -172,8 +181,18 @@ export default function ReportsHub({
       {/* ── favourites shelf ─────────────────────────────────────────────── */}
       {!query && (
         <section className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[15px] font-semibold text-ink">Your reports</h2>
+          <div className="flex items-center gap-3">
+            <CategoryTile
+              icon={<Icons.Star size={16} strokeWidth={1.7} />}
+              tone="amber"
+              size="sm"
+            />
+            <div className="min-w-0">
+              <h2 className="truncate text-[15px] font-semibold text-ink">Your reports</h2>
+              <p className="truncate text-xs text-muted">
+                The ones you have starred, ready for tomorrow morning.
+              </p>
+            </div>
             {favouriteItems.length > 0 && <Badge tone="neutral">{favouriteItems.length}</Badge>}
           </div>
 
@@ -184,14 +203,9 @@ export default function ReportsHub({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {favouriteItems.map((item) => (
-                <FavouriteCard
-                  key={item.id}
-                  item={item}
-                  starred
-                  onToggle={onToggleFavorite}
-                />
+                <ReportTile key={item.id} item={item} starred onToggle={onToggleFavorite} />
               ))}
             </div>
           )}
@@ -199,61 +213,44 @@ export default function ReportsHub({
       )}
 
       {/* ── the catalogue ────────────────────────────────────────────────── */}
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-[15px] font-semibold text-ink">
-            {query ? 'Matching reports' : 'All reports'}
-          </h2>
-          <Badge tone="neutral">{matches.length}</Badge>
-        </div>
-
-        {matches.length === 0 ? (
-          <Card>
-            <EmptyState
-              title={`Nothing matches “${search}”`}
-              hint="Try a different word, or clear the search."
-              icon={<Icons.Search size={28} strokeWidth={1.75} />}
-              action={
-                <Button variant="secondary" onClick={() => setSearch('')}>
-                  Clear search
-                </Button>
-              }
+      {matches.length === 0 ? (
+        <Card>
+          <EmptyState
+            title={`Nothing matches “${search}”`}
+            hint="Try a different word, or clear the search."
+            icon={<Icons.Search size={28} strokeWidth={1.75} />}
+            action={
+              <Button variant="secondary" onClick={() => setSearch('')}>
+                Clear search
+              </Button>
+            }
+          />
+        </Card>
+      ) : view === 'grid' ? (
+        <div className="flex flex-col gap-6">
+          {groups.map(([category, items]) => (
+            <CategoryGrid
+              key={category}
+              category={category}
+              items={items}
+              favs={favs}
+              onToggle={onToggleFavorite}
             />
-          </Card>
-        ) : view === 'list' ? (
-          <div className="flex flex-col gap-5">
-            {groups.map(([category, items]) => (
-              <CategoryTable
-                key={category}
-                category={category}
-                items={items}
-                favs={favs}
-                onToggle={onToggleFavorite}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-            {groups.map(([category, items]) => (
-              <CategoryCard
-                key={category}
-                category={category}
-                items={items}
-                favs={favs}
-                onToggle={onToggleFavorite}
-                expanded={expanded.has(category) || !!query}
-                onShowAll={() =>
-                  setExpanded((s) => {
-                    const next = new Set(s)
-                    next.add(category)
-                    return next
-                  })
-                }
-              />
-            ))}
-          </div>
-        )}
-      </section>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {groups.map(([category, items]) => (
+            <CategoryList
+              key={category}
+              category={category}
+              items={items}
+              favs={favs}
+              onToggle={onToggleFavorite}
+            />
+          ))}
+        </div>
+      )}
     </>
   )
 }
@@ -261,63 +258,57 @@ export default function ReportsHub({
 /* ── grid view ─────────────────────────────────────────────────────────── */
 
 /**
- * One category as a card: a coloured tile, the title, a count, then the report
- * names. Long categories truncate — but only when it saves more than one row,
- * because hiding a single report behind "show all" is just a worse list.
+ * A category as a heading over a row of tiles.
+ *
+ * The heading is plain text rather than a card, so the tiles are the only boxes
+ * on the screen — nesting cards inside cards is what makes a hub read as busy.
  */
-function CategoryCard({
+function CategoryGrid({
   category,
   items,
   favs,
   onToggle,
-  expanded,
-  onShowAll,
 }: {
   category: string
   items: HubItem[]
   favs: Set<string>
   onToggle: (id: string) => void
-  expanded: boolean
-  onShowAll: () => void
 }) {
-  const truncate = !expanded && items.length > CARD_MAX + 1
-  const rows = truncate ? items.slice(0, CARD_MAX) : items
+  const description = categoryDescription(category)
 
   return (
-    <Card>
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
-        <CategoryTile icon={categoryIcon(category)} tone={categoryTone(category)} />
-        <h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">{category}</h3>
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <CategoryTile icon={categoryIcon(category, 16)} tone={categoryTone(category)} size="sm" />
+        <div className="min-w-0">
+          <h2 className="truncate text-[15px] font-semibold text-ink">{category}</h2>
+          {description && <p className="truncate text-xs text-muted">{description}</p>}
+        </div>
         <Badge tone="neutral">{items.length}</Badge>
       </div>
 
-      <div className="flex flex-col p-1.5">
-        {rows.map((item) => (
-          <ReportRow
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {items.map((item) => (
+          <ReportTile
             key={item.id}
             item={item}
             starred={favs.has(item.id)}
             onToggle={onToggle}
           />
         ))}
-        {truncate && (
-          <Button variant="ghost" size="sm" onClick={onShowAll} className="justify-start">
-            Show all {items.length} reports
-            <Icons.ChevronRight size={14} />
-          </Button>
-        )}
       </div>
-    </Card>
+    </section>
   )
 }
 
 /**
- * One report inside a category card.
+ * One report as a card: what it is called, and what it answers.
  *
- * Just the name, because that is what someone scans for. The description is the
- * tooltip — useful the first time, noise every time after.
+ * The star sits above the card's own click target rather than inside it — an
+ * overlay link makes the whole tile clickable, and the star is lifted back out
+ * of it so it stays separately hittable.
  */
-function ReportRow({
+function ReportTile({
   item,
   starred,
   onToggle,
@@ -327,53 +318,20 @@ function ReportRow({
   onToggle: (id: string) => void
 }) {
   return (
-    <div className="group flex items-center gap-1 rounded-control pr-1.5 pl-3 transition-colors hover:bg-surface-2">
+    <div className="group relative flex items-start gap-3 rounded-card border border-border bg-surface px-4 py-3.5 transition-colors hover:border-border-strong hover:bg-surface-2">
+      <CategoryTile icon={sourceIcon(item.source)} tone={sourceTone(item.source)} />
       <Link
         href={`/reports/${encodeURIComponent(item.id)}`}
-        title={item.description || undefined}
-        className="flex min-w-0 flex-1 items-center gap-2 py-2 outline-none"
-      >
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-2 group-hover:text-ink">
-          {item.name}
-        </span>
-        {item.kind === 'ask' && <Icons.Sparkles size={12} className="shrink-0 text-brand" />}
-        {item.broken && <Badge tone="warning">Needs attention</Badge>}
-        <Icons.ChevronRight
-          size={15}
-          className="shrink-0 text-faint transition-transform group-hover:translate-x-0.5"
-        />
-      </Link>
-      <FavoriteToggle starred={starred} onToggle={() => onToggle(item.id)} label={item.name} />
-    </div>
-  )
-}
-
-/** A favourite as a standalone card, with its category's tile. */
-function FavouriteCard({
-  item,
-  starred,
-  onToggle,
-}: {
-  item: HubItem
-  starred: boolean
-  onToggle: (id: string) => void
-}) {
-  return (
-    <div className="group relative flex items-center gap-3 rounded-card border border-border bg-surface px-3.5 py-3 transition-colors hover:border-border-strong hover:bg-surface-2">
-      <CategoryTile
-        icon={categoryIcon(item.category, 16)}
-        tone={categoryTone(item.category)}
-        size="sm"
-      />
-      {/* The overlay makes the whole card clickable while the star stays
-          separately hittable above it. */}
-      <Link
-        href={`/reports/${encodeURIComponent(item.id)}`}
-        title={item.description || undefined}
         className="min-w-0 flex-1 outline-none after:absolute after:inset-0 after:rounded-card after:content-['']"
       >
-        <span className="block truncate text-sm font-medium text-ink">{item.name}</span>
-        <span className="block truncate text-xs text-muted">{item.category}</span>
+        <span className="flex items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+            {item.name}
+          </span>
+          {item.kind === 'ask' && <Icons.Sparkles size={12} className="shrink-0 text-brand" />}
+          {item.broken && <Badge tone="warning">Needs attention</Badge>}
+        </span>
+        <span className="mt-0.5 block text-xs leading-relaxed text-muted">{item.description}</span>
       </Link>
       <span className="relative z-10">
         <FavoriteToggle starred={starred} onToggle={() => onToggle(item.id)} label={item.name} />
@@ -384,11 +342,8 @@ function FavouriteCard({
 
 /* ── list view ─────────────────────────────────────────────────────────── */
 
-/**
- * The same catalogue as rows rather than cards — for someone who knows the
- * name and wants the whole lot on one screen, with the descriptions visible.
- */
-function CategoryTable({
+/** The same catalogue as rows — for someone who knows the name already. */
+function CategoryList({
   category,
   items,
   favs,
@@ -403,25 +358,29 @@ function CategoryTable({
     <Card>
       <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
         <CategoryTile icon={categoryIcon(category)} tone={categoryTone(category)} />
-        <h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">{category}</h3>
+        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">{category}</h2>
         <Badge tone="neutral">{items.length}</Badge>
       </div>
+
       <div className="flex flex-col divide-y divide-border">
         {items.map((item) => (
           <div
             key={item.id}
             className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-surface-2"
           >
+            <CategoryTile
+              icon={sourceIcon(item.source, 15)}
+              tone={sourceTone(item.source)}
+              size="sm"
+            />
             <Link
               href={`/reports/${encodeURIComponent(item.id)}`}
-              className="flex min-w-0 flex-1 flex-col outline-none sm:flex-row sm:items-center sm:gap-4"
+              className="min-w-0 flex-1 flex-col outline-none sm:flex sm:flex-row sm:items-center sm:gap-4"
             >
-              <span className="min-w-0 truncate text-sm font-medium text-ink-2 group-hover:text-ink sm:w-64">
+              <span className="min-w-0 truncate text-sm font-medium text-ink-2 group-hover:text-ink sm:w-56">
                 {item.name}
               </span>
-              <span className="min-w-0 flex-1 truncate text-xs text-muted">
-                {item.description}
-              </span>
+              <span className="min-w-0 flex-1 truncate text-xs text-muted">{item.description}</span>
             </Link>
             {item.kind === 'ask' && (
               <Badge tone="brand">
@@ -429,6 +388,7 @@ function CategoryTable({
                 AI
               </Badge>
             )}
+            {item.broken && <Badge tone="warning">Needs attention</Badge>}
             <FavoriteToggle
               starred={favs.has(item.id)}
               onToggle={() => onToggle(item.id)}

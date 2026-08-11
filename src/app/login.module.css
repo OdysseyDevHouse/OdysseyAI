@@ -452,3 +452,202 @@
   font-size: 13px;
   margin-bottom: 16px;
 }
+
+/* ============================================================================
+   Store picker
+   ----------------------------------------------------------------------------
+   Shown over this screen when an account opens more than one store. It lives
+   here rather than using the kit's <Modal> for the same reason the rest of this
+   file exists: it sits ON the login card, and the kit's token palette would put
+   a slightly different blue and radius right next to Odyssey's. The <dialog>
+   element still does the real work — focus trap, Escape, inertness underneath.
+
+   The palette variables are declared on .wrapper, which a top-layer <dialog> is
+   NOT a descendant of, so they are restated here. Keep the two in sync.
+   ========================================================================= */
+.picker {
+  --l-surface: #ffffff;
+  --l-surface-2: #f6f8fc;
+  --l-text: #2b3445;
+  --l-muted: #8a94a6;
+  --l-border: #e7e9f0;
+  --l-brand: #2563eb;
+  --l-radius: 10px;
+
+  width: min(440px, calc(100vw - 32px));
+  /* A <dialog> centres itself via `margin: auto`, which the app's CSS reset
+     zeroes out — without this it pins to the top-left corner. */
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--l-border);
+  border-radius: 24px;
+  background: var(--l-surface);
+  color: var(--l-text);
+  box-shadow: 0 24px 70px rgba(16, 24, 40, 0.18);
+  animation: rise 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+:global([data-theme='dark']) .picker {
+  --l-surface: #1a212b;
+  --l-surface-2: #212a36;
+  --l-text: #e7ecf3;
+  --l-muted: #8a94a6;
+  --l-border: #2a3340;
+  --l-brand: #3b82f6;
+
+  border-color: transparent;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+
+.picker::backdrop {
+  background: rgba(16, 24, 40, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.pickerInner {
+  padding: 28px 28px 24px;
+}
+
+/* Icon and words side by side, as in the Odyssey dialog. */
+.pickerHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.pickerIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--l-brand) 12%, var(--l-surface));
+  color: var(--l-brand);
+}
+
+.pickerTitle {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--l-text);
+}
+
+.pickerSubtitle {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--l-muted);
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* One store. A two-line row with a trailing chevron — closer to a list item
+   than a labelled action, which is why it is not the kit's <Button>. */
+.pickerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 15px;
+  text-align: left;
+  border: 1px solid var(--l-border);
+  border-radius: 14px;
+  background: var(--l-surface);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.pickerRow:hover:not(:disabled),
+.pickerRow:focus-visible {
+  border-color: var(--l-brand);
+  background: var(--l-surface-2);
+}
+
+.pickerRow:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pickerRowMain {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pickerRowIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--l-brand) 10%, var(--l-surface));
+  color: var(--l-brand);
+}
+
+.pickerName {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--l-text);
+}
+
+.pickerCode {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--l-muted);
+}
+
+.pickerChevron {
+  flex: none;
+  color: var(--l-muted);
+}
+
+.pickerCancel {
+  width: 100%;
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--l-brand) 30%, var(--l-surface));
+  border-radius: var(--l-radius);
+  background: color-mix(in srgb, var(--l-brand) 8%, var(--l-surface));
+  color: var(--l-brand);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.pickerCancel:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--l-brand) 14%, var(--l-surface));
+  border-color: var(--l-brand);
+}
+
+.pickerCancel:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .picker {
+    animation: none;
+  }
+}

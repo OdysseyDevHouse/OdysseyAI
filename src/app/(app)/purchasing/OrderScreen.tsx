@@ -31,6 +31,7 @@ import PurchaseLineGrid, {
 import { purchaseDocumentFigures } from './purchaseLine'
 import {
   searchProductsForPurchaseAction,
+  agreedPricesAction,
   saveOrderAction,
   issueOrderAction,
 } from './actions'
@@ -135,6 +136,33 @@ export default function OrderScreen({
     setLines((current) => current.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   }
 
+  /**
+   * Replaces line costs with what the supplier has AGREED to charge.
+   *
+   * Runs when a product is added and when the supplier changes: the same
+   * product from two suppliers is two different prices, and an order that kept
+   * the first supplier's would go out wrong. Falls back silently to whatever
+   * the line already carries — a product they have never quoted still orders
+   * at last cost, which is what ordering did before price lists existed.
+   */
+  function applyAgreedPrices(forSupplierId: number, candidates: OrderScreenLine[]) {
+    const ids = candidates.map((l) => l.productId).filter((id): id is number => id !== null)
+    if (!forSupplierId || ids.length === 0) return
+
+    startTransition(async () => {
+      const agreed = await agreedPricesAction(forSupplierId, ids)
+      if (agreed.length === 0) return
+      const byProduct = new Map(agreed.map((a) => [a.productId, a]))
+
+      setLines((current) =>
+        current.map((l) => {
+          const price = l.productId === null ? undefined : byProduct.get(l.productId)
+          return price ? { ...l, unitCostExcl: price.costExcl } : l
+        }),
+      )
+    })
+  }
+
   function addProduct(product: TillProduct) {
     setLines((current) => [
       ...current,
@@ -154,12 +182,22 @@ export default function OrderScreen({
         vatRatePct: defaultVatRate,
         locationId: null,
         currentAverage: product.costExcl,
+        lastCost: product.costExcl,
         currentStock: product.stockOnHand,
         sellIncl: product.priceIncl,
       },
     ])
     setQuery('')
     setOptions([])
+
+    // Their agreed price beats the product's last cost, if they have quoted
+    // one. Fetched after the line is on screen rather than before, so adding a
+    // product is never gated on a round trip.
+    if (supplierId) {
+      applyAgreedPrices(Number(supplierId), [
+        { productId: product.id } as OrderScreenLine,
+      ])
+    }
   }
 
   const totals = useMemo(() => purchaseDocumentFigures(lines), [lines])
@@ -242,7 +280,16 @@ export default function OrderScreen({
                     : undefined
                 }
               >
-                <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+                <Select
+                  value={supplierId}
+                  onChange={(e) => {
+                    setSupplierId(e.target.value)
+                    // Reprice everything already on the order: the same
+                    // product from two suppliers is two different prices, and
+                    // keeping the old one would send the order out wrong.
+                    applyAgreedPrices(Number(e.target.value), lines)
+                  }}
+                >
                   <option value="">— Choose —</option>
                   {suppliers.map((s) => (
                     <option key={s.id} value={s.id}>

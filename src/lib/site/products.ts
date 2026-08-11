@@ -100,6 +100,24 @@ export type Product = {
   lastSoldDate: Date | null
   lastAdjustDate: Date | null
 
+  /* ── Where this row sits in the variant scheme ─────────────────────── */
+  /**
+   * True when this product is a variant PARENT — a grouping row.
+   *
+   * A parent never sells and never holds stock; the columns a list shows for it
+   * are about its children, not itself. See productVariants.ts for the rules.
+   */
+  hasVariants: boolean
+  /** Set when this product is somebody's variant. Null on an ordinary product. */
+  parentId: number | null
+  /**
+   * How many live variants sit under this parent. Zero on everything else.
+   *
+   * Counted in SQL alongside the row rather than fetched per parent, because a
+   * page of 50 products would otherwise be 50 extra round trips.
+   */
+  variantCount: number
+
   /** Derived, never stored. */
   cost: CostLine
   prices: ProductPrice[]
@@ -121,17 +139,63 @@ type ProductRow = RowDataPacket & Record<string, unknown>
  * of zero is "no level set" rather than "reorder at zero"; without that guard
  * every room holding none of a product it has never carried would be
  * permanently low, which is most rows in the table.
+ *
+ * ── A PARENT IS LOW WHEN ANY OF ITS VARIANTS IS ──────────────────────────
+ *
+ * A parent holds no stock of its own and therefore has no product_location_stock
+ * rows at all, so the first branch is always false for one. Left at that, a
+ * group down to two Larges would never flag, and the "below minimum" slice —
+ * which is the screen someone opens to decide what to reorder — would silently
+ * omit every variant product in the catalogue. The pile is the children's, so
+ * the question has to be asked of the children.
  */
-const BELOW_MINIMUM_SQL = `EXISTS (
+const BELOW_MINIMUM_SQL = `(EXISTS (
   SELECT 1 FROM product_location_stock pls
    WHERE pls.product_id = p.id
      AND pls.min_stock > 0
      AND pls.stock_on_hand <= pls.min_stock
+) OR (p.has_variants = 1 AND EXISTS (
+  SELECT 1 FROM products child
+    JOIN product_location_stock cpls ON cpls.product_id = child.id
+   WHERE child.parent_id = p.id
+     AND child.is_archived = 0
+     AND cpls.min_stock > 0
+     AND cpls.stock_on_hand <= cpls.min_stock
+)))`
+
+/**
+ * How many live variants a parent has.
+ *
+ * Archived children are excluded: a group whose mediums were discontinued
+ * should read "4 variants", not 5, or the badge disagrees with the list the
+ * click-through then shows.
+ */
+const VARIANT_COUNT_SQL = `(
+  SELECT COUNT(*) FROM products child
+   WHERE child.parent_id = p.id AND child.is_archived = 0
+)`
+
+/**
+ * A parent's stock is the sum of its children's.
+ *
+ * The column on the row itself is always 0 — rule 4, enforced by
+ * recordMovement. Showing that zero in a list would say "out of stock" about a
+ * shirt with 300 on the shelf, which is worse than showing nothing. So the
+ * group's row reports the group's pile.
+ *
+ * Zero for every other product, where p.stock_on_hand is already the answer.
+ */
+const VARIANT_STOCK_SQL = `(
+  SELECT COALESCE(SUM(child.stock_on_hand), 0) FROM products child
+   WHERE child.parent_id = p.id AND child.is_archived = 0
 )`
 
 const SELECT_PRODUCT = `
   SELECT p.id, p.code, p.barcode, p.description, p.extra_description, p.product_type,
          p.is_manufactured,
+         p.has_variants, p.parent_id,
+         ${VARIANT_COUNT_SQL} AS variant_count,
+         ${VARIANT_STOCK_SQL} AS variant_stock,
          ${BELOW_MINIMUM_SQL} AS below_minimum,
          p.department_id, p.brand_id, p.image_path, p.image_icon, p.image_color,
          p.purchase_vat_rate_id, p.selling_vat_rate_id,
@@ -158,6 +222,7 @@ function mapProduct(
   const purchaseVat = toNum(r.purchase_vat_rate)
   const sellingVat = toNum(r.selling_vat_rate)
   const cost = costLine(r.average_cost, r.last_cost, purchaseVat, basis)
+  const isParent = Number(r.has_variants ?? 0) === 1
 
   return {
     id: Number(r.id),
@@ -183,7 +248,9 @@ function mapProduct(
     lastCost: cost.lastCost,
     averageCost: cost.averageCost,
 
-    stockOnHand: toNum(r.stock_on_hand),
+    // A parent's own column is always zero; the group's pile is what the row
+    // is standing for. See VARIANT_STOCK_SQL.
+    stockOnHand: isParent ? toNum(r.variant_stock) : toNum(r.stock_on_hand),
     belowMinimum: !!r.below_minimum,
 
     isArchived: !!r.is_archived,
@@ -216,6 +283,10 @@ function mapProduct(
     lastPurchaseDate: (r.last_purchase_date as Date | null) ?? null,
     lastSoldDate: (r.last_sold_date as Date | null) ?? null,
     lastAdjustDate: (r.last_adjust_date as Date | null) ?? null,
+
+    hasVariants: isParent,
+    parentId: r.parent_id === null || r.parent_id === undefined ? null : Number(r.parent_id),
+    variantCount: Number(r.variant_count ?? 0),
 
     cost,
     prices: prices.map((p) => ({
@@ -273,6 +344,31 @@ export type ProductListOptions = {
   brandId?: number
   includeArchived?: boolean
   belowMinimum?: boolean
+  /**
+   * List only the variants of this parent, instead of the catalogue.
+   *
+   * The click-through from a collapsed group. Set, the other filters still
+   * apply — a group opened from the "below minimum" slice shows the variants
+   * that are actually low, which is the question that was being asked.
+   */
+  parentId?: number
+  /**
+   * Fold variants away under their parent. Default TRUE.
+   *
+   * A shirt in 5 sizes × 4 colours is 21 rows of catalogue for one thing on a
+   * shelf, and the 20 children look unrelated to each other in a list sorted by
+   * description. The parent stands for the group and carries a count; opening
+   * it lists the children.
+   *
+   * ── SEARCH DELIBERATELY OVERRIDES THIS ────────────────────────────────
+   *
+   * A search is a question about a specific product, and the answer is often a
+   * child: someone scans the barcode on a Large Blue shirt, or types its code
+   * off a purchase order. Hiding it because its parent exists would make the
+   * catalogue look like it had lost the product. So `search` un-collapses, and
+   * the children carry their parent's name on screen for context.
+   */
+  collapseVariants?: boolean
   limit?: number
   offset?: number
 }
@@ -286,12 +382,24 @@ export async function listProducts(
 
   if (!opts.includeArchived) where.push('p.is_archived = 0')
 
-  if (opts.search?.trim()) {
-    const term = `%${opts.search.trim()}%`
+  const searching = !!opts.search?.trim()
+
+  if (searching) {
+    const term = `%${opts.search!.trim()}%`
     // Barcode matches exactly: a scanner sends the whole code, and a LIKE would
     // turn every scan into a full table scan.
     where.push('(p.description LIKE ? OR p.code LIKE ? OR p.barcode = ?)')
-    params.push(term, term, opts.search.trim())
+    params.push(term, term, opts.search!.trim())
+  }
+
+  if (opts.parentId) {
+    // Opening one group. Only its children, and never the parent itself — the
+    // parent is the heading above this list, not a row inside it.
+    where.push('p.parent_id = ?')
+    params.push(opts.parentId)
+  } else if ((opts.collapseVariants ?? true) && !searching) {
+    // A child is represented by its parent's row. See collapseVariants.
+    where.push('p.parent_id IS NULL')
   }
   if (opts.departmentIds?.length) {
     where.push(`p.department_id IN (${opts.departmentIds.map(() => '?').join(',')})`)
@@ -315,10 +423,21 @@ export async function listProducts(
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500)
   const offset = Math.max(opts.offset ?? 0, 0)
 
+  /*
+   * Inside a group, the picker's own order — sizes are not alphabetical.
+   *
+   * Small/Medium/Large sorted by description reads Large, Medium, Small, which
+   * is exactly the ordering variant_sort exists to override. Everywhere else
+   * the catalogue stays sorted by description.
+   */
+  const orderSql = opts.parentId
+    ? 'ORDER BY p.variant_sort, p.axis_1_value, p.axis_2_value, p.id'
+    : 'ORDER BY p.description ASC'
+
   const [rows, countRow, basis] = await Promise.all([
     siteQuery<ProductRow>(
       siteId,
-      `${SELECT_PRODUCT} ${whereSql} ORDER BY p.description ASC LIMIT ${limit} OFFSET ${offset}`,
+      `${SELECT_PRODUCT} ${whereSql} ${orderSql} LIMIT ${limit} OFFSET ${offset}`,
       params,
     ),
     siteQueryOne<RowDataPacket & { total: number }>(

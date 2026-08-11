@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Payout</title>
+  <rect x="6.5" y="16.5" width="29" height="15.5" rx="2.4" fill="#15803D"/>
+  <rect x="9" y="11.5" width="31" height="17.5" rx="2.4" fill="#17A34A"/>
+  <rect x="11.7" y="14.2" width="25.6" height="12.1" rx="1.5" fill="#A7E8BC"/>
+  <circle cx="24.5" cy="20.25" r="4.9" fill="#A7E8BC" stroke="#17A34A" stroke-width="1.9"/>
+  <g transform="translate(24.5 20.25) scale(0.620)" stroke="#17A34A" stroke-width="2.3" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M2.45-2.15C2.45-3.4 1.3-4.05 0-4.05C-1.45-4.05-2.5-3.3-2.5-2.05C-2.5-0.85-1.5-0.3 0 .18C1.5 .66 2.5 1.15 2.5 2.35C2.5 3.65 1.4 4.35 0 4.35C-1.35 4.35-2.45 3.7-2.45 2.45"/><path d="M0-5.75V5.75"/></g>
+  <circle cx="37.4" cy="32.8" r="10.899999999999999" fill="#FFFFFF"/><circle cx="37.4" cy="32.8" r="8.6" fill="#16A34A"/>
+  <path d="M33.70 36.50L41.10 29.10" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round"/><path d="M36.84 29.10H41.10V33.35" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

@@ -1,7 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { Button, EmptyState, Icons, TileGrid, tileClass } from '@/components/ui'
+import {
+  ActionTile,
+  Button,
+  EmptyState,
+  Icons,
+  TileGrid,
+  toneForId,
+  toneForTileToken,
+} from '@/components/ui'
 import {
   actionForSlug,
   groupMembers,
@@ -9,6 +17,8 @@ import {
   topLevelKeys,
   type QuickKeyRow,
 } from '@/lib/quickKeys'
+import { quickKeyArt, quickKeyArtSrc } from '@/lib/quickKeyArt'
+import { useTileSizeValue } from '@/lib/posOffline/useTileSize'
 
 /**
  * The shop's own keys, on the till.
@@ -41,6 +51,10 @@ export function QuickKeyPanel({
   onPress: (key: QuickKeyRow) => void
 }) {
   const [openGroupId, setOpenGroupId] = useState<number | null>(null)
+  /* The same tile size the product and department grids use. A quick-key grid at its
+     own fixed size beside a product grid at the cashier's chosen one reads as two
+     screens that happen to be adjacent. */
+  const tiles = useTileSizeValue()
 
   const openGroup = openGroupId ? keys.find((k) => k.id === openGroupId) : null
   /* Hidden keys are filtered HERE rather than in the query, so the same list serves the
@@ -72,7 +86,7 @@ export function QuickKeyPanel({
     <div className="flex flex-col gap-3">
       {/* Back sits ABOVE the grid, at a fixed spot — a cashier finds it by position
           rather than by reading, and it must not move as the grid changes length. */}
-      {openGroup && (
+      {openGroup ? (
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="touch" onClick={() => setOpenGroupId(null)}>
             <Icons.Reverse size={18} />
@@ -82,6 +96,13 @@ export function QuickKeyPanel({
             {labelFor(openGroup)}
           </span>
         </div>
+      ) : (
+        /* Says what the grid IS and what tapping does, in one line. The tiles below
+           are now white cards like the product tiles, so without this a cashier
+           landing on the till has no cue that these run rather than sell. */
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+          Quick keys — tap to run
+        </p>
       )}
 
       {shown.length === 0 ? (
@@ -91,12 +112,13 @@ export function QuickKeyPanel({
           hint="This folder is empty. Tap Back, or ask a manager to put something in it."
         />
       ) : (
-        <TileGrid tileWidth={120} tileHeight={104}>
+        <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
           {shown.map((key) => (
             <KeyButton
               key={key.id}
               keyRow={key}
               label={labelFor(key)}
+              tileHeight={tiles.height}
               memberCount={key.kind === 'group' ? visible(groupMembers(keys, key.id)).length : 0}
               enabled={isEnabled(key)}
               onPress={() => {
@@ -113,53 +135,75 @@ export function QuickKeyPanel({
   )
 }
 
+/**
+ * One key.
+ *
+ * ── WHAT A KEY SHOWS, AND IN WHICH ORDER IT IS DECIDED ────────────────────
+ *
+ * Three things are resolved separately because they come from different places and a
+ * shop can override each on its own:
+ *
+ *   PICTURE  drawn art for the slug, else drawn art for the chosen icon name, else
+ *            the lucide glyph. A product key falls all the way through, which is
+ *            right — there is no drawing of "Coca-Cola 2L".
+ *   TONE     the art's own hue when there is art, so disc and drawing agree; a tone
+ *            derived from the key's id otherwise, which is what gives a grid of
+ *            product keys distinguishable colours with nothing stored.
+ *   HINT     the action's one-liner. A group says how many are inside instead, and a
+ *            product key says nothing — its caption is already the whole story.
+ */
 function KeyButton({
   keyRow,
   label,
   memberCount,
   enabled,
+  tileHeight,
   onPress,
 }: {
   keyRow: QuickKeyRow
   label: string
   memberCount: number
   enabled: boolean
+  tileHeight: number
   onPress: () => void
 }) {
   const action = keyRow.kind === 'action' ? actionForSlug(keyRow.actionSlug) : null
+  const art = quickKeyArt({ actionSlug: keyRow.actionSlug, icon: keyRow.icon })
   const Glyph = glyphFor(keyRow.icon || action?.icon || (keyRow.kind === 'group' ? 'Shapes' : ''))
 
+  /* The art is a picture, so it gets an empty alt and the caption beside it carries
+     the meaning — a screen reader reading "cashup.svg" after the word "Cash up" is
+     the same thing said twice. */
+  const icon = art ? (
+    <img src={quickKeyArtSrc(art.file)} alt="" className="h-7 w-7" />
+  ) : Glyph ? (
+    <Glyph size={22} />
+  ) : null
+
+  const hint =
+    keyRow.kind === 'group'
+      ? `${memberCount} ${memberCount === 1 ? 'key' : 'keys'}`
+      : (action?.hint ?? undefined)
+
   return (
-    <button
-      type="button"
-      data-kit-ok
+    <ActionTile
+      title={label}
+      hint={hint}
+      icon={icon}
+      tone={art ? art.tone : toneForId(keyRow.id)}
+      /* The colour the SHOP chose for this key, not the one derived from its art.
+         A manager who set a key green expects a green edge, and a key with no
+         colour stored simply gets none — an edge invented for it would look like a
+         choice nobody made. */
+      edge={toneForTileToken(keyRow.colourToken) ?? undefined}
+      tileHeight={tileHeight}
+      chevron={keyRow.kind === 'group'}
       disabled={!enabled}
       onClick={onPress}
-      /* h-full so every tile fills the row TileGrid measured — a grid of tiles sized to
-         their own captions is a grid a finger cannot aim at. */
-      className={`relative flex h-full flex-col items-center justify-center gap-1.5 overflow-hidden rounded-card px-1.5 text-center transition active:scale-[0.97] ${tileClass(
-        keyRow.colourToken,
-      )} ${enabled ? '' : 'opacity-40'}`}
-    >
-      {Glyph && <Glyph size={26} className="text-white" />}
-      <span className="line-clamp-2 text-[13px] font-semibold leading-tight text-white">
-        {label}
-      </span>
-
-      {keyRow.kind === 'group' && (
-        <span className="absolute right-1.5 top-1.5 rounded-pill bg-ink/40 px-1.5 text-[11px] font-bold text-white">
-          {memberCount}
-        </span>
-      )}
-
-      {/* A cashier should know a key will ask for a PIN before they press it in front
-          of a customer, not after. */}
-      {keyRow.requireAuth && (
-        <span className="absolute left-1.5 top-1.5 text-white/90">
-          <Icons.KeyRound size={13} />
-        </span>
-      )}
-    </button>
+      /* A cashier should know a key will ask for a PIN before they press it in front
+         of a customer, not after. */
+      corner={keyRow.requireAuth ? <Icons.KeyRound size={13} /> : undefined}
+    />
   )
 }
 

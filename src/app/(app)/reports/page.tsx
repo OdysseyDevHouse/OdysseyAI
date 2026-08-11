@@ -43,6 +43,9 @@ export default async function ReportsPage() {
             name: s.name,
             description: s.description || (s.kind === 'ask' ? s.question : ''),
             category: 'Saved' as const,
+            // The dataset behind it, which gives the tile its glyph. A spec that
+            // no longer validates has none, and falls back to the generic one.
+            source: s.spec?.source ?? '',
             kind: s.kind,
             createdByName: s.createdByName,
             broken: s.spec === null,
@@ -63,6 +66,7 @@ function toHubItem(t: ReportTemplate) {
     name: t.name,
     description: t.description,
     category: t.category,
+    source: t.spec.source,
     kind: 'builtin' as const,
     createdByName: '',
     broken: false,

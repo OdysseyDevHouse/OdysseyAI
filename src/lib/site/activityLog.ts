@@ -66,6 +66,12 @@ export type ActivityEntity =
      Monday" has no other answer, and product_prices keeps no history of its
      own. entityId is the schedule. */
   | 'price_schedule'
+  /* A table booking: taking one, confirming it, seating the party, and the two
+     ways it can end badly. entityId is the reservation. Worth an audit trail
+     because a booking is a promise made to somebody who is not in the room —
+     "who cancelled the party of twelve on Saturday" has no other answer, and
+     the guest will certainly be asking. */
+  | 'reservation'
 
 export type ActivityEvent = {
   id: number

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <title>Cash-out</title>
+  <rect x="5.5" y="13" width="30" height="18.5" rx="2.6" stroke="#16A34A" stroke-width="3" fill="none"/>
+  <circle cx="20.5" cy="22.25" r="4.6" fill="#16A34A"/>
+  <path d="M9.6 17.1h1.9M29.5 17.1h1.9M9.6 27.4h1.9M29.5 27.4h1.9" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round"/>
+  <circle cx="36.5" cy="34.5" r="9.5" fill="#16A34A"/><path d="M36.5 29.90V38.70M32.80 35.10L36.5 38.90l3.7-3.8" stroke="#FFFFFF" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

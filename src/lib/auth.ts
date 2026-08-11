@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import type { RowDataPacket } from 'mysql2/promise'
 import { queryOne, execute } from './db'
 import { verifyPassword, hashPassword } from './password'
-import { defaultSiteForUser, getSiteForUser, type Site } from './sites'
+import { getSiteForUser, listSitesForUser, type Site } from './sites'
 import { siteExecute } from './siteDb'
 import { getTillSession } from './tillSession'
 import { getUserByControlId, type SiteUser } from './site/users'
@@ -36,8 +36,22 @@ type UserRow = RowDataPacket & {
   locked_until: Date | null
 }
 
+/** A store offered in the sign-in picker. Deliberately the bare minimum. */
+export type SignInChoice = { id: number; name: string; code: string }
+
 export type SignInResult =
-  | { ok: true; siteId: number | null; mustChangePassword: boolean }
+  | {
+      ok: true
+      siteId: number | null
+      mustChangePassword: boolean
+      /**
+       * The stores to choose between, when there is a genuine choice. Empty
+       * when the account has one store (already open) or none. Name and code
+       * only — the full `Site` carries the VAT number, registration number and
+       * postal address, none of which belongs in a client component's props.
+       */
+      choices: SignInChoice[]
+    }
   | { ok: false; error: string }
 
 /**
@@ -94,23 +108,31 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     [user.id],
   )
 
-  // Drop them straight into their default site. A user with no site link gets
-  // a null siteId and lands on a screen that says so, rather than a broken page.
-  const site = await defaultSiteForUser(user.id)
+  // One site: open it. More than one: leave the session's site null so the
+  // caller sends them to /select-site to choose — picking for them would hide
+  // the fact that they have access to another store's books. A user with no
+  // site link also gets a null siteId, and lands on a screen that says so
+  // rather than a broken page.
+  const sites = await listSitesForUser(user.id)
+  const siteId = sites.length === 1 ? sites[0].id : null
 
   const token = await createSessionToken({
     userId: user.id,
     email: user.email,
     name: user.full_name?.trim() || user.email,
-    siteId: site?.id ?? null,
+    siteId,
     mustChangePassword: !!user.must_change_password,
   })
   await setSessionCookie(token)
 
   return {
     ok: true,
-    siteId: site?.id ?? null,
+    siteId,
     mustChangePassword: !!user.must_change_password,
+    choices:
+      sites.length > 1
+        ? sites.map((s) => ({ id: s.id, name: s.displayName, code: s.code }))
+        : [],
   }
 }
 

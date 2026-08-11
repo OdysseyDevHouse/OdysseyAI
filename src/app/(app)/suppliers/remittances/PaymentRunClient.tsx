@@ -210,7 +210,7 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
       />
 
       <TableToolbar
-        className="border-b border-border px-4 py-3.5"
+        inCard
         actions={
           <>
             <Button variant="ghost" size="sm" onClick={payEverythingOverdue} disabled={pending}>

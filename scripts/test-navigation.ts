@@ -56,6 +56,12 @@ const {
   subpageMatches,
 } = nodeRequire('../src/lib/nav') as typeof import('../src/lib/nav')
 
+/* The global search palette's index. Same stub, same reasoning — it hangs the
+   section's icon off every hit and nothing here touches one. */
+const { buildPageIndex, searchPages, scorePage } = nodeRequire(
+  '../src/lib/pageSearch',
+) as typeof import('../src/lib/pageSearch')
+
 let failures = 0
 
 function check(what: string, got: unknown, want: unknown) {
@@ -111,7 +117,12 @@ console.log('\nThe sidebar search still finds settings')
 const found = (term: string) => filterNav(term).map((s) => s.label)
 check('"tender" finds Setup', found('tender'), ['Setup'])
 check('"reconcil" finds Setup', found('reconcil'), ['Setup'])
-check('"vat" finds Accounting AND Setup', found('vat'), ['Accounting', 'Setup'])
+/* Sales is in here because "reserVATions" contains the term. The search matches
+   on substring, which is what makes "reconcil" reach "Reconciliation" — so this
+   is the same rule working, not a bug to special-case away. Left as a plain
+   expectation rather than adding word-boundary matching: a shop owner typing
+   three letters wants more results, not fewer. */
+check('"vat" finds Accounting AND Setup', found('vat'), ['Sales', 'Accounting', 'Setup'])
 /* The regression a hub is most likely to cause: twenty-four rows became two
    links, so a search that used to hit a menu entry must still reach the hub. */
 check('"cashbook" finds Accounting', found('cashbook'), ['Accounting'])
@@ -135,6 +146,149 @@ check('a synonym is still scoped to its subtree', subpageMatches('/reports', 'te
 // Every synonym must name a screen that exists, or it silently matches nothing.
 const strayKeywords = Object.keys(SUBPAGE_KEYWORDS).filter((h) => !(h in SUBPAGE_LABELS))
 check('every synonym key is a real screen', strayKeywords, [])
+
+// ── THE GLOBAL SEARCH PALETTE ─────────────────────────────────────────────
+//
+// filterNav above answers "which parts of the MENU survive this term" and can
+// only ever name a menu row — which is why every settings assertion above expects
+// the string "Setup" rather than the screen somebody was actually looking for.
+// The palette indexes screens instead, so the same searches must now land on the
+// SCREEN. That is the whole point of it, and it is the thing most likely to
+// regress silently: a hub sub-page dropping out of the index still compiles, and
+// the menu above it goes on looking perfectly correct.
+
+console.log('\nThe global search finds screens, not just their hub')
+const everything = navFor(() => true)
+const index = buildPageIndex(everything)
+const hits = (term: string) => searchPages(index, term).map((h) => h.label)
+const top = (term: string) => hits(term)[0]
+
+/* The settings searches from further up this file, which used to be able to
+   answer nothing better than "Setup". */
+check('"tender" finds the screen itself', top('tender'), 'Tender types')
+check('"reconcil" finds Reconciliation', top('reconcil'), 'Reconciliation')
+check('"journals" finds Journals', top('journals'), 'Journals')
+check('"cashbook" finds Cashbook', top('cashbook'), 'Cashbook')
+check('"punch" finds Punch cards', top('punch'), 'Punch cards')
+check('"pay rules" finds Pay rules', top('pay rules'), 'Pay rules')
+check('"discount codes" finds the screen', top('discount codes'), 'Discount codes')
+
+/* A synonym must reach the screen it describes, not merely its hub — the screen
+   is called "Tills" and a shop owner types "terminal". */
+check('"terminal" finds Tills', top('terminal'), 'Tills')
+/* "register" is a DELIBERATE synonym on two screens — the till register and the
+   fixed-asset register — so both are correct answers and the test asserts that
+   Tills is among them rather than first. Pinning an order here would be pinning
+   an alphabetical tie-break, which is not a rule worth defending. */
+check('"register" reaches Tills', hits('register').includes('Tills'), true)
+check('"permissions" finds Roles', top('permissions'), 'Roles & permissions')
+check('"gratuity" finds Tips', top('gratuity'), 'Tips')
+
+/* Ranking, not just filtering. An exact label beats a longer string that merely
+   contains the term, and a prefix beats a mid-word hit — without which "suppl"
+   puts "Supplier age analysis" above "Suppliers" purely because it is longer. */
+check('an exact label wins', top('tips'), 'Tips')
+check('a prefix beats a longer containing match', top('suppliers'), 'Suppliers')
+check('"customers" finds the list first', top('customers'), 'Customers')
+
+/* Every word must match something, so a space narrows rather than widens. */
+check('"setup tips" narrows to one screen', hits('setup tips'), ['Tips'])
+check('a miss finds nothing', hits('zzzzz'), [])
+check('an empty term finds nothing', hits('   '), [])
+
+/* The index must actually cover the app: every screen a hub lists has to be in
+   it, or the palette silently cannot reach a whole hub's worth of settings. This
+   is the assertion that fails the day somebody adds a screen to SUBPAGE_LABELS
+   and the search quietly does not find it. */
+const indexed = new Set(index.map((h) => h.href))
+const missing = Object.keys(SUBPAGE_LABELS).filter((href) => !indexed.has(href))
+check('every hub screen is in the index', missing, [])
+
+const missingItems = allNavItems().filter((href) => !indexed.has(href))
+check('every menu item is in the index', missingItems, [])
+
+/* One entry per destination. A duplicate renders the same screen twice in the
+   palette and makes the keyboard cursor land on it twice on the way past. */
+const indexSeen = new Set<string>()
+const indexDupes = index
+  .map((h) => h.href)
+  .filter((href) => (indexSeen.has(href) ? true : (indexSeen.add(href), false)))
+check('no screen is indexed twice', [...new Set(indexDupes)], [])
+
+/* ── Descriptions ───────────────────────────────────────────────────────────
+   The line under a result is what makes an unfamiliar screen choosable, so a
+   screen without one renders as a bare name in a list of explained ones. The
+   hub screens read theirs from their catalogue; menu items carry it in NAV. */
+const described = (term: string) => searchPages(index, term)[0]?.description ?? null
+check('a hub screen describes itself', described('tender types'), 'How sales are paid for. Some stores have four, some have ten.')
+check('a menu item describes itself too', described('timesheets'), 'Hours worked, and approving them for pay')
+check('and so does a hub link', described('accounting'), 'The books — ledgers, VAT, expenses and the bank')
+
+/* Searchable, not just displayed: "rang up" is in the Tills description and in
+   neither its label nor its synonyms. */
+check('a description is searchable', top('rang up'), 'Tills')
+
+/*
+ * A keyword must outrank a description.
+ *
+ * A keyword is a deliberate synonym — somebody wrote "gratuity" on Tips meaning
+ * "people will search for this". A description is prose about what the screen
+ * does, and the same word can fall inside one by coincidence. Scoring the two
+ * alike decides such a collision on an alphabetical tie-break rather than on
+ * intent, which is how "register" — a real synonym on BOTH the till register and
+ * the fixed-asset register — put Fixed assets above Tills.
+ *
+ * Asserted on the tiers themselves rather than on a pair of screens, because
+ * every word that collides today is a legitimate synonym on both sides; the rule
+ * is what needs defending, not one ranking that happens to demonstrate it.
+ */
+const tips = index.find((h) => h.href === '/setup/tips')!
+const tills = index.find((h) => h.href === '/setup/terminals')!
+check('a synonym scores above prose', scorePage(tips, 'gratuity') > scorePage(tills, 'rang up'), true)
+check('and prose still scores at all', scorePage(tills, 'rang up') > 0, true)
+
+/* Synonyms come from two places — nav.ts and the catalogues — and most screens
+   have the same string in both. Joined without deduping, Tills carried
+   "terminals registers pos devices" twice. */
+const doubledKeywords = index
+  .filter((h) => {
+    const words = (h.keywords ?? '').split(/\s+/).filter(Boolean)
+    return words.length !== new Set(words).size
+  })
+  .map((h) => h.href)
+check('no screen carries a synonym twice', doubledKeywords, [])
+
+/* Every screen in the index needs one. This is the check that fails the day a
+   screen is added to NAV or a catalogue without the line that explains it. */
+const undescribed = index
+  .filter((h) => h.built && !h.description)
+  .map((h) => h.href)
+  .sort()
+check('every screen has a description', undescribed, [])
+
+/* A catalogue names an icon per screen so a list of settings is not twelve
+   identical cogs. An unresolvable name renders nothing at all. */
+const { HUB_ICONS } = nodeRequire('../src/components/ui/hubIcons') as {
+  HUB_ICONS: Record<string, unknown>
+}
+const strayIcons = index
+  .filter((h) => h.iconName && !HUB_ICONS[h.iconName])
+  .map((h) => h.iconName)
+check('every catalogue icon resolves to a glyph', [...new Set(strayIcons)], [])
+
+/* Capabilities gate the index exactly as they gate the menu, because it is built
+   from the already-filtered sections. Someone who cannot open the setup hub must
+   not be able to find a setting by name — the palette would otherwise be a way
+   to enumerate screens around a permission. */
+const setupOnly = buildPageIndex(navFor((c) => c === 'sales.view'))
+const reachable = new Set(setupOnly.map((h) => h.href))
+check('a setting is not indexed without its hub', reachable.has('/setup/users'), false)
+check('nor is another section’s screen', reachable.has('/customers'), false)
+check('but the granted one is', reachable.has('/sales'), true)
+
+function allNavItems(): string[] {
+  return NAV.flatMap((s) => (s.items ?? []).map((i) => i.href))
+}
 
 console.log('\nCapabilities gate the entry')
 const shows = (granted: string[]) =>
@@ -257,6 +411,7 @@ function routesUnder(dir: string, prefix = ''): string[] {
 const UNLINKED: Record<string, string> = {
   '/not-allowed': 'the redirect target for a failed capability check',
   '/purchasing/receive': 'an action reached from a purchase order, not a destination',
+  '/purchasing/suggest': 'reached from the purchasing hub’s own "What to order"',
   '/customers/new': 'reached from the customer list',
   '/suppliers/new': 'reached from the supplier list',
   '/products/new': 'reached from the product list',

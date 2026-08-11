@@ -57,6 +57,12 @@ export type StorefrontPage = {
    * no publish is scheduled — see 075.
    */
   publishAt: string
+  /**
+   * Department pages only: whether this page also stands in for the departments
+   * beneath it that have no page of their own. Always false on other kinds.
+   * See 096.
+   */
+  appliesToChildren: boolean
   /** Whether this page has unpublished edits. The layouts are not carried. */
   hasDraft: boolean
 }
@@ -65,14 +71,39 @@ export type SaveResult = { ok: true } | { ok: false; error: string }
 export type CreateResult = { ok: true; id: number } | { ok: false; error: string }
 
 /**
- * How many pages one shop may have.
+ * How many pages of a shop's OWN making it may have.
  *
  * A cap rather than none, for the same reason MAX_SECTIONS exists: every page
  * is a row the nav reads and a route the shop resolves, and a shop with two
  * hundred of them has a navigation problem no builder can fix. Generous enough
  * that no real shop meets it.
+ *
+ * Counts standard pages only — see MAX_DEPARTMENT_PAGES.
  */
 export const MAX_PAGES = 30
+
+/**
+ * How many DEPARTMENT pages one shop may have.
+ *
+ * ── WHY THESE ARE COUNTED SEPARATELY ─────────────────────────────────────
+ *
+ * The cost MAX_PAGES exists to bound is navigational: a shop with thirty
+ * hand-made pages has a menu nobody can read. A department page carries none
+ * of that cost. `navPages` filters to `kind = 'standard'`, so a department page
+ * never appears in the menu, and it has no slug to collide with — it is reached
+ * only by browsing to the department it is attached to, which the shop already
+ * lists whether the page exists or not.
+ *
+ * Charging them against the same thirty is what stopped a shop with forty
+ * sub-departments from customising them: it ran out of budget on rows that add
+ * nothing to navigate. So the ceiling here is the size of a real department
+ * tree rather than the size of a menu, and the two are bounded independently.
+ *
+ * Still capped, not unlimited: `listPages` reads every row for one screen, and
+ * a runaway integration creating one page per product is the failure this
+ * prevents.
+ */
+export const MAX_DEPARTMENT_PAGES = 300
 
 function mapPage(r: Row): StorefrontPage {
   const kind = String(r.kind)
@@ -86,10 +117,15 @@ function mapPage(r: Row): StorefrontPage {
     // and a page whose kind is not understood becomes a 'standard' one at a
     // slug it does not have.
     kind: (PAGE_KINDS as readonly string[]).includes(kind) ? (kind as PageKind) : 'standard',
-    slug: String(r.slug ?? ''),
+    // NULL for the kinds that have no URL — see 097. Presented as '' so every
+    // caller keeps treating slug as a string it can safely call .trim() on.
+    slug: r.slug === null || r.slug === undefined ? '' : String(r.slug),
     title: String(r.title ?? ''),
     departmentId: r.department_id === null ? null : Number(r.department_id),
     isPublished: !!r.is_published,
+    // Only a department page can lend itself downwards; a stray 1 on any other
+    // kind reads as false rather than as a rule nothing knows how to apply.
+    appliesToChildren: kind === 'department' && !!r.applies_to_children,
     showInNav: !!r.show_in_nav,
     navOrder: Number(r.nav_order ?? 0),
     seoTitle: String(r.seo_title ?? ''),
@@ -113,7 +149,7 @@ function mapPage(r: Row): StorefrontPage {
  */
 const PAGE_COLUMNS = `
   id, kind, slug, title, department_id, is_published, show_in_nav, nav_order,
-  seo_title, seo_description, seo_image_id, publish_at,
+  seo_title, seo_description, seo_image_id, publish_at, applies_to_children,
   (layout_draft IS NOT NULL) AS has_draft
 `
 
@@ -205,7 +241,13 @@ export async function productPage(siteId: number): Promise<StorefrontPage | null
   return row ? mapPage(row) : null
 }
 
-/** The optional layout attached to one department, if it has one. */
+/**
+ * The layout attached to exactly one department, if it has one.
+ *
+ * An EXACT match — this is the question the admin screens ask ("does this
+ * department have a page of its own to edit?"). The shop asks a different one;
+ * see `departmentPageFor`.
+ */
 export async function departmentPage(
   siteId: number,
   departmentId: number,
@@ -218,6 +260,67 @@ export async function departmentPage(
     [departmentId],
   )
   return row ? mapPage(row) : null
+}
+
+/**
+ * The page the SHOP should render for a department: its own, or the nearest
+ * ancestor's that offered itself.
+ *
+ * ── A PAGE OF ITS OWN ALWAYS WINS ────────────────────────────────────────
+ *
+ * Checked first and returned unconditionally — even when it is unpublished or
+ * empty. An owner who built a page for "Wine › Red" has said what that
+ * department should show, and quietly falling back to the parent's because
+ * theirs is switched off would override a deliberate choice with a default.
+ *
+ * ── NEAREST ANCESTOR, NOT THE TOPMOST ────────────────────────────────────
+ *
+ * Walking up and stopping at the first lender means a specific branch page
+ * beats a general one: with pages on "Wine" and "Wine › Red › Bordeaux", a
+ * department under Bordeaux gets Bordeaux's. The alternative — the root's —
+ * makes the more specific page useless the moment a broader one exists.
+ *
+ * Only `applies_to_children` pages are considered, so this returns exactly what
+ * it always did for every shop that has not opted in. See 096.
+ *
+ * One query for the ancestry, walked in code: the same shape
+ * `listDepartmentVisibility` uses, and the reason is the same — the tree is
+ * small, and the alternative is a recursive CTE per department page lookup.
+ */
+export async function departmentPageFor(
+  siteId: number,
+  departmentId: number,
+): Promise<{ page: StorefrontPage; inherited: boolean } | null> {
+  const own = await departmentPage(siteId, departmentId)
+  if (own) return { page: own, inherited: false }
+
+  const lenders = await siteQuery<Row>(
+    siteId,
+    `SELECT ${PAGE_COLUMNS} FROM storefront_pages
+      WHERE kind = 'department' AND applies_to_children = 1 AND is_published = 1`,
+  )
+  if (lenders.length === 0) return null
+  const byDepartment = new Map(lenders.map((r) => [Number(r.department_id), mapPage(r)]))
+
+  const tree = await siteQuery<Row>(
+    siteId,
+    `SELECT id, parent_id FROM departments`,
+  )
+  const parentOf = new Map(
+    tree.map((r) => [Number(r.id), r.parent_id === null ? null : Number(r.parent_id)]),
+  )
+
+  // `seen` guards a parent_id cycle. The schema forbids one, but a walk that
+  // trusts the data to be acyclic hangs the shop rather than misdrawing a page.
+  const seen = new Set<number>([departmentId])
+  let at = parentOf.get(departmentId) ?? null
+  while (at !== null && !seen.has(at)) {
+    seen.add(at)
+    const lender = byDepartment.get(at)
+    if (lender) return { page: lender, inherited: true }
+    at = parentOf.get(at) ?? null
+  }
+  return null
 }
 
 /* ── Layouts ──────────────────────────────────────────────────────────────── */
@@ -662,12 +765,27 @@ export async function createPage(siteId: number, input: NewPageInput): Promise<C
   const title = String(input.title ?? '').trim().slice(0, 120)
   if (!title) return { ok: false, error: 'Give the page a name.' }
 
+  /*
+   * Two ceilings, counted separately — see MAX_DEPARTMENT_PAGES. A shop with
+   * forty sub-departments must not be told it is out of pages because of rows
+   * that never reach the menu.
+   */
+  const scope = input.kind === 'department' ? 'department' : 'other'
   const count = await siteQueryOne<Row>(
     siteId,
-    `SELECT COUNT(*) AS n FROM storefront_pages`,
+    scope === 'department'
+      ? `SELECT COUNT(*) AS n FROM storefront_pages WHERE kind = 'department'`
+      : `SELECT COUNT(*) AS n FROM storefront_pages WHERE kind <> 'department'`,
   )
-  if (Number(count?.n ?? 0) >= MAX_PAGES) {
-    return { ok: false, error: `A shop can have ${MAX_PAGES} pages.` }
+  const ceiling = scope === 'department' ? MAX_DEPARTMENT_PAGES : MAX_PAGES
+  if (Number(count?.n ?? 0) >= ceiling) {
+    return {
+      ok: false,
+      error:
+        scope === 'department'
+          ? `A shop can have ${MAX_DEPARTMENT_PAGES} department pages.`
+          : `A shop can have ${MAX_PAGES} pages.`,
+    }
   }
 
   /*
@@ -682,9 +800,11 @@ export async function createPage(siteId: number, input: NewPageInput): Promise<C
     if (await productPage(siteId)) {
       return { ok: false, error: 'Your product pages already have a layout.' }
     }
+    // NULL, not '': the unique key on slug counts empty strings as one URL, so
+    // '' would make this row collide with every department page. See 097.
     const result = await siteExecute(
       siteId,
-      `INSERT INTO storefront_pages (kind, slug, title, is_published) VALUES ('product', '', ?, 0)`,
+      `INSERT INTO storefront_pages (kind, slug, title, is_published) VALUES ('product', NULL, ?, 0)`,
       [title],
     )
     return { ok: true, id: Number(result.insertId) }
@@ -703,8 +823,10 @@ export async function createPage(siteId: number, input: NewPageInput): Promise<C
 
     const result = await siteExecute(
       siteId,
+      // NULL rather than '' — see 097. This is the line that limited a shop to
+      // one department page in total.
       `INSERT INTO storefront_pages (kind, slug, title, department_id, is_published)
-       VALUES ('department', '', ?, ?, 0)`,
+       VALUES ('department', NULL, ?, ?, 0)`,
       [title, departmentId],
     )
     return { ok: true, id: Number(result.insertId) }
@@ -734,6 +856,8 @@ export type PageSettingsInput = {
   seoTitle?: string
   seoDescription?: string
   seoImageId?: number | null
+  /** Department pages only; ignored on every other kind. See 096. */
+  appliesToChildren?: boolean
 }
 
 /**
@@ -771,13 +895,23 @@ export async function savePageSettings(
     siteId,
     `UPDATE storefront_pages
         SET title = ?, slug = ?, is_published = ?, show_in_nav = ?,
+            applies_to_children = ?,
             seo_title = ?, seo_description = ?, seo_image_id = ?
       WHERE id = ?`,
     [
       title,
-      slug,
+      // A kind with no URL writes NULL back, never '' — otherwise saving a
+      // department page's settings would re-introduce the collision 097 fixed.
+      page.kind === 'department' || page.kind === 'product' ? null : slug,
       input.isPublished === undefined ? (page.isPublished ? 1 : 0) : input.isPublished ? 1 : 0,
       input.showInNav === undefined ? (page.showInNav ? 1 : 0) : input.showInNav ? 1 : 0,
+      // Forced off on any other kind, so the column can never hold a rule that
+      // nothing reads — the same reasoning `mapPage` applies coming back out.
+      page.kind !== 'department'
+        ? 0
+        : input.appliesToChildren === undefined
+          ? page.appliesToChildren ? 1 : 0
+          : input.appliesToChildren ? 1 : 0,
       (input.seoTitle ?? page.seoTitle).slice(0, 120),
       (input.seoDescription ?? page.seoDescription).slice(0, 300),
       // An id or nothing. Anything unusable becomes NULL rather than 0, which

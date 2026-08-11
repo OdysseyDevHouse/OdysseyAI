@@ -10,7 +10,13 @@ import {
   productPositions,
   type OrderInput,
 } from '@/lib/site/purchaseDocuments'
-import { receiveGoods, voidReceipt, type ReceiveInput } from '@/lib/site/purchasePosting'
+import {
+  receiveGoods,
+  voidReceipt,
+  saveDraftReceipt,
+  deleteDraftReceipt,
+  type ReceiveInput,
+} from '@/lib/site/purchasePosting'
 import { createSupplierReturn, type SupplierReturnInput } from '@/lib/site/purchaseReversal'
 import {
   reorderBySupplier,
@@ -19,7 +25,9 @@ import {
 } from '@/lib/site/reorderSuggestions'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { availableSerials } from '@/lib/site/serials'
-import { searchForTill } from '@/lib/site/tillSearch'
+import { searchForTill, browseForTill } from '@/lib/site/tillSearch'
+import { listDepartments, flattenTree } from '@/lib/site/departments'
+import { pricesFor } from '@/lib/site/supplierPrices'
 import { listSuppliers } from '@/lib/site/suppliers'
 
 export type PurchaseResult = { ok: true; id: number; message: string } | { ok: false; error: string }
@@ -83,6 +91,40 @@ export async function receiveGoodsAction(input: ReceiveInput): Promise<ReceiveAc
   return result
 }
 
+/**
+ * Saves a delivery part-keyed, without posting anything.
+ *
+ * Separate from receiveGoodsAction on purpose: a posting path with a "do not
+ * post" branch is one bad condition away from moving stock for a document
+ * nobody finished.
+ */
+export async function saveDraftReceiptAction(
+  documentId: number | null,
+  input: ReceiveInput,
+): Promise<PurchaseResult> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+  const result = await saveDraftReceipt(siteId, actor, input, documentId ?? undefined)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/purchasing')
+  return { ok: true, id: result.id, message: 'Saved. Nothing has been posted yet.' }
+}
+
+export async function deleteDraftReceiptAction(
+  id: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+  const result = await deleteDraftReceipt(siteId, id)
+  if (!result.ok) return result
+
+  revalidatePath('/purchasing')
+  return { ok: true }
+}
+
 export async function voidReceiptAction(
   id: number,
   reason: string,
@@ -103,6 +145,64 @@ export async function searchProductsForPurchaseAction(term: string) {
   const ctx = await actorForOrThrow('purchasing.view')
   const { siteId } = ctx
   return searchForTill(siteId, term, null)
+}
+
+/**
+ * Products for the "Add stock" picker — browse, not type-ahead.
+ *
+ * Distinct from searchProductsForPurchaseAction, which answers keystrokes in a
+ * Combobox and needs two characters before it says anything. This one answers
+ * "show me what is in Groceries" with no term at all, which is how a receiver
+ * works through a delivery note of things they cannot spell.
+ *
+ * Guarded by purchasing.view rather than reusing the sales action: the same
+ * question asked from a different screen is a different boundary, and a buyer
+ * who cannot sell should still be able to receive.
+ */
+export async function browseProductsForPurchaseAction(options: {
+  term?: string
+  departmentId?: number | null
+  limit?: number
+}) {
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
+  return browseForTill(siteId, { ...options, priceStructureId: null })
+}
+
+/** The department list for that picker's filter, flattened for a <select>. */
+export async function purchaseDepartmentsAction(): Promise<
+  { id: number; name: string; depth: number }[]
+> {
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
+  const all = await listDepartments(siteId)
+  return flattenTree(all).map(({ department, depth }) => ({
+    id: department.id,
+    name: department.name,
+    depth,
+  }))
+}
+
+/**
+ * What this supplier has agreed to charge for these products, today.
+ *
+ * Used when a product is added to an order, and when the supplier on an order
+ * is changed: the same product from two suppliers is two different prices, and
+ * an order that kept the first one would go out wrong.
+ */
+export async function agreedPricesAction(supplierId: number, productIds: number[]) {
+  const ctx = await actorForOrThrow('purchasing.view')
+  const { siteId } = ctx
+  if (!supplierId || productIds.length === 0) return []
+
+  const prices = await pricesFor(siteId, supplierId, productIds)
+  return [...prices.values()].map((p) => ({
+    productId: p.productId,
+    costExcl: p.costExcl,
+    packSize: p.packSize,
+    effectiveFrom: p.effectiveFrom,
+    listReference: p.listReference,
+  }))
 }
 
 export async function listActiveSuppliersAction() {

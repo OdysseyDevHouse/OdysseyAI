@@ -27,7 +27,11 @@
  *    cached shell opens and the outbox keeps filling.
  */
 
-const VERSION = 'odyssey-pos-v1'
+/* Bumped when what the worker CACHES changes, not when the app does — v2 adds the
+   quick-key artwork below. A till already running v1 keeps serving its old caches
+   until this string differs, so a new precache list with the old name would never
+   be fetched by the tills that need it. */
+const VERSION = 'odyssey-pos-v2'
 const PAGES = `${VERSION}-pages`
 const ASSETS = `${VERSION}-assets`
 
@@ -37,14 +41,44 @@ const NAV_TIMEOUT_MS = 4000
 /** The shell pages worth holding. Both, because either can be the entry point. */
 const SHELL = ['/pos', '/pos-unlock']
 
+/**
+ * The quick-key artwork, fetched at install rather than on first paint.
+ *
+ * Everything else the till draws is either in the JS bundle or comes from IndexedDB,
+ * but these are 36 separate image requests, and `staleWhileRevalidate` below only
+ * holds one AFTER it has been shown once. A till that opens, is used for the morning
+ * on keys A and B, then loses its line, would draw an empty disc the first time
+ * anybody pressed C — the key still works, but it stops being findable by picture,
+ * which is the whole reason it has one.
+ *
+ * Cheap enough to be uncontroversial: the set is about 120KB in total, once, versus a
+ * cashier hunting captions for the rest of an outage. Listed explicitly because a
+ * service worker cannot read a directory — a name added here that does not exist is
+ * skipped by `allSettled` rather than failing the install.
+ */
+const KEY_ART = [
+  'account', 'add-tip', 'bill-print', 'car-wash', 'card', 'cash-out', 'cash', 'cashup',
+  'credit-sale', 'customer-payment', 'customers', 'eft-transfer', 'end-shift', 'float-topup',
+  'global-discount', 'kick-drawer', 'loyalty-payment', 'loyalty', 'online-orders', 'other-3',
+  'payout', 'price-change', 'price-enquiry', 'print-labels', 'refund', 'reprint-invoice',
+  'reprint-last-slip', 'save-sale', 'shopify-orders', 'split-table', 'split-tender',
+  'supervisor', 'table-transfer', 'undo', 'void-sale', 'yoco',
+].map((name) => `/quick-keys/${name}.svg`)
+
 self.addEventListener('install', (event) => {
   // Warm the shell, but do not fail the install if it cannot be fetched — a first
   // load with no network should still register the worker for next time.
   event.waitUntil(
-    caches
-      .open(PAGES)
-      .then((cache) => Promise.allSettled(SHELL.map((url) => cache.add(url))))
-      .then(() => self.skipWaiting()),
+    Promise.all([
+      caches
+        .open(PAGES)
+        .then((cache) => Promise.allSettled(SHELL.map((url) => cache.add(url)))),
+      // Into ASSETS, the cache staleWhileRevalidate reads — warming PAGES instead
+      // would store them where nothing ever looks.
+      caches
+        .open(ASSETS)
+        .then((cache) => Promise.allSettled(KEY_ART.map((url) => cache.add(url)))),
+    ]).then(() => self.skipWaiting()),
   )
 })
 

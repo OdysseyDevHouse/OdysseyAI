@@ -13,6 +13,7 @@ import {
   Checkbox,
   Combobox,
   CurrencyInput,
+  EDIT_COLUMN,
   Field,
   Input,
   NumberInput,
@@ -266,7 +267,7 @@ export default function InstructionForm({
   const single = maxChoices === 1
 
   return (
-    <div className="flex w-full max-w-[1100px] flex-col gap-4">
+    <div className={`flex ${EDIT_COLUMN} flex-col gap-4`}>
       <div className="flex items-center gap-2">
         <SubmitButton />
         {rowActions}

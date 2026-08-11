@@ -330,6 +330,50 @@ export async function productPositions(
   }))
 }
 
+/**
+ * The itemised charges on a document — freight, duty, and who billed each.
+ *
+ * Returns nothing where 088 has not reached this site: such a document cannot
+ * have charge rows, so an empty list is the correct answer rather than an
+ * error. The total on the document itself is unaffected either way.
+ */
+export type PurchaseCharge = {
+  id: number
+  supplierId: number | null
+  description: string
+  amountExcl: number
+  vatRatePct: number
+  theirInvoiceNo: string | null
+}
+
+export async function documentCharges(
+  siteId: number,
+  documentId: number,
+): Promise<PurchaseCharge[]> {
+  const present = await siteQueryOne<Row>(
+    siteId,
+    `SELECT 1 AS ok FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'purchase_document_charges' LIMIT 1`,
+  )
+  if (!present) return []
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT id, supplier_id, description, amount_excl, vat_rate_pct, their_invoice_no
+       FROM purchase_document_charges WHERE document_id = ? ORDER BY id`,
+    [documentId],
+  )
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    supplierId: r.supplier_id === null ? null : Number(r.supplier_id),
+    description: String(r.description),
+    amountExcl: toNum(r.amount_excl),
+    vatRatePct: toNum(r.vat_rate_pct),
+    theirInvoiceNo: (r.their_invoice_no as string | null) ?? null,
+  }))
+}
+
 /* ── Orders ──────────────────────────────────────────────────────────────── */
 
 export type OrderLineInput = {

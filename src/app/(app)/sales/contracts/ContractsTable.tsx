@@ -151,6 +151,7 @@ export function ContractsTable({ contracts }: { contracts: ContractRow[] }) {
   return (
     <Card>
       <TableToolbar
+        inCard
         actions={
           <>
             <SegmentedControl<Slice>

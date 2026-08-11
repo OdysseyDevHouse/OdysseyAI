@@ -54,6 +54,10 @@ export type OfflineFinaliseInput = {
   totalIncl: number
   tenderedTotal: number
   change: number
+  /** Declared tips per tender type, from the pad. */
+  declaredTips?: Record<number, number>
+  /** The forced service charge the slip showed. */
+  serviceCharge?: number
 }
 
 export type OfflineFinaliseResult =
@@ -133,6 +137,23 @@ export async function finaliseOffline(
     claimedTotalIncl: input.totalIncl,
     claimedTenderedTotal: input.tenderedTotal,
     claimedChange: input.change,
+    /*
+     * Carried, not recomputed at sync.
+     *
+     * The tiers may have changed by the time this till reconnects — a shop that edits its
+     * bands at 18:00 must not have that reprice a bill a customer settled at 17:30. And the
+     * declared split is a person's decision about money already handed over; nothing at sync
+     * time can reconstruct it.
+     *
+     * Omitted entirely when there are none, so an OLD queued sale and a new tipless one are
+     * byte-identical on the wire.
+     */
+    ...(input.declaredTips && Object.keys(input.declaredTips).length > 0
+      ? { declaredTips: input.declaredTips }
+      : {}),
+    ...(input.serviceCharge && input.serviceCharge > 0.005
+      ? { serviceCharge: input.serviceCharge }
+      : {}),
   }
 
   /* 2. The queue. THE durable record. */

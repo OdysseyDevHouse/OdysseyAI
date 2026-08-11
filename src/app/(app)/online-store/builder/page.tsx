@@ -119,7 +119,22 @@ export default async function BuilderPage({
    * opening. So the pictures are looked up directly here and merged over
    * whatever the resolver produced.
    */
-  const resolved = context ? await resolveSectionContent(context, editing) : editing.map(() => ({}))
+  /*
+   * A department page previews ANCHORED to its own department, exactly as the
+   * shop renders it — otherwise a "this department" row would draw nothing in
+   * the builder and the owner would think the rule was broken.
+   *
+   * Nothing to pass for a product page: the builder is arranging the one layout
+   * that forty thousand products share, so there is no single product to
+   * anchor to, and those rows preview empty by nature.
+   */
+  const anchor =
+    current.kind === 'department' && current.departmentId
+      ? { id: 0, departmentId: current.departmentId }
+      : undefined
+  const resolved = context
+    ? await resolveSectionContent(context, editing, anchor)
+    : editing.map(() => ({}))
   const bannerImages = await storefrontImagesByIds(siteId, [
     ...editing
       // A carousel's slides and a logo strip's pictures carry their own ids,

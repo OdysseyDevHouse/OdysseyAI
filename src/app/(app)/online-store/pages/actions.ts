@@ -65,12 +65,19 @@ export async function savePageSettingsAction(
     action: 'update',
     // Whether the public can reach it is the change worth being able to find
     // later, so it is named rather than folded into "settings changed".
+    // Lending a page to a whole branch changes what shoppers see on
+    // departments nobody opened, so it is named too rather than folded into
+    // "settings changed".
     detail:
-      input.isPublished === undefined
-        ? 'Page settings changed'
-        : input.isPublished
+      input.isPublished !== undefined
+        ? input.isPublished
           ? 'Page switched on'
-          : 'Page switched off',
+          : 'Page switched off'
+        : input.appliesToChildren !== undefined
+          ? input.appliesToChildren
+            ? 'Page extended to sub-departments'
+            : 'Page limited to its own department'
+          : 'Page settings changed',
   })
 
   revalidatePath('/online-store/pages')

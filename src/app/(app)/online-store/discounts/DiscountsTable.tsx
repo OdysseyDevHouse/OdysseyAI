@@ -115,6 +115,7 @@ export default function DiscountsTable({
     <>
       <Card>
         <TableToolbar
+          inCard
           actions={
             <Button variant="primary" onClick={() => setEditing(emptyRow())}>
               <Icons.Plus size={16} />
