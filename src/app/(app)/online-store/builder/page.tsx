@@ -153,7 +153,21 @@ export default async function BuilderPage({
   ])
 
   return (
-    <>
+    /*
+      The one screen in the app that does NOT scroll as a document.
+
+      The builder divides the height it is given between two panes that scroll
+      separately — see the layout note in Builder.tsx — and for that it needs a
+      bounded box rather than a page that grows. The app shell hands one over
+      already: `main` is `flex-1 overflow-y-auto` inside an `h-screen` column.
+      So this claims exactly that height and splits it, header above and builder
+      filling the rest.
+
+      `h-full` rather than a `calc()` against the viewport: the header is a
+      sibling of unknown height — it wraps on a narrow window — and any figure
+      typed here would be a guess that goes wrong the moment it does.
+    */
+    <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
         title="Page builder"
         subtitle={
@@ -165,7 +179,9 @@ export default async function BuilderPage({
           layout.draft !== null ? <Badge tone="warning">Unpublished changes</Badge> : undefined
         }
       />
-      <PageBody>
+      {/* `pb-6` in place of PageBody's `pb-10`: that padding is breathing room
+          under a page that ends, and this one does not end — it clips. */}
+      <PageBody className="min-h-0 flex-1 overflow-hidden !pb-6">
         <Builder
           key={current.id}
           page={current}
@@ -230,6 +246,6 @@ export default async function BuilderPage({
           }}
         />
       </PageBody>
-    </>
+    </div>
   )
 }

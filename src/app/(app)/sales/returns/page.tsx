@@ -1,6 +1,7 @@
 import { requireSiteUser } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
+import { listSalesReasons } from '@/lib/site/salesReasons'
 import { PageHeader, PageBody, Callout } from '@/components/ui'
 import ReturnForm from './ReturnForm'
 
@@ -9,7 +10,10 @@ export const dynamic = 'force-dynamic'
 export default async function ReturnsPage() {
   const { site, user, capabilities } = await requireSiteUser()
 
-  const tenders = await listTenderTypes(site.id)
+  const [tenders, reasons] = await Promise.all([
+    listTenderTypes(site.id),
+    listSalesReasons(site.id, 'return'),
+  ])
 
   const allowed = can(capabilities, 'sales.credit_note')
 
@@ -18,8 +22,8 @@ export default async function ReturnsPage() {
       <PageHeader
         title="Return without a receipt"
         subtitle="For goods coming back when the customer has no invoice"
-        backHref="/sales"
-        backLabel="Sales"
+        backHref="/sales/invoicing?status=all"
+        backLabel="Invoicing"
       />
 
       <PageBody>
@@ -36,11 +40,11 @@ export default async function ReturnsPage() {
             <Callout tone="warning" title="Nothing caps what can be returned here.">
               Crediting an invoice can never exceed what was sold. With no invoice there is no such
               limit, so every one of these is recorded against you by name and appears on the
-              exception report. Use the invoice where there is one — Sales → Documents → the sale →
+              exception report. Use the invoice where there is one — Sales → Invoicing → the sale →
               Credit.
             </Callout>
 
-            <ReturnForm tenders={tenders.filter((t) => t.allowsRefund)} />
+            <ReturnForm tenders={tenders.filter((t) => t.allowsRefund)} reasons={reasons} />
           </>
         )}
       </PageBody>

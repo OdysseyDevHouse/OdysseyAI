@@ -94,7 +94,7 @@ export async function completeLaybyAction(
 
   revalidatePath(`/sales/laybys/${laybyId}`)
   revalidatePath('/sales/laybys')
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   revalidatePath('/products')
 
   return {

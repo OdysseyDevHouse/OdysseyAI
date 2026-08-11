@@ -124,7 +124,7 @@ export async function billNowAction(id: number): Promise<ActionResult> {
 
   const result = await billNow(siteId, actor, id)
   revalidateContracts(id)
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   revalidatePath('/customers')
 
   if (result.generated.length === 0) {
@@ -174,7 +174,7 @@ export async function postContractInvoiceAction(
   ).catch(() => null)
 
   revalidateContracts(contractId)
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   return { ok: true, message: `Posted as ${result.documentNumber}.` }
 }
 

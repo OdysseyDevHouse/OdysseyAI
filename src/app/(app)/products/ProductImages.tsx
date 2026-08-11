@@ -101,6 +101,7 @@ export default function ProductImages({
   return (
     <Card>
       <CardHeader
+        tone="brand"
         title="Photographs"
         description={`Shown in your online store. The first one leads the gallery. ${IMAGE_EXTENSIONS_LABEL}.`}
         action={

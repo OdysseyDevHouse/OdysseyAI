@@ -15,10 +15,10 @@ import {
 } from 'recharts'
 import { ChartGlow, ChartTooltip, EmptyState, Icons, useChartColors } from '@/components/ui'
 import type { DayBucket, HourBucket, TenderBucket } from '@/lib/site/salesDashboard'
-import { money, moneyShort, percent, dayLabel, hourLabel } from './format'
+import { money, moneyShort, count, percent, dayLabel, hourLabel } from './format'
 
 /**
- * The dashboard's three charts.
+ * The dashboard's charts.
  *
  * All of them read colour from `useChartColors()` and never name one directly —
  * that is what keeps them correct in dark mode and restyleable from
@@ -65,13 +65,31 @@ function TurnoverLine({
   rows,
   glowId,
   tickInterval,
+  seriesName = 'Turnover',
+  color,
+  format,
+  axisFormat,
 }: {
   rows: { label: string; turnover: number }[]
   glowId: string
   tickInterval?: number
+  /** What the tooltip calls the series. */
+  seriesName?: string
+  /** Defaults to brand. Pass one from useChartColors, never a literal. */
+  color?: string
+  /** Tooltip formatter. Defaults to money. */
+  format?: (value: number) => string
+  /** Y-axis formatter. Defaults to the short money form. */
+  axisFormat?: (value: number) => string
 }) {
   const colors = useChartColors()
   const axis = axisProps(colors)
+  // The series carries a `turnover` key whatever it measures — the shape is
+  // the chart's, not the caller's, so a count rides in the same field rather
+  // than duplicating this component for a different key name.
+  const stroke = color ?? colors.brand
+  const tooltipFormat = format ?? ((v: number) => money(v))
+  const yFormat = axisFormat ?? ((v: number) => moneyShort(v))
 
   return (
     <ResponsiveContainer width="100%" height="100%" minHeight={200}>
@@ -83,7 +101,7 @@ function TurnoverLine({
             without adding an answer — the x labels already mark the columns. */}
         <CartesianGrid vertical={false} stroke={colors.grid} />
         <XAxis dataKey="label" {...axis} interval={tickInterval} minTickGap={8} />
-        <YAxis {...axis} width={64} tickFormatter={(v) => moneyShort(Number(v))} />
+        <YAxis {...axis} width={64} tickFormatter={(v) => yFormat(Number(v))} />
         <Tooltip
           cursor={{ stroke: colors.grid }}
           content={(p) => (
@@ -91,22 +109,22 @@ function TurnoverLine({
               active={p.active}
               payload={p.payload}
               label={p.label}
-              format={(v) => money(Number(v))}
+              format={(v) => tooltipFormat(Number(v))}
             />
           )}
         />
         <Line
           type="monotone"
           dataKey="turnover"
-          name="Turnover"
-          stroke={colors.brand}
+          name={seriesName}
+          stroke={stroke}
           strokeWidth={2}
           filter={`url(#${glowId})`}
           /* The markers glow with the line rather than sitting flat on top of
              it — the same filter, so the two can never drift apart. */
           dot={
             rows.length <= MAX_DOTS
-              ? { r: 2.5, fill: colors.brand, stroke: 'none', filter: `url(#${glowId})` }
+              ? { r: 2.5, fill: stroke, stroke: 'none', filter: `url(#${glowId})` }
               : false
           }
           activeDot={{ r: 4.5, stroke: colors.surface, strokeWidth: 2 }}
@@ -133,6 +151,49 @@ export function TurnoverPerDayChart({ data }: { data: DayBucket[] }) {
   const tickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
 
   return <TurnoverLine rows={rows} glowId="perDayGlow" tickInterval={tickInterval} />
+}
+
+/**
+ * How many baskets a day, as opposed to how much money.
+ *
+ * Its own chart rather than a second line on the turnover one: a dual axis
+ * puts two unrelated scales on one grid and invites the reader to see a
+ * correlation in what is really just two lines drawn near each other. Turnover
+ * and basket-count genuinely do diverge — a quiet day of big orders looks
+ * nothing like a busy day of small ones — and that divergence is the whole
+ * reason to plot the second series at all.
+ */
+export function SalesCountPerDayChart({ data }: { data: DayBucket[] }) {
+  const colors = useChartColors()
+
+  if (!data.some((d) => d.saleCount !== 0)) {
+    return (
+      <EmptyState
+        icon={<Icons.Receipt size={22} />}
+        title="No sales in this period"
+        hint="Try a wider date range, or check that sales have been finalised."
+      />
+    )
+  }
+
+  // `turnover` is the chart's field name, not a claim about the units — see
+  // TurnoverLine. The count rides in it so the two charts stay one component.
+  const rows = data.map((d) => ({ label: dayLabel(d.date), turnover: d.saleCount }))
+  const tickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
+
+  return (
+    <TurnoverLine
+      rows={rows}
+      glowId="countPerDayGlow"
+      tickInterval={tickInterval}
+      seriesName="Sales"
+      /* The fourth ramp colour, matching the `saleCount` KPI tile, so the two
+         readings of the same figure are recognisably the same thing. */
+      color={colors.series[3]}
+      format={(v) => count(v)}
+      axisFormat={(v) => count(v)}
+    />
+  )
 }
 
 export function SalesPerHourChart({ data }: { data: HourBucket[] }) {

@@ -21,6 +21,8 @@ import {
 import { formatQty } from '@/lib/decimals'
 import type { StockTakeLine } from '@/lib/site/stockTakes'
 import { saveCountsAction } from '../actions'
+import { LineImportDialog } from '@/components/import/LineImportDialog'
+import type { LineDraft as ImportedLine } from '@/lib/import/documentLines'
 
 /**
  * The counting grid.
@@ -120,6 +122,7 @@ export default function CountSheet({
   const timers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
   const inputs = useRef<Record<number, HTMLInputElement | null>>({})
   const scanRef = useRef<HTMLInputElement>(null)
+  const [importOpen, setImportOpen] = useState(false)
 
   const serialCount = (line: StockTakeLine) => (serials[line.id] ?? []).length
 
@@ -182,6 +185,80 @@ export default function CountSheet({
   function commit(lineId: number) {
     clearTimeout(timers.current[lineId])
     void save(lineId, drafts[lineId]?.text ?? '')
+  }
+
+  /**
+   * Counts from a spreadsheet — a shelf walked with a clipboard, or a scanner
+   * that exports rather than talks to the till.
+   *
+   * Matched onto the lines this sheet ALREADY has, because a stock take's lines
+   * are seeded when it is created and cannot be added to afterwards. A product
+   * in the file that is not on the sheet is therefore reported rather than
+   * quietly created: it means the sheet was built for a different scope, and
+   * the fix is a new sheet, not a row appearing halfway down this one.
+   *
+   * Saved in ONE call. The grid autosaves per line as somebody works down a
+   * shelf, but two thousand rows arriving at once is one batch — that is
+   * exactly what saveCounts takes a list for.
+   */
+  async function addImportedCounts(imported: ImportedLine[]) {
+    const byProduct = new Map(lines.map((l) => [l.productId, l]))
+
+    const entries: { lineId: number; countedQty?: number | null; serials?: string[] }[] = []
+    const nextDrafts: Record<number, { text: string; saved: boolean }> = {}
+    const nextSerials: Record<number, string[]> = {}
+    const missed: string[] = []
+
+    for (const row of imported) {
+      const line = byProduct.get(row.productId)
+      if (!line) {
+        missed.push(row.code)
+        continue
+      }
+
+      // On a serial line the scanned list IS the count — a typed quantity is
+      // ignored at post time, so accepting one here would show a figure the
+      // post would then contradict.
+      if (line.productType === 'serial') {
+        if (row.serials.length === 0) {
+          missed.push(`${row.code} (needs serial numbers, not a quantity)`)
+          continue
+        }
+        nextSerials[line.id] = row.serials
+        entries.push({ lineId: line.id, serials: row.serials, countedQty: row.serials.length })
+        nextDrafts[line.id] = { text: String(row.serials.length), saved: true }
+      } else {
+        entries.push({ lineId: line.id, countedQty: row.qty })
+        nextDrafts[line.id] = { text: String(row.qty), saved: true }
+      }
+    }
+
+    if (entries.length === 0) {
+      toast.error('None of those products are on this sheet.')
+      return
+    }
+
+    const result = await saveCountsAction(takeId, entries)
+    if (!result || !('ok' in result) || !result.ok) {
+      setFailed(true)
+      toast.error('Those counts could not be saved. Nothing was changed.')
+      return
+    }
+
+    setDrafts((d) => ({ ...d, ...nextDrafts }))
+    if (Object.keys(nextSerials).length > 0) {
+      setSerials((s) => ({ ...s, ...nextSerials }))
+    }
+    setFailed(false)
+
+    if (missed.length > 0) {
+      toast.info(
+        `${entries.length} counted · ${missed.length} not on this sheet — ${missed.slice(0, 3).join(', ')}` +
+        (missed.length > 3 ? '…' : ''),
+      )
+    } else {
+      toast.success(`${entries.length} ${entries.length === 1 ? 'count' : 'counts'} imported`)
+    }
   }
 
   /**
@@ -312,6 +389,15 @@ export default function CountSheet({
               ]}
             />
             <ToolbarSearch value={search} onChange={setSearch} placeholder="Find a product" />
+            {/* For a shelf walked with a clipboard, or a scanner that exports
+                a file rather than talking to the till. Counts land on the
+                lines this sheet already has — see addImportedCounts. */}
+            {!readOnly && (
+              <Button variant="ghost" onClick={() => setImportOpen(true)}>
+                <Icons.Upload size={16} />
+                Import counts
+              </Button>
+            )}
           </>
         }
       >
@@ -564,6 +650,13 @@ export default function CountSheet({
           </table>
         </div>
       )}
+
+      <LineImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onLines={(rows) => void addImportedCounts(rows)}
+        noun="counts"
+      />
     </>
   )
 }

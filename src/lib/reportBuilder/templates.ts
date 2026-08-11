@@ -292,7 +292,7 @@ export const TEMPLATES: ReportTemplate[] = [
       ],
       filters: [
         { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'credit_note' },
+        { field: 'docType', op: 'eq', value: 'credit_sale' },
       ],
       sort: { key: 'documentDate', dir: 'desc' },
     }),
@@ -310,6 +310,39 @@ export const TEMPLATES: ReportTemplate[] = [
       columns: [{ field: '__rows' }, { field: 'discountTotal', agg: 'sum' }, { field: 'totalIncl', agg: 'sum' }],
       filters: [],
       sort: { key: 'discountTotal_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'voids-by-reason',
+    name: 'Voids by reason',
+    description:
+      'What voiding is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.',
+    category: 'Operations',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'sales',
+      groupFields: ['cancelReasonName'],
+      columns: [{ field: '__rows' }, { field: 'totalIncl', agg: 'sum' }],
+      filters: [{ field: 'status', op: 'eq', value: 'cancelled' }],
+      sort: { key: 'totalIncl_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'returns-by-reason',
+    name: 'Returns by reason',
+    description:
+      'Why goods come back, and what it costs. Faulty is a supplier conversation; wrong size is a description one.',
+    category: 'Operations',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'sales',
+      groupFields: ['returnReasonName'],
+      columns: [{ field: '__rows' }, { field: 'totalIncl', agg: 'sum' }],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        { field: 'docType', op: 'eq', value: 'credit_sale' },
+      ],
+      sort: { key: 'totalIncl_sum', dir: 'desc' },
     }),
   },
 
@@ -850,7 +883,8 @@ export const TEMPLATES: ReportTemplate[] = [
   {
     id: 'refund-history',
     name: 'Refund history',
-    description: 'Every credit note line — what was handed back, by whom, and what it cost in margin.',
+    description:
+      'Every credit note line — what was handed back, why, by whom, and what it cost in margin.',
     category: 'Operations',
     permission: 'reports.view',
     spec: spec({
@@ -860,6 +894,10 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'documentNumber' },
         { field: 'customerName' },
         { field: 'userName' },
+        /* The reason a report could not show until the codes existed: it lived
+           in internal_note as free text, so it could be read one row at a time
+           and never counted. */
+        { field: 'returnReasonName' },
         { field: 'productCode' },
         { field: 'description' },
         { field: 'qty' },
@@ -867,7 +905,7 @@ export const TEMPLATES: ReportTemplate[] = [
       ],
       filters: [
         { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'credit_note' },
+        { field: 'docType', op: 'eq', value: 'credit_sale' },
       ],
       sort: { key: 'documentDate', dir: 'desc' },
     }),
@@ -876,7 +914,7 @@ export const TEMPLATES: ReportTemplate[] = [
     id: 'void-history',
     name: 'Void history',
     description:
-      'Documents that were voided, with the reason given. A void with no reason is the one to ask about.',
+      'Documents that were voided, with the reason given. A run of the same reason on one till is the pattern to ask about.',
     category: 'Operations',
     permission: 'reports.view',
     spec: spec({
@@ -887,10 +925,16 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'customerName' },
         { field: 'userName' },
         { field: 'terminalCode' },
+        { field: 'cancelReasonName' },
+        /* The free text as well as the code. The code is what groups; this is
+           where the detail lives on the reasons that allow a note, and it is
+           the only column that reads at all on a void raised before 102. */
         { field: 'voidReason' },
         { field: 'totalIncl' },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'void' }],
+      /* 'cancelled', not 'void': 022 renamed the status value and this filter was
+         never updated, so this report has been returning nothing since. */
+      filters: [{ field: 'status', op: 'eq', value: 'cancelled' }],
       sort: { key: 'documentDate', dir: 'desc' },
     }),
   },

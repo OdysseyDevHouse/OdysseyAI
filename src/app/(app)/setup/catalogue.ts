@@ -110,6 +110,18 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'emerald',
         capability: 'setup.edit',
       },
+      /* Beside Pricing because they are two halves of one sentence: that tile is
+         what a product SELLS for, this is what it is HELD at. Both feed the same
+         margin, which is why neither belongs under Store & stock with the
+         warehouses. */
+      {
+        href: '/setup/purchasing',
+        description: 'Average or last cost, and the checks that run when a delivery is posted.',
+        keywords: 'cost basis average last cost price landed grv receiving tolerance margin gp',
+        icon: 'Coins',
+        tone: 'emerald',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/tender-types',
         description: 'How sales are paid for. Some stores have four, some have ten.',
@@ -162,6 +174,16 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'orange',
         capability: 'setup.edit',
       },
+      {
+        href: '/setup/import',
+        description: 'Bring a catalogue, a debtors list or a supplier book in from a spreadsheet.',
+        keywords: 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments',
+        icon: 'Boxes',
+        tone: 'indigo',
+        // The tile is only a door: each import guards itself with the
+        // capability of the thing it writes, and the index filters to those.
+        capability: 'setup.view',
+      },
     ],
   },
   {
@@ -184,6 +206,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         keywords: 'write off shrinkage damage breakage wastage expired codes',
         icon: 'SlidersHorizontal',
         tone: 'teal',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/setup/sales-reasons',
+        description: 'Why a sale was cancelled, and why goods came back.',
+        keywords: 'void cancel reasons refund return credit note faulty codes exception',
+        icon: 'SlidersHorizontal',
+        tone: 'rose',
         capability: 'setup.edit',
       },
       {

@@ -18,6 +18,7 @@ import {
   Modal,
   NumberInput,
   PageBody,
+  PageHeader,
   PickerResults,
   Select,
   TableToolbar,
@@ -28,6 +29,8 @@ import { formatMoney, formatQty, round } from '@/lib/decimals'
 import { useColumnPrefs } from '@/lib/useColumnPrefs'
 import ChargesEditor, { type ChargeRow } from './ChargesEditor'
 import type { TillProduct } from '@/lib/site/tillSearch'
+import { LineImportDialog } from '@/components/import/LineImportDialog'
+import type { LineDraft as ImportedLine } from '@/lib/import/documentLines'
 import PurchaseLineGrid, {
   PURCHASE_COLUMNS,
   PURCHASE_COLUMN_IDS,
@@ -62,6 +65,27 @@ const PICKER_LIMIT = 500
  * moves the cost every future margin is measured against, and seeing it in
  * advance is the difference between catching a keying error and finding it in
  * next month's GP report.
+ *
+ * ── CHANGING THIS SCREEN? CHANGE ../OrderScreen.tsx WITH IT ───────────────
+ *
+ * Ordering and receiving are two documents but ONE flow, and the same person
+ * works both in the same afternoon. They are separate files because a GRV
+ * carries what an order cannot — their invoice number and total, freight and
+ * charges, a stock location, serial numbers — not because they are allowed to
+ * look like two different products.
+ *
+ * So a layout change here is only half a change:
+ *
+ *   • The LINE GRID is shared already — edit ../PurchaseLineGrid.tsx and it
+ *     lands on both. Never patch grid behaviour inside this file.
+ *   • Card order, headings, the search-plus-browse row, the totals panel, where
+ *     the primary button sits, the explanatory footnote under it: mirror it in
+ *     OrderScreen so the two screens still read as the same screen.
+ *   • Something genuinely receiving-only (serials, charges, locations) is a
+ *     card OrderScreen simply omits — that is fine. Moving a card both screens
+ *     have, and moving it only here, is not.
+ *
+ * Supplier returns (../[id]/return/ReturnScreen.tsx) follow the same shape.
  */
 
 type StockLocationOption = { id: number; code: string; name: string; isMain: boolean }
@@ -159,6 +183,7 @@ export default function ReceiveScreen({
      all, which is how a receiver works through a delivery note full of things
      they cannot spell. */
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [pickerTerm, setPickerTerm] = useState('')
   const [pickerDept, setPickerDept] = useState<number | null>(null)
   const [pickerResults, setPickerResults] = useState<TillProduct[]>([])
@@ -316,6 +341,62 @@ export default function ReceiveScreen({
     ])
     setQuery('')
     setOptions([])
+  }
+
+  /**
+   * Lines from a supplier's delivery note or a spreadsheet.
+   *
+   * The same row shape `addProduct` builds. Two things the file can say that a
+   * hand-added line cannot: which room each line lands in, and the serials on
+   * it — both per line, because one delivery can be split across rooms and a
+   * serial product is counted by its labels rather than by a typed quantity.
+   *
+   * A cost the file omitted falls back to zero here rather than to the
+   * product's, deliberately: a GRV prices what the supplier actually charged,
+   * and a silently inherited cost is the kind of figure that gets posted
+   * without being read.
+   */
+  function addImportedLines(imported: ImportedLine[]) {
+    const stamp = Date.now()
+    setLines((current) => {
+      const inherited = current[current.length - 1]?.locationId ?? mainLocationId
+      return [
+        ...current,
+        ...imported.map((row, index) => ({
+          key: `${row.productId}-${stamp}-${index}`,
+          productId: row.productId,
+          productCode: row.code,
+          supplierCode: '',
+          description: row.description,
+          productType: row.productType,
+          departmentId: null,
+          qtyOrdered: 0,
+          qty: row.qty,
+          qtyBonus: 0,
+          unitCostExcl: row.unitCostExcl ?? 0,
+          discountPct: row.discountPct ?? 0,
+          discountAmount: 0,
+          vatRatePct: defaultVatRate,
+          locationId: locationIdFor(row.locationCode) ?? inherited,
+          serials: row.serials,
+          warrantyUntil: '',
+          currentAverage: 0,
+          lastCost: 0,
+          currentStock: 0,
+          sellIncl: 0,
+        })),
+      ]
+    })
+  }
+
+  /** A location named in the file, by code or by name. Null falls back. */
+  function locationIdFor(code: string | null): number | null {
+    if (!code) return null
+    const wanted = code.trim().toLowerCase()
+    const match = locations.find(
+      (l) => l.code.toLowerCase() === wanted || l.name.toLowerCase() === wanted,
+    )
+    return match?.id ?? null
   }
 
   // Every figure on the delivery, from the one place that computes them. The
@@ -480,96 +561,158 @@ export default function ReceiveScreen({
   }))
 
   return (
-    <PageBody>
-      {/* The header cards share a row and the LINE GRID GETS THE FULL WIDTH
-          below them. It carries up to twenty columns — cost, markup, GP,
-          selling price — and squeezing that into two thirds of the page made
-          the buyer scroll sideways to see figures that only mean anything
-          beside each other. The delivery header is read once; the grid is
-          worked in. */}
-      {/* Three across on a wide screen: delivery, discount and charges are each
-          read once and set aside, so they sit side by side rather than
-          stacking down the left and leaving the right half of the page empty. */}
-      <div className="grid items-start gap-4 xl:grid-cols-3">
+    <>
+      {/* Rendered here rather than by the page, because the two actions carry
+          this component's state — pending, and everything `ready` checks. They
+          sit in the header, anchored right, so the act this screen exists for
+          is reachable without scrolling past a delivery of forty lines. */}
+      <PageHeader
+        title="Receive goods"
+        /* Says which of the two it is, now that a draft row in the list opens
+           straight here: landing on an editor already full of lines, under a
+           title that reads like a blank one, leaves the receiver wondering
+           whose delivery they are looking at. */
+        subtitle={
+          draftId
+            ? 'Picking up a saved draft — nothing has moved yet.'
+            : 'Stock in, costs updated, supplier credited.'
+        }
+        backHref="/purchasing"
+        backLabel="Purchasing"
+        action={
+          <>
+            {/* Needs only a supplier, where posting needs everything. That is
+                the point: a half-checked pallet is exactly what gets put down,
+                and refusing to save it because a quantity is still zero would
+                defeat the feature. */}
+            <Button variant="ghost" disabled={supplierId === '' || pending} onClick={saveDraft}>
+              <Icons.Save size={15} />
+              {draftId ? 'Update the draft' : 'Save for later'}
+            </Button>
+            <Button variant="primary" disabled={!ready || pending} onClick={submit}>
+              <Icons.PackageOpen size={15} />
+              {pending ? 'Receiving…' : 'Receive the goods'}
+            </Button>
+          </>
+        }
+      />
+      <PageBody>
+      {/* DELIVERY FIRST, FULL WIDTH, AND ITS FOUR FIELDS IN ONE ROW.
+
+          They are one question asked four ways — who sent it, against what, on
+          which invoice, for how much — and they are answered together off the
+          top of the document in the receiver's hand. Stacking them down a third
+          of the page made a four-line job read as a form, and pushed the
+          invoice total, the screen's best guard, below the fold on a laptop.
+
+          The LINE GRID still gets the full width below: it carries up to twenty
+          columns — cost, markup, GP, selling price — and figures that only mean
+          anything beside each other must not be scrolled to. */}
+      <Card>
+        <CardHeader title="Delivery" description="Who it came from, and what it came with." />
+        <CardBody className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Field
+            label="Supplier"
+            // Marked here, not in a footnote by the button — the fix is this box.
+            error={
+              lines.length > 0 && supplierId === ''
+                ? 'Choose who this delivery came from.'
+                : undefined
+            }
+          >
+            <Select
+              value={supplierId}
+              onChange={(e) => {
+                setSupplierId(e.target.value)
+                setOrderId('')
+              }}
+            >
+              <option value="">— Choose —</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.code} — {s.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field
+            label="Against an order"
+            hint={
+              ordersForSupplier.length === 0
+                ? 'No open orders — receiving straight in is fine.'
+                : 'Pulls the outstanding lines in.'
+            }
+          >
+            <Select
+              value={orderId}
+              onChange={(e) => loadOrder(e.target.value)}
+              disabled={ordersForSupplier.length === 0}
+            >
+              <option value="">— No order —</option>
+              {ordersForSupplier.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.documentNumber} · {o.documentDate}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field label="Their invoice number" hint="What the payment run will match against.">
+            <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+          </Field>
+
+          {/* The single best guard in the module. Typed from the bottom of
+              the page in their hand; the receipt is refused if the lines do
+              not tie to it. Left blank when receiving against a delivery
+              note that carries no prices. */}
+          <Field
+            label="Their invoice total (incl.)"
+            hint={
+              invoiceTotal > 0
+                ? undefined
+                : 'Optional — but it catches a mis-keyed cost before it reaches the ledger.'
+            }
+            error={
+              invoiceTotal > 0 && Math.abs(invoiceVariance) > 0.1
+                ? `Out by ${formatMoney(Math.abs(invoiceVariance))} — the lines come to ${formatMoney(ourTotal)}.`
+                : undefined
+            }
+          >
+            <CurrencyInput
+              value={invoiceTotal}
+              onChange={(e) =>
+                setInvoiceTotal(Number(String(e.target.value).replace(',', '.')) || 0)
+              }
+            />
+          </Field>
+        </CardBody>
+      </Card>
+
+      {/* The two things that move the whole invoice rather than one line, side
+          by side under the delivery they adjust. They are a pair: charges add
+          to what the goods cost, a discount takes off it, and both are read off
+          the bottom of the same supplier invoice in one pass. `items-start` so
+          the shorter card keeps its own height instead of stretching to match
+          a charges list that grows a row at a time. */}
+      <div className="grid items-start gap-4 xl:grid-cols-2">
         <Card>
-          <CardHeader title="Delivery" description="Who it came from, and what it came with." />
-          <CardBody className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-            <Field
-              label="Supplier"
-              // Marked here, not in a footnote by the button — the fix is this box.
-              error={
-                lines.length > 0 && supplierId === ''
-                  ? 'Choose who this delivery came from.'
-                  : undefined
+          <CardHeader
+            title="Delivery and charges"
+            description="Spread across the lines by value, so cost is landed cost — whoever billed it."
+          />
+          <CardBody>
+            <ChargesEditor
+              charges={charges}
+              suppliers={suppliers}
+              goodsSupplierName={
+                supplierId
+                  ? `On ${suppliers.find((s) => s.id === Number(supplierId))?.name ?? 'the'} invoice`
+                  : ''
               }
-            >
-              <Select
-                value={supplierId}
-                onChange={(e) => {
-                  setSupplierId(e.target.value)
-                  setOrderId('')
-                }}
-              >
-                <option value="">— Choose —</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.code} — {s.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field
-              label="Against an order"
-              hint={
-                ordersForSupplier.length === 0
-                  ? 'No open orders — receiving straight in is fine.'
-                  : 'Pulls the outstanding lines in.'
-              }
-            >
-              <Select
-                value={orderId}
-                onChange={(e) => loadOrder(e.target.value)}
-                disabled={ordersForSupplier.length === 0}
-              >
-                <option value="">— No order —</option>
-                {ordersForSupplier.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.documentNumber} · {o.documentDate}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label="Their invoice number" hint="What the payment run will match against.">
-              <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
-            </Field>
-
-            {/* The single best guard in the module. Typed from the bottom of
-                the page in their hand; the receipt is refused if the lines do
-                not tie to it. Left blank when receiving against a delivery
-                note that carries no prices. */}
-            <Field
-              label="Their invoice total (incl.)"
-              hint={
-                invoiceTotal > 0
-                  ? undefined
-                  : 'Optional — but it catches a mis-keyed cost before it reaches the ledger.'
-              }
-              error={
-                invoiceTotal > 0 && Math.abs(invoiceVariance) > 0.1
-                  ? `Out by ${formatMoney(Math.abs(invoiceVariance))} — the lines come to ${formatMoney(ourTotal)}.`
-                  : undefined
-              }
-            >
-              <CurrencyInput
-                value={invoiceTotal}
-                onChange={(e) =>
-                  setInvoiceTotal(Number(String(e.target.value).replace(',', '.')) || 0)
-                }
-              />
-            </Field>
-
+              defaultVatRate={defaultVatRate}
+              onChange={setCharges}
+            />
           </CardBody>
         </Card>
 
@@ -578,7 +721,7 @@ export default function ReceiveScreen({
             title="Discount on the invoice"
             description="Settlement terms or a rebate on the whole delivery, spread across the lines."
           />
-          <CardBody className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+          <CardBody className="grid gap-4 sm:grid-cols-2">
             <Field
               label="Percent off"
               hint={docDiscountAmount > 0 ? 'Ignored — an amount is set.' : 'Of the goods total.'}
@@ -603,26 +746,6 @@ export default function ReceiveScreen({
             </Field>
           </CardBody>
         </Card>
-
-        <Card>
-          <CardHeader
-            title="Delivery and charges"
-            description="Spread across the lines by value, so cost is landed cost — whoever billed it."
-          />
-          <CardBody>
-            <ChargesEditor
-              charges={charges}
-              suppliers={suppliers}
-              goodsSupplierName={
-                supplierId
-                  ? `On ${suppliers.find((s) => s.id === Number(supplierId))?.name ?? 'the'} invoice`
-                  : ''
-              }
-              defaultVatRate={defaultVatRate}
-              onChange={setCharges}
-            />
-          </CardBody>
-        </Card>
       </div>
 
       <Card>
@@ -642,22 +765,32 @@ export default function ReceiveScreen({
           {/* Two ways in, because a delivery is checked two ways. The box is
               for something whose code you know; the button is for working down
               a note of things you do not. */}
+          {/* The box is capped rather than filling the row: a search field is
+              sized by what gets typed into it — a code or a few words — and one
+              stretched across a wide screen leaves the button it belongs with
+              stranded at the far edge. Capped, the two read as one control. */}
           <div className="flex items-start gap-2">
-            <div className="flex-1">
-          <Combobox
-            options={comboOptions}
-            query={query}
-            onQueryChange={setQuery}
-            onSelect={(option) => option.data && addProduct(option.data)}
-            placeholder="Search a product to add a line…"
-            loading={searching}
-            clearOnSelect
-            emptyText={query.trim().length >= 2 ? 'No product matches.' : 'Keep typing…'}
-          />
+            <div className="w-full max-w-[400px]">
+              <Combobox
+                options={comboOptions}
+                query={query}
+                onQueryChange={setQuery}
+                onSelect={(option) => option.data && addProduct(option.data)}
+                placeholder="Search a product to add a line…"
+                loading={searching}
+                clearOnSelect
+                emptyText={query.trim().length >= 2 ? 'No product matches.' : 'Keep typing…'}
+              />
             </div>
             <Button variant="secondary" onClick={() => setPickerOpen(true)}>
               <Icons.Plus size={16} />
               Add stock
+            </Button>
+            {/* For a supplier who sends the delivery note as a file. It fills
+                this grid — nothing is received until the usual button. */}
+            <Button variant="ghost" onClick={() => setImportOpen(true)}>
+              <Icons.Upload size={16} />
+              Import
             </Button>
           </div>
 
@@ -724,10 +857,9 @@ export default function ReceiveScreen({
         )}
       </Card>
 
-      {/* The totals and the two buttons, kept to the right-hand third under the
-          grid. Full width would put a lone "Receive the goods" across a
-          2,000px screen, which reads as a page footer rather than the one act
-          this screen exists for. */}
+      {/* The totals, kept to the right-hand third under the grid. The two
+          buttons that used to sit beneath them are in the page header now, so
+          what remains here is the figure the invoice is checked against. */}
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="xl:col-start-3">
         <div className="flex flex-col gap-4">
@@ -771,23 +903,12 @@ export default function ReceiveScreen({
           )}
         </Card>
 
-        <Button variant="primary" disabled={!ready || pending} onClick={submit}>
-          <Icons.PackageOpen size={16} />
-          {pending ? 'Receiving…' : 'Receive the goods'}
-        </Button>
-
-        {/* Needs only a supplier, where posting needs everything. That is the
-            point: a half-checked pallet is exactly what gets put down, and
-            refusing to save it because a quantity is still zero would defeat
-            the feature. */}
-        <Button variant="ghost" disabled={supplierId === '' || pending} onClick={saveDraft}>
-          <Icons.Save size={16} />
-          {draftId ? 'Update the draft' : 'Save for later'}
-        </Button>
-
         {/* Everything that blocks the button is marked at its source — the
             supplier field, a quantity box, or a line's serial badge. The only
-            state with nowhere to point is an empty delivery. */}
+            state with nowhere to point is an empty delivery. Kept here beside
+            the totals rather than in the header: it explains a disabled button
+            a long way up the page, and a hint that shouts from the title bar
+            reads as an error the receiver has not made yet. */}
         {lines.length === 0 && (
           <p className="text-center text-xs text-muted">Add what arrived.</p>
         )}
@@ -908,7 +1029,15 @@ export default function ReceiveScreen({
           )}
         </div>
       </Modal>
-    </PageBody>
+
+      <LineImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onLines={addImportedLines}
+        noun="delivery lines"
+      />
+      </PageBody>
+    </>
   )
 }
 

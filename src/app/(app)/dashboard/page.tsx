@@ -1,7 +1,8 @@
 import { requireSiteUser } from '@/lib/auth'
-import { can } from '@/lib/site/permissions'
+import { can, type Capability } from '@/lib/site/permissions'
 import { PageHeader, PageBody, Badge, Card, Icons } from '@/components/ui'
 import { SalesDashboard } from './SalesDashboard'
+import { WIDGETS } from './widgets'
 
 /**
  * The landing screen: how the shop is trading.
@@ -25,6 +26,18 @@ export default async function DashboardPage() {
   // them. The trading figures are still withheld.
   const allowed = can(capabilities, 'dashboard.view')
 
+  /*
+   * Which widgets to OFFER, not which data to send.
+   *
+   * A UI affordance only — the two dashboard endpoints do the real gating, and
+   * they do it by not querying the data at all. This exists so the widget panel
+   * does not list switches that would turn on a box reading "not available".
+   * A Set cannot cross the server/client boundary, so it goes as a plain array.
+   */
+  const visibleWidgets = WIDGETS.filter(
+    (w) => !w.capability || can(capabilities, w.capability as Capability),
+  ).map((w) => w.id)
+
   return (
     <>
       <PageHeader
@@ -36,7 +49,7 @@ export default async function DashboardPage() {
       />
       <PageBody>
         {allowed ? (
-          <SalesDashboard />
+          <SalesDashboard visibleWidgets={visibleWidgets} />
         ) : (
           <Card>
             <div className="flex items-start gap-3 px-6 py-5">

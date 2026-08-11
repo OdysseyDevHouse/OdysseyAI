@@ -259,7 +259,7 @@ export async function saveForLaterAction(documentId: number): Promise<SaleResult
   const result = await saveForLaterDocument(siteId, documentId)
   if (!result.ok) return { ok: false, error: result.error }
 
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   return { ok: true, documentId: result.id }
 }
 
@@ -279,7 +279,7 @@ export async function discardSaleAction(
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
   const result = await discardDocument(siteId, documentId)
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   return result
 }
 
@@ -351,14 +351,14 @@ export async function finaliseSaleAction(
   })
   if (!posted.ok) return { ok: false, error: posted.error }
 
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   revalidatePath('/products')
   return posted
 }
 
 export async function voidSaleAction(
   documentId: number,
-  reason: string,
+  reason: { reasonId: number; note?: string | null },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   // The Void button on /sales/[id] is already hidden without this capability.
   // Hiding a button changes what is EASY, not what is possible — and voiding
@@ -370,7 +370,7 @@ export async function voidSaleAction(
   const result = await voidDocument(siteId, actor, documentId, reason)
   if (!result.ok) return { ok: false, error: result.error }
 
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   revalidatePath(`/sales/${documentId}`)
   revalidatePath('/products')
   return { ok: true }
@@ -405,7 +405,7 @@ export async function createCreditNoteAction(
   const result = await createCreditNote(site.id, { userId: user.id, userName: user.name }, input)
   if (!result.ok) return result
 
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   revalidatePath(`/sales/${input.invoiceId ?? ''}`)
   revalidatePath('/products')
   if (input.customerId) revalidatePath(`/customers/${input.customerId}`)
@@ -428,7 +428,7 @@ export async function createCreditNoteAction(
  */
 export async function creditWholeSaleAction(
   invoiceId: number,
-  reason: string,
+  reason: { reasonId: number; note?: string | null },
   refunds?: { tenderTypeId: number; amount: number; reference?: string | null }[],
 ): Promise<CreditNoteActionResult> {
   const { site, user, capabilities } = await requireSiteUser()
@@ -436,9 +436,8 @@ export async function creditWholeSaleAction(
   if (!can(capabilities, 'sales.credit_note')) {
     return { ok: false, error: 'You do not have permission to credit a sale.' }
   }
-  if (!reason?.trim()) {
-    return { ok: false, error: 'Give a reason for the credit.' }
-  }
+  // The reason itself is validated by createCreditNote, which resolves the id
+  // against the live list rather than trusting what the client sent.
 
   const lines = await creditableLines(site.id, invoiceId)
   if (!lines) return { ok: false, error: 'That sale no longer exists.' }
@@ -450,7 +449,8 @@ export async function creditWholeSaleAction(
 
   const result = await createCreditNote(site.id, { userId: user.id, userName: user.name }, {
     invoiceId,
-    reason: reason.trim(),
+    reasonId: reason.reasonId,
+    note: reason.note,
     lines: outstanding.map((line) => ({
       sourceLineId: line.id,
       productId: line.productId,
@@ -469,7 +469,7 @@ export async function creditWholeSaleAction(
   })
   if (!result.ok) return result
 
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   revalidatePath(`/sales/${invoiceId}`)
   revalidatePath('/products')
 

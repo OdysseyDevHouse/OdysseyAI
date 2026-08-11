@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { creditNotesFor, creditableLines } from '@/lib/site/salesReversal'
+import { listSalesReasons } from '@/lib/site/salesReasons'
 import { siteQuery } from '@/lib/siteDb'
 import { can } from '@/lib/site/permissions'
 import { formatMoney, formatQty, toNum } from '@/lib/decimals'
@@ -44,11 +45,15 @@ export default async function SalesDocumentPage({
   const document = await getDocument(site.id, documentId)
   if (!document) notFound()
 
-  const [credits, remaining] = await Promise.all([
+  const [credits, remaining, voidReasons, returnReasons] = await Promise.all([
     creditNotesFor(site.id, documentId),
     document.docType === 'invoice' && document.status === 'finalised'
       ? creditableLines(site.id, documentId)
       : Promise.resolve(null),
+    // Active only: these are the lists somebody picks FROM. Retired reasons stay
+    // readable on the documents that used them.
+    listSalesReasons(site.id, 'void'),
+    listSalesReasons(site.id, 'return'),
   ])
 
   const tenders = await siteQuery<Record<string, unknown>>(
@@ -99,8 +104,8 @@ export default async function SalesDocumentPage({
       <PageHeader
         title={document.documentNumber ?? `Draft #${document.id}`}
         subtitle={`${document.docLabel} · ${document.documentDate}`}
-        backHref="/sales"
-        backLabel="Sales"
+        backHref="/sales/invoicing?status=all"
+        backLabel="Invoicing"
         action={
           <>
             <Badge tone={STATUS_TONE[document.status]}>{STATUS_LABELS[document.status]}</Badge>
@@ -110,6 +115,8 @@ export default async function SalesDocumentPage({
               voidable={voidable}
               isVoid={document.status === 'cancelled'}
               creditable={creditable}
+              voidReasons={voidReasons}
+              returnReasons={returnReasons}
               voidBlockedReason={voidBlockedReason}
               creditBlockedReason={creditBlockedReason}
             />

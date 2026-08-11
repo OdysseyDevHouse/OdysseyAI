@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Button, Callout, Field, Icons, Input, Modal } from '@/components/ui'
+import { Button, Callout, Icons, Modal, ReasonPicker, type PickableReason } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 
 /**
@@ -24,11 +24,20 @@ import { formatMoney } from '@/lib/decimals'
  * moves stock back onto the shelf and money off a debtor's card. "Voided" with no
  * reason is a row nobody can account for later; the reason is what makes a pattern
  * of them visible.
+ *
+ * ── WHY IT IS A CODE AND NOT FREE TEXT ────────────────────────────────────
+ *
+ * It used to be a typed sentence, which meant "wrong item", "Wrong Item" and
+ * "wrng itm" were three different reasons and no report could add them up. The
+ * question the field exists to answer — what are we losing to voids, and why —
+ * could not be answered by the thing recording the answer. Now the shop's own
+ * list is picked from, and the typed note survives as the detail beside it.
  */
 export function VoidModal({
   open,
   documentNumber,
   total,
+  reasons,
   busy,
   onClose,
   onVoid,
@@ -36,19 +45,25 @@ export function VoidModal({
   open: boolean
   documentNumber: string
   total: number
+  /** The site's void reasons, active ones only. */
+  reasons: PickableReason[]
   busy: boolean
   onClose: () => void
-  onVoid: (reason: string) => void
+  onVoid: (reason: { reasonId: number; note: string | null }) => void
 }) {
-  const [reason, setReason] = useState('')
+  const [reasonId, setReasonId] = useState<number | null>(null)
+  const [note, setNote] = useState('')
 
   // Cleared each time it opens: the last void's reason must not be sitting there
   // ready to be submitted for a different sale.
   useEffect(() => {
-    if (open) setReason('')
+    if (open) {
+      setReasonId(null)
+      setNote('')
+    }
   }, [open])
 
-  const ready = reason.trim().length >= 3
+  const ready = reasonId !== null
 
   return (
     <Modal
@@ -69,7 +84,7 @@ export function VoidModal({
             size="touch-lg"
             className="flex-1 justify-center"
             disabled={!ready || busy}
-            onClick={() => onVoid(reason.trim())}
+            onClick={() => reasonId !== null && onVoid({ reasonId, note: note.trim() || null })}
           >
             <Icons.Trash size={20} />
             {busy ? 'Voiding…' : 'Void the sale'}
@@ -94,18 +109,16 @@ export function VoidModal({
           is what makes the gap in the numbering explainable.
         </Callout>
 
-        <Field
-          label="Reason"
-          hint="Recorded against the sale. Say what actually happened — “wrong item”, “customer changed their mind”."
-        >
-          <Input
-            size="touch"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Why is this being voided?"
-            autoComplete="off"
-          />
-        </Field>
+        <ReasonPicker
+          reasons={reasons}
+          value={reasonId}
+          note={note}
+          onChange={setReasonId}
+          onNoteChange={setNote}
+          label="Why is this being voided?"
+          hint="Recorded against the sale, and what a void report groups by."
+          disabled={busy}
+        />
       </div>
     </Modal>
   )

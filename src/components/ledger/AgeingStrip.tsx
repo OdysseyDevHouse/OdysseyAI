@@ -1,6 +1,9 @@
 import Link from 'next/link'
 import { formatMoney } from '@/lib/decimals'
-import { AGING_BUCKETS, BUCKET_LABELS, type Aging, type AgingBucket } from '@/lib/site/ledger'
+/* From agingBuckets, NOT from site/ledger — this component renders on both
+   sides of the boundary now (the dashboard is a client tree), and ledger.ts is
+   server-only. Same constants, re-exported there for existing callers. */
+import { AGING_BUCKETS, BUCKET_LABELS, type Aging, type AgingBucket } from '@/lib/agingBuckets'
 
 /**
  * Current / 30 / 60 / 90 / 120+ as one strip.

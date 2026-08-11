@@ -4,6 +4,23 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  closestCorners,
+  pointerWithin,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
+import {
+  Accordion,
   Badge,
   Button,
   Callout,
@@ -84,9 +101,10 @@ import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefr
 import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { PageVersion, SavedSection, StorefrontPage } from '@/lib/site/storefrontPages'
 import type { ProductDisplay, SectionContent } from '@/app/store/[token]/HomeSections'
-import { BuilderCanvas, type PreviewWidth } from './BuilderCanvas'
+import { BuilderCanvas, gapIndex, type PreviewWidth } from './BuilderCanvas'
 import ProductPicker from './ProductPicker'
 import Outline from './Outline'
+import SectionPalette, { PALETTE_PREFIX, paletteKind } from './SectionPalette'
 import PicturePicker from '@/components/PicturePicker'
 import {
   deleteSavedSectionAction,
@@ -132,14 +150,44 @@ const AUTOSAVE_MS = 1200
  * afternoon.
  */
 /**
- * How many sections a page needs before the outline is offered.
+ * The folding panels down the right-hand side, in the order they appear.
  *
- * Below this the canvas IS the outline — everything fits on a screen and a
- * second list of the same names is noise in a panel that is already busy.
+ * `edit` and `add` first because they are what the screen is FOR — the settings
+ * for the thing you are working on, and the shelf of things you can add. The
+ * rest descend by how often an owner reaches for them, ending at the two that
+ * are recovery rather than building.
  */
-const OUTLINE_FROM = 5
+type PanelKey = 'edit' | 'add' | 'outline' | 'saved' | 'presets' | 'appearance' | 'history'
 
 const HISTORY_LIMIT = 50
+
+/**
+ * What counts as being "over" a drop target.
+ *
+ * ── WHY NOT closestCorners FOR EVERYTHING ────────────────────────────────
+ *
+ * `closestCorners` always answers with SOMETHING: it ranks every droppable by
+ * distance and returns the nearest, however far away the pointer actually is.
+ * For rearranging that is exactly right — a section dragged loosely towards a
+ * gap should land in it without having to be aimed.
+ *
+ * For a NEW section from the palette it is wrong, and wrong in a way that
+ * quietly does the opposite of what somebody just decided. Carrying a tile back
+ * to the palette and letting go is how everyone cancels a drag; with
+ * closestCorners the far-off canvas gap was still "the nearest one", so the
+ * release read as a drop and the section they had changed their mind about was
+ * added anyway.
+ *
+ * So a palette drag uses `pointerWithin`, which answers only when the pointer
+ * is genuinely inside a droppable and otherwise answers nothing at all — giving
+ * the release somewhere to mean "not there". A section MOVE keeps
+ * closestCorners, because a move has no cancel to protect: dropping it nowhere
+ * simply leaves it where it was.
+ */
+const collisionStrategy: CollisionDetection = (args) =>
+  String(args.active.id).startsWith(PALETTE_PREFIX)
+    ? pointerWithin(args)
+    : closestCorners(args)
 
 let idCounter = 0
 function newId(kind: SectionKind): string {
@@ -406,11 +454,55 @@ export default function Builder({
   const [width, setWidth] = useState<PreviewWidth>('desktop')
   /** Collapsing the panel gives the preview the whole width. */
   const [inspectorOpen, setInspectorOpen] = useState(true)
-  const [presetsOpen, setPresetsOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleAt, setScheduleAt] = useState(page.publishAt)
-  const [outlineOpen, setOutlineOpen] = useState(true)
-  const [historyOpen, setHistoryOpen] = useState(false)
+
+  /*
+   * Which panels in the right column are folded open.
+   *
+   * A SET rather than one "which is open" value, because these are accordions
+   * and not tabs: the point of folding them is that the section you are editing
+   * and the list of what is on the page can both be open at once, with the
+   * presets and the appearance settings folded away between them.
+   *
+   * ── EVERYTHING STARTS SHUT ───────────────────────────────────────────
+   *
+   * The panel opens as a short list of headings, so the whole of what this
+   * column offers fits on screen at once and can be read in a glance. Opening
+   * with two panels expanded put the rest below the fold, where an owner had
+   * to scroll past a form to discover that saved sections and ready-made pages
+   * existed at all.
+   *
+   * It costs one click to start editing, and the screen spends that click
+   * back: `openPanel` fires whenever something is selected or added, so the
+   * panel you need is open by the time you look at it. In practice the fold
+   * opens itself and the only thing left is the list you can now see.
+   */
+  const [openPanels, setOpenPanels] = useState<Set<PanelKey>>(() => new Set<PanelKey>())
+
+  const togglePanel = useCallback((key: PanelKey) => {
+    setOpenPanels((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  /** Open a panel that may be shut, without shutting it if it is already open. */
+  const openPanel = useCallback((key: PanelKey) => {
+    setOpenPanels((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))
+  }, [])
+
+  /** Fold a panel away once it has done its job. The opposite of `openPanel`. */
+  const closePanel = useCallback((key: PanelKey) => {
+    setOpenPanels((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }, [])
   /** The version awaiting confirmation, because restoring replaces the draft. */
   const [restoring, setRestoring] = useState<PageVersion | null>(null)
   /** The section being given a name to save, if any. */
@@ -584,6 +676,51 @@ export default function Builder({
     return () => clearTimeout(timer)
   }, [currentJson, sections, toast, page.id])
 
+  /*
+   * The panel, so the selection can bring its own settings back into view.
+   *
+   * ── THE OTHER HALF OF THE SCROLL SYNC ────────────────────────────────
+   *
+   * The canvas chases the selection (see `EditableSection`); this is the
+   * matching move in the opposite direction. Selecting a different section
+   * while scrolled down among the appearance settings would otherwise swap the
+   * contents of a panel that is scrolled past them — the fields change, the
+   * viewport does not, and the owner sees the middle of a form they did not
+   * ask for.
+   *
+   * To the TOP rather than `scrollIntoView` on the edit panel: the edit panel
+   * is the first thing in this column, so the top of the scroll IS its
+   * heading, and scrolling the container directly avoids asking the browser to
+   * scroll an ancestor it might decide to move as well.
+   */
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const editOpen = openPanels.has('edit')
+  useEffect(() => {
+    if (!selectedId) return
+    /*
+     * Deferred a frame, because the thing being scrolled to may not exist yet.
+     *
+     * Adding a section sets the selection AND unfolds the edit panel in the
+     * same commit, so at the moment this effect first runs the panel is still
+     * the height it was without that fold. Scrolling then measures against a
+     * column that is about to grow, and the browser clamps the request to the
+     * old height — which left a just-dropped section's settings 850px above
+     * the visible area, off screen, on the one action that most needs them in
+     * front of you.
+     *
+     * `editOpen` in the dependencies for the same reason: unfolding is what
+     * changes the height, so the scroll has to be re-run when it does.
+     */
+    const raf = requestAnimationFrame(() => {
+      panelRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    })
+    return () => cancelAnimationFrame(raf)
+    // `editOpen`, NOT the whole set: unfolding the EDIT panel is what changes
+    // the height this scroll depends on. Depending on every panel would send
+    // the column back to the top each time somebody opened Appearance — which
+    // is scrolling away from the thing they just reached for.
+  }, [selectedId, editOpen])
+
   // Flash "Saved" briefly once an autosave lands, then fall back to idle.
   // Without this the 'saved' state was computed but never shown, so the bar
   // went silently from "Saving…" back to its resting text.
@@ -662,11 +799,140 @@ export default function Builder({
       return next
     })
     setSelectedId(section.id)
+    // Almost every new section needs something typed or chosen before it shows
+    // anything at all — a banner has no picture, a carousel has two empty
+    // slides. Landing on the page with its settings folded away would leave the
+    // owner looking at a dashed "choose a picture" box with no picker in sight.
+    openPanel('edit')
   }
 
   function add(kind: SectionKind) {
     insert(kind, sections.length)
   }
+
+  /* ── Dragging ───────────────────────────────────────────────────────────
+   *
+   * ONE DndContext for the whole screen, not one per column.
+   *
+   * The palette lives in the right-hand panel and its tiles are dropped on the
+   * canvas in the left one. dnd-kit only knows about draggables and droppables
+   * inside the same context, so two contexts — one per column — would mean a
+   * tile that goes dead the instant it crossed the gap between them. The
+   * context therefore has to sit above both, which is here.
+   */
+
+  /** What is in flight: a section's id, or a `palette:` tile. */
+  const [dragging, setDragging] = useState<string | null>(null)
+  /** What it is currently over, so the drop target can show itself. */
+  const [over, setOver] = useState<string | null>(null)
+
+  /** The kind being carried from the palette, or null if a section is moving. */
+  const placingKind = paletteKind(dragging)
+  const placing = placingKind !== null
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    // Long-press before a drag starts, so the canvas can still be scrolled
+    // with a finger on a tablet.
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  const sectionIds = sections.map((s) => s.id)
+  const atLimit = sections.length >= MAX_SECTIONS
+
+  const nameOf = (id: unknown) => {
+    const kind = paletteKind(String(id))
+    if (kind) return SECTION_LABEL[kind]
+    const found = sections.find((s) => s.id === String(id))
+    return found ? sectionName(found) : 'Section'
+  }
+
+  function handleDragStart(event: DragStartEvent) {
+    const id = String(event.active.id)
+    setDragging(id)
+    // Selecting on lift means the inspector already shows the right panel by
+    // the time the section lands. A palette tile has nothing to select yet —
+    // it becomes a section only when it is dropped.
+    if (!paletteKind(id)) setSelectedId(id)
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over: target } = event
+    setDragging(null)
+    setOver(null)
+    if (!target) return
+
+    const activeId = String(active.id)
+    const overId = String(target.id)
+    const kind = paletteKind(activeId)
+
+    if (kind) {
+      /*
+       * A NEW section, from the palette.
+       *
+       * Two things can be under the cursor: a gap between two sections, which
+       * names the index outright, or an existing section — which for a new
+       * block means "put it here", i.e. take that section's place and push it
+       * down. Dropping on the outline resolves to a gap too; see `OutlineGap`.
+       *
+       * ── ANYTHING ELSE IS A CANCEL ────────────────────────────────────
+       *
+       * Carrying a tile back to the palette and letting go is how somebody
+       * says "no, not that one" — it is the gesture every drag-and-drop
+       * interface has meant by it for thirty years. This used to fall through
+       * to "add it at the bottom", so changing your mind silently did the one
+       * thing you had just decided against, on the part of the page you were
+       * not looking at. A drop that lands on nothing must do nothing.
+       */
+      const gap = gapIndex(overId)
+      if (gap !== null) {
+        insert(kind, gap)
+        return
+      }
+      const at = sectionIds.indexOf(overId)
+      if (at === -1) return
+      insert(kind, at)
+      return
+    }
+
+    // An existing section being moved. A gap names where it goes; another
+    // section means "take its place", which is what `reorder` splices.
+    const gap = gapIndex(overId)
+    if (gap !== null) {
+      const from = sectionIds.indexOf(activeId)
+      if (from === -1) return
+      // A gap index counts positions in the CURRENT array, so a section moving
+      // DOWN passes its own slot on the way — without this the drop lands one
+      // place short of the gap the owner was pointing at.
+      moveTo(from, gap > from ? gap - 1 : gap)
+      return
+    }
+    if (activeId === overId) return
+    reorder(activeId, overId)
+  }
+
+  /*
+   * Where the drop line is drawn on a hovered section.
+   *
+   * A splice, not a swap (see `reorder`), so the line goes ABOVE the hovered
+   * section when travelling up the page and BELOW it when travelling down —
+   * which is exactly where the dragged section will come to rest. Getting this
+   * backwards is what makes a drag feel like it did something other than what
+   * was shown.
+   *
+   * Only for a MOVE. A palette tile has no position to travel from, so there is
+   * no direction to infer — it lands where the gaps say, and the gaps show
+   * themselves.
+   */
+  const fromIndex = dragging && !placing ? sectionIds.indexOf(dragging) : -1
+  const overIndex = over ? sectionIds.indexOf(over) : -1
+  const dropEdge: 'top' | 'bottom' | null =
+    fromIndex === -1 || overIndex === -1 || fromIndex === overIndex
+      ? null
+      : overIndex < fromIndex
+        ? 'top'
+        : 'bottom'
 
   /**
    * Drop a saved section onto this page, at the end.
@@ -685,11 +951,15 @@ export default function Builder({
    * a pair of ids at the call site would just be this function inlined.
    */
   function moveByIndex(index: number, by: number) {
-    const to = index + by
-    if (to < 0 || to >= sections.length) return
+    moveTo(index, index + by)
+  }
+
+  /** Move the section at `from` to sit at `to`. The move both arrows and drops use. */
+  function moveTo(from: number, to: number) {
+    if (to < 0 || to >= sections.length || from === to) return
     commit((prev) => {
       const next = [...prev]
-      const [moved] = next.splice(index, 1)
+      const [moved] = next.splice(from, 1)
       next.splice(to, 0, moved)
       return next
     })
@@ -712,6 +982,7 @@ export default function Builder({
     }
     commit((prev) => [...prev, copy])
     setSelectedId(copy.id)
+    openPanel('edit')
     toast.success('Added at the bottom of the page.')
   }
 
@@ -780,7 +1051,10 @@ export default function Builder({
     const next = preset.sections.map((s) => ({ ...s, id: newId(s.kind) }))
     commit(next)
     setSelectedId(next[0]?.id ?? null)
-    setPresetsOpen(false)
+    // Fold the presets away and open the first section's settings: the page has
+    // been chosen, so the next thing anybody does is start editing it.
+    closePanel('presets')
+    openPanel('edit')
     toast.success(`Started from “${preset.name}”. Undo puts your page back.`)
   }
 
@@ -1263,50 +1537,116 @@ export default function Builder({
         </p>
       </Modal>
 
-      {/* The inspector collapses, because the canvas is drawing a whole shop
-          in whatever is left over — and at 360px of panel on a laptop that is
-          not much. */}
+      {/*
+        ── TWO PANES THAT SCROLL SEPARATELY ─────────────────────────────────
+
+        This used to be one long document: the canvas and the panel sat side by
+        side in a grid and the WINDOW scrolled both. On a page of any real
+        length that made editing a ping-pong — click a section near the bottom,
+        scroll all the way up to reach its settings, change one field, scroll
+        back down to see what it did, repeat. The taller the page, the worse it
+        got, which is precisely backwards.
+
+        So the builder claims the viewport: the bar above stays put, and the two
+        columns divide what is left and scroll inside themselves. The settings
+        for a section are now beside the section, wherever on the page it is.
+
+        `min-h-0` on the row is what makes it work — a grid child defaults to
+        min-height:auto, which lets it grow to its content and hands the scroll
+        straight back to the window.
+      */}
+      <DndContext
+        /*
+         * A FIXED id, because dnd-kit otherwise derives its aria-describedby
+         * ids from a module-level counter. The server starts that counter at 0
+         * on every render while the browser continues from wherever it already
+         * was, so the two disagree and React reports a hydration mismatch on
+         * every load. Naming the context makes both sides derive the same ids.
+         */
+        id="storefront-builder"
+        sensors={sensors}
+        collisionDetection={collisionStrategy}
+        onDragStart={handleDragStart}
+        onDragOver={(event: DragOverEvent) =>
+          setOver(event.over ? String(event.over.id) : null)
+        }
+        onDragEnd={handleDragEnd}
+        /* Escape mid-drag must clear it too, or the overlay chip stays parked
+           over the canvas and swallows every click after it. */
+        onDragCancel={() => {
+          setDragging(null)
+          setOver(null)
+        }}
+        accessibility={{
+          announcements: {
+            onDragStart: ({ active }) =>
+              `Picked up ${nameOf(active.id)}. Use the arrow keys to move it, space to drop.`,
+            onDragOver: ({ active, over: target }) =>
+              target ? `${nameOf(active.id)} is over ${nameOf(target.id)}.` : '',
+            onDragEnd: ({ active, over: target }) =>
+              target
+                ? `${nameOf(active.id)} dropped onto ${nameOf(target.id)}.`
+                : `${nameOf(active.id)} was dropped.`,
+            onDragCancel: ({ active }) => `Moving ${nameOf(active.id)} was cancelled.`,
+          },
+        }}
+      >
+      {/* DndContext renders no element of its own, so this grid is a direct
+          flex child of PageBody and `flex-1` reaches it. */}
       <div
-        className={`grid gap-5 lg:items-start ${
-          inspectorOpen ? 'lg:grid-cols-[1fr_360px]' : 'lg:grid-cols-[1fr_auto]'
+        className={`grid min-h-0 flex-1 gap-5 lg:grid-cols-[1fr_400px] ${
+          inspectorOpen ? '' : 'lg:grid-cols-[1fr_auto]'
         }`}
       >
         {/* The page itself, live. Not a list of section names — the actual
             storefront, arranged in place. See BuilderCanvas. */}
-        <Card className="overflow-hidden p-0">
-          <BuilderCanvas
-            sections={sections}
-            content={content}
-            theme={theme}
-            display={display}
-            storeName={storeName}
-            blurb={blurb}
-            departments={publishedDepartments}
-            selected={selectedId}
-            width={width}
-            pageKind={page.kind}
-            onWidthChange={setWidth}
-            onSelect={(id) => {
-              setSelectedId(id)
-              // Selecting a section with the panel shut is a request to edit
-              // it, and there is nowhere to do that until the panel is back.
-              setInspectorOpen(true)
-            }}
-            onReorder={reorder}
-            onToggle={(id, enabled) => patch(id, { enabled })}
-            onAdd={add}
-            onInsert={insert}
-            onDuplicate={duplicate}
-            onRemove={remove}
-            onSelectAppearance={() => {
-              setSelectedId(null)
-              setInspectorOpen(true)
-            }}
-          />
+        <Card className="flex min-h-0 flex-col overflow-hidden p-0">
+          {/* The toolbar inside the canvas card is pinned by the flex column;
+              only this inner div scrolls. */}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <BuilderCanvas
+              sections={sections}
+              content={content}
+              theme={theme}
+              display={display}
+              storeName={storeName}
+              blurb={blurb}
+              departments={publishedDepartments}
+              selected={selectedId}
+              width={width}
+              dropEdge={dropEdge}
+              over={over}
+              dragging={dragging}
+              placing={placing}
+              onWidthChange={setWidth}
+              onSelect={(id) => {
+                setSelectedId(id)
+                // Selecting a section with the panel shut is a request to edit
+                // it, and there is nowhere to do that until the panel is back.
+                setInspectorOpen(true)
+                // And it must be the OPEN panel, not merely a heading: clicking
+                // a section whose settings are folded away would otherwise look
+                // like clicking did nothing.
+                openPanel('edit')
+              }}
+              onToggle={(id, enabled) => patch(id, { enabled })}
+              onDuplicate={duplicate}
+              onRemove={remove}
+              onSelectAppearance={() => {
+                setSelectedId(null)
+                setInspectorOpen(true)
+                openPanel('appearance')
+              }}
+              onShowPalette={() => {
+                setInspectorOpen(true)
+                openPanel('add')
+              }}
+            />
+          </div>
         </Card>
 
         {!inspectorOpen ? (
-          <div className="lg:sticky lg:top-4">
+          <div>
             <Button
               variant="secondary"
               iconOnly
@@ -1318,45 +1658,57 @@ export default function Builder({
             </Button>
           </div>
         ) : (
-        /* Whatever is selected. */
-        <div className="flex flex-col gap-5">
+        /* The panel, scrolling on its own.
+           `[&>*]:shrink-0` because a flex column's children shrink to fit by
+           default: without it a tall stack is squashed into the pane rather
+           than overflowing it, so every panel gets shorter and NOTHING
+           scrolls — which is the one thing this column exists to do. */
+        <div
+          ref={panelRef}
+          className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5 [&>*]:shrink-0"
+        >
+          {/* The one control that belongs to the panel rather than to anything
+              in it. Its own row above the folds, because a "hide the panel"
+              button parked inside one of them disappears when that one is
+              folded away. */}
+          <div className="flex items-center justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setInspectorOpen(false)}
+            >
+              <Icons.Close size={14} />
+              Hide this panel
+            </Button>
+          </div>
+
           {selected ? (
-            <Card>
-              <CardHeader
-                title={SECTION_LABEL[selected.kind]}
-                description={SECTION_HINT[selected.kind]}
-                action={
-                  <div className="flex items-center gap-1">
-                    {/* Keeping a section is a property of the section, so it
-                        lives on the section's own panel rather than in a
-                        toolbar that would have to say which one it meant. */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label="Save this section to use again"
-                      title="Save to use again"
-                      onClick={() => {
-                        setSaveName(sectionName(selected))
-                        setSavingSection(selected)
-                      }}
-                    >
-                      <Icons.Star size={15} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label="Hide the settings panel"
-                      title="Hide the settings panel"
-                      onClick={() => setInspectorOpen(false)}
-                    >
-                      <Icons.Close size={15} />
-                    </Button>
-                  </div>
-                }
-              />
-              <CardBody className="flex flex-col gap-4">
+            <Accordion
+              title={SECTION_LABEL[selected.kind]}
+              description={SECTION_HINT[selected.kind]}
+              open={editOpen}
+              onToggle={() => togglePanel('edit')}
+            >
+              <div className="flex flex-col gap-4">
+                {/* Keeping a section is a property of the section, so it lives
+                    on the section's own panel rather than in a toolbar that
+                    would have to say which one it meant. Inside the fold rather
+                    than in the header — an Accordion's header is a button, and
+                    a button inside a button is neither valid nor clickable. */}
+                <div className="flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSaveName(sectionName(selected))
+                      setSavingSection(selected)
+                    }}
+                  >
+                    <Icons.Star size={14} />
+                    Save to use again
+                  </Button>
+                </div>
+
                 <Field label="Heading" hint="Leave blank for no heading.">
                   <Input
                     value={selected.title}
@@ -2101,107 +2453,81 @@ export default function Builder({
                       </Callout>
                     )}
                 </FieldGroup>
-              </CardBody>
-            </Card>
+              </div>
+            </Accordion>
           ) : (
             <Card>
               <EmptyState
                 icon={<Icons.LayoutGrid size={22} />}
                 title="Nothing selected"
-                hint="Click a section in the preview to edit it, or add a new one."
+                hint="Click a section on the page to edit it, or add a new one."
                 action={
-                  <Menu
-                    variant="secondary"
-                    label={
-                      <>
-                        <Icons.Plus size={15} />
-                        Add a section
-                      </>
-                    }
-                  >
-                    {kindsFor(page.kind).map((kind) => (
-                      <MenuItem key={kind} onClick={() => add(kind)}>
-                        {SECTION_LABEL[kind]}
-                      </MenuItem>
-                    ))}
-                  </Menu>
+                  <Button variant="secondary" onClick={() => openPanel('add')}>
+                    <Icons.Plus size={15} />
+                    Add a section
+                  </Button>
                 }
               />
             </Card>
           )}
 
-          {/* Ready-made pages. Below the inspector rather than above it: this
-              is where somebody looks when they do not know what to do next,
-              and it must not be the first thing offered to somebody who
-              already has a page they like.
+          {/*
+            The shelf of things you can add.
 
-              Front page only: every preset is a SHOP WINDOW — a welcome, some
-              departments, a row of products. Applying one to a Returns policy
-              would replace it with a storefront, which is not a starting point
-              for the thing being edited. */}
-          {page.kind === 'home' && (
-          <Card>
-            <CardHeader
-              title="Start from a ready-made page"
-              description="Replaces your page. Undo puts it back."
-              action={
-                <Button variant="ghost" size="sm" onClick={() => setPresetsOpen((o) => !o)}>
-                  {presetsOpen ? 'Hide' : 'Show'}
-                </Button>
-              }
-            />
-            {presetsOpen && (
-              <CardBody className="flex flex-col gap-2">
-                {/* ChoiceTile, not SelectableCard: applying a preset acts and
-                    moves on — there is no "chosen preset" for a tile to keep
-                    showing afterwards, because the page is then just a page. */}
-                {PAGE_PRESETS.map((preset) => (
-                  <ChoiceTile
-                    key={preset.key}
-                    layout="inline"
-                    title={preset.name}
-                    description={preset.hint}
-                    onClick={() => applyPreset(preset)}
-                  />
-                ))}
-              </CardBody>
-            )}
-          </Card>
-          )}
+            Directly under the section being edited, and above everything else,
+            because adding and editing are the two things this screen is for.
+            See `SectionPalette` on why it is a palette rather than the dropdown
+            it replaced.
+          */}
+          <Accordion
+            title="Add a section"
+            description="Drag one onto the page."
+            open={openPanels.has('add')}
+            onToggle={() => togglePanel('add')}
+          >
+            <SectionPalette kinds={kindsFor(page.kind)} atLimit={atLimit} onAdd={add} />
+          </Accordion>
 
           {/*
             The page as a list.
 
-            Above the presets and the saved sections because it is about the
-            page being edited right now, and below the inspector because the
-            inspector is what the owner is actually working in. Only once a
-            page is long enough to be hard to scan — on four sections the
-            canvas IS the outline, and a second copy of it is noise.
+            Directly under the palette, because it is the other half of the same
+            job: the palette says what can go on the page, this says what is on
+            it — and while a tile is being carried, its rows are drop targets
+            for a section that belongs a long way from where the drag started.
+
+            No longer gated on a section count. It used to appear only past five
+            sections, on the reasoning that below that the canvas IS the
+            outline. That held when it was merely a second list; now it is where
+            a far-away drop lands, and a control that appears once a page grows
+            is one nobody knows to look for.
           */}
-          {sections.length > OUTLINE_FROM && (
-            <Card>
-              <CardHeader
-                title="Everything on this page"
-                description={`${sections.length} sections. Click one to edit it.`}
-                action={
-                  <Button variant="ghost" size="sm" onClick={() => setOutlineOpen((o) => !o)}>
-                    {outlineOpen ? 'Hide' : 'Show'}
-                  </Button>
-                }
+          <Accordion
+            title="Everything on this page"
+            description={
+              sections.length === 0
+                ? 'Nothing on it yet.'
+                : `${sections.length} section${sections.length === 1 ? '' : 's'}. Click one to edit it.`
+            }
+            open={openPanels.has('outline')}
+            onToggle={() => togglePanel('outline')}
+          >
+            {sections.length === 0 ? (
+              <p className="text-sm text-muted">
+                Drag something from “Add a section” to start the page.
+              </p>
+            ) : (
+              <Outline
+                sections={sections}
+                selected={selectedId}
+                placing={placing}
+                over={over}
+                onSelect={setSelectedId}
+                onMove={moveByIndex}
+                onToggle={(id, enabled) => patch(id, { enabled })}
               />
-              {outlineOpen && (
-                <CardBody>
-                  <Outline
-                    sections={sections}
-                    selected={selectedId}
-                    onSelect={setSelectedId}
-                    onMove={moveByIndex}
-                    onToggle={(id, enabled) => patch(id, { enabled })}
-                  />
-                </CardBody>
-              )}
-            </Card>
-          )}
+            )}
+          </Accordion>
 
           {/*
             Sections kept from anywhere in the shop.
@@ -2213,12 +2539,13 @@ export default function Builder({
             they are, on the page they are already editing.
           */}
           {savedSections.length > 0 && (
-            <Card>
-              <CardHeader
-                title="Saved sections"
-                description="Add a copy to this page. Editing it here leaves the saved one alone."
-              />
-              <CardBody className="flex flex-col gap-2">
+            <Accordion
+              title="Saved sections"
+              description="Add a copy to this page. Editing it here leaves the saved one alone."
+              open={openPanels.has('saved')}
+              onToggle={() => togglePanel('saved')}
+            >
+              <div className="flex flex-col gap-2">
                 {savedSections.map((saved) => (
                   <div
                     key={saved.id}
@@ -2256,8 +2583,41 @@ export default function Builder({
                     </Button>
                   </div>
                 ))}
-              </CardBody>
-            </Card>
+              </div>
+            </Accordion>
+          )}
+
+          {/* Ready-made pages. Below the things that build a page one section
+              at a time: this is where somebody looks when they do not know what
+              to do next, and it must not be the first thing offered to somebody
+              who already has a page they like.
+
+              Front page only: every preset is a SHOP WINDOW — a welcome, some
+              departments, a row of products. Applying one to a Returns policy
+              would replace it with a storefront, which is not a starting point
+              for the thing being edited. */}
+          {page.kind === 'home' && (
+            <Accordion
+              title="Start from a ready-made page"
+              description="Replaces your page. Undo puts it back."
+              open={openPanels.has('presets')}
+              onToggle={() => togglePanel('presets')}
+            >
+              <div className="flex flex-col gap-2">
+                {/* ChoiceTile, not SelectableCard: applying a preset acts and
+                    moves on — there is no "chosen preset" for a tile to keep
+                    showing afterwards, because the page is then just a page. */}
+                {PAGE_PRESETS.map((preset) => (
+                  <ChoiceTile
+                    key={preset.key}
+                    layout="inline"
+                    title={preset.name}
+                    description={preset.hint}
+                    onClick={() => applyPreset(preset)}
+                  />
+                ))}
+              </div>
+            </Accordion>
           )}
 
           {/*
@@ -2268,18 +2628,13 @@ export default function Builder({
             not compete with the controls somebody uses every time.
           */}
           {versions.length > 0 && (
-            <Card>
-              <CardHeader
-                title="Earlier versions"
-                description="Loads it back as a draft. Nothing goes live until you publish."
-                action={
-                  <Button variant="ghost" size="sm" onClick={() => setHistoryOpen((o) => !o)}>
-                    {historyOpen ? 'Hide' : 'Show'}
-                  </Button>
-                }
-              />
-              {historyOpen && (
-                <CardBody className="flex flex-col gap-2">
+            <Accordion
+              title="Earlier versions"
+              description="Loads it back as a draft. Nothing goes live until you publish."
+              open={openPanels.has('history')}
+              onToggle={() => togglePanel('history')}
+            >
+              <div className="flex flex-col gap-2">
                   {versions.map((v) => (
                     <div
                       key={v.id}
@@ -2309,20 +2664,20 @@ export default function Builder({
                       </Button>
                     </div>
                   ))}
-                </CardBody>
-              )}
-            </Card>
+              </div>
+            </Accordion>
           )}
 
           {/* Appearance is NOT part of the draft — see saveThemeChanges. */}
-          <Card>
-            <CardHeader
-              title="Appearance"
-              description="Applies to your shop as soon as you save it."
-            />
+          <Accordion
+            title="Appearance"
+            description="Applies to your shop as soon as you save it."
+            open={openPanels.has('appearance')}
+            onToggle={() => togglePanel('appearance')}
+          >
             {/* Grouped by what the owner is doing — one undifferentiated
                 column of eight fields is where these settings got lost. */}
-            <CardBody className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4">
               <FieldGroup title="Look">
                 {/* From the SAME library the banners use, so a shop uploads
                     its logo once and can reuse it anywhere. */}
@@ -2612,15 +2967,16 @@ export default function Builder({
                   </div>
                 </Field>
               </FieldGroup>
-            </CardBody>
-            <CardFooter>
+
               {/* secondary: the screen's one primary is Publish, in the bar
                   above — two primaries is zero primaries. */}
-              <Button variant="secondary" onClick={saveThemeChanges} disabled={busy}>
-                Save appearance
-              </Button>
-            </CardFooter>
-          </Card>
+              <div className="border-t border-border pt-4">
+                <Button variant="secondary" onClick={saveThemeChanges} disabled={busy}>
+                  Save appearance
+                </Button>
+              </div>
+            </div>
+          </Accordion>
 
           {!storeOpen && (
             <Card>
@@ -2666,6 +3022,25 @@ export default function Builder({
         </div>
         )}
       </div>
+
+      {/* A label chip, never the real section: cloning a twelve-product grid
+          every frame drops the drag to a crawl.
+
+          Keyed off `dragging`, NOT `selected` — DragOverlay portals a floating
+          element at the cursor, so leaving it mounted for a merely SELECTED
+          section parks an invisible chip over the canvas that eats every
+          subsequent click. */}
+      <DragOverlay>
+        {dragging ? (
+          <div className="rounded-card bg-brand px-3 py-2 text-sm font-medium text-white shadow-pop">
+            {/* A new section says so. Carrying a tile that reads exactly like a
+                move of an existing section is how somebody ends up expecting
+                the palette to have moved something. */}
+            {placingKind ? `Add ${SECTION_LABEL[placingKind]}` : nameOf(dragging)}
+          </div>
+        ) : null}
+      </DragOverlay>
+      </DndContext>
     </>
   )
 }

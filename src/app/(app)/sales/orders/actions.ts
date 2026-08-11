@@ -49,7 +49,7 @@ export async function deliverAction(
 
   revalidatePath(`/sales/orders/${documentId}`)
   revalidatePath('/sales/orders')
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
 
   return {
     ok: true,

@@ -21,8 +21,29 @@ import { listLedger, reconcileBalances, postTransaction, allocate } from '../src
 import { reconcileStock } from '../src/lib/site/stockMovements'
 import { addSerials, availableSerials, listSerials, reconcileSerials } from '../src/lib/site/serials'
 import { toNum } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let VOID_REASON_ID = 0
+let RETURN_REASON_ID = 0
+
+async function loadReasonIds() {
+  const v = await findSalesReasonByCode(SITE, 'void', 'WRONG-ITEM')
+  if (!v) throw new Error('Seeded void reason WRONG-ITEM is missing — run site-migrate for 102.')
+  VOID_REASON_ID = v.id
+  const r = await findSalesReasonByCode(SITE, 'return', 'FAULTY')
+  if (!r) throw new Error('Seeded return reason FAULTY is missing — run site-migrate for 102.')
+  RETURN_REASON_ID = r.id
+}
+
 const actor = { userId: 1, userName: 'Void Test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -42,6 +63,7 @@ async function sweepStrays() {
 }
 
 async function main() {
+  await loadReasonIds()
   await sweepStrays()
 
   const stamp = Date.now().toString().slice(-8)
@@ -96,7 +118,7 @@ async function main() {
     String((await getCustomer(SITE, cust.id))?.balance))
   ok('  stock dropped to 95', (await stockOf(widget)) === 95, String(await stockOf(widget)))
 
-  const voided = await voidDocument(SITE, actor, draft.id, 'Rang up on the wrong account')
+  const voided = await voidDocument(SITE, actor, draft.id, { reasonId: VOID_REASON_ID, note: 'Rang up on the wrong account' })
   ok('*** voided ***', voided.ok, voided.ok ? '' : voided.error)
 
   ok('*** stock came back to 100 ***', (await stockOf(widget)) === 100, String(await stockOf(widget)))
@@ -135,7 +157,7 @@ async function main() {
   })
   if (payment.ok) {
     await allocate(SITE, actor, invoiceTxn.id, payment.id, 100)
-    const blocked = await voidDocument(SITE, actor, second.id, 'Try to void a part-paid sale')
+    const blocked = await voidDocument(SITE, actor, second.id, { reasonId: VOID_REASON_ID, note: 'Try to void a part-paid sale' })
     ok('*** a sale with an allocated payment REFUSES to void ***', !blocked.ok,
       !blocked.ok ? blocked.error : '')
     ok('  and the sale is still finalised, stock still out',
@@ -154,7 +176,7 @@ async function main() {
   if (cashDraft.ok) {
     await finaliseDocument(SITE, actor, { documentId: cashDraft.id, tenders: [{ tenderTypeId: cash.id, amount: 115 }] })
     const balanceBefore = (await getCustomer(SITE, cust.id))?.balance
-    const cashVoid = await voidDocument(SITE, actor, cashDraft.id, 'Wrong item')
+    const cashVoid = await voidDocument(SITE, actor, cashDraft.id, { reasonId: VOID_REASON_ID, note: 'Wrong item' })
     ok('*** a cash sale voids cleanly ***', cashVoid.ok, cashVoid.ok ? '' : cashVoid.error)
     ok('  and no ledger entry was touched', (await getCustomer(SITE, cust.id))?.balance === balanceBefore)
     ok('  stock back', (await stockOf(widget)) === 98, String(await stockOf(widget)))
@@ -175,7 +197,7 @@ async function main() {
     ok('a serial phone sold', sold.ok, sold.ok ? '' : sold.error)
     ok('  one serial is marked sold', (await availableSerials(SITE, phone)).length === 1)
 
-    const serialVoid = await voidDocument(SITE, actor, serialDraft.id, 'Customer changed their mind')
+    const serialVoid = await voidDocument(SITE, actor, serialDraft.id, { reasonId: VOID_REASON_ID, note: 'Customer changed their mind' })
     ok('*** voiding returns the SERIAL to stock ***', serialVoid.ok, serialVoid.ok ? '' : serialVoid.error)
     ok('  both units sellable again', (await availableSerials(SITE, phone)).length === 2,
       String((await availableSerials(SITE, phone)).length))
@@ -186,8 +208,8 @@ async function main() {
   }
 
   // ── The refusals that were already right
-  ok('voiding twice refused', !(await voidDocument(SITE, actor, draft.id, 'again')).ok)
-  ok('a reason is required', !(await voidDocument(SITE, actor, second.id, '  ')).ok)
+  ok('voiding twice refused', !(await voidDocument(SITE, actor, draft.id, { reasonId: VOID_REASON_ID, note: 'again' })).ok)
+  ok('a reason is required', !(await voidDocument(SITE, actor, second.id, { reasonId: 0, note: null })).ok)
 
   // ── The duplicate-document-number guard
   //
@@ -227,7 +249,7 @@ async function main() {
     // Credit 3 of the 10 first, the partial way.
     const wholeLine = (await getDocument(SITE, whole.id))!.lines[0]
     await createCreditNote(SITE, actor, {
-      invoiceId: whole.id, customerId: cust.id, reason: 'Three faulty',
+      invoiceId: whole.id, customerId: cust.id, reasonId: RETURN_REASON_ID, note: 'Three faulty',
       lines: [{
         sourceLineId: wholeLine.id, productId: widget, productCode: `VDN${stamp}`,
         description: 'Void test widget', productType: 'normal', qty: 3,
@@ -242,7 +264,7 @@ async function main() {
       left.length === 1 && left[0].creditable === 7, String(left[0]?.creditable))
 
     const rest = await createCreditNote(SITE, actor, {
-      invoiceId: whole.id, customerId: cust.id, reason: 'Rest returned',
+      invoiceId: whole.id, customerId: cust.id, reasonId: RETURN_REASON_ID, note: 'Rest returned',
       lines: left.map((l) => ({
         sourceLineId: l.id, productId: l.productId, productCode: l.productCode,
         description: l.description, productType: l.productType, departmentId: l.departmentId,
@@ -257,7 +279,7 @@ async function main() {
       (await creditableLines(SITE, whole.id))!.every((l) => l.creditable === 0))
     ok('  a further credit is refused',
       !(await createCreditNote(SITE, actor, {
-        invoiceId: whole.id, customerId: cust.id, reason: 'Again',
+        invoiceId: whole.id, customerId: cust.id, reasonId: RETURN_REASON_ID, note: 'Again',
         lines: [{
           sourceLineId: wholeLine.id, productId: widget, productCode: `VDN${stamp}`,
           description: 'Void test widget', productType: 'normal', qty: 1,

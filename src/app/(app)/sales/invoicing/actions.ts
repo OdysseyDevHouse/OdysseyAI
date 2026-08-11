@@ -176,7 +176,6 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
 
   revalidatePath(`/sales/invoicing/${payload.documentId}`)
   revalidatePath('/sales/invoicing')
-  revalidatePath('/sales')
   return { ok: true, documentId: result.id }
 }
 
@@ -253,7 +252,9 @@ export async function finaliseInvoiceAction(
 
   revalidatePath(`/sales/invoicing/${saved.documentId}`)
   revalidatePath('/sales/invoicing')
-  revalidatePath('/sales')
+  /* Finalising moves the invoice from the editor to the record screen, so that
+     is the URL the user lands on next — it must not serve a cached draft. */
+  revalidatePath(`/sales/${saved.documentId}`)
   revalidatePath('/products')
   return {
     ok: true,

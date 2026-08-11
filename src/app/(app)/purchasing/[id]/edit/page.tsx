@@ -55,8 +55,12 @@ export default async function EditOrderPage({
       <PageHeader
         title={`Edit draft #${doc.id}`}
         subtitle={`${doc.supplierName} · nothing has been received`}
-        backHref={`/purchasing/${documentId}`}
-        backLabel="Back to the order"
+        /* The LIST, not the document. Clicking a draft in the list now lands
+           here directly, so the document is a screen this user has never seen —
+           sending them "back" to it would be somewhere they have not been.
+           Receiving's back link goes to the same place, for the same reason. */
+        backHref="/purchasing"
+        backLabel="Purchasing"
       />
       <OrderScreen
         suppliers={suppliers.items.map((s) => ({

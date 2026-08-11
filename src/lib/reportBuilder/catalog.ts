@@ -397,7 +397,14 @@ const PRODUCT_LOOKUP_FIELDS: CatalogField[] = [
 
 /* ── sales documents ───────────────────────────────────────────────────────── */
 
-const SALE_DOC_TYPES = ['quote', 'sales_order', 'invoice', 'credit_note']
+/*
+ * 'credit_sale', not 'credit_note': 022 renamed the doc_type value and the enum
+ * here was never updated, so every template filtering on credit_note has been
+ * matching nothing. Both spellings are offered — the old one because it is
+ * stored in saved reports and schedules that would otherwise break, and it
+ * still matches on a site that has not run 022.
+ */
+const SALE_DOC_TYPES = ['quote', 'sales_order', 'invoice', 'credit_sale', 'credit_note']
 const SALE_STATUSES = ['draft', 'parked', 'issued', 'finalised', 'void', 'cancelled']
 
 const CUSTOMER_JOIN: JoinUnit = {
@@ -411,6 +418,23 @@ const CUSTOMER_GROUP_JOIN: JoinUnit = {
 const CUSTOMER_REP_JOIN: JoinUnit = {
   name: 'customerRep',
   sql: 'LEFT JOIN sales_reps cr ON cr.id = c.rep_id',
+}
+
+/**
+ * The two coded reason lists, joined off sales_documents.
+ *
+ * Both are LEFT joins and stay that way: every void and credit note raised
+ * before 102 has free text and no code, and an INNER join would silently drop
+ * exactly the history somebody is trying to compare against.
+ */
+const VOID_REASON_JOIN = {
+  name: 'voidReason',
+  sql: 'LEFT JOIN sales_void_reasons vr ON vr.id = t.cancel_reason_id',
+}
+
+const RETURN_REASON_JOIN = {
+  name: 'returnReason',
+  sql: 'LEFT JOIN sales_return_reasons rr ON rr.id = t.return_reason_id',
 }
 
 /** Account context for a transaction — who they are and what they may owe. */
@@ -494,7 +518,7 @@ const SALES_SOURCE: CatalogSource = {
   shape: 'timeline',
   table: 'sales_documents',
   dateColumn: 'document_date',
-  joins: [CUSTOMER_JOIN, CUSTOMER_GROUP_JOIN, CUSTOMER_REP_JOIN],
+  joins: [CUSTOMER_JOIN, CUSTOMER_GROUP_JOIN, CUSTOMER_REP_JOIN, VOID_REASON_JOIN, RETURN_REASON_JOIN],
   // A report about "sales" means money that counted. Drafts, quotes and voids
   // are all reachable by removing this, but none of them belongs in a turnover
   // figure by default.
@@ -617,9 +641,51 @@ const SALES_SOURCE: CatalogSource = {
       // 029 renamed the column to cancel_reason and 022 the status value to
       // cancelled. The field KEY is left alone: it is stored in saved reports
       // and schedules, and renaming it would break them for a label change.
-      label: 'Cancel reason',
+      //
+      // Kept alongside the coded field below rather than replaced, for the same
+      // reason: this key is in saved reports. It is also still the only field
+      // that reads on a void raised before 102, and the only one that shows the
+      // free-text note beside a code.
+      label: 'Cancel reason (text)',
       type: 'text',
       expr: 't.cancel_reason',
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'cancelReasonCode',
+      label: 'Cancel reason',
+      type: 'text',
+      expr: 'vr.code',
+      needs: ['voidReason'],
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'cancelReasonName',
+      label: 'Cancel reason name',
+      type: 'text',
+      /* Labelled rather than left blank. Every void raised before 102 has free
+         text and no code, and those rows genuinely belong in the total — a
+         grouped report that showed them as an unnamed row would read as a bug
+         in the report rather than as the truth about the history. */
+      expr: "COALESCE(vr.name, 'Not recorded')",
+      needs: ['voidReason'],
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'returnReasonCode',
+      label: 'Return reason',
+      type: 'text',
+      expr: 'rr.code',
+      needs: ['returnReason'],
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'returnReasonName',
+      label: 'Return reason name',
+      type: 'text',
+      // Labelled for the same reason the cancel one is — see above.
+      expr: "COALESCE(rr.name, 'Not recorded')",
+      needs: ['returnReason'],
       group: FIELD_GROUPS.OTHER,
     },
     {
@@ -658,6 +724,10 @@ const SALE_LINES_SOURCE: CatalogSource = {
     PRODUCT_LEVELS_JOIN,
     LINE_DEPT_JOIN,
     { name: 'customer', sql: 'LEFT JOIN customers c ON c.id = d.customer_id' },
+    /* Off the PARENT document, which on this source is `d` rather than `t` — so
+       it cannot reuse RETURN_REASON_JOIN. A credit note line has no reason of
+       its own; the whole document has one. */
+    { name: 'returnReason', sql: 'LEFT JOIN sales_return_reasons rr ON rr.id = d.return_reason_id' },
     CUSTOMER_GROUP_JOIN,
     CUSTOMER_REP_JOIN,
   ],
@@ -859,6 +929,27 @@ const SALE_LINES_SOURCE: CatalogSource = {
       type: 'text',
       expr: 'd.terminal_code',
       group: FIELD_GROUPS.PEOPLE,
+    },
+    /* Only populated on a credit-note line — an ordinary sale has no return
+       reason. That is what makes "refunds by reason and product" answerable
+       from this source: the reason is the document's, the product is the
+       line's, and neither exists on the other. */
+    {
+      key: 'returnReasonCode',
+      label: 'Return reason',
+      type: 'text',
+      expr: 'rr.code',
+      needs: ['returnReason'],
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'returnReasonName',
+      label: 'Return reason name',
+      type: 'text',
+      // Labelled for the same reason the cancel one is — see above.
+      expr: "COALESCE(rr.name, 'Not recorded')",
+      needs: ['returnReason'],
+      group: FIELD_GROUPS.OTHER,
     },
     ...CUSTOMER_LOOKUP_FIELDS,
     ...PRODUCT_LOOKUP_FIELDS,

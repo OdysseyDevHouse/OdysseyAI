@@ -18,7 +18,6 @@ import {
   ShoppingBag,
   Gem,
   Plus,
-  Receipt,
   FileText,
   Users,
   Undo2 as Reverse,
@@ -104,9 +103,12 @@ export const NAV: NavSection[] = [
     label: 'Sales',
     icon: LineChart,
     items: [
-      { label: 'New sale', href: '/pos', icon: Plus, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
-      { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.edit', description: 'Capture and finalise an invoice' },
-      { label: 'Documents', href: '/sales', icon: Receipt, built: true, capability: 'sales.view', description: 'Every sale, invoice and credit note' },
+      { label: 'Point of sale', href: '/pos', icon: Plus, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
+      /* One row, not two. Invoicing was the capture worklist and Documents the
+         finalised record — the same table under two addresses, where finding an
+         invoice meant knowing which of the two it had moved to. Status is a
+         filter on this screen now, and /sales redirects here. */
+      { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax invoice sale history', description: 'Every invoice and credit note, from draft to finalised' },
       { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view', description: 'What customers have ordered but not yet taken' },
       { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view', description: 'Prices offered, and what became of them' },
       { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view', description: 'Goods put aside and paid off over time' },
@@ -318,7 +320,9 @@ export const SUBPAGE_LABELS = {
   '/setup/linked-stores': 'Linked stores',
   '/setup/locations': 'Stock locations',
   '/setup/adjustment-reasons': 'Adjustment reasons',
+  '/setup/sales-reasons': 'Void & return reasons',
   '/setup/pricing': 'Price types & VAT',
+  '/setup/purchasing': 'Purchasing & cost',
   '/setup/tender-types': 'Tender types',
   '/setup/tips': 'Tips',
   // "Tills", not "Terminals" — it is what the screen's own heading says, and
@@ -331,6 +335,7 @@ export const SUBPAGE_LABELS = {
   '/setup/reservations': 'Reservations',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
+  '/setup/import': 'Import data',
   '/setup/laybys': 'Lay-bys',
   '/setup/expense-categories': 'Expense categories',
   '/setup/databases': 'Site & databases',
@@ -491,6 +496,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/linked-stores': 'multi store group branches sharing',
   '/setup/locations': 'warehouse storeroom bins branches',
   '/setup/adjustment-reasons': 'write off shrinkage damage breakage wastage codes',
+  '/setup/sales-reasons': 'void cancel reasons refund return credit note faulty codes exception',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/tender-types': 'cash card eft payment methods vouchers',
   '/setup/tips': 'tips gratuity service charge tiers waiter pool',
@@ -501,6 +507,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/reservations': 'bookings diary online booking form opening hours sittings covers restaurant',
   '/setup/reconciliation': 'drift integrity check invariants audit',
   '/setup/opening-balances': 'import migration debtors creditors go live',
+  '/setup/import': 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments stock take',
   '/setup/laybys': 'deposit cancellation fee terms instalments',
   '/setup/expense-categories': 'chart of accounts spending overheads account codes',
   '/setup/databases': 'connection health server site details',
@@ -554,10 +561,11 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   '/instructions': { new: 'New instruction', edit: 'Edit instruction' },
   '/customers': { new: 'New customer', edit: 'Customer' },
   '/suppliers': { new: 'New supplier', edit: 'Supplier' },
-  /* A finalised document is never "edited" — the detail screen is a record of
-     what was issued, so the crumb names the thing rather than the action. */
-  '/sales': { new: 'New sale', edit: 'Document' },
-  /* Unlike /sales, an invoice here IS being edited until it is finalised. */
+  /* /sales itself redirects to the register now, but /sales/[id] is still where
+     an issued document lives. It is never "edited" — the screen is a record of
+     what went out — so the crumb names the thing rather than the action. */
+  '/sales': { new: 'Point of sale', edit: 'Document' },
+  /* Unlike /sales/[id], an invoice here IS being edited until it is finalised. */
   '/sales/invoicing': { new: 'New invoice', edit: 'Invoice' },
   '/sales/orders': { new: 'New order', edit: 'Order' },
   /* A posted transfer is a record of what moved, not something anyone edits. */

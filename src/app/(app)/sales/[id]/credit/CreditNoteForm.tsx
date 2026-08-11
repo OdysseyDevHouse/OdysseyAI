@@ -10,10 +10,11 @@ import {
   CardHeader,
   Field,
   Icons,
-  Input,
   NumberInput,
   PageBody,
+  ReasonPicker,
   Select,
+  type PickableReason,
   SummaryList,
   SummaryRow,
   SummaryTotal,
@@ -67,6 +68,7 @@ export default function CreditNoteForm({
   terminalCode,
   lines,
   tenders,
+  reasons,
 }: {
   invoiceId: number
   invoiceNumber: string
@@ -76,9 +78,12 @@ export default function CreditNoteForm({
   terminalCode: string | null
   lines: CreditLine[]
   tenders: { id: number; name: string }[]
+  /** The site's return reasons, active only. */
+  reasons: PickableReason[]
 }) {
   const [qty, setQty] = useState<Record<number, number>>({})
-  const [reason, setReason] = useState('')
+  const [reasonId, setReasonId] = useState<number | null>(null)
+  const [note, setNote] = useState('')
   const [refunding, setRefunding] = useState(!customerId)
   const [refundTenderId, setRefundTenderId] = useState(String(tenders[0]?.id ?? ''))
   const [pending, startTransition] = useTransition()
@@ -103,12 +108,14 @@ export default function CreditNoteForm({
   }
 
   function submit() {
+    if (reasonId === null) return
     startTransition(async () => {
       const result = await createCreditNoteAction({
         invoiceId,
         customerId,
         customerName,
-        reason,
+        reasonId,
+        note: note.trim() || null,
         terminalId,
         terminalCode,
         lines: chosen.map((l) => ({
@@ -140,7 +147,7 @@ export default function CreditNoteForm({
     })
   }
 
-  const ready = chosen.length > 0 && reason.trim().length > 0
+  const ready = chosen.length > 0 && reasonId !== null
 
   return (
     <PageBody className="grid lg:grid-cols-3">
@@ -219,19 +226,17 @@ export default function CreditNoteForm({
             description="The original invoice keeps saying exactly what it said — the customer may be holding a copy. This raises a separate document that reverses part of it."
           />
           <CardBody className="flex flex-col gap-4">
-            <Field
-              label="Reason"
-              hint="Recorded on the credit and in the audit trail."
-              error={
-                chosen.length > 0 && reason.trim().length === 0 ? 'Give a reason.' : undefined
-              }
-            >
-              <Input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. Damaged in transit"
-              />
-            </Field>
+            <ReasonPicker
+              reasons={reasons}
+              value={reasonId}
+              note={note}
+              onChange={setReasonId}
+              onNoteChange={setNote}
+              label="Why is it coming back?"
+              hint="Recorded on the credit and in the audit trail, and what a returns report groups by."
+              error={chosen.length > 0 && reasonId === null ? 'Choose a reason.' : undefined}
+              disabled={pending}
+            />
 
             {customerId ? (
               <>

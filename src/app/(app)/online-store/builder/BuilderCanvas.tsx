@@ -1,39 +1,18 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  MouseSensor,
-  TouchSensor,
-  closestCorners,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragOverEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { useDroppable } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Button, Icons, Menu, MenuItem, SegmentedControl, Switch } from '@/components/ui'
+import { Button, Icons, SegmentedControl, Switch } from '@/components/ui'
 import {
   MAX_SECTIONS,
-  SECTION_LABEL,
   isScheduledNow,
-  kindsFor,
   // One definition, shared with the publish summary — two copies of "what do
   // we call this section" would drift the moment either changed.
   sectionName,
   shopToday,
   type HomeSection,
-  type PageKind,
-  type SectionKind,
   type StorefrontTheme,
 } from '@/lib/storefrontModel'
 import type { StorefrontDepartment } from '@/lib/site/storefront'
@@ -109,16 +88,17 @@ export function BuilderCanvas({
   departments,
   selected,
   width,
-  pageKind,
+  dropEdge,
+  over,
+  dragging,
+  placing,
   onWidthChange,
   onSelect,
-  onReorder,
   onToggle,
-  onAdd,
-  onInsert,
   onDuplicate,
   onRemove,
   onSelectAppearance,
+  onShowPalette,
 }: {
   sections: HomeSection[]
   content: SectionContent[]
@@ -130,129 +110,36 @@ export function BuilderCanvas({
   departments: StorefrontDepartment[]
   selected: string | null
   width: PreviewWidth
-  /** Which kinds the add menus offer — see `kindsFor`. */
-  pageKind: PageKind
+  /** Which edge of the hovered section the drop line goes on. */
+  dropEdge: 'top' | 'bottom' | null
+  /** The droppable currently under the cursor, if any. */
+  over: string | null
+  /** What is in flight, so a section can dim itself while it is the one moving. */
+  dragging: string | null
+  /**
+   * True while a PALETTE tile is in flight.
+   *
+   * The gaps between sections are invisible at rest — see `InsertPoint`. While
+   * something is being carried they have to be visible, or the owner is aiming
+   * a drop at a target the screen has not admitted exists.
+   */
+  placing: boolean
   onWidthChange: (width: PreviewWidth) => void
   onSelect: (id: string) => void
-  onReorder: (from: string, to: string) => void
   onToggle: (id: string, enabled: boolean) => void
-  onAdd: (kind: SectionKind) => void
-  /** Add a section AT an index — the between-sections insert points. */
-  onInsert: (kind: SectionKind, index: number) => void
   onDuplicate: (id: string) => void
   onRemove: (id: string) => void
   /** Clicking the masthead or footer opens the shop-wide settings. */
   onSelectAppearance: () => void
+  /** Unfold the palette in the panel, for the empty page's own Add button. */
+  onShowPalette: () => void
 }) {
-  /** Which section is being dragged right now. Only set during a drag. */
-  const [dragging, setDragging] = useState<string | null>(null)
-  /**
-   * Which section it is currently hovering over, so a line can be drawn where
-   * it would land. Tracked separately from `dragging` because dnd-kit reports
-   * the two in different events.
-   */
-  const [over, setOver] = useState<string | null>(null)
-
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    // Long-press before a drag starts, so the canvas can still be scrolled
-    // with a finger on a tablet.
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-
   const sectionIds = sections.map((s) => s.id)
   const atLimit = sections.length >= MAX_SECTIONS
-  // What the three add menus offer. One rule, in the model — see `kindsFor`.
-  const kinds = kindsFor(pageKind)
-
-  const nameOf = (id: unknown) => {
-    const found = sections.find((s) => s.id === String(id))
-    return found ? sectionName(found) : 'Section'
-  }
-
-  function handleDragStart(event: DragStartEvent) {
-    const id = String(event.active.id)
-    setDragging(id)
-    // Selecting on lift means the inspector already shows the right panel by
-    // the time the section lands.
-    onSelect(id)
-  }
-
-  function handleDragOver(event: DragOverEvent) {
-    setOver(event.over ? String(event.over.id) : null)
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
-    setDragging(null)
-    setOver(null)
-    const { active, over: target } = event
-    if (!target || active.id === target.id) return
-    onReorder(String(active.id), String(target.id))
-  }
-
-  /*
-   * Where the drop line is drawn.
-   *
-   * A splice, not a swap (see `reorder` in Builder.tsx), so the line goes
-   * ABOVE the hovered section when travelling up the page and BELOW it when
-   * travelling down — which is exactly where the dragged section will come to
-   * rest. Getting this backwards is what makes a drag feel like it did
-   * something other than what was shown.
-   */
-  const fromIndex = dragging ? sectionIds.indexOf(dragging) : -1
-  const overIndex = over ? sectionIds.indexOf(over) : -1
-  const dropEdge: 'top' | 'bottom' | null =
-    fromIndex === -1 || overIndex === -1 || fromIndex === overIndex
-      ? null
-      : overIndex < fromIndex
-        ? 'top'
-        : 'bottom'
 
   return (
-    <DndContext
-      /*
-       * A FIXED id, because dnd-kit otherwise derives its aria-describedby
-       * ids from a module-level counter. The server starts that counter at 0
-       * on every render while the browser continues from wherever it already
-       * was, so the two disagree and React reports a hydration mismatch on
-       * every load. Naming the context makes both sides derive the same ids.
-       */
-      id="storefront-builder"
-      sensors={sensors}
-      collisionDetection={closestCorners}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      /* Escape mid-drag must clear it too, or the overlay chip stays parked
-         over the canvas and swallows every click after it. */
-      onDragCancel={() => {
-        setDragging(null)
-        setOver(null)
-      }}
-      accessibility={{
-        announcements: {
-          onDragStart: ({ active }) =>
-            `Picked up ${nameOf(active.id)}. Use the arrow keys to move it, space to drop.`,
-          onDragOver: ({ active, over: target }) =>
-            target ? `${nameOf(active.id)} is over ${nameOf(target.id)}.` : '',
-          onDragEnd: ({ active, over: target }) =>
-            target
-              ? `${nameOf(active.id)} moved to position ${
-                  sectionIds.indexOf(String(target.id)) + 1
-                } of ${sectionIds.length}.`
-              : `${nameOf(active.id)} was dropped.`,
-          onDragCancel: ({ active }) => `Moving ${nameOf(active.id)} was cancelled.`,
-        },
-      }}
-    >
-      <CanvasToolbar
-        atLimit={atLimit}
-        width={width}
-        kinds={kinds}
-        onWidthChange={onWidthChange}
-        onAdd={onAdd}
-      />
+    <>
+      <CanvasToolbar width={width} onWidthChange={onWidthChange} />
 
       {/* The shop's own colour, scoped to the preview so `text-brand` inside
           follows the store's theme rather than the app's. */}
@@ -303,7 +190,7 @@ export function BuilderCanvas({
             {/* The first insert point, above everything. Without it there is
                 no way to put a new section at the very top except by adding it
                 at the bottom and dragging it the length of the page. */}
-            <InsertPoint index={0} atLimit={atLimit} kinds={kinds} onInsert={onInsert} />
+            <InsertPoint index={0} atLimit={atLimit} placing={placing} over={over} />
 
             <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
               {/*
@@ -344,13 +231,13 @@ export function BuilderCanvas({
                       emptyReason={emptyReason(section, content, departments, theme)}
                       selected={selected === section.id}
                       atLimit={atLimit}
+                      placing={placing}
+                      over={over}
                       dropEdge={over === section.id ? dropEdge : null}
                       onSelect={() => onSelect(section.id)}
                       onToggle={(on) => onToggle(section.id, on)}
                       onDuplicate={() => onDuplicate(section.id)}
                       onRemove={() => onRemove(section.id)}
-                      onInsert={onInsert}
-                      kinds={kinds}
                     >
                       {node}
                     </EditableSection>
@@ -364,9 +251,19 @@ export function BuilderCanvas({
               <div className="rounded-card border border-dashed border-border-strong px-6 py-12 text-center">
                 <p className="text-sm font-medium text-ink">Your front page is empty</p>
                 <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
-                  Shoppers land straight on your product list. Add a section above, or start from
-                  a ready-made page in the panel on the right.
+                  Shoppers land straight on your product list. Add a section to build one, or
+                  start from a ready-made page.
                 </p>
+                {/* A button rather than a sentence pointing at the panel: the
+                    panel's folds all start shut, so "drag one from over there"
+                    would be directions to a heading somebody still has to open.
+                    This opens it for them. */}
+                <div className="mt-4 flex justify-center">
+                  <Button variant="secondary" onClick={onShowPalette}>
+                    <Icons.Plus size={15} />
+                    Add a section
+                  </Button>
+                </div>
               </div>
             )}
           </div>
@@ -391,22 +288,7 @@ export function BuilderCanvas({
           </button>
         </div>
       </div>
-
-      {/* A label chip, never the real section: cloning a twelve-product grid
-          every frame drops the drag to a crawl.
-
-          Keyed off `dragging`, NOT `selected` — DragOverlay portals a floating
-          element at the cursor, so leaving it mounted for a merely SELECTED
-          section parks an invisible chip over the canvas that eats every
-          subsequent click. */}
-      <DragOverlay>
-        {dragging ? (
-          <div className="rounded-card bg-brand px-3 py-2 text-sm font-medium text-white shadow-pop">
-            {nameOf(dragging)}
-          </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+    </>
   )
 }
 
@@ -419,13 +301,13 @@ function EditableSection({
   emptyReason,
   selected,
   atLimit,
+  placing,
+  over,
   dropEdge,
   onSelect,
   onToggle,
   onDuplicate,
   onRemove,
-  onInsert,
-  kinds,
   children,
 }: {
   section: HomeSection
@@ -434,19 +316,42 @@ function EditableSection({
   emptyReason: string
   selected: boolean
   atLimit: boolean
-  kinds: readonly SectionKind[]
+  placing: boolean
+  over: string | null
   /** Where the drop line goes while something is hovering here, if at all. */
   dropEdge: 'top' | 'bottom' | null
   onSelect: () => void
   onToggle: (on: boolean) => void
   onDuplicate: () => void
   onRemove: () => void
-  onInsert: (kind: SectionKind, index: number) => void
   children: ReactNode
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: section.id,
   })
+
+  /*
+   * Bring this section into view when it becomes the selected one.
+   *
+   * ── WHY THE CANVAS CHASES THE SELECTION ──────────────────────────────
+   *
+   * Selecting is no longer only something you do BY clicking the section — the
+   * outline in the panel selects too, and after a drop the new section is
+   * selected wherever it landed. In both cases the thing being edited can be
+   * off-screen, and a panel full of settings for something you cannot see is
+   * the problem this screen exists to solve.
+   *
+   * `block: 'nearest'` so a section already on screen is left exactly where it
+   * is. Scrolling a visible thing to the middle of the pane yanks the page
+   * under the cursor for no reason, which is worse than not scrolling at all.
+   */
+  const box = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    // Never mid-drag: the canvas is already being scrolled by dnd-kit's own
+    // auto-scroll, and a second thing moving it fights the pointer.
+    if (!selected || isDragging) return
+    box.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selected, isDragging])
 
   /*
    * Whether TODAY is inside this section's window, and what to say if not.
@@ -464,7 +369,13 @@ function EditableSection({
   return (
     <>
       <div
-        ref={setNodeRef}
+        // Both: dnd-kit measures this element, and the scroll-into-view above
+        // needs to reach it. A ref callback rather than passing `box` to
+        // useSortable, because dnd-kit owns the shape of its own ref.
+        ref={(node) => {
+          setNodeRef(node)
+          box.current = node
+        }}
         style={{ transform: CSS.Transform.toString(transform), transition }}
         className={`group relative mb-4 ${isDragging ? 'z-10 opacity-60' : ''}`}
       >
@@ -588,64 +499,94 @@ function EditableSection({
         )}
       </div>
 
-      {/* Add a section directly BELOW this one. */}
-      <InsertPoint index={index + 1} atLimit={atLimit} kinds={kinds} onInsert={onInsert} />
+      {/* Where a dragged section lands if it is dropped directly BELOW this
+          one. */}
+      <InsertPoint index={index + 1} atLimit={atLimit} placing={placing} over={over} />
     </>
   )
 }
 
+/** The id a gap answers to while something is being dropped into it. */
+export const GAP_PREFIX = 'gap:'
+
+/** The index a gap drop lands at, or null if the id is not a gap. */
+export function gapIndex(id: string | null): number | null {
+  if (!id || !id.startsWith(GAP_PREFIX)) return null
+  const index = Number(id.slice(GAP_PREFIX.length))
+  return Number.isFinite(index) ? index : null
+}
+
 /**
- * The thin "add one here" line between two sections.
+ * The landing strip between two sections.
  *
- * ── WHY THIS EXISTS ──────────────────────────────────────────────────────
+ * ── WHY A GAP AND NOT A MENU ─────────────────────────────────────────────
  *
- * Every new section used to land at the bottom, and the toolbar had to
- * apologise for it — "it appears at the bottom, drag it where you want it".
- * On a page of eight sections that is a long drag to do something the owner
- * had already decided before clicking Add.
+ * This used to be a hover-revealed "Add here" dropdown, and it worked — you
+ * could already add a section anywhere on the page. Nobody found it. A control
+ * that is invisible until the pointer crosses a 16px band is a control most
+ * owners never learn exists, which is why "add a section" still felt like
+ * something that only ever happened at the bottom.
  *
- * Invisible until hovered, so a page being READ is not a ladder of grey
- * dashes. It keeps a small always-there hit area rather than collapsing to
- * nothing, because a control you have to find by sweeping the mouse is not
- * really there.
+ * So the gap stopped being a thing you click and became a thing you drop onto.
+ * The palette in the panel is now what says "you can add a section", and it is
+ * visible without being opened; these are where it can go.
+ *
+ * ── WHY IT ONLY APPEARS WHILE SOMETHING IS IN FLIGHT ─────────────────────
+ *
+ * At rest it is invisible and nearly heightless, for the same reason it always
+ * was: the canvas is a live preview, and a preview laddered with grey dashes is
+ * showing the owner a page that is not their page. The moment a tile is picked
+ * up, every gap lights up — an owner aiming a drop must be able to see what
+ * they are aiming at.
  */
 function InsertPoint({
   index,
   atLimit,
-  kinds,
-  onInsert,
+  placing,
+  over,
 }: {
   index: number
   atLimit: boolean
-  kinds: readonly SectionKind[]
-  onInsert: (kind: SectionKind, index: number) => void
+  /** True while a palette tile is in flight — see above. */
+  placing: boolean
+  over: string | null
 }) {
+  const id = `${GAP_PREFIX}${index}`
+  const { setNodeRef } = useDroppable({ id, disabled: atLimit || !placing })
+
   if (atLimit) return null
+
+  const active = over === id
 
   return (
     // Negative margins pull this INTO the gap the sections already leave, so
     // it costs almost no height at rest. An insert point that reserved its own
     // band would make the builder visibly looser than the shop — the one thing
     // a live preview must not be.
-    <div className="group/insert relative -my-2 flex h-4 items-center justify-center">
-      <span className="pointer-events-none absolute inset-x-0 h-px bg-brand opacity-0 transition group-hover/insert:opacity-40" />
-      <div className="relative opacity-0 transition group-hover/insert:opacity-100 focus-within:opacity-100">
-        <Menu
-          variant="secondary"
-          label={
-            <>
-              <Icons.Plus size={13} />
-              Add here
-            </>
-          }
+    //
+    // While placing, it grows to a real target: a 4px strip is not something
+    // anybody can hit reliably with a section held under the cursor.
+    <div
+      ref={setNodeRef}
+      className={`relative flex items-center justify-center transition-all ${
+        placing ? 'my-1 h-10' : '-my-2 h-4'
+      }`}
+    >
+      {placing && (
+        <span
+          className={`pointer-events-none absolute inset-x-0 flex h-full items-center justify-center rounded-control border border-dashed transition ${
+            active
+              ? 'border-brand bg-brand-soft'
+              : 'border-border-strong bg-surface-2/40'
+          }`}
         >
-          {kinds.map((kind) => (
-            <MenuItem key={kind} onClick={() => onInsert(kind, index)}>
-              {SECTION_LABEL[kind]}
-            </MenuItem>
-          ))}
-        </Menu>
-      </div>
+          <span
+            className={`text-xs font-medium transition ${active ? 'text-brand-ink' : 'text-muted'}`}
+          >
+            {active ? 'Drop it here' : 'Here'}
+          </span>
+        </span>
+      )}
     </div>
   )
 }
@@ -666,44 +607,23 @@ function EmptySection({ section, reason }: { section: HomeSection; reason: strin
   )
 }
 
-/** The bar above the page: add a section, and how wide to draw the preview. */
+/**
+ * The bar above the page: how wide to draw the preview.
+ *
+ * "Add a section" used to live here as a dropdown, and adding at the END was
+ * all it could do — the button had no way to know where on the page you wanted
+ * the thing. That is now the palette's job in the panel, where a tile can be
+ * carried to a spot. See `SectionPalette`.
+ */
 function CanvasToolbar({
-  atLimit,
   width,
-  kinds,
   onWidthChange,
-  onAdd,
 }: {
-  atLimit: boolean
   width: PreviewWidth
-  kinds: readonly SectionKind[]
   onWidthChange: (width: PreviewWidth) => void
-  onAdd: (kind: SectionKind) => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-border bg-surface-2/60 px-5 py-3">
-      {atLimit ? (
-        <span className="text-sm text-muted">
-          {MAX_SECTIONS} sections is the most one page can have. Remove one to add another.
-        </span>
-      ) : (
-        <Menu
-          variant="secondary"
-          label={
-            <>
-              <Icons.Plus size={15} />
-              Add a section
-            </>
-          }
-        >
-          {kinds.map((kind) => (
-            <MenuItem key={kind} onClick={() => onAdd(kind)}>
-              {SECTION_LABEL[kind]}
-            </MenuItem>
-          ))}
-        </Menu>
-      )}
-
       <div className="ml-auto flex items-center gap-2">
         <span className="text-sm text-muted">Preview</span>
         <SegmentedControl<PreviewWidth>

@@ -5,6 +5,7 @@ import { isPeriodLocked } from './settings'
 import { can, type CapabilitySet } from './permissions'
 import { getDocument, saveDraft, type SalesDocument, type LineInput } from './salesDocuments'
 import { createCreditNote } from './salesReversal'
+import { CORRECTION_REASON_CODE, findSalesReasonByCode } from './salesReasons'
 import { finaliseDocument } from './salesPosting'
 import type { Actor } from './activityLog'
 
@@ -217,11 +218,32 @@ export async function editFinalisedDocument(
   // ── 1. Reverse the original in full, through the ordinary credit path so
   //       every rule it enforces — cost from the original line, stock back,
   //       ledger reversed — applies unchanged.
+  // Nothing came back and nobody chose a return reason: this is a correction,
+  // and the dedicated code keeps it out of the returns report rather than
+  // letting it borrow OTHER. Missing only if a site deleted a seeded row.
+  const correctionReason = await findSalesReasonByCode(
+    siteId,
+    'return',
+    CORRECTION_REASON_CODE,
+  )
+  if (!correctionReason) {
+    return {
+      ok: false,
+      error:
+        'The Invoice correction reason is missing from this site. Add a return reason with the code CORRECTION in Setup, then try again.',
+    }
+  }
+
   const credit = await createCreditNote(siteId, actor, {
     invoiceId: original.id,
     customerId: original.customerId,
     customerName: original.customerName,
-    reason: `Correction: ${input.reason.trim()}`,
+    reasonId: correctionReason.id,
+    note: input.reason.trim(),
+    reasonPrefix: 'Correction',
+    // Retired is fine here: the SYSTEM chose this code, so a site tidying its
+    // returns list must not be able to break invoice editing.
+    allowRetiredReason: true,
     lines: original.lines.map((line) => ({
       sourceLineId: line.id,
       productId: line.productId,

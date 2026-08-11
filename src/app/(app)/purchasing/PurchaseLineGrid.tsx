@@ -36,6 +36,20 @@ import {
  * as an order that priced a line one way and the GRV against it pricing the
  * same line another.
  *
+ * ── THIS FILE IS THE ONLY PLACE THE GRID CHANGES ──────────────────────────
+ *
+ * A column, a cell, a width, a warning, an input behaviour: it belongs here,
+ * and it lands on ordering and receiving at the same moment. Do NOT fix a grid
+ * problem inside OrderScreen or ReceiveScreen — a wrapper around one of them is
+ * exactly the drift this component exists to prevent, and it is invisible until
+ * a buyer notices the two screens disagree about the same product.
+ *
+ * The two DEFAULT sets below are allowed to differ, and only those: they are
+ * which columns a screen OPENS with, not what the grid can do. A user's own
+ * choice via the ColumnPicker overrides them anyway. Anything beyond a default
+ * that has to differ goes through `mode`, in `show()` below, so both cases sit
+ * on one screen where you can read them against each other.
+ *
  * ── WHY THE COLUMNS ARE TOGGLEABLE ────────────────────────────────────────
  *
  * There are twenty of them. A buyer pricing a delivery wants cost, markup, GP

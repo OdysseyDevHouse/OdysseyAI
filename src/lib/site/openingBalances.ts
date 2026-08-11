@@ -1,6 +1,13 @@
 import 'server-only'
 import { siteQuery } from '@/lib/siteDb'
-import { round, toNum } from '@/lib/decimals'
+import { round } from '@/lib/decimals'
+import {
+  splitCsvLine,
+  sniffDelimiter,
+  detectDateFormat,
+  parseDate,
+  parseAmount,
+} from '@/lib/import/text'
 import { postTransaction } from './customerLedger'
 import { postSupplierTransaction } from './supplierLedger'
 import type { Actor } from './activityLog'
@@ -285,8 +292,12 @@ export function parseOpeningCsv(text: string): { rows: OpeningRow[]; skipped: nu
 
   if (lines.length === 0) return { rows: [], skipped: 0 }
 
-  const cells = (line: string) =>
-    line.split(/[,;\t]/).map((c) => c.trim().replace(/^"(.*)"$/, '$1'))
+  // Quote-aware, and the delimiter is sniffed rather than assumed. Splitting on
+  // /[,;\t]/ used to break every row for a customer called 'Smith, T (Pty) Ltd':
+  // the comma inside the quoted name shifted amount into reference's column, so
+  // the invoice posted as zero — with nothing on screen to say it had.
+  const delimiter = sniffDelimiter(lines[0])
+  const cells = (line: string) => splitCsvLine(line, delimiter)
 
   const first = cells(lines[0]).map((c) => c.toLowerCase().replace(/[^a-z]/g, ''))
   const known = ['code', 'docnumber', 'docdate', 'amount', 'reference']
@@ -309,10 +320,23 @@ export function parseOpeningCsv(text: string): { rows: OpeningRow[]; skipped: nu
     }
   }
 
+  const body = lines.slice(looksLikeHeader ? 1 : 0)
+
+  // Ambiguous d/m vs m/d is decided ONCE for the whole file, from whichever row
+  // carries a day past the 12th — the only unambiguous evidence a file offers.
+  // Deciding per row would put 05/08 and 20/08 in different months. Day-first
+  // is the fallback, because every South African system writes it that way.
+  const dateFormat = detectDateFormat(
+    body.map((line) => {
+      const c = cells(line)
+      return order.docDate >= 0 && order.docDate < c.length ? c[order.docDate] : ''
+    }),
+  )
+
   const rows: OpeningRow[] = []
   let skipped = 0
 
-  for (const line of lines.slice(looksLikeHeader ? 1 : 0)) {
+  for (const line of body) {
     const c = cells(line)
     const at = (index: number) => (index >= 0 && index < c.length ? c[index] : '')
 
@@ -325,39 +349,19 @@ export function parseOpeningCsv(text: string): { rows: OpeningRow[]; skipped: nu
     rows.push({
       code,
       docNumber: at(order.docNumber),
-      docDate: normaliseDate(at(order.docDate)),
-      // Strips thousands separators and currency symbols, which every export
-      // adds and no parser wants.
-      amount: toNum(at(order.amount).replace(/[^\d.,-]/g, '').replace(/\s/g, '').replace(/,(?=\d{3}\b)/g, '').replace(',', '.')),
+      // An unreadable date stays as it was written: planOpeningBalances checks
+      // it against DATE and reports the row by name, which is far more use than
+      // a silent fallback to today.
+      docDate: parseDate(at(order.docDate), dateFormat) ?? at(order.docDate).trim(),
+      // Handles thousands separators, currency symbols, trailing minus and
+      // parenthesised negatives — every one of which appears in a real export.
+      amount: parseAmount(at(order.amount)) ?? 0,
       reference: at(order.reference) || null,
     })
   }
 
   return { rows, skipped }
 }
-
-/**
- * Accepts the date formats an export is likely to use.
- *
- * Ambiguous d/m vs m/d is resolved as **day first**, because this is a South
- * African product and every local system writes 05/08/2026 for 5 August. A
- * wrong guess here silently puts an invoice in the wrong ageing bucket, so the
- * assumption is stated rather than inferred.
- */
-function normaliseDate(value: string): string {
-  const raw = value.trim()
-  if (DATE.test(raw)) return raw
-
-  const parts = raw.split(/[/.-]/).map((p) => p.trim())
-  if (parts.length === 3) {
-    const [a, b, c] = parts
-    if (a.length === 4) return `${a}-${pad(b)}-${pad(c)}`
-    if (c.length === 4) return `${c}-${pad(b)}-${pad(a)}`
-  }
-  return raw
-}
-
-const pad = (v: string) => v.padStart(2, '0')
 
 function today(): string {
   const d = new Date()

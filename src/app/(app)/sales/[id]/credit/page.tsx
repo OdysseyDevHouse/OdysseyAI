@@ -3,6 +3,7 @@ import { requireSiteUser } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { creditableLines } from '@/lib/site/salesReversal'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
+import { listSalesReasons } from '@/lib/site/salesReasons'
 import { can } from '@/lib/site/permissions'
 import { isPeriodLocked } from '@/lib/site/settings'
 import { PageHeader, PageBody, Card, ButtonLink, EmptyState, Icons } from '@/components/ui'
@@ -29,10 +30,11 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
     redirect(`/sales/${invoiceId}?error=${encodeURIComponent(`A ${invoice.status} document cannot be credited.`)}`)
   }
 
-  const [lines, tenders, locked] = await Promise.all([
+  const [lines, tenders, locked, reasons] = await Promise.all([
     creditableLines(site.id, invoiceId),
     listTenderTypes(site.id),
     isPeriodLocked(site.id, new Date().toISOString().slice(0, 10)),
+    listSalesReasons(site.id, 'return'),
   ])
 
   const remaining = (lines ?? []).filter((l) => l.creditable > 0)
@@ -86,6 +88,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
           customerName={invoice.customerName}
           terminalId={invoice.terminalId}
           terminalCode={invoice.terminalCode}
+          reasons={reasons}
           lines={remaining.map((l) => ({
             id: l.id,
             productId: l.productId,

@@ -13,12 +13,19 @@ import { WIDGETS, type WidgetId } from './widgets'
 export function WidgetPanel({
   open,
   hidden,
+  visible,
   onToggle,
   onClose,
   onReset,
 }: {
   open: boolean
   hidden: WidgetId[]
+  /**
+   * The widgets this user could see at all. A switch for data their role does
+   * not include would only ever turn on a box saying "not available", which is
+   * a worse answer than not offering the switch.
+   */
+  visible: readonly WidgetId[]
   onToggle: (id: WidgetId) => void
   onClose: () => void
   onReset: () => void
@@ -41,7 +48,7 @@ export function WidgetPanel({
       }
     >
       <ul className="flex flex-col">
-        {WIDGETS.map((w) => (
+        {WIDGETS.filter((w) => visible.includes(w.id)).map((w) => (
           <li key={w.id}>
             <label className="flex cursor-pointer items-center justify-between gap-4 rounded-control px-2 py-2.5 hover:bg-surface-2">
               <span className="text-sm text-ink">{w.title}</span>

@@ -62,6 +62,8 @@
     "test:sales-orders": "tsx --conditions=react-server --env-file=.env scripts/test-sales-orders.ts",
     "test:opening-balances": "tsx --conditions=react-server --env-file=.env scripts/test-opening-balances.ts",
     "test:composition": "tsx --conditions=react-server --env-file=.env scripts/test-composition.ts",
+    "test:refers": "tsx --conditions=react-server --env-file=.env scripts/test-refers.ts",
+    "test:refer-range": "tsx --conditions=react-server --env-file=.env scripts/test-refer-range.ts",
     "test:manufacturing": "tsx --conditions=react-server --env-file=.env scripts/test-manufacturing.ts",
     "test:serials": "tsx --conditions=react-server --env-file=.env scripts/test-serials.ts",
     "test:product-setup": "tsx --conditions=react-server --env-file=.env scripts/test-product-setup.ts",
@@ -81,6 +83,12 @@
     "test:online-orders": "tsx --conditions=react-server --env-file=.env scripts/test-online-orders.ts",
     "seed:menu": "tsx --conditions=react-server --env-file=.env scripts/seed-menu.ts",
     "seed:menu:wipe": "tsx --conditions=react-server --env-file=.env scripts/seed-menu.ts 1 --wipe",
+    "seed:ingredients": "tsx --conditions=react-server --env-file=.env scripts/seed-ingredients.ts",
+    "seed:ingredients:wipe": "tsx --conditions=react-server --env-file=.env scripts/seed-ingredients.ts 2 --wipe",
+    "seed:drinks": "tsx --conditions=react-server --env-file=.env scripts/seed-drinks.ts",
+    "seed:drinks:wipe": "tsx --conditions=react-server --env-file=.env scripts/seed-drinks.ts 2 --wipe",
+    "seed:bulk-drinks": "tsx --conditions=react-server --env-file=.env scripts/seed-bulk-drinks.ts",
+    "seed:bulk-drinks:wipe": "tsx --conditions=react-server --env-file=.env scripts/seed-bulk-drinks.ts 2 --wipe",
     "seed:stress": "node --env-file=.env scripts/seed-stress.mjs",
     "seed:stress:small": "node --env-file=.env scripts/seed-stress.mjs 1 --docs=100000 --grvs=2000 --orders=2000",
     "seed:stress:medium": "node --env-file=.env scripts/seed-stress.mjs 1 --docs=1000000 --grvs=10000 --orders=10000",
@@ -115,7 +123,8 @@
     "test:tips": "tsx --conditions=react-server --env-file=.env scripts/test-tips.ts",
     "test:pos-floor": "tsx --conditions=react-server --env-file=.env scripts/test-pos-floor.ts",
     "test:pos-split": "tsx --conditions=react-server --env-file=.env scripts/test-pos-split.ts",
-    "test:rich-paste": "tsx scripts/test-rich-paste.ts"
+    "test:rich-paste": "tsx scripts/test-rich-paste.ts",
+    "test:imports": "tsx --conditions=react-server --env-file=.env scripts/test-imports.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

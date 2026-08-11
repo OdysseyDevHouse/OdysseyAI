@@ -273,8 +273,19 @@ export type OfflineReturn = {
   documentDate: string
   customerId: number | null
   customerName: string | null
-  /** Required. `createCreditNote` refuses a blank one, and so does the till. */
-  reason: string
+  /**
+   * Which of the shop's return reasons this is. Required — `createCreditNote`
+   * refuses a missing one, and so does the till.
+   *
+   * The ID is carried rather than the code, because the row it points at cannot
+   * change under it: a retired reason still resolves, and a renamed one syncs
+   * under its new name. What CAN happen is the row being deleted outright
+   * before this syncs, which `requireSalesReason` turns into a stated refusal
+   * rather than a silently reason-less credit note.
+   */
+  reasonId: number
+  /** The optional free-text detail beside the code. */
+  note: string | null
   lines: OfflineReturnLine[]
   /** What went back out of the drawer. Empty leaves the credit on the account. */
   refunds: OfflineTender[]

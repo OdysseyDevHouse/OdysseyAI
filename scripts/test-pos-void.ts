@@ -18,8 +18,25 @@ import { finaliseDocument, voidDocument } from '../src/lib/site/salesPosting'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { reconcileStock, seedOpeningStock } from '../src/lib/site/stockMovements'
 import { toNum } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let VOID_REASON_ID = 0
+
+async function loadReasonIds() {
+  const v = await findSalesReasonByCode(SITE, 'void', 'WRONG-ITEM')
+  if (!v) throw new Error('Seeded void reason WRONG-ITEM is missing — run site-migrate for 102.')
+  VOID_REASON_ID = v.id
+}
+
 const actor = { userId: 1, userName: 'POS void test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -31,6 +48,7 @@ const stockOf = async (id: number) =>
   toNum((await siteQueryOne<any>(SITE, 'SELECT stock_on_hand FROM products WHERE id = ?', [id]))?.stock_on_hand)
 
 async function main() {
+  await loadReasonIds()
   const stamp = Date.now().toString().slice(-8)
   const vat = await siteQueryOne<any>(
     SITE,
@@ -90,7 +108,7 @@ async function main() {
   // The number the till shows on its receipt, which is what Void acts on.
   ok('the till sale carries a per-till number', sale.number.includes('_'), sale.number)
 
-  const voided = await voidDocument(SITE, actor, sale.id, 'wrong item scanned')
+  const voided = await voidDocument(SITE, actor, sale.id, { reasonId: VOID_REASON_ID, note: 'wrong item scanned' })
   ok('a same-day sale voids', voided.ok, voided.ok ? '' : voided.error)
 
   const afterVoid = await stockOf(productId)
@@ -117,15 +135,18 @@ async function main() {
 
   /* ── 3. The refusals the till's UI depends on ────────────────────────── */
 
-  const twice = await voidDocument(SITE, actor, sale.id, 'again')
+  const twice = await voidDocument(SITE, actor, sale.id, { reasonId: VOID_REASON_ID, note: 'again' })
   ok('voiding twice is refused', !twice.ok, twice.ok ? 'accepted!' : twice.error)
 
   const noReason = await sell(1)
-  const blank = await voidDocument(SITE, actor, noReason.id, '   ')
-  ok('a blank reason is refused', !blank.ok, blank.ok ? 'accepted!' : blank.error)
-  // The dialog disables its button below three characters for this reason; the
+  const blank = await voidDocument(SITE, actor, noReason.id, { reasonId: 0, note: null })
+  ok('a missing reason is refused', !blank.ok, blank.ok ? 'accepted!' : blank.error)
+  // An id that names no live void reason is refused too — the client sent it, so
+  // it is not trusted. The dialog disables its button until one is picked; the
   // engine is the boundary and this is what it actually enforces.
-  await voidDocument(SITE, actor, noReason.id, 'tidy up')
+  const unknown = await voidDocument(SITE, actor, noReason.id, { reasonId: 999999, note: null })
+  ok('an unknown reason id is refused', !unknown.ok, unknown.ok ? 'accepted!' : unknown.error)
+  await voidDocument(SITE, actor, noReason.id, { reasonId: VOID_REASON_ID, note: 'tidy up' })
 
   /* A sale dated YESTERDAY must refuse — this is why the till only offers Void
      from the receipt, on the sale just taken, and sends anything older to a
@@ -136,7 +157,7 @@ async function main() {
     'UPDATE sales_documents SET document_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY) WHERE id = ?',
     [older.id],
   )
-  const stale = await voidDocument(SITE, actor, older.id, 'yesterday')
+  const stale = await voidDocument(SITE, actor, older.id, { reasonId: VOID_REASON_ID, note: 'yesterday' })
   ok('a PRIOR-DAY sale is refused, and says so', !stale.ok, stale.ok ? 'accepted!' : stale.error)
   ok(
     'the refusal points at a credit note',
@@ -147,7 +168,7 @@ async function main() {
   await siteExecute(SITE, 'UPDATE sales_documents SET document_date = CURDATE() WHERE id = ?', [
     older.id,
   ])
-  await voidDocument(SITE, actor, older.id, 'test cleanup')
+  await voidDocument(SITE, actor, older.id, { reasonId: VOID_REASON_ID, note: 'test cleanup' })
 
   const settled = await stockOf(productId)
   ok('every test sale is reversed, so stock is back where it started', settled === before,

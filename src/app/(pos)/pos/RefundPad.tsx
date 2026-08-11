@@ -6,7 +6,6 @@ import {
   Button,
   Field,
   Input,
-  Textarea,
   NumPad,
   NumPadDisplay,
   numPadValue,
@@ -14,6 +13,8 @@ import {
   Callout,
   Badge,
   Icons,
+  ReasonPicker,
+  type PickableReason,
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
 import type { TenderType } from '@/lib/site/tenderTypes'
@@ -40,9 +41,13 @@ import type { TenderType } from '@/lib/site/tenderTypes'
  *      through the bank instead. Methods that cannot be refunded are not shown, with the
  *      reason said once rather than per row.
  *
- *   2. A REASON IS REQUIRED. `createCreditNote` refuses a blank one, so collecting it
- *      here is the difference between a cashier fixing it in three seconds and a return
- *      that is rejected at sync, after the cash is gone.
+ *   2. A REASON IS REQUIRED, and it is a CODE. `createCreditNote` refuses a missing one,
+ *      so collecting it here is the difference between a cashier fixing it in three
+ *      seconds and a return that is rejected at sync, after the cash is gone. It is
+ *      picked from the shop's own list rather than typed, because typed reasons cannot
+ *      be added up — "faulty" and "Faulty" were two different reasons, and the question
+ *      the field exists to answer went unanswered. The typed note survives beside it,
+ *      for the reasons whose code does not say enough on its own.
  *
  *   3. REFUNDING LESS THAN THE CREDIT IS LEGITIMATE. The remainder stays on the
  *      customer's account, which is what happens when somebody wants a credit note
@@ -58,6 +63,7 @@ export function RefundPad({
   tenders,
   totalIncl,
   hasCustomer,
+  reasons,
   pending,
   onConfirm,
 }: {
@@ -74,15 +80,21 @@ export function RefundPad({
    * record of owing it.
    */
   hasCustomer: boolean
+  /** The site's return reasons, active ones only. */
+  reasons: PickableReason[]
   pending: boolean
-  onConfirm: (given: Given[], reason: string) => void
+  onConfirm: (
+    given: Given[],
+    reason: { reasonId: number; note: string | null },
+  ) => void
 }) {
   const [given, setGiven] = useState<Given[]>([])
   const [active, setActive] = useState<TenderType | null>(null)
   /** The pad's live value — a decimal STRING, never a number. See NumPad. */
   const [entry, setEntry] = useState('')
   const [reference, setReference] = useState('')
-  const [reason, setReason] = useState('')
+  const [reasonId, setReasonId] = useState<number | null>(null)
+  const [note, setNote] = useState('')
 
   // Reset between returns, so the next customer never inherits the last one's
   // half-entered refund or, worse, their reason.
@@ -92,7 +104,8 @@ export function RefundPad({
     setActive(null)
     setEntry('')
     setReference('')
-    setReason('')
+    setReasonId(null)
+    setNote('')
   }, [open])
 
   /*
@@ -130,7 +143,7 @@ export function RefundPad({
     setReference('')
   }
 
-  const reasonMissing = reason.trim().length === 0
+  const reasonMissing = reasonId === null
   /* Over-refunding is refused HERE as well as server-side. createCreditNote checks it
      too, but by then the cash is counted out — a refusal at sync is a shortage nobody
      can explain. */
@@ -180,7 +193,9 @@ export function RefundPad({
             <Button
               variant="success"
               size="touch-lg"
-              onClick={() => onConfirm(given, reason.trim())}
+              onClick={() =>
+                reasonId !== null && onConfirm(given, { reasonId, note: note.trim() || null })
+              }
               disabled={!canConfirm}
             >
               <Icons.Check size={20} />
@@ -193,18 +208,17 @@ export function RefundPad({
       <div className="grid gap-5 md:grid-cols-2">
         {/* ── Left: what has been handed back ──────────────────────────── */}
         <div className="space-y-3">
-          <Field
+          <ReasonPicker
+            reasons={reasons}
+            value={reasonId}
+            note={note}
+            onChange={setReasonId}
+            onNoteChange={setNote}
             label="Why is it coming back?"
+            hint="Kept for the audit trail, and what a returns report groups by."
             error={reasonMissing && given.length > 0 ? 'A return needs a reason.' : undefined}
-            hint="Printed on the credit note and kept for the audit trail."
-          >
-            <Textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Faulty, wrong size, changed their mind..."
-              rows={2}
-            />
-          </Field>
+            disabled={pending}
+          />
 
           {given.length === 0 ? (
             <p className="text-sm text-muted">Choose how the money is going back.</p>

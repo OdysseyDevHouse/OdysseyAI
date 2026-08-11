@@ -19,19 +19,36 @@ export function CardHeader({
   description,
   action,
   className = '',
+  tone = 'default',
 }: {
   title: ReactNode
   /** One line saying what this block is for — muted, sentence case. */
   description?: ReactNode
   action?: ReactNode
   className?: string
+  /**
+   * 'brand' draws a brand-rule line across the card's top edge and colours the
+   * title, matching <SectionTitle tone="brand">. Both exist so a screen that
+   * mixes the two headings reads as one stack rather than two. Worn by the
+   * product screen only for now.
+   */
+  tone?: 'default' | 'brand'
 }) {
+  const brand = tone === 'brand'
   return (
     <div
-      className={`flex items-start justify-between gap-4 border-b border-border px-5 py-4 ${className}`}
+      className={[
+        'flex items-start justify-between gap-4 border-b border-border px-5 py-4',
+        // See the note in SectionTitle: the negative insets put the rule on the
+        // card's own edge so it follows the rounded corners.
+        brand ? '-mx-px -mt-px rounded-t-card border-t-2 border-t-brand-rule' : '',
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}
     >
       <div className="min-w-0">
-        <h2 className="text-sm font-semibold text-ink">{title}</h2>
+        <h2 className={`text-sm font-semibold ${brand ? 'text-brand' : 'text-ink'}`}>{title}</h2>
         {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}

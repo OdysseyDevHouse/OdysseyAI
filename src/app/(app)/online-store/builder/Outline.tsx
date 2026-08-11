@@ -1,5 +1,7 @@
 'use client'
 
+import { Fragment } from 'react'
+import { useDroppable } from '@dnd-kit/core'
 import { Button, Icons } from '@/components/ui'
 import {
   SECTION_LABEL,
@@ -7,6 +9,7 @@ import {
   sectionName,
   type HomeSection,
 } from '@/lib/storefrontModel'
+import { GAP_PREFIX } from './BuilderCanvas'
 
 /**
  * The page as a list of its sections.
@@ -30,16 +33,34 @@ import {
  * canvas has to scroll while the pointer is held, and the drop lands somewhere
  * approximate. Two arrows move a section one place with no aim required, and
  * they are reachable from a keyboard without entering dnd-kit's grab mode.
+ *
+ * ── AND WHY IT IS ALSO A SET OF DROP TARGETS ─────────────────────────────
+ *
+ * The same long-drag problem, from the other end. A new section from the
+ * palette has to reach a spot that may be two thousand pixels down the canvas,
+ * with dnd-kit auto-scrolling under a held pointer the whole way — precisely
+ * the drag the arrows exist to avoid having to make.
+ *
+ * This list is the whole page in a few hundred pixels, right beside the
+ * palette. Dropping a tile between two rows here means the same thing as
+ * dropping it between those two sections on the canvas, and it is a drag of an
+ * inch. Same gap ids on both sides — see `GAP_PREFIX` — so there is one notion
+ * of "position 3" rather than two that could disagree.
  */
 export default function Outline({
   sections,
   selected,
+  placing,
+  over,
   onSelect,
   onMove,
   onToggle,
 }: {
   sections: HomeSection[]
   selected: string | null
+  /** True while a palette tile is in flight, so the gaps show themselves. */
+  placing: boolean
+  over: string | null
   onSelect: (id: string) => void
   /** Move the section at `index` by `by` places. */
   onMove: (index: number, by: number) => void
@@ -49,6 +70,7 @@ export default function Outline({
 
   return (
     <ol className="flex flex-col gap-1">
+      <OutlineGap index={0} placing={placing} over={over} />
       {sections.map((section, index) => {
         const isSelected = selected === section.id
         // Out of season is not the same as switched off, and the two want
@@ -56,7 +78,8 @@ export default function Outline({
         const scheduled = isScheduledNow(section)
 
         return (
-          <li key={section.id} className="flex items-center gap-1">
+          <Fragment key={section.id}>
+          <li className="flex items-center gap-1">
             {/* Not a kit Button: this is a row with two lines of text in it and
                 a selected state, and a Button variant used nowhere else would
                 fight its own padding. */}
@@ -129,8 +152,50 @@ export default function Outline({
               {section.enabled ? <Icons.Eye size={14} /> : <Icons.EyeOff size={14} />}
             </Button>
           </li>
+          <OutlineGap index={index + 1} placing={placing} over={over} />
+          </Fragment>
         )
       })}
     </ol>
+  )
+}
+
+/**
+ * The landing strip between two rows.
+ *
+ * Nothing at all until something is being carried — an outline laddered with
+ * empty bands would be a longer list saying the same thing, and this list earns
+ * its place by being short enough to take in at a glance.
+ */
+function OutlineGap({
+  index,
+  placing,
+  over,
+}: {
+  index: number
+  placing: boolean
+  over: string | null
+}) {
+  const id = `${GAP_PREFIX}${index}`
+  // Registered whatever the state, because hooks cannot be conditional — but
+  // disabled unless something is actually in flight, so these never win a
+  // collision test against the canvas during an ordinary section drag.
+  const { setNodeRef } = useDroppable({ id, disabled: !placing })
+
+  if (!placing) return null
+
+  const active = over === id
+
+  return (
+    <li
+      ref={setNodeRef}
+      className={`flex h-7 items-center justify-center rounded-control border border-dashed text-xs font-medium transition ${
+        active
+          ? 'border-brand bg-brand-soft text-brand-ink'
+          : 'border-border-strong bg-surface-2/40 text-muted'
+      }`}
+    >
+      {active ? 'Drop it here' : 'Here'}
+    </li>
   )
 }

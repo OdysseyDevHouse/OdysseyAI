@@ -3,7 +3,14 @@
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Button, ConfirmModal, Field, Icons, Input, useToast } from '@/components/ui'
+import {
+  Button,
+  ConfirmModal,
+  Icons,
+  ReasonPicker,
+  useToast,
+  type PickableReason,
+} from '@/components/ui'
 import { voidSaleAction, recordPrintAction, creditWholeSaleAction } from '../actions'
 
 /**
@@ -20,6 +27,8 @@ export default function DocumentActions({
   voidable,
   isVoid,
   creditable,
+  voidReasons,
+  returnReasons,
   voidBlockedReason,
   creditBlockedReason,
 }: {
@@ -27,6 +36,9 @@ export default function DocumentActions({
   documentNumber: string | null
   voidable: boolean
   isVoid: boolean
+  /** The site's two reason lists, active entries only. */
+  voidReasons: PickableReason[]
+  returnReasons: PickableReason[]
   /** Finalised, has something left to credit, and the role is allowed. */
   creditable: boolean
   /**
@@ -42,19 +54,29 @@ export default function DocumentActions({
 }) {
   const [voiding, setVoiding] = useState(false)
   const [crediting, setCrediting] = useState(false)
-  const [reason, setReason] = useState('')
-  const [creditReason, setCreditReason] = useState('')
+  const [voidReasonId, setVoidReasonId] = useState<number | null>(null)
+  const [voidNote, setVoidNote] = useState('')
+  const [creditReasonId, setCreditReasonId] = useState<number | null>(null)
+  const [creditNote, setCreditNote] = useState('')
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
 
   function doCredit() {
+    if (creditReasonId === null) {
+      toast.error('Choose a reason for the credit.')
+      return
+    }
     startTransition(async () => {
-      const result = await creditWholeSaleAction(documentId, creditReason)
+      const result = await creditWholeSaleAction(documentId, {
+        reasonId: creditReasonId,
+        note: creditNote.trim() || null,
+      })
       if (result.ok) {
         toast.success(`${result.documentNumber} raised. The stock is back on hand.`)
         setCrediting(false)
-        setCreditReason('')
+        setCreditReasonId(null)
+        setCreditNote('')
         router.push(`/sales/${result.documentId}`)
       } else {
         toast.error(result.error)
@@ -71,12 +93,20 @@ export default function DocumentActions({
   }
 
   function doVoid() {
+    if (voidReasonId === null) {
+      toast.error('Choose a reason for the cancellation.')
+      return
+    }
     startTransition(async () => {
-      const result = await voidSaleAction(documentId, reason)
+      const result = await voidSaleAction(documentId, {
+        reasonId: voidReasonId,
+        note: voidNote.trim() || null,
+      })
       if (result.ok) {
         toast.success(`${documentNumber} cancelled. The stock has been returned.`)
         setVoiding(false)
-        setReason('')
+        setVoidReasonId(null)
+        setVoidNote('')
         router.refresh()
       } else {
         toast.error(result.error)
@@ -152,13 +182,16 @@ export default function DocumentActions({
               shelf and, on an account sale, the customer&apos;s balance drops. The original invoice
               stays exactly as it is — this raises a separate document against it.
             </p>
-            <Field label="Reason" hint="Recorded on the credit and in the audit trail.">
-              <Input
-                value={creditReason}
-                onChange={(e) => setCreditReason(e.target.value)}
-                placeholder="e.g. Customer returned everything"
-              />
-            </Field>
+            <ReasonPicker
+              reasons={returnReasons}
+              value={creditReasonId}
+              note={creditNote}
+              onChange={setCreditReasonId}
+              onNoteChange={setCreditNote}
+              label="Why is it coming back?"
+              hint="Recorded on the credit and in the audit trail, and what a returns report groups by."
+              disabled={pending}
+            />
             <p className="text-xs text-muted">
               Only some of it coming back?{' '}
               <Link href={`/sales/${documentId}/credit`} className="text-brand hover:underline">
@@ -192,13 +225,16 @@ export default function DocumentActions({
               Only possible on the day the sale was rung up. After that, credit it instead —
               cancelling would change a day that has already been banked.
             </p>
-            <Field label="Reason" hint="Recorded against the document.">
-              <Input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. Rang up twice"
-              />
-            </Field>
+            <ReasonPicker
+              reasons={voidReasons}
+              value={voidReasonId}
+              note={voidNote}
+              onChange={setVoidReasonId}
+              onNoteChange={setVoidNote}
+              label="Why is it being cancelled?"
+              hint="Recorded against the document, and what a void report groups by."
+              disabled={pending}
+            />
           </div>
         }
       />

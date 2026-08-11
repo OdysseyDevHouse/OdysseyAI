@@ -17,8 +17,29 @@ import { listLedger, reconcileBalances } from '../src/lib/site/customerLedger'
 import { reconcileStock, listMovements } from '../src/lib/site/stockMovements'
 import { setSetting } from '../src/lib/site/settings'
 import { toNum } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let VOID_REASON_ID = 0
+let RETURN_REASON_ID = 0
+
+async function loadReasonIds() {
+  const v = await findSalesReasonByCode(SITE, 'void', 'WRONG-ITEM')
+  if (!v) throw new Error('Seeded void reason WRONG-ITEM is missing — run site-migrate for 102.')
+  VOID_REASON_ID = v.id
+  const r = await findSalesReasonByCode(SITE, 'return', 'FAULTY')
+  if (!r) throw new Error('Seeded return reason FAULTY is missing — run site-migrate for 102.')
+  RETURN_REASON_ID = r.id
+}
+
 const actor = { userId: 1, userName: 'Credit Test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -29,6 +50,7 @@ const stockOf = async (id: number) =>
   toNum((await siteQueryOne<any>(SITE, 'SELECT stock_on_hand FROM products WHERE id=?', [id]))?.stock_on_hand)
 
 async function main() {
+  await loadReasonIds()
   const stamp = Date.now().toString().slice(-8)
   const vat = await siteQueryOne<any>(SITE, "SELECT id, rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1")
   const rate = toNum(vat?.rate, 15)
@@ -76,7 +98,7 @@ async function main() {
   // ── Partial credit: 3 of 10 back.
   const line = creditable![0]
   const partial = await createCreditNote(SITE, actor, {
-    invoiceId: draft.id, customerId: cust.id, reason: 'Three returned damaged',
+    invoiceId: draft.id, customerId: cust.id, reasonId: RETURN_REASON_ID, note: 'Three returned damaged',
     lines: [{ sourceLineId: line.id, productId, productCode: line.productCode, description: line.description, productType: 'normal', qty: 3, unitPriceIncl: line.unitPriceIncl, vatRatePct: line.vatRatePct, unitCostExcl: line.unitCostExcl }],
   })
   ok('*** partial credit note posted ***', partial.ok, partial.ok ? partial.documentNumber : partial.error)
@@ -105,14 +127,14 @@ async function main() {
   const remaining = await creditableLines(SITE, draft.id)
   ok('creditable now shows 7 left', remaining?.[0].creditable === 7, String(remaining?.[0].creditable))
   const tooMuch = await createCreditNote(SITE, actor, {
-    invoiceId: draft.id, customerId: cust.id, reason: 'Too many',
+    invoiceId: draft.id, customerId: cust.id, reasonId: RETURN_REASON_ID, note: 'Too many',
     lines: [{ sourceLineId: line.id, productId, description: line.description, productType: 'normal', qty: 8, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 10 }],
   })
   ok('*** over-crediting REFUSED ***', !tooMuch.ok, !tooMuch.ok ? tooMuch.error : '')
 
   // Exactly the remainder is fine.
   const rest = await createCreditNote(SITE, actor, {
-    invoiceId: draft.id, customerId: cust.id, reason: 'Rest returned',
+    invoiceId: draft.id, customerId: cust.id, reasonId: RETURN_REASON_ID, note: 'Rest returned',
     lines: [{ sourceLineId: line.id, productId, description: line.description, productType: 'normal', qty: 7, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 10 }],
   })
   ok('crediting exactly the remainder allowed', rest.ok, rest.ok ? '' : rest.error)
@@ -122,8 +144,11 @@ async function main() {
   ok('  two credit notes linked to the invoice', (await creditNotesFor(SITE, draft.id)).length === 2)
 
   // ── Validation
-  ok('credit without a reason refused', !(await createCreditNote(SITE, actor, { invoiceId: draft.id, reason: '', lines: [] })).ok)
-  ok('credit with no lines refused', !(await createCreditNote(SITE, actor, { invoiceId: draft.id, reason: 'x', lines: [] })).ok)
+  ok('credit without a reason refused', !(await createCreditNote(SITE, actor, { invoiceId: draft.id, reasonId: 0, lines: [] })).ok)
+  // An id from the VOID list satisfies no foreign key on the returns column, and
+  // must be refused before it can label a return with the wrong vocabulary.
+  ok('credit with a void reason refused', !(await createCreditNote(SITE, actor, { invoiceId: draft.id, reasonId: 999999, lines: [] })).ok)
+  ok('credit with no lines refused', !(await createCreditNote(SITE, actor, { invoiceId: draft.id, reasonId: RETURN_REASON_ID, lines: [] })).ok)
 
   // ── A no-receipt return: no invoice, cost falls back to what the caller gives.
   const cashDraft = await saveDraft(SITE, actor, {
@@ -133,7 +158,7 @@ async function main() {
   if (cashDraft.ok) await finaliseDocument(SITE, actor, { documentId: cashDraft.id, tenders: [{ tenderTypeId: cash.id, amount: 250 }] })
 
   const noReceipt = await createCreditNote(SITE, actor, {
-    invoiceId: null, customerName: 'Walk-in', reason: 'Returned without a slip',
+    invoiceId: null, customerName: 'Walk-in', reasonId: RETURN_REASON_ID, note: 'Returned without a slip',
     lines: [{ productId, description: 'Credit test item', productType: 'normal', qty: 1, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 10 }],
     refunds: [{ tenderTypeId: cash.id, amount: 115 }],
   })
@@ -141,7 +166,7 @@ async function main() {
 
   // EFT cannot be refunded at the till.
   const badRefund = await createCreditNote(SITE, actor, {
-    invoiceId: null, customerName: 'Walk-in', reason: 'Refund by EFT',
+    invoiceId: null, customerName: 'Walk-in', reasonId: RETURN_REASON_ID, note: 'Refund by EFT',
     lines: [{ productId, description: 'Credit test item', productType: 'normal', qty: 1, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 10 }],
     refunds: [{ tenderTypeId: eft.id, amount: 115 }],
   })
@@ -151,18 +176,18 @@ async function main() {
   const today = new Date().toISOString().slice(0, 10)
   await setSetting(SITE, 'vat_period_locked_to', today)
   const locked = await createCreditNote(SITE, actor, {
-    invoiceId: null, customerName: 'Walk-in', reason: 'After lock',
+    invoiceId: null, customerName: 'Walk-in', reasonId: RETURN_REASON_ID, note: 'After lock',
     lines: [{ productId, description: 'Credit test item', productType: 'normal', qty: 1, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 10 }],
   })
   ok('*** locked VAT period REFUSES a credit ***', !locked.ok, !locked.ok ? locked.error : '')
 
   if (cashDraft.ok) {
-    const lockedVoid = await voidDocument(SITE, actor, cashDraft.id, 'After lock')
+    const lockedVoid = await voidDocument(SITE, actor, cashDraft.id, { reasonId: VOID_REASON_ID, note: 'After lock' })
     ok('*** locked VAT period REFUSES a void ***', !lockedVoid.ok, !lockedVoid.ok ? lockedVoid.error : '')
   }
   await setSetting(SITE, 'vat_period_locked_to', '')
   ok('unlocking lets it through again', (await createCreditNote(SITE, actor, {
-    invoiceId: null, customerName: 'Walk-in', reason: 'After unlock',
+    invoiceId: null, customerName: 'Walk-in', reasonId: RETURN_REASON_ID, note: 'After unlock',
     lines: [{ productId, description: 'Credit test item', productType: 'normal', qty: 1, unitPriceIncl: 115, vatRatePct: rate, unitCostExcl: 10 }],
   })).ok)
 

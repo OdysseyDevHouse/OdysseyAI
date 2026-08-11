@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireSiteUser, siteIdForCapability } from '@/lib/auth'
+import { actorForCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import {
   getSalesDashboard,
@@ -44,10 +44,16 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   // Checked here because api/ sits outside the (app) route group, so the
   // layout's guard never runs for it. This URL is directly typeable.
-  const siteId = await siteIdForCapability('dashboard.view')
-  if (siteId === null) {
+  //
+  // `actorForCapability` rather than `siteIdForCapability`: two things in this
+  // payload depend on capabilities beyond the one that opens the door — margin
+  // and the exception rows — and this returns the whole set in the read the
+  // session was going to cost anyway.
+  const ctx = await actorForCapability('dashboard.view')
+  if (!ctx) {
     return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
   }
+  const { siteId, capabilities } = ctx
   const params = req.nextUrl.searchParams
   const from = params.get('from')
   const to = params.get('to')
@@ -60,12 +66,21 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const data = await getSalesDashboard(siteId, { from, to })
+    const data = await getSalesDashboard(
+      siteId,
+      { from, to },
+      // Named staff, so it is gated separately from the dashboard itself and
+      // the queries do not run at all for a role that may not read it.
+      { includeExceptions: can(capabilities, 'reports.view') },
+    )
 
     // Margin is stripped from the RESPONSE, not merely hidden by the tile that
     // renders it: this endpoint is a typeable URL that returns JSON, so a
     // client-side check would leave the figures one network-tab away.
-    const { capabilities } = await requireSiteUser()
+    //
+    // `exceptions` needs nothing from withoutMargin — it carries counts and
+    // tender values, no cost and no margin. Anything added here that DOES
+    // carry margin must be blanked there too.
     if (!can(capabilities, 'products.cost')) {
       return NextResponse.json(withoutMargin(data))
     }

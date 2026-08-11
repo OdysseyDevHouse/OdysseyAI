@@ -45,7 +45,8 @@ export async function searchReturnProductsAction(term: string): Promise<TillProd
 }
 
 export async function createNoReceiptReturnAction(input: {
-  reason: string
+  reasonId: number
+  note?: string | null
   customerId?: number | null
   customerName?: string | null
   lines: ReturnLineInput[]
@@ -63,8 +64,8 @@ export async function createNoReceiptReturnAction(input: {
     }
   }
 
-  if (!input.reason?.trim()) {
-    return { ok: false, error: 'Give a reason — a return with no receipt has nothing else to explain it.' }
+  if (!input.reasonId) {
+    return { ok: false, error: 'Choose a reason — a return with no receipt has nothing else to explain it.' }
   }
   if (input.lines.length === 0) {
     return { ok: false, error: 'Add at least one item to return.' }
@@ -75,14 +76,20 @@ export async function createNoReceiptReturnAction(input: {
     invoiceId: null,
     customerId: input.customerId ?? null,
     customerName: input.customerName?.trim() || 'Walk-in',
-    reason: `No receipt: ${input.reason.trim()}`,
+    reasonId: input.reasonId,
+    note: input.note,
+    // Kept as a caption rather than folded into the reason: the CODE has to stay
+    // the same one a receipted return uses, or the two cannot be grouped
+    // together — and "no receipt" is a property of the return, not a reason
+    // goods came back.
+    reasonPrefix: 'No receipt',
     lines: input.lines,
     refunds: input.refunds,
   })
 
   if (!result.ok) return result
 
-  revalidatePath('/sales')
+  revalidatePath('/sales/invoicing')
   revalidatePath('/reports')
 
   return result

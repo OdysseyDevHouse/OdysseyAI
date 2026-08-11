@@ -20,8 +20,25 @@ import {
   compositionCost, buildableQty, usedInRecipes, clearRefer,
 } from '../src/lib/site/productComposition'
 import { toNum } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let RETURN_REASON_ID = 0
+
+async function loadReasonIds() {
+  const r = await findSalesReasonByCode(SITE, 'return', 'FAULTY')
+  if (!r) throw new Error('Seeded return reason FAULTY is missing — run site-migrate for 102.')
+  RETURN_REASON_ID = r.id
+}
+
 const actor = { userId: 1, userName: 'Composition Test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -65,6 +82,7 @@ async function makeProduct(
 }
 
 async function main() {
+  await loadReasonIds()
   // A crash mid-test used to leave products whose stock had moved but whose
   // movements were already deleted, which shows up as drift in EVERY later
   // suite. Cleanup now runs in a finally, and this sweeps anything an older
@@ -186,7 +204,7 @@ async function main() {
     : 0
   const credit = await createCreditNote(SITE, actor, {
     invoiceId: sale.id,
-    reason: 'Customer sent it back',
+    reasonId: RETURN_REASON_ID, note: 'Customer sent it back',
     lines: [{
       sourceLineId: invoiceLineId,
       productId: burger,

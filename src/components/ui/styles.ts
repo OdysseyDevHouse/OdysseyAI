@@ -158,7 +158,7 @@ export const TABLE_TOTAL_ROW = 'border-t-2 border-border bg-surface-2 font-mediu
 
 /* ── Modals ──────────────────────────────────────────────────────────────── */
 
-export type ModalSize = 'sm' | 'md' | 'lg'
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl'
 
 /**
  * The dialog panel itself.
@@ -176,6 +176,9 @@ export const MODAL_SIZE: Record<ModalSize, string> = {
   sm: 'max-w-md',
   md: 'max-w-xl',
   lg: 'max-w-3xl',
+  /* For a dialog whose content is a grid rather than a form — the bulk options
+     catalogue, where a third column at 3xl clips the longer action names. */
+  xl: 'max-w-5xl',
 }
 
 /* ── Form controls ───────────────────────────────────────────────────────── */

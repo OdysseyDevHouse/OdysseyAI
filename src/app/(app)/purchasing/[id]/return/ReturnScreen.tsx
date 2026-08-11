@@ -40,6 +40,14 @@ import { createSupplierReturnAction, serialsForReturnAction } from '../../action
  * A serial line is different in kind: the quantity is decided BY the units
  * chosen, not typed. Which physical handset goes back is the whole question,
  * so the tick boxes drive the number rather than the other way round.
+ *
+ * ── THE THIRD PURCHASING SCREEN ──────────────────────────────────────────
+ *
+ * Ordering, receiving and returning are one flow to the person doing them, so
+ * they are meant to look alike: see the note at the top of ../../OrderScreen.tsx.
+ * This one does NOT use PurchaseLineGrid — its rows are a pick-list off an
+ * existing document, not editable purchase lines — but its cards, totals panel
+ * and button placement should still follow the other two.
  */
 
 type ReturnableLine = {

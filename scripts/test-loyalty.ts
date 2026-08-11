@@ -54,8 +54,25 @@ import {
   cleanSettings, LOYALTY_DEFAULTS, type LoyaltySettings, type LoyaltyTier,
 } from '../src/lib/loyaltyRules'
 import { round, toNum } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let VOID_REASON_ID = 0
+
+async function loadReasonIds() {
+  const v = await findSalesReasonByCode(SITE, 'void', 'WRONG-ITEM')
+  if (!v) throw new Error('Seeded void reason WRONG-ITEM is missing — run site-migrate for 102.')
+  VOID_REASON_ID = v.id
+}
+
 const actor = { userId: 1, userName: 'Loyalty Test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -154,6 +171,7 @@ async function sell(
 }
 
 async function main() {
+  await loadReasonIds()
   console.log('\n── The arithmetic, in isolation ────────────────────────────\n')
 
   ok('R100 at R1 per point earns 100',
@@ -480,7 +498,7 @@ async function main() {
   const walletBeforeVoid = await getWalletBalance(SITE, customerId)
 
   // Void the wallet sale: the money must come back.
-  const voided = await voidDocument(SITE, actor, sale3.id, 'Loyalty reversal test')
+  const voided = await voidDocument(SITE, actor, sale3.id, { reasonId: VOID_REASON_ID, note: 'Loyalty reversal test' })
   ok('a wallet sale can be voided', voided.ok, voided.ok ? '' : voided.error)
 
   const walletAfterVoid = await getWalletBalance(SITE, customerId)
@@ -492,7 +510,7 @@ async function main() {
 
   // Void the points sale: earned points clawed back AND spent points returned.
   const pointsBeforeReversal = await ledgerBalance(customerId)
-  const voidPoints = await voidDocument(SITE, actor, sale2.id, 'Points reversal test')
+  const voidPoints = await voidDocument(SITE, actor, sale2.id, { reasonId: VOID_REASON_ID, note: 'Points reversal test' })
   ok('a part-points sale can be voided', voidPoints.ok, voidPoints.ok ? '' : voidPoints.error)
 
   const reversalRow = (await listLedger(SITE, customerId))
@@ -508,7 +526,7 @@ async function main() {
       `${pointsBeforeReversal} -> ${afterReversal}`)
   ok('  and the cache keeps up', (await cachedBalance(customerId)) === afterReversal)
 
-  const voidAgain = await voidDocument(SITE, actor, sale2.id, 'again')
+  const voidAgain = await voidDocument(SITE, actor, sale2.id, { reasonId: VOID_REASON_ID, note: 'again' })
   ok('a second void is refused by the document rules', !voidAgain.ok)
   ok('*** and the balance did not move again ***', (await ledgerBalance(customerId)) === afterReversal)
 

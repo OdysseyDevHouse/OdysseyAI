@@ -110,6 +110,7 @@ export default function VariantsPanel({
     return (
       <Card>
         <CardHeader
+          tone="brand"
           title="Variants"
           description={`This product is one of the variants of ${isChildOf.description}.`}
         />
@@ -136,6 +137,7 @@ export default function VariantsPanel({
     return (
       <Card>
         <CardHeader
+          tone="brand"
           title="Variants"
           description="Sell one product in several sizes, colours or packs."
         />
@@ -199,6 +201,7 @@ export default function VariantsPanel({
   return (
     <Card>
       <CardHeader
+        tone="brand"
         title="Variants"
         description={`${productDescription} is sold as ${group.children.length} ${
           group.children.length === 1 ? 'variant' : 'variants'

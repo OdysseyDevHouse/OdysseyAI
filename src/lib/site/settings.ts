@@ -331,6 +331,32 @@ export function validateSetting(key: SettingKey, value: string): string | null {
         ? null
         : "Cost basis must be 'average' or 'last'."
 
+    /* The two receiving guards. Both had no case here until they became
+       editable — an unvalidated key falls through to `default` and saves
+       whatever it is given, which was harmless while the only writer was a
+       migration and is not once a text box points at it. */
+
+    case 'purchase_invoice_tolerance': {
+      const tolerance = Number(value)
+      if (!Number.isFinite(tolerance) || tolerance < 0) {
+        return 'The tolerance cannot be negative.'
+      }
+      /* Cents, not rands. This check exists to catch a transposed digit or a
+         case cost keyed as a unit cost; a tolerance of R50 would wave through
+         exactly those errors while still looking configured. */
+      if (tolerance > 10) return 'A tolerance above R10 would let a keying error through.'
+      return null
+    }
+
+    case 'purchase_cost_change_warn_pct': {
+      const pct = Number(value)
+      // Zero is meaningful: it switches the warning off for a shop whose costs
+      // genuinely move on every delivery.
+      if (!Number.isFinite(pct) || pct < 0) return 'The percentage cannot be negative.'
+      if (pct > 1000) return 'A threshold that high would never warn about anything.'
+      return null
+    }
+
     case 'price_ending_direction':
       return value === 'up' || value === 'down' || value === 'nearest'
         ? null

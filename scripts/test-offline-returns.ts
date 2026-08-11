@@ -17,8 +17,25 @@ import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { setSetting, getSetting } from '../src/lib/site/settings'
 import { toNum } from '../src/lib/decimals'
 import type { OfflineReturn } from '../src/lib/posOffline/types'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let RETURN_REASON_ID = 0
+
+async function loadReasonIds() {
+  const r = await findSalesReasonByCode(SITE, 'return', 'FAULTY')
+  if (!r) throw new Error('Seeded return reason FAULTY is missing — run site-migrate for 102.')
+  RETURN_REASON_ID = r.id
+}
+
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
   if (!cond) fails++
@@ -57,6 +74,7 @@ async function freeTillNumber(): Promise<string> {
 }
 
 async function main() {
+  await loadReasonIds()
   const stamp = Date.now().toString().slice(-8)
 
   /* Sweep scratch rows from a crashed earlier run, so a leftover cannot fail an
@@ -122,7 +140,7 @@ async function main() {
     documentDate: today,
     customerId: null,
     customerName: 'Walk-in',
-    reason: 'Faulty on arrival',
+    reasonId: RETURN_REASON_ID, note: 'Faulty on arrival',
     lines: [
       {
         productId,
@@ -155,8 +173,14 @@ async function main() {
   )
   ok('a return with no lines is refused', validateOfflineReturn(base({ lines: [] })) !== null)
   ok(
-    'a blank reason is REFUSED rather than defaulted',
-    validateOfflineReturn(base({ reason: '   ' })) !== null,
+    'a missing reason is REFUSED rather than defaulted',
+    validateOfflineReturn(base({ reasonId: 0 })) !== null,
+  )
+  // The note is optional, and always was for the reasons whose code says enough.
+  // A return carrying a code and no note has to queue.
+  ok(
+    'a coded reason with no note is accepted',
+    validateOfflineReturn(base({ reasonId: RETURN_REASON_ID, note: null })) === null,
   )
   /* The sign convention is the trap: the till sends "credit 2" and the server stores
      −2. A negative arriving here would double-negate into a second SALE. */

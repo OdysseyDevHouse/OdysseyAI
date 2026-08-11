@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
 import { round, toNum } from '../decimals'
+import { exceptionReport, type ExceptionRow } from './salesReports'
 
 /**
  * The sales dashboard's data layer.
@@ -72,6 +73,14 @@ export type SalesDashboardData = {
   topProducts: RankedRow[]
   topDepartments: RankedRow[]
   topCashiers: RankedRow[]
+  /**
+   * Voids, credits and no-receipt returns by cashier — top five.
+   *
+   * Null when the caller lacks `reports.view`, which is NOT the same as an
+   * empty array: one means "you may not see this", the other "there was
+   * nothing to see". The widget says something different for each.
+   */
+  exceptions: ExceptionRow[] | null
   hasData: boolean
 }
 
@@ -324,9 +333,21 @@ export async function rankedDimension(
 export async function getSalesDashboard(
   siteId: number,
   range: DateRange,
+  opts: {
+    /**
+     * Voids, credits and no-receipt returns by cashier. Off by default and
+     * gated on `reports.view` by the caller: this names staff, so a role that
+     * may see turnover must not get it for free. A flag rather than an
+     * unconditional fetch so the three extra queries are not run to have their
+     * results thrown away.
+     */
+    includeExceptions?: boolean
+  } = {},
 ): Promise<SalesDashboardData> {
   const comparison = previousMonth(range)
   const compareLabel = compareLabelFor(comparison)
+
+  const exceptionsPromise = opts.includeExceptions ? exceptionReport(siteId, range) : null
 
   const [kpis, compareRaw, hourRows, dayRows, tenderRows, topProducts, topDepartments, topCashiers] =
     await Promise.all([
@@ -434,6 +455,11 @@ export async function getSalesDashboard(
     topProducts,
     topDepartments,
     topCashiers,
+    /* Null means "not entitled", which the widget states plainly. An empty
+       array means a clean period, which is a different and much better thing —
+       so the two must not collapse into each other. Top five: this is a prompt
+       to open the report, not a replacement for it. */
+    exceptions: exceptionsPromise ? (await exceptionsPromise).slice(0, 5) : null,
     hasData: kpis.saleCount > 0 || kpis.turnoverIncl !== 0,
   }
 }

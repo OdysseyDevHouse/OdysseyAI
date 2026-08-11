@@ -211,6 +211,14 @@ export {
   // A picture itself, rather than a file containing one — the storefront's
   // banner sections and their library.
   Image as Picture,
+  // Several pictures in the same place, one after another — the storefront's
+  // rotating banner, as distinct from the single `Picture` it is built from.
+  Images as Pictures,
+  // Two panes side by side, and stacked bands: the storefront's "picture beside
+  // words" block and its spacer. Named for the shape rather than lucide's
+  // `Columns2`/`Rows3`, whose digits describe that icon's own strokes.
+  Columns2 as SplitPanes,
+  Rows3 as StackedBands,
   FileSpreadsheet,
   FileArchive,
 } from 'lucide-react'

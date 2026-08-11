@@ -29,10 +29,30 @@ export type WidgetId =
   | 'avgItemsPerSale'
   | 'perHour'
   | 'perDay'
+  | 'countPerDay'
   | 'tenderTypes'
   | 'topProducts'
   | 'topDepartments'
   | 'topCashiers'
+  | 'voidsAndReturns'
+  /* The as-at-now half — see `scope` below. */
+  | 'attention'
+  | 'debtorsAgeing'
+  | 'creditorsAgeing'
+  | 'cashPosition'
+  | 'pipeline'
+  | 'reorder'
+
+/**
+ * Which question a widget answers, and therefore which payload feeds it.
+ *
+ * `range` widgets move when the toolbar moves. `asAt` widgets do NOT — a debtor
+ * ageing is true right now and cannot be "as at last March" without either an
+ * expensive reconstruction or a lie. The screen marks the difference rather
+ * than hiding it, because a figure that ignores the date range sitting silently
+ * under one is read as belonging to it.
+ */
+export type WidgetScope = 'range' | 'asAt'
 
 export type WidgetDef = {
   id: WidgetId
@@ -40,23 +60,33 @@ export type WidgetDef = {
   default: Pick<LayoutItem, 'x' | 'y' | 'w' | 'h' | 'minW' | 'minH'>
   /** Fixed-size widgets can be dragged but not resized. */
   resizable?: boolean
+  /** Defaults to 'range', so the twelve original widgets need no entry. */
+  scope?: WidgetScope
+  /**
+   * Hides the widget's toggle from the panel when the user cannot see its data.
+   * A UI affordance ONLY — the endpoints do the real gating, and this exists so
+   * a user is not offered a switch that turns on an empty box.
+   */
+  capability?: string
 }
 
 /**
- * The KPI ids, in the order they appear — three to a row, so the order is also
- * the grouping.
+ * The KPI ids, in the order they appear — one row, so the order is the reading
+ * order, left to right.
  *
- * Row one is the money: what was taken, what of it is the shop's, what was made
- * on it. Row two is the shape of the trade behind that money: how many baskets,
- * how big, how full. Read across, each row is one thought.
+ * Money first and widening: what was taken, what of it is the shop's, what was
+ * made on it. Then the shape of the trade behind that money — how big a basket,
+ * how full, and how many. Sales sits last rather than beside the money because
+ * it is a count, not an amount, and the eye should reach the four money figures
+ * without stepping over it.
  */
 export const KPI_IDS = [
   'turnoverIncl',
   'turnoverExcl',
   'grossProfit',
-  'saleCount',
   'avgSaleValue',
   'avgItemsPerSale',
+  'saleCount',
 ] as const
 
 export type KpiId = (typeof KPI_IDS)[number]
@@ -70,21 +100,23 @@ const KPI_TITLES: Record<KpiId, string> = {
   avgItemsPerSale: 'Items per sale',
 }
 
-// Six KPIs, THREE to a row — not six across.
+// Six KPIs, ALL SIX to a row.
 //
-// The width is the whole history of this file. Six tiles at a twelfth of the
-// grid truncated every money figure to "R2 658 …"; a fifth each fitted but was
-// tight (~246px at 1600, ~200px at 1366). Six across is roughly a fifth again:
-// about 196px at a 1600 viewport and 163px at 1366, which is under the width
-// "R860 025.54 (36.5%)" needs even at the smallest type size the tile will use.
-// Nothing truncates any more — it wraps onto a second line instead and eats the
-// trend chart — but that is still the wrong shape.
+// The width is the whole history of this file, and it has gone back and forth.
+// Six tiles at a twelfth of the grid once truncated every money figure to
+// "R2 658 …", which is what pushed them to three-and-three at a third each.
 //
-// A third of sixty columns is ~413px at 1600 and ~333px at 1366, which every
-// figure clears at full size, and three-and-three is the grouping the numbers
-// already have (see KPI_IDS). The cost is one extra grid row of height, which
-// is the cheaper thing to spend.
-const KPI_PER_ROW = 3
+// A sixth (10 of 60 columns, ~196px at a 1600 viewport) works NOW because the
+// tile no longer clips: `valueSize()` in KpiTile steps the figure down a type
+// size as it lengthens, and the Sparkline's height is a ceiling rather than a
+// fixed block, so a shorter tile simply gets a shorter chart. The figures that
+// used to truncate now fit.
+//
+// What it buys is the row underneath: at three-across the tiles ate two rows —
+// 160px twice, plus a gap — before the first chart. One row of KPIs puts the
+// day's trading and the first real chart on the same screen, which is what a
+// dashboard is for.
+const KPI_PER_ROW = 6
 const KPI_W = GRID_COLS / KPI_PER_ROW
 // Three rows — 160px — and the trend chart takes what is left rather than the
 // tile being sized around it.
@@ -132,13 +164,18 @@ const KPI_WIDGETS: WidgetDef[] = KPI_IDS.map((id, i) => ({
   // store that wants six small tiles on one row can now just drag them there.
 }))
 
-/** Height of the KPI tiles themselves. */
+/**
+ * Height of the KPI tiles themselves — now a single row of six.
+ *
+ * Still computed rather than written as `3`, so putting them back onto two
+ * rows is a one-line change to KPI_PER_ROW and every y below follows.
+ */
 const KPI_ROWS_H = Math.ceil(KPI_IDS.length / KPI_PER_ROW) * KPI_H
 
 /**
  * Where the rest of the dashboard starts.
  *
- * The tiles fill their rows exactly, so nothing sits beside them and this is
+ * The tiles fill their row exactly, so nothing sits beside them and this is
  * simply the bottom of the block.
  */
 const KPI_BLOCK_H = KPI_ROWS_H
@@ -149,6 +186,7 @@ const HALF = GRID_COLS / 2
 const THIRD = GRID_COLS / 3
 const TWO_THIRDS = THIRD * 2
 const QUARTER = GRID_COLS / 4
+const THREE_QUARTERS = QUARTER * 3
 
 /**
  * The curated default layout — what a new user sees and what "Reset layout"
@@ -156,41 +194,141 @@ const QUARTER = GRID_COLS / 4
  */
 export const WIDGETS: WidgetDef[] = [
   ...KPI_WIDGETS,
+  /*
+   * ── THE ROWS BELOW THE KPIs ─────────────────────────────────────────────
+   *
+   * Captured from a real arrangement rather than reasoned out a widget at a
+   * time, which is why it reads as rows: the whole screen was dragged into
+   * shape and then written down. Six bands, each answering one question:
+   *
+   *   trend      perDay | perHour              how the money moved
+   *   volume     countPerDay | topProducts     what actually sold
+   *   ranking    topDepartments               (topProducts is double height
+   *                                            and runs beside both)
+   *   people     topCashiers | voidsAndReturns who rang it, and who undid it
+   *   today      attention · reorder · pipeline · tenderTypes
+   *   owed       creditorsAgeing | debtorsAgeing · cashPosition
+   *
+   * The as-at band sits BELOW the trading figures here, not above them. That
+   * is a deliberate reversal of the first arrangement: the action list led,
+   * on the argument that a dashboard should open on what needs doing. In
+   * practice the trading figures are what the screen is opened for every
+   * morning, and the four as-at panels read better as a row of equal quarters
+   * than as one tall box competing with a chart.
+   */
   {
     id: 'perDay',
     title: 'Turnover per day',
-    default: { x: 0, y: KPI_BLOCK_H, w: TWO_THIRDS, h: 7, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H, w: HALF, h: 5, minW: QUARTER, minH: 5 },
   },
   {
-    // Shares the row with the turnover chart, taking the last third.
-    //
-    // SEVEN rows tall to match it. Its old height was six, and three (the KPI
-    // height) is the cautionary tale: the card was ~140px, leaving the donut
-    // ~60px to draw in, so it rendered nothing at all while its legend and
-    // total showed fine. minH keeps that floor.
-    id: 'tenderTypes',
-    title: 'Tender mix',
-    default: { x: TWO_THIRDS, y: KPI_BLOCK_H, w: THIRD, h: 7, minW: QUARTER, minH: 6 },
-  },
-  {
+    /* Beside the daily trend rather than full width below it: the two are the
+       same question at two scales — which days, and which hours of a day. */
     id: 'perHour',
     title: 'Sales per hour',
-    default: { x: 0, y: KPI_BLOCK_H + 7, w: GRID_COLS, h: 6, minW: QUARTER, minH: 5 },
+    default: { x: HALF, y: KPI_BLOCK_H, w: HALF, h: 5, minW: QUARTER, minH: 5 },
   },
   {
+    /* The sale-count series was already in the payload and plotted nowhere.
+       Its own chart rather than a second axis on the turnover one: a dual axis
+       implies the two lines share a scale, and these do not. */
+    id: 'countPerDay',
+    title: 'Sales per day',
+    default: { x: 0, y: KPI_BLOCK_H + 5, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+  },
+  {
+    /* DOUBLE height, and the only widget that is. The product ranking is the
+       longest list on the screen and the one most worth scrolling; at ten rows
+       it shows about a dozen lines without scrolling at all, and it runs down
+       the right of both the count chart and the department ranking. */
     id: 'topProducts',
     title: 'Top products',
-    default: { x: 0, y: KPI_BLOCK_H + 13, w: HALF, h: 8, minW: QUARTER, minH: 5 },
+    default: { x: HALF, y: KPI_BLOCK_H + 5, w: HALF, h: 10, minW: QUARTER, minH: 5 },
   },
   {
     id: 'topDepartments',
     title: 'Top departments',
-    default: { x: HALF, y: KPI_BLOCK_H + 13, w: HALF, h: 8, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 10, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+  },
+  {
+    /*
+     * The as-at band: four panels of what is true right now, in a row.
+     *
+     * A quarter each, so they read as one band rather than four unrelated
+     * boxes. Seven rows because the action list and the reorder table both
+     * need room for several lines, and the tender donut cannot draw below six.
+     */
+    id: 'attention',
+    title: 'Needs attention',
+    default: { x: 0, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
+    scope: 'asAt',
+  },
+  {
+    id: 'reorder',
+    title: 'Reorder',
+    default: { x: QUARTER, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
+    scope: 'asAt',
+    capability: 'purchasing.view',
+  },
+  {
+    id: 'pipeline',
+    title: 'Pipeline',
+    default: { x: HALF, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 3 },
+    scope: 'asAt',
+    capability: 'sales.view',
+  },
+  {
+    /* Ends the band. SEVEN rows tall like its neighbours, and three (the KPI
+       height) is the cautionary tale: the card was ~140px, leaving the donut
+       ~60px to draw in, so it rendered nothing at all while its legend and
+       total showed fine. minH keeps that floor. */
+    id: 'tenderTypes',
+    title: 'Tender mix',
+    default: { x: THREE_QUARTERS, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 6 },
   },
   {
     id: 'topCashiers',
     title: 'Top cashiers',
-    default: { x: 0, y: KPI_BLOCK_H + 21, w: GRID_COLS, h: 7, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 22, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+  },
+  {
+    /* Beside the cashier ranking, because both answer "who is doing what" —
+       one by turnover, one by what they had to undo. */
+    id: 'voidsAndReturns',
+    title: 'Voids and returns',
+    default: { x: HALF, y: KPI_BLOCK_H + 22, w: HALF, h: 5, minW: QUARTER, minH: 4 },
+    capability: 'reports.view',
+  },
+  {
+    /*
+     * What we owe, beside what we are owed — creditors on the LEFT.
+     *
+     * The pairing is the point: two strips of the same shape let the eye
+     * compare them without reading a figure. Half the grid each gives every
+     * cell ~140px, which fits "R1 819 713.18" on one line; at a quarter they
+     * wrapped, which is what made an earlier version stack them full width.
+     */
+    id: 'creditorsAgeing',
+    title: 'Creditors ageing',
+    default: { x: 0, y: KPI_BLOCK_H + 27, w: HALF, h: 4, minW: HALF, minH: 3 },
+    scope: 'asAt',
+    capability: 'suppliers.view',
+  },
+  {
+    id: 'debtorsAgeing',
+    title: 'Debtors ageing',
+    default: { x: HALF, y: KPI_BLOCK_H + 27, w: HALF, h: 4, minW: HALF, minH: 3 },
+    scope: 'asAt',
+    capability: 'customers.view',
+  },
+  {
+    /* Under the creditors strip, because both are the same question — what is
+       owed, and what there is to pay it with. */
+    id: 'cashPosition',
+    title: 'Cash position',
+    default: { x: 0, y: KPI_BLOCK_H + 31, w: HALF, h: 4, minW: QUARTER, minH: 3 },
+    scope: 'asAt',
+    capability: 'cashbook.view',
   },
 ]
 
@@ -216,8 +354,22 @@ export const ALL_WIDGET_IDS: WidgetId[] = WIDGETS.map((w) => w.id)
    worse arrangement than either version was.
    v5: KPI tiles went from four rows to three and became resizable. Only the
    height actually changed, but a v4 layout would hold every tile at 220px —
-   the exact complaint the change answers. */
-export const STORAGE_KEY = 'odyssey-sales-dashboard-v5'
+   the exact complaint the change answers.
+   v6: the dashboard stopped being sales-only. Eight widgets were added, and
+   the action list took the left third of the first row below the KPIs — which
+   moved `perDay` from two-thirds at x:0 to a third at x:THIRD, and pushed
+   everything below it down. Adding widgets alone would NOT need a bump
+   (loadPrefs gives a new id its default slot), but moving an existing one
+   does: a v5 layout would keep the turnover chart across the left two-thirds
+   and drop the action list on top of it, which is the one position that
+   defeats the point of adding it.
+   v7: the whole arrangement was rebuilt by dragging it and captured back — see
+   the row-by-row comment on WIDGETS. Every widget moved, the KPIs went from
+   three-and-three to all six on one row, and the as-at panels became a band of
+   quarters below the trading figures instead of a tall box above them. A v6
+   layout would keep every one of those old positions, which is the entire
+   thing this version changes. */
+export const STORAGE_KEY = 'odyssey-sales-dashboard-v7'
 
 export type DashboardPrefs = {
   layout: LayoutItem[]

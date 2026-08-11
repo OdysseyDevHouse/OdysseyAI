@@ -108,6 +108,7 @@ export default function PricingPanel({
   linkedLines,
   sharesCost,
   sharesSelling,
+  derivedCost = null,
 }: {
   vatRates: VatRate[]
   structures: PriceStructure[]
@@ -124,13 +125,28 @@ export default function PricingPanel({
   /** Live toggle state, owned by the form so this panel reacts to it. */
   sharesCost: boolean
   sharesSelling: boolean
+  /**
+   * Cost worked out from something else, and therefore not editable here.
+   *
+   * Set for a recipe product, where the cost IS the sum of the ingredients:
+   * nothing was ever bought called "burger", so a typed figure would be a guess
+   * that silently overrides the real one and makes every GP report wrong.
+   * Null — the default — leaves cost editable as it always was.
+   */
+  derivedCost?: number | null
 }) {
   const purchaseRates = vatRates.filter((v) => v.vatType === 'purchase')
   const salesRates = vatRates.filter((v) => v.vatType === 'sales')
 
   const [purchaseVatId, setPurchaseVatId] = useState<number | ''>(defaultPurchaseVatId ?? '')
   const [sellingVatId, setSellingVatId] = useState<number | ''>(defaultSellingVatId ?? '')
-  const [costExcl, setCostExcl] = useState(defaultCostExcl)
+  const [typedCostExcl, setCostExcl] = useState(defaultCostExcl)
+
+  // A derived cost wins outright. Kept separate from the typed value rather
+  // than overwriting it, so switching a product's type back to normal restores
+  // whatever cost it had rather than freezing the last recipe total.
+  const isDerived = derivedCost !== null
+  const costExcl = isDerived ? derivedCost : typedCostExcl
   const [prices, setPrices] = useState<Record<number, number>>(defaultPrices)
   const [lines, setLines] = useState<StoreLine[]>(linkedLines)
 
@@ -140,8 +156,11 @@ export default function PricingPanel({
   // Margin is measured against whichever cost this site prices from. On a new
   // product there is no purchase history, so the entered cost is the only
   // figure available and average would otherwise sit at zero.
+  //
+  // A derived cost ignores the basis setting entirely: "average cost" for a
+  // recipe is 0, and pricing a burger off 0 shows a 100% margin on every tier.
   const basisFor = (last: number, average: number) =>
-    isNew || costBasis === 'last' ? last : average
+    isDerived || isNew || costBasis === 'last' ? last : average
 
   const basisCost = basisFor(costExcl, defaultAverageCost)
   const costIncl = addVat(costExcl, purchaseVat)
@@ -166,7 +185,7 @@ export default function PricingPanel({
     <div className="flex flex-col gap-4">
       {/* ── Cost price & taxes ───────────────────────────────────────── */}
       <Card>
-        <SectionTitle icon={<Coins size={16} />}>Cost price &amp; TAXES</SectionTitle>
+        <SectionTitle tone="brand" icon={<Coins size={16} />}>Cost price &amp; TAXES</SectionTitle>
         <section className="flex flex-col gap-3 p-6">
           <div className="overflow-x-auto">
               <table className={`${TABLE} table-fixed`}>
@@ -206,13 +225,24 @@ export default function PricingPanel({
                     </td>
 
                     <td className={TD}>
-                      <CurrencyInput
-                        name="lastCost"
-                        min="0"
-                        value={costExcl}
-                        onChange={(e) => setCostExcl(Number(e.target.value) || 0)}
-                        className={CONTROL_W}
-                      />
+                      {isDerived ? (
+                        /* Read-only, but still submitted: the save path writes
+                           products.last_cost from this field, and a bare
+                           ReadOnlyCell posts nothing — every save would store a
+                           cost of zero. */
+                        <>
+                          <ReadOnlyCell value={costExcl} />
+                          <input type="hidden" name="lastCost" value={costExcl.toFixed(4)} />
+                        </>
+                      ) : (
+                        <CurrencyInput
+                          name="lastCost"
+                          min="0"
+                          value={costExcl}
+                          onChange={(e) => setCostExcl(Number(e.target.value) || 0)}
+                          className={CONTROL_W}
+                        />
+                      )}
                     </td>
 
                     <td className={TD}>
@@ -234,18 +264,28 @@ export default function PricingPanel({
                     </td>
 
                     <td className={TD}>
-                      <CurrencyInput
-                        min="0"
-                        value={costIncl}
-                        onChange={(e) =>
-                          setCostExcl(removeVat(Number(e.target.value) || 0, purchaseVat))
-                        }
-                        className={CONTROL_W}
-                      />
+                      {/* Locks with cost excl. — this box edits the same figure
+                          backwards through tax, so leaving it live would be an
+                          editable cost box wearing a different label. */}
+                      {isDerived ? (
+                        <ReadOnlyCell value={costIncl} />
+                      ) : (
+                        <CurrencyInput
+                          min="0"
+                          value={costIncl}
+                          onChange={(e) =>
+                            setCostExcl(removeVat(Number(e.target.value) || 0, purchaseVat))
+                          }
+                          className={CONTROL_W}
+                        />
+                      )}
                     </td>
 
                     <td className={TD}>
-                      <ReadOnlyCell value={defaultAverageCost} />
+                      {/* A recipe has no purchase history of its own, so its
+                          stored average is 0 and would read as a free product.
+                          The ingredient total is the honest figure. */}
+                      <ReadOnlyCell value={isDerived ? costExcl : defaultAverageCost} />
                     </td>
 
                     <td className={TD}>
@@ -290,9 +330,12 @@ export default function PricingPanel({
                         </div>
                       </td>
 
+                      {/* A derived cost locks every store's row, not just this
+                          one: the other store's copy is the same recipe, so a
+                          figure typed there would be just as invented. */}
                       <td className={TD}>
-                        {sharesCost ? (
-                          <ReadOnlyCell value={costExcl} />
+                        {sharesCost || isDerived ? (
+                          <ReadOnlyCell value={sharesCost ? costExcl : line.lastCost} />
                         ) : (
                           <CurrencyInput
                             name={`storeCost_${line.siteId}`}
@@ -312,8 +355,10 @@ export default function PricingPanel({
                       </td>
 
                       <td className={TD}>
-                        {sharesCost ? (
-                          <ReadOnlyCell value={addVat(costExcl, purchaseVat)} />
+                        {sharesCost || isDerived ? (
+                          <ReadOnlyCell
+                            value={addVat(sharesCost ? costExcl : line.lastCost, purchaseVat)}
+                          />
                         ) : (
                           <CurrencyInput
                             min="0"
@@ -343,24 +388,39 @@ export default function PricingPanel({
           </div>
 
           <p className="text-xs text-muted">
-            {lines.length > 0 && sharesCost
-              ? 'Cost is shared: saving writes this cost to every linked store, so their rows follow it. '
-              : lines.length > 0
-                ? 'Cost is not shared: each store keeps the cost typed against it. '
-                : ''}
-            Average cost is a consequence of purchases and cannot be typed in. Margin is calculated
-            on{' '}
-            <strong className="text-ink">
-              {isNew ? 'the cost entered above' : costBasis === 'last' ? 'last cost' : 'average cost'}
-            </strong>
-            {!isNew && ` (${money(basisCost)})`}.
+            {isDerived ? (
+              <>
+                This is a recipe product, so its cost is the total of its ingredients and cannot be
+                typed in. Change it on the <strong className="text-ink">Recipe</strong> tab — adjust
+                a quantity or an ingredient&apos;s own cost and this figure follows. Margin is
+                calculated on <strong className="text-ink">{money(basisCost)}</strong>.
+              </>
+            ) : (
+              <>
+                {lines.length > 0 && sharesCost
+                  ? 'Cost is shared: saving writes this cost to every linked store, so their rows follow it. '
+                  : lines.length > 0
+                    ? 'Cost is not shared: each store keeps the cost typed against it. '
+                    : ''}
+                Average cost is a consequence of purchases and cannot be typed in. Margin is
+                calculated on{' '}
+                <strong className="text-ink">
+                  {isNew
+                    ? 'the cost entered above'
+                    : costBasis === 'last'
+                      ? 'last cost'
+                      : 'average cost'}
+                </strong>
+                {!isNew && ` (${money(basisCost)})`}.
+              </>
+            )}
           </p>
         </section>
       </Card>
 
       {/* ── Selling price ────────────────────────────────────────────── */}
       <Card>
-        <SectionTitle icon={<Banknote size={16} />}>Selling price</SectionTitle>
+        <SectionTitle tone="brand" icon={<Banknote size={16} />}>Selling price</SectionTitle>
         <section className="flex flex-col gap-4 p-6">
           <SellingTable
             heading={storeName}

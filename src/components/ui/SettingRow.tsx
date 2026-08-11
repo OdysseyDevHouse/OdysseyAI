@@ -67,15 +67,29 @@ export function SettingGroup({
   title,
   description,
   children,
+  tone = 'default',
 }: {
   title: string
   description?: string
   children: ReactNode
+  /**
+   * 'brand' draws a brand-rule line along the top edge and colours the title, to
+   * match <SectionTitle tone="brand"> and <CardHeader tone="brand">. Worn by
+   * the product screen only for now.
+   */
+  tone?: 'default' | 'brand'
 }) {
+  const brand = tone === 'brand'
   return (
-    <div className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
+    // The rule goes on the outer box, not pulled out from the header: this
+    // wrapper clips its children, so a negative inset would be cut off.
+    <div
+      className={`overflow-hidden rounded-card border border-border bg-surface shadow-card ${
+        brand ? 'border-t-2 border-t-brand-rule' : ''
+      }`}
+    >
       <div className="border-b border-border px-6 py-4">
-        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        <h3 className={`text-sm font-semibold ${brand ? 'text-brand' : 'text-ink'}`}>{title}</h3>
         {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
       </div>
       <div>{children}</div>

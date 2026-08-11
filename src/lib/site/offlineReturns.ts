@@ -63,9 +63,14 @@ export function validateOfflineReturn(ret: OfflineReturn): string | null {
   if (ret.documentNumber.length > 32) return 'That document number is too long.'
   if (!ISO_DATE.test(ret.documentDate ?? '')) return 'Missing or malformed document date.'
   if (!Number.isFinite(Date.parse(ret.takenAt ?? ''))) return 'Missing or malformed taken-at time.'
-  // createCreditNote refuses a blank reason, so refusing it here too means the till
+  // createCreditNote refuses a missing reason, so refusing it here too means the till
   // hears about it as a structural problem rather than as a mystery rejection.
-  if (!ret.reason?.trim()) return 'A return must carry a reason.'
+  // Only the SHAPE is checked here — whether the id names a live return reason is
+  // createCreditNote's job, because that answer can change between the sale and the
+  // sync and this validator must stay a pure function of the payload.
+  if (!Number.isInteger(ret.reasonId) || ret.reasonId <= 0) {
+    return 'A return must carry a reason.'
+  }
 
   if (!Array.isArray(ret.lines) || ret.lines.length === 0) return 'A return must have lines.'
   if (ret.lines.length > 500) return 'A return cannot have more than 500 lines.'
@@ -407,7 +412,8 @@ export async function postOfflineReturn(
     invoiceId: null,
     customerId: ret.customerId ?? null,
     customerName: ret.customerName ?? null,
-    reason: ret.reason,
+    reasonId: ret.reasonId,
+    note: ret.note,
     terminalId: ret.terminalId ?? null,
     terminalCode: ret.terminalCode ?? null,
     lines: ret.lines.map((l) => ({

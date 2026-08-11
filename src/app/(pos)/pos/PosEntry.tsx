@@ -14,6 +14,7 @@ import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import type { VisitType } from '@/lib/site/visitTypes'
 import type { ServiceTier } from '@/lib/tipMath'
 import type { Department } from './types'
+import type { PickableReason } from '@/components/ui'
 
 /**
  * Gate or till, decided on the CLIENT when the server could not decide it.
@@ -47,6 +48,8 @@ export default function PosEntry({
   departments,
   priceStructureId,
   tenders,
+  voidReasons,
+  returnReasons,
   cashRounding,
   savedCount,
   specials,
@@ -82,6 +85,9 @@ export default function PosEntry({
   departments: Department[]
   priceStructureId: number | null
   tenders: TenderType[]
+  /** The void and return reason lists, relayed unchanged to the shell. */
+  voidReasons: PickableReason[]
+  returnReasons: PickableReason[]
   cashRounding: number
   savedCount: number
   specials: Special[]
@@ -159,6 +165,8 @@ export default function PosEntry({
       departments={departments}
       priceStructureId={priceStructureId}
       tenders={tenders}
+      voidReasons={voidReasons}
+      returnReasons={returnReasons}
       cashRounding={cashRounding}
       savedCount={savedCount}
       canOverrideDiscount={operator.canOverrideDiscount}

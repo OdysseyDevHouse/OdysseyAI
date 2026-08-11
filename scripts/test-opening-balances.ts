@@ -68,6 +68,47 @@ OPN${stamp},INV-9003,${daysAgo(5)},575,`,
   const dmy = parseOpeningCsv(`code,invoice,date,amount\nOPN${stamp},INV-7000,05/08/2026,100`)
   ok('*** 05/08/2026 reads as 5 August (day first) ***', dmy.rows[0].docDate === '2026-08-05', dmy.rows[0].docDate)
 
+  // A comma inside a quoted field used to shift every later column: the name's
+  // comma pushed amount into reference's slot and the invoice posted as zero.
+  const quoted = parseOpeningCsv(
+    `code,name,invoice,date,amount,reference
+OPN${stamp},"Smith, T (Pty) Ltd",INV-6000,2026-03-15,"1,234.56",PO-9`,
+  )
+  ok(
+    '*** a quoted comma does not shift the columns ***',
+    quoted.rows[0].amount === 1234.56,
+    String(quoted.rows[0].amount),
+  )
+  ok('  document number survives the quoted field', quoted.rows[0].docNumber === 'INV-6000', quoted.rows[0].docNumber)
+  ok('  reference survives it too', quoted.rows[0].reference === 'PO-9', String(quoted.rows[0].reference))
+
+  // Formats a real export writes, none of which the old parser handled.
+  const shapes = parseOpeningCsv(
+    `code,invoice,date,amount
+OPN${stamp},INV-5001,15-Mar-26,(500.00)
+OPN${stamp},INV-5002,2026-01-08,750.00-`,
+  )
+  ok('a named month with a 2-digit year reads', shapes.rows[0].docDate === '2026-03-15', shapes.rows[0].docDate)
+  ok('a parenthesised negative is negative', shapes.rows[0].amount === -500, String(shapes.rows[0].amount))
+  ok('a trailing minus is negative', shapes.rows[1].amount === -750, String(shapes.rows[1].amount))
+
+  // The whole file agrees on one date format, decided by the row that proves it.
+  const usa = parseOpeningCsv(
+    `code,invoice,date,amount
+OPN${stamp},INV-4001,03/04/2026,100
+OPN${stamp},INV-4002,12/25/2026,100`,
+  )
+  // 12/25 can only be month-first, and that decision governs the whole file —
+  // so 03/04 above it is 4 March, not 3 April.
+  ok(
+    'a month-first file flips every row, not just the proving one',
+    usa.rows[0].docDate === '2026-03-04' && usa.rows[1].docDate === '2026-12-25',
+    `${usa.rows[0].docDate} / ${usa.rows[1].docDate}`,
+  )
+
+  const semi = parseOpeningCsv(`code;invoice;date;amount\nOPN${stamp};INV-3001;2026-02-02;99,50`)
+  ok('a semicolon export with a comma decimal reads', semi.rows[0].amount === 99.5, String(semi.rows[0].amount))
+
   // ── Planning refuses what it should, and says why
   const badPlan = await planOpeningBalances(SITE, 'customer', [
     { code: 'NOSUCHCODE', docNumber: 'X1', docDate: daysAgo(10), amount: 100 },

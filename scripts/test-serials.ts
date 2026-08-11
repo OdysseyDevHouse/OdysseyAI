@@ -22,8 +22,25 @@ import {
   writeOffSerial, reconcileSerials, serialHistory, checkSellable,
 } from '../src/lib/site/serials'
 import { toNum } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let RETURN_REASON_ID = 0
+
+async function loadReasonIds() {
+  const r = await findSalesReasonByCode(SITE, 'return', 'FAULTY')
+  if (!r) throw new Error('Seeded return reason FAULTY is missing — run site-migrate for 102.')
+  RETURN_REASON_ID = r.id
+}
+
 const actor = { userId: 1, userName: 'Serial Test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -43,6 +60,7 @@ async function sweepStrays() {
 }
 
 async function main() {
+  await loadReasonIds()
   await sweepStrays()
 
   const stamp = Date.now().toString().slice(-8)
@@ -154,7 +172,7 @@ async function main() {
   const credit = await createCreditNote(SITE, actor, {
     invoiceId: noPick.id,
     customerId: cust.id,
-    reason: 'Faulty screen',
+    reasonId: RETURN_REASON_ID, note: 'Faulty screen',
     lines: [{
       sourceLineId: invoiceLine.id, productId: phone, productCode: `SER${stamp}`,
       description: `Smartphone ${stamp}`, productType: 'serial', qty: 1,

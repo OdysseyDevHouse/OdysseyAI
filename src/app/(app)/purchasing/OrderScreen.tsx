@@ -13,7 +13,9 @@ import {
   Field,
   Icons,
   Input,
+  Modal,
   PageBody,
+  PickerResults,
   Select,
   Textarea,
   useToast,
@@ -22,6 +24,8 @@ import {
 import { formatMoney, formatQty } from '@/lib/decimals'
 import { useColumnPrefs } from '@/lib/useColumnPrefs'
 import type { TillProduct } from '@/lib/site/tillSearch'
+import { LineImportDialog } from '@/components/import/LineImportDialog'
+import type { LineDraft as ImportedLine } from '@/lib/import/documentLines'
 import PurchaseLineGrid, {
   ORDER_DEFAULT_COLUMNS,
   PURCHASE_COLUMNS,
@@ -31,10 +35,21 @@ import PurchaseLineGrid, {
 import { purchaseDocumentFigures } from './purchaseLine'
 import {
   searchProductsForPurchaseAction,
+  browseProductsForPurchaseAction,
+  purchaseDepartmentsAction,
   agreedPricesAction,
   saveOrderAction,
   issueOrderAction,
 } from './actions'
+
+/**
+ * How many products the browse dialog will show at once.
+ *
+ * The same ceiling receiving uses, for the same reason: a buyer narrows by
+ * department or types a few characters, and 500 rows is already more than
+ * anyone scrolls. The dialog says when the list was cut short.
+ */
+const PICKER_LIMIT = 500
 
 /**
  * Raising a purchase order.
@@ -50,6 +65,27 @@ import {
  *
  * Save leaves it a draft. Issue claims the PO number — an order that was never
  * sent should not consume one, for the same reason a saved sale does not.
+ *
+ * ── CHANGING THIS SCREEN? CHANGE receive/ReceiveScreen.tsx WITH IT ────────
+ *
+ * Ordering and receiving are two documents but ONE flow, and the same person
+ * works both in the same afternoon. They are separate files because a GRV
+ * carries what an order cannot — their invoice number and total, freight and
+ * charges, a stock location, serial numbers — not because they are allowed to
+ * look like two different products.
+ *
+ * So a layout change here is only half a change:
+ *
+ *   • The LINE GRID is shared already — edit ./PurchaseLineGrid.tsx and it
+ *     lands on both. Never patch grid behaviour inside this file.
+ *   • Card order, headings, the product search row, the totals panel, where the
+ *     primary button sits, the explanatory footnote under it: mirror it in
+ *     ReceiveScreen so the two screens still read as the same screen.
+ *   • Something genuinely ordering-only (lead time, expected date, the minimum
+ *     order warning) is a field ReceiveScreen simply omits — that is fine.
+ *     Moving a card both screens have, and moving it only here, is not.
+ *
+ * Supplier returns ([id]/return/ReturnScreen.tsx) follow the same shape.
  */
 
 export type OrderScreenLine = GridLine
@@ -96,6 +132,18 @@ export default function OrderScreen({
   const [searching, setSearching] = useState(false)
   const [pending, startTransition] = useTransition()
 
+  /* The browse dialog, the same one receiving uses. Distinct from the Combobox
+     above it, which answers keystrokes: this one answers "show me what is in
+     Groceries" with no term at all, which is how a buyer works down a
+     supplier's catalogue for things they cannot spell. */
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [pickerTerm, setPickerTerm] = useState('')
+  const [pickerDept, setPickerDept] = useState<number | null>(null)
+  const [pickerResults, setPickerResults] = useState<TillProduct[]>([])
+  const [pickerBusy, setPickerBusy] = useState(false)
+  const [depts, setDepts] = useState<{ id: number; name: string; depth: number }[]>([])
+
   const columns = useColumnPrefs(
     'odyssey.purchasing.order.columns',
     ORDER_DEFAULT_COLUMNS,
@@ -131,6 +179,31 @@ export default function OrderScreen({
     }, 180)
     return () => clearTimeout(timer)
   }, [query])
+
+  // The department filter, fetched once the dialog is first opened rather than
+  // on page load: most orders are keyed from the search box and never open it.
+  useEffect(() => {
+    if (!pickerOpen || depts.length > 0) return
+    purchaseDepartmentsAction().then(setDepts).catch(() => setDepts([]))
+  }, [pickerOpen, depts.length])
+
+  // Results follow the term and the department. Debounced like the Combobox,
+  // and it runs with an EMPTY term too — that is the whole point of browsing.
+  useEffect(() => {
+    if (!pickerOpen) return
+    setPickerBusy(true)
+    const timer = setTimeout(() => {
+      browseProductsForPurchaseAction({
+        term: pickerTerm.trim() || undefined,
+        departmentId: pickerDept,
+        limit: PICKER_LIMIT,
+      })
+        .then(setPickerResults)
+        .catch(() => setPickerResults([]))
+        .finally(() => setPickerBusy(false))
+    }, 180)
+    return () => clearTimeout(timer)
+  }, [pickerOpen, pickerTerm, pickerDept])
 
   function patchLine(key: string, patch: Partial<GridLine>) {
     setLines((current) => current.map((l) => (l.key === key ? { ...l, ...patch } : l)))
@@ -200,6 +273,49 @@ export default function OrderScreen({
     }
   }
 
+  /**
+   * Lines from a spreadsheet, in the same shape `addProduct` builds.
+   *
+   * A cost the file did not carry stays null there and falls back to the
+   * product's last cost, exactly as if the line had been added by hand — the
+   * import fills the grid in, it does not invent figures for it. Their agreed
+   * prices are applied afterwards for the same reason they are on a hand-added
+   * line: a quoted price beats a historic one.
+   */
+  function addImportedLines(imported: ImportedLine[]) {
+    const stamp = Date.now()
+    setLines((current) => [
+      ...current,
+      ...imported.map((row, index) => ({
+        key: `${row.productId}-${stamp}-${index}`,
+        productId: row.productId,
+        productCode: row.code,
+        supplierCode: '',
+        description: row.description,
+        productType: row.productType,
+        qtyOrdered: row.qty,
+        qty: row.qty,
+        qtyBonus: 0,
+        unitCostExcl: row.unitCostExcl ?? 0,
+        discountPct: row.discountPct ?? 0,
+        discountAmount: 0,
+        vatRatePct: defaultVatRate,
+        locationId: null,
+        currentAverage: 0,
+        lastCost: 0,
+        currentStock: 0,
+        sellIncl: 0,
+      })),
+    ])
+
+    if (supplierId) {
+      applyAgreedPrices(
+        Number(supplierId),
+        imported.map((row) => ({ productId: row.productId }) as OrderScreenLine),
+      )
+    }
+  }
+
   const totals = useMemo(() => purchaseDocumentFigures(lines), [lines])
 
   const ready = supplierId !== '' && lines.length > 0 && lines.every((l) => l.qty > 0)
@@ -264,11 +380,20 @@ export default function OrderScreen({
 
   return (
     <PageBody>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="flex flex-col gap-4 lg:col-span-2">
-          <Card>
-            <CardHeader title="The order" description="Who it goes to, and when it is due." />
-            <CardBody className="grid gap-4 sm:grid-cols-2">
+      {/* The header card across the top and the LINE GRID FULL WIDTH below it,
+          which is receiving's shape and for receiving's reason: the grid
+          carries up to twenty columns — cost, markup, GP, selling price — and
+          squeezing that into two thirds of the page made the buyer scroll
+          sideways to see figures that only mean anything beside each other.
+          The order header is read once; the grid is worked in. */}
+      <Card>
+        <CardHeader title="The order" description="Who it goes to, and when it is due." />
+        {/* THREE across, where receiving's Delivery card is four. Deliberate:
+            six fields at three columns is two full rows, and the same six at
+            four would leave a ragged 4 + 2. The shared shape is the one that
+            matters — one full-width header card, the line grid below it — not
+            an identical column count. */}
+        <CardBody className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <Field
                 label="Supplier"
                 error={
@@ -329,23 +454,32 @@ export default function OrderScreen({
               <Field label="Notes" hint="Printed on the order.">
                 <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
               </Field>
-            </CardBody>
-          </Card>
+        </CardBody>
+      </Card>
 
-          <Card>
-            <CardHeader
-              title="What to order"
-              description="Costs are exclusive of VAT — how a supplier quotes."
-              action={
-                <ColumnPicker
-                  columns={PURCHASE_COLUMNS}
-                  visible={columns.visible}
-                  onChange={columns.setVisible}
-                  onReset={columns.reset}
-                />
-              }
+      <Card>
+        <CardHeader
+          title="What to order"
+          description="Costs are exclusive of VAT — how a supplier quotes."
+          action={
+            <ColumnPicker
+              columns={PURCHASE_COLUMNS}
+              visible={columns.visible}
+              onChange={columns.setVisible}
+              onReset={columns.reset}
             />
-            <CardBody>
+          }
+        />
+        <CardBody className="flex flex-col gap-3">
+          {/* Two ways in, because an order is built two ways. The box is for
+              something whose code you know; the button is for working down a
+              supplier's catalogue of things you do not. */}
+          {/* Capped rather than filling the row, matching the receive screen: a
+              search field is sized by what gets typed into it, and one stretched
+              across a wide screen strands the button it belongs with at the far
+              edge. */}
+          <div className="flex items-start gap-2">
+            <div className="w-full max-w-[400px]">
               <Combobox
                 options={comboOptions}
                 query={query}
@@ -356,30 +490,48 @@ export default function OrderScreen({
                 clearOnSelect
                 emptyText={query.trim().length >= 2 ? 'No product matches.' : 'Keep typing…'}
               />
-            </CardBody>
+            </div>
+            <Button variant="secondary" onClick={() => setPickerOpen(true)}>
+              <Icons.Plus size={16} />
+              Add stock
+            </Button>
+            {/* A third way in, for a supplier who sends the order as a
+                spreadsheet. It fills this grid rather than posting anything —
+                the lines still get checked and issued the normal way. */}
+            <Button variant="ghost" onClick={() => setImportOpen(true)}>
+              <Icons.Upload size={16} />
+              Import
+            </Button>
+          </div>
+        </CardBody>
 
-            {lines.length === 0 ? (
-              <EmptyState
-                title="Nothing on this order yet"
-                hint="Search for a product above to add the first line."
-                icon={<Icons.Truck size={22} />}
-              />
-            ) : (
-              <PurchaseLineGrid
-                lines={lines}
-                visible={columns.visible}
-                mode="order"
-                locations={[]}
-                documentDiscounts={totals.lines.map((l) => l.documentDiscountExcl)}
-                charges={totals.lines.map((l) => l.chargeExcl)}
-                sellingVatPct={sellingVatRate}
-                onPatch={patchLine}
-                onRemove={(key) => setLines((c) => c.filter((l) => l.key !== key))}
-              />
-            )}
-          </Card>
-        </div>
+        {lines.length === 0 ? (
+          <EmptyState
+            title="Nothing on this order yet"
+            hint="Search for a product above to add the first line."
+            icon={<Icons.Truck size={22} />}
+          />
+        ) : (
+          <PurchaseLineGrid
+            lines={lines}
+            visible={columns.visible}
+            mode="order"
+            locations={[]}
+            documentDiscounts={totals.lines.map((l) => l.documentDiscountExcl)}
+            charges={totals.lines.map((l) => l.chargeExcl)}
+            sellingVatPct={sellingVatRate}
+            onPatch={patchLine}
+            onRemove={(key) => setLines((c) => c.filter((l) => l.key !== key))}
+          />
+        )}
+      </Card>
 
+      {/* The totals and the two buttons, kept to the right-hand third under the
+          grid — receiving's placement. Full width would put a lone "Issue to
+          supplier" across a 2,000px screen, which reads as a page footer rather
+          than the one act this screen exists for. */}
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="xl:col-start-3">
         <div className="flex flex-col gap-4">
           <Card className="p-4">
             <dl className="flex flex-col gap-1.5 text-sm">
@@ -427,7 +579,116 @@ export default function OrderScreen({
             </p>
           </Card>
         </div>
+        </div>
       </div>
+
+      {/* Stays OPEN after each pick, so an order of fifteen lines is fifteen
+          clicks rather than fifteen round trips through a button. Each pick
+          shows a toast, which is the only feedback that the row landed on a
+          grid the dialog is covering. */}
+      <Modal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Add stock"
+        description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the order."
+        size="lg"
+        footer={
+          <Button variant="secondary" onClick={() => setPickerOpen(false)}>
+            Done
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Search" className="min-w-64 flex-1">
+              <Input
+                autoFocus
+                value={pickerTerm}
+                placeholder="Code, barcode or description…"
+                aria-label="Search products to add to this order"
+                icon={<Icons.Search size={15} />}
+                onChange={(e) => setPickerTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter takes the first match, so a search that has already
+                  // narrowed to one thing needs no reach for the mouse.
+                  if (e.key === 'Enter' && pickerResults[0]) {
+                    e.preventDefault()
+                    addProduct(pickerResults[0])
+                    toast.success(`${pickerResults[0].description} added.`)
+                  }
+                }}
+              />
+            </Field>
+
+            <Field label="Department" className="w-60">
+              <Select
+                value={pickerDept ?? ''}
+                aria-label="Filter products by department"
+                onChange={(e) => setPickerDept(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">All departments</option>
+                {depts.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {/* Non-breaking spaces: a plain one is collapsed inside an
+                        <option>, so a nested list would render flat. */}
+                    {'  '.repeat(d.depth)}
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          {/* A fixed height, so the dialog does not jump as results arrive and
+              a pick never lands on a row that moved under the cursor. */}
+          <div className="min-h-[18rem]">
+            {pickerBusy && pickerResults.length === 0 ? (
+              <p className="px-1 py-3 text-sm text-muted">Loading products…</p>
+            ) : pickerResults.length === 0 ? (
+              <p className="px-1 py-3 text-sm text-muted">
+                {pickerTerm.trim()
+                  ? `Nothing matches “${pickerTerm.trim()}”${pickerDept !== null ? ' in this department' : ''}.`
+                  : 'No products in this department.'}
+              </p>
+            ) : (
+              <PickerResults
+                results={pickerResults.map((p) => ({
+                  key: p.id,
+                  label: p.description,
+                  // On hand and the cost, because those are the two figures a
+                  // buyer checks before deciding to order more.
+                  meta: `${p.code} · ${formatQty(p.stockOnHand)} on hand`,
+                  trailing: formatMoney(p.costExcl),
+                }))}
+                onPick={(key) => {
+                  const product = pickerResults.find((p) => p.id === Number(key))
+                  if (!product) return
+                  addProduct(product)
+                  toast.success(`${product.description} added.`)
+                }}
+              />
+            )}
+          </div>
+
+          {/* Say so when the list is cut short. A picker that silently shows
+              the first 500 of 40,000 looks like a complete catalogue, and the
+              product someone cannot find is the one they conclude the shop
+              does not stock. */}
+          {pickerResults.length >= PICKER_LIMIT && (
+            <p className="px-1 text-xs text-muted">
+              Showing the first <span className="numeric">{PICKER_LIMIT}</span> products. Narrow by
+              department or search to see the rest.
+            </p>
+          )}
+        </div>
+      </Modal>
+
+      <LineImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onLines={addImportedLines}
+        noun="order lines"
+      />
     </PageBody>
   )
 }

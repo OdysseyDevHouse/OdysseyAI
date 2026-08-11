@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
+import { listSalesReasons } from '@/lib/site/salesReasons'
 import { listSaved } from '@/lib/site/salesDocuments'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { getNumericSetting, getSetting } from '@/lib/site/settings'
@@ -61,6 +62,8 @@ export default async function PosPage() {
   const [
     terminals,
     tenders,
+    voidReasons,
+    returnReasons,
     saved,
     structures,
     cashRounding,
@@ -78,6 +81,12 @@ export default async function PosPage() {
   ] = await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
+      /* Active only: this is the list a cashier picks FROM, and a retired reason
+         is one nobody may choose again. The retired ones stay readable on the
+         documents that used them, and visible on the setup screen that brings
+         one back. */
+      listSalesReasons(site.id, 'void'),
+      listSalesReasons(site.id, 'return'),
       /* Site-wide, and it cannot be otherwise here: which till this machine IS
          lives in its own localStorage, so the server has no way to narrow this at
          render time. The count is a first paint for the badge — PosShell replaces
@@ -185,6 +194,8 @@ export default async function PosPage() {
       }
       terminals={terminals}
       tenders={tenders}
+      voidReasons={voidReasons}
+      returnReasons={returnReasons}
       /* Narrowed on the way out rather than passed whole: the till needs an id,
          a parent and a name, and shipping `color`/`posImageId`/`code` as well
          would invite a tile to read a stored hex — which the design system does

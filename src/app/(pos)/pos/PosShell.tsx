@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { useToast, ConfirmModal } from '@/components/ui'
+import { useToast, ConfirmModal, type PickableReason } from '@/components/ui'
 import { deviceId } from '@/lib/deviceId'
 import { useOfflineShell } from '@/lib/posOffline/useOfflineShell'
 import { useOfflineTill } from '@/lib/posOffline/useOfflineTill'
@@ -135,6 +135,8 @@ export default function PosShell({
   departments,
   priceStructureId,
   tenders,
+  voidReasons,
+  returnReasons,
   cashRounding,
   canOverrideDiscount,
   canOverridePrice,
@@ -162,6 +164,16 @@ export default function PosShell({
   departments: Department[]
   priceStructureId: number | null
   tenders: TenderType[]
+  /**
+   * The two reason lists, active entries only.
+   *
+   * Shipped with the page for the same reason the quick keys are: a till that
+   * reloads with no network still has to be able to void and take a return, and
+   * fetching a lookup at the moment a cashier taps Void is the one moment the
+   * line is least likely to be there.
+   */
+  voidReasons: PickableReason[]
+  returnReasons: PickableReason[]
   cashRounding: number
   canOverrideDiscount: boolean
   canOverridePrice: boolean
@@ -868,7 +880,7 @@ export default function PosShell({
    */
   async function confirmReturn(
     given: { tenderTypeId: number; amount: number; reference?: string | null }[],
-    reason: string,
+    reason: { reasonId: number; note: string | null },
   ) {
     const lines = returnPayloadLines(state.lines)
     const total = totals.doc.totalIncl
@@ -885,7 +897,8 @@ export default function PosShell({
           invoiceId: null,
           customerId: state.customer?.id ?? null,
           customerName: state.customer?.name || state.customerName.trim() || null,
-          reason,
+          reasonId: reason.reasonId,
+          note: reason.note,
           terminalId: terminal?.id ?? null,
           terminalCode: terminal?.code ?? null,
           lines: lines.map((l) => ({
@@ -933,7 +946,7 @@ export default function PosShell({
   /** The offline half of the above. */
   async function returnLocally(
     given: { tenderTypeId: number; amount: number; reference?: string | null }[],
-    reason: string,
+    reason: { reasonId: number; note: string | null },
     lines: ReturnType<typeof returnPayloadLines>,
     total: number,
   ) {
@@ -950,7 +963,8 @@ export default function PosShell({
         : state.customerName.trim()
           ? { id: null, name: state.customerName.trim() }
           : null,
-      reason,
+      reasonId: reason.reasonId,
+      note: reason.note,
       lines,
       refunds: given.map((g) => ({
         tenderTypeId: g.tenderTypeId,
@@ -1140,12 +1154,12 @@ export default function PosShell({
    * `cancelled` — which is what makes the gap in the invoice run explainable
    * rather than missing. All of that is `voidDocument`'s work; this only asks.
    */
-  function voidSale(reason: string) {
+  function voidSale(reason: { reasonId: number; note: string | null }) {
     if (!receipt) return
     startTransition(async () => {
       const result = await voidSaleAction(receipt.documentId, reason)
       if (!result.ok) {
-        // Left open with the reason still typed: the likely refusals are a locked
+        // Left open with the reason still chosen: the likely refusals are a locked
         // VAT period or a payment already allocated against the sale, and both
         // need somebody to read the message rather than start again.
         toast.error(result.error)
@@ -1675,6 +1689,7 @@ export default function PosShell({
         tenders={tenders}
         totalIncl={totals.doc.totalIncl}
         hasCustomer={state.customer !== null}
+        reasons={returnReasons}
         pending={pending}
         onConfirm={confirmReturn}
       />
@@ -1833,6 +1848,7 @@ export default function PosShell({
         open={voiding && receipt !== null}
         documentNumber={receipt?.number ?? ''}
         total={receipt?.total ?? 0}
+        reasons={voidReasons}
         busy={pending}
         onClose={() => setVoiding(false)}
         onVoid={voidSale}

@@ -1,5 +1,7 @@
 import 'server-only'
 import { round } from '../decimals'
+// Used by the bucketing rules below; also re-exported (see the Aging section).
+import type { AgingBucket } from '../agingBuckets'
 
 /**
  * The rules both sub-ledgers obey.
@@ -205,22 +207,22 @@ export function refuseAllocation(
 
 /* ── Aging ───────────────────────────────────────────────────────────────── */
 
-export const AGING_BUCKETS = ['current', 'd30', 'd60', 'd90', 'd120'] as const
-export type AgingBucket = (typeof AGING_BUCKETS)[number]
-
-export const BUCKET_LABELS: Record<AgingBucket, string> = {
-  current: 'Current',
-  d30: '30 days',
-  d60: '60 days',
-  d90: '90 days',
-  d120: '120+ days',
-}
-
-export type Aging = Record<AgingBucket, number> & { total: number }
-
-export function emptyAging(): Aging {
-  return { current: 0, d30: 0, d60: 0, d90: 0, d120: 0, total: 0 }
-}
+/*
+ * The buckets themselves moved to `src/lib/agingBuckets.ts`.
+ *
+ * They are presentation — five names and their labels — and a client component
+ * that draws an ageing strip needs them. Importing them from here dragged this
+ * `server-only` module into the browser bundle and broke the build. Re-exported
+ * so every caller of `@/lib/site/ledger` is unaffected; the rules that COMPUTE
+ * an ageing stay below, where they belong.
+ */
+export {
+  AGING_BUCKETS,
+  BUCKET_LABELS,
+  emptyAging,
+  type AgingBucket,
+  type Aging,
+} from '../agingBuckets'
 
 /**
  * Which bucket a debit falls in, by how many days overdue it is.

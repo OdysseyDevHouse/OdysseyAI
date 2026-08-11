@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   BulkActionBar,
+  BulkOptionsDialog,
   Badge,
   Button,
   ButtonLink,
@@ -11,15 +12,13 @@ import {
   Field,
   Icons,
   Input,
-  Menu,
-  MenuItem,
-  MenuSeparator,
   Modal,
   NumberInput,
   CurrencyInput,
   RowTile,
   Select,
   useToast,
+  type BulkOptionGroup,
   type Column,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -47,6 +46,42 @@ type Filters = {
 /** Which bulk modal is open. */
 type BulkKind = BulkChange['kind'] | null
 
+/**
+ * What the options dialog can offer: every field change, plus statements —
+ * which queues a run rather than changing a field, and so is handled apart.
+ */
+type OptionKey = BulkChange['kind'] | 'statements'
+
+/**
+ * The bulk actions, grouped by what they touch.
+ *
+ * A dialog rather than buttons in the bar so that customers, suppliers and
+ * products all reach their bulk actions the same way — the product list has
+ * twenty-odd and could never have fitted them on one strip.
+ */
+const BULK_OPTIONS: BulkOptionGroup<OptionKey>[] = [
+  {
+    title: 'Account',
+    options: [
+      { key: 'status', label: 'Change status', icon: <Icons.Check size={15} />, keywords: 'hold close active' },
+      { key: 'terms', label: 'Set payment terms', icon: <Icons.Clock size={15} />, keywords: 'days cod' },
+      { key: 'creditLimit', label: 'Set credit limit', icon: <Icons.CreditCard size={15} /> },
+    ],
+  },
+  {
+    title: 'Assignment',
+    options: [
+      { key: 'group', label: 'Assign group', icon: <Icons.Users size={15} /> },
+      { key: 'rep', label: 'Assign rep', icon: <Icons.Contact size={15} />, keywords: 'salesperson' },
+      { key: 'category', label: 'Set category', icon: <Icons.Tag size={15} /> },
+    ],
+  },
+  {
+    title: 'Statements',
+    options: [{ key: 'statements', label: 'Email statements', icon: <Icons.Mail size={15} /> }],
+  },
+]
+
 export default function CustomerListClient({
   rows,
   total,
@@ -60,7 +95,9 @@ export default function CustomerListClient({
   filters: Filters
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [showOptions, setShowOptions] = useState(false)
   const [openBulk, setOpenBulk] = useState<BulkKind>(null)
+  const [recent, setRecent] = useState<OptionKey[]>([])
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -90,15 +127,22 @@ export default function CustomerListClient({
         return
       }
       toast.success(result.message)
+      remember('statements')
       setSelected(new Set())
       router.push(`/customers/statements/${result.runId}`)
     })
+  }
+
+  /** Remembers an action, most recent first, for the dialog's top row. */
+  function remember(key: OptionKey) {
+    setRecent((prev) => [key, ...prev.filter((k) => k !== key)].slice(0, 4))
   }
 
   function runBulk(change: BulkChange) {
     startTransition(async () => {
       const result = await bulkUpdateCustomersAction(selectedIds, change)
       setOpenBulk(null)
+      remember(change.kind)
 
       if (result.updated === 0) {
         // Every row refused for the same reason is the common case — say the
@@ -131,38 +175,27 @@ export default function CustomerListClient({
   return (
     <>
       <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
-        <Button variant="ghost" size="sm" onClick={() => setOpenBulk('status')} disabled={pending}>
-          <Icons.Check size={15} />
-          Change status
+        <Button variant="ghost" size="sm" onClick={() => setShowOptions(true)} disabled={pending}>
+          <Icons.SlidersHorizontal size={15} />
+          Bulk options
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => setOpenBulk('terms')} disabled={pending}>
-          <Icons.Clock size={15} />
-          Set terms
-        </Button>
-        <Menu label="More" variant="ghost">
-          <MenuItem onClick={() => setOpenBulk('creditLimit')}>
-            <Icons.CreditCard size={15} />
-            Set credit limit
-          </MenuItem>
-          <MenuItem onClick={() => setOpenBulk('group')}>
-            <Icons.Users size={15} />
-            Assign group
-          </MenuItem>
-          <MenuItem onClick={() => setOpenBulk('rep')}>
-            <Icons.Contact size={15} />
-            Assign rep
-          </MenuItem>
-          <MenuItem onClick={() => setOpenBulk('category')}>
-            <Icons.Tag size={15} />
-            Set category
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem onClick={sendStatements}>
-            <Icons.Mail size={15} />
-            Email statements
-          </MenuItem>
-        </Menu>
       </BulkActionBar>
+
+      <BulkOptionsDialog
+        open={showOptions}
+        onClose={() => setShowOptions(false)}
+        onPick={(key) => {
+          setShowOptions(false)
+          // Statements are not a field change: they queue a run and navigate,
+          // so they never reach the BulkChange modals.
+          if (key === 'statements') sendStatements()
+          else setOpenBulk(key)
+        }}
+        groups={BULK_OPTIONS}
+        count={selected.size}
+        noun="account"
+        recent={recent}
+      />
 
       <DataTable
         columns={COLUMNS}
@@ -209,7 +242,12 @@ export default function CustomerListClient({
         count={selected.size}
         filters={filters}
         pending={pending}
-        onClose={() => setOpenBulk(null)}
+        /* Back to the catalogue rather than closing outright: picking the wrong
+           action is easy, and rebuilding the selection is not. */
+        onClose={() => {
+          setOpenBulk(null)
+          setShowOptions(true)
+        }}
         onApply={runBulk}
       />
     </>
@@ -347,7 +385,7 @@ function BulkModals({
   const footer = (change: () => BulkChange) => (
     <>
       <Button variant="ghost" onClick={onClose} disabled={pending}>
-        Cancel
+        Back
       </Button>
       <Button variant="primary" onClick={() => onApply(change())} disabled={pending}>
         {pending ? 'Applying…' : `Apply to ${noun}`}

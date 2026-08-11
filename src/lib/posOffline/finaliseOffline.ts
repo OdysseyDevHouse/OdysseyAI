@@ -195,7 +195,9 @@ export type OfflineReturnInput = {
   authorisedBy: { userId: number; name: string } | null
   shiftId: number | null
   customer: { id: number | null; name: string } | null
-  reason: string
+  /** Which of the shop's return reasons, and the optional detail beside it. */
+  reasonId: number
+  note: string | null
   lines: OfflineReturnLine[]
   /** What went back out of the drawer. Empty leaves the credit on the account. */
   refunds: OfflineTender[]
@@ -231,10 +233,10 @@ export async function returnOffline(
   const { siteId } = input
 
   /* Refused rather than defaulted, and before a number is taken: createCreditNote
-     refuses a blank reason server-side, so inventing one here would queue a return that
+     refuses a missing reason server-side, so inventing one here would queue a return that
      is certain to be rejected at sync — after the cash is gone. */
-  if (!input.reason.trim()) {
-    return { ok: false, error: 'Give a reason for the return.' }
+  if (!input.reasonId) {
+    return { ok: false, error: 'Choose a reason for the return.' }
   }
   if (input.lines.length === 0) {
     return { ok: false, error: 'Add what is being returned.' }
@@ -266,7 +268,8 @@ export async function returnOffline(
     documentDate: todayIso(),
     customerId: input.customer?.id ?? null,
     customerName: input.customer?.name ?? null,
-    reason: input.reason.trim(),
+    reasonId: input.reasonId,
+    note: input.note?.trim() || null,
     lines: input.lines,
     refunds: input.refunds,
     claimedTotalIncl: input.totalIncl,

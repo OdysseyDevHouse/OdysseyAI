@@ -36,6 +36,11 @@
   --color-brand: #2f6fed;
   --color-brand-ink: #1b4fc0;
   --color-brand-soft: #eaf1fe;
+  /* The rule a tone="brand" card heading draws along its top edge. Its own
+     token, not brand-soft: the rule is a single hairline and needs more depth
+     to read, while brand-soft is a background that text sits on and must stay
+     pale. Used by SectionTitle, CardHeader and SettingGroup. */
+  --color-brand-rule: #b3ccfb;
 
   /* --- Status ------------------------------------------------------------ */
   --color-success: #17a34a;
@@ -228,6 +233,9 @@
     --color-brand: #6a9bff;
     --color-brand-ink: #8fb4ff;
     --color-brand-soft: #1c2942;
+    /* Lighter than brand-soft, not darker: on a dark card the rule has to lift
+       off the surface to be seen at all. */
+    --color-brand-rule: #35538f;
 
     --color-success: #4ade80;
     --color-success-ink: #86efac;
@@ -305,6 +313,8 @@
   --color-brand: #6a9bff;
   --color-brand-ink: #8fb4ff;
   --color-brand-soft: #1c2942;
+  /* Keep in sync with the media-query block above. */
+  --color-brand-rule: #35538f;
 
   --color-success: #4ade80;
   --color-success-ink: #86efac;

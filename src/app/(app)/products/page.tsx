@@ -1,13 +1,14 @@
-import Link from 'next/link'
 import { Pencil, Plus } from '@/components/ui/icons'
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
-import ProductsTable from './ProductsTable'
-import { listProducts, getProduct } from '@/lib/site/products'
+import ProductListClient from './ProductListClient'
+import { listProducts, getProduct, type ProductSort } from '@/lib/site/products'
+import { PRODUCT_TYPES, type ProductTypeId } from '@/lib/productTypes'
 import { getGroup } from '@/lib/site/productVariants'
-import { getCostBasis } from '@/lib/site/lookups'
+import { getCostBasis, listBrands, listVatRates } from '@/lib/site/lookups'
+import { listGroups } from '@/lib/site/instructions'
+import { listLocations } from '@/lib/site/stockLocations'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
-import { formatMoney, formatQty } from '@/lib/decimals'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
@@ -16,17 +17,12 @@ import {
   ButtonLink,
   Card,
   SearchBar,
-  Badge,
-  RowTile,
-  TextLink,
   FilterChip,
   Pagination,
   TableToolbar,
   LinkSegmentedControl,
   LinkSelect,
   Icons,
-  DataTable,
-  type Column,
 } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
@@ -34,11 +30,36 @@ export const dynamic = 'force-dynamic'
 /** Rows per page. The list used to render a flat 100 with no way to reach 101. */
 const PAGE_SIZE = 50
 
-type ProductRow = Awaited<ReturnType<typeof listProducts>>['items'][number]
+/**
+ * The sort choices, in the order the picker offers them.
+ *
+ * Each carries the direction it should START in, because the useful end of a
+ * column differs: a name is read A to Z, but "date created" is asked to answer
+ * "what is new", which is the newest first. Picking a sort a second time from
+ * the column header flips it — that is DataTable's business, not this list's.
+ */
+const SORTS: { value: ProductSort; label: string; initial: 'asc' | 'desc' }[] = [
+  { value: 'description', label: 'Description', initial: 'asc' },
+  { value: 'code', label: 'Product code', initial: 'asc' },
+  { value: 'created', label: 'Date created', initial: 'desc' },
+  { value: 'edited', label: 'Last modified', initial: 'desc' },
+]
 
-/** The shelf price: the structure flagged default, else the first one. */
-function defaultPrice(p: ProductRow) {
-  return p.prices.find((x) => x.isDefault) ?? p.prices[0]
+const SORT_IDS = new Set<string>(SORTS.map((s) => s.value))
+const TYPE_IDS = new Set<string>(PRODUCT_TYPES.map((t) => t.id))
+
+/**
+ * A DATETIME for the screen.
+ *
+ * Read out of the UTC fields and formatted HERE, on the server: the site pool
+ * parses a DATETIME as though its wall-clock were UTC, so handing the Date to
+ * the browser would re-read it in the viewer's timezone and could show the day
+ * before. See src/lib/siteDb.ts.
+ */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+function formatDate(value: Date | null): string {
+  if (!value || Number.isNaN(value.getTime())) return ''
+  return `${String(value.getUTCDate()).padStart(2, '0')} ${MONTHS[value.getUTCMonth()]} ${value.getUTCFullYear()}`
 }
 
 export default async function ProductsPage({
@@ -49,6 +70,9 @@ export default async function ProductsPage({
     archived?: string
     low?: string
     department?: string
+    type?: string
+    sort?: string
+    dir?: string
     page?: string
     group?: string
   }>
@@ -66,10 +90,18 @@ export default async function ProductsPage({
   const openGroup =
     Number.isFinite(groupId) && groupId > 0 ? await getGroup(siteId, groupId) : null
 
-  const [departments, costBasis] = await Promise.all([
-    listDepartments(siteId, true),
-    getCostBasis(siteId),
-  ])
+  /* The bulk-options lookups load with the list rather than on demand: the
+     dialog is a client component, so fetching them when it opens would mean a
+     round trip between clicking "Bulk options" and seeing the actions. */
+  const [departments, costBasis, brands, vatRates, instructionGroups, locations] =
+    await Promise.all([
+      listDepartments(siteId, true),
+      getCostBasis(siteId),
+      listBrands(siteId),
+      listVatRates(siteId),
+      listGroups(siteId),
+      listLocations(siteId, false, true),
+    ])
 
   // Filtering by a department includes everything beneath it — picking
   // "Fresh Produce" should not hide the products filed under its sub-levels.
@@ -79,12 +111,25 @@ export default async function ProductsPage({
       ? [...descendantIds(departments, departmentId)]
       : undefined
 
+  /* Both narrowed against the known ids rather than trusted: these reach an
+     ORDER BY and a WHERE, and the URL is typeable. An unrecognised value falls
+     back to the default instead of erroring — a stale bookmark should show the
+     catalogue, not a broken screen. */
+  const productType = TYPE_IDS.has(params.type ?? '') ? (params.type as ProductTypeId) : undefined
+  const sortKey: ProductSort = SORT_IDS.has(params.sort ?? '')
+    ? (params.sort as ProductSort)
+    : 'description'
+  const direction = params.dir === 'desc' ? 'desc' : 'asc'
+
   const page = pageFrom(params.page)
   const { items, total } = await listProducts(siteId, {
     search: q,
     includeArchived: archived === '1',
     belowMinimum: low === '1',
     departmentIds: filterIds,
+    productTypes: productType ? [productType] : undefined,
+    sort: sortKey,
+    direction,
     parentId: openGroup ? openGroup.parentId : undefined,
     limit: PAGE_SIZE,
     offset: offsetFor(page, PAGE_SIZE),
@@ -153,6 +198,74 @@ export default async function ProductsPage({
       .sort((a, b) => a.label.localeCompare(b.label)),
   ]
 
+  /* What the bulk-options forms need to offer a choice. Plain values only:
+     these cross into a client component, so ids and labels rather than the
+     domain objects the queries returned. Departments reuse the same full-path
+     labels the filter picker uses, sorted the same way. */
+  const bulkLookups = {
+    departments: departments
+      .map((d) => ({ id: d.id, label: departmentPaths[d.id] }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    brands: brands.map((b) => ({ id: b.id, name: b.name })),
+    sellingVatRates: vatRates
+      .filter((v) => v.vatType === 'sales')
+      .map((v) => ({ id: v.id, label: `${v.name} (${v.rate}%)` })),
+    purchaseVatRates: vatRates
+      .filter((v) => v.vatType === 'purchase')
+      .map((v) => ({ id: v.id, label: `${v.name} (${v.rate}%)` })),
+    instructionGroups: instructionGroups.map((g) => ({ id: g.id, name: g.name })),
+    locations: locations.map((l) => ({ id: l.id, name: l.name, isMain: l.isMain })),
+  }
+
+  /* The type picker. Eight kinds is too many for a segmented bar and they are
+     read by name rather than by position, so it is a select — the same
+     reasoning that makes the department filter one. The stored ids are dropped
+     in favour of the names the product form uses, minus the trailing
+     "product": the label above the control already says what is being
+     filtered. */
+  const typeOptions = [
+    { value: '', label: 'All types', href: filterHref({ type: null }) },
+    ...PRODUCT_TYPES.map((t) => ({
+      value: t.id,
+      label: t.name.replace(/ product$/i, ''),
+      href: filterHref({ type: t.id }),
+    })),
+  ]
+
+  /* Sorting keeps its own page — unlike a filter, re-ordering does not change
+     WHICH products match, so page 4 of the same result set is still a page of
+     it. Every ordering gets an href so both the picker and the column headers
+     can navigate; the headers need the flipped direction too, which is why the
+     map is keyed by "key:direction" rather than by key alone. */
+  const sortHrefs: Record<string, string> = Object.fromEntries(
+    SORTS.flatMap((s) =>
+      (['asc', 'desc'] as const).map((d) => [
+        `${s.value}:${d}`,
+        href({ sort: s.value, dir: d === 'asc' ? null : 'desc' }),
+      ]),
+    ),
+  )
+
+  const sortOptions = SORTS.map((s) => ({
+    value: s.value,
+    label: s.label,
+    href: sortHrefs[`${s.value}:${s.initial}`],
+  }))
+
+  /* Formatted on the server and passed as strings: a DATETIME arrives parsed
+     as UTC, so a Date crossing into the client would be re-read in the
+     viewer's timezone. See formatDate above. */
+  const dates: Record<number, { created: string; edited: string }> = Object.fromEntries(
+    items.map((p) => [
+      p.id,
+      { created: formatDate(p.createdAt), edited: formatDate(p.lastEditDate) },
+    ]),
+  )
+
+  const typeLabel = productType
+    ? PRODUCT_TYPES.find((t) => t.id === productType)!.name.replace(/ product$/i, '')
+    : null
+
   /* Which slice the segmented control shows. The two flags are mutually
      exclusive here: a segmented control is one choice, and "archived products
      below minimum" was a combination nobody ever asked for. */
@@ -169,7 +282,7 @@ export default async function ProductsPage({
           </ButtonLink>
         ),
       }
-    : slice !== 'all' || filterLabel
+    : slice !== 'all' || filterLabel || typeLabel
       ? {
           title: 'No products match this filter',
           hint: 'Nothing on file fits the current slice.',
@@ -235,8 +348,9 @@ export default async function ProductsPage({
               placeholder="Search description, code or barcode…"
               className="p-0"
               /* A GET form submits only its own fields, so without these a
-                 search would silently clear whichever filters were applied. */
-              keep={{ archived, low, department }}
+                 search would silently clear whichever filters were applied —
+                 and the chosen ordering with them. */
+              keep={{ archived, low, department, type: params.type, sort: params.sort, dir: params.dir }}
             />
           </div>
 
@@ -269,6 +383,32 @@ export default async function ProductsPage({
             className="w-64"
           />
 
+          <LinkSelect
+            aria-label="Filter by product type"
+            icon={<Icons.Tag size={16} />}
+            value={productType ?? ''}
+            options={typeOptions}
+            className="w-48"
+          />
+
+          {/* Sort sits with the filters rather than in the actions slot: it is
+              a statement about the list, not something done to it. The column
+              headers offer the same four orderings and flip the direction — the
+              picker is for choosing one that is not on screen.
+
+              Not offered inside a group: the variants there are in the order
+              the group defines (Small, Medium, Large — not alphabetical), and
+              a picker whose choice the query ignores is worse than none. */}
+          {!openGroup && (
+            <LinkSelect
+              aria-label="Sort products"
+              icon={<Icons.SortIcon size={16} />}
+              value={sortKey}
+              options={sortOptions}
+              className="w-52"
+            />
+          )}
+
           {filterLabel && (
             <FilterChip
               label="Department"
@@ -276,10 +416,14 @@ export default async function ProductsPage({
               clearHref={filterHref({ department: null })}
             />
           )}
+
+          {typeLabel && (
+            <FilterChip label="Type" value={typeLabel} clearHref={filterHref({ type: null })} />
+          )}
         </TableToolbar>
 
         <Card>
-          <ProductsTable
+          <ProductListClient
             items={items}
             departmentPaths={departmentPaths}
             costBasis={costBasis}
@@ -287,6 +431,13 @@ export default async function ProductsPage({
             empty={empty}
             groupHrefs={groupHrefs}
             parentNames={parentNames}
+            dates={dates}
+            /* Null inside a group: those rows are in the group's own size
+               order, which the sort argument deliberately does not override. */
+            sort={openGroup ? null : { key: sortKey, direction }}
+            sortHrefs={sortHrefs}
+            canDelete={can(capabilities, 'products.delete')}
+            lookups={bulkLookups}
           />
 
           <Pagination

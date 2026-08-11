@@ -78,7 +78,7 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
 
   return (
     <div className="flex flex-col gap-4">
-      <SettingGroup title="Properties" description="Configure how this product behaves in sales and pricing.">
+      <SettingGroup tone="brand" title="Properties" description="Configure how this product behaves in sales and pricing.">
         <SettingRow
           icon={<Icons.Eye size={16} />}
           label="Visible in point of sale"
@@ -206,7 +206,7 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
       {/* ── Weight and size ──────────────────────────────────────────────── */}
       {/* A grid rather than SettingRows: these are paired value + unit fields,
           and each pair reads as one setting rather than two. */}
-      <SettingGroup title="Weight and size">
+      <SettingGroup tone="brand" title="Weight and size">
         <div className="grid gap-5 px-6 py-5 sm:grid-cols-2">
           <div>
             <label htmlFor="packWeight" className="block text-sm font-medium text-ink">
@@ -345,7 +345,7 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
       </SettingGroup>
 
       {/* ── Scale properties ─────────────────────────────────────────────── */}
-      <SettingGroup title="Scale properties">
+      <SettingGroup tone="brand" title="Scale properties">
         <SettingRow
           icon={<Icons.Scale size={16} />}
           label="Scale Item"

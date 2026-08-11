@@ -18,6 +18,7 @@ import {
   Select,
   Switch,
   useToast,
+  type PickableReason,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
@@ -59,20 +60,18 @@ type ReturnLine = {
   unitCostExcl: number
 }
 
-const REASONS = [
-  'Faulty',
-  'Wrong item',
-  'Changed their mind',
-  'Damaged in transit',
-  'Gift return',
-  'Other',
-]
-
-export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
+export default function ReturnForm({
+  tenders,
+  reasons,
+}: {
+  tenders: TenderType[]
+  /** The site's return reasons, active only. Was a hardcoded list until 102. */
+  reasons: PickableReason[]
+}) {
   const [lines, setLines] = useState<ReturnLine[]>([])
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<TillProduct[]>([])
-  const [reason, setReason] = useState(REASONS[0])
+  const [reasonId, setReasonId] = useState<number | null>(reasons[0]?.id ?? null)
   const [note, setNote] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [refund, setRefund] = useState(true)
@@ -129,9 +128,14 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
   }
 
   function submit() {
+    if (reasonId === null) {
+      toast.error('Choose a reason for the return.')
+      return
+    }
     startTransition(async () => {
       const result = await createNoReceiptReturnAction({
-        reason: note.trim() ? `${reason} — ${note.trim()}` : reason,
+        reasonId,
+        note: note.trim() || null,
         customerName: customerName || null,
         lines: lines.map((line) => ({
           productId: line.productId,
@@ -282,10 +286,13 @@ export default function ReturnForm({ tenders }: { tenders: TenderType[] }) {
             {/* Required is the default here — the optional fields are the
                 marked ones. */}
             <Field label="Reason">
-              <Select value={reason} onChange={(e) => setReason(e.target.value)}>
-                {REASONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
+              <Select
+                value={reasonId ?? ''}
+                onChange={(e) => setReasonId(Number(e.target.value) || null)}
+              >
+                {reasons.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
                   </option>
                 ))}
               </Select>

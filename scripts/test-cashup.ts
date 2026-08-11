@@ -20,8 +20,25 @@ import {
 } from '../src/lib/site/salesReports'
 import { setSetting } from '../src/lib/site/settings'
 import { toNum, round } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let VOID_REASON_ID = 0
+
+async function loadReasonIds() {
+  const v = await findSalesReasonByCode(SITE, 'void', 'WRONG-ITEM')
+  if (!v) throw new Error('Seeded void reason WRONG-ITEM is missing — run site-migrate for 102.')
+  VOID_REASON_ID = v.id
+}
+
 const actor = { userId: 1, userName: 'Cashup Test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -54,6 +71,7 @@ async function freeTillNumber(): Promise<string> {
 }
 
 async function main() {
+  await loadReasonIds()
   const stamp = Date.now().toString().slice(-8)
   const today = new Date().toISOString().slice(0, 10)
 
@@ -146,7 +164,7 @@ async function main() {
 
   // ── A void must NOT count toward the drawer
   if (s2.ok) {
-    const voided = await voidDocument(SITE, actor, s2.documentId, 'Rang up twice')
+    const voided = await voidDocument(SITE, actor, s2.documentId, { reasonId: VOID_REASON_ID, note: 'Rang up twice' })
     ok('void accepted', voided.ok, voided.ok ? '' : voided.error)
     pos = (await shiftPosition(SITE, shiftId))!
     ok('*** voided sale removed from the drawer (520) ***', pos.expectedCash === 520, String(pos.expectedCash))

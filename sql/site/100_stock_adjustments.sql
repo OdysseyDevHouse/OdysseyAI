@@ -235,7 +235,7 @@ VALUES ('stock_adjustment', 'ADJ', 1, 6, 'none');
 INSERT INTO gl_mappings (mapping_key, ref_id, account_id)
 SELECT 'stock_adjustment', NULL, a.id
   FROM gl_accounts a
- WHERE a.code = '5100'
+ WHERE a.account_code = '5100'
    AND NOT EXISTS (SELECT 1 FROM gl_mappings m
                     WHERE m.mapping_key = 'stock_adjustment' AND m.ref_id IS NULL)
  LIMIT 1;

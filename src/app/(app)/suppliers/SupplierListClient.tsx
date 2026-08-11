@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   BulkActionBar,
+  BulkOptionsDialog,
   Badge,
   Button,
   DataTable,
@@ -11,8 +12,6 @@ import {
   Icons,
   Input,
   LinkSegmentedControl,
-  Menu,
-  MenuItem,
   Modal,
   NumberInput,
   PrimaryLink,
@@ -20,6 +19,7 @@ import {
   Select,
   TableToolbar,
   useToast,
+  type BulkOptionGroup,
   type Column,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -35,6 +35,18 @@ type Filters = {
 }
 
 type BulkKind = SupplierBulkChange['kind'] | null
+
+/** The bulk actions, in the same dialog customers and products use. */
+const BULK_OPTIONS: BulkOptionGroup<SupplierBulkChange['kind']>[] = [
+  {
+    title: 'Supplier',
+    options: [
+      { key: 'status', label: 'Change status', icon: <Icons.Check size={15} />, keywords: 'hold active' },
+      { key: 'terms', label: 'Set payment terms', icon: <Icons.Clock size={15} />, keywords: 'days cod' },
+      { key: 'category', label: 'Set category', icon: <Icons.Tag size={15} /> },
+    ],
+  },
+]
 
 export default function SupplierListClient({
   rows,
@@ -52,7 +64,9 @@ export default function SupplierListClient({
   filters: Filters
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [showOptions, setShowOptions] = useState(false)
   const [openBulk, setOpenBulk] = useState<BulkKind>(null)
+  const [recent, setRecent] = useState<SupplierBulkChange['kind'][]>([])
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -62,6 +76,8 @@ export default function SupplierListClient({
     startTransition(async () => {
       const result = await bulkUpdateSuppliersAction(ids, change)
       setOpenBulk(null)
+      // Most recent first, for the dialog's top row.
+      setRecent((prev) => [change.kind, ...prev.filter((k) => k !== change.kind)].slice(0, 4))
 
       if (result.updated === 0) {
         const reason = result.skipped[0]?.reason
@@ -107,21 +123,24 @@ export default function SupplierListClient({
       </TableToolbar>
 
       <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
-        <Button variant="ghost" size="sm" onClick={() => setOpenBulk('status')} disabled={pending}>
-          <Icons.Check size={15} />
-          Change status
+        <Button variant="ghost" size="sm" onClick={() => setShowOptions(true)} disabled={pending}>
+          <Icons.SlidersHorizontal size={15} />
+          Bulk options
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => setOpenBulk('terms')} disabled={pending}>
-          <Icons.Clock size={15} />
-          Set terms
-        </Button>
-        <Menu label="More" variant="ghost">
-          <MenuItem onClick={() => setOpenBulk('category')}>
-            <Icons.Tag size={15} />
-            Set category
-          </MenuItem>
-        </Menu>
       </BulkActionBar>
+
+      <BulkOptionsDialog
+        open={showOptions}
+        onClose={() => setShowOptions(false)}
+        onPick={(key) => {
+          setShowOptions(false)
+          setOpenBulk(key)
+        }}
+        groups={BULK_OPTIONS}
+        count={selected.size}
+        noun="supplier"
+        recent={recent}
+      />
 
       <DataTable
         columns={COLUMNS}
@@ -155,7 +174,11 @@ export default function SupplierListClient({
         count={selected.size}
         filters={filters}
         pending={pending}
-        onClose={() => setOpenBulk(null)}
+        /* Back to the catalogue rather than closing outright — see customers. */
+        onClose={() => {
+          setOpenBulk(null)
+          setShowOptions(true)
+        }}
         onApply={runBulk}
       />
     </>
@@ -268,7 +291,7 @@ function BulkModals({
   const footer = (change: () => SupplierBulkChange) => (
     <>
       <Button variant="ghost" onClick={onClose} disabled={pending}>
-        Cancel
+        Back
       </Button>
       <Button variant="primary" onClick={() => onApply(change())} disabled={pending}>
         {pending ? 'Applying…' : `Apply to ${noun}`}

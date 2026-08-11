@@ -9,7 +9,7 @@
 // Chrome is driven over the DevTools protocol rather than through Playwright:
 // Node ships a global WebSocket, so this needs no dependency at all, and a
 // verification tool that installs a browser toolchain is a tool nobody runs.
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -373,6 +373,28 @@ for (const p of paths) {
   // this inspects the screen, not the console.
   await evaluate(`document.querySelectorAll('nextjs-portal').forEach((el) => el.remove())`)
 
+  /*
+   * SHOT_PROBE='<js expression>' prints what the expression evaluates to and
+   * captures nothing else out of the ordinary.
+   *
+   * For the questions a picture cannot answer: whether an element actually
+   * scrolls, what a computed height resolved to, whether a pane is clipping.
+   * Run BEFORE the viewport is stretched below — that resize is a lie about
+   * height for any screen that fills the viewport rather than growing past it,
+   * and measuring after it would report the lie.
+   */
+  // `async` and awaited, so a probe can drive an interaction — click something,
+  // wait for the re-render, then report — rather than only measure what is
+  // already on screen. SHOT_PROBE_FILE reads the expression from a file, for
+  // anything longer than a shell one-liner will survive quoting.
+  const PROBE = process.env.SHOT_PROBE_FILE
+    ? readFileSync(process.env.SHOT_PROBE_FILE, 'utf8')
+    : process.env.SHOT_PROBE
+  if (PROBE) {
+    const probed = await evaluate(`(async () => { ${PROBE} })()`)
+    console.log('probe:', typeof probed === 'string' ? probed : JSON.stringify(probed))
+  }
+
   // captureBeyondViewport paints black past the first couple of viewports on
   // long pages under the software rasterizer. Resizing the emulated viewport
   // to the document height (capped so a huge page still rasterises) and
@@ -385,14 +407,27 @@ for (const p of paths) {
   // back to the document for pages (login, store) that scroll normally.
   // <main> specifically, not every element: walking the whole tree calling
   // getComputedStyle on each node takes minutes on a busy screen.
+  //
+  // A screen that FILLS the viewport rather than growing past it must be shot
+  // at the viewport's own height. Stretching one of those to a 1000px floor
+  // hands its panes height they never have in life, so the capture shows a
+  // layout nobody can produce — which reads as a bug in the screen rather than
+  // in the capture. The page builder is the first such screen; `main` there
+  // reports a scrollHeight equal to its own height, which is how one is
+  // recognised.
   const fullHeight = await evaluate(
     `(() => {
        let tallest = document.documentElement.scrollHeight
+       let fills = false
        document.querySelectorAll('main').forEach((el) => {
+         // Nothing to scroll to: the screen divides the height it is given
+         // instead of extending past it.
+         if (el.scrollHeight <= Math.ceil(el.getBoundingClientRect().height) + 1) fills = true
          // Its own content height, plus whatever sits above it on the page.
          const height = el.scrollHeight + el.getBoundingClientRect().top
          if (height > tallest) tallest = height
        })
+       if (fills) return window.innerHeight
        return Math.min(Math.max(tallest, 1000), 12000)
      })()`,
   )

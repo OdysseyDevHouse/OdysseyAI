@@ -1,4 +1,5 @@
 import { requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { listPurchaseDocuments, PURCHASE_DOC_LABELS } from '@/lib/site/purchaseDocuments'
 import { supplierAgingSummary } from '@/lib/site/supplierLedger'
 import { formatMoney } from '@/lib/decimals'
@@ -32,8 +33,14 @@ export default async function PurchasingPage({
   searchParams: Promise<{ q?: string; type?: string; status?: string; page?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('purchasing.view')
+  const { siteId, capabilities } = await requireCapability('purchasing.view')
   const params = await searchParams
+
+  // Viewing and editing are separate rights here, and a draft row opens in the
+  // editor only for someone who holds the second. Not a security check — both
+  // editors guard themselves — but the difference between resuming the work and
+  // bouncing off /not-allowed.
+  const canEdit = can(capabilities, 'purchasing.edit')
 
   const type = (['purchase_order', 'grv', 'supplier_return'] as const).find(
     (t) => t === params.type,
@@ -62,6 +69,9 @@ export default async function PurchasingPage({
   const rows: PurchasingRow[] = items.map((doc) => ({
     id: doc.id,
     documentNumber: doc.documentNumber,
+    // Carried so the table can send a draft row straight back into the screen
+    // that raises it, rather than to a read-only copy of it. See hrefFor.
+    docType: doc.docType,
     docLabel: doc.docLabel,
     documentDate: doc.documentDate,
     supplierName: doc.supplierName,
@@ -168,7 +178,12 @@ export default async function PurchasingPage({
             />
           </TableToolbar>
 
-          <PurchasingTable rows={rows} search={params.q} filtered={filtered} />
+          <PurchasingTable
+            rows={rows}
+            search={params.q}
+            filtered={filtered}
+            canEdit={canEdit}
+          />
 
           <Pagination
             page={page}

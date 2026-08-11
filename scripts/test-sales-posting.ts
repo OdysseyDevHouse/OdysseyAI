@@ -15,8 +15,25 @@ import { reconcileBalances } from '../src/lib/site/customerLedger'
 import { createCustomer, getCustomer } from '../src/lib/site/customers'
 import { verifySequence } from '../src/lib/site/sequences'
 import { toNum } from '../src/lib/decimals'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
+
+/*
+ * The seeded reason codes, resolved once.
+ *
+ * Every void and credit note now names a row rather than carrying free text, so
+ * these tests need real ids. Read from the site rather than hardcoded: the ids
+ * are AUTO_INCREMENT and differ per site, and 102 seeds the codes by name.
+ */
+let VOID_REASON_ID = 0
+
+async function loadReasonIds() {
+  const v = await findSalesReasonByCode(SITE, 'void', 'WRONG-ITEM')
+  if (!v) throw new Error('Seeded void reason WRONG-ITEM is missing — run site-migrate for 102.')
+  VOID_REASON_ID = v.id
+}
+
 const actor = { userId: 1, userName: 'Posting Test' }
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -30,6 +47,7 @@ async function stockOf(productId: number): Promise<number> {
 }
 
 async function main() {
+  await loadReasonIds()
   // ── Fixtures: a stocked product and a service, both disposable.
   const stamp = Date.now().toString().slice(-8)
   const vat = await siteQueryOne<any>(SITE, "SELECT id, rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1")
@@ -172,13 +190,21 @@ async function main() {
 
   // ── Void: same day only, and it reverses stock.
   const beforeVoid = await stockOf(normalId)
-  const voided = await voidDocument(SITE, actor, draft.id, 'Rang up twice')
+  const voided = await voidDocument(SITE, actor, draft.id, { reasonId: VOID_REASON_ID, note: 'Rang up twice' })
   ok('*** same-day void accepted ***', voided.ok, voided.ok ? '' : voided.error)
   ok('  void returned the stock', (await stockOf(normalId)) === beforeVoid + 3, `${beforeVoid} -> ${await stockOf(normalId)}`)
   const afterVoid = (await getDocument(SITE, draft.id))!
   ok('  voided document KEEPS its number', afterVoid.documentNumber === fin.documentNumber, String(afterVoid.documentNumber))
-  ok('  and records the reason', afterVoid.cancelReason === 'Rang up twice')
-  ok('  double void refused', !(await voidDocument(SITE, actor, draft.id, 'again')).ok)
+  /* The stored text is the reason NAME and the note, not the note alone: the code
+     is what a report groups by, and the free-text column has to keep reading
+     correctly for every reader that predates the codes. */
+  ok(
+    '  and records the reason',
+    afterVoid.cancelReason === 'Wrong item rung up — Rang up twice',
+    String(afterVoid.cancelReason),
+  )
+  ok('  and links the reason code', afterVoid.cancelReasonId === VOID_REASON_ID, String(afterVoid.cancelReasonId))
+  ok('  double void refused', !(await voidDocument(SITE, actor, draft.id, { reasonId: VOID_REASON_ID, note: 'again' })).ok)
   ok('  finalised document cannot be discarded', !(await discardDocument(SITE, draft.id)).ok)
 
   // ── The invariants.

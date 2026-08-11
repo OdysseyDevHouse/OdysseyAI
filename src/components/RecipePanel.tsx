@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import {
   Badge,
   Button,
@@ -67,6 +67,7 @@ export default function RecipePanel({
   isNew,
   isManufactured = false,
   lockManufactured = false,
+  onCostChange,
 }: {
   /** What this recipe holds today. Empty for a product with none yet. */
   lines: RecipeLine[]
@@ -83,6 +84,14 @@ export default function RecipePanel({
    * is not a boundary.
    */
   lockManufactured?: boolean
+  /**
+   * Reports what one made item costs, whenever the lines change.
+   *
+   * A recipe product's cost is not a figure anyone types — it IS the sum of its
+   * ingredients. The Pricing panel shows this instead of an editable cost box
+   * and measures margin against it, so the two cannot disagree.
+   */
+  onCostChange?: (costExcl: number) => void
 }) {
   const [made, setMade] = useState(isManufactured)
   const [rows, setRows] = useState<Row[]>(() => lines.map(toRow))
@@ -128,10 +137,22 @@ export default function RecipePanel({
   const remove = (key: string) => setRows((prev) => prev.filter((r) => r.key !== key))
 
   // Cost of one made item: what each ingredient contributes, wastage included.
+  //
+  // Deliberately the same arithmetic as compositionCost() in
+  // productComposition.ts, which is what the server charges a sale at. If these
+  // two ever diverge the screen shows a margin the GP report disagrees with.
   const totalCost = rows.reduce(
     (sum, r) => sum + r.qty * (1 + r.wastagePct / 100) * r.unitCostExcl,
     0,
   )
+
+  // In an effect, not during render: this sets state in a PARENT, and doing
+  // that mid-render is the "Cannot update a component while rendering a
+  // different component" warning. Keyed on the number rather than on `rows` so
+  // editing a quantity back to what it was does not re-notify.
+  useEffect(() => {
+    onCostChange?.(totalCost)
+  }, [totalCost, onCostChange])
 
   // The binding ingredient decides how many can be made — two buns and ten
   // patties makes two burgers. Shown live so the setup screen answers the

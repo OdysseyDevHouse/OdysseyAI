@@ -157,6 +157,15 @@ export type SalesDocument = {
   notes: string | null
   internalNote: string | null
   cancelReason: string | null
+  /**
+   * The coded reason a sale was cancelled, and the coded reason goods came back.
+   *
+   * Both nullable and both stay that way: every void and credit note raised
+   * before 102 carries free text and no code, and back-filling one would be
+   * inventing a fact about trade that already happened.
+   */
+  cancelReasonId: number | null
+  returnReasonId: number | null
   cancelledAt: Date | null
   finalisedAt: Date | null
   printCount: number
@@ -283,6 +292,8 @@ function mapDocument(r: Row, lines: SalesLine[]): SalesDocument {
     notes: (r.notes as string | null) ?? null,
     internalNote: (r.internal_note as string | null) ?? null,
     cancelReason: (r.cancel_reason as string | null) ?? null,
+    cancelReasonId: r.cancel_reason_id ? Number(r.cancel_reason_id) : null,
+    returnReasonId: r.return_reason_id ? Number(r.return_reason_id) : null,
     cancelledAt: (r.cancelled_at as Date | null) ?? null,
     finalisedAt: (r.finalised_at as Date | null) ?? null,
     printCount: Number(r.print_count ?? 0),

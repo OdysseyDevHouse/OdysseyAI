@@ -155,12 +155,12 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
 
   'reprint-last-slip': ({ handlers, online }) =>
     online
-      ? handlers.navigate('/sales')
+      ? handlers.navigate('/sales/invoicing?status=finalised')
       : handlers.say('A reprint needs the connection. The sale is safe on this till.', 'info'),
 
   'reprint-invoice': ({ handlers, online }) =>
     online
-      ? handlers.navigate('/sales')
+      ? handlers.navigate('/sales/invoicing?status=finalised')
       : handlers.say('A reprint needs the connection.', 'info'),
 
   'price-enquiry': ({ handlers }) =>

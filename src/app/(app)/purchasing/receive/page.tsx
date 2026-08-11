@@ -9,7 +9,6 @@ import {
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { listLocations } from '@/lib/site/stockLocations'
 import { getNumericSetting } from '@/lib/site/settings'
-import { PageHeader } from '@/components/ui'
 import ReceiveScreen from './ReceiveScreen'
 
 export const dynamic = 'force-dynamic'
@@ -62,12 +61,9 @@ export default async function ReceivePage({
 
   return (
     <>
-      <PageHeader
-        title="Receive goods"
-        subtitle="Stock in, costs updated, supplier credited."
-        backHref="/purchasing"
-        backLabel="Purchasing"
-      />
+      {/* The header is rendered by ReceiveScreen, not here: its two actions —
+          "Receive the goods" and the draft save — carry the client's pending
+          and validation state, which a server component cannot hand them. */}
       <ReceiveScreen
         suppliers={suppliers.items.map((s) => ({
           id: s.id,

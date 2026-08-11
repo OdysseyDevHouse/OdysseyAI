@@ -2,11 +2,13 @@
 
 import { useState } from 'react'
 import {
+  Accordion,
   ActionTile,
   Badge,
   CategoryTile,
   ChoiceTile,
   BulkActionBar,
+  BulkOptionsDialog,
   Button,
   Callout,
   SettingsHint,
@@ -45,6 +47,8 @@ import {
   Pagination,
   Radio,
   SegmentedControl,
+  ReasonPicker,
+  SectionTitle,
   SelectableCard,
   Select,
   RowTile,
@@ -52,6 +56,7 @@ import {
   SettingGroup,
   SettingRow,
   Sparkline,
+  MeterBar,
   StatStrip,
   StatTile,
   SummaryList,
@@ -112,6 +117,7 @@ export default function StyleGuidePage() {
         <FormSection />
         <FieldGroupSection />
         <BadgeSection />
+        <SectionTitleSection />
         <CalloutSection />
         <SettingsHintSection />
         <StatsSection />
@@ -119,7 +125,9 @@ export default function StyleGuidePage() {
         <IdentitySection />
         <PickerResultsSection />
         <SettingRowSection />
+        <AccordionSection />
         <SelectableCardSection />
+        <ReasonPickerSection />
         <TileSwatchSection />
         <ToastSection />
         <MenuSection />
@@ -403,6 +411,60 @@ function SettingRowSection() {
   )
 }
 
+function AccordionSection() {
+  // A Set, not a single value — more than one can be open at a time, which is
+  // the whole difference between this and a tab strip.
+  const [open, setOpen] = useState<Set<string>>(() => new Set(['first']))
+  const toggle = (key: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  return (
+    <Card>
+      <CardHeader
+        title="Accordion"
+        description="<Accordion /> — a titled panel that folds away. Use to stack several groups of settings in one narrow column, where a tall page of everything-at-once would bury what somebody is working on. Any number can be open at once; the parent owns which, so a screen can open one in response to something selected elsewhere."
+      />
+      <CardBody className="flex flex-col gap-2">
+        <Accordion
+          title="An open panel"
+          description="The description shows whether it is open or shut."
+          open={open.has('first')}
+          onToggle={() => toggle('first')}
+        >
+          <p className="text-sm text-muted">
+            Whatever the panel holds — a form, a list, a set of tiles. Contents are unmounted
+            when shut, so nothing inside keeps running or catches a Tab.
+          </p>
+        </Accordion>
+        <Accordion
+          title="A folded panel"
+          description="Click the header anywhere to open it."
+          open={open.has('second')}
+          onToggle={() => toggle('second')}
+        >
+          <p className="text-sm text-muted">Now you can see me.</p>
+        </Accordion>
+        <Accordion
+          title="With a badge"
+          description="For a count, or a state worth seeing while shut."
+          badge={<Badge tone="warning">3 to check</Badge>}
+          open={open.has('third')}
+          onToggle={() => toggle('third')}
+        >
+          <p className="text-sm text-muted">
+            The badge sits between the title and the chevron, and stays visible when folded.
+          </p>
+        </Accordion>
+      </CardBody>
+    </Card>
+  )
+}
+
 function SelectableCardSection() {
   const [choice, setChoice] = useState('normal')
 
@@ -453,6 +515,37 @@ function SelectableCardSection() {
   )
 }
 
+const GUIDE_REASONS = [
+  { id: 1, code: 'WRONG-ITEM', name: 'Wrong item rung up', allowsNote: false },
+  { id: 2, code: 'DOUBLE-RUNG', name: 'Rung up twice', allowsNote: false },
+  { id: 3, code: 'OTHER', name: 'Something else', allowsNote: true },
+]
+
+function ReasonPickerSection() {
+  const [reasonId, setReasonId] = useState<number | null>(null)
+  const [note, setNote] = useState('')
+
+  return (
+    <Card>
+      <CardHeader
+        title="Reason picker"
+        description="<ReasonPicker /> — picking a coded reason from a short list, with the note that only appears for reasons whose code cannot say enough"
+      />
+      <CardBody className="max-w-md">
+        <ReasonPicker
+          reasons={GUIDE_REASONS}
+          value={reasonId}
+          note={note}
+          onChange={setReasonId}
+          onNoteChange={setNote}
+          label="Why is this being voided?"
+          hint="Choose “Something else” to see the note appear."
+        />
+      </CardBody>
+    </Card>
+  )
+}
+
 function TileSwatchSection() {
   const [picked, setPicked] = useState<string | null>(TILE_SWATCHES[0].token)
 
@@ -495,6 +588,57 @@ function BadgeSection() {
         <Badge tone="warning">Low</Badge>
         <Badge tone="brand">New</Badge>
         <Badge tone="neutral">42</Badge>
+      </CardBody>
+    </Card>
+  )
+}
+
+function SectionTitleSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Section titles"
+        description="<SectionTitle icon tone action> — the heading bar inside a card that holds one section of a long form. Distinct from CardHeader, which belongs to a card that is a screen in its own right."
+      />
+      <CardBody className="flex flex-col gap-4">
+        <Card>
+          <SectionTitle icon={<Icons.Info size={16} />}>Product overview</SectionTitle>
+          <div className="px-5 py-4 text-sm text-muted">tone=&quot;default&quot; — the standard heading.</div>
+        </Card>
+        <Card>
+          <SectionTitle tone="brand" icon={<Icons.Info size={16} />}>
+            Product overview
+          </SectionTitle>
+          <div className="px-5 py-4 text-sm text-muted">
+            tone=&quot;brand&quot; — a brand-rule line across the top with a brand heading, so a stack
+            of sections reads as separate blocks. The rule has its own token, so it can be
+            deeper than the pale brand-soft the icon tile uses. Worn by the product screen
+            while it is tried out.
+          </div>
+        </Card>
+        <Card>
+          <CardHeader
+            tone="brand"
+            title="Photographs"
+            description="CardHeader takes the same tone, so a screen that mixes the two headings still reads as one stack."
+          />
+          <CardBody className="text-sm text-muted">
+            Use it on a card that carries a description or an action.
+          </CardBody>
+        </Card>
+        <SettingGroup
+          tone="brand"
+          title="Scale properties"
+          description="SettingGroup takes it too — the three heading components share the tone so a screen can use whichever fits and still look like one page."
+        >
+          <SettingRow
+            icon={<Icons.Percent size={16} />}
+            label="A setting"
+            description="The rule sits on the group's own top edge here, because the group clips its children."
+          >
+            <span className="text-sm text-muted">—</span>
+          </SettingRow>
+        </SettingGroup>
       </CardBody>
     </Card>
   )
@@ -991,13 +1135,14 @@ function DataTableSection() {
 
 function SelectionSection() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [showOptions, setShowOptions] = useState(false)
   const toast = useToast()
 
   return (
     <Card>
       <CardHeader
         title="Row selection + bulk actions"
-        description="<DataTable selectedKeys onSelectionChange /> with <BulkActionBar /> — click a checkbox, then shift-click another to take the range. Out-of-stock rows are unselectable via isRowSelectable."
+        description="<DataTable selectedKeys onSelectionChange /> with <BulkActionBar /> and <BulkOptionsDialog /> — click a checkbox, then shift-click another to take the range. The bar holds one button; every action lives in the dialog, which stays readable whether a list has three or twenty. Out-of-stock rows are unselectable via isRowSelectable."
       />
       <BulkActionBar
         count={selected.size}
@@ -1008,25 +1153,12 @@ function SelectionSection() {
           onSelectAll: () => toast.info('Would select all 412 matching the filter'),
         }}
       >
-        <Button variant="ghost" size="sm" onClick={() => toast.success(`${selected.size} updated`)}>
-          <Icons.Check size={15} />
-          Change status
+        {/* One button, not a row of them: the actions live in the dialog, so a
+            list with twenty of them looks exactly like a list with three. */}
+        <Button variant="ghost" size="sm" onClick={() => setShowOptions(true)}>
+          <Icons.SlidersHorizontal size={15} />
+          Bulk options
         </Button>
-        <Menu label="More" variant="ghost">
-          <MenuItem onClick={() => toast.info('Emailing statements')}>
-            <Icons.Mail size={15} />
-            Email statements
-          </MenuItem>
-          <MenuItem href="#" download>
-            <Icons.Download size={15} />
-            Export selection
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem tone="danger" onClick={() => toast.error('Placed on hold')}>
-            <Icons.Ban size={15} />
-            Place on hold
-          </MenuItem>
-        </Menu>
       </BulkActionBar>
       <DataTable
         columns={PRODUCT_COLUMNS}
@@ -1037,6 +1169,48 @@ function SelectionSection() {
         /* Nothing on hand cannot be picked for a stock action — the reason a
            row is unselectable belongs to the screen, not the table. */
         isRowSelectable={(row) => row.qty > 0}
+      />
+
+      <BulkOptionsDialog
+        open={showOptions}
+        onClose={() => setShowOptions(false)}
+        onPick={(key) => {
+          setShowOptions(false)
+          toast.info(`Would open the “${key}” form for ${selected.size} rows`)
+        }}
+        count={selected.size}
+        noun="product"
+        recent={['department']}
+        groups={[
+          {
+            title: 'Product',
+            options: [
+              { key: 'department', label: 'Move to department', icon: <Icons.Landmark size={15} /> },
+              { key: 'colour', label: 'Change product colour', icon: <Icons.Palette size={15} /> },
+              { key: 'tax', label: 'Change selling tax', icon: <Icons.Percent size={15} /> },
+            ],
+          },
+          {
+            title: 'Properties',
+            options: [
+              { key: 'pos', label: 'Change visible on POS', icon: <Icons.Eye size={15} /> },
+              { key: 'scale', label: 'Change scale item', icon: <Icons.Scale size={15} /> },
+              { key: 'discount', label: 'Change max discount', icon: <Icons.Percent size={15} /> },
+            ],
+          },
+          {
+            title: 'Lifecycle',
+            options: [
+              { key: 'archive', label: 'Archive product', icon: <Icons.Archive size={15} /> },
+              {
+                key: 'delete',
+                label: 'Delete products',
+                icon: <Icons.Trash size={15} />,
+                tone: 'danger',
+              },
+            ],
+          },
+        ]}
       />
     </Card>
   )
@@ -1453,6 +1627,30 @@ function ChartSection() {
               <Sparkline values={series} color={color} />
             </div>
           ))}
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<MeterBar />"
+          note="A proportion drawn as one bar — an ageing balance across its buckets, or progress toward a total. Pass `total` to leave the shortfall as track. Tones mean what they mean everywhere else, so a mostly-danger bar reads as a problem without a figure being read."
+        />
+        <div className="flex flex-1 flex-col gap-4">
+          <MeterBar
+            segments={[
+              { label: 'Current', value: 62, tone: 'success' },
+              { label: '30 days', value: 21, tone: 'neutral' },
+              { label: '60 days', value: 11, tone: 'warning' },
+              { label: '90 days +', value: 6, tone: 'danger' },
+            ]}
+            showLegend
+          />
+          {/* `total` larger than the segments leaves the remainder as track,
+              which is how progress differs from a share-of-whole. */}
+          <MeterBar
+            segments={[{ label: 'Reconciled', value: 34, tone: 'brand' }]}
+            total={50}
+            height={10}
+          />
         </div>
       </Row>
       <Row>
