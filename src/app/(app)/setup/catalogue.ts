@@ -203,6 +203,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/reservations',
+        description: 'Whether the floor takes bookings, and the hours it takes them for.',
+        keywords: 'reservations bookings diary online booking form opening hours sittings covers restaurant',
+        icon: 'Clock',
+        tone: 'amber',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/linked-stores',
         description: 'Branches that share products, customers or loyalty with this one.',
         keywords: 'multi store group branches sharing',
