@@ -5,10 +5,17 @@ import type { ReactNode } from 'react'
  *
  * Compose it as Card > CardHeader + CardBody. CardHeader draws its own bottom
  * rule, so a card with a header and a table needs no extra dividers.
+ *
+ * `data-card` is not decoration: it is how the brand rule finds this element.
+ * A brand-toned heading marks itself and the card turns its own left border
+ * into the rule — see the note in globals.css.
  */
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-card border border-border bg-surface shadow-card ${className}`}>
+    <div
+      data-card
+      className={`rounded-card border border-border bg-surface shadow-card ${className}`}
+    >
       {children}
     </div>
   )
@@ -27,28 +34,32 @@ export function CardHeader({
   action?: ReactNode
   className?: string
   /**
-   * The brand rule and title are the default, matching <SectionTitle>, so a
-   * screen that mixes the two headings reads as one stack rather than two.
-   * 'default' opts out — use it for a card nested inside another card, where a
-   * second rule would compete with the outer one.
+   * The brand rule is the default, matching <SectionTitle>, so a screen that
+   * mixes the two headings reads as one stack rather than two. 'default' opts
+   * out — use it for a card nested inside another card, where a second rule
+   * would compete with the outer one.
    */
   tone?: 'default' | 'brand'
 }) {
   const brand = tone === 'brand'
   return (
     <div
+      /* The marker the card's left border keys off — the rule itself is drawn
+         by the card, because a border here could only be as tall as the
+         header. See globals.css. */
+      data-brand-rule={brand ? '' : undefined}
       className={[
         'flex items-start justify-between gap-4 border-b border-border px-5 py-4',
-        // See the note in SectionTitle: the negative insets put the rule on the
-        // card's own edge so it follows the rounded corners.
-        brand ? '-mx-px -mt-px rounded-t-card border-t-2 border-t-brand-rule' : '',
         className,
       ]
         .filter(Boolean)
         .join(' ')}
     >
       <div className="min-w-0">
-        <h2 className={`text-sm font-semibold ${brand ? 'text-brand' : 'text-ink'}`}>{title}</h2>
+        {/* Ink, not brand. The rule down the card's edge is what marks the
+            heading; colouring the words as well said the same thing twice, and
+            a blue title reads as a link. */}
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
         {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}

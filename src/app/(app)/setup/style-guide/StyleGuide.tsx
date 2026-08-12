@@ -604,15 +604,16 @@ function SectionTitleSection() {
     <Card>
       <CardHeader
         title="Card headings"
-        description="All three heading components wear a brand rule and a brand title by default, so a screen that mixes them still reads as one stack. Pass tone='default' to opt out."
+        description="All three heading components mark their card with a brand rule down its left edge by default, so a screen that mixes them still reads as one stack. The heading text itself is ink. Pass tone='default' to opt out of the rule."
       />
       <CardBody className="flex flex-col gap-4">
         <Card>
           <SectionTitle icon={<Icons.Info size={16} />}>Product overview</SectionTitle>
           <div className="px-5 py-4 text-sm text-muted">
             &lt;SectionTitle icon action&gt; — the heading bar inside a card that holds one
-            section of a long form. The icon sits in a pale brand-soft tile; the rule above it
-            uses its own deeper brand-rule token.
+            section of a long form. The icon sits in a pale brand-soft tile; the rule down the
+            card&apos;s left edge uses its own deeper brand-rule token, and is drawn by the card
+            rather than by this heading, so it runs the card&apos;s full height.
           </div>
         </Card>
         <Card>
@@ -631,7 +632,7 @@ function SectionTitleSection() {
           <SettingRow
             icon={<Icons.Percent size={16} />}
             label="A setting"
-            description="The rule sits on the group's own top edge here, because the group clips its children."
+            description="The group is its own card, so it draws the left rule itself rather than being marked for a parent to draw."
           >
             <span className="text-sm text-muted">—</span>
           </SettingRow>

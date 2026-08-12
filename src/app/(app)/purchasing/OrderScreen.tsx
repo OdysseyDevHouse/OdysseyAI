@@ -31,6 +31,7 @@ import PurchaseLineGrid, {
   PURCHASE_COLUMNS,
   PURCHASE_COLUMN_IDS,
   type GridLine,
+  type StockLocationOption,
 } from './PurchaseLineGrid'
 import { purchaseDocumentFigures } from './purchaseLine'
 import {
@@ -57,11 +58,25 @@ const PICKER_LIMIT = 500
  * An order MOVES NOTHING — no stock, no cost, no ledger. It is a statement of
  * what was asked for, and it exists so that receiving can be checked against
  * it. That is why this screen is so much simpler than receiving: no serials, no
- * location, no average-cost preview, nothing that needs a warning.
+ * average-cost preview, nothing that needs a warning.
  *
  * What it does need is the cost and margin columns, because the decision being
  * made here is "should we buy this, at this price". The shared line grid
  * carries those; see PurchaseLineGrid.
+ *
+ * ── THE LOCATION COLUMN IS A DESTINATION, NOT A MOVEMENT ──────────────────
+ *
+ * A line can name where its goods are meant to land. That does not weaken the
+ * paragraph above: nothing moves here either way, and receiveGoods() is still
+ * the only thing that puts stock in a pile. What it records is the buyer's
+ * intent — ten cases for the warehouse and two for the shop is known when the
+ * order is raised, and rebuilding that split at the door from a delivery note
+ * that never carried it is guesswork.
+ *
+ * Receiving INHERITS it and may override it line by line, because what was
+ * intended in January is not a promise about where the pallet actually goes in
+ * February. A line left blank means "wherever main is at the time", resolved at
+ * receipt rather than pinned here.
  *
  * Save leaves it a draft. Issue claims the PO number — an order that was never
  * sent should not consume one, for the same reason a saved sale does not.
@@ -71,8 +86,8 @@ const PICKER_LIMIT = 500
  * Ordering and receiving are two documents but ONE flow, and the same person
  * works both in the same afternoon. They are separate files because a GRV
  * carries what an order cannot — their invoice number and total, freight and
- * charges, a stock location, serial numbers — not because they are allowed to
- * look like two different products.
+ * charges, serial numbers — not because they are allowed to look like two
+ * different products.
  *
  * So a layout change here is only half a change:
  *
@@ -94,6 +109,7 @@ export default function OrderScreen({
   suppliers,
   defaultVatRate,
   sellingVatRate,
+  locations,
   existing,
 }: {
   suppliers: {
@@ -108,6 +124,8 @@ export default function OrderScreen({
   }[]
   defaultVatRate: number
   sellingVatRate: number
+  /** Active stock locations. Always at least one — the main location. */
+  locations: StockLocationOption[]
   /** Set when editing a draft. Absent when raising a new order. */
   existing?: {
     id: number
@@ -120,6 +138,11 @@ export default function OrderScreen({
     lines: OrderScreenLine[]
   }
 }) {
+  // Every new line starts here, so a single-location site never sees the
+  // control and a multi-location one gets the sensible default rather than an
+  // empty box it must fill in ten times. Receiving seeds itself the same way.
+  const mainLocationId = locations.find((l) => l.isMain)?.id ?? locations[0]?.id ?? null
+  const multiLocation = locations.length > 1
   const [supplierId, setSupplierId] = useState(existing ? String(existing.supplierId) : '')
   const [documentDate, setDocumentDate] = useState(existing?.documentDate ?? todayIso())
   const [expectedDate, setExpectedDate] = useState(existing?.expectedDate ?? '')
@@ -253,7 +276,10 @@ export default function OrderScreen({
         discountPct: 0,
         discountAmount: 0,
         vatRatePct: defaultVatRate,
-        locationId: null,
+        // Inherits whatever the previous line used, so ordering a whole pallet
+        // for the warehouse is one choice rather than one per line. The same
+        // rule receiving follows.
+        locationId: current[current.length - 1]?.locationId ?? mainLocationId,
         currentAverage: product.costExcl,
         lastCost: product.costExcl,
         currentStock: product.stockOnHand,
@@ -284,29 +310,35 @@ export default function OrderScreen({
    */
   function addImportedLines(imported: ImportedLine[]) {
     const stamp = Date.now()
-    setLines((current) => [
-      ...current,
-      ...imported.map((row, index) => ({
-        key: `${row.productId}-${stamp}-${index}`,
-        productId: row.productId,
-        productCode: row.code,
-        supplierCode: '',
-        description: row.description,
-        productType: row.productType,
-        qtyOrdered: row.qty,
-        qty: row.qty,
-        qtyBonus: 0,
-        unitCostExcl: row.unitCostExcl ?? 0,
-        discountPct: row.discountPct ?? 0,
-        discountAmount: 0,
-        vatRatePct: defaultVatRate,
-        locationId: null,
-        currentAverage: 0,
-        lastCost: 0,
-        currentStock: 0,
-        sellIncl: 0,
-      })),
-    ])
+    setLines((current) => {
+      const inherited = current[current.length - 1]?.locationId ?? mainLocationId
+      return [
+        ...current,
+        ...imported.map((row, index) => ({
+          key: `${row.productId}-${stamp}-${index}`,
+          productId: row.productId,
+          productCode: row.code,
+          supplierCode: '',
+          description: row.description,
+          productType: row.productType,
+          qtyOrdered: row.qty,
+          qty: row.qty,
+          qtyBonus: 0,
+          unitCostExcl: row.unitCostExcl ?? 0,
+          discountPct: row.discountPct ?? 0,
+          discountAmount: 0,
+          vatRatePct: defaultVatRate,
+          // A file that names a room is honoured, exactly as on a delivery
+          // note: one order split across two buildings is a spreadsheet
+          // column, not ten dropdowns.
+          locationId: locationIdFor(row.locationCode) ?? inherited,
+          currentAverage: 0,
+          lastCost: 0,
+          currentStock: 0,
+          sellIncl: 0,
+        })),
+      ]
+    })
 
     if (supplierId) {
       applyAgreedPrices(
@@ -314,6 +346,16 @@ export default function OrderScreen({
         imported.map((row) => ({ productId: row.productId }) as OrderScreenLine),
       )
     }
+  }
+
+  /** A location named in the file, by code or by name. Null falls back. */
+  function locationIdFor(code: string | null): number | null {
+    if (!code) return null
+    const wanted = code.trim().toLowerCase()
+    const match = locations.find(
+      (l) => l.code.toLowerCase() === wanted || l.name.toLowerCase() === wanted,
+    )
+    return match?.id ?? null
   }
 
   const totals = useMemo(() => purchaseDocumentFigures(lines), [lines])
@@ -337,6 +379,7 @@ export default function OrderScreen({
           description: l.description,
           productType: l.productType,
           departmentId: null,
+          locationId: l.locationId,
           qtyOrdered: l.qty,
           unitCostExcl: l.unitCostExcl,
           discountPct: l.discountPct,
@@ -503,6 +546,31 @@ export default function OrderScreen({
               Import
             </Button>
           </div>
+
+          {/* Most orders are for one place. Setting each line separately is
+              what the per-line control is for; this is the common case. The
+              receive screen carries the same control in the same spot. */}
+          {multiLocation && lines.length > 1 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">Send every line to</span>
+              <Select
+                value=""
+                className="w-auto"
+                onChange={(e) => {
+                  const id = Number(e.target.value)
+                  if (!id) return
+                  setLines((c) => c.map((l) => ({ ...l, locationId: id })))
+                }}
+              >
+                <option value="">— Choose —</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.code} — {loc.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
         </CardBody>
 
         {lines.length === 0 ? (
@@ -516,7 +584,7 @@ export default function OrderScreen({
             lines={lines}
             visible={columns.visible}
             mode="order"
-            locations={[]}
+            locations={locations}
             documentDiscounts={totals.lines.map((l) => l.documentDiscountExcl)}
             charges={totals.lines.map((l) => l.chargeExcl)}
             sellingVatPct={sellingVatRate}

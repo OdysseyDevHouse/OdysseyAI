@@ -383,6 +383,21 @@ export type OrderLineInput = {
   description: string
   productType?: string
   departmentId?: number | null
+  /**
+   * Where this line is MEANT to land. A destination, not a commitment.
+   *
+   * An order still moves nothing — the goods go into a pile at the door, and
+   * receiveGoods() is what puts them there. What this buys is that a buyer
+   * ordering ten cases for the warehouse and two for the shop says so once,
+   * when they know it, rather than the receiver rebuilding the split from a
+   * delivery note that does not carry it.
+   *
+   * So receiving INHERITS this and may override it, line by line. Null means
+   * "wherever main is at the time", resolved by receiveGoods and never here:
+   * an order raised in January must not be pinned to whichever location
+   * happened to be main that morning.
+   */
+  locationId?: number | null
   qtyOrdered: number
   unitCostExcl: number
   discountPct?: number
@@ -522,19 +537,31 @@ export async function saveOrder(
     // and the amount is what the two disagree about by at most a cent.
     const hasDiscountAmount = await columnExistsTx(tx, 'purchase_document_lines', 'discount_amount')
 
+    // Locations that actually exist, so a stale dropdown cannot fail the save
+    // on a foreign key. An id we do not recognise becomes null, which reads as
+    // "wherever main is when it arrives" — the answer an order gave before it
+    // could name a destination at all, and harmless because nothing has moved.
+    const [locationRows] = await tx.execute('SELECT id FROM stock_locations')
+    const knownLocations = new Set(
+      (locationRows as RowDataPacket[]).map((r) => Number(r.id)),
+    )
+
     for (const [index, line] of input.lines.entries()) {
       const c = computed[index]
+      const locationId =
+        line.locationId && knownLocations.has(line.locationId) ? line.locationId : null
       await tx.execute(
         `INSERT INTO purchase_document_lines
-           (document_id, line_number, product_id, product_code, supplier_code, description,
-            product_type, department_id, qty_ordered, qty_received, unit_cost_excl,
+           (document_id, line_number, product_id, location_id, product_code, supplier_code,
+            description, product_type, department_id, qty_ordered, qty_received, unit_cost_excl,
             discount_pct, ${hasDiscountAmount ? 'discount_amount, ' : ''}vat_rate_pct,
             line_total_excl, line_vat, line_total_incl)
-         VALUES (?,?,?,?,?,?,?,?,?,0,?,?,${hasDiscountAmount ? '?,' : ''}?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,${hasDiscountAmount ? '?,' : ''}?,?,?,?)`,
         [
           id,
           index + 1,
           line.productId ?? null,
+          locationId,
           line.productCode ?? null,
           line.supplierCode ?? null,
           line.description.trim().slice(0, 190),

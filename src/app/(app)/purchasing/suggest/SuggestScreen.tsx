@@ -113,6 +113,11 @@ export default function SuggestScreen({
     startTransition(async () => {
       const result = await createOrdersFromSuggestionAction({
         supplierId: group.supplierId!,
+        // The location these shortfalls were measured in. An order raised from
+        // "what is the warehouse short of" is an order for the warehouse, and
+        // making the buyer re-pick that on the edit screen throws away the one
+        // thing this screen already knew.
+        locationId: Number(locationId) || null,
         lines: lines.map((l) => ({
           productId: l.productId,
           productCode: l.code,

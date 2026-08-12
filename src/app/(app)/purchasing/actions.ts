@@ -282,6 +282,15 @@ export async function suggestOrdersAction(input: {
  */
 export async function createOrdersFromSuggestionAction(input: {
   supplierId: number
+  /**
+   * The location the suggestion was computed FOR, stamped onto every line.
+   *
+   * A suggestion answers "what is the warehouse short of", so an order raised
+   * from it is an order for the warehouse — leaving the destination blank would
+   * throw away the one thing the screen already knew. Still a default: the buyer
+   * lands on the edit screen and can move any line.
+   */
+  locationId?: number | null
   lines: {
     productId: number
     productCode: string | null
@@ -312,6 +321,7 @@ export async function createOrdersFromSuggestionAction(input: {
       supplierCode: l.supplierCode,
       description: l.description,
       productType: l.productType,
+      locationId: input.locationId ?? null,
       qtyOrdered: l.qtyOrdered,
       unitCostExcl: l.unitCostExcl,
       vatRatePct: purchaseVat?.rate ?? 0,

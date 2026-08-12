@@ -80,15 +80,17 @@ export function SettingGroup({
 }) {
   const brand = tone === 'brand'
   return (
-    // The rule goes on the outer box, not pulled out from the header: this
-    // wrapper clips its children, so a negative inset would be cut off.
+    // This IS the card, so it draws the rule itself rather than being marked
+    // for a parent to draw — the same left edge, and the same token, as every
+    // Card with a brand heading. See the note in globals.css.
     <div
       className={`overflow-hidden rounded-card border border-border bg-surface shadow-card ${
-        brand ? 'border-t-2 border-t-brand-rule' : ''
+        brand ? 'border-l-2 border-l-brand-rule' : ''
       }`}
     >
       <div className="border-b border-border px-6 py-4">
-        <h3 className={`text-sm font-semibold ${brand ? 'text-brand' : 'text-ink'}`}>{title}</h3>
+        {/* Ink, not brand — see CardHeader. */}
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
         {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
       </div>
       <div>{children}</div>

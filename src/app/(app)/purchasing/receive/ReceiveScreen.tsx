@@ -288,7 +288,18 @@ export default function ReceiveScreen({
             discountPct: l.discountPct,
             discountAmount: 0,
             vatRatePct: l.vatRatePct,
-            locationId: mainLocationId,
+            // Where the ORDER said these goods should go, which is the buyer
+            // saying it once at the point they knew — rather than the receiver
+            // rebuilding the split from a delivery note that never carried it.
+            // Still editable: intent in January is not a promise about where
+            // the pallet actually goes in February. A line the order left blank
+            // falls back to main, as it always did — and so does one naming a
+            // location that has been CLOSED since the order went out, which
+            // would otherwise sit in state as an id with no option behind it
+            // and post goods into a room nobody uses.
+            locationId: locations.some((loc) => loc.id === l.locationId)
+              ? l.locationId
+              : mainLocationId,
             serials: [],
             warrantyUntil: '',
             currentAverage: positionFor.get(l.productId ?? -1)?.averageCost ?? 0,

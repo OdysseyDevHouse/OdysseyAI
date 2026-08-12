@@ -137,7 +137,20 @@ guard are both real boundaries.
 
 Header: supplier, order date, expected date, their order number, reference,
 notes. Ordering does not touch stock or the ledger, so this screen is far
-simpler than receiving — no serials, no location, no cost preview.
+simpler than receiving — no serials, no cost preview.
+
+**Superseded — the location column now appears on ordering too.** The original
+rule was that only a GRV names a location, on the reasoning that only a GRV
+moves anything. That reasoning still holds for the *movement* — `receiveGoods()`
+remains the only thing that puts stock in a pile — but it was the wrong rule for
+the *intent*. A buyer ordering ten cases for the warehouse and two for the shop
+knows the split when they raise the order; making the receiver rebuild it at the
+door from a delivery note that never carried it is guesswork.
+
+So `purchase_document_lines.location_id` is written by `saveOrder()` as well,
+receiving inherits it per line and may override it, and a line left null still
+means "wherever main is when it lands" — resolved at receipt, never pinned at
+order time. No schema change: the column has existed since 025.
 
 Save → draft. Issue → `issueOrder()`, which claims the PO number. Both actions
 exist and are tested at the library level.

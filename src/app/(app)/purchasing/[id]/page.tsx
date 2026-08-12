@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { getPurchaseDocument } from '@/lib/site/purchaseDocuments'
 import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
+import { listLocations } from '@/lib/site/stockLocations'
 import { formatMoney, formatQty } from '@/lib/decimals'
 import {
   PageHeader,
@@ -47,6 +48,24 @@ export default async function PurchaseDocumentPage({
   // under one entity would mix them on a screen that shows one document.
   const attachTo = doc.docType === 'purchase_order' ? 'purchase_order' : 'grv'
   const attachments = await listAttachments(siteId, attachTo, documentId)
+
+  /*
+   * Where each line went, or is meant to go.
+   *
+   * Closed locations included: a receipt posted into a room that has since been
+   * shut still went there, and showing a blank would make the document disagree
+   * with the movement behind it. The column appears only when the site has more
+   * than one place for goods to go — on a single-location site it would be the
+   * same word forty times.
+   */
+  const locations = await listLocations(siteId)
+  const locationName = new Map(locations.map((l) => [l.id, l.code]))
+  // Transit is excluded from the COUNT but not from the names above: it is a
+  // real pile a line could name, and it is not somewhere a site chooses to
+  // send goods, so a site of "main plus transit" is a one-location site here.
+  const showLocation =
+    locations.filter((l) => !l.isTransit).length > 1 &&
+    doc.lines.some((l) => l.locationId !== null)
 
   const today = new Date().toISOString().slice(0, 10)
   const voidable = doc.docType === 'grv' && doc.status === 'finalised' && doc.documentDate === today
@@ -120,6 +139,7 @@ export default async function PurchaseDocumentPage({
                     <th className={`${TABLE_TH} text-right`}>
                       {doc.docType === 'purchase_order' ? 'Ordered' : 'Received'}
                     </th>
+                    {showLocation && <th className={TABLE_TH}>Location</th>}
                     <th className={`${TABLE_TH} text-right`}>Unit cost</th>
                     {doc.chargesExcl > 0 && <th className={`${TABLE_TH} text-right`}>Landed</th>}
                     <th className={`${TABLE_TH} text-right`}>Total (excl.)</th>
@@ -149,6 +169,20 @@ export default async function PurchaseDocumentPage({
                           formatQty(line.qtyReceived)
                         )}
                       </td>
+                      {showLocation && (
+                        <td className={TABLE_TD}>
+                          {/* An order says where goods are HEADED; a receipt
+                              says where they went. Blank on an order is a real
+                              answer — main, whichever that is when it lands. */}
+                          {line.locationId === null ? (
+                            <span className="text-muted">
+                              {doc.docType === 'purchase_order' ? 'At receipt' : '—'}
+                            </span>
+                          ) : (
+                            (locationName.get(line.locationId) ?? '—')
+                          )}
+                        </td>
+                      )}
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                         {formatMoney(line.unitCostExcl)}
                       </td>

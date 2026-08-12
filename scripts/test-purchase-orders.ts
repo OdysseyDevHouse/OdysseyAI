@@ -24,6 +24,7 @@ import {
 } from '../src/lib/site/purchaseDocuments'
 import { receiveGoods } from '../src/lib/site/purchasePosting'
 import { createSupplier } from '../src/lib/site/suppliers'
+import { listLocations, createLocation, mainLocationId } from '../src/lib/site/stockLocations'
 import { reconcileStock } from '../src/lib/site/stockMovements'
 import { verifySequence } from '../src/lib/site/sequences'
 import { toNum } from '../src/lib/decimals'
@@ -258,6 +259,115 @@ async function main() {
     ok('  and is read back', toNum(doc?.lines[0]?.discountAmount) === 250)
   } else {
     console.log('SKIP  discount_amount — migration 086 has not reached this site')
+  }
+
+  console.log('\n── A destination per line ──')
+
+  /*
+   * An order can say where each line is HEADED. This does not make it move
+   * anything — that is asserted below, and it is the property that would be
+   * silent if it broke — it records the buyer's intent so receiving can inherit
+   * it instead of the receiver rebuilding the split from a delivery note.
+   */
+  const mainId = await mainLocationId(SITE)
+  const existingSpare = (await listLocations(SITE, false, true)).find((l) => l.id !== mainId)
+  const spareLocation =
+    existingSpare ??
+    (await (async () => {
+      const made = await createLocation(SITE, { code: `OL${stamp}`, name: 'Order test store' })
+      if (!made.ok) return null
+      return (await listLocations(SITE, false, true)).find((l) => l.id === made.id) ?? null
+    })())
+
+  if (!spareLocation) {
+    console.log('SKIP  per-line destination — could not obtain a second location')
+  } else {
+    const split = await saveOrder(
+      SITE,
+      actor,
+      {
+        supplierId: sup.id,
+        lines: [
+          {
+            productId,
+            description: 'For the warehouse',
+            locationId: spareLocation.id,
+            qtyOrdered: 10,
+            unitCostExcl: 10,
+            vatRatePct: rate,
+          },
+          {
+            productId,
+            description: 'For the shop',
+            locationId: mainId,
+            qtyOrdered: 2,
+            unitCostExcl: 10,
+            vatRatePct: rate,
+          },
+          {
+            productId,
+            description: 'Wherever main is when it lands',
+            qtyOrdered: 1,
+            unitCostExcl: 10,
+            vatRatePct: rate,
+          },
+        ],
+      },
+      draft.id,
+    )
+    ok('an order with a destination per line saves', split.ok, split.ok ? '' : split.error)
+
+    doc = await getPurchaseDocument(SITE, draft.id)
+    ok(
+      '*** each line kept its OWN destination ***',
+      doc?.lines[0]?.locationId === spareLocation.id && doc?.lines[1]?.locationId === mainId,
+      `${doc?.lines[0]?.locationId} / ${doc?.lines[1]?.locationId}`,
+    )
+    ok(
+      '  a line that named none stays null — resolved at receipt, not pinned here',
+      doc?.lines[2]?.locationId === null,
+      String(doc?.lines[2]?.locationId),
+    )
+
+    // A stale dropdown must not fail the save on a foreign key. Nothing has
+    // moved, so falling back to "wherever main is then" is the honest answer.
+    const bogus = await saveOrder(
+      SITE,
+      actor,
+      {
+        supplierId: sup.id,
+        lines: [
+          {
+            productId,
+            description: 'Headed nowhere real',
+            locationId: 999999999,
+            qtyOrdered: 1,
+            unitCostExcl: 10,
+            vatRatePct: rate,
+          },
+        ],
+      },
+      draft.id,
+    )
+    ok('a location that does not exist does not break the save', bogus.ok, bogus.ok ? '' : bogus.error)
+    doc = await getPurchaseDocument(SITE, draft.id)
+    ok('  it was written as null instead', doc?.lines[0]?.locationId === null)
+
+    state = await siteQueryOne<any>(
+      SITE,
+      'SELECT stock_on_hand, average_cost FROM products WHERE id=?',
+      [productId],
+    )
+    ok(
+      '*** NAMING A DESTINATION STILL MOVED NO STOCK ***',
+      toNum(state.stock_on_hand) === 0,
+      String(state.stock_on_hand),
+    )
+    ok(
+      '*** and still did not touch average cost ***',
+      toNum(state.average_cost) === 0,
+      String(state.average_cost),
+    )
   }
 
   console.log('\n── Issuing ──')

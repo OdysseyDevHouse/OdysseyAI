@@ -3,6 +3,7 @@ import { requireCapability } from '@/lib/auth'
 import { getPurchaseDocument, productPositions } from '@/lib/site/purchaseDocuments'
 import { listSuppliers } from '@/lib/site/suppliers'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
+import { listLocations } from '@/lib/site/stockLocations'
 import { PageHeader } from '@/components/ui'
 import OrderScreen from '../../OrderScreen'
 
@@ -34,9 +35,12 @@ export default async function EditOrderPage({
     redirect(`/purchasing/${documentId}`)
   }
 
-  const [suppliers, vatRates, positions] = await Promise.all([
+  const [suppliers, vatRates, locations, positions] = await Promise.all([
     listSuppliers(siteId, { statuses: ['active'], limit: 200 }),
     listVatRates(siteId),
+    // Active only: there is no sense in ordering goods towards a location that
+    // has been closed, even though one may still hold stock from before.
+    listLocations(siteId, false, true),
     // Where these products stand NOW. The order snapshotted its costs when it
     // was raised, so without this every margin column would price against a
     // stale figure and the stock column would read zero.
@@ -73,6 +77,12 @@ export default async function EditOrderPage({
         }))}
         defaultVatRate={purchaseVat?.rate ?? 0}
         sellingVatRate={salesVat?.rate ?? 0}
+        locations={locations.map((l) => ({
+          id: l.id,
+          code: l.code,
+          name: l.name,
+          isMain: l.isMain,
+        }))}
         existing={{
           id: doc.id,
           supplierId: doc.supplierId,
@@ -95,7 +105,11 @@ export default async function EditOrderPage({
             discountPct: l.discountPct,
             discountAmount: l.discountAmount,
             vatRatePct: l.vatRatePct,
-            locationId: null,
+            // Whatever the buyer asked for. Null on an order raised before the
+            // column existed, and null again if that location has since been
+            // closed — either way the grid reads "— At receipt —" rather than
+            // showing a dropdown whose value has no option behind it.
+            locationId: locations.some((loc) => loc.id === l.locationId) ? l.locationId : null,
             currentAverage: positionFor.get(l.productId ?? -1)?.averageCost ?? 0,
             lastCost: positionFor.get(l.productId ?? -1)?.lastCost ?? 0,
             currentStock: positionFor.get(l.productId ?? -1)?.stockOnHand ?? 0,

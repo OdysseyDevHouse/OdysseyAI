@@ -68,6 +68,15 @@ import {
  * makes the same trade for the same reason.
  */
 
+/**
+ * A location a line can be sent to.
+ *
+ * Defined here rather than on either screen: both hand the same list to this
+ * grid, and two copies of the shape would drift the first time one gained a
+ * field. `isMain` is what a screen seeds a new line with.
+ */
+export type StockLocationOption = { id: number; code: string; name: string; isMain: boolean }
+
 /** What the grid needs to know about a line. The screens hold the rest. */
 export type GridLine = PurchaseLineValues & {
   key: string
@@ -160,12 +169,20 @@ export const RECEIVE_DEFAULT_COLUMNS: GridColumnId[] = [
   'lineTotalExcl',
 ]
 
-/** What an ordering screen opens with. No landed cost: nothing has arrived. */
+/**
+ * What an ordering screen opens with. No landed cost: nothing has arrived.
+ *
+ * 'location' is here for the same reason receiving opens with it — a buyer
+ * splitting an order across rooms should not have to find the column first —
+ * and it costs a single-location site nothing, because show() hides it when
+ * there is only one place for goods to go.
+ */
 export const ORDER_DEFAULT_COLUMNS: GridColumnId[] = [
   'ordered',
   'costExcl',
   'discountPct',
   'supplierCode',
+  'location',
   'onHand',
   'lineTotalExcl',
 ]
@@ -189,7 +206,7 @@ export default function PurchaseLineGrid({
   visible: ReadonlySet<string>
   /** Ordering shows what was asked for; receiving shows what turned up. */
   mode: 'order' | 'receive'
-  locations: { id: number; code: string; name: string }[]
+  locations: StockLocationOption[]
   /** Each line's share of the document discount, from purchaseDocumentFigures. */
   documentDiscounts: number[]
   /** Each line's share of freight, from purchaseDocumentFigures. */
@@ -470,6 +487,15 @@ export default function PurchaseLineGrid({
                         onPatch(line.key, { locationId: Number(e.target.value) || null })
                       }
                     >
+                      {/* An ORDER is allowed to leave this blank — it states an
+                          intention, and "wherever main is when it lands" is a
+                          real answer to give in January about February. A
+                          RECEIPT is not: the goods are physically going into a
+                          pile, and it has to be named. Orders raised before the
+                          column existed come back through here as blanks, so
+                          the option has to survive even once every new line is
+                          seeded with main. */}
+                      {mode === 'order' && <option value="">— At receipt —</option>}
                       {locations.map((loc) => (
                         <option key={loc.id} value={loc.id}>
                           {loc.code}

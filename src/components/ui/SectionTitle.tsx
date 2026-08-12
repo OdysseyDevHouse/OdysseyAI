@@ -11,10 +11,10 @@ import type { ReactNode } from 'react'
  * Distinct from <CardHeader>, which carries a description and an action and is
  * used for cards that are a screen in their own right.
  *
- * The heading wears a brand-rule line across the top of the card and a brand
- * title, so a long stack of sections reads as a set of distinct blocks. That is
- * the default across the app; tone="default" drops back to a plain ink heading
- * for the rare card that should not draw the eye.
+ * The heading marks its card with a brand-rule line down the card's left edge,
+ * so a long stack of sections reads as a set of distinct blocks. That is the
+ * default across the app; tone="default" drops the rule for the rare card that
+ * should not draw the eye.
  */
 export function SectionTitle({
   icon,
@@ -26,26 +26,21 @@ export function SectionTitle({
   icon?: ReactNode
   children: ReactNode
   action?: ReactNode
-  /** 'default' opts out of the brand rule and title. */
+  /** 'default' opts out of the brand rule. */
   tone?: 'default' | 'brand'
 }) {
   const brand = tone === 'brand'
   return (
     <div
-      className={[
-        'flex items-center justify-between gap-3 border-b border-border px-5 py-3',
-        // -mt/-mx pull the rule onto the card's own top edge, so it sits inside
-        // the rounded corners instead of leaving a square cap above them.
-        brand ? '-mx-px -mt-px rounded-t-card border-t-2 border-t-brand-rule' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
+      /* The card draws the rule down its own left edge and keys off this
+         marker — a border here could only be as tall as the heading. See
+         globals.css. */
+      data-brand-rule={brand ? '' : undefined}
+      className="flex items-center justify-between gap-3 border-b border-border px-5 py-3"
     >
-      <h2
-        className={`flex items-center gap-2.5 text-sm font-semibold ${
-          brand ? 'text-brand' : 'text-ink'
-        }`}
-      >
+      {/* Ink, not brand: the rule on the card's edge already marks the section,
+          and the tinted icon tile carries the colour. */}
+      <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink">
         {icon && (
           <span className="flex size-8 shrink-0 items-center justify-center rounded-control border border-brand/25 bg-brand-soft text-brand">
             {icon}
