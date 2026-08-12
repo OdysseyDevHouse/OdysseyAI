@@ -174,6 +174,16 @@ export interface CatalogSource {
   table: string
   /** TIMELINE only: the column the date range filters on. */
   dateColumn?: string
+  /**
+   * The join whose table `dateColumn` lives on, when it is not the primary one.
+   *
+   * A line-level source dates from its parent — a stock take line from the
+   * sheet, an adjustment line from the document. Naming the join here is what
+   * lets the parent be called anything; without it, only joins named 'doc' or
+   * 'exp' were found and every other source's date filter looked for the column
+   * on `t`, where it does not exist.
+   */
+  dateJoin?: string
   joins?: JoinUnit[]
   /** Filters the source starts with (e.g. finalised invoices only). */
   defaultFilters?: DefaultFilter[]
@@ -2212,6 +2222,378 @@ const SALE_MODIFIERS_SOURCE: CatalogSource = {
   ],
 }
 
+/* ── cash-up detail ────────────────────────────────────────────────────────── */
+
+/*
+ * The shifts source rolls a cash-up up to one expected, one counted and one
+ * variance. That is the right summary and the wrong grain for the question a
+ * manager actually asks, which is "which tender was short". These two sources
+ * are the detail underneath it, and together they are most of what v2's cash-up
+ * history carried as columns.
+ */
+
+const SHIFT_JOIN: JoinUnit = {
+  name: 'shift',
+  sql: 'INNER JOIN shifts sh ON sh.id = t.shift_id',
+  always: true,
+}
+
+const SHIFT_COUNTS_SOURCE: CatalogSource = {
+  key: 'shiftCounts',
+  label: 'Cash-up by tender',
+  description:
+    'One row per tender per cash-up — what was expected in the drawer, what was counted, and the difference.',
+  category: 'Operations',
+  permission: 'sales.cashup',
+  shape: 'timeline',
+  table: 'shift_counts',
+  /* The count has its own created_at, but a cash-up belongs to the day its
+     SHIFT opened — counting at one minute past midnight must not move the
+     figures into the next day's report. */
+  dateColumn: 'opened_at',
+  dateJoin: 'shift',
+  joins: [SHIFT_JOIN],
+  fields: [
+    { key: 'tenderName', label: 'Tender', type: 'text', expr: 't.tender_name', starter: true, group: FIELD_GROUPS.TENDER },
+    { key: 'tenderCode', label: 'Tender code', type: 'text', expr: 't.tender_code', group: FIELD_GROUPS.TENDER },
+    { key: 'expected', label: 'Expected', type: 'currency', expr: 't.expected', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    { key: 'counted', label: 'Counted', type: 'currency', expr: 't.counted', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'variance',
+      label: 'Variance',
+      type: 'currency',
+      expr: 't.variance',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Negative is short.',
+    },
+    { key: 'terminalCode', label: 'Till', type: 'text', expr: 'sh.terminal_code', starter: true, group: FIELD_GROUPS.PEOPLE },
+    { key: 'userName', label: 'Opened by', type: 'text', expr: 'sh.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'closedByName', label: 'Closed by', type: 'text', expr: 'sh.closed_by_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'openedAt', label: 'Opened at', type: 'datetime', expr: 'sh.opened_at', group: FIELD_GROUPS.DATES },
+    { key: 'closedAt', label: 'Closed at', type: 'datetime', expr: 'sh.closed_at', group: FIELD_GROUPS.DATES },
+    { key: 'varianceNote', label: 'Variance note', type: 'text', expr: 'sh.variance_note', group: FIELD_GROUPS.OTHER },
+    ...timeBuckets('opened_at', { hours: true }).map((f) => ({
+      ...f,
+      // Off the shift, for the reason dateColumn is.
+      expr: f.expr.replace(/t\.`opened_at`/g, 'sh.`opened_at`'),
+    })),
+  ],
+}
+
+const SHIFT_MOVEMENTS_SOURCE: CatalogSource = {
+  key: 'shiftMovements',
+  label: 'Drawer movements',
+  description:
+    'Money in and out of the drawer that is not a sale — payouts, pay-ins and cash drops.',
+  category: 'Operations',
+  permission: 'sales.cashup',
+  shape: 'timeline',
+  table: 'shift_movements',
+  dateColumn: 'created_at',
+  joins: [{ name: 'shift', sql: 'LEFT JOIN shifts sh ON sh.id = t.shift_id' }],
+  fields: [
+    { key: 'movedAt', label: 'When', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },
+    /* v2 had a report per kind — Payout history, Cashout history, Top-up
+       history. One source with the kind as a column answers all three, and a
+       filter turns it into any of them. */
+    enumField('movementType', 'Kind', 't.movement_type', ['payout', 'payin', 'drop'], {
+      starter: true,
+    }),
+    { key: 'amount', label: 'Amount', type: 'currency', expr: 't.amount', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    { key: 'reason', label: 'Reason', type: 'text', expr: 't.reason', starter: true, group: FIELD_GROUPS.OTHER },
+    { key: 'userName', label: 'By', type: 'text', expr: 't.user_name', starter: true, group: FIELD_GROUPS.PEOPLE },
+    { key: 'terminalCode', label: 'Till', type: 'text', expr: 'sh.terminal_code', needs: ['shift'], group: FIELD_GROUPS.PEOPLE },
+    { key: 'shiftOpenedAt', label: 'Cash-up opened', type: 'datetime', expr: 'sh.opened_at', needs: ['shift'], group: FIELD_GROUPS.DATES },
+    ...timeBuckets('created_at', { hours: true }),
+  ],
+}
+
+/* ── tips ──────────────────────────────────────────────────────────────────── */
+
+const TIPS_SOURCE: CatalogSource = {
+  key: 'tips',
+  label: 'Tips',
+  description: 'Every tip taken — how it arrived, who it belongs to, and on which tender.',
+  category: 'Operations',
+  permission: 'sales.cashup',
+  shape: 'timeline',
+  table: 'sales_tips',
+  dateColumn: 'created_at',
+  joins: [
+    { name: 'doc', sql: 'LEFT JOIN sales_documents d ON d.id = t.document_id' },
+    { name: 'tender', sql: 'LEFT JOIN tender_types tt ON tt.id = t.tender_type_id' },
+  ],
+  fields: [
+    { key: 'takenAt', label: 'When', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'userName', label: 'Whose tip', type: 'text', expr: 't.user_name', starter: true, group: FIELD_GROUPS.PEOPLE },
+    { key: 'amount', label: 'Tip', type: 'currency', expr: 't.amount', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    /* How it arrived. over_tender is change left behind, declared is typed in,
+       service is an automatic charge, manual is added afterwards — different
+       enough that a total mixing them answers nothing. */
+    enumField('source', 'How', 't.source', ['over_tender', 'declared', 'service', 'manual'], {
+      starter: true,
+    }),
+    { key: 'tenderName', label: 'Tender', type: 'text', expr: 'tt.name', needs: ['tender'], group: FIELD_GROUPS.TENDER },
+    { key: 'documentNumber', label: 'Document', type: 'document', expr: 'd.document_number', needs: ['doc'], group: FIELD_GROUPS.IDENTITY },
+    { key: 'documentTotal', label: 'Sale total (incl.)', type: 'currency', expr: 'd.total_incl', numeric: true, noTotal: true, needs: ['doc'], group: FIELD_GROUPS.MONEY },
+    /* Reassignment is an audit trail: a tip put on the wrong name and moved
+       leaves both names and a reason, which is the whole point of recording it
+       rather than editing the row. */
+    { key: 'reassignedByName', label: 'Reassigned by', type: 'text', expr: 't.reassigned_by_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'reassignedAt', label: 'Reassigned at', type: 'datetime', expr: 't.reassigned_at', group: FIELD_GROUPS.DATES },
+    { key: 'reassignReason', label: 'Reassign reason', type: 'text', expr: 't.reassign_reason', group: FIELD_GROUPS.OTHER },
+    ...timeBuckets('created_at', { hours: true }),
+  ],
+}
+
+/* ── stock takes ───────────────────────────────────────────────────────────── */
+
+const STOCK_TAKE_LINES_SOURCE: CatalogSource = {
+  key: 'stockTakeLines',
+  label: 'Stock take lines',
+  description:
+    'Every counted line — what the book said, what was counted, and the difference between them.',
+  category: 'Stock',
+  permission: 'stock.view',
+  shape: 'timeline',
+  table: 'stock_take_lines',
+  dateColumn: 'document_date',
+  dateJoin: 'take',
+  joins: [
+    { name: 'take', sql: 'INNER JOIN stock_takes st ON st.id = t.stock_take_id', always: true },
+    { name: 'location', sql: 'LEFT JOIN stock_locations loc ON loc.id = st.location_id' },
+    { name: 'product', sql: 'LEFT JOIN products pm ON pm.id = t.product_id' },
+    PRODUCT_DEPT_JOIN,
+  ],
+  /* A draft count is somebody halfway through a shelf. Only a posted sheet is
+     a fact about stock, and it is the only one that moved any. */
+  defaultFilters: [{ field: 'status', op: 'eq', value: 'posted' }],
+  fields: [
+    { key: 'documentNumber', label: 'Stock take', type: 'document', expr: 'st.document_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'documentDate', label: 'Date', type: 'date', expr: 'st.document_date', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'productCode', label: 'Product code', type: 'text', expr: 't.product_code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', starter: true, group: FIELD_GROUPS.IDENTITY },
+    {
+      key: 'department',
+      label: 'Department',
+      type: 'text',
+      expr: 'pdm.name',
+      needs: ['product', 'productDept'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      /* What the book said when the counter was handed the sheet. NOT what it
+         said when the sheet posted — that is postedQtyBefore, and the two
+         differ exactly when something sold mid-count. */
+      key: 'snapshotQty',
+      label: 'Book quantity',
+      type: 'number',
+      expr: 't.snapshot_qty',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'What the system held when the sheet was printed.',
+    },
+    { key: 'countedQty', label: 'Counted', type: 'number', expr: 't.counted_qty', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    {
+      key: 'postedQtyBefore',
+      label: 'Book at posting',
+      type: 'number',
+      expr: 't.posted_qty_before',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'What the system held when the sheet was posted — this is what the variance was measured against.',
+    },
+    { key: 'varianceQty', label: 'Variance', type: 'number', expr: 't.variance_qty', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    {
+      key: 'varianceValue',
+      label: 'Variance value',
+      type: 'currency',
+      expr: 't.variance_qty * COALESCE(t.unit_cost_excl, 0)',
+      numeric: true,
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    { key: 'unitCostExcl', label: 'Unit cost (excl.)', type: 'currency', expr: 't.unit_cost_excl', numeric: true, noTotal: true, permission: 'products.cost', group: FIELD_GROUPS.COST },
+    enumField('lineMode', 'How counted', 't.line_mode', ['count', 'topup', 'recount']),
+    { key: 'countedBy', label: 'Counted by', type: 'text', expr: 't.counted_by', group: FIELD_GROUPS.PEOPLE },
+    { key: 'countedAt', label: 'Counted at', type: 'datetime', expr: 't.counted_at', group: FIELD_GROUPS.DATES },
+    { key: 'lineNumber', label: 'Line number', type: 'number', expr: 't.line_number', numeric: true, noTotal: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    { key: 'locationName', label: 'Location', type: 'text', expr: 'loc.name', needs: ['location'], group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'takenBy', label: 'Sheet raised by', type: 'text', expr: 'st.user_name', group: FIELD_GROUPS.PEOPLE },
+    enumField('status', 'Status', 'st.status', ['draft', 'counting', 'posted', 'cancelled']),
+    enumField('scope', 'Scope', 'st.scope', ['full', 'department', 'brand', 'supplier', 'manual']),
+    ...timeBuckets('document_date').map((f) => ({
+      ...f,
+      expr: f.expr.replace(/t\.`document_date`/g, 'st.`document_date`'),
+    })),
+  ],
+}
+
+/* ── stock adjustments, with their reasons ─────────────────────────────────── */
+
+const ADJUSTMENT_LINES_SOURCE: CatalogSource = {
+  key: 'adjustmentLines',
+  label: 'Stock adjustment lines',
+  description:
+    'Every write-off and correction, with the reason it was given — what shrinkage cost and why.',
+  category: 'Stock',
+  permission: 'stock.view',
+  shape: 'timeline',
+  table: 'stock_adjustment_lines',
+  dateColumn: 'document_date',
+  dateJoin: 'adj',
+  joins: [
+    { name: 'adj', sql: 'INNER JOIN stock_adjustments adj ON adj.id = t.adjustment_id', always: true },
+    { name: 'location', sql: 'LEFT JOIN stock_locations loc ON loc.id = adj.location_id' },
+    /* The reason may be set per LINE or fall back to the document's. Both are
+       joined so COALESCE can prefer the line's, which is the one the person
+       chose for this particular write-off. */
+    { name: 'lineReason', sql: 'LEFT JOIN stock_adjustment_reasons lr ON lr.id = t.reason_id' },
+    { name: 'docReason', sql: 'LEFT JOIN stock_adjustment_reasons dr ON dr.id = adj.reason_id' },
+    { name: 'product', sql: 'LEFT JOIN products pm ON pm.id = t.product_id' },
+    PRODUCT_DEPT_JOIN,
+  ],
+  defaultFilters: [{ field: 'status', op: 'eq', value: 'posted' }],
+  fields: [
+    { key: 'documentNumber', label: 'Adjustment', type: 'document', expr: 'adj.document_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'documentDate', label: 'Date', type: 'date', expr: 'adj.document_date', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'productCode', label: 'Product code', type: 'text', expr: 't.product_code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', starter: true, group: FIELD_GROUPS.IDENTITY },
+    {
+      key: 'department',
+      label: 'Department',
+      type: 'text',
+      expr: 'pdm.name',
+      needs: ['product', 'productDept'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      /* THE column this source exists for. "How much did we lose to breakage
+         last quarter" is the question an adjustment document is raised to
+         answer, and until now nothing could group by it. Line reason first,
+         document reason behind it. */
+      key: 'reasonName',
+      label: 'Reason',
+      type: 'text',
+      expr: "COALESCE(lr.name, dr.name, 'Not recorded')",
+      needs: ['lineReason', 'docReason'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'reasonCode',
+      label: 'Reason code',
+      type: 'text',
+      expr: 'COALESCE(lr.code, dr.code)',
+      needs: ['lineReason', 'docReason'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    { key: 'qtyBefore', label: 'Quantity before', type: 'number', expr: 't.qty_before', numeric: true, group: FIELD_GROUPS.QUANTITIES },
+    { key: 'qtyChange', label: 'Adjusted by', type: 'number', expr: 't.qty_change', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES, hint: 'Negative is a write-off.' },
+    {
+      key: 'qtyAfter',
+      label: 'Quantity after',
+      type: 'number',
+      expr: 't.qty_before + t.qty_change',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'valueExcl',
+      label: 'Value (excl.)',
+      type: 'currency',
+      expr: 't.qty_change * COALESCE(t.unit_cost_excl, 0)',
+      numeric: true,
+      starter: true,
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    { key: 'unitCostExcl', label: 'Unit cost (excl.)', type: 'currency', expr: 't.unit_cost_excl', numeric: true, noTotal: true, permission: 'products.cost', group: FIELD_GROUPS.COST },
+    { key: 'userName', label: 'By', type: 'text', expr: 'adj.user_name', starter: true, group: FIELD_GROUPS.PEOPLE },
+    { key: 'locationName', label: 'Location', type: 'text', expr: 'loc.name', needs: ['location'], group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    { key: 'reference', label: 'Reference', type: 'text', expr: 'adj.reference', group: FIELD_GROUPS.OTHER },
+    enumField('status', 'Status', 'adj.status', ['draft', 'posted', 'cancelled']),
+    ...timeBuckets('document_date').map((f) => ({
+      ...f,
+      expr: f.expr.replace(/t\.`document_date`/g, 'adj.`document_date`'),
+    })),
+  ],
+}
+
+/* ── what a supplier charges for what ──────────────────────────────────────── */
+
+const PRODUCT_SUPPLIERS_SOURCE: CatalogSource = {
+  key: 'productSuppliers',
+  label: 'Supplier price list',
+  description:
+    'What each supplier charges for each product — the buying catalogue, not what was actually bought.',
+  category: 'Suppliers',
+  permission: 'purchasing.view',
+  /* A SNAPSHOT, which is what makes it different from purchaseLines. That
+     source can only show a product somebody has already bought in the period;
+     this one lists everything on the supplier's list whether or not it has ever
+     been ordered, which is what a buyer compares prices from. */
+  shape: 'snapshot',
+  table: 'product_suppliers',
+  joins: [
+    { name: 'supplier', sql: 'INNER JOIN suppliers s ON s.id = t.supplier_id', always: true },
+    { name: 'product', sql: 'INNER JOIN products pm ON pm.id = t.product_id', always: true },
+    PRODUCT_DEPT_JOIN,
+    {
+      name: 'price',
+      sql:
+        'LEFT JOIN product_prices ppr ON ppr.product_id = pm.id ' +
+        'AND ppr.price_structure_id = (SELECT id FROM price_structures WHERE is_default = 1 ORDER BY position LIMIT 1)',
+    },
+    /* The margin field derives an exclusive selling price, which needs the
+       product's own SELLING rate — not the purchase one, which may differ. */
+    { name: 'sellingVat', sql: 'LEFT JOIN vat_rates pvr ON pvr.id = pm.selling_vat_rate_id' },
+  ],
+  fields: [
+    { key: 'supplierName', label: 'Supplier', type: 'text', expr: 's.name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'productCode', label: 'Product code', type: 'text', expr: 'pm.code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'description', label: 'Description', type: 'text', expr: 'pm.description', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'supplierCode', label: 'Supplier’s code', type: 'text', expr: 't.supplier_code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'barcode', label: 'Barcode', type: 'text', expr: 'pm.barcode', group: FIELD_GROUPS.IDENTITY },
+    {
+      key: 'department',
+      label: 'Department',
+      type: 'text',
+      expr: 'pdm.name',
+      needs: ['productDept'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    { key: 'supplierCost', label: 'Supplier cost', type: 'currency', expr: 't.last_cost', numeric: true, noTotal: true, starter: true, permission: 'products.cost', group: FIELD_GROUPS.COST },
+    { key: 'packSize', label: 'Pack size', type: 'number', expr: 't.pack_size', numeric: true, noTotal: true, group: FIELD_GROUPS.QUANTITIES },
+    yesNo('isPreferred', 'Preferred supplier', 't.is_preferred'),
+    { key: 'currentSoh', label: 'Stock on hand', type: 'number', expr: 'pm.stock_on_hand', numeric: true, group: FIELD_GROUPS.QUANTITIES },
+    { key: 'ourAvgCost', label: 'Our average cost', type: 'currency', expr: 'pm.average_cost', numeric: true, noTotal: true, permission: 'products.cost', group: FIELD_GROUPS.COST },
+    { key: 'sellingPriceIncl', label: 'Selling price (incl.)', type: 'currency', expr: 'ppr.selling_price_incl', numeric: true, noTotal: true, needs: ['price'], group: FIELD_GROUPS.MONEY },
+    {
+      /* Margin against THIS supplier's price, which is the number a buyer is
+         comparing when two suppliers quote the same product. */
+      key: 'marginPct',
+      label: 'Margin % at this cost',
+      type: 'percent',
+      expr:
+        'CASE WHEN COALESCE(ppr.selling_price_incl, 0) = 0 THEN 0 ELSE ' +
+        '((ppr.selling_price_incl / NULLIF(1 + COALESCE(pvr.rate, 0) / 100, 0)) - COALESCE(t.last_cost, 0)) ' +
+        '/ NULLIF(ppr.selling_price_incl / NULLIF(1 + COALESCE(pvr.rate, 0) / 100, 0), 0) * 100 END',
+      numeric: true,
+      noTotal: true,
+      needs: ['price', 'sellingVat'],
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    { key: 'lastPurchaseDate', label: 'Last purchased', type: 'datetime', expr: 'pm.last_purchase_date', group: FIELD_GROUPS.DATES },
+    yesNo('isArchived', 'Archived', 'pm.is_archived'),
+  ],
+}
+
 /* ── the catalog ───────────────────────────────────────────────────────────── */
 
 export const SOURCES: CatalogSource[] = [
@@ -2228,6 +2610,12 @@ export const SOURCES: CatalogSource[] = [
   PURCHASE_LINES_SOURCE,
   EXPENSE_LINES_SOURCE,
   SHIFTS_SOURCE,
+  SHIFT_COUNTS_SOURCE,
+  SHIFT_MOVEMENTS_SOURCE,
+  TIPS_SOURCE,
+  STOCK_TAKE_LINES_SOURCE,
+  ADJUSTMENT_LINES_SOURCE,
+  PRODUCT_SUPPLIERS_SOURCE,
   ACTIVITY_SOURCE,
 ]
 

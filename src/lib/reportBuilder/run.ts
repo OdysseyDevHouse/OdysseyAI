@@ -414,9 +414,17 @@ function buildWhere(
  * The expression the date range filters on. For a line-level source the date
  * lives on the parent document, so the catalog's `dateColumn` is qualified with
  * the joined alias rather than `t`.
+ *
+ * Which join is the parent is DECLARED (`dateJoin`) rather than guessed from a
+ * hardcoded pair of names. It used to look only for 'doc' or 'exp', so a source
+ * whose parent join was called anything else silently qualified the date with
+ * `t` and every one of its fields failed with "Unknown column 't.<date>'" — the
+ * whole source unusable, for a naming convention nothing stated.
  */
 function dateColumnExpr(source: CatalogSource): string {
-  const parentAlias = source.joins?.find((j) => j.name === 'doc' || j.name === 'exp')
+  const parentAlias = source.joins?.find((j) =>
+    source.dateJoin ? j.name === source.dateJoin : j.name === 'doc' || j.name === 'exp',
+  )
   if (parentAlias) {
     const m = /JOIN\s+\S+\s+(\w+)\s+ON/.exec(parentAlias.sql)
     if (m) return `${m[1]}.\`${source.dateColumn}\``
