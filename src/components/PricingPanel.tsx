@@ -185,7 +185,7 @@ export default function PricingPanel({
     <div className="flex flex-col gap-4">
       {/* ── Cost price & taxes ───────────────────────────────────────── */}
       <Card>
-        <SectionTitle tone="brand" icon={<Coins size={16} />}>Cost price &amp; TAXES</SectionTitle>
+        <SectionTitle icon={<Coins size={16} />}>Cost price &amp; TAXES</SectionTitle>
         <section className="flex flex-col gap-3 p-6">
           <div className="overflow-x-auto">
               <table className={`${TABLE} table-fixed`}>
@@ -420,7 +420,7 @@ export default function PricingPanel({
 
       {/* ── Selling price ────────────────────────────────────────────── */}
       <Card>
-        <SectionTitle tone="brand" icon={<Banknote size={16} />}>Selling price</SectionTitle>
+        <SectionTitle icon={<Banknote size={16} />}>Selling price</SectionTitle>
         <section className="flex flex-col gap-4 p-6">
           <SellingTable
             heading={storeName}

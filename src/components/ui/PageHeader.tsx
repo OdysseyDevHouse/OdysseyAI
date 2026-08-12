@@ -6,12 +6,19 @@ import { buttonClass } from './styles'
 /** Title block at the top of a screen. One per page, above everything else. */
 export function PageHeader({
   title,
+  status,
   subtitle,
   action,
   backHref,
   backLabel = 'Back',
 }: {
   title: string
+  /**
+   * A status chip sitting between the title and the subtitle — usually a
+   * <Badge>. For the state of the record being edited ("Draft", "Issued"),
+   * which the subtitle can only describe in prose and easily gets skimmed past.
+   */
+  status?: ReactNode
   subtitle?: string
   action?: ReactNode
   /**
@@ -40,6 +47,9 @@ export function PageHeader({
             as a second, competing heading. */}
         <div className="flex min-w-0 items-baseline gap-2.5">
           <h1 className="shrink-0 text-lg font-semibold text-ink">{title}</h1>
+          {/* `self-center` so a pill sits on the title's optical centre rather
+              than on its baseline, where its own padding would hang it low. */}
+          {status && <span className="shrink-0 self-center">{status}</span>}
           {subtitle && <p className="truncate text-sm text-muted">{subtitle}</p>}
         </div>
       </div>

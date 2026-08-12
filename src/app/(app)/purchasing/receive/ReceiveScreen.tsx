@@ -568,6 +568,11 @@ export default function ReceiveScreen({
           is reachable without scrolling past a delivery of forty lines. */}
       <PageHeader
         title="Receive goods"
+        /* The state as a chip, not only as prose. A receiver who opens a saved
+           draft is looking at an editor full of lines that have not moved any
+           stock, and a sentence in muted text beside the title is the first
+           thing skimmed past — the badge is what survives a glance. */
+        status={draftId ? <Badge tone="brand">Draft</Badge> : undefined}
         /* Says which of the two it is, now that a draft row in the list opens
            straight here: landing on an editor already full of lines, under a
            title that reads like a blank one, leaves the receiver wondering
@@ -786,12 +791,6 @@ export default function ReceiveScreen({
               <Icons.Plus size={16} />
               Add stock
             </Button>
-            {/* For a supplier who sends the delivery note as a file. It fills
-                this grid — nothing is received until the usual button. */}
-            <Button variant="ghost" onClick={() => setImportOpen(true)}>
-              <Icons.Upload size={16} />
-              Import
-            </Button>
           </div>
 
           {/* Most deliveries go to one place. Setting each line separately is
@@ -857,13 +856,52 @@ export default function ReceiveScreen({
         )}
       </Card>
 
-      {/* The totals, kept to the right-hand third under the grid. The two
-          buttons that used to sit beneath them are in the page header now, so
-          what remains here is the figure the invoice is checked against. */}
-      <div className="grid gap-4 xl:grid-cols-3">
-        <div className="xl:col-start-3">
-        <div className="flex flex-col gap-4">
-        <Card className="p-4">
+      {/* Under the grid: the state of the document on the left, what receiving
+          will do in the middle, and the figure the invoice is checked against
+          on the right. Three columns rather than one stacked third, so the
+          explanation sits BESIDE the total it explains instead of pushing it
+          down the page — on a laptop that difference is whether the invoice
+          total is on screen at the moment the button is pressed. `items-start`
+          so neither side stretches to the other's height. */}
+      <div className="grid items-start gap-4 xl:grid-cols-3">
+        {/* Status notes, centred in the space left of the totals. Kept out of
+            the header deliberately: they explain a disabled button a long way
+            up the page, and a hint that shouts from the title bar reads as an
+            error the receiver has not made yet. */}
+        <div className="flex flex-col items-center justify-center gap-2 self-center">
+          {/* Everything else that blocks the button is marked at its source —
+              the supplier field, a quantity box, a line's serial badge. An
+              empty delivery is the one state with nowhere to point. */}
+          {lines.length === 0 && (
+            <p className="text-center text-xs text-muted">Add what arrived.</p>
+          )}
+
+          {draftId && (
+            <p className="flex items-center gap-2 text-center text-xs text-muted">
+              <Icons.StatusSuccess size={15} className="shrink-0 text-success" />
+              Saved as a draft. Nothing has moved yet.
+            </p>
+          )}
+        </div>
+
+        {/* What the button is about to do, in the reading path between the
+            lines and the total — an informational tint rather than a plain
+            card, because it is a standing explanation and not a figure. */}
+        <Card className="flex gap-3 border-brand-soft bg-brand-soft/40 p-4">
+          <Icons.Info size={17} className="mt-0.5 shrink-0 text-brand" />
+          <div className="flex flex-col gap-2 text-xs text-muted">
+            <p>
+              Receiving moves stock in, blends the landed cost into each product&apos;s average,
+              and credits the supplier&apos;s account.
+            </p>
+            <p>It is the only thing in the system that changes average cost.</p>
+          </div>
+        </Card>
+
+        {/* The totals panel. A brand-tinted left edge so the one figure that
+            gets checked against the paper invoice is findable without reading
+            — it is the last thing looked at before posting. */}
+        <Card className="border-l-2 border-l-brand p-4">
           <dl className="flex flex-col gap-1.5 text-sm">
             <Row label="Goods (excl.)" value={formatMoney(totals.subtotalExcl)} />
             {totals.discountExcl > 0 && (
@@ -902,32 +940,6 @@ export default function ReceiveScreen({
             </div>
           )}
         </Card>
-
-        {/* Everything that blocks the button is marked at its source — the
-            supplier field, a quantity box, or a line's serial badge. The only
-            state with nowhere to point is an empty delivery. Kept here beside
-            the totals rather than in the header: it explains a disabled button
-            a long way up the page, and a hint that shouts from the title bar
-            reads as an error the receiver has not made yet. */}
-        {lines.length === 0 && (
-          <p className="text-center text-xs text-muted">Add what arrived.</p>
-        )}
-
-        {draftId && (
-          <p className="text-center text-xs text-muted">
-            Saved as a draft. Nothing has moved yet.
-          </p>
-        )}
-
-        <Card className="p-3">
-          <p className="text-xs text-muted">
-            Receiving moves stock in, blends the landed cost into each product&apos;s average, and
-            credits the supplier&apos;s account. It is the only thing in the system that changes
-            average cost.
-          </p>
-        </Card>
-        </div>
-      </div>
       </div>
       {/* Stays OPEN after each pick, so a delivery of fifteen lines is fifteen
           clicks rather than fifteen round trips through a button. Each pick
@@ -940,9 +952,26 @@ export default function ReceiveScreen({
         description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the delivery."
         size="lg"
         footer={
-          <Button variant="secondary" onClick={() => setPickerOpen(false)}>
-            Done
-          </Button>
+          <>
+            {/* For a supplier who sends the delivery note as a file. It lives
+                here rather than in the grid's toolbar because it answers the
+                same question the dialog does — how do lines get onto this
+                delivery — and the toolbar is for the two hands-on ways in.
+                Nothing is received until the usual button. */}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setPickerOpen(false)
+                setImportOpen(true)
+              }}
+            >
+              <Icons.Upload size={16} />
+              Import a file
+            </Button>
+            <Button variant="secondary" onClick={() => setPickerOpen(false)}>
+              Done
+            </Button>
+          </>
         }
       >
         <div className="flex flex-col gap-3">

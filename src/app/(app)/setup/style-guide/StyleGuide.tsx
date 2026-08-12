@@ -372,7 +372,13 @@ function SettingRowSection() {
         description="<SettingGroup /> + <SettingRow /> — a labelled setting with its control on the right. Use for any settings screen rather than laying out icon, label and control by hand."
       />
       <CardBody>
-        <SettingGroup title="Properties" description="What a group of settings is for.">
+        {/* tone="default" only because this demo sits inside the style guide's
+            own card — in a real screen a SettingGroup keeps the brand rule. */}
+        <SettingGroup
+          tone="default"
+          title="Properties"
+          description="What a group of settings is for."
+        >
           <SettingRow
             icon={<Icons.Eye size={16} />}
             label="A switch setting"
@@ -597,39 +603,30 @@ function SectionTitleSection() {
   return (
     <Card>
       <CardHeader
-        title="Section titles"
-        description="<SectionTitle icon tone action> — the heading bar inside a card that holds one section of a long form. Distinct from CardHeader, which belongs to a card that is a screen in its own right."
+        title="Card headings"
+        description="All three heading components wear a brand rule and a brand title by default, so a screen that mixes them still reads as one stack. Pass tone='default' to opt out."
       />
       <CardBody className="flex flex-col gap-4">
         <Card>
           <SectionTitle icon={<Icons.Info size={16} />}>Product overview</SectionTitle>
-          <div className="px-5 py-4 text-sm text-muted">tone=&quot;default&quot; — the standard heading.</div>
-        </Card>
-        <Card>
-          <SectionTitle tone="brand" icon={<Icons.Info size={16} />}>
-            Product overview
-          </SectionTitle>
           <div className="px-5 py-4 text-sm text-muted">
-            tone=&quot;brand&quot; — a brand-rule line across the top with a brand heading, so a stack
-            of sections reads as separate blocks. The rule has its own token, so it can be
-            deeper than the pale brand-soft the icon tile uses. Worn by the product screen
-            while it is tried out.
+            &lt;SectionTitle icon action&gt; — the heading bar inside a card that holds one
+            section of a long form. The icon sits in a pale brand-soft tile; the rule above it
+            uses its own deeper brand-rule token.
           </div>
         </Card>
         <Card>
           <CardHeader
-            tone="brand"
             title="Photographs"
-            description="CardHeader takes the same tone, so a screen that mixes the two headings still reads as one stack."
+            description="A card that is a screen in its own right — this one carries a description and can take an action."
           />
           <CardBody className="text-sm text-muted">
-            Use it on a card that carries a description or an action.
+            &lt;CardHeader title description action&gt;.
           </CardBody>
         </Card>
         <SettingGroup
-          tone="brand"
           title="Scale properties"
-          description="SettingGroup takes it too — the three heading components share the tone so a screen can use whichever fits and still look like one page."
+          description="A group of switches and inputs, each one a SettingRow."
         >
           <SettingRow
             icon={<Icons.Percent size={16} />}
@@ -639,6 +636,15 @@ function SectionTitleSection() {
             <span className="text-sm text-muted">—</span>
           </SettingRow>
         </SettingGroup>
+        <Card>
+          <SectionTitle tone="default" icon={<Icons.Info size={16} />}>
+            A quieter heading
+          </SectionTitle>
+          <div className="px-5 py-4 text-sm text-muted">
+            tone=&quot;default&quot; — no rule, ink title. Use it for a card nested inside another
+            card, where a second rule would compete with the outer one.
+          </div>
+        </Card>
       </CardBody>
     </Card>
   )

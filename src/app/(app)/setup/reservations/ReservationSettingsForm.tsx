@@ -102,7 +102,9 @@ export default function ReservationSettingsForm({
           title="Online bookings"
           description="The link you put on your website or a QR code on the door."
         />
-        <SettingGroup title="" description="">
+        {/* Nested inside the card above, which draws the heading and the rule.
+            tone="default" keeps this group from drawing a second one. */}
+        <SettingGroup tone="default" title="" description="">
           <SettingRow
             icon={<Icons.CalendarClock size={18} />}
             label="Take bookings online"

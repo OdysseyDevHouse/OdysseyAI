@@ -332,7 +332,7 @@ export default function ProductForm({
         <div className={tab === 'general' ? 'flex flex-col gap-4' : 'hidden'}>
           {/* ── Product overview ─────────────────────────────────────────── */}
           <Card>
-            <SectionTitle tone="brand" icon={<Info size={16} />}>Product overview</SectionTitle>
+            <SectionTitle icon={<Info size={16} />}>Product overview</SectionTitle>
             <div className="flex flex-col gap-5 p-6">
               <Field label="Description *">
                 <Input
@@ -423,7 +423,7 @@ export default function ProductForm({
 
           {/* ── Departments ──────────────────────────────────────────────── */}
           <Card>
-            <SectionTitle tone="brand" icon={<LayoutGrid size={16} />}>Departments</SectionTitle>
+            <SectionTitle icon={<LayoutGrid size={16} />}>Departments</SectionTitle>
             <div className="flex flex-col gap-4 p-6">
               {departments.length === 0 ? (
                 <p className="text-sm text-muted">
@@ -477,7 +477,7 @@ export default function ProductForm({
               is exactly the figure that hides 57 units sitting in a back
               warehouse. Stock lives in rooms; a store is the outer grouping. */}
           <Card>
-            <SectionTitle tone="brand" icon={<Warehouse size={16} />}>Inventory</SectionTitle>
+            <SectionTitle icon={<Warehouse size={16} />}>Inventory</SectionTitle>
             <LocationStockPanel
               isNew={isNew}
               stores={[
@@ -515,7 +515,7 @@ export default function ProductForm({
 
           {/* ── Product type ─────────────────────────────────────────────── */}
           <Card>
-            <SectionTitle tone="brand" icon={<Shapes size={16} />}>Product type</SectionTitle>
+            <SectionTitle icon={<Shapes size={16} />}>Product type</SectionTitle>
             <ProductTypePanel
               defaultValue={product?.productType ?? DEFAULT_PRODUCT_TYPE}
               onChange={setProductType}
@@ -568,7 +568,7 @@ export default function ProductForm({
             inputs, and dropping them would detach every instruction on save. */}
         <div className={tab === 'instructions' ? 'flex flex-col gap-4' : 'hidden'}>
           <Card>
-            <SectionTitle tone="brand" icon={<Lightbulb size={16} />}>Instructions</SectionTitle>
+            <SectionTitle icon={<Lightbulb size={16} />}>Instructions</SectionTitle>
             <InstructionsPanel
               groups={instructionGroups}
               attached={attachedInstructions}
@@ -581,7 +581,7 @@ export default function ProductForm({
             and dropping them would unlink every supplier on save. */}
         <div className={tab === 'suppliers' ? 'flex flex-col gap-4' : 'hidden'}>
           <Card>
-            <SectionTitle tone="brand" icon={<Truck size={16} />}>Suppliers</SectionTitle>
+            <SectionTitle icon={<Truck size={16} />}>Suppliers</SectionTitle>
             <ProductSuppliersPanel links={productSuppliers} />
           </Card>
         </div>
@@ -593,7 +593,7 @@ export default function ProductForm({
         {productType === 'recipe' && (
           <div className={tab === 'recipe' ? 'flex flex-col gap-4' : 'hidden'}>
             <Card>
-              <SectionTitle tone="brand" icon={<Shapes size={16} />}>Recipe</SectionTitle>
+              <SectionTitle icon={<Shapes size={16} />}>Recipe</SectionTitle>
               <RecipePanel
                 lines={recipeLines}
                 productId={product?.id ?? null}
@@ -616,7 +616,6 @@ export default function ProductForm({
           <div className={tab === 'refer' ? 'flex flex-col gap-4' : 'hidden'}>
             <Card>
               <SectionTitle
-                tone="brand"
                 icon={<ArrowLeftRight size={16} />}
                 action={
                   !isNew && (
@@ -651,7 +650,7 @@ export default function ProductForm({
         {isLinked && (
           <div className={tab === 'linked' ? 'flex flex-col gap-4' : 'hidden'}>
             <Card>
-              <SectionTitle tone="brand" icon={<Store size={16} />}>Linked stores</SectionTitle>
+              <SectionTitle icon={<Store size={16} />}>Linked stores</SectionTitle>
               <LinkedStoresPanel
                 stores={linkedStores}
                 currentSiteId={currentSiteId}
@@ -709,7 +708,7 @@ export default function ProductForm({
       {productType === 'serial' && (
         <div className={tab === 'serials' ? 'flex flex-col gap-4' : 'hidden'}>
           <Card>
-            <SectionTitle tone="brand" icon={<Barcode size={16} />}>Serial numbers</SectionTitle>
+            <SectionTitle icon={<Barcode size={16} />}>Serial numbers</SectionTitle>
             <SerialsPanel
               serials={serials}
               productId={product?.id ?? null}

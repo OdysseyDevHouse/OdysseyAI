@@ -11,21 +11,22 @@ import type { ReactNode } from 'react'
  * Distinct from <CardHeader>, which carries a description and an action and is
  * used for cards that are a screen in their own right.
  *
- * tone="brand" adds a brand-rule line across the top of the card and colours
- * the heading to match, so a long stack of sections reads as a set of tabs down
- * the page. Currently worn by the product screen only — it is being tried there
- * before the rest of the app follows.
+ * The heading wears a brand-rule line across the top of the card and a brand
+ * title, so a long stack of sections reads as a set of distinct blocks. That is
+ * the default across the app; tone="default" drops back to a plain ink heading
+ * for the rare card that should not draw the eye.
  */
 export function SectionTitle({
   icon,
   children,
   action,
-  tone = 'default',
+  tone = 'brand',
 }: {
   /** A 16px glyph from @/components/ui/icons. */
   icon?: ReactNode
   children: ReactNode
   action?: ReactNode
+  /** 'default' opts out of the brand rule and title. */
   tone?: 'default' | 'brand'
 }) {
   const brand = tone === 'brand'

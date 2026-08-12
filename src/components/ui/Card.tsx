@@ -19,7 +19,7 @@ export function CardHeader({
   description,
   action,
   className = '',
-  tone = 'default',
+  tone = 'brand',
 }: {
   title: ReactNode
   /** One line saying what this block is for — muted, sentence case. */
@@ -27,10 +27,10 @@ export function CardHeader({
   action?: ReactNode
   className?: string
   /**
-   * 'brand' draws a brand-rule line across the card's top edge and colours the
-   * title, matching <SectionTitle tone="brand">. Both exist so a screen that
-   * mixes the two headings reads as one stack rather than two. Worn by the
-   * product screen only for now.
+   * The brand rule and title are the default, matching <SectionTitle>, so a
+   * screen that mixes the two headings reads as one stack rather than two.
+   * 'default' opts out — use it for a card nested inside another card, where a
+   * second rule would compete with the outer one.
    */
   tone?: 'default' | 'brand'
 }) {

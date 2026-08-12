@@ -67,15 +67,14 @@ export function SettingGroup({
   title,
   description,
   children,
-  tone = 'default',
+  tone = 'brand',
 }: {
   title: string
   description?: string
   children: ReactNode
   /**
-   * 'brand' draws a brand-rule line along the top edge and colours the title, to
-   * match <SectionTitle tone="brand"> and <CardHeader tone="brand">. Worn by
-   * the product screen only for now.
+   * The brand rule and title are the default, matching <SectionTitle> and
+   * <CardHeader>. 'default' opts out.
    */
   tone?: 'default' | 'brand'
 }) {
