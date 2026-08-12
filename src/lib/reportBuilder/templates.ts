@@ -82,10 +82,26 @@ export const TEMPLATES: ReportTemplate[] = [
     permission: 'reports.view',
     spec: spec({
       source: 'saleLines',
-      groupFields: ['productCode', 'description'],
+      /* Department is a GROUP field, not a column: on a summarised report an
+         unaggregated text column takes defaultAgg, which for text is `count` —
+         it would have rendered "Count department" showing a row count. Grouping
+         by it is also free, since a product sits in one department. */
+      groupFields: ['lineDepartment', 'productCode', 'description'],
+      /* v2's Product performance, which carried the department, the cost and
+         the VAT beside the margin.
+         Stock on hand is NOT here. It is a live per-product figure, so summing
+         it multiplies the shop's stock by how often the product sold, and the
+         `max` that fixes the arithmetic labels the column "Highest stock on
+         hand now" — accurate and daft for a number that is the same on every
+         row. A store that wants it beside sales adds it as a grouping, where it
+         adds no rows and keeps its own name. stock-on-hand answers it plainly. */
       columns: [
         { field: 'qty', agg: 'sum' },
+        { field: 'lineCostExcl', agg: 'sum' },
+        { field: 'lineTotalExcl', agg: 'sum' },
+        { field: 'lineVat', agg: 'sum' },
         { field: 'lineTotalIncl', agg: 'sum' },
+        { field: 'discountIncl', agg: 'sum' },
         { field: 'grossProfit', agg: 'sum' },
         { field: 'grossProfitPct', agg: 'avg' },
       ],
@@ -102,8 +118,14 @@ export const TEMPLATES: ReportTemplate[] = [
     spec: spec({
       source: 'saleLines',
       groupFields: ['lineDepartment'],
+      /* Cost and excl. selling added, as v2's Department performance carried
+         them. Its "Turnover %" — each department's share of the total — has no
+         equivalent: a percent-of-grand-total column is not something the spec
+         model can express, and it is a known gap rather than an oversight. */
       columns: [
         { field: 'qty', agg: 'sum' },
+        { field: 'lineCostExcl', agg: 'sum' },
+        { field: 'lineTotalExcl', agg: 'sum' },
         { field: 'lineTotalIncl', agg: 'sum' },
         { field: 'grossProfit', agg: 'sum' },
         { field: 'grossProfitPct', agg: 'avg' },
@@ -122,10 +144,20 @@ export const TEMPLATES: ReportTemplate[] = [
     spec: spec({
       source: 'sales',
       groupFields: ['userName'],
+      /* Deliberately still on `sales` rather than `saleLines`, though that
+         source has no cost and so this report can never show margin.
+         `__rows` here is a BASKET count and `totalIncl avg` a real average
+         basket; on saleLines both would silently become line counts, which is
+         the wrong answer to the question this report asks.
+         v2's "Clerk performance" was a different report — one row per clerk AND
+         product — and is added separately as products-sold-per-clerk rather
+         than by bending this one out of shape. */
       columns: [
         { field: '__rows' },
         { field: 'totalIncl', agg: 'sum' },
         { field: 'totalIncl', agg: 'avg' },
+        { field: 'subtotalExcl', agg: 'sum' },
+        { field: 'vatTotal', agg: 'sum' },
         { field: 'discountTotal', agg: 'sum' },
       ],
       filters: [
@@ -177,14 +209,17 @@ export const TEMPLATES: ReportTemplate[] = [
     permission: 'reports.financial',
     spec: spec({
       source: 'saleLines',
-      groupFields: ['vatRatePct'],
+      /* Per DAY and rate, which is what a VAT return is assembled from — v2's
+         Daily TAXES report. Grouping by rate alone gives the period total, and
+         a store that wants only that removes the day column. */
+      groupFields: ['day', 'vatRatePct'],
       columns: [
         { field: 'lineTotalExcl', agg: 'sum' },
         { field: 'lineVat', agg: 'sum' },
         { field: 'lineTotalIncl', agg: 'sum' },
       ],
       filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'vatRatePct', dir: 'asc' },
+      sort: { key: 'day', dir: 'asc' },
     }),
   },
   {
@@ -195,13 +230,23 @@ export const TEMPLATES: ReportTemplate[] = [
     permission: 'reports.view',
     spec: spec({
       source: 'sales',
+      /* The columns the v2 invoice history carried. A store that only wants a
+         total and a name hides the rest — which is now a thing it can do. */
       columns: [
         { field: 'documentNumber' },
         { field: 'documentDate' },
         { field: 'docType' },
+        { field: 'status' },
         { field: 'customerName' },
+        { field: 'accountCode' },
         { field: 'userName' },
+        { field: 'terminalCode' },
+        /* The customer's own order number, which is what `reference` holds. */
+        { field: 'reference' },
+        { field: 'subtotalExcl' },
+        { field: 'vatTotal' },
         { field: 'discountTotal' },
+        { field: 'roundingAdj' },
         { field: 'totalIncl' },
       ],
       filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
@@ -216,16 +261,31 @@ export const TEMPLATES: ReportTemplate[] = [
     permission: 'reports.view',
     spec: spec({
       source: 'saleLines',
+      /* The widest report in the catalogue, deliberately: v2's detailed history
+         was the one people exported and pivoted, so it carries the identity,
+         the money and the margin rather than making each a separate report.
+         Cost and GP drop out for a role without products.cost. */
       columns: [
         { field: 'documentDate' },
         { field: 'documentNumber' },
         { field: 'customerName' },
+        { field: 'accountCode' },
+        { field: 'userName' },
+        { field: 'terminalCode' },
         { field: 'productCode' },
         { field: 'description' },
+        { field: 'lineDepartment' },
         { field: 'qty' },
         { field: 'unitPriceIncl' },
+        { field: 'vatRatePct' },
+        { field: 'discountPct' },
         { field: 'discountIncl' },
+        { field: 'lineTotalExcl' },
+        { field: 'lineVat' },
         { field: 'lineTotalIncl' },
+        { field: 'unitCostExcl' },
+        { field: 'lineCostExcl' },
+        { field: 'grossProfit' },
       ],
       filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
       sort: { key: 'documentDate', dir: 'desc' },
@@ -378,12 +438,18 @@ export const TEMPLATES: ReportTemplate[] = [
       source: 'products',
       // A stock list that stops at 5,000 is a stocktake sheet missing pages.
       limit: MAX_ROWS,
+      /* No cost columns, on purpose — this report is products.view so that
+         anyone counting a shelf may read it, and cost lives in stock-valuation
+         behind reports.financial. Max level added to complete the pair with
+         min, which v2's stock-on-hand carried. */
       columns: [
         { field: 'code' },
+        { field: 'barcode' },
         { field: 'description' },
         { field: 'department' },
         { field: 'stockOnHand' },
         { field: 'minStock' },
+        { field: 'maxStock' },
         { field: 'lastSoldDate' },
       ],
       filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
@@ -401,12 +467,19 @@ export const TEMPLATES: ReportTemplate[] = [
       // A price list is printed and worked through — a truncated one is wrong
       // in a way nobody notices until a shelf has no price.
       limit: MAX_ROWS,
+      /* v2's price list carried stock, cost and margin beside the price. The
+         cost columns drop out for a role without products.cost, which is why
+         this can stay a products.view report and still show them to a buyer. */
       columns: [
         { field: 'code' },
         { field: 'barcode' },
         { field: 'description' },
         { field: 'department' },
+        { field: 'stockOnHand' },
+        { field: 'lastCost' },
+        { field: 'averageCost' },
         { field: 'sellingPriceIncl' },
+        { field: 'marginPct' },
       ],
       filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
       sort: { key: 'description', dir: 'asc' },
@@ -441,7 +514,17 @@ export const TEMPLATES: ReportTemplate[] = [
     permission: 'stock.view',
     spec: spec({
       source: 'stockMovements',
-      groupFields: ['productCode', 'productDescription'],
+      /* Department joins the grouping rather than sitting as a column: a
+         product has one, and an unaggregated text column on a summarised
+         report silently renders as a COUNT. */
+      groupFields: ['productDepartment', 'productCode', 'productDescription'],
+      /* v2 showed an opening and a closing quantity here. Neither is offered,
+         and deliberately: stock_movements records qty_after per movement, so a
+         CLOSING balance would have to be "the last one in the period" and the
+         only aggregate that comes close is `max` — which is the period's PEAK,
+         a different number wearing the right label. The net change is the
+         honest figure this source can give, and stock-on-hand answers "what is
+         there now" without guessing. */
       columns: [
         { field: '__rows' },
         { field: 'qtyChange', agg: 'sum' },
@@ -464,6 +547,7 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'department' },
         { field: 'stockOnHand' },
         { field: 'minStock' },
+        { field: 'maxStock' },
         { field: 'shortfall' },
       ],
       filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
@@ -484,7 +568,9 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'description' },
         { field: 'department' },
         { field: 'stockOnHand' },
+        { field: 'lastSoldDate' },
         { field: 'daysSinceSold' },
+        { field: 'averageCost' },
         { field: 'stockValue' },
       ],
       filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
@@ -568,10 +654,26 @@ export const TEMPLATES: ReportTemplate[] = [
     permission: 'stock.view',
     spec: spec({
       source: 'stockMovements',
-      groupFields: ['userName', 'movementType'],
-      columns: [{ field: '__rows' }, { field: 'qtyChange', agg: 'sum' }, { field: 'movementValue', agg: 'sum' }],
+      /* One row per ADJUSTMENT, not per person — v2's grain, and the useful
+         one: "who adjusted what, when, and by how much" is the question this
+         report is opened to answer. The per-person rollup is a group away, and
+         product-movement already gives the per-product one.
+         The adjustment REASON is the column this still lacks; it lives in
+         stock_adjustments (100), which has no catalog source yet. */
+      columns: [
+        { field: 'movedAt' },
+        { field: 'productCode' },
+        { field: 'productDescription' },
+        { field: 'productDepartment' },
+        { field: 'userName' },
+        { field: 'qtyChange' },
+        { field: 'qtyAfter' },
+        { field: 'unitCostExcl' },
+        { field: 'movementValue' },
+        { field: 'note' },
+      ],
       filters: [{ field: 'movementType', op: 'eq', value: 'adjustment' }],
-      sort: { key: 'movementValue_sum', dir: 'asc' },
+      sort: { key: 'movedAt', dir: 'desc' },
     }),
   },
   {
@@ -762,6 +864,7 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'productCode' },
         { field: 'description' },
         { field: 'qtyReceived' },
+        { field: 'unitCostExcl' },
         { field: 'lineTotalExcl' },
       ],
       filters: [
@@ -963,8 +1066,12 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'userName' },
         { field: 'productCode' },
         { field: 'description' },
+        { field: 'lineDepartment' },
+        { field: 'qty' },
         { field: 'discountPct' },
         { field: 'discountIncl' },
+        { field: 'lineCostExcl' },
+        { field: 'lineTotalExcl' },
         { field: 'lineTotalIncl' },
       ],
       filters: [
