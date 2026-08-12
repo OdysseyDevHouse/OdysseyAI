@@ -107,6 +107,22 @@ export type Product = {
   lastPurchaseDate: Date | null
   lastSoldDate: Date | null
   lastAdjustDate: Date | null
+  /**
+   * When this product was last physically counted on a stock take.
+   *
+   * Separate from lastAdjustDate, which a posted take also stamps: one says
+   * somebody corrected the figure, the other says somebody walked the shelf.
+   * See 109_list_columns.sql.
+   */
+  lastStockTakeDate: Date | null
+  /**
+   * Reorder levels for the MAIN location — see PRODUCT_LEVELS_JOIN.
+   *
+   * Not the site total, and not this-or-any-location: levels are per location
+   * and a list row shows the main one. Zero when the product has no row there.
+   */
+  minStock: number
+  maxStock: number
 
   /* ── Where this row sits in the variant scheme ─────────────────────── */
   /**
@@ -198,6 +214,30 @@ const VARIANT_STOCK_SQL = `(
    WHERE child.parent_id = p.id AND child.is_archived = 0
 )`
 
+/*
+ * Reorder levels, from the MAIN location only.
+ *
+ * Levels are per location by design (025/028): a warehouse holding 500 and a
+ * shop floor holding 5 need different reorder points, and products.min_stock
+ * was dropped precisely so one number could not pretend to govern both.
+ *
+ * A list row is one line per product, so it cannot show a level per location —
+ * it has to pick one, and main is the one a person means when they ask without
+ * qualifying. This is the same join the report builder already uses to answer
+ * the same question (reportBuilder/catalog.ts), so the two agree rather than
+ * offering a store two different "minimum level" figures.
+ *
+ * A store that needs another location's levels reads them on the product's own
+ * Inventory tab, which shows every location at once.
+ */
+const PRODUCT_LEVELS_JOIN = `
+    LEFT JOIN product_location_stock pl
+           ON pl.product_id = p.id
+          AND pl.location_id = (
+                SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1
+              )
+`
+
 const SELECT_PRODUCT = `
   SELECT p.id, p.code, p.barcode, p.description, p.extra_description, p.product_type,
          p.is_manufactured,
@@ -217,10 +257,13 @@ const SELECT_PRODUCT = `
          p.scale_item, p.label_scale_item, p.fixed_price_scale, p.expires_in_days,
          p.created_at,
          p.last_edit_date, p.last_purchase_date, p.last_sold_date, p.last_adjust_date,
+         p.last_stock_take_date,
+         pl.min_stock AS min_stock, pl.max_stock AS max_stock,
          pv.rate AS purchase_vat_rate, sv.rate AS selling_vat_rate
     FROM products p
     LEFT JOIN vat_rates pv ON pv.id = p.purchase_vat_rate_id
     LEFT JOIN vat_rates sv ON sv.id = p.selling_vat_rate_id
+    ${PRODUCT_LEVELS_JOIN}
 `
 
 function mapProduct(
@@ -293,6 +336,9 @@ function mapProduct(
     lastPurchaseDate: (r.last_purchase_date as Date | null) ?? null,
     lastSoldDate: (r.last_sold_date as Date | null) ?? null,
     lastAdjustDate: (r.last_adjust_date as Date | null) ?? null,
+    lastStockTakeDate: (r.last_stock_take_date as Date | null) ?? null,
+    minStock: toNum(r.min_stock),
+    maxStock: toNum(r.max_stock),
 
     hasVariants: isParent,
     parentId: r.parent_id === null || r.parent_id === undefined ? null : Number(r.parent_id),

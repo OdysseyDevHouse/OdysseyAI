@@ -67,7 +67,11 @@ export function AccountsTable({
       cell: (a) => (
         <div className="flex items-center gap-2">
           <span className="text-muted">{a.subtypeLabel}</span>
-          {!a.isActive && <Badge tone="default">Hidden</Badge>}
+          {!a.isActive && (
+            <Badge dot tone="default">
+              Hidden
+            </Badge>
+          )}
         </div>
       ),
       sortValue: (a) => a.subtypeLabel ?? '',

@@ -12,11 +12,14 @@ import {
   Badge,
   DataTable,
   EmptyState,
+  Icons,
+  StatStrip,
   StatTile,
   Modal,
   Field,
   CurrencyInput,
-  Tabs,
+  SegmentedControl,
+  TableToolbar,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -138,6 +141,7 @@ export function PromisesClient({ promises }: { promises: PromiseRow[] }) {
       header: 'State',
       cell: (p) => (
         <Badge
+          dot
           tone={
             p.state === 'broken'
               ? 'danger'
@@ -169,23 +173,28 @@ export function PromisesClient({ promises }: { promises: PromiseRow[] }) {
         </Callout>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* StatStrip rather than a hand-rolled grid, so this strip keeps the
+          same gutters and breakpoints as every other one in the app. */}
+      <StatStrip columns={4}>
         <StatTile
           label="Open"
           value={String(open.length)}
           hint={formatMoney(open.reduce((sum, p) => sum + p.promisedAmount, 0))}
+          icon={<Icons.Wallet size={20} />}
         />
         <StatTile
           label="Due now"
           value={String(dueNow.length)}
           tone={dueNow.length > 0 ? 'warning' : 'default'}
           hint={dueNow.length > 0 ? 'check the bank first' : 'nothing due today'}
+          icon={<Icons.Clock size={20} />}
         />
         <StatTile
           label="Broken"
           value={String(broken.length)}
           tone={broken.length > 0 ? 'danger' : 'default'}
           hint={broken.length > 0 ? 'needs settling' : 'none outstanding'}
+          icon={<Icons.StatusFailure size={20} />}
         />
         {/* The record, not an opinion: the counts sit beside the rate so a
             perfect score over one promise cannot be mistaken for a long one. */}
@@ -194,8 +203,9 @@ export function PromisesClient({ promises }: { promises: PromiseRow[] }) {
           value={decided === 0 ? '—' : `${Math.round((keptCount / decided) * 100)}%`}
           tone={decided === 0 ? 'default' : keptCount / decided >= 0.8 ? 'positive' : 'warning'}
           hint={decided === 0 ? 'no promises settled yet' : `${keptCount} of ${decided} settled`}
+          icon={<Icons.StatusSuccess size={20} />}
         />
-      </div>
+      </StatStrip>
 
       <Card>
         <CardHeader
@@ -210,15 +220,30 @@ export function PromisesClient({ promises }: { promises: PromiseRow[] }) {
           }
         />
 
-        <Tabs
-          items={[
-            { value: 'open' as const, label: `Open (${open.length})` },
-            { value: 'history' as const, label: `History (${history.length})` },
-          ]}
-          value={tab}
-          onChange={setTab}
-          aria-label="Promise state"
-        />
+        {/* A segmented control, not Tabs: these slice ONE list of promises by
+            whether they are still live, which is what the segmented bar means.
+            The counts move into the count pills, which is what they are for. */}
+        <TableToolbar inCard>
+          <SegmentedControl
+            aria-label="Promise state"
+            value={tab}
+            onChange={setTab}
+            options={[
+              {
+                value: 'open' as const,
+                label: 'Open',
+                count: open.length || undefined,
+                icon: <Icons.Clock size={15} />,
+              },
+              {
+                value: 'history' as const,
+                label: 'History',
+                count: history.length || undefined,
+                icon: <Icons.StatusSuccess size={15} />,
+              },
+            ]}
+          />
+        </TableToolbar>
 
         {tab === 'open' ? (
           open.length === 0 ? (

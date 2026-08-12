@@ -383,6 +383,19 @@ export type AdjustmentLineInput = {
   qtyBefore?: number
   /** Signed. Negative writes stock off. */
   qtyChange: number
+  /**
+   * The figure that was COUNTED, when the line was captured that way.
+   *
+   * Set only by count mode, and it is what separates "there are none" from "I
+   * left this row blank" — both of which produce a zero delta when the pile is
+   * already zero. Without it the zero-delta guard below has no way to tell an
+   * answer from an omission, and counting an empty shelf was refused.
+   *
+   * Never stored: qty_change is still the authoritative signed figure, and
+   * qty_before already snapshots what was there. This only carries intent from
+   * the screen to the validator.
+   */
+  countedQty?: number | null
   unitCostExcl?: number
   reasonId?: number | null
   /**
@@ -427,9 +440,26 @@ export function validateAdjustment(input: AdjustmentInput): string | null {
   if (lines.some((l) => !Number.isFinite(l.qtyChange))) {
     return 'Every line needs a quantity.'
   }
-  // A line of zero is the one thing that looks captured and does nothing. It is
-  // refused rather than skipped so the person can see which row they left blank.
-  if (lines.some((l) => Math.abs(round(l.qtyChange, 3)) < 0.0005)) {
+  /*
+   * A zero line is refused, EXCEPT when it was counted.
+   *
+   * A blank row and a counted-empty shelf both come through as a zero delta
+   * when the pile is already zero, and they mean opposite things: one is a row
+   * someone forgot, the other is the answer "there are none". Refusing both
+   * made it impossible to confirm an empty shelf — the user tells the truth and
+   * the system rejects it.
+   *
+   * countedQty is what tells them apart: count mode always sets it, delta mode
+   * never does. So a counted zero is accepted and posts nothing, which is the
+   * correct outcome — the count agreed with the book.
+   */
+  if (
+    lines.some(
+      (l) =>
+        Math.abs(round(l.qtyChange, 3)) < 0.0005 &&
+        !Number.isFinite(l.countedQty as number),
+    )
+  ) {
     return 'Every line needs a quantity that is not zero — say how many were gained or lost.'
   }
 
@@ -814,6 +844,24 @@ export async function postAdjustment(
       for (const { line, before, cost, isSerial } of checked) {
         const qty = round(line.qtyChange, 3)
         const reasonLabel = line.reasonName ?? adjustment.reasonName ?? 'Stock adjustment'
+
+        /*
+         * A counted line that agreed with the book moves nothing.
+         *
+         * Reachable now that counting an empty shelf is allowed — "there are
+         * none" against a pile of none is a legitimate answer with a zero
+         * delta. A movement of zero would be a ledger row saying nothing
+         * happened, so the snapshot is written and the movement is not.
+         */
+        if (Math.abs(qty) < 0.0005) {
+          await tx.execute(
+            `UPDATE stock_adjustment_lines
+                SET qty_before = ?, unit_cost_excl = ?, movement_id = NULL
+              WHERE id = ?`,
+            [before.toFixed(3), cost.toFixed(4), line.id] as never,
+          )
+          continue
+        }
 
         if (isSerial) {
           const written = await writeOffSerialsTx(tx, actor, {

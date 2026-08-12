@@ -12,6 +12,7 @@ const DOC_LABELS: Record<string, string> = {
   quote: 'Quotes',
   sales_order: 'Sales orders',
   stock_adjustment: 'Stock adjustments',
+  job_card: 'Job cards',
 }
 
 /**

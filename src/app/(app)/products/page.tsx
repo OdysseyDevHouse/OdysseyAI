@@ -10,6 +10,9 @@ import { listGroups } from '@/lib/site/instructions'
 import { listLocations } from '@/lib/site/stockLocations'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
+import { listColumnsFor } from '@/lib/site/listColumns'
+import { PRODUCT_COLUMN_IDS, PRODUCT_DEFAULT_COLUMNS } from './columns'
+import ProductColumnsButton from './ProductColumnsButton'
 import {
   PageHeader,
   PageBody,
@@ -254,13 +257,40 @@ export default async function ProductsPage({
 
   /* Formatted on the server and passed as strings: a DATETIME arrives parsed
      as UTC, so a Date crossing into the client would be re-read in the
-     viewer's timezone. See formatDate above. */
-  const dates: Record<number, { created: string; edited: string }> = Object.fromEntries(
+     viewer's timezone. See formatDate above.
+
+     Every date the column catalogue offers is formatted whether or not it is
+     currently shown — six strings for fifty rows, against the alternative of
+     threading the visible set into this loop so a column can arrive blank the
+     first time somebody switches it on. */
+  const dates: Record<
+    number,
+    {
+      created: string
+      edited: string
+      lastSold: string
+      lastPurchase: string
+      lastAdjust: string
+      lastStockTake: string
+    }
+  > = Object.fromEntries(
     items.map((p) => [
       p.id,
-      { created: formatDate(p.createdAt), edited: formatDate(p.lastEditDate) },
+      {
+        created: formatDate(p.createdAt),
+        edited: formatDate(p.lastEditDate),
+        lastSold: formatDate(p.lastSoldDate),
+        lastPurchase: formatDate(p.lastPurchaseDate),
+        lastAdjust: formatDate(p.lastAdjustDate),
+        lastStockTake: formatDate(p.lastStockTakeDate),
+      },
     ]),
   )
+
+  /* The store's columns, or the list's own default when it has never chosen.
+     The device may narrow this further — see ProductListClient. */
+  const storeColumns =
+    (await listColumnsFor(siteId, 'products', PRODUCT_COLUMN_IDS)) ?? PRODUCT_DEFAULT_COLUMNS
 
   const typeLabel = productType
     ? PRODUCT_TYPES.find((t) => t.id === productType)!.name.replace(/ product$/i, '')
@@ -340,7 +370,17 @@ export default async function ProductsPage({
       />
 
       <PageBody>
-        <TableToolbar>
+        {/* Columns goes in the actions slot — right-aligned, beside the other
+            things you do TO the list, rather than in a strip of its own
+            between the toolbar and the table. */}
+        <TableToolbar
+          actions={
+            <ProductColumnsButton
+              storeColumns={storeColumns}
+              canSetColumns={can(capabilities, 'setup.edit')}
+            />
+          }
+        >
           <div className="w-80 max-w-full">
             <SearchBar
               action="/products"
@@ -432,6 +472,7 @@ export default async function ProductsPage({
             groupHrefs={groupHrefs}
             parentNames={parentNames}
             dates={dates}
+            storeColumns={storeColumns}
             /* Null inside a group: those rows are in the group's own size
                order, which the sort argument deliberately does not override. */
             sort={openGroup ? null : { key: sortKey, direction }}

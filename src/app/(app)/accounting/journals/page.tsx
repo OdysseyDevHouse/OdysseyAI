@@ -14,18 +14,25 @@ import {
   Input,
   TableToolbar,
   LinkSegmentedControl,
+  Icons,
 } from '@/components/ui'
 import { JournalClient } from './JournalClient'
 import { JournalsTable, type BatchRow } from './JournalsTable'
 
 export const dynamic = 'force-dynamic'
 
-/** The slices an auditor actually asks for — manual first among them. */
+/**
+ * The slices an auditor actually asks for — manual first among them.
+ *
+ * The glyphs name each entry's ORIGIN rather than a status: a journal somebody
+ * typed carries different weight from one a sale mirrored, and that difference
+ * is the whole reason this filter exists.
+ */
 const SOURCES = [
-  { value: 'all', label: 'All', source: null },
-  { value: 'manual', label: 'Manual', source: 'manual' },
-  { value: 'sale', label: 'Sales', source: 'sale' },
-  { value: 'grv', label: 'Purchases', source: 'grv' },
+  { value: 'all', label: 'All', source: null, icon: <Icons.LayoutGrid size={15} /> },
+  { value: 'manual', label: 'Manual', source: 'manual', icon: <Icons.Pencil size={15} /> },
+  { value: 'sale', label: 'Sales', source: 'sale', icon: <Icons.Receipt size={15} /> },
+  { value: 'grv', label: 'Purchases', source: 'grv', icon: <Icons.Truck size={15} /> },
 ] as const
 
 /**
@@ -73,6 +80,7 @@ export default async function JournalsPage({
     <>
       <PageHeader
         title="Journals"
+        icon={<Icons.ClipboardList size={18} />}
         subtitle={`${from} to ${to}`}
         action={
           <JournalClient
@@ -115,6 +123,7 @@ export default async function JournalsPage({
             options={SOURCES.map((s) => ({
               value: s.value,
               label: s.label,
+              icon: s.icon,
               href: href({ source: s.source }),
             }))}
           />

@@ -84,6 +84,7 @@ export default function ReferWizard({
   autoCode = false,
   supplierId,
   base,
+  groupMethod = null,
   onCreated,
 }: {
   open: boolean
@@ -116,10 +117,20 @@ export default function ReferWizard({
     purchaseVatRateId: number | null
     sellingVatRateId: number | null
   } | null
+  /**
+   * The method the base product's ladder is ALREADY on, if it is linked.
+   *
+   * The method belongs to the whole group of linked products, so a range built
+   * on top of an existing ladder joins that ladder's method rather than
+   * choosing one — the server enforces this either way (see
+   * setReferGroupMethod). Passing it here means the dropdown shows what will
+   * actually be used instead of an option that gets quietly overruled.
+   */
+  groupMethod?: ReferMethod | null
   onCreated?: (productIds: number[]) => void
 }) {
   const stamp = useMemo(() => Math.random().toString(36).slice(2, 7), [])
-  const [method, setMethod] = useState<ReferMethod>('normal')
+  const [method, setMethod] = useState<ReferMethod>(groupMethod ?? 'normal')
   const [rows, setRows] = useState<Row[]>(() => {
     const first = blankRow(0, stamp)
     if (base) {
@@ -290,10 +301,22 @@ export default function ReferWizard({
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-start gap-4">
-          <Field label="Refer method" hint={METHOD_HINT[method]} className="min-w-[22rem] flex-1">
+          <Field
+            label="Refer method"
+            hint={
+              groupMethod
+                ? `${METHOD_HINT[method]} Set on the Refer tab — the whole ladder shares one method.`
+                : METHOD_HINT[method]
+            }
+            className="min-w-[22rem] flex-1"
+          >
             <Select
               value={method}
               onChange={(e) => setMethod(e.target.value as ReferMethod)}
+              // Locked once the base is already linked: these rows join a
+              // ladder that has a method, and the server would overrule any
+              // other choice made here.
+              disabled={!!groupMethod}
               aria-label="Refer method"
             >
               <option value="normal">Normal refers — every pack holds its own stock</option>

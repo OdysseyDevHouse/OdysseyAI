@@ -11,12 +11,15 @@ import {
   Card,
   CardHeader,
   CardBody,
+  StatStrip,
   StatTile,
   EmptyState,
   Callout,
-  LinkTabs,
+  LinkSegmentedControl,
+  TableToolbar,
   Pagination,
   ButtonLink,
+  Icons,
 } from '@/components/ui'
 import { BuildRunButton } from './BuildRunButton'
 import { PositionsTable, type PositionRow } from './PositionsTable'
@@ -95,6 +98,7 @@ export default async function CreditPage({
     <>
       <PageHeader
         title="Collections"
+        icon={<Icons.HandCoins size={18} />}
         subtitle={`${summary.chaseable} account${summary.chaseable === 1 ? '' : 's'} worth chasing today`}
         action={<BuildRunButton hasDraft={draft !== undefined} draftId={draft?.id ?? null} />}
       />
@@ -136,12 +140,15 @@ export default async function CreditPage({
           </Callout>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* StatStrip rather than a hand-rolled grid, so this strip keeps the
+            same gutters and breakpoints as every other one in the app. */}
+        <StatStrip columns={4}>
           <StatTile
             label="Overdue"
             value={formatMoney(summary.overdueTotal)}
             tone={summary.overdueTotal > 0 ? 'warning' : 'default'}
             hint={`across ${summary.overdueAccounts} account${summary.overdueAccounts === 1 ? '' : 's'}`}
+            icon={<Icons.Coins size={20} />}
           />
           {/* The number that turns a report into a morning's work. */}
           <StatTile
@@ -152,6 +159,7 @@ export default async function CreditPage({
                 ? 'nothing is on hold or promised'
                 : `${summary.overdueAccounts - summary.chaseable} promised, paused or held`
             }
+            icon={<Icons.Phone size={20} />}
           />
           <StatTile
             label="Promised to us"
@@ -162,14 +170,16 @@ export default async function CreditPage({
                 ? `${summary.promisesBroken} already broken`
                 : `${summary.promisesDueThisWeek} due this week`
             }
+            icon={<Icons.Wallet size={20} />}
           />
           <StatTile
             label="Oldest debt"
             value={summary.worstDays === 0 ? '—' : `${summary.worstDays} days`}
             tone={summary.worstDays >= 90 ? 'danger' : summary.worstDays >= 60 ? 'warning' : 'default'}
             hint={summary.onHold > 0 ? `${summary.onHold} account on hold` : 'nothing on hold'}
+            icon={<Icons.Clock size={20} />}
           />
-        </div>
+        </StatStrip>
 
         <Card>
           <CardHeader
@@ -182,34 +192,53 @@ export default async function CreditPage({
             }
           />
 
-          {/* Every tab drops back to page one: staying on page 7 while
+          {/* A segmented control, not LinkTabs: these slice ONE list by risk
+              band, which is what the segmented bar means — tabs promise
+              different sections of a record. The counts move into the count
+              pills, which is what they are for.
+
+              The glyphs escalate rather than pass/fail: risk here is a scale,
+              so Bad takes the hard stop, Poor the warning, and Watch the clock
+              — an account that is only being kept an eye on.
+
+              Every segment drops back to page one: staying on page 7 while
               switching to a band with two accounts shows an empty table. */}
-          <LinkTabs
-            items={[
-              {
-                value: 'all',
-                label: `All (${summary.overdueAccounts})`,
-                href: href({ risk: null, page: null }),
-              },
-              {
-                value: 'bad',
-                label: `Bad (${summary.byRisk.bad.count})`,
-                href: href({ risk: 'bad', page: null }),
-              },
-              {
-                value: 'poor',
-                label: `Poor (${summary.byRisk.poor.count})`,
-                href: href({ risk: 'poor', page: null }),
-              },
-              {
-                value: 'watch',
-                label: `Watch (${summary.byRisk.watch.count})`,
-                href: href({ risk: 'watch', page: null }),
-              },
-            ]}
-            value={risk ?? 'all'}
-            aria-label="Risk band"
-          />
+          <TableToolbar inCard>
+            <LinkSegmentedControl
+              value={risk ?? 'all'}
+              aria-label="Risk band"
+              options={[
+                {
+                  value: 'all',
+                  label: 'All',
+                  count: summary.overdueAccounts || undefined,
+                  icon: <Icons.LayoutGrid size={15} />,
+                  href: href({ risk: null, page: null }),
+                },
+                {
+                  value: 'bad',
+                  label: 'Bad',
+                  count: summary.byRisk.bad.count || undefined,
+                  icon: <Icons.Ban size={15} />,
+                  href: href({ risk: 'bad', page: null }),
+                },
+                {
+                  value: 'poor',
+                  label: 'Poor',
+                  count: summary.byRisk.poor.count || undefined,
+                  icon: <Icons.StatusWarning size={15} />,
+                  href: href({ risk: 'poor', page: null }),
+                },
+                {
+                  value: 'watch',
+                  label: 'Watch',
+                  count: summary.byRisk.watch.count || undefined,
+                  icon: <Icons.Clock size={15} />,
+                  href: href({ risk: 'watch', page: null }),
+                },
+              ]}
+            />
+          </TableToolbar>
 
           {shown.length === 0 ? (
             <CardBody>

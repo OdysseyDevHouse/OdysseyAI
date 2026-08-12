@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listDocuments, DOC_LABELS, type SalesDocStatus } from '@/lib/site/salesDocuments'
@@ -54,6 +55,18 @@ const SLICE_LABELS: Record<Slice, string> = {
   finalised: STATUS_LABELS.finalised,
   cancelled: STATUS_LABELS.cancelled,
   all: 'All',
+}
+
+/**
+ * A glyph per slice, so the bar is findable by shape once someone has used the
+ * screen twice. They echo the outcome each slice holds — a worklist, a tick, a
+ * cancellation, everything — rather than being four decorative marks.
+ */
+const SLICE_ICONS: Record<Slice, ReactNode> = {
+  progress: <Icons.List size={15} />,
+  finalised: <Icons.StatusSuccess size={15} />,
+  cancelled: <Icons.StatusFailure size={15} />,
+  all: <Icons.LayoutGrid size={15} />,
 }
 
 /**
@@ -162,6 +175,7 @@ export default async function InvoicingPage({
     <>
       <PageHeader
         title="Invoicing"
+        icon={<Icons.FileText size={18} />}
         subtitle={`${total} ${total === 1 ? 'document' : 'documents'}`}
         action={canEdit ? <NewInvoiceButton /> : undefined}
       />
@@ -172,13 +186,14 @@ export default async function InvoicingPage({
             label="Today's takings"
             value={formatMoney(takings)}
             hint={`${todayDocs.length} sale${todayDocs.length === 1 ? '' : 's'}`}
-            icon={<Icons.Coins size={16} />}
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
           />
           <StatTile
             label="Documents"
             value={String(total)}
             hint="Matching the current filter"
-            icon={<Icons.Receipt size={16} />}
+            icon={<Icons.Receipt size={20} />}
           />
           <StatTile
             label="In progress"
@@ -217,6 +232,7 @@ export default async function InvoicingPage({
             options={SLICES.map((value) => ({
               value,
               label: SLICE_LABELS[value],
+              icon: SLICE_ICONS[value],
               href: filterHref({ status: value === 'progress' ? null : value }),
             }))}
           />

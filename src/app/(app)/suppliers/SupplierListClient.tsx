@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   BulkActionBar,
@@ -12,6 +12,8 @@ import {
   Icons,
   Input,
   LinkSegmentedControl,
+  Menu,
+  MenuItem,
   Modal,
   NumberInput,
   PrimaryLink,
@@ -112,10 +114,11 @@ export default function SupplierListClient({
           aria-label="Filter by status"
           value={activeStatus}
           options={[
-            { value: 'all', label: 'All', href: filters.allHref },
+            { value: 'all', label: 'All', icon: STATUS_ICONS.all, href: filters.allHref },
             ...filters.statuses.map((status) => ({
               value: status.value,
               label: status.label,
+              icon: STATUS_ICONS[status.value] ?? STATUS_ICONS.all,
               href: status.href,
             })),
           ]}
@@ -149,6 +152,24 @@ export default function SupplierListClient({
         selectedKeys={selected}
         onSelectionChange={setSelected}
         onRowClick={(row) => router.push(`/suppliers/${row.id}`)}
+        actions={(row) => (
+          <Menu
+            iconOnly
+            size="sm"
+            variant="bare"
+            triggerLabel={`Actions for ${row.name}`}
+            label={<Icons.MoreVertical size={16} />}
+          >
+            <MenuItem href={`/suppliers/${row.id}`}>
+              <Icons.Eye size={15} />
+              View supplier
+            </MenuItem>
+            <MenuItem href={`/suppliers/${row.id}/statement`}>
+              <Icons.FileText size={15} />
+              Statement
+            </MenuItem>
+          </Menu>
+        )}
         empty={
           !hasAny
             ? {
@@ -197,6 +218,19 @@ const STATUS_LABEL: Record<SupplierStatus, string> = {
   on_hold: 'On hold',
   inactive: 'Inactive',
   closed: 'Closed',
+}
+
+/**
+ * A glyph per account state, matching the customers list so the two registers
+ * read the same way. Keyed by plain string because the segment options arrive
+ * from the server as data, not as a typed status.
+ */
+const STATUS_ICONS: Record<string, ReactNode> = {
+  all: <Icons.LayoutGrid size={15} />,
+  active: <Icons.StatusSuccess size={15} />,
+  on_hold: <Icons.Ban size={15} />,
+  inactive: <Icons.Clock size={15} />,
+  closed: <Icons.StatusFailure size={15} />,
 }
 
 const COLUMNS: readonly Column<Supplier>[] = [
@@ -260,7 +294,9 @@ const COLUMNS: readonly Column<Supplier>[] = [
     sortValue: (row) => row.status,
     cell: (row) => (
       <span title={row.statusReason ?? undefined}>
-        <Badge tone={STATUS_TONE[row.status]}>{STATUS_LABEL[row.status]}</Badge>
+        <Badge dot tone={STATUS_TONE[row.status]}>
+          {STATUS_LABEL[row.status]}
+        </Badge>
       </span>
     ),
   },

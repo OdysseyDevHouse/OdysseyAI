@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { formatMoney } from '@/lib/decimals'
-import { Badge, DataTable, type Column } from '@/components/ui'
+import { Badge, DataTable, Icons, Menu, MenuItem, type Column } from '@/components/ui'
 
 /**
  * The ledger-entries table, as a client component.
@@ -86,6 +86,20 @@ export function JournalsTable({ rows }: { rows: BatchRow[] }) {
       columns={columns}
       rows={rows}
       getRowKey={(b) => b.id}
+      actions={(b) => (
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for journal ${b.journalNumber ?? `#${b.id}`}`}
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem href={`/accounting/journals/${b.id}`}>
+            <Icons.Eye size={15} />
+            View journal
+          </MenuItem>
+        </Menu>
+      )}
       empty={{
         title: 'No journals in this period',
         hint: 'Sales, purchases and expenses post here as they are captured. A manual journal is for corrections and anything the documents cannot express.',

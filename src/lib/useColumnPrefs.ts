@@ -24,6 +24,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
  * `ready` is exposed for the caller that needs to know the difference between
  * "the default" and "what this user chose", so a table can avoid animating
  * columns in on load.
+ *
+ * ── A STORE DEFAULT SITS UNDER THIS, NOT BESIDE IT ────────────────────────
+ *
+ * Some lists also let the STORE decide which columns belong — see
+ * lib/site/listColumns.ts and 109_list_columns.sql. That is not a competing
+ * mechanism and this hook needs no knowledge of it: the caller passes the
+ * store's set as `defaultVisible`, and everything below already does the right
+ * thing. The device layer becomes an override, and reset() lands on the
+ * store's choice rather than a hardcoded one.
+ *
+ * The two answer different questions and both are worth having. The store says
+ * which columns this business uses at all; the device says how many of them fit
+ * on the screen in front of you.
  */
 
 export type ColumnPrefs = {

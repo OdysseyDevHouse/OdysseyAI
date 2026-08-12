@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { requireCapability } from '@/lib/auth'
 import {
   listOrders,
@@ -17,6 +18,7 @@ import {
   StatTile,
   StatStrip,
   LinkSegmentedControl,
+  TableToolbar,
   Pagination,
   Icons,
 } from '@/components/ui'
@@ -25,6 +27,21 @@ import OrdersTable, { type OrderTableRow } from './OrdersTable'
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
+
+/**
+ * A glyph per fulfilment slice, echoing the outcome each one holds — everything,
+ * a worklist, in transit, part-way, arrived, called off. Six segments is at the
+ * top of what a bar can carry, and the shapes are what keep it scannable once
+ * the labels start blurring together.
+ */
+const FULFILMENT_ICONS: Record<FulfilmentStatus | 'all' | 'outstanding', ReactNode> = {
+  all: <Icons.LayoutGrid size={15} />,
+  outstanding: <Icons.List size={15} />,
+  open: <Icons.Truck size={15} />,
+  part_delivered: <Icons.Clock size={15} />,
+  delivered: <Icons.StatusSuccess size={15} />,
+  cancelled: <Icons.StatusFailure size={15} />,
+}
 
 function toFulfilment(value: unknown): FulfilmentStatus | 'outstanding' | undefined {
   const raw = String(value ?? '')
@@ -92,6 +109,7 @@ export default async function OrdersPage({
     <>
       <PageHeader
         title="Sales orders"
+        icon={<Icons.ListOrdered size={18} />}
         subtitle={`${total} order${total === 1 ? '' : 's'}`}
         action={
           <PrimaryLink href="/pos">
@@ -107,21 +125,22 @@ export default async function OrdersPage({
             label="Outstanding orders"
             value={String(openOrders.length)}
             hint="Still to be delivered"
-            icon={<Icons.ListOrdered size={16} />}
+            icon={<Icons.ListOrdered size={20} />}
             href={filterHref({ fulfilment: 'outstanding' })}
           />
           <StatTile
             label="Value committed"
             value={formatMoney(committed)}
             hint="Ordered but not yet invoiced"
-            icon={<Icons.Coins size={16} />}
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
           />
           <StatTile
             label="Past delivery date"
             value={String(late.length)}
             hint={late.length > 0 ? 'Customers are waiting' : 'Nothing overdue'}
             tone={late.length > 0 ? 'warning' : 'default'}
-            icon={<Icons.Clock size={16} />}
+            icon={<Icons.Clock size={20} />}
           />
           <StatTile
             label="Units reserved"
@@ -129,39 +148,52 @@ export default async function OrdersPage({
               openOrders.reduce((sum, o) => sum + (o.reservesStock ? o.qtyOutstanding : 0), 0),
             )}
             hint="Held off available stock"
-            icon={<Icons.Boxes size={16} />}
+            icon={<Icons.Boxes size={20} />}
           />
         </StatStrip>
 
-        {/* SearchBar carries its own page gutter, so back PageBody's out. */}
-        <div className="-mx-6 -my-3">
-          <SearchBar
-            action="/sales/orders"
-            defaultValue={params.q}
-            placeholder="Search by order number, customer or their order number…"
-            keep={{ fulfilment: params.fulfilment }}
-          />
-        </div>
-
-        <div>
+        {/* One toolbar row, filters left and search right — the same rhythm as
+            the invoice register. The search used to sit on its own line above,
+            negative-margined out of PageBody's gutter to line up, which left a
+            stray band of whitespace between the strip and the filters. */}
+        <TableToolbar
+          actions={
+            <div className="w-80">
+              <SearchBar
+                action="/sales/orders"
+                defaultValue={params.q}
+                placeholder="Search order number, customer or their order number…"
+                className="p-0"
+                keep={{ fulfilment: params.fulfilment }}
+              />
+            </div>
+          }
+        >
           <LinkSegmentedControl
             aria-label="Filter by fulfilment"
             value={fulfilment ?? 'all'}
             options={[
-              { value: 'all', label: 'All', href: filterHref({ fulfilment: null }) },
+              {
+                value: 'all',
+                label: 'All',
+                icon: FULFILMENT_ICONS.all,
+                href: filterHref({ fulfilment: null }),
+              },
               {
                 value: 'outstanding',
                 label: 'Outstanding',
+                icon: FULFILMENT_ICONS.outstanding,
                 href: filterHref({ fulfilment: 'outstanding' }),
               },
               ...FULFILMENT_STATUSES.map((value) => ({
                 value,
                 label: FULFILMENT_LABELS[value],
+                icon: FULFILMENT_ICONS[value],
                 href: filterHref({ fulfilment: value }),
               })),
             ]}
           />
-        </div>
+        </TableToolbar>
 
         <Card>
           <OrdersTable

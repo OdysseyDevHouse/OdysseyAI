@@ -25,6 +25,7 @@ import { SUBPAGE_LABELS, type SubpageHref } from '@/lib/nav'
  * a tile that renders with no icon.
  */
 export type HubIconName =
+  | 'Wrench'
   | 'Users'
   | 'KeyRound'
   | 'Store'

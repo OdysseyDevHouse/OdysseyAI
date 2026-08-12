@@ -1,20 +1,22 @@
-import Link from 'next/link'
 import { requireCapability } from '@/lib/auth'
 import { listQuotes, quoteSummary, lostReasons } from '@/lib/site/quotes'
 import { formatMoney } from '@/lib/decimals'
-import { today } from '@/lib/site/ledger'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
   PageBody,
+  ButtonLink,
   Card,
   CardHeader,
   CardBody,
+  StatStrip,
   StatTile,
   EmptyState,
-  LinkTabs,
+  LinkSegmentedControl,
+  TableToolbar,
   SearchBar,
   Pagination,
+  Icons,
 } from '@/components/ui'
 import { NewQuoteButton } from './NewQuoteButton'
 import { QuotesTable, type QuoteTableRow } from './QuotesTable'
@@ -82,16 +84,20 @@ export default async function QuotesPage({
     <>
       <PageHeader
         title="Quotes"
+        icon={<Icons.FileText size={18} />}
         subtitle={`${summary.openCount} awaiting a decision`}
         action={<NewQuoteButton />}
       />
 
       <PageBody>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* StatStrip rather than a hand-rolled grid, so this strip keeps the
+            same gutters and breakpoints as every other one in the app. */}
+        <StatStrip columns={4}>
           <StatTile
             label="Out for decision"
             value={formatMoney(summary.openValue)}
             hint={`${summary.openCount} quote${summary.openCount === 1 ? '' : 's'}`}
+            icon={<Icons.FileText size={20} />}
           />
           <StatTile
             label="Expiring this week"
@@ -102,12 +108,14 @@ export default async function QuotesPage({
                 ? `${summary.expiringSoon} worth a phone call`
                 : 'Nothing expiring soon'
             }
+            icon={<Icons.Clock size={20} />}
           />
           <StatTile
             label="Expired"
             value={formatMoney(summary.expiredValue)}
             tone={summary.expiredCount > 0 ? 'danger' : 'default'}
             hint={`${summary.expiredCount} never answered`}
+            icon={<Icons.StatusWarning size={20} />}
           />
           {/* The number an owner wants and rarely has. */}
           <StatTile
@@ -125,44 +133,110 @@ export default async function QuotesPage({
                 ? 'No quotes decided yet'
                 : `${summary.acceptedCount} won of ${summary.acceptedCount + summary.declinedCount} decided`
             }
+            iconTone="success"
+            icon={<Icons.StatusSuccess size={20} />}
           />
-        </div>
+        </StatStrip>
 
-        <Card>
-          <CardHeader
-            title="Quotes"
-            description="A quote reserves no stock and posts nothing — it is an offer until it is accepted."
-            action={<SearchBar
+        {/* A segmented control, not LinkTabs: these slice ONE list by state,
+            which is what the segmented bar means. Tabs say "different sections
+            of a record" — the wrong promise, and it read as a second page
+            heading stacked under the card's own title. The description that
+            title carried moves to the empty state, which is where a first-time
+            user actually needs telling what a quote is. */}
+        <TableToolbar
+          actions={
+            <div className="w-80">
+              <SearchBar
                 action="/sales/quotes"
                 defaultValue={params.q}
                 placeholder="Number, customer or reference…"
+                className="p-0"
                 keep={{ state: params.state }}
-              />}
-          />
-
-          <LinkTabs
-            items={[
-              { value: 'all', label: 'All', href: href({ state: null, page: null }) },
-              { value: 'open', label: `Open${summary.openCount ? ` (${summary.openCount})` : ''}`, href: href({ state: 'open', page: null }) },
-              { value: 'expired', label: 'Expired', href: href({ state: 'expired', page: null }) },
-              { value: 'accepted', label: 'Accepted', href: href({ state: 'accepted', page: null }) },
-              { value: 'declined', label: 'Lost', href: href({ state: 'declined', page: null }) },
-              { value: 'draft', label: 'Drafts', href: href({ state: 'draft', page: null }) },
-            ]}
-            value={state ?? 'all'}
+              />
+            </div>
+          }
+        >
+          <LinkSegmentedControl
             aria-label="Quote state"
+            value={state ?? 'all'}
+            options={[
+              {
+                value: 'all',
+                label: 'All',
+                icon: <Icons.LayoutGrid size={15} />,
+                href: href({ state: null, page: null }),
+              },
+              {
+                value: 'open',
+                label: 'Open',
+                count: summary.openCount || undefined,
+                icon: <Icons.Clock size={15} />,
+                href: href({ state: 'open', page: null }),
+              },
+              {
+                value: 'expired',
+                label: 'Expired',
+                icon: <Icons.StatusWarning size={15} />,
+                href: href({ state: 'expired', page: null }),
+              },
+              {
+                value: 'accepted',
+                label: 'Accepted',
+                icon: <Icons.StatusSuccess size={15} />,
+                href: href({ state: 'accepted', page: null }),
+              },
+              {
+                value: 'declined',
+                label: 'Lost',
+                icon: <Icons.StatusFailure size={15} />,
+                href: href({ state: 'declined', page: null }),
+              },
+              {
+                value: 'draft',
+                label: 'Drafts',
+                icon: <Icons.List size={15} />,
+                href: href({ state: 'draft', page: null }),
+              },
+            ]}
           />
+        </TableToolbar>
 
+        <Card>
           {items.length === 0 ? (
             <CardBody>
+              {/* Three different empties, and they want different things said:
+                  a missed search echoes the term, a filter offers to clear
+                  itself, and a genuinely empty register explains what a quote
+                  even is — which is the line the card's description used to
+                  carry, now shown to the one person who needs it. */}
               <EmptyState
-                title={params.q ? `Nothing matches "${params.q}"` : 'No quotes yet'}
+                icon={
+                  params.q ? <Icons.Search size={22} /> : <Icons.FileText size={22} />
+                }
+                title={
+                  params.q
+                    ? `Nothing matches “${params.q}”`
+                    : state
+                      ? 'Nothing in this slice'
+                      : 'No quotes yet'
+                }
                 hint={
                   params.q
-                    ? 'Try a different search.'
-                    : 'A quote is priced and captured exactly like an invoice — it just does not post until the customer accepts it.'
+                    ? 'Check the number, customer or reference, or clear the search.'
+                    : state
+                      ? 'No quotes are in this state right now.'
+                      : 'A quote reserves no stock and posts nothing — it is an offer until it is accepted, priced and captured exactly like an invoice.'
                 }
-                action={!params.q ? <NewQuoteButton /> : undefined}
+                action={
+                  params.q || state ? (
+                    <ButtonLink variant="secondary" href="/sales/quotes">
+                      {params.q ? 'Clear the search' : 'Show all quotes'}
+                    </ButtonLink>
+                  ) : (
+                    <NewQuoteButton />
+                  )
+                }
               />
             </CardBody>
           ) : (

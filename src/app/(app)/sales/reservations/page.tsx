@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
-import { Badge, PageBody, PageHeader, StatStrip, StatTile } from '@/components/ui'
+import { Badge, Icons, PageBody, PageHeader, StatStrip, StatTile } from '@/components/ui'
 import { createPublicReserveToken } from '@/lib/publicReserveToken'
 import { getReservationSettings, listReservations } from '@/lib/site/reservations'
 import { dateKey, dayLabel, dayOf } from '@/lib/reservationTypes'
@@ -46,8 +46,11 @@ export default async function ReservationsPage() {
 
   return (
     <>
+      {/* The header badge takes no dot: it is a COUNT of work waiting, not the
+          state of a record. The dot is reserved for status pills. */}
       <PageHeader
         title="Reservations"
+        icon={<Icons.CalendarClock size={18} />}
         subtitle="Tonight’s book, and every booking still to come."
         action={
           pending > 0 ? (
@@ -70,21 +73,26 @@ export default async function ReservationsPage() {
             value={pending.toLocaleString('en-ZA')}
             tone={pending > 0 ? 'warning' : 'default'}
             hint={pending === 1 ? '1 request to answer' : 'Requests to answer'}
+            icon={<Icons.StatusWarning size={20} />}
           />
           <StatTile
             label="Bookings today"
             value={bookingsToday.toLocaleString('en-ZA')}
             hint={dayLabel(todayKey)}
+            icon={<Icons.CalendarClock size={20} />}
           />
           <StatTile
             label="Covers today"
             value={coversToday.toLocaleString('en-ZA')}
             hint="People expected"
+            icon={<Icons.Users size={20} />}
           />
           <StatTile
             label="Seated now"
             value={seatedNow.toLocaleString('en-ZA')}
             hint="Parties in the room"
+            iconTone="success"
+            icon={<Icons.StatusSuccess size={20} />}
           />
         </StatStrip>
 

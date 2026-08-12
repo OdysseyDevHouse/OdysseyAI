@@ -106,6 +106,17 @@ const DYNAMIC = {
   '/departments/[id]': 'SELECT id FROM departments ORDER BY id DESC LIMIT 1',
   '/expenses/[id]': 'SELECT id FROM expenses ORDER BY id DESC LIMIT 1',
   '/instructions/[id]': 'SELECT id FROM instruction_groups ORDER BY id DESC LIMIT 1',
+  // A job WITH LINES first: the cost table, the billing badges and the totals
+  // panel are the bulk of this screen and none of them render on an empty job.
+  // ORDER BY rather than WHERE, so a site holding only bare jobs still gets
+  // checked. /jobs/[id]/edit inherits this id, being the longer route.
+  '/jobs/[id]':
+    'SELECT j.id FROM job_cards j' +
+    ' ORDER BY (SELECT COUNT(*) FROM job_card_lines l WHERE l.job_card_id = j.id) DESC, j.id DESC' +
+    ' LIMIT 1',
+  // The board is addressed by SLUG, not id — the column is named `id` here only
+  // because resolveRoute reads that one key off the row.
+  '/jobs/board/[slug]': 'SELECT slug AS id FROM job_boards WHERE is_active = 1 ORDER BY sort_order LIMIT 1',
   '/products/[id]': 'SELECT id FROM products ORDER BY id DESC LIMIT 1',
   // Finalised first, as with invoicing: this screen only renders its received
   // lines and supplier-invoice blocks once the document has been posted.

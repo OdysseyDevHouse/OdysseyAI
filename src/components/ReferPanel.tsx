@@ -27,6 +27,7 @@ import { searchProductsAction } from '@/app/(app)/products/pickerActions'
 import {
   addReferRungAction,
   removeReferRungAction,
+  setReferMethodAction,
 } from '@/app/(app)/products/referRangeActions'
 
 /**
@@ -51,6 +52,15 @@ import {
  * Pack sizes are typed in BASE UNITS — a case is "24", not "4 six-packs" —
  * because that is the only sane thing to type. The stored factor is relative
  * to the rung below and is derived server-side. See 103_refer_methods.sql.
+ *
+ * ── ONE METHOD PER LADDER ────────────────────────────────────────────────
+ *
+ * The refer method is stored per link, but it is chosen once for the whole
+ * ladder and shown here as one control rather than a column in the table. Set
+ * it on any rung and every linked product moves with it. A ladder running two
+ * methods at once takes stock in at one level and looks for it at another, so
+ * offering it per rung would only be offering a way to break the chain. The
+ * rule itself lives in referRange.ts — see setReferGroupMethod.
  */
 
 const money = (n: number) =>
@@ -86,15 +96,46 @@ export default function ReferPanel({
   const [code, setCode] = useState('')
   const [description, setDescription] = useState('')
   const [packSize, setPackSize] = useState(0)
-  const [method, setMethod] = useState<ReferMethod>(
-    (chain.find((r) => r.method)?.method ?? 'subtract') as ReferMethod,
-  )
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ProductPick[]>([])
   const [searching, startSearch] = useTransition()
 
   const top = chain.length ? chain[chain.length - 1] : null
   const base = chain.length ? chain[0] : null
+
+  // Read off the chain, not held in state: the server decides what the group
+  // is on, and a refused change must leave the control showing the truth
+  // rather than the option that was rejected.
+  const method: ReferMethod = chain.find((r) => r.method)?.method ?? 'subtract'
+
+  // A pack with stock on it blocks the switch, because the same figure means a
+  // different thing under each method. Said before the attempt rather than
+  // after it, so the control explains itself instead of just failing.
+  const holding = chain.filter((r, i) => i > 0 && r.stockOnHand !== 0)
+
+  // Forks are linked too, so they count towards what the change will touch —
+  // the ladder is the part that is SHOWN, not the whole of what moves.
+  const linkedCount = new Set([
+    ...chain.map((r) => r.productId),
+    ...chain.flatMap((r) => r.alsoDrawnOnBy.map((o) => o.productId)),
+  ]).size
+
+  function changeMethod(next: ReferMethod) {
+    if (!productId || next === method) return
+    startAction(async () => {
+      const result = await setReferMethodAction(productId, next)
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setChain(result.chain)
+      toast.success(
+        result.changed <= 1
+          ? 'Refer method changed'
+          : `Refer method changed on ${result.changed} linked products`,
+      )
+    })
+  }
 
   function search(next: string) {
     setQuery(next)
@@ -157,6 +198,27 @@ export default function ReferPanel({
     })
   }
 
+  /**
+   * Unlinks a pack that draws on this ladder without being on it.
+   *
+   * Same action as remove() — removeReferRung() re-reads the chain from the
+   * product it is given, so a fork is a rung of its OWN chain and closes up the
+   * same way. It only needs its own handler because a fork is not a ChainRung:
+   * the panel knows its id and name, not its stock or cost.
+   */
+  function removeFork(forkId: number, description: string) {
+    if (!productId) return
+    startAction(async () => {
+      const result = await removeReferRungAction(forkId, productId)
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setChain(result.chain)
+      toast.success(`${description} unlinked`)
+    })
+  }
+
   // Nothing linked yet: the chain has to start somewhere, and starting it means
   // saying what one of these IS. That is still the wizard's job — it creates
   // the base and the packs together — so this points at it rather than
@@ -186,6 +248,38 @@ export default function ReferPanel({
         <span className="text-ink">{base?.description}</span> is what the whole ladder is counted
         in.
       </p>
+
+      {/* One method for the whole ladder. Changing it here changes every
+          linked product — see the header comment. */}
+      <div className="flex flex-col gap-2 rounded-card border border-border p-4">
+        <Field
+          label="Refer method"
+          hint={METHOD_HINT[method]}
+          className="min-w-[20rem] max-w-2xl"
+        >
+          <Select
+            value={method}
+            onChange={(e) => changeMethod(e.target.value as ReferMethod)}
+            disabled={busy || holding.length > 0}
+            aria-label="Refer method for this ladder"
+          >
+            <option value="subtract">Subtract pack — only the base holds stock</option>
+            <option value="normal">Normal refers — each pack holds its own stock</option>
+          </Select>
+        </Field>
+        {holding.length > 0 ? (
+          <p className="text-sm text-warning">
+            {holding.map((r) => r.description).join(', ')} still{' '}
+            {holding.length === 1 ? 'has' : 'have'} stock on hand. Bring the pack sizes to zero to
+            change the method — that quantity means something different under each one.
+          </p>
+        ) : (
+          <p className="text-sm text-muted">
+            Applies to all {linkedCount} linked products. The method is how the ladder holds stock,
+            so every pack size on it has to agree.
+          </p>
+        )}
+      </div>
 
       <div className="overflow-x-auto">
         <table className={TABLE}>
@@ -257,20 +351,40 @@ export default function ReferPanel({
 
       {/* A fork: something draws on a rung without being part of the ladder
           above it. Named rather than hidden — the walk up can only follow one
-          branch, and a pack the user cannot see is a pack they cannot fix. */}
+          branch, and a pack the user cannot see is a pack they cannot fix.
+          Unlinkable from here for the same reason: naming a problem and then
+          offering no way to act on it just moves the work to another screen. */}
       {chain.some((r) => r.alsoDrawnOnBy.length > 0) && (
-        <div className="flex flex-col gap-2 rounded-card border border-warning bg-warning-soft p-4">
+        <div className="flex flex-col gap-3 rounded-card border border-warning bg-warning-soft p-4">
           <span className="text-sm font-medium text-ink">Not part of this ladder</span>
           {chain.flatMap((rung) =>
             rung.alsoDrawnOnBy.map((other) => (
-              <p key={other.productId} className="text-sm text-ink-2">
-                <Link href={`/products/${other.productId}`} className="text-brand hover:underline">
-                  {other.description}
-                </Link>{' '}
-                ({other.code}) also draws on {rung.description} at{' '}
-                <span className="numeric">{other.factor.toLocaleString('en-ZA')}</span> each. Two
-                packs drawing on the same one is allowed, but only this ladder is shown above.
-              </p>
+              <div key={other.productId} className="flex items-start justify-between gap-3">
+                <p className="text-sm text-ink-2">
+                  <Link
+                    href={`/products/${other.productId}`}
+                    className="text-brand hover:underline"
+                  >
+                    {other.description}
+                  </Link>{' '}
+                  ({other.code}) also draws on {rung.description} at{' '}
+                  <span className="numeric">{other.factor.toLocaleString('en-ZA')}</span> each. Two
+                  packs drawing on the same one is allowed, but only this ladder is shown above.
+                </p>
+                <Button
+                  type="button"
+                  variant="danger-ghost"
+                  size="sm"
+                  iconOnly
+                  disabled={busy}
+                  aria-label={`Unlink ${other.description}`}
+                  onClick={() =>
+                    removeFork(other.productId, other.description)
+                  }
+                >
+                  <Trash size={15} />
+                </Button>
+              </div>
             )),
           )}
         </div>
@@ -281,8 +395,9 @@ export default function ReferPanel({
         <div>
           <span className="text-sm font-medium text-ink">Add a bigger pack size</span>
           <p className="text-sm text-muted">
-            It sits on top of {top?.description}. Search for a product that already exists, or leave
-            the search empty and type a code to create one.
+            It sits on top of {top?.description} and joins the ladder&rsquo;s refer method. Search
+            for a product that already exists, or leave the search empty and type a code to create
+            one.
           </p>
         </div>
 
@@ -352,17 +467,6 @@ export default function ReferPanel({
               onChange={(e) => setPackSize(Number(e.target.value))}
               aria-label="New pack size"
             />
-          </Field>
-
-          <Field label="Refer method" hint={METHOD_HINT[method]} className="min-w-[20rem] flex-1">
-            <Select
-              value={method}
-              onChange={(e) => setMethod(e.target.value as ReferMethod)}
-              aria-label="Refer method for the new pack"
-            >
-              <option value="subtract">Subtract pack — only the base holds stock</option>
-              <option value="normal">Normal refers — this pack holds its own stock</option>
-            </Select>
           </Field>
 
           <Button

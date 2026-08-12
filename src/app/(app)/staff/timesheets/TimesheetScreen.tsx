@@ -160,14 +160,14 @@ export default function TimesheetScreen({
         <StatTile
           label="Ordinary"
           value={formatDuration(totals.ordinary)}
-          icon={<Icons.Clock size={16} />}
+          icon={<Icons.Clock size={20} />}
         />
         <StatTile
           label="Overtime"
           value={formatDuration(totals.overtime)}
           hint={`Paid at ${rates.overtime}× — BCEA s10`}
           tone={totals.overtime > 0 ? 'warning' : 'default'}
-          icon={<Icons.Clock size={16} />}
+          icon={<Icons.StatusWarning size={20} />}
         />
         <StatTile
           label="Sunday & holidays"
@@ -181,12 +181,12 @@ export default function TimesheetScreen({
               : `${rates.sundayOrdinary}–${rates.sunday}× — BCEA s16, s18`
           }
           tone={totals.premium > 0 ? 'warning' : 'default'}
-          icon={<Icons.CalendarRange size={16} />}
+          icon={<Icons.CalendarRange size={20} />}
         />
         <StatTile
           label="People"
           value={String(sheets.length)}
-          icon={<Icons.Users size={16} />}
+          icon={<Icons.Users size={20} />}
         />
       </StatStrip>
 
@@ -272,7 +272,9 @@ function PersonCard({
           mayApprove ? (
             fullyApproved ? (
               <div className="flex items-center gap-2">
-                <Badge tone="success">Approved</Badge>
+                <Badge dot tone="success">
+                  Approved
+                </Badge>
                 <Button variant="ghost" size="sm" disabled={pending} onClick={onUnapprove}>
                   Reopen
                 </Button>
@@ -332,7 +334,11 @@ function PersonCard({
                     ) : day.isSunday && day.minutes > 0 ? (
                       <Badge tone="warning">Sunday</Badge>
                     ) : null}
-                    {day.approved && <Badge tone="success">Approved</Badge>}
+                    {day.approved && (
+                      <Badge dot tone="success">
+                        Approved
+                      </Badge>
+                    )}
                   </div>
                 </td>
 
@@ -351,7 +357,15 @@ function PersonCard({
                               less {e.breakMinutes}m break
                             </span>
                           )}
-                          {e.endedAt === null && <Badge tone="warning">Open</Badge>}
+                          {/* Still clocked in — the one STATE on this row, so
+                              it takes the dot. "Public holiday", "Sunday" and
+                              "Entered" beside it classify the day or the
+                              entry's origin, and stay undotted. */}
+                          {e.endedAt === null && (
+                            <Badge dot tone="warning">
+                              Open
+                            </Badge>
+                          )}
                           {/* An amendment is visible on the row, not buried in
                               an audit screen — that is what makes it trusted. */}
                           {e.editedReason && (

@@ -13,6 +13,7 @@ import {
   TextLink,
   type Column,
 } from '@/components/ui'
+import { PRODUCT_TYPES } from '@/lib/productTypes'
 import type { listProducts, ProductSort } from '@/lib/site/products'
 
 type ProductRow = Awaited<ReturnType<typeof listProducts>>['items'][number]
@@ -22,6 +23,10 @@ type Empty = { title: string; hint?: string; icon?: React.ReactNode; action?: Re
 function defaultPrice(p: ProductRow) {
   return p.prices.find((x) => x.isDefault) ?? p.prices[0]
 }
+
+/* The column catalogue lives in ./columns — plain data both the server page
+   and this client table read. See the note there for why it is not declared
+   here beside the Column<T> array it describes. */
 
 /**
  * The product list table.
@@ -43,6 +48,7 @@ export default function ProductsTable({
   groupHrefs,
   parentNames,
   dates,
+  visibleColumns,
   sort,
   sortHrefs,
   selectedKeys,
@@ -77,7 +83,25 @@ export default function ProductsTable({
    * viewer's timezone and could render the day before. The server formats,
    * the client displays.
    */
-  dates: Record<number, { created: string; edited: string }>
+  dates: Record<
+    number,
+    {
+      created: string
+      edited: string
+      lastSold: string
+      lastPurchase: string
+      lastAdjust: string
+      lastStockTake: string
+    }
+  >
+  /**
+   * Which columns to render, by id.
+   *
+   * Resolved by the caller: the store's set from list_columns, narrowed by
+   * whatever this device chose. The permission gate is applied on top of it
+   * here and is not the caller's to weaken.
+   */
+  visibleColumns: ReadonlySet<string>
   /**
    * Which column the SERVER ordered by. The table is told rather than sorting
    * itself: it only holds one page of a catalogue, and re-sorting 50 of 4,000
@@ -142,6 +166,16 @@ export default function ProductsTable({
       ),
     },
     {
+      key: 'barcode',
+      header: 'Barcode',
+      cell: (p) =>
+        p.barcode ? (
+          <span className="numeric text-muted">{p.barcode}</span>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
+    },
+    {
       key: 'department',
       header: 'Department',
       cell: (p) => {
@@ -152,6 +186,16 @@ export default function ProductsTable({
           <span className="text-faint">—</span>
         )
       },
+    },
+    {
+      key: 'productType',
+      header: 'Type',
+      // The label, not the stored id: "Refer product" rather than "refer".
+      cell: (p) => (
+        <span className="text-muted">
+          {PRODUCT_TYPES.find((t) => t.id === p.productType)?.name ?? p.productType}
+        </span>
+      ),
     },
     {
       key: 'cost',
@@ -167,6 +211,32 @@ export default function ProductsTable({
         ),
     },
     {
+      key: 'costIncl',
+      header: 'Cost incl.',
+      numeric: true,
+      // Derived from the same figure the cost column shows, plus the PURCHASE
+      // VAT rate — which is not always the selling one (001_products.sql).
+      cell: (p) =>
+        p.hasVariants ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <span className="text-muted">{formatMoney(p.cost.effectiveIncl)}</span>
+        ),
+    },
+    {
+      key: 'sellExcl',
+      header: 'Selling excl.',
+      numeric: true,
+      cell: (p) => {
+        const price = p.hasVariants ? null : defaultPrice(p)
+        return price ? (
+          <span className="text-muted">{formatMoney(price.sellExcl)}</span>
+        ) : (
+          <span className="text-faint">—</span>
+        )
+      },
+    },
+    {
       key: 'price',
       header: 'Price incl.',
       numeric: true,
@@ -179,6 +249,22 @@ export default function ProductsTable({
           <span className="text-ink">{formatMoney(price.sellIncl)}</span>
         ) : (
           <span className="text-faint">—</span>
+        )
+      },
+    },
+    {
+      key: 'gpValue',
+      header: 'GP value',
+      numeric: true,
+      // The rand per unit, where GP % is the ratio. A 40% margin on a R6 item
+      // and on a R600 one are the same percentage and very different money.
+      cell: (p) => {
+        const price = p.hasVariants ? null : defaultPrice(p)
+        if (!price) return <span className="text-faint">—</span>
+        return price.profit < 0 ? (
+          <Badge tone="danger">{formatMoney(price.profit)}</Badge>
+        ) : (
+          <span className="text-muted">{formatMoney(price.profit)}</span>
         )
       },
     },
@@ -210,8 +296,16 @@ export default function ProductsTable({
       // minimum a warning one; normal stock stays a plain tabular figure.
       // On a group this is the total across its variants, so it answers the
       // question the row is actually asked: is there any of this shirt left.
+      //
+      // A NEGATIVE PILE SHOWS ITS FIGURE. "Out of stock" said the same thing
+      // for 0 and for -40, and they are different problems: an empty shelf is
+      // ordinary, a negative one means the count has been wrong for a while and
+      // is the row someone has to go and fix. Hiding the number behind two
+      // words is what let a product sit at -3 unnoticed.
       cell: (p) =>
-        p.stockOnHand <= 0 ? (
+        p.stockOnHand < 0 ? (
+          <Badge tone="danger">{formatQty(p.stockOnHand)}</Badge>
+        ) : p.stockOnHand === 0 ? (
           <Badge tone="danger">Out of stock</Badge>
         ) : p.belowMinimum ? (
           <Badge tone="warning">{formatQty(p.stockOnHand)}</Badge>
@@ -219,16 +313,83 @@ export default function ProductsTable({
           formatQty(p.stockOnHand)
         ),
     },
-    /* The two date columns appear only when the list is ordered by one of
-       them. Carried on every screen they would be twelve characters of grey
-       nobody reads; shown when they are the sort key, they are the evidence
-       for the order the rows are in — otherwise "sort by date created"
-       rearranges the catalogue for no visible reason. */
     {
-      key: 'created',
-      header: 'Created',
-      sortable: true,
-      cell: (p) => <span className="numeric text-muted">{dates[p.id]?.created || '—'}</span>,
+      key: 'maxDiscount',
+      header: 'Max disc. %',
+      numeric: true,
+      // Zero means "no discount allowed", which is a real setting rather than a
+      // blank — so it prints as 0 rather than a dash.
+      cell: (p) => <span className="text-muted">{p.maxDiscountPct.toFixed(1)}%</span>,
+    },
+    /* Levels are the MAIN location's — see PRODUCT_LEVELS_JOIN. A parent holds
+       no stock of its own, so it has no levels either. */
+    {
+      key: 'minStock',
+      header: 'Min level',
+      numeric: true,
+      cell: (p) =>
+        p.hasVariants ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <span className="text-muted">{formatQty(p.minStock)}</span>
+        ),
+    },
+    {
+      key: 'maxStock',
+      header: 'Max level',
+      numeric: true,
+      cell: (p) =>
+        p.hasVariants ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <span className="text-muted">{formatQty(p.maxStock)}</span>
+        ),
+    },
+    {
+      key: 'packSize',
+      header: 'Pack size',
+      numeric: true,
+      cell: (p) => <span className="text-muted">{formatQty(p.packSize)}</span>,
+    },
+    {
+      key: 'packDescription',
+      header: 'Pack desc.',
+      cell: (p) => <span className="text-muted">{p.packDescription || '—'}</span>,
+    },
+    {
+      key: 'packWeight',
+      header: 'Pack weight',
+      numeric: true,
+      cell: (p) => <span className="text-muted">{formatQty(p.packWeight)}</span>,
+    },
+    {
+      key: 'weightDescription',
+      header: 'Weight unit',
+      cell: (p) => <span className="text-muted">{p.weightDescription || '—'}</span>,
+    },
+    /* Dates. All formatted on the SERVER — see the `dates` prop. A column the
+       store has switched on is shown whether or not it is the sort key; the two
+       that predate the picker keep their old sort-follows behaviour, which is
+       handled in the filter below. */
+    {
+      key: 'lastSold',
+      header: 'Last sold',
+      cell: (p) => <span className="numeric text-muted">{dates[p.id]?.lastSold || '—'}</span>,
+    },
+    {
+      key: 'lastPurchase',
+      header: 'Last received',
+      cell: (p) => <span className="numeric text-muted">{dates[p.id]?.lastPurchase || '—'}</span>,
+    },
+    {
+      key: 'lastAdjust',
+      header: 'Last adjusted',
+      cell: (p) => <span className="numeric text-muted">{dates[p.id]?.lastAdjust || '—'}</span>,
+    },
+    {
+      key: 'lastStockTake',
+      header: 'Last stock take',
+      cell: (p) => <span className="numeric text-muted">{dates[p.id]?.lastStockTake || '—'}</span>,
     },
     {
       key: 'edited',
@@ -236,20 +397,41 @@ export default function ProductsTable({
       sortable: true,
       cell: (p) => <span className="numeric text-muted">{dates[p.id]?.edited || '—'}</span>,
     },
+    {
+      key: 'created',
+      header: 'Created',
+      sortable: true,
+      cell: (p) => <span className="numeric text-muted">{dates[p.id]?.created || '—'}</span>,
+    },
   ]
 
-  /* Sorting is the server's: the header hands the key back into the URL and the
-     page re-queries. A date column that is not the active sort is dropped, and
-     the cost pair still depends on the permission.
+  /* Which columns actually render.
+   *
+   * Three rules, and their ORDER is the point:
+   *
+   *   1. The permission. Cost, cost incl., GP value and GP % are gone for a
+   *      role without products.cost, and this is an AND over everything below —
+   *      a store preference can hide a cost column but must never reveal one.
+   *      This test comes first so no later rule can put it back.
+   *   2. The chosen set — the store's columns, possibly narrowed per device.
+   *   3. Created and Last modified keep their old behaviour when the store has
+   *      expressed no opinion: they follow the sort key, so ordering by a date
+   *      shows the evidence for the order. Once a store puts either in its own
+   *      set, that choice wins and the column stays put.
+   *
+   * `sort` is null inside a variant group, where the rows are in the group's
+   * own size order and no header may claim otherwise — so there the sort
+   * affordance comes off rather than pointing at an ordering that would be
+   * ignored. */
+  const COST_COLUMNS = new Set(['cost', 'costIncl', 'gpValue', 'gp'])
 
-     `sort` is null inside a variant group, where the rows are in the group's
-     own size order and no header may claim otherwise — so there the sort
-     affordance comes off rather than pointing at an ordering that would be
-     ignored. */
   const shown = columns.filter((c) => {
-    if (c.key === 'cost' || c.key === 'gp') return showCost
+    if (COST_COLUMNS.has(c.key) && !showCost) return false
+    if (visibleColumns.has(c.key)) return true
+    // Not chosen: the two legacy date columns may still earn their place by
+    // being what the list is ordered by.
     if (c.key === 'created' || c.key === 'edited') return sort?.key === c.key
-    return true
+    return false
   })
 
   return (

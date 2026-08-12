@@ -284,6 +284,187 @@ export async function referChain(siteId: number, productId: number): Promise<Cha
   })
 }
 
+/* ── The method belongs to the group, not to one link ─────────────────────
+ *
+ * The method column sits on each row of product_refers, so it is set up per
+ * stock code. But the thing it describes — where the stock actually lives — is
+ * a property of the whole family of linked products, not of one link in it.
+ *
+ * Under SUBTRACT PACK there is one pile at the base and every pack draws off
+ * it. Under NORMAL REFERS each pack has a pile of its own and larger packs get
+ * broken open to refill smaller ones. A ladder with one link set each way is
+ * not a mix of two sensible policies; it is a chain that receives stock at one
+ * level and looks for it at another. The case explodes into six-packs on
+ * receipt, but the six-pack was never given a pile, so the singles it should
+ * have refilled are counted in a place nothing sells from.
+ *
+ * So the method stays per stock code to set, and is kept uniform per group to
+ * store: changing it anywhere changes every link connected to it. The group is
+ * the CONNECTED COMPONENT of the link graph — up through targets, down through
+ * dependants, and across forks — not just the single ladder referChain() walks.
+ * A fork left behind on the old method is exactly the case above.
+ */
+
+/** How far the group walk will spread before it calls the graph broken. */
+const MAX_GROUP = 64
+
+/**
+ * Whether this product sits on a refer ladder at all — above or below.
+ *
+ * The product screen uses this to decide whether to offer the Refer tab, and it
+ * cannot use the product type to do it: the BASE of a ladder is a `normal`
+ * product on purpose, so a type check hides the ladder from the rung people
+ * open first. One indexed lookup on each side of the link, which is cheap
+ * enough to ask on every product page and returns false immediately for the
+ * vast majority that are on no ladder.
+ */
+export async function isOnReferLadder(siteId: number, productId: number): Promise<boolean> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT 1 AS hit FROM product_refers
+      WHERE product_id = ? OR target_id = ? LIMIT 1`,
+    [productId, productId],
+  )
+  return !!row
+}
+
+/**
+ * Every product connected to this one by refer links, in any direction.
+ *
+ * referChain() follows ONE ladder because that is what a person is editing.
+ * This follows all of them, because that is what the method has to cover: a
+ * case and a shrink-wrap both drawing on the same six-pack are one stock
+ * arrangement even though the chain walk can only show one branch.
+ *
+ * Breadth-first with a seen-set, so a cycle built before the guards existed
+ * terminates rather than hanging.
+ */
+export async function referGroupIds(siteId: number, productId: number): Promise<number[]> {
+  const seen = new Set<number>([productId])
+  let frontier = [productId]
+
+  while (frontier.length > 0 && seen.size <= MAX_GROUP) {
+    const placeholders = frontier.map(() => '?').join(',')
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT product_id, target_id FROM product_refers
+        WHERE product_id IN (${placeholders}) OR target_id IN (${placeholders})`,
+      [...frontier, ...frontier],
+    )
+
+    const next: number[] = []
+    for (const r of rows) {
+      for (const id of [Number(r.product_id), Number(r.target_id)]) {
+        if (id > 0 && !seen.has(id)) {
+          seen.add(id)
+          next.push(id)
+        }
+      }
+    }
+    frontier = next
+  }
+
+  return [...seen]
+}
+
+/**
+ * The method the group is already running on, or null when nothing is linked.
+ *
+ * Mixed groups should not exist — this module is what stops them — but a site
+ * that set links up before the group rule, or by hand, can have one. The
+ * majority wins so the answer is stable, with subtract breaking a tie because
+ * it is the column default and therefore what an unmigrated site behaves as.
+ */
+export async function referGroupMethod(
+  siteId: number,
+  productId: number,
+): Promise<ReferMethod | null> {
+  const ids = await referGroupIds(siteId, productId)
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT method, COUNT(*) AS n FROM product_refers
+      WHERE product_id IN (${ids.map(() => '?').join(',')})
+      GROUP BY method`,
+    ids,
+  )
+  if (rows.length === 0) return null
+
+  let best: ReferMethod = 'subtract'
+  let bestCount = -1
+  for (const r of rows) {
+    const method: ReferMethod = String(r.method) === 'normal' ? 'normal' : 'subtract'
+    const n = Number(r.n ?? 0)
+    // Strictly greater, and subtract is seeded first, so a tie keeps subtract.
+    if (n > bestCount) {
+      best = method
+      bestCount = n
+    }
+  }
+  return best
+}
+
+/**
+ * Switches the whole group of linked products to one refer method.
+ *
+ * The stock guard saveRefer() applies to a single product is applied to every
+ * product in the group here, and for the same reason: a quantity on hand means
+ * something different under each method. Ten cases under normal refers is ten
+ * cases; the same ten under subtract pack is a label on 240 singles that were
+ * never received. Reinterpreting them would either invent stock or strand it.
+ *
+ * The BASE is exempt. It is an ordinary stocked product under both methods —
+ * its pile is the same pile either way — and refusing on it would make the
+ * change impossible for any shop that has ever received the thing it sells.
+ * Only the packs, whose figures change meaning, have to be empty.
+ */
+export async function setReferGroupMethod(
+  siteId: number,
+  productId: number,
+  method: ReferMethod,
+): Promise<{ ok: true; changed: number } | { ok: false; error: string }> {
+  const wanted: ReferMethod = method === 'normal' ? 'normal' : 'subtract'
+
+  const ids = await referGroupIds(siteId, productId)
+  const links = await siteQuery<Row>(
+    siteId,
+    `SELECT f.product_id, f.method, p.description, p.stock_on_hand
+       FROM product_refers f
+       JOIN products p ON p.id = f.product_id
+      WHERE f.product_id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  )
+  if (links.length === 0) {
+    return { ok: false, error: 'This product is not linked to anything yet.' }
+  }
+
+  const changing = links.filter(
+    (r) => (String(r.method) === 'normal' ? 'normal' : 'subtract') !== wanted,
+  )
+  if (changing.length === 0) return { ok: true, changed: 0 }
+
+  const held = changing.find((r) => Number(r.stock_on_hand ?? 0) !== 0)
+  if (held) {
+    const onHand = Number(held.stock_on_hand ?? 0)
+    return {
+      ok: false,
+      error:
+        `${String(held.description ?? 'A pack size')} still has ${onHand.toLocaleString('en-ZA')} on hand. ` +
+        `Bring the pack sizes to zero before changing the refer method, because that quantity means ` +
+        `something different under each one.`,
+    }
+  }
+
+  await siteTransaction(siteId, async (tx) => {
+    await tx.execute(
+      `UPDATE product_refers SET method = ?
+        WHERE product_id IN (${ids.map(() => '?').join(',')})`,
+      [wanted, ...ids] as never,
+    )
+  })
+
+  return { ok: true, changed: changing.length }
+}
+
 export type AddRungInput = {
   /** The rung the new one sits directly on top of. */
   belowId: number
@@ -296,6 +477,13 @@ export type AddRungInput = {
   packSize: number
   packDescription?: string | null
   costExcl?: number
+  /**
+   * What the new link should use when the group has no method yet.
+   *
+   * Ignored once anything is linked: the group's own method wins, because a
+   * rung joining a ladder joins the arrangement it is already running. See
+   * setReferGroupMethod above.
+   */
   method: ReferMethod
 }
 
@@ -329,6 +517,12 @@ export async function addReferRung(
       error: `${input.packSize} is not a whole number of ${basePack}s, so it could not be broken down. Use a pack size that divides evenly.`,
     }
   }
+
+  // The group decides, not the caller. A rung added to a ladder that already
+  // runs subtract pack cannot be a normal refer — it would be given a pile of
+  // its own on a chain where the stock all lives at the base. Only a group
+  // with no links at all takes the method it was asked for.
+  const method = (await referGroupMethod(siteId, input.belowId)) ?? input.method
 
   // Linking something that already exists: no product to create, just the link.
   if (input.productId) {
@@ -370,7 +564,7 @@ export async function addReferRung(
               VALUES (?,?,?,?)
          ON DUPLICATE KEY UPDATE
            target_id = VALUES(target_id), factor = VALUES(factor), method = VALUES(method)`,
-        [input.productId, input.belowId, factor.toFixed(3), input.method] as never,
+        [input.productId, input.belowId, factor.toFixed(3), method] as never,
       )
       await ensureBaseIsStockedTx(tx, chain[0].productId)
       return { ok: true as const, productId: input.productId as number }
@@ -430,7 +624,7 @@ export async function addReferRung(
     await tx.execute(
       `INSERT INTO product_refers (product_id, target_id, factor, method)
             VALUES (?,?,?,?)`,
-      [id, input.belowId, factor.toFixed(3), input.method] as never,
+      [id, input.belowId, factor.toFixed(3), method] as never,
     )
     await ensureBaseIsStockedTx(tx, chain[0].productId)
     return { ok: true as const, productId: id }
@@ -444,32 +638,64 @@ export async function addReferRung(
  * multiplied together, so removing the six-pack from single ← six ← case
  * leaves single ← case at factor 24. Deleting the link alone would strand the
  * case pointing at nothing.
+ *
+ * ── WHY THIS DOES NOT USE referChain ─────────────────────────────────────
+ *
+ * referChain() walks down to the base and then back UP one branch, choosing the
+ * smallest factor at each fork. That walk can branch away from the very product
+ * it was asked about, so a fork is often absent from its own chain — and
+ * looking the product up in that list refused to unlink exactly the packs the
+ * panel's fork warning exists to point at.
+ *
+ * The link and its dependants are read directly instead. It is also more
+ * correct: EVERY pack drawing on this one has to be re-pointed, not just the
+ * one that happened to win the walk. Two packs above a rung being removed
+ * would otherwise leave the loser pointing at a link that no longer exists.
  */
 export async function removeReferRung(
   siteId: number,
   productId: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const chain = await referChain(siteId, productId)
-  const index = chain.findIndex((r) => r.productId === productId)
-  if (index < 0) return { ok: false, error: 'That product is not on this chain.' }
-  if (index === 0) {
+  const link = await siteQueryOne<Row>(
+    siteId,
+    'SELECT target_id, factor FROM product_refers WHERE product_id = ?',
+    [productId],
+  )
+  if (!link) {
+    // No link of its own: either the base of a chain, or not a refer at all.
+    // The base is what the chain is counted in and cannot be taken out of it.
+    const dependants = await siteQueryOne<Row>(
+      siteId,
+      'SELECT product_id FROM product_refers WHERE target_id = ? LIMIT 1',
+      [productId],
+    )
     return {
       ok: false,
-      error: 'The base product is what the chain is counted in. Remove the pack sizes above it first.',
+      error: dependants
+        ? 'The base product is what the chain is counted in. Remove the pack sizes above it first.'
+        : 'That product is not linked to anything.',
     }
   }
 
-  const above = chain[index + 1]
-  const below = chain[index - 1]
+  const belowId = Number(link.target_id)
+  const ownFactor = Number(link.factor ?? 0)
+
+  // Everything sitting directly on top of this one — all of it, not just the
+  // branch a display walk would have followed.
+  const above = await siteQuery<Row>(
+    siteId,
+    'SELECT product_id, factor FROM product_refers WHERE target_id = ?',
+    [productId],
+  )
 
   return siteTransaction(siteId, async (tx) => {
-    if (above) {
-      // The rung above closes the gap, keeping the same number of base units.
-      const merged = round(above.factor * chain[index].factor, 3)
+    for (const r of above) {
+      // Each closes the gap, keeping the same number of base units.
+      const merged = round(Number(r.factor ?? 0) * ownFactor, 3)
       await tx.execute('UPDATE product_refers SET target_id = ?, factor = ? WHERE product_id = ?', [
-        below.productId,
+        belowId,
         merged.toFixed(3),
-        above.productId,
+        Number(r.product_id),
       ] as never)
     }
     await tx.execute('DELETE FROM product_refers WHERE product_id = ?', [productId] as never)
@@ -622,7 +848,15 @@ export async function createReferRange(
     sellingVatRateId: input.inherit?.sellingVatRateId ?? undefined,
   })
 
-  const method: ReferMethod = input.method === 'normal' ? 'normal' : 'subtract'
+  /*
+   * A range built on top of a product that is ALREADY linked is a longer
+   * ladder, not a new one, so it runs the method that ladder is already on —
+   * the same rule addReferRung applies. The dropdown in the wizard is what a
+   * brand-new group starts on; it cannot re-decide an existing one from a
+   * dialog that never showed the packs it would be changing.
+   */
+  const joining = existingIds.length > 0 ? await referGroupMethod(siteId, existingIds[0]) : null
+  const method: ReferMethod = joining ?? (input.method === 'normal' ? 'normal' : 'subtract')
 
   return siteTransaction(siteId, async (tx) => {
     const ids: number[] = []

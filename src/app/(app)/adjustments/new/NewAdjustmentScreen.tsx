@@ -53,6 +53,15 @@ type AdjLine = {
   description: string
   /** Signed. Negative writes stock off. The authoritative figure. */
   qtyChange: number
+  /**
+   * The figure typed into count mode, or null when it has not been counted.
+   *
+   * Tracked separately from qtyChange because a counted zero against an empty
+   * pile is a zero delta, and so is an untouched row. Without this the screen
+   * cannot tell "I counted, there are none" from "I have not filled this in",
+   * and confirming an empty shelf was refused as a blank line.
+   */
+  countedQty: number | null
   unitCostExcl: number
   /** What this location holds. Null while in flight. */
   onHand: number | null
@@ -186,6 +195,7 @@ export default function NewAdjustmentScreen({
         // Zero, not -1: an adjustment has to be typed. Defaulting to a quantity
         // would let somebody post a write-off nobody decided on.
         qtyChange: 0,
+        countedQty: null,
         unitCostExcl: product.costExcl,
         onHand: null,
         reasonId: null,
@@ -207,7 +217,19 @@ export default function NewAdjustmentScreen({
     if (line.isSerial && line.qtyChange > 0) {
       return 'Serial-tracked units cannot be written on here — count them on a stock take.'
     }
-    if (Math.abs(line.qtyChange) < 0.0005) return 'Say how many were gained or lost.'
+    /*
+     * A zero line is blank UNLESS it was counted.
+     *
+     * Counting an empty shelf gives a zero delta and is a real answer — "there
+     * are none" — so it is allowed through and simply posts no movement. An
+     * untouched row has no countedQty and is still refused, which is what this
+     * check was always for.
+     */
+    if (Math.abs(line.qtyChange) < 0.0005 && line.countedQty === null) {
+      return entryMode === 'count'
+        ? 'Type what you counted.'
+        : 'Say how many were gained or lost.'
+    }
     if (line.onHand !== null && line.onHand + line.qtyChange < 0) {
       return `Only ${formatQty(line.onHand)} in ${location?.code}.`
     }
@@ -240,6 +262,7 @@ export default function NewAdjustmentScreen({
         description: l.description,
         qtyBefore: l.onHand ?? 0,
         qtyChange: l.qtyChange,
+        countedQty: l.countedQty,
         unitCostExcl: l.unitCostExcl,
         reasonId: l.reasonId,
         note: l.note || null,
@@ -416,8 +439,14 @@ export default function NewAdjustmentScreen({
                               // Typing here would let the two disagree, which
                               // the server refuses anyway.
                               disabled={line.isSerial}
+                              // countedQty cleared: a delta typed by hand is not
+                              // a count, and leaving a stale one would let a
+                              // blank row pass as "counted none".
                               onChange={(e) =>
-                                patch(line.key, { qtyChange: Number(e.target.value) || 0 })
+                                patch(line.key, {
+                                  qtyChange: Number(e.target.value) || 0,
+                                  countedQty: null,
+                                })
                               }
                             />
                           </Field>
@@ -428,15 +457,21 @@ export default function NewAdjustmentScreen({
                             error={problem ?? undefined}
                           >
                             <NumberInput
-                              value={after ?? 0}
+                              value={line.countedQty ?? after ?? 0}
                               precision={3}
                               min="0"
                               disabled={line.isSerial || line.onHand === null}
-                              onChange={(e) =>
+                              // Both figures move together: the delta is what
+                              // posts, countedQty is what says this was counted
+                              // — including a count of none on an empty shelf,
+                              // which is a zero delta and a real answer.
+                              onChange={(e) => {
+                                const counted = Number(e.target.value) || 0
                                 patch(line.key, {
-                                  qtyChange: (Number(e.target.value) || 0) - (line.onHand ?? 0),
+                                  qtyChange: counted - (line.onHand ?? 0),
+                                  countedQty: counted,
                                 })
-                              }
+                              }}
                             />
                           </Field>
                         )}

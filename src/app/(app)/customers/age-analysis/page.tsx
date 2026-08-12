@@ -87,6 +87,7 @@ export default async function AgeAnalysisPage({
     <>
       <PageHeader
         title="Age analysis"
+        icon={<Icons.Scale size={18} />}
         subtitle={
           isHistoric
             ? `${rows.length} account${rows.length === 1 ? '' : 's'} as at ${asAt}`
@@ -121,20 +122,21 @@ export default async function AgeAnalysisPage({
             label="Total outstanding"
             value={formatMoney(totals.total)}
             hint="The whole book"
-            icon={<Icons.Coins size={16} />}
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
           />
           <StatTile
             label="Not yet due"
             value={formatMoney(totals.current)}
             hint="Within terms"
-            icon={<Icons.Clock size={16} />}
+            icon={<Icons.Clock size={20} />}
           />
           <StatTile
             label="Overdue"
             value={formatMoney(totals.d30 + totals.d60 + totals.d90 + totals.d120)}
             tone={totals.d30 + totals.d60 + totals.d90 + totals.d120 > 0 ? 'warning' : 'default'}
             hint="Past due date"
-            icon={<Icons.StatusWarning size={16} />}
+            icon={<Icons.StatusWarning size={20} />}
           />
           <StatTile
             label="90 days and older"
@@ -197,7 +199,7 @@ export default async function AgeAnalysisPage({
                           </TextLink>
                           <span className="truncate text-ink">{row.name}</span>
                           {row.status !== 'active' && (
-                            <Badge tone={row.status === 'on_hold' ? 'danger' : 'neutral'}>
+                            <Badge dot tone={row.status === 'on_hold' ? 'danger' : 'neutral'}>
                               {STATUS_LABELS[row.status] ?? row.status}
                             </Badge>
                           )}

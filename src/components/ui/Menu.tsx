@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown } from './icons'
-import { buttonClass, type ButtonVariant } from './styles'
+import { buttonClass, type ButtonSize, type ButtonVariant } from './styles'
 
 /**
  * Dropdown menu. Handles open/close, outside click, Escape and the aria wiring
@@ -15,6 +15,9 @@ export function Menu({
   children,
   variant = 'ghost',
   align = 'right',
+  iconOnly = false,
+  size = 'md',
+  triggerLabel,
   className = '',
 }: {
   label: ReactNode
@@ -22,6 +25,19 @@ export function Menu({
   variant?: ButtonVariant
   /** Which edge the panel lines up with. 'right' suits toolbar buttons. */
   align?: 'left' | 'right'
+  /**
+   * A square, chevron-less trigger — the kebab at the end of a table row. The
+   * chevron is dropped with the text because it exists to say "this word opens
+   * something"; a lone ⋮ already says that, and the arrow beside it just makes
+   * the control wider in the one column with no room to spare.
+   *
+   * Pass `triggerLabel` with it: the button then has no text to announce.
+   */
+  iconOnly?: boolean
+  /** 'sm' for an inline row action, matching the other controls in the row. */
+  size?: ButtonSize
+  /** Accessible name for the trigger. Required when `iconOnly`. */
+  triggerLabel?: string
   className?: string
 }) {
   const [open, setOpen] = useState(false)
@@ -53,11 +69,14 @@ export function Menu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        aria-label={triggerLabel}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
-        className={buttonClass({ variant })}
+        className={buttonClass({ variant, size, iconOnly })}
       >
         {label}
-        <ChevronDown size={16} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        {!iconOnly && (
+          <ChevronDown size={16} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        )}
       </button>
 
       {open && (

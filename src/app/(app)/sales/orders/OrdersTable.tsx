@@ -4,7 +4,7 @@ import Link from 'next/link'
 import type { ReactNode } from 'react'
 import type { FulfilmentStatus } from '@/lib/site/salesOrders'
 import { formatMoney, formatQty } from '@/lib/decimals'
-import { Badge, DataTable, type Column } from '@/components/ui'
+import { Badge, DataTable, Icons, Menu, MenuItem, type Column } from '@/components/ui'
 
 /**
  * The sales-orders list. A client component only because DataTable's column
@@ -109,7 +109,12 @@ function buildColumns(today: string): readonly Column<OrderTableRow>[] {
       header: 'Status',
       cell: (order) => (
         <div className="flex items-center gap-2">
-          <Badge tone={TONE[order.fulfilmentStatus]}>{order.fulfilmentLabel}</Badge>
+          {/* Only the fulfilment state takes a dot. "Not reserving" beside it is
+              a warning ABOUT the order, not a second state it is in — dotting
+              both would present them as two equal states. */}
+          <Badge dot tone={TONE[order.fulfilmentStatus]}>
+            {order.fulfilmentLabel}
+          </Badge>
           {!order.reservesStock &&
             (order.fulfilmentStatus === 'open' ||
               order.fulfilmentStatus === 'part_delivered') && (
@@ -140,6 +145,20 @@ export default function OrdersTable({
       columns={buildColumns(today)}
       rows={rows}
       getRowKey={(order) => order.id}
+      actions={(order) => (
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for ${order.documentNumber ?? `order #${order.id}`}`}
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem href={`/sales/orders/${order.id}`}>
+            <Icons.Eye size={15} />
+            View order
+          </MenuItem>
+        </Menu>
+      )}
       empty={empty}
     />
   )

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Badge, DataTable, type Column } from '@/components/ui'
+import { Badge, DataTable, Icons, Menu, MenuItem, type Column } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 // The pure model, NOT lib/site/quotes — importing the server module from a
 // client component pulls the database layer into the browser bundle.
@@ -52,6 +52,7 @@ export function QuotesTable({ rows }: { rows: QuoteTableRow[] }) {
       header: 'State',
       cell: (q) => (
         <Badge
+          dot
           tone={
             q.state === 'accepted'
               ? 'success'
@@ -105,6 +106,20 @@ export function QuotesTable({ rows }: { rows: QuoteTableRow[] }) {
       columns={columns}
       rows={rows}
       getRowKey={(q) => q.id}
+      actions={(q) => (
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for ${q.documentNumber ?? `draft quote #${q.id}`}`}
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem href={`/sales/quotes/${q.id}`}>
+            <Icons.Eye size={15} />
+            View quote
+          </MenuItem>
+        </Menu>
+      )}
       empty={{ title: 'No quotes', hint: 'Nothing in this filter.' }}
     />
   )

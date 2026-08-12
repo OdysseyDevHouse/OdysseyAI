@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { requireCapability } from '@/lib/auth'
 import { listLaybys, LAYBY_STATUS_LABELS } from '@/lib/site/laybys'
 import { formatMoney } from '@/lib/decimals'
@@ -12,6 +13,7 @@ import {
   StatTile,
   StatStrip,
   LinkSegmentedControl,
+  TableToolbar,
   Pagination,
   Icons,
 } from '@/components/ui'
@@ -22,6 +24,23 @@ export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
 
+const LAYBY_SLICES = ['open', 'completed', 'cancelled', 'expired'] as const
+
+/**
+ * A glyph per lay-by status, echoing the outcome each holds: still being paid
+ * off, paid up and collected, called off, and run out of time. Expired takes
+ * the warning triangle rather than the same X as cancelled — one is a decision
+ * somebody made, the other is a deadline that passed, and the money sitting
+ * against them is treated differently.
+ */
+const LAYBY_SLICE_ICONS: Record<(typeof LAYBY_SLICES)[number] | 'all', ReactNode> = {
+  all: <Icons.LayoutGrid size={15} />,
+  open: <Icons.Clock size={15} />,
+  completed: <Icons.StatusSuccess size={15} />,
+  cancelled: <Icons.StatusFailure size={15} />,
+  expired: <Icons.StatusWarning size={15} />,
+}
+
 export default async function LaybysPage({
   searchParams,
 }: {
@@ -31,9 +50,7 @@ export default async function LaybysPage({
   const { siteId } = await requireCapability('sales.view')
   const params = await searchParams
 
-  const status = (['open', 'completed', 'cancelled', 'expired'] as const).find(
-    (s) => s === params.status,
-  )
+  const status = LAYBY_SLICES.find((s) => s === params.status)
   const page = pageFrom(params.page)
 
   const { items, total } = await listLaybys(siteId, {
@@ -70,6 +87,7 @@ export default async function LaybysPage({
     <>
       <PageHeader
         title="Lay-bys"
+        icon={<Icons.Package size={18} />}
         subtitle={`${total} lay-by${total === 1 ? '' : 's'}`}
         action={
           <>
@@ -88,7 +106,7 @@ export default async function LaybysPage({
             label="Open"
             value={String(open.length)}
             hint="Being paid off"
-            icon={<Icons.Package size={16} />}
+            icon={<Icons.Package size={20} />}
             href={filterHref({ status: 'open' })}
           />
           {/* The figure a manager needs to understand and most systems hide:
@@ -98,47 +116,58 @@ export default async function LaybysPage({
             value={formatMoney(held)}
             hint="Refundable — not yet earned"
             tone={held > 0 ? 'warning' : 'default'}
-            icon={<Icons.Coins size={16} />}
+            icon={<Icons.Coins size={20} />}
           />
           <StatTile
             label="Still to collect"
             value={formatMoney(committed)}
             hint="Before the goods go out"
-            icon={<Icons.HandCoins size={16} />}
+            iconTone="success"
+            icon={<Icons.HandCoins size={20} />}
           />
           <StatTile
             label="Past due"
             value={String(overdue.length)}
             hint={overdue.length > 0 ? 'Chase these' : 'Nothing overdue'}
             tone={overdue.length > 0 ? 'danger' : 'default'}
-            icon={<Icons.Clock size={16} />}
+            icon={<Icons.Clock size={20} />}
           />
         </StatStrip>
 
-        {/* SearchBar carries its own page gutter, so back PageBody's out. */}
-        <div className="-mx-6 -my-3">
-          <SearchBar
-            action="/sales/laybys"
-            defaultValue={params.q}
-            placeholder="Search by lay-by number or customer…"
-            keep={{ status: params.status }}
-          />
-        </div>
-
-        <div>
+        {/* One toolbar row, filters left and search right — the same rhythm as
+            the invoice register. */}
+        <TableToolbar
+          actions={
+            <div className="w-80">
+              <SearchBar
+                action="/sales/laybys"
+                defaultValue={params.q}
+                placeholder="Search by lay-by number or customer…"
+                className="p-0"
+                keep={{ status: params.status }}
+              />
+            </div>
+          }
+        >
           <LinkSegmentedControl
             aria-label="Filter by status"
             value={status ?? 'all'}
             options={[
-              { value: 'all', label: 'All', href: filterHref({ status: null }) },
-              ...(['open', 'completed', 'cancelled', 'expired'] as const).map((value) => ({
+              {
+                value: 'all',
+                label: 'All',
+                icon: LAYBY_SLICE_ICONS.all,
+                href: filterHref({ status: null }),
+              },
+              ...LAYBY_SLICES.map((value) => ({
                 value,
                 label: LAYBY_STATUS_LABELS[value],
+                icon: LAYBY_SLICE_ICONS[value],
                 href: filterHref({ status: value }),
               })),
             ]}
           />
-        </div>
+        </TableToolbar>
 
         <Card>
           <LaybysTable

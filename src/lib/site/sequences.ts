@@ -556,6 +556,9 @@ const OWN_TABLE_TYPES: Record<string, string> = {
   stock_transfer: 'stock_transfers',
   stock_adjustment: 'stock_adjustments',
   manufacturing_order: 'manufacturing_orders',
+  // A job card is not a sales document — it RAISES them. Its numbers live in
+  // its own table, and without this entry every JC ever issued reports missing.
+  job_card: 'job_cards',
 }
 
 export async function verifySequence(

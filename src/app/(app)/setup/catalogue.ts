@@ -249,6 +249,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/job-workflow',
+        description: 'The stages a job moves through, and the boards that show them.',
+        keywords: 'job card workflow statuses stages board kanban columns service repair technician',
+        icon: 'Wrench',
+        tone: 'amber',
+        capability: 'jobs.setup',
+      },
+      {
         href: '/setup/linked-stores',
         description: 'Branches that share products, customers or loyalty with this one.',
         keywords: 'multi store group branches sharing',

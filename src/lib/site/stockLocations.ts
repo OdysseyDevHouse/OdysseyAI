@@ -39,11 +39,51 @@ export type StockLocation = {
   address: string | null
   note: string | null
   sortOrder: number
+  /**
+   * A pile that moves: a technician van.
+   *
+   * Distinct from isTransit, which is goods on their way to another STORE and is
+   * hidden from every picker. A van is the opposite — stock gets there by a
+   * hand-made transfer and a van stocktake is a real business need — so it is
+   * visible where a human picks a room, and hidden only where it would be wrong
+   * (goods received, reorder suggestions). See LOCATION_PURPOSE below.
+   */
+  isMobile: boolean
   /** Products holding a non-zero pile here. Shown before offering to delete. */
   productCount: number
   /** Movements recorded against it — the history that makes deletion refuseable. */
   movementCount: number
 }
+
+/**
+ * What a caller is going to do with a list of locations, and therefore whether a
+ * technician van belongs in it.
+ *
+ * A van is a real pile that must appear wherever stock is MOVED or COUNTED — that
+ * is how stock gets onto it, and a van stocktake is a real business need. It must
+ * NOT appear where goods arrive from outside or where somebody decides what to
+ * buy: a supplier does not deliver into a bakkie, and reordering to one would put
+ * a purchase order against a vehicle.
+ *
+ * Named rather than inferred, because the two cases look identical at the call
+ * site — both are "a picker of rooms" — and only the caller knows which it is.
+ */
+export const LOCATION_PURPOSE = {
+  /** Moving stock between rooms, and onto a van. */
+  transfer: { mobile: true },
+  /** Counting a pile, including a van. */
+  count: { mobile: true },
+  /** Selling. A van is not sellable stock — availableToSell reads MAIN. */
+  sell: { mobile: false },
+  /** Goods arriving from a supplier. Never into a vehicle. */
+  receive: { mobile: false },
+  /** Deciding what to buy. A purchase order against a bakkie is nonsense. */
+  reorder: { mobile: false },
+  /** Writing stock on or off. A van pile can genuinely be adjusted. */
+  adjust: { mobile: true },
+} as const
+
+export type LocationPurpose = keyof typeof LOCATION_PURPOSE
 
 type Row = RowDataPacket & Record<string, unknown>
 
@@ -54,6 +94,7 @@ function mapLocation(r: Row): StockLocation {
     name: String(r.name),
     isMain: !!r.is_main,
     isTransit: !!r.is_transit,
+    isMobile: !!r.is_mobile,
     isActive: !!r.is_active,
     address: (r.address as string | null) ?? null,
     note: (r.note as string | null) ?? null,
@@ -73,7 +114,7 @@ function mapLocation(r: Row): StockLocation {
  * deletion.
  */
 const SELECT_LOCATION = `
-  SELECT l.id, l.code, l.name, l.is_main, l.is_transit, l.is_active, l.address, l.note, l.sort_order,
+  SELECT l.id, l.code, l.name, l.is_main, l.is_transit, l.is_mobile, l.is_active, l.address, l.note, l.sort_order,
          (SELECT COUNT(*) FROM product_location_stock pls
            WHERE pls.location_id = l.id AND pls.stock_on_hand <> 0) AS product_count,
          (SELECT COUNT(*) FROM stock_movements m
@@ -94,10 +135,28 @@ export async function listLocations(
   siteId: number,
   includeInactive = true,
   excludeTransit = false,
+  /**
+   * What the caller is going to do with the list.
+   *
+   * ── WHY THIS IS NOT A THIRD BOOLEAN ────────────────────────────────────
+   *
+   * `excludeTransit` used to mean "give me somewhere a human can pick", and for
+   * two kinds of location a single flag said it. Vans broke that: they must
+   * appear where stock is MOVED or COUNTED and must not appear where goods are
+   * RECEIVED from a supplier or reordered to — nobody has a delivery dropped into
+   * a bakkie, and nobody reorders to one.
+   *
+   * That is not one boolean, and the signature already carries two positional
+   * ones. A third is how a call site ends up passing them in the wrong order, so
+   * the distinction is a named purpose instead. Omitted, every existing caller
+   * behaves exactly as it did.
+   */
+  purpose?: LocationPurpose,
 ): Promise<StockLocation[]> {
   const where: string[] = []
   if (!includeInactive) where.push('l.is_active = 1')
   if (excludeTransit) where.push('l.is_transit = 0')
+  if (purpose && !LOCATION_PURPOSE[purpose].mobile) where.push('l.is_mobile = 0')
 
   const rows = await siteQuery<Row>(
     siteId,
@@ -208,6 +267,37 @@ export async function transitLocationId(siteId: number): Promise<number> {
   return Number(row.id)
 }
 
+/**
+ * Every van.
+ *
+ * Deliberately NOT a `mobileLocationIdTx()` sibling to mainLocationIdTx and
+ * transitLocationIdTx. Those exist because there is exactly ONE such row and every
+ * path needs to find it without being told, so both do `ORDER BY id LIMIT 1`.
+ *
+ * A van is the opposite: there are n of them, and every path that touches one is
+ * TOLD which — the technician picks it, or it resolves from the visit assignees.
+ * A LIMIT 1 helper would silently issue every part to whichever bakkie has the
+ * lowest id, which is the kind of bug that looks like it works.
+ */
+export async function listVans(siteId: number, includeInactive = false): Promise<StockLocation[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_LOCATION}
+      WHERE l.is_mobile = 1 ${includeInactive ? '' : 'AND l.is_active = 1'}
+      ORDER BY l.sort_order ASC, l.code ASC`,
+  )
+  return rows.map(mapLocation)
+}
+
+/** Whether this location is a van, inside a caller's transaction. */
+export async function isVanTx(tx: PoolConnection, locationId: number): Promise<boolean> {
+  const [rows] = await tx.query<Row[]>(
+    'SELECT is_mobile FROM stock_locations WHERE id = ? LIMIT 1',
+    [locationId],
+  )
+  return Number(rows[0]?.is_mobile) === 1
+}
+
 export type LocationInput = {
   code: string
   name: string
@@ -215,6 +305,16 @@ export type LocationInput = {
   note?: string | null
   isActive?: boolean
   sortOrder?: number
+  /**
+   * A technician van rather than a room.
+   *
+   * Optional and defaulting to false, so every existing caller creates exactly
+   * what it created before. Deliberately NOT settable on an existing location: a
+   * room that has been holding stock for two years does not become a vehicle, and
+   * flipping the flag would silently change which pickers the pile appears in and
+   * whether it could be the main location. Make a new one.
+   */
+  isMobile?: boolean
 }
 
 export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
@@ -245,16 +345,18 @@ export async function createLocation(siteId: number, input: LocationInput): Prom
   if (clash) return { ok: false, error: `A location with code "${code}" already exists.` }
 
   // Never is_main. A new location becomes main only through setMainLocation(),
-  // which is the one place that can clear the incumbent in the same breath.
+  // which is the one place that can clear the incumbent in the same breath — and
+  // which refuses a van, for the reason its own comment gives.
   const res = await siteExecute(
     siteId,
-    `INSERT INTO stock_locations (code, name, address, note, is_main, is_active, sort_order)
-     VALUES (?,?,?,?,0,?,?)`,
+    `INSERT INTO stock_locations (code, name, address, note, is_main, is_mobile, is_active, sort_order)
+     VALUES (?,?,?,?,0,?,?,?)`,
     [
       code,
       input.name.trim(),
       input.address?.trim() || null,
       input.note?.trim() || null,
+      input.isMobile ? 1 : 0,
       input.isActive === false ? 0 : 1,
       input.sortOrder ?? 0,
     ],
@@ -347,6 +449,22 @@ export async function setMainLocation(siteId: number, id: number): Promise<SaveR
     return {
       ok: false,
       error: `${target.name} holds goods on their way to another store, so it cannot be the location sales come from.`,
+    }
+  }
+  /*
+   * A van, for the reason the comment above already gives about transit — and it
+   * gives it in exactly these words: pointing the till at the van would have the
+   * counter promise goods that are on a motorway.
+   *
+   * Worse than misleading. recordMovement() resolves mainLocationIdTx() whenever a
+   * caller passes no location, and salesPosting.ts never passes one — so making a
+   * bakkie main would route EVERY sale movement in the business into a pile that
+   * is driving around.
+   */
+  if (target.isMobile) {
+    return {
+      ok: false,
+      error: `${target.name} is a vehicle, so it cannot be the location sales come from — the counter would be promising goods that are on the road.`,
     }
   }
   if (target.isMain) return { ok: true, id }

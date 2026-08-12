@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 import type { LaybyStatus } from '@/lib/site/laybys'
 import { formatMoney } from '@/lib/decimals'
 import { percentPaid } from '@/lib/laybyRules'
-import { Badge, DataTable, type Column } from '@/components/ui'
+import { Badge, DataTable, Icons, Menu, MenuItem, type Column } from '@/components/ui'
 
 /**
  * The lay-bys list. A client component only because DataTable's column cells
@@ -113,7 +113,11 @@ function buildColumns(today: string): readonly Column<LaybyTableRow>[] {
     {
       key: 'status',
       header: 'Status',
-      cell: (layby) => <Badge tone={TONE[layby.status]}>{layby.statusLabel}</Badge>,
+      cell: (layby) => (
+        <Badge dot tone={TONE[layby.status]}>
+          {layby.statusLabel}
+        </Badge>
+      ),
       sortable: true,
       sortValue: (layby) => layby.status,
     },
@@ -135,6 +139,20 @@ export default function LaybysTable({
       columns={buildColumns(today)}
       rows={rows}
       getRowKey={(layby) => layby.id}
+      actions={(layby) => (
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for ${layby.laybyNumber ?? `lay-by #${layby.id}`}`}
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem href={`/sales/laybys/${layby.id}`}>
+            <Icons.Eye size={15} />
+            View lay-by
+          </MenuItem>
+        </Menu>
+      )}
       empty={empty}
     />
   )

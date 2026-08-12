@@ -64,6 +64,7 @@ export default async function ExpensesPage({
     <>
       <PageHeader
         title="Expenses"
+        icon={<Icons.Receipt size={18} />}
         subtitle={`${from} to ${to}`}
         action={
           <div className="flex items-center gap-2">
@@ -85,6 +86,8 @@ export default async function ExpensesPage({
             label="Total cost"
             value={formatMoney(summary.totalCost)}
             hint="Excluding VAT and capital items"
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
           />
           <StatTile
             label="Awaiting review"
@@ -95,23 +98,27 @@ export default async function ExpensesPage({
                 ? `${formatMoney(summary.draftTotal)} not in any figures yet`
                 : 'Everything is posted'
             }
+            icon={<Icons.Clock size={20} />}
           />
           <StatTile
             label="Bills unpaid"
             value={formatMoney(summary.unpaidTotal)}
             tone={summary.unpaidCount > 0 ? 'warning' : 'default'}
             hint={`${summary.unpaidCount} on account`}
+            icon={<Icons.StatusWarning size={20} />}
           />
           <StatTile
             label="VAT claimable"
             value={formatMoney(summary.vatClaimable)}
             hint="Included in the VAT return"
+            icon={<Icons.Scale size={20} />}
           />
           {summary.capital > 0 && (
             <StatTile
               label="Capital items"
               value={formatMoney(summary.capital)}
               hint="Assets — depreciated, not expensed"
+              icon={<Icons.Package size={20} />}
             />
           )}
         </StatStrip>
@@ -136,15 +143,31 @@ export default async function ExpensesPage({
               aria-label="Expense status"
               value={status ?? 'all'}
               options={[
-                { value: 'all', label: 'All', href: href({ status: null }) },
+                {
+                  value: 'all',
+                  label: 'All',
+                  icon: <Icons.LayoutGrid size={15} />,
+                  href: href({ status: null }),
+                },
                 {
                   value: 'draft',
                   label: 'Drafts',
                   count: summary.draftCount > 0 ? summary.draftCount : undefined,
+                  icon: <Icons.Clock size={15} />,
                   href: href({ status: 'draft' }),
                 },
-                { value: 'finalised', label: 'Posted', href: href({ status: 'finalised' }) },
-                { value: 'void', label: 'Void', href: href({ status: 'void' }) },
+                {
+                  value: 'finalised',
+                  label: 'Posted',
+                  icon: <Icons.StatusSuccess size={15} />,
+                  href: href({ status: 'finalised' }),
+                },
+                {
+                  value: 'void',
+                  label: 'Void',
+                  icon: <Icons.StatusFailure size={15} />,
+                  href: href({ status: 'void' }),
+                },
               ]}
             />
             {/* SearchBar carries its own page gutter for screens without a

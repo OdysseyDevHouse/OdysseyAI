@@ -10,18 +10,26 @@ import {
   TableToolbar,
   LinkSegmentedControl,
   SearchBar,
+  Icons,
 } from '@/components/ui'
 import { AccountsClient } from './AccountsClient'
 import { AccountsTable, type AccountRow } from './AccountsTable'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * The five account types, each with a glyph.
+ *
+ * These name a TAXONOMY, not a state — an expense account is not "worse" than
+ * an income one — so the icons describe what each type holds rather than
+ * borrowing the tick/cross pair that means status elsewhere in the app.
+ */
 const TYPES = [
-  { type: 'asset', label: 'Assets' },
-  { type: 'liability', label: 'Liabilities' },
-  { type: 'equity', label: 'Equity' },
-  { type: 'income', label: 'Income' },
-  { type: 'expense', label: 'Expenses' },
+  { type: 'asset', label: 'Assets', icon: <Icons.Package size={15} /> },
+  { type: 'liability', label: 'Liabilities', icon: <Icons.Scale size={15} /> },
+  { type: 'equity', label: 'Equity', icon: <Icons.Wallet size={15} /> },
+  { type: 'income', label: 'Income', icon: <Icons.Coins size={15} /> },
+  { type: 'expense', label: 'Expenses', icon: <Icons.Receipt size={15} /> },
 ] as const
 
 /**
@@ -72,6 +80,7 @@ export default async function ChartOfAccountsPage({
     <>
       <PageHeader
         title="Chart of accounts"
+        icon={<Icons.Scale size={18} />}
         subtitle={`${accounts.filter((a) => a.isActive).length} active accounts`}
         action={<AccountsClient accounts={accounts} />}
       />
@@ -82,10 +91,17 @@ export default async function ChartOfAccountsPage({
             aria-label="Account type"
             value={type}
             options={[
-              { value: 'all', label: 'All', href: href({ type: null }), count: accounts.length },
+              {
+                value: 'all',
+                label: 'All',
+                icon: <Icons.LayoutGrid size={15} />,
+                href: href({ type: null }),
+                count: accounts.length,
+              },
               ...TYPES.map((t) => ({
                 value: t.type as string,
                 label: t.label,
+                icon: t.icon,
                 href: href({ type: t.type }),
                 count: accounts.filter((a) => a.accountType === t.type).length,
               })),

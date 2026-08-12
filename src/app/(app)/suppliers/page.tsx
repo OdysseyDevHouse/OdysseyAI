@@ -85,6 +85,7 @@ export default async function SuppliersPage({
     <>
       <PageHeader
         title="Suppliers"
+        icon={<Icons.Truck size={18} />}
         subtitle={`${total} supplier${total === 1 ? '' : 's'}`}
         action={
           <PrimaryLink href="/suppliers/new">
@@ -103,7 +104,8 @@ export default async function SuppliersPage({
             label="Total owed"
             value={formatMoney(summary.totalOwed)}
             hint={`${summary.owed} account${summary.owed === 1 ? '' : 's'} with a balance`}
-            icon={<Icons.Coins size={16} />}
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
             href={filterHref({ balance: 'owed' })}
           />
           <StatTile
@@ -111,7 +113,7 @@ export default async function SuppliersPage({
             value={String(summary.onHold)}
             tone={summary.onHold > 0 ? 'warning' : 'default'}
             hint={summary.onHold > 0 ? 'No new orders' : 'None blocked'}
-            icon={<Icons.Ban size={16} />}
+            icon={<Icons.Ban size={20} />}
             href={filterHref({ status: 'on_hold' })}
           />
         </StatStrip>

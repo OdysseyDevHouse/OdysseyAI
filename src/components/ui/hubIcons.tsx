@@ -18,6 +18,7 @@ import type { LucideIcon } from './icons'
  * the second copy is the one that silently renders nothing.
  */
 export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
+  Wrench: Icons.Wrench,
   Users: Icons.Users,
   KeyRound: Icons.KeyRound,
   Store: Icons.Store,

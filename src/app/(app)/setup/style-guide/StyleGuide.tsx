@@ -586,14 +586,33 @@ function BadgeSection() {
     <Card>
       <CardHeader
         title="Badges"
-        description="<Badge tone=... /> — status & count pills, coloured by meaning"
+        description="<Badge tone=... /> — status & count pills, coloured by meaning. Add `dot` for the STATE of a record, where the mark is caught before the word is read; leave it off for a plain count."
       />
-      <CardBody className="flex flex-wrap items-center gap-2">
-        <Badge tone="success">In stock</Badge>
-        <Badge tone="danger">Out of stock</Badge>
-        <Badge tone="warning">Low</Badge>
-        <Badge tone="brand">New</Badge>
-        <Badge tone="neutral">42</Badge>
+      <CardBody className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="success">In stock</Badge>
+          <Badge tone="danger">Out of stock</Badge>
+          <Badge tone="warning">Low</Badge>
+          <Badge tone="brand">New</Badge>
+          <Badge tone="neutral">42</Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge dot tone="brand">
+            Draft
+          </Badge>
+          <Badge dot tone="success">
+            Finalised
+          </Badge>
+          <Badge dot tone="warning">
+            On hold
+          </Badge>
+          <Badge dot tone="danger">
+            Cancelled
+          </Badge>
+          <Badge dot tone="neutral">
+            Archived
+          </Badge>
+        </div>
       </CardBody>
     </Card>
   )
@@ -711,14 +730,37 @@ function StatsSection() {
     <Card>
       <CardHeader
         title="Stat strip"
-        description="<StatStrip> of <StatTile> — a list screen's headline numbers. Tone only the tile that means “act on me”; three tiles all in the same ink is three tiles nobody looks at. <MiniStat> is the compact figure inside other chrome."
+        description="<StatStrip> of <StatTile> — a list screen's headline numbers. `tone` colours the VALUE and says the figure is an exception; `iconTone` colours only the medallion, for a subject with a natural colour. Tone only the tile that means “act on me”; three tiles all in the same ink is three tiles nobody looks at. <MiniStat> is the compact figure inside other chrome."
       />
       <CardBody className="flex flex-col gap-4">
         <StatStrip>
-          <StatTile label="Products" value="1,284" hint="86 archived" />
-          <StatTile label="Stock value" value={rand(482210.4)} hint="At cost" />
-          <StatTile label="Below minimum" value="37" tone="warning" hint="Reorder these" />
-          <StatTile label="Out of stock" value="4" tone="danger" hint="Losing sales" />
+          <StatTile
+            label="Products"
+            value="1,284"
+            hint="86 archived"
+            icon={<Icons.Package size={20} />}
+          />
+          <StatTile
+            label="Stock value"
+            value={rand(482210.4)}
+            hint="At cost"
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
+          />
+          <StatTile
+            label="Below minimum"
+            value="37"
+            tone="warning"
+            hint="Reorder these"
+            icon={<Icons.StatusWarning size={20} />}
+          />
+          <StatTile
+            label="Out of stock"
+            value="4"
+            tone="danger"
+            hint="Losing sales"
+            icon={<Icons.StatusFailure size={20} />}
+          />
         </StatStrip>
         <div className="flex flex-wrap gap-2">
           <MiniStat label="Parsed" value="212" />
@@ -861,9 +903,9 @@ function MenuSection() {
     <Card>
       <CardHeader
         title="Dropdown menu"
-        description="<Menu> + <MenuItem> — handles open/close, outside-click, Esc, aria"
+        description="<Menu> + <MenuItem> — handles open/close, outside-click, Esc, aria. Pass `iconOnly` with a `triggerLabel` for the kebab at the end of a table row; the chevron drops with the text, since a lone ⋮ already reads as “opens something”."
       />
-      <CardBody>
+      <CardBody className="flex items-center gap-3">
         <Menu label="Actions" align="left">
           <MenuItem onClick={() => toast.info('Duplicated.')}>
             <Icons.Copy size={16} />
@@ -877,6 +919,24 @@ function MenuSection() {
           <MenuItem tone="danger" onClick={() => toast.error('Deleted.')}>
             <Icons.Trash size={16} />
             Delete
+          </MenuItem>
+        </Menu>
+
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          align="left"
+          triggerLabel="Actions for INV-1042"
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem onClick={() => toast.info('Opened.')}>
+            <Icons.Eye size={15} />
+            View document
+          </MenuItem>
+          <MenuItem tone="danger" onClick={() => toast.error('Cancelled.')}>
+            <Icons.Close size={15} />
+            Cancel
           </MenuItem>
         </Menu>
       </CardBody>
@@ -959,8 +1019,8 @@ function TableControlsSection() {
       />
       <CardBody className="space-y-6">
         <div>
-          <Spec name="<SegmentedControl />" note="Pill group for switching views (the GRV All / Orders / GRVs filter)." />
-          <div className="mt-2">
+          <Spec name="<SegmentedControl />" note="Pill group for switching views (the GRV All / Orders / GRVs filter). An optional `icon` per option gives each slice a shape — all of them or none, never some." />
+          <div className="mt-2 flex flex-wrap gap-3">
             <SegmentedControl
               aria-label="GRV view"
               value={view}
@@ -969,6 +1029,16 @@ function TableControlsSection() {
                 { value: 'all', label: 'All', count: 162 },
                 { value: 'orders', label: 'Orders', count: 47 },
                 { value: 'grvs', label: 'GRVs', count: 115 },
+              ]}
+            />
+            <SegmentedControl
+              aria-label="Document status"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'all', label: 'In progress', icon: <Icons.List size={15} /> },
+                { value: 'orders', label: 'Finalised', icon: <Icons.StatusSuccess size={15} /> },
+                { value: 'grvs', label: 'Cancelled', icon: <Icons.StatusFailure size={15} /> },
               ]}
             />
           </div>

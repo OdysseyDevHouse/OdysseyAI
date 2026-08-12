@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { DataTable, Badge, ButtonLink, Icons, type Column } from '@/components/ui'
+import { DataTable, Badge, ButtonLink, Icons, Menu, MenuItem, type Column } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { listExpenses } from '@/lib/site/expenses'
 import type { spendByCategory } from '@/lib/site/expenseReports'
@@ -52,11 +52,17 @@ const columns: Column<ExpenseRow>[] = [
     header: 'Status',
     cell: (e) =>
       e.status === 'draft' ? (
-        <Badge tone="warning">Draft</Badge>
+        <Badge dot tone="warning">
+          Draft
+        </Badge>
       ) : e.status === 'void' ? (
-        <Badge tone="default">Void</Badge>
+        <Badge dot tone="default">
+          Void
+        </Badge>
       ) : (
-        <Badge tone="success">Posted</Badge>
+        <Badge dot tone="success">
+          Posted
+        </Badge>
       ),
     sortValue: (e) => e.status,
   },
@@ -107,6 +113,20 @@ export function ExpensesTable({
       columns={columns}
       rows={rows}
       getRowKey={(e) => e.id}
+      actions={(e) => (
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for ${e.documentNumber ?? `expense #${e.id}`}`}
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem href={`/expenses/${e.id}`}>
+            <Icons.Eye size={15} />
+            View expense
+          </MenuItem>
+        </Menu>
+      )}
       empty={{
         title: searchQuery
           ? `Nothing matches "${searchQuery}"`

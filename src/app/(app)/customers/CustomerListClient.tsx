@@ -12,6 +12,8 @@ import {
   Field,
   Icons,
   Input,
+  Menu,
+  MenuItem,
   Modal,
   NumberInput,
   CurrencyInput,
@@ -204,17 +206,23 @@ export default function CustomerListClient({
         selectedKeys={selected}
         onSelectionChange={setSelected}
         onRowClick={(row) => router.push(`/customers/${row.id}`)}
-        actionsOnHover
         actions={(row) => (
-          <ButtonLink
-            href={`/customers/${row.id}/statement`}
-            variant="ghost"
-            size="sm"
+          <Menu
             iconOnly
-            aria-label={`Statement for ${row.name}`}
+            size="sm"
+            variant="bare"
+            triggerLabel={`Actions for ${row.name}`}
+            label={<Icons.MoreVertical size={16} />}
           >
-            <Icons.FileText size={15} />
-          </ButtonLink>
+            <MenuItem href={`/customers/${row.id}`}>
+              <Icons.Eye size={15} />
+              View account
+            </MenuItem>
+            <MenuItem href={`/customers/${row.id}/statement`}>
+              <Icons.FileText size={15} />
+              Statement
+            </MenuItem>
+          </Menu>
         )}
         empty={
           total === 0
@@ -340,19 +348,32 @@ function StatusCell({ row }: { row: Customer }) {
   if (row.status !== 'active') {
     return (
       <span title={row.statusReason ?? undefined}>
-        <Badge tone={STATUS_TONE[row.status]}>
+        <Badge dot tone={STATUS_TONE[row.status]}>
           {row.status === 'on_hold' ? 'On hold' : row.status === 'closed' ? 'Closed' : 'Inactive'}
         </Badge>
       </span>
     )
   }
-  if (row.overLimit) return <Badge tone="warning">Over limit</Badge>
+  if (row.overLimit) {
+    return (
+      <Badge dot tone="warning">
+        Over limit
+      </Badge>
+    )
+  }
   // The type is only worth a badge when it changes what the counter can do.
   // An open-item account is the default and needs no label.
+  //
+  // No dot on this one: it classifies the account rather than reporting its
+  // state, and the row is "active" either way.
   if (row.accountType !== 'open_item') {
     return <Badge tone="neutral">{accountTypeLabel(row.accountType)}</Badge>
   }
-  return <Badge tone="success">Active</Badge>
+  return (
+    <Badge dot tone="success">
+      Active
+    </Badge>
+  )
 }
 
 /* ── Bulk modals ─────────────────────────────────────────────────────────── */

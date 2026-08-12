@@ -4,7 +4,7 @@ import { can } from '@/lib/site/permissions'
 import { timesheetsFor } from '@/lib/site/timesheets'
 import { payMultipliers } from '@/lib/site/payRates'
 import { listUsers } from '@/lib/site/users'
-import { PageHeader, PageBody, Callout } from '@/components/ui'
+import { PageHeader, PageBody, Callout, Icons } from '@/components/ui'
 import TimesheetScreen from './TimesheetScreen'
 
 export const dynamic = 'force-dynamic'
@@ -69,6 +69,7 @@ export default async function TimesheetsPage({
     <>
       <PageHeader
         title="Timesheets"
+        icon={<Icons.Clock size={18} />}
         subtitle={`${from} to ${to}`}
       />
 

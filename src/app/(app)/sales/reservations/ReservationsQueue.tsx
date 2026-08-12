@@ -201,7 +201,11 @@ export default function ReservationsQueue({
       width: 'w-32',
       sortable: true,
       sortValue: (r) => r.status,
-      cell: (r) => <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>,
+      cell: (r) => (
+        <Badge dot tone={STATUS_TONE[r.status]}>
+          {STATUS_LABEL[r.status]}
+        </Badge>
+      ),
     },
     {
       key: 'source',
@@ -235,10 +239,23 @@ export default function ReservationsQueue({
             value={filter}
             onChange={setFilter}
             aria-label="Which bookings to show"
+            /* These slice by TIME, not by state, so the glyphs are a clock face
+               for tonight, a forward calendar for what is still coming, and the
+               grid for everything — not the tick/cross pair a status bar uses. */
             options={[
-              { value: 'today', label: 'Today', count: counts.today },
-              { value: 'upcoming', label: 'Upcoming', count: counts.upcoming },
-              { value: 'all', label: 'All', count: counts.all },
+              {
+                value: 'today',
+                label: 'Today',
+                count: counts.today,
+                icon: <Icons.Clock size={15} />,
+              },
+              {
+                value: 'upcoming',
+                label: 'Upcoming',
+                count: counts.upcoming,
+                icon: <Icons.CalendarClock size={15} />,
+              },
+              { value: 'all', label: 'All', count: counts.all, icon: <Icons.LayoutGrid size={15} /> },
             ]}
           />
           <ToolbarSearch
@@ -433,7 +450,11 @@ function DetailModal({
           <Detail
             icon={<Icons.Clock size={16} />}
             label="Status"
-            value={<Badge tone={STATUS_TONE[reservation.status]}>{STATUS_LABEL[reservation.status]}</Badge>}
+            value={
+              <Badge dot tone={STATUS_TONE[reservation.status]}>
+                {STATUS_LABEL[reservation.status]}
+              </Badge>
+            }
           />
           <Detail icon={<Icons.Phone size={16} />} label="Phone" value={reservation.contactPhone || '—'} />
           <Detail icon={<Icons.Mail size={16} />} label="Email" value={reservation.contactEmail || '—'} />

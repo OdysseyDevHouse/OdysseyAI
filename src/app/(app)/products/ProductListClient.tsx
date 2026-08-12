@@ -18,6 +18,7 @@ import {
 } from '@/components/ui'
 import type { ProductBulkChange } from '@/lib/site/products'
 import { bulkUpdateProductsAction } from './actions'
+import { useProductColumns } from './ProductColumnsButton'
 import ProductsTable from './ProductsTable'
 
 /**
@@ -49,12 +50,24 @@ type Stage = { view: 'options' } | { view: 'form'; kind: BulkKind } | null
 export default function ProductListClient({
   lookups,
   canDelete,
+  storeColumns,
   ...tableProps
 }: {
   lookups: ProductBulkLookups
   /** Whether this role holds products.delete — decides if delete is offered. */
   canDelete: boolean
-} & Omit<Parameters<typeof ProductsTable>[0], 'selectedKeys' | 'onSelectionChange'>) {
+  /**
+   * The columns THIS STORE shows, from list_columns — or the list's own default
+   * when it has never chosen. See lib/site/listColumns.ts.
+   *
+   * The Columns button in the toolbar takes the same value and resolves it with
+   * the same hook, so the control and the table always agree.
+   */
+  storeColumns: string[]
+} & Omit<
+  Parameters<typeof ProductsTable>[0],
+  'selectedKeys' | 'onSelectionChange' | 'visibleColumns'
+>) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [stage, setStage] = useState<Stage>(null)
   const [recent, setRecent] = useState<BulkKind[]>([])
@@ -63,6 +76,10 @@ export default function ProductListClient({
   const router = useRouter()
 
   const count = selected.size
+
+  /* The same hook the Columns button in the toolbar uses, so the control and
+     the table cannot disagree about what is shown. See ProductColumnsButton. */
+  const { visible: visibleColumns } = useProductColumns(storeColumns)
 
   function runBulk(change: ProductBulkChange) {
     const ids = [...selected].map(Number)
@@ -109,7 +126,12 @@ export default function ProductListClient({
         </Button>
       </BulkActionBar>
 
-      <ProductsTable {...tableProps} selectedKeys={selected} onSelectionChange={setSelected} />
+      <ProductsTable
+        {...tableProps}
+        visibleColumns={visibleColumns}
+        selectedKeys={selected}
+        onSelectionChange={setSelected}
+      />
 
       <BulkOptionsDialog
         open={stage?.view === 'options'}

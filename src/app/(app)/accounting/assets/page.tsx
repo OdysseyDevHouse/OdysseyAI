@@ -17,6 +17,7 @@ import {
   Card,
   CardHeader,
   CardBody,
+  StatStrip,
   StatTile,
   EmptyState,
   Icons,
@@ -86,6 +87,7 @@ export default async function AssetsPage({
     <>
       <PageHeader
         title="Fixed assets"
+        icon={<Icons.Building2 size={18} />}
         subtitle={`${summary.count} owned · ${formatMoney(summary.totalBookValue)} book value`}
         action={
           <div className="flex items-center gap-2">
@@ -102,17 +104,26 @@ export default async function AssetsPage({
       />
 
       <PageBody>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label="At cost" value={formatMoney(summary.totalCost)} />
+        {/* StatStrip rather than a hand-rolled grid, so this strip keeps the
+            same gutters and breakpoints as every other one in the app. */}
+        <StatStrip columns={4}>
+          <StatTile
+            label="At cost"
+            value={formatMoney(summary.totalCost)}
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
+          />
           <StatTile
             label="Depreciated"
             value={formatMoney(summary.totalAccumulated)}
             hint="Written off to date"
+            icon={<Icons.Clock size={20} />}
           />
           <StatTile
             label="Book value"
             value={formatMoney(summary.totalBookValue)}
             hint="What the balance sheet carries"
+            icon={<Icons.Scale size={20} />}
           />
           <StatTile
             label="Not yet in use"
@@ -123,8 +134,9 @@ export default async function AssetsPage({
                 ? 'Owned but not depreciating'
                 : 'Everything is in use'
             }
+            icon={<Icons.StatusWarning size={20} />}
           />
-        </div>
+        </StatStrip>
 
         {/* A month not yet charged is missing from the profit and loss, and
             nothing else on this screen will produce it. */}
@@ -197,14 +209,25 @@ export default async function AssetsPage({
               aria-label="Asset status"
               value={status ?? 'all'}
               options={[
-                { value: 'all', label: 'In use', href: href({ status: null }) },
+                {
+                  value: 'all',
+                  label: 'In use',
+                  icon: <Icons.StatusSuccess size={15} />,
+                  href: href({ status: null }),
+                },
                 {
                   value: 'pending',
                   label: 'Not yet in use',
+                  icon: <Icons.Clock size={15} />,
                   href: href({ status: 'pending' }),
                   count: summary.pendingCount > 0 ? summary.pendingCount : undefined,
                 },
-                { value: 'disposed', label: 'Disposed', href: href({ status: 'disposed' }) },
+                {
+                  value: 'disposed',
+                  label: 'Disposed',
+                  icon: <Icons.StatusFailure size={15} />,
+                  href: href({ status: 'disposed' }),
+                },
               ]}
             />
           </TableToolbar>

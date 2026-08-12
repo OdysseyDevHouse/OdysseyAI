@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { requireCapability } from '@/lib/auth'
 import {
   listCustomers,
@@ -38,6 +39,19 @@ const STATUS_LABELS: Record<CustomerStatus, string> = {
   on_hold: 'On hold',
   inactive: 'Inactive',
   closed: 'Closed',
+}
+
+/**
+ * A glyph per account state. On hold and closed are deliberately different: a
+ * hold is a block someone applied and can lift, a closed account is finished —
+ * and the money still owed against each is chased differently.
+ */
+const STATUS_ICONS: Record<CustomerStatus | 'all', ReactNode> = {
+  all: <Icons.LayoutGrid size={15} />,
+  active: <Icons.StatusSuccess size={15} />,
+  on_hold: <Icons.Ban size={15} />,
+  inactive: <Icons.Clock size={15} />,
+  closed: <Icons.StatusFailure size={15} />,
 }
 
 type Search = {
@@ -101,6 +115,7 @@ export default async function CustomersPage({
     <>
       <PageHeader
         title="Customers"
+        icon={<Icons.Users size={18} />}
         subtitle={`${total} account${total === 1 ? '' : 's'}`}
         action={
           <PrimaryLink href="/customers/new">
@@ -120,7 +135,7 @@ export default async function CustomersPage({
             value={formatMoney(summary.totalOwed)}
             tone={summary.totalOwed > 0 ? 'warning' : 'default'}
             hint={`${summary.owing} account${summary.owing === 1 ? '' : 's'} with a balance`}
-            icon={<Icons.Coins size={16} />}
+            icon={<Icons.Coins size={20} />}
             href={filterHref({ balance: 'owing' })}
           />
           <StatTile
@@ -128,7 +143,7 @@ export default async function CustomersPage({
             value={String(summary.overLimit)}
             tone={summary.overLimit > 0 ? 'warning' : 'default'}
             hint={summary.overLimit > 0 ? 'Credit exceeded' : 'All within limit'}
-            icon={<Icons.StatusWarning size={16} />}
+            icon={<Icons.StatusWarning size={20} />}
             href={filterHref({ balance: 'over' })}
           />
           <StatTile
@@ -136,7 +151,7 @@ export default async function CustomersPage({
             value={String(summary.onHold)}
             tone={summary.onHold > 0 ? 'danger' : 'default'}
             hint={summary.onHold > 0 ? 'Blocked from account sales' : 'None blocked'}
-            icon={<Icons.Ban size={16} />}
+            icon={<Icons.Ban size={20} />}
             href={filterHref({ status: 'on_hold' })}
           />
         </StatStrip>
@@ -159,10 +174,16 @@ export default async function CustomersPage({
             aria-label="Filter by status"
             value={status ?? 'all'}
             options={[
-              { value: 'all', label: 'All', href: filterHref({ status: null }) },
+              {
+                value: 'all',
+                label: 'All',
+                icon: STATUS_ICONS.all,
+                href: filterHref({ status: null }),
+              },
               ...Object.entries(STATUS_LABELS).map(([value, label]) => ({
                 value,
                 label,
+                icon: STATUS_ICONS[value as CustomerStatus],
                 href: filterHref({ status: value }),
               })),
             ]}

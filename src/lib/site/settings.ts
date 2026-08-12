@@ -247,6 +247,87 @@ export const SETTING_DEFAULTS = {
    * Frozen once the store has issued anything; see setStoreNumber().
    */
   store_number: '01',
+
+  /** The priority a new job card starts on. */
+  job_default_priority: 'normal',
+
+  /**
+   * The service products labour and travel are billed through.
+   *
+   * Blank until a business picks one. Labour and travel reach an invoice as
+   * ordinary product_type = 'service' lines, which is what lets them go through
+   * the same posting path as a part while moving no stock — so these name which
+   * product plays each part rather than the module inventing one.
+   */
+  job_labour_product_id: '',
+  job_travel_product_id: '',
+
+  /**
+   * What a kilometre is charged at.
+   *
+   * Blank rather than a guessed number: a rate nobody has set must read as unset,
+   * not as R0.00 quietly billing nothing for every trip.
+   */
+  job_travel_rate_per_km: '',
+
+  /**
+   * Whether work may start before the customer has accepted the quote.
+   *
+   * Off by default. The commonest real case is a technician already on site
+   * finding a second fault, and refusing outright would strand them — so this
+   * exists for the businesses that genuinely gate work on a signature, and
+   * everybody else is unaffected.
+   */
+  job_require_quote_acceptance: '0',
+
+  /** How long a visit is assumed to take when nobody says. */
+  job_default_visit_minutes: '60',
+
+  /**
+   * Where a schedule lane starts and stops being drawn, and the bounds of the
+   * outside-hours warning.
+   *
+   * Deliberately a pair of times rather than a per-day table: this is not whether
+   * the business is open, and a shop that works Saturdays draws the same lane.
+   */
+  job_day_starts: '07:00',
+  job_day_ends: '17:00',
+
+  /**
+   * Minutes to leave between two visits for the same person.
+   *
+   * A flat allowance, NOT a computed drive time — nothing in this app talks to a
+   * distance provider, and a figure invented per pair of addresses would be
+   * guessing dressed as arithmetic. This catches the case that bites (two visits
+   * booked back to back across town); the real travel-time check waits for a
+   * provider.
+   */
+  job_travel_gap_minutes: '30',
+
+  /** What a kilometre costs the business, as against what it is charged at. */
+  job_travel_cost_per_km: '',
+
+  /**
+   * How a claimed distance becomes a chargeable one: 'none', or the block to
+   * round UP to. Up rather than nearest, because a business that set "nearest 5"
+   * means it bills in blocks of five, not that it absorbs the remainder.
+   */
+  job_travel_round_to: '1',
+
+  /** A floor per trip, so a 400m call-out does not bill nothing. Blank for none. */
+  job_travel_minimum_km: '',
+
+  /** How far past the estimate a claim may go before it needs a signature, as a %. */
+  job_travel_tolerance_pct: '20',
+
+  /**
+   * Straight-line distance times this is the road estimate.
+   *
+   * 1.30 is the ordinary ratio in a built-up area. A setting because a rural
+   * region is nearer 1.15 and a mountain pass considerably worse — and because
+   * this is the number that decides whether the tolerance check is fair.
+   */
+  job_travel_road_factor: '1.30',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS

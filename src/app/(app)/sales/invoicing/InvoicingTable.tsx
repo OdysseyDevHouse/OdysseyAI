@@ -4,7 +4,7 @@ import Link from 'next/link'
 import type { ReactNode } from 'react'
 import type { SalesDocStatus } from '@/lib/site/salesDocuments'
 import { formatMoney } from '@/lib/decimals'
-import { Badge, ButtonLink, Icons, DataTable, type Column } from '@/components/ui'
+import { Badge, Icons, DataTable, Menu, MenuItem, type Column } from '@/components/ui'
 import { STATUS_LABELS, STATUS_TONE } from '../status'
 
 /**
@@ -40,11 +40,14 @@ export type InvoiceTableRow = {
   cancelReason: string | null
 }
 
+/** Still being captured — the one distinction the row's link and menu turn on. */
+function isOpen(doc: InvoiceTableRow): boolean {
+  return doc.status === 'draft' || doc.status === 'saved'
+}
+
 /** Unfinished work opens in the editor; everything else opens as a record. */
 function hrefFor(doc: InvoiceTableRow): string {
-  return doc.status === 'draft' || doc.status === 'saved'
-    ? `/sales/invoicing/${doc.id}`
-    : `/sales/${doc.id}`
+  return isOpen(doc) ? `/sales/invoicing/${doc.id}` : `/sales/${doc.id}`
 }
 
 /*
@@ -108,7 +111,9 @@ const COLUMNS: readonly Column<InvoiceTableRow>[] = [
     sortValue: (doc) => STATUS_LABELS[doc.status],
     cell: (doc) => (
       <span title={doc.cancelReason ?? undefined}>
-        <Badge tone={STATUS_TONE[doc.status]}>{STATUS_LABELS[doc.status]}</Badge>
+        <Badge dot tone={STATUS_TONE[doc.status]}>
+          {STATUS_LABELS[doc.status]}
+        </Badge>
       </span>
     ),
   },
@@ -126,17 +131,27 @@ export default function InvoicingTable({
       columns={COLUMNS}
       rows={rows}
       getRowKey={(doc) => doc.id}
-      actionsOnHover
       actions={(doc) => (
-        <ButtonLink
-          variant="ghost"
-          size="sm"
+        <Menu
           iconOnly
-          href={hrefFor(doc)}
-          aria-label={`View ${labelFor(doc)}`}
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for ${labelFor(doc)}`}
+          label={<Icons.MoreVertical size={16} />}
         >
-          <Icons.Eye size={15} />
-        </ButtonLink>
+          {/* Same split as the row's own link: unfinished work opens in the
+              editor, everything else as the issued record.
+
+              Printing is deliberately NOT here. It is a client action on the
+              record screen that also increments the document's print count —
+              a link from this row would either 404 or print without recording
+              it, and a menu that silently does neither is worse than one
+              entry. */}
+          <MenuItem href={hrefFor(doc)}>
+            <Icons.Eye size={15} />
+            {isOpen(doc) ? 'Continue capturing' : 'View document'}
+          </MenuItem>
+        </Menu>
       )}
       empty={empty}
     />

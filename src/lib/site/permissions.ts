@@ -177,6 +177,31 @@ export const CAPABILITY_GROUPS = [
     ],
   },
   {
+    key: 'jobs',
+    label: 'Job cards',
+    capabilities: [
+      { key: 'jobs.view', label: 'See job cards', hint: 'Open the job list and read a job.' },
+      /* Split from view, exactly as commission and staff split their own: a
+         technician who must see today's work should not thereby be able to
+         reassign it or change what a customer is being charged. */
+      { key: 'jobs.view_own', label: 'See only their own jobs', hint: 'Just the jobs assigned to them, not the whole board.' },
+      { key: 'jobs.edit', label: 'Create and change job cards', hint: 'Log a job, record what was used, and move it through the workflow.' },
+      { key: 'jobs.assign', label: 'Assign jobs', hint: 'Decide who is responsible for a job.' },
+      { key: 'jobs.close', label: 'Close and reopen jobs', hint: 'Sign a job off as done, or put a closed one back into play.' },
+      /* Deliberately separate from close. The PRD is explicit that completing
+         work, closing a job and invoicing it are three distinct events that may
+         need three different people: a technician finishes, a supervisor signs
+         off, the office bills. */
+      { key: 'jobs.invoice', label: 'Bill a job', hint: 'Raise the invoice for the work and parts on a job.' },
+      /* The decision that turns a recorded cost into money somebody pays, or
+         does not. Split out because the PRD requires a technician to be able to
+         record usage without seeing or setting any commercial value. */
+      { key: 'jobs.bill_decide', label: 'Decide who pays', hint: 'Classify a cost as billable, internal or written off.' },
+      { key: 'jobs.cost', label: 'See job cost and profit', hint: 'What a job cost to do, and what was made on it.' },
+      { key: 'jobs.setup', label: 'Configure the workflow', hint: 'Statuses, boards and the job settings.' },
+    ],
+  },
+  {
     key: 'setup',
     label: 'Setup',
     capabilities: [

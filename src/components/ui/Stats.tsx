@@ -34,15 +34,27 @@ export function StatTile({
   value,
   hint,
   tone = 'default',
+  iconTone,
   icon,
   href,
 }: {
   label: string
   value: string
   hint?: string
-  /** `success` is the preferred name; `positive` is a legacy alias. */
+  /**
+   * Colours the VALUE, and so says the figure itself is an exception — over
+   * limit, below minimum, unposted. Leave it `default` for a plain number; a
+   * strip where every figure is coloured is a strip with no signal in it.
+   */
   tone?: 'default' | 'positive' | 'success' | 'warning' | 'danger'
-  /** Tinted glyph in the corner. Keep it to the tile's subject, not decoration. */
+  /**
+   * Colours only the medallion, leaving the value in plain ink. For a tile
+   * whose SUBJECT has a natural colour — takings are money, so the glyph is
+   * green — where tinting the number would falsely claim the figure needs
+   * acting on. Defaults to whatever `tone` is.
+   */
+  iconTone?: 'default' | 'positive' | 'success' | 'warning' | 'danger'
+  /** Glyph in the leading medallion. Keep it to the tile's subject, not decoration. */
   icon?: ReactNode
   /**
    * Makes the whole tile a link — "12 over limit" should go to that filtered
@@ -58,15 +70,47 @@ export function StatTile({
     danger: 'text-danger',
   }[tone]
 
+  /* The medallion behind the glyph. A `-soft` fill rather than the saturated
+     base: it has to sit under an icon at 20px and stay a background, and the
+     full-strength tone at that size competes with the figure it labels. */
+  const medallionClass = {
+    default: 'bg-brand-soft text-brand',
+    positive: 'bg-success-soft text-success-ink',
+    success: 'bg-success-soft text-success-ink',
+    warning: 'bg-warning-soft text-warning-ink',
+    danger: 'bg-danger-soft text-danger-ink',
+  }[iconTone ?? tone]
+
+  /*
+   * Medallion left, figures right, hairline between them.
+   *
+   * The glyph used to be a faint mark in the corner, which made it decoration —
+   * it sat in the tile's quietest spot and named nothing. Leading the row, at
+   * the size of the number it introduces, it becomes the tile's subject: the
+   * strip is scannable by shape (coins, receipt, clock) before a word is read.
+   *
+   * The divider is what keeps that from reading as two loose halves; without it
+   * the icon floats and the tile looks unfinished at wide column widths.
+   */
   const body = (
-    <>
-      <div className="flex items-start justify-between gap-2">
+    <div className="flex items-center gap-3.5">
+      {icon && (
+        <span
+          aria-hidden
+          className={`flex size-11 shrink-0 items-center justify-center rounded-pill ${medallionClass}`}
+        >
+          {icon}
+        </span>
+      )}
+      {icon && <span aria-hidden className="h-9 w-px shrink-0 bg-border" />}
+      {/* min-w-0 so a long value truncates inside the tile instead of pushing
+          the medallion out of the row. */}
+      <div className="min-w-0">
         <div className="text-xs font-medium text-muted">{label}</div>
-        {icon && <span className={`shrink-0 ${toneClass} opacity-60`}>{icon}</span>}
+        <div className={`numeric mt-0.5 truncate text-2xl font-semibold ${toneClass}`}>{value}</div>
+        {hint && <div className="mt-0.5 truncate text-xs text-muted">{hint}</div>}
       </div>
-      <div className={`numeric mt-1.5 text-2xl font-semibold ${toneClass}`}>{value}</div>
-      {hint && <div className="mt-1 text-xs text-muted">{hint}</div>}
-    </>
+    </div>
   )
 
   if (href) {

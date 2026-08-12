@@ -31,6 +31,15 @@ export type StockNoteProduct = {
  * overwhelmingly common case, and a note on every line is a note nobody reads.
  * It speaks up for the two situations that change what should be said to the
  * customer: some of this is promised to someone else, or there is none.
+ *
+ * ── AN EMPTY PILE SHOWS ITS FIGURE ───────────────────────────────────────
+ *
+ * "none on hand" covered zero and minus forty with the same three words, and
+ * those are not the same situation: one is a shelf that ran out, the other is a
+ * count that has been wrong for weeks. The number is the thing that tells a
+ * person which they are looking at, and it was already in hand — so it is
+ * shown. Zero still reads as "none on hand", because "0 on hand" is a worse
+ * sentence and zero needs no investigating.
  */
 export function stockNote(product: StockNoteProduct): string {
   if (UNSTOCKED.has(product.productType)) return ''
@@ -38,6 +47,7 @@ export function stockNote(product: StockNoteProduct): string {
   if (product.reservedQty > 0) {
     return ` · ${formatQty(product.availableQty)} available of ${formatQty(product.stockOnHand)} (${formatQty(product.reservedQty)} on order)`
   }
-  if (product.stockOnHand <= 0) return ' · none on hand'
+  if (product.stockOnHand < 0) return ` · ${formatQty(product.stockOnHand)} on hand`
+  if (product.stockOnHand === 0) return ' · none on hand'
   return ''
 }

@@ -378,6 +378,16 @@ export async function saveRecipe(
   return { ok: true }
 }
 
+/**
+ * Writes ONE refer link.
+ *
+ * This is the primitive, and it takes the method it is given. The rule that a
+ * method belongs to the whole group of linked products — change it on one link
+ * and every link connected to it changes with it — is enforced one level up,
+ * in referRange.ts, which is what the screens call. Putting it here as well
+ * would mean a caller building a chain link by link, ascending, could not set
+ * the first link's method without the second one overruling it.
+ */
 export async function saveRefer(
   siteId: number,
   productId: number,
@@ -518,6 +528,49 @@ export function stockedReferSql(alias = 'p'): string {
     SELECT 1 FROM product_refers f
      WHERE f.product_id = ${alias}.id AND f.method = 'normal'
   )`
+}
+
+/**
+ * Which of these products can be refilled by breaking a bigger pack open.
+ *
+ * ── WHY THIS IS NOT A PRODUCT-TYPE CHECK ─────────────────────────────────
+ *
+ * The obvious guard is `productType === 'refer'`, and it is wrong at exactly
+ * the place it matters most. The BASE of a ladder is deliberately an ordinary
+ * `normal` product — createReferRange forces it, because a refer with nothing
+ * underneath it is refused by resolveComponents on every sale. So the single at
+ * the bottom, the one a shop sells most often and the one a case exists to
+ * refill, is the only rung a type check excludes.
+ *
+ * What matters is not what a product IS but what sits ABOVE it: any
+ * normal-method pack drawing on it can be opened to refill it. That is the same
+ * condition referParentOf() uses to pick a pack, so the guard and the cascade
+ * agree by construction rather than by coincidence.
+ *
+ * One query for a whole document, because the sale path holds a transaction
+ * open while it runs and a per-line round trip inside that is a lock held for
+ * no reason.
+ */
+export async function refillableProducts(
+  siteId: number,
+  productIds: readonly number[],
+): Promise<Set<number>> {
+  const ids = [...new Set(productIds)].filter((id) => id > 0)
+  if (ids.length === 0) return new Set()
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT DISTINCT f.target_id AS id
+       FROM product_refers f
+       JOIN products p ON p.id = f.product_id
+      WHERE f.target_id IN (${ids.map(() => '?').join(',')})
+        AND f.method = 'normal'
+        AND f.factor > 0
+        AND p.is_archived = 0`,
+    ids,
+  )
+
+  return new Set(rows.map((r) => Number(r.id)))
 }
 
 /** Products that use this one as an ingredient — shown before deleting it. */

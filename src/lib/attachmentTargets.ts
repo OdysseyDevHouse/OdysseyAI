@@ -94,6 +94,16 @@ export const ATTACHMENT_TARGETS = {
     write: 'reports.financial',
     href: (id: number) => `/accounting/journals/${id}`,
   },
+  /* Photographs of the fault, the signed-off worksheet, the supplier receipt for
+     a part bought on the way. A job card accumulates more paperwork than any
+     other record in the app, and most of it arrives from a phone on site — which
+     is exactly the case the loose (entity, entity_id) design was built for. */
+  job_card: {
+    label: 'Job card',
+    read: 'jobs.view',
+    write: 'jobs.edit',
+    href: (id: number) => `/jobs/${id}`,
+  },
 } as const
 
 export type AttachmentTarget = keyof typeof ATTACHMENT_TARGETS

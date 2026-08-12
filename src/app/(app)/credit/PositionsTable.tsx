@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Badge, DataTable, type Column } from '@/components/ui'
+import { Badge, DataTable, Icons, Menu, MenuItem, type Column } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { RISK_LABELS, type RiskBand } from '@/lib/creditModel'
 
@@ -60,6 +60,7 @@ export function PositionsTable({ rows, today }: { rows: PositionRow[]; today: st
       cell: (p) => (
         <>
           <Badge
+            dot
             tone={
               p.risk === 'bad'
                 ? 'danger'
@@ -120,11 +121,17 @@ export function PositionsTable({ rows, today }: { rows: PositionRow[]; today: st
       // list looks like 60 accounts nobody is bothering to phone.
       cell: (p) =>
         p.isHeld ? (
-          <Badge tone="danger">On hold</Badge>
+          <Badge dot tone="danger">
+            On hold
+          </Badge>
         ) : p.hasOpenPromise ? (
-          <Badge tone="success">Promised {p.openPromiseDate}</Badge>
+          <Badge dot tone="success">
+            Promised {p.openPromiseDate}
+          </Badge>
         ) : p.pausedUntil && p.pausedUntil >= today ? (
-          <Badge tone="default">Paused</Badge>
+          <Badge dot tone="default">
+            Paused
+          </Badge>
         ) : (
           <span className="text-faint">—</span>
         ),
@@ -137,6 +144,24 @@ export function PositionsTable({ rows, today }: { rows: PositionRow[]; today: st
       columns={columns}
       rows={rows}
       getRowKey={(p) => p.customerId}
+      actions={(p) => (
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for ${p.name}`}
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem href={`/customers/${p.customerId}?tab=transactions`}>
+            <Icons.Eye size={15} />
+            View account
+          </MenuItem>
+          <MenuItem href={`/customers/${p.customerId}/statement`}>
+            <Icons.FileText size={15} />
+            Statement
+          </MenuItem>
+        </Menu>
+      )}
       empty={{ title: 'No accounts', hint: 'Nothing in this filter.' }}
     />
   )

@@ -25,7 +25,12 @@ import { planTips } from '../tipMath'
 import { getNumericSetting, isPeriodLocked } from './settings'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
 import { requireSalesReason } from './salesReasons'
-import { resolveComponents, explodingProducts, type ResolvedComponent } from './productComposition'
+import {
+  resolveComponents,
+  explodingProducts,
+  refillableProducts,
+  type ResolvedComponent,
+} from './productComposition'
 import { checkSellable, markSold } from './serials'
 import { postTransaction, reverseTransaction } from './customerLedger'
 import type { Actor } from './activityLog'
@@ -349,6 +354,23 @@ export async function finaliseDocument(
       .map((l) => l.productId as number),
   )
 
+  /*
+   * Which sold lines a bigger pack can be broken open for.
+   *
+   * Resolved by LINK rather than by product type, because the base of a ladder
+   * is a `normal` product by design — see refillableProducts(). Guarding on the
+   * type instead left the single at the bottom, the rung a case exists to
+   * refill, as the one product that could never be refilled: selling it simply
+   * drove it negative with full cases sitting on the shelf.
+   *
+   * Every line with a product is offered, not just the refer-typed ones, for
+   * exactly that reason.
+   */
+  const refillable = await refillableProducts(
+    siteId,
+    document.lines.filter((l) => l.productId).map((l) => l.productId as number),
+  )
+
   const composed = new Map<number, ResolvedComponent[]>()
   for (const line of document.lines) {
     if (!line.productId) continue
@@ -538,11 +560,16 @@ export async function finaliseDocument(
          * movement below so the single is on the shelf to be sold, and inside
          * this transaction so the whole lot rolls back together.
          *
+         * Membership of `refillable` is the whole test — a pack drawing on this
+         * product under normal refers. NOT the product type: the base of a
+         * ladder is `normal`, and testing the type here excluded the one rung
+         * that most needs refilling. See refillableProducts().
+         *
          * Only on the way OUT. A credit note (qty < 0) puts stock back and has
          * nothing to break open — and it must never re-close a case, because
          * the shop cannot un-open one either.
          */
-        if (line.productType === 'refer' && carriesOwnStock && line.qty > 0) {
+        if (refillable.has(line.productId) && line.qty > 0) {
           await ensureStock(tx, actor, line.productId, line.qty, {
             source: document.docType,
             sourceDocId: document.id,

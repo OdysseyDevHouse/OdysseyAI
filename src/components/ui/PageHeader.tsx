@@ -6,6 +6,7 @@ import { buttonClass } from './styles'
 /** Title block at the top of a screen. One per page, above everything else. */
 export function PageHeader({
   title,
+  icon,
   status,
   subtitle,
   action,
@@ -13,6 +14,16 @@ export function PageHeader({
   backLabel = 'Back',
 }: {
   title: string
+  /**
+   * A glyph in a soft tile to the left of the title, naming the section the
+   * way the sidebar row does. For the LANDING screen of a section — the
+   * invoice register, the product catalogue — where it gives the page an
+   * identity you recognise before reading.
+   *
+   * Leave it off on detail screens: those get `backHref`, and an arrow plus a
+   * tile is two competing things in the same corner.
+   */
+  icon?: ReactNode
   /**
    * A status chip sitting between the title and the subtitle — usually a
    * <Badge>. For the state of the record being edited ("Draft", "Issued"),
@@ -41,6 +52,15 @@ export function PageHeader({
           >
             <ArrowLeft size={18} />
           </Link>
+        )}
+        {/* Never shown next to a back arrow — see the prop's note. */}
+        {icon && !backHref && (
+          <span
+            aria-hidden
+            className="flex size-9 shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand"
+          >
+            {icon}
+          </span>
         )}
         {/* Title and subtitle on one line: a detail screen's subtitle names the
             record, so it reads as "Edit product — 2-Hole Punch 22" rather than

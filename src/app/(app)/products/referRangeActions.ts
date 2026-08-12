@@ -7,10 +7,12 @@ import {
   referChain,
   addReferRung,
   removeReferRung,
+  setReferGroupMethod,
   type ReferRangeInput,
   type AddRungInput,
   type ChainRung,
 } from '@/lib/site/referRange'
+import type { ReferMethod } from '@/lib/site/productComposition'
 
 /**
  * The refer wizard's one action.
@@ -72,6 +74,27 @@ export async function addReferRungAction(
 
   revalidatePath('/products')
   return { ok: true, chain: await referChain(ctx.siteId, viewingId) }
+}
+
+/**
+ * Switches the refer method for every product linked to this one.
+ *
+ * Set from one stock code, applied to the whole group — a ladder running two
+ * methods at once receives stock at one level and looks for it at another. See
+ * setReferGroupMethod.
+ */
+export async function setReferMethodAction(
+  productId: number,
+  method: ReferMethod,
+): Promise<{ ok: true; chain: ChainRung[]; changed: number } | { ok: false; error: string }> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await setReferGroupMethod(ctx.siteId, productId, method)
+  if (!result.ok) return result
+
+  revalidatePath('/products')
+  return { ok: true, chain: await referChain(ctx.siteId, productId), changed: result.changed }
 }
 
 export async function removeReferRungAction(

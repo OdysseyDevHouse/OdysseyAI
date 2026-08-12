@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listPromises } from '@/lib/site/creditControl'
-import { PageHeader, PageBody } from '@/components/ui'
+import { Icons, PageHeader, PageBody } from '@/components/ui'
 import { PromisesClient, type PromiseRow } from './PromisesClient'
 
 export const dynamic = 'force-dynamic'
@@ -47,6 +47,7 @@ export default async function PromisesPage() {
     <>
       <PageHeader
         title="Promises to pay"
+        icon={<Icons.Wallet size={18} />}
         subtitle={
           open.length === 0
             ? 'No open promises'

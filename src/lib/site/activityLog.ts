@@ -72,6 +72,16 @@ export type ActivityEntity =
      "who cancelled the party of twelve on Saturday" has no other answer, and
      the guest will certainly be asking. */
   | 'reservation'
+  /* A job card: who it was assigned to, every status it moved through, and every
+     commercial decision taken on its lines. entityId is the job, and null for
+     workflow-level settings like the statuses themselves.
+
+     The line decisions are the reason this is here. "Who wrote off the R4 200
+     compressor, and why" is the question an owner asks first, and a job card is
+     the one record in the app where somebody with no financial permission
+     records a cost that somebody else later decides not to charge for. Both
+     halves of that need a name against them. */
+  | 'job_card'
 
 export type ActivityEvent = {
   id: number

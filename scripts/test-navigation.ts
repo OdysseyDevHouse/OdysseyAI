@@ -423,6 +423,7 @@ const UNLINKED: Record<string, string> = {
      than a section of its own. */
   '/transfers/inbound': 'reached from the transfer list',
   '/adjustments/new': 'reached from the adjustment list',
+  '/jobs/new': 'reached from the job list',
   '/stock-takes/new': 'reached from the stock take list',
   '/manufacturing/new': 'reached from the manufacturing list',
   '/expenses/new': 'reached from the expense list',

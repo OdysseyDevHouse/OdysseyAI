@@ -229,6 +229,18 @@ export default function ProductForm({
   // rather than a sum and the cost box is not how it is set.
   const derivedCost = productType === 'recipe' ? recipeCost : null
 
+  /*
+   * Whether to offer the Refer tab.
+   *
+   * NOT `productType === 'refer'` alone. The BASE of a ladder is an ordinary
+   * `normal` product on purpose — createReferRange forces it, because a refer
+   * with nothing under it is refused on every sale — so a type check hid the
+   * ladder from the single at the bottom, which is the rung people open first
+   * and the one a case exists to refill. Being ON a ladder earns the tab, and
+   * referChain returns the same ladder from any rung including the base.
+   */
+  const onReferLadder = productType === 'refer' || referChain.length > 1
+
   // The refer wizard builds a whole pack range around this product. Only
   // reachable once it is saved, because the range chains onto its id.
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -299,7 +311,7 @@ export default function ProductForm({
                   },
                 ]
               : []),
-            ...(productType === 'refer'
+            ...(onReferLadder
               ? [{ value: 'refer', label: 'Refer', icon: <ArrowLeftRight size={16} /> }]
               : []),
             ...(productType === 'serial'
@@ -612,7 +624,7 @@ export default function ProductForm({
         )}
 
         {/* ── Refer ────────────────────────────────────────────────────── */}
-        {productType === 'refer' && (
+        {onReferLadder && (
           <div className={tab === 'refer' ? 'flex flex-col gap-4' : 'hidden'}>
             <Card>
               <SectionTitle
@@ -676,6 +688,9 @@ export default function ProductForm({
           onClose={() => setWizardOpen(false)}
           vatPercent={sellingVatPercent}
           autoCode={autoCode}
+          // Already linked? The range joins that ladder's method rather than
+          // picking one — see setReferGroupMethod.
+          groupMethod={referChain.find((r) => r.method)?.method ?? null}
           base={{
             productId: product.id,
             description: product.description,

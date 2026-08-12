@@ -883,6 +883,16 @@ export async function postStockTake(
           [before.toFixed(3), target.toFixed(3), delta.toFixed(3), cost.toFixed(4), line.id] as never,
         )
 
+        /*
+         * When this product was last counted — stamped ABOVE the zero-variance
+         * skip, because a shelf counted and found correct was still counted.
+         * That is the question this column answers: when did somebody last walk
+         * up and look, not when did the figure last change.
+         */
+        await tx.execute('UPDATE products SET last_stock_take_date = NOW() WHERE id = ?', [
+          line.productId,
+        ] as never)
+
         // The whole point of the skip: a movement of zero is noise.
         if (Math.abs(delta) < 0.0005) continue
 

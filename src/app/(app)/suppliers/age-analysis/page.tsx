@@ -54,6 +54,7 @@ export default async function SupplierAgeAnalysisPage({
     <>
       <PageHeader
         title="Payables age analysis"
+        icon={<Icons.Scale size={18} />}
         subtitle={
           isHistoric
             ? `${rows.length} supplier${rows.length === 1 ? '' : 's'} as at ${asAt}`
@@ -66,27 +67,28 @@ export default async function SupplierAgeAnalysisPage({
           <StatTile
             label="Total owed"
             value={formatMoney(totals.total)}
-            icon={<Icons.Coins size={16} />}
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
           />
           <StatTile
             label="Not yet due"
             value={formatMoney(totals.current)}
             hint="Within terms"
-            icon={<Icons.Clock size={16} />}
+            icon={<Icons.Clock size={20} />}
           />
           <StatTile
             label="Overdue"
             value={formatMoney(overdue)}
             tone={overdue > 0 ? 'warning' : 'default'}
             hint={overdue > 0 ? 'We are late paying' : 'All within terms'}
-            icon={<Icons.StatusWarning size={16} />}
+            icon={<Icons.StatusWarning size={20} />}
           />
           <StatTile
             label="90 days and older"
             value={formatMoney(totals.d90 + totals.d120)}
             tone={totals.d90 + totals.d120 > 0 ? 'danger' : 'default'}
             hint="Supply at risk"
-            icon={<Icons.Ban size={16} />}
+            icon={<Icons.Ban size={20} />}
           />
         </StatStrip>
 
@@ -107,16 +109,40 @@ export default async function SupplierAgeAnalysisPage({
               aria-label="Which suppliers to show"
               value={overdueOnly ? 'overdue' : 'all'}
               options={[
-                { value: 'all', label: 'All', href: href({ overdue: null }) },
-                { value: 'overdue', label: 'Overdue only', href: href({ overdue: '1' }) },
+                {
+                  value: 'all',
+                  label: 'All',
+                  icon: <Icons.LayoutGrid size={15} />,
+                  href: href({ overdue: null }),
+                },
+                {
+                  value: 'overdue',
+                  label: 'Overdue only',
+                  icon: <Icons.StatusWarning size={15} />,
+                  href: href({ overdue: '1' }),
+                },
               ]}
             />
+            {/* This bar is a MODE switch, not a status filter — it changes how
+                the same balances are aged. So the glyphs name the two dates
+                being chosen between, rather than borrowing the tick/cross pair
+                that everywhere else in the app means "state". */}
             <LinkSegmentedControl
               aria-label="How to age the balances"
               value={basis}
               options={[
-                { value: 'due', label: 'By due date', href: href({ basis: null }) },
-                { value: 'doc', label: 'By document date', href: href({ basis: 'doc' }) },
+                {
+                  value: 'due',
+                  label: 'By due date',
+                  icon: <Icons.CalendarClock size={15} />,
+                  href: href({ basis: null }),
+                },
+                {
+                  value: 'doc',
+                  label: 'By document date',
+                  icon: <Icons.FileText size={15} />,
+                  href: href({ basis: 'doc' }),
+                },
               ]}
             />
           </TableToolbar>

@@ -15,6 +15,9 @@ import {
   referChain,
   addReferRung,
   removeReferRung,
+  referGroupIds,
+  referGroupMethod,
+  setReferGroupMethod,
 } from '../src/lib/site/referRange'
 import { getRefer } from '../src/lib/site/productComposition'
 import { createSupplier } from '../src/lib/site/suppliers'
@@ -136,6 +139,11 @@ async function main() {
     extended.ok ? String(extended.created) : '')
   ok('  reusing the existing product as rung 1',
     extended.ok && extended.productIds[0] === single)
+  // It asked for 'subtract', but the single already runs a 'normal' ladder and
+  // the method belongs to the group. Joining a ladder does not re-decide it.
+  ok("*** and it keeps the existing ladder's method, ignoring the one asked for ***",
+    extended.ok && (await getRefer(SITE, extended.productIds[1]))?.method === 'normal',
+    extended.ok ? String((await getRefer(SITE, extended.productIds[1]))?.method) : '')
 
   /*
    * The usual way in is the Refer tab of a product that is ALREADY type
@@ -256,6 +264,168 @@ async function main() {
     String(pallet?.packSize))
 
   ok('the base rung cannot be removed', !(await removeReferRung(SITE, single)).ok)
+
+  /*
+   * ── One method per GROUP ──────────────────────────────────────────────
+   *
+   * The method is set per stock code but stored per group: a ladder running two
+   * methods at once receives stock at one level and looks for it at another.
+   * Changing it anywhere has to change every link connected to it — including
+   * forks, which the ladder walk cannot see.
+   */
+  console.log('\n── One method per group ──')
+
+  const groupIds = await referGroupIds(SITE, six)
+  const ladder = await referChain(SITE, six)
+  ok('*** the group is wider than the ladder — it includes the fork ***',
+    groupIds.includes(loose.insertId) && groupIds.length > ladder.length,
+    `group=${groupIds.length} ladder=${ladder.length}`)
+  ok('  and it is the same set read from any member',
+    (await referGroupIds(SITE, single)).sort().join(',') === [...groupIds].sort().join(','))
+
+  ok('the group reports the method its links are on',
+    (await referGroupMethod(SITE, single)) === 'normal')
+
+  const switched = await setReferGroupMethod(SITE, six, 'subtract')
+  ok('*** the method can be switched from any rung ***', switched.ok,
+    switched.ok ? '' : switched.error)
+
+  const afterSwitch = await siteQuery<any>(SITE,
+    `SELECT method FROM product_refers WHERE product_id IN (${groupIds.map(() => '?').join(',')})`,
+    groupIds)
+  ok('*** EVERY link in the group moved, not just the one ***',
+    afterSwitch.length > 1 && afterSwitch.every((r: any) => String(r.method) === 'subtract'),
+    afterSwitch.map((r: any) => r.method).join(','))
+
+  // The fork is the point: it is not on the ladder referChain walks, so a
+  // per-ladder change would have left it behind on the old method.
+  ok('*** including the fork the ladder walk never showed ***',
+    (await getRefer(SITE, loose.insertId))?.method === 'subtract')
+
+  // A rung added afterwards joins the group's method rather than its own
+  // argument — otherwise the panel could re-mix what was just made uniform.
+  const joined = await addReferRung(SITE, {
+    belowId: single,
+    code: `RG${stamp}-3`,
+    description: 'Range three',
+    packSize: 3,
+    method: 'normal',
+  })
+  ok('a rung can be added to a group already on subtract', joined.ok,
+    joined.ok ? '' : joined.error)
+  ok("*** and it takes the GROUP's method, not the one it asked for ***",
+    joined.ok && (await getRefer(SITE, joined.productId))?.method === 'subtract',
+    joined.ok ? String((await getRefer(SITE, joined.productId))?.method) : '')
+
+  // Same rule for a range built on top of an existing ladder.
+  const joinedRange = await createReferRange(SITE, {
+    method: 'normal',
+    rows: [
+      { productId: single, description: 'Range single', packSize: 1 },
+      { description: 'Range thirty-six', code: `RG${stamp}-36`, packSize: 36 },
+    ],
+  })
+  ok('a range can be built on a group already on subtract', joinedRange.ok,
+    joinedRange.ok ? '' : joinedRange.error)
+  ok("*** and it joins that method too, not the wizard's dropdown ***",
+    joinedRange.ok && (await getRefer(SITE, joinedRange.productIds[1]))?.method === 'subtract',
+    joinedRange.ok ? String((await getRefer(SITE, joinedRange.productIds[1]))?.method) : '')
+
+  /*
+   * Stock blocks the switch, because the same figure means a different thing
+   * under each method — 10 cases under normal refers is 10 cases, and under
+   * subtract pack it is a label on 240 singles nobody received. The BASE is
+   * exempt: its pile is the same pile either way, and refusing on it would make
+   * the change impossible for any shop that has ever received the thing.
+   */
+  await siteExecute(SITE, 'UPDATE products SET stock_on_hand = 5 WHERE id = ?', [six])
+  const blocked = await setReferGroupMethod(SITE, single, 'normal')
+  ok('*** a pack with stock on hand blocks the switch ***', !blocked.ok,
+    !blocked.ok ? blocked.error : '')
+  ok('  and nothing moved',
+    (await getRefer(SITE, six))?.method === 'subtract')
+
+  await siteExecute(SITE, 'UPDATE products SET stock_on_hand = 0 WHERE id = ?', [six])
+  await siteExecute(SITE, 'UPDATE products SET stock_on_hand = 99 WHERE id = ?', [single])
+  const baseExempt = await setReferGroupMethod(SITE, single, 'normal')
+  ok('*** stock on the BASE does not block it ***', baseExempt.ok,
+    baseExempt.ok ? '' : baseExempt.error)
+  await siteExecute(SITE, 'UPDATE products SET stock_on_hand = 0 WHERE id = ?', [single])
+
+  /*
+   * ── Unlinking a fork ──────────────────────────────────────────────────
+   *
+   * The panel names a fork in a warning, and now offers to unlink it there —
+   * naming a problem and giving no way to act on it just moves the work to
+   * another screen. removeReferRung re-reads the chain from whatever product it
+   * is handed, so a fork is a rung of its OWN chain and needs no special path.
+   *
+   * Left until after the group tests, which need the fork to still exist.
+   */
+  console.log('\n── Unlinking a fork ──')
+
+  /*
+   * A fork built for the purpose: a leaf hanging off the base, on nothing and
+   * with nothing on it. Scavenging "the first fork on the chain" picks up a
+   * rung the ladder is BUILT ON by this point in the script, and removing that
+   * legitimately shortens it — which says nothing about unlinking a fork.
+   */
+  const leaf = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, 'Fork leaf', 'refer', 0, 0, 5, 1)`, [`RG${stamp}-777`])
+  await siteExecute(SITE,
+    'INSERT INTO product_refers (product_id, target_id, factor, method) VALUES (?,?,?,?)',
+    [leaf.insertId, single, 7, 'subtract'])
+
+  const beforeFork = await referChain(SITE, single)
+  ok('the leaf shows up as a fork, not as a rung',
+    beforeFork.flatMap((r) => r.alsoDrawnOnBy).some((o) => o.productId === leaf.insertId) &&
+      !beforeFork.some((r) => r.productId === leaf.insertId))
+
+  const unlinked = await removeReferRung(SITE, leaf.insertId)
+  ok('*** a fork can be unlinked from the ladder it hangs off ***', unlinked.ok,
+    unlinked.ok ? '' : unlinked.error)
+  ok('  and the link is actually gone', (await getRefer(SITE, leaf.insertId)) === null)
+
+  const afterFork = await referChain(SITE, single)
+  ok('*** the ladder it hung off is untouched ***',
+    afterFork.length === beforeFork.length,
+    `${beforeFork.length} -> ${afterFork.length}`)
+  ok('  and the warning has one fewer entry',
+    afterFork.flatMap((r) => r.alsoDrawnOnBy).length <
+      beforeFork.flatMap((r) => r.alsoDrawnOnBy).length,
+    `${beforeFork.flatMap((r) => r.alsoDrawnOnBy).length} -> ${afterFork.flatMap((r) => r.alsoDrawnOnBy).length}`)
+
+  /*
+   * Two packs on the same rung, both re-pointed when it goes. The old code
+   * followed one branch of a display walk and re-pointed only the winner,
+   * stranding the other on a link that no longer existed.
+   */
+  const mid = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, 'Doomed middle', 'refer', 0, 0, 5, 1)`, [`RG${stamp}-800`])
+  const upA = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, 'Above A', 'refer', 0, 0, 5, 1)`, [`RG${stamp}-801`])
+  const upB = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, 'Above B', 'refer', 0, 0, 5, 1)`, [`RG${stamp}-802`])
+  const ins = (p: number, t: number, f: number) => siteExecute(SITE,
+    'INSERT INTO product_refers (product_id, target_id, factor, method) VALUES (?,?,?,?)',
+    [p, t, f, 'subtract'])
+  await ins(mid.insertId, single, 2)
+  await ins(upA.insertId, mid.insertId, 3)
+  await ins(upB.insertId, mid.insertId, 5)
+
+  ok('*** a rung with TWO packs above it can be removed ***',
+    (await removeReferRung(SITE, mid.insertId)).ok)
+  const a = await getRefer(SITE, upA.insertId)
+  const b = await getRefer(SITE, upB.insertId)
+  ok('*** BOTH were re-pointed at the base, neither stranded ***',
+    a?.targetId === single && b?.targetId === single,
+    `A->${a?.targetId} B->${b?.targetId} (base ${single})`)
+  ok('  and both kept their base-unit count (3×2=6, 5×2=10)',
+    a?.factor === 6 && b?.factor === 10, `A=${a?.factor} B=${b?.factor}`)
 
   // ── Refusals leave nothing behind
   console.log('\n── Refusals ──')

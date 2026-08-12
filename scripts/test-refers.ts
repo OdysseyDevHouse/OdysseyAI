@@ -27,6 +27,7 @@ import { saveRefer, getRefer, explodingProducts } from '../src/lib/site/productC
 import { receiveGoods } from '../src/lib/site/purchasePosting'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { toNum } from '../src/lib/decimals'
+import { toProductType } from '../src/lib/productTypes'
 import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
 const SITE = 1
@@ -107,10 +108,22 @@ async function main() {
 
   const driftBefore = (await reconcileStock(SITE)).length
 
+  /*
+   * The line's product_type is read from the PRODUCT, not hardcoded.
+   *
+   * It used to pass 'refer' for every line, including sales of the base — which
+   * is a `normal` product. That fixture disagreed with the schema and hid a real
+   * bug: the posting path gated the pack-breakdown on the line type, so selling
+   * a base in production never opened a case, while this test sold one under a
+   * type real data never carries and passed. A fixture that lies about its own
+   * data proves nothing.
+   */
   const sale = async (productId: number, code: string, desc: string, qty: number, price: number) => {
+    const typeRow = await siteQueryOne<any>(SITE, 'SELECT product_type FROM products WHERE id = ?', [productId])
+    const productType = toProductType(typeRow?.product_type)
     const draft = await saveDraft(SITE, actor, {
       docType: 'invoice', customerName: 'Walk-in',
-      lines: [{ productId, productCode: code, description: desc, productType: 'refer', qty, unitPriceIncl: price, vatRatePct: rate, unitCostExcl: 0 }],
+      lines: [{ productId, productCode: code, description: desc, productType, qty, unitPriceIncl: price, vatRatePct: rate, unitCostExcl: 0 }],
     })
     if (!draft.ok) throw new Error('draft failed')
     const done = await finaliseDocument(SITE, actor, {
@@ -245,6 +258,43 @@ async function main() {
     `${afterBulk.c}/${afterBulk.x}/${afterBulk.s}`)
 
   /*
+   * ── THE BASE IS A `normal` PRODUCT, AND IT STILL BREAKS PACKS OPEN ──────
+   *
+   * The regression that put this section here. The pack-breakdown used to be
+   * gated on `line.productType === 'refer'`, but the base of a ladder is a
+   * `normal` product BY DESIGN — createReferRange forces it, because a refer
+   * with nothing under it is refused on every sale. So the single at the
+   * bottom, the rung a case exists to refill, was the one product that could
+   * never be refilled: a real shop sold one and watched it go to -1 with ten
+   * full cases on the shelf.
+   *
+   * Asserted on the stored type rather than on behaviour alone, because the
+   * fixture that hid this bug was one that passed 'refer' for every line.
+   */
+  const baseType = String((await siteQueryOne<any>(SITE,
+    'SELECT product_type FROM products WHERE id=?', [nSingle]))?.product_type)
+  ok('*** the base of a normal-refer ladder is a `normal` product ***',
+    baseType === 'normal', baseType)
+
+  // Put a case back so there is something to open, then sell the base again.
+  // Captured for the teardown: a GRV left behind keeps its supplier alive, and
+  // the orphan ledger rows fail reconcileSupplierBalances in another suite.
+  const baseGrv = await receiveGoods(SITE, actor, {
+    supplierId: sup.id, supplierInvoiceNo: `RN2-${stamp}`,
+    lines: [{ productId: nCase, productCode: `RNC${stamp}`, description: 'Beer case', productType: 'refer', qtyReceived: 1, unitCostExcl: 240, vatRatePct: rate }],
+  })
+  const beforeBase = { c: await stockOf(nCase), x: await stockOf(nSix), s: await stockOf(nSingle) }
+  const baseSale = await sale(nSingle, `RNS${stamp}`, 'Beer single', 1, 15)
+  ok('*** selling the `normal` BASE opens a case, it does not go negative ***',
+    baseSale.result.ok, baseSale.result.ok ? '' : baseSale.result.error)
+  const afterBase = { c: await stockOf(nCase), x: await stockOf(nSix), s: await stockOf(nSingle) }
+  console.log(`      -> ${beforeBase.c}/${beforeBase.x}/${beforeBase.s}  =>  ${afterBase.c}/${afterBase.x}/${afterBase.s}`)
+  ok('  the case was opened (one fewer)', afterBase.c === beforeBase.c - 1,
+    `${beforeBase.c} -> ${afterBase.c}`)
+  ok('*** and the single is POSITIVE, not -1 ***', afterBase.s === 5,
+    String(afterBase.s))
+
+  /*
    * ── An empty chain lets stock go negative rather than refusing the sale.
    *
    * Emptied through recordMovement rather than an UPDATE, because writing
@@ -277,7 +327,7 @@ async function main() {
 
   // ── Cleanup.
   await sweepStrays()
-  const docIds = [sSale.draftId, beerSale.draftId, again.draftId, sixSale.draftId, bulk.draftId, dry.draftId]
+  const docIds = [sSale.draftId, beerSale.draftId, again.draftId, sixSale.draftId, bulk.draftId, baseSale.draftId, dry.draftId]
   await siteExecute(SITE, `DELETE FROM sales_tenders WHERE document_id IN (${docIds.map(() => '?').join(',')})`, docIds)
   await siteExecute(SITE, `DELETE FROM document_audit WHERE document_id IN (${docIds.map(() => '?').join(',')})`, docIds)
   await siteExecute(SITE, `UPDATE sales_documents SET reverses_id = NULL WHERE id IN (${docIds.map(() => '?').join(',')})`, docIds)
@@ -285,7 +335,11 @@ async function main() {
 
   // The GRVs and the supplier they were bought from. Left behind, the ledger
   // rows make reconcileSupplierBalances fail in an unrelated suite.
-  const grvIds = [sGrv.ok ? sGrv.documentId : 0, nGrv.ok ? nGrv.documentId : 0]
+  const grvIds = [
+    sGrv.ok ? sGrv.documentId : 0,
+    nGrv.ok ? nGrv.documentId : 0,
+    baseGrv.ok ? baseGrv.documentId : 0,
+  ]
   await siteExecute(SITE, `DELETE FROM purchase_document_lines WHERE document_id IN (${grvIds.map(() => '?').join(',')})`, grvIds)
   await siteExecute(SITE, `DELETE FROM purchase_documents WHERE id IN (${grvIds.map(() => '?').join(',')})`, grvIds)
   await siteExecute(SITE, 'DELETE FROM supplier_transactions WHERE supplier_id = ?', [sup.id])

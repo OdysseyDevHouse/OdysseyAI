@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Badge, DataTable, type Column } from '@/components/ui'
+import { Badge, DataTable, Icons, Menu, MenuItem, type Column } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 
 /**
@@ -56,14 +56,22 @@ export function AssetsTable({ rows }: { rows: AssetTableRow[] }) {
       header: 'Status',
       cell: (a) =>
         a.status === 'disposed' ? (
-          <Badge tone="default">Disposed</Badge>
+          <Badge dot tone="default">
+            Disposed
+          </Badge>
         ) : a.status === 'pending' ? (
-          <Badge tone="warning">Not in use</Badge>
+          <Badge dot tone="warning">
+            Not in use
+          </Badge>
         ) : a.fullyDepreciated ? (
           // Still owned and still on the balance sheet, but no longer a cost.
-          <Badge tone="default">Fully depreciated</Badge>
+          <Badge dot tone="default">
+            Fully depreciated
+          </Badge>
         ) : (
-          <Badge tone="success">In use</Badge>
+          <Badge dot tone="success">
+            In use
+          </Badge>
         ),
       sortValue: (a) => a.status,
     },
@@ -95,6 +103,24 @@ export function AssetsTable({ rows }: { rows: AssetTableRow[] }) {
       columns={columns}
       rows={rows}
       getRowKey={(a) => a.id}
+      actions={(a) => (
+        <Menu
+          iconOnly
+          size="sm"
+          variant="bare"
+          triggerLabel={`Actions for ${a.assetCode || a.name}`}
+          label={<Icons.MoreVertical size={16} />}
+        >
+          <MenuItem href={`/accounting/assets/${a.id}`}>
+            <Icons.Eye size={15} />
+            View asset
+          </MenuItem>
+          <MenuItem href={`/accounting/assets/${a.id}/edit`}>
+            <Icons.Pencil size={15} />
+            Edit
+          </MenuItem>
+        </Menu>
+      )}
       empty={{ title: 'No assets', hint: 'Nothing in this filter.' }}
     />
   )

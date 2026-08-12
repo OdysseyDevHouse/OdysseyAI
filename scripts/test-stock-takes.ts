@@ -272,6 +272,23 @@ async function main() {
   ok('  and the correct line carries no movement id',
     postedSheet.lines.find((l) => l.productId === exact)!.movementId === null)
 
+  /* ── 7b. But every counted line IS stamped as counted ─────────────────
+   *
+   * last_stock_take_date answers "when did somebody last walk up and look",
+   * which is a different question from "when did the figure last change". So it
+   * is written ABOVE the zero-variance skip: a shelf counted and found correct
+   * was still counted, and it is exactly the product a stale-count report must
+   * not flag. Separate from last_adjust_date, which a posted take also stamps.
+   */
+  const countedAt = async (id: number) =>
+    (await siteQueryOne<any>(SITE, 'SELECT last_stock_take_date d FROM products WHERE id=?', [id]))?.d
+
+  ok('*** the counted-right product is still STAMPED as counted ***',
+    (await countedAt(exact)) !== null,
+    String(await countedAt(exact)))
+  ok('  and so are the two that varied',
+    (await countedAt(short)) !== null && (await countedAt(over)) !== null)
+
   /* ── 8. Valuation ────────────────────────────────────────────────────── */
 
   // -1 x 10 = -10, +3 x 4 = +12. Net +2.

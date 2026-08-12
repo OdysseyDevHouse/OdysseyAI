@@ -16,7 +16,7 @@ import { Callout, PageBody, PageHeader } from '@/components/ui'
 import { listImages } from '@/lib/site/productImages'
 import { variantStanding } from '@/lib/site/productVariants'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
-import { referChain } from '@/lib/site/referRange'
+import { referChain, isOnReferLadder } from '@/lib/site/referRange'
 import ProductForm, { SaveProductButton } from '../ProductForm'
 import ProductImages from '../ProductImages'
 import VariantsPanel from '../VariantsPanel'
@@ -85,11 +85,19 @@ export default async function EditProductPage({
     product.productType === 'recipe'
       ? listRecipe(siteId, product.id).catch(() => [])
       : Promise.resolve([]),
-    // The whole ladder, not just this rung's own link: the Refer tab edits the
-    // chain and shows every pack size whichever one was opened.
-    product.productType === 'refer'
-      ? referChain(siteId, product.id).catch(() => [])
-      : Promise.resolve([]),
+    /*
+     * The whole ladder, not just this rung's own link: the Refer tab edits the
+     * chain and shows every pack size whichever one was opened.
+     *
+     * Asked by LINK rather than by product type. The base of a ladder is a
+     * `normal` product by design, so keying this off `productType === 'refer'`
+     * sent it an empty chain and hid the Refer tab from the single at the
+     * bottom — the rung most people open first. isOnReferLadder is one indexed
+     * lookup that answers false immediately for a product on no ladder.
+     */
+    isOnReferLadder(siteId, product.id)
+      .then((on) => (on ? referChain(siteId, product.id) : []))
+      .catch(() => []),
     product.productType === 'serial'
       ? listSerials(siteId, { productId: product.id, limit: 200 })
           .then((r) => r.items)
@@ -99,13 +107,17 @@ export default async function EditProductPage({
     // Tolerant like its neighbours: an unmigrated store still edits products,
     // it simply has no gallery yet.
     listImages(siteId, product.id).catch(() => []),
-    // Whether the refer wizard may leave a product code blank. A site without
-    // auto-numbering must be told up front rather than at Create.
-    product.productType === 'refer'
-      ? suggestedMasterCode(siteId, 'product')
-          .then((c) => c !== null)
-          .catch(() => false)
-      : Promise.resolve(false),
+    /*
+     * Whether the refer wizard may leave a product code blank. A site without
+     * auto-numbering must be told up front rather than at Create.
+     *
+     * Asked for every product, because the wizard is reachable from the Refer
+     * tab and that tab is no longer limited to refer-typed products — the base
+     * of a ladder is `normal`. One cached settings read either way.
+     */
+    suggestedMasterCode(siteId, 'product')
+      .then((c) => c !== null)
+      .catch(() => false),
   ])
 
   // Same tolerance: a store that has not run 070 yet has no parent_id column,

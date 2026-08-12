@@ -52,6 +52,9 @@ export {
   ArrowLeft,
   ArrowLeftRight,
   Ellipsis as MoreHorizontal,
+  // The row-actions kebab. Vertical because it sits in a narrow trailing
+  // column, where a horizontal one reads as an ellipsis in the data.
+  EllipsisVertical as MoreVertical,
   ExternalLink,
   CornerDownRight,
   // The Enter key, drawn. Only ever a keyboard hint — the global search palette
@@ -87,6 +90,10 @@ export {
   Building2,
   Users,
   Truck,
+  // Work to be done on something: a job card, a repair, a service call. Distinct
+  // from Factory, which is making stock, and from Settings, which is configuring
+  // the shop.
+  Wrench,
   FileText,
   Settings,
   // Per-DEVICE display choices, as distinct from Settings (which is the shop's).

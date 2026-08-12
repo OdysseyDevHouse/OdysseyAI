@@ -51,8 +51,13 @@ export function TableToolbar({
         inCard ? TOOLBAR_IN_CARD : ''
       } ${className}`}
     >
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {/* The left group takes the space it needs and the actions take the rest.
+          When a list carries enough filters to fill the row, the actions wrap
+          to a line of their own — and `ml-auto` keeps them against the RIGHT
+          edge when they do. Without it they landed bottom-left, under the
+          filters, where a table control reads as one more filter. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
+      {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
   )
 }
@@ -68,6 +73,12 @@ export type SegmentedOption<T extends string> = {
   label: string
   /** Optional count pill, e.g. All 162. */
   count?: number
+  /**
+   * A glyph before the label, giving each slice a shape the eye can find
+   * without reading. Either every option carries one or none does — a bar with
+   * icons on some segments and not others looks broken rather than considered.
+   */
+  icon?: ReactNode
 }
 
 /**
@@ -233,6 +244,13 @@ function SegmentLabel<T extends string>({
 }) {
   return (
     <>
+      {/* Inactive icons sit back a step so the label stays the thing being
+          read; on the active segment both are white and equally loud. */}
+      {option.icon && (
+        <span aria-hidden className={`shrink-0 ${active ? '' : 'text-faint'}`}>
+          {option.icon}
+        </span>
+      )}
       {option.label}
       {option.count !== undefined && (
         <span

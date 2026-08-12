@@ -1,0 +1,39 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- Travel: was the claim one way, or there and back?
+--
+-- ── WHY THIS IS NOT PART OF 107 ──────────────────────────────────────────
+--
+-- It belongs beside recorded_km and recorded_source, and that is where the
+-- comment in 107 now points. But 107 had already been applied when the need for
+-- this column was found, and scripts/site-migrate.mjs records a migration BY
+-- FILENAME — editing an applied file changes nothing at all, silently. So a
+-- correction is always a new file, exactly as 085 corrected 081.
+--
+-- ── THE BUG IT FIXES ─────────────────────────────────────────────────────
+--
+-- expectedFor() in jobTravel.ts always DOUBLED the straight-line estimate,
+-- reasoning that a technician has to get back. That is a guess, and it fails in
+-- the direction that matters.
+--
+-- A trip from a branch to a site 21 km away got a 42 km expectation. Somebody
+-- claiming the single leg they actually drove was measured against twice the
+-- distance, so with a 20% tolerance they could claim 50 km on a 21 km drive and
+-- nothing flagged it. The check silently stopped catching the thing it exists for.
+--
+-- The leg count is not something arithmetic can recover from a distance. It is
+-- something the person recording the trip knows, so they say — and it is stored,
+-- because expected_km was derived against it and an edit must re-derive the same
+-- figure. Inferring it back from the claim would be circular.
+--
+-- Defaults to 1: a return trip is the ordinary case, so an existing row keeps the
+-- expectation it was already measured against and nothing already verified moves.
+--
+-- DDL auto-commits, so every step here is re-runnable.
+--
+-- NOTE: no apostrophes in comments anywhere in this file. The runner sends it as
+-- one multipleStatements batch, and MariaDB reads a lone ' inside a `--` comment
+-- as opening a string literal, swallowing the SQL that follows.
+-- ─────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE job_card_travel
+  ADD COLUMN IF NOT EXISTS is_return TINYINT(1) NOT NULL DEFAULT 1 AFTER recorded_source;

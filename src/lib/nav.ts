@@ -35,6 +35,7 @@ import {
   CalendarRange,
   Handshake,
   Repeat,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -268,9 +269,56 @@ export const NAV: NavSection[] = [
    * with a single setting still gets in and the hub drops the rest.
    */
   { label: 'Setup', icon: Settings, href: '/setup', built: true, capability: 'setup.view', description: 'How this shop is configured, from tills to VAT' },
-  /* Job Cards was an empty section rendering "Not built yet" — a promise the
-     menu could not keep, costing a permanent row. It comes back when it has a
-     route. */
+  /*
+   * Job Cards, back with routes.
+   *
+   * It was removed for rendering "Not built yet" — a promise the menu could not
+   * keep, costing a permanent row. This is the promise kept.
+   *
+   * Two rows, not a hub. hub.ts is explicit that a hub is what a section becomes
+   * when its screens are "too many, too unfamiliar and too rarely opened to work
+   * as a flat menu group" — which describes Setup and Online Store, and is the
+   * opposite of this. For a service business these are the screens they live in
+   * all day, and a hub would put a click between a technician and their work.
+   * Sales and Stock stayed flat for the same reason.
+   *
+   * The workflow settings go under /setup via SETUP_ELSEWHERE rather than here,
+   * so this section never becomes the flat list of settings that Setup and
+   * Online Store were created to undo.
+   */
+  {
+    label: 'Job cards',
+    icon: Wrench,
+    items: [
+      {
+        label: 'Job list',
+        href: '/jobs',
+        icon: ListOrdered,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'jobcard job card work order service repair technician callout maintenance install',
+        description: 'Every job, searchable and filterable',
+      },
+      {
+        label: 'Board',
+        href: '/jobs/board',
+        icon: LayoutGrid,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'kanban board columns workshop stages drag pipeline',
+        description: 'The day at a glance, by the stage each job is at',
+      },
+      {
+        label: 'Schedule',
+        href: '/jobs/schedule',
+        icon: CalendarClock,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'calendar diary schedule appointments visits technician dispatch day roster',
+        description: 'Who is going where today, and what has no slot yet',
+      },
+    ],
+  },
 ]
 
 /**
@@ -333,6 +381,9 @@ export const SUBPAGE_LABELS = {
   '/setup/quick-keys': 'Quick keys',
   '/setup/tables': 'Tables',
   '/setup/reservations': 'Reservations',
+  /* "Job workflow", not "Job statuses": the screen configures the stages AND the
+     boards that show them, and somebody looking for either should find it. */
+  '/setup/job-workflow': 'Job workflow',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
   '/setup/import': 'Import data',
@@ -561,6 +612,14 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   '/instructions': { new: 'New instruction', edit: 'Edit instruction' },
   '/customers': { new: 'New customer', edit: 'Customer' },
   '/suppliers': { new: 'New supplier', edit: 'Supplier' },
+  /* A job card is worked on for days and edited throughout, but the crumb names
+     the thing: the same screen serves an open job and a closed one, and "Edit
+     job" over a job that was finished last month reads wrongly. */
+  '/jobs': { new: 'New job', edit: 'Job card' },
+  /* /jobs/board/[slug] is not a detail route at all — the segment names WHICH
+     board, and the board's own name is already the page heading. Without an
+     entry the fallback labelled every board "Edit". */
+  '/jobs/board': { new: 'Board', edit: 'Board' },
   /* /sales itself redirects to the register now, but /sales/[id] is still where
      an issued document lives. It is never "edited" — the screen is a record of
      what went out — so the crumb names the thing rather than the action. */
@@ -648,9 +707,11 @@ export function breadcrumbFor(pathname: string): { icon: LucideIcon; crumbs: Cru
       const rest = pathname.slice(item.href.length).replace(/^\//, '')
       if (rest) {
         const labels = LEAF_LABELS[item.href]
-        crumbs.push({
-          label: rest === 'new' ? (labels?.new ?? 'New') : (labels?.edit ?? 'Edit'),
-        })
+        const leaf = rest === 'new' ? (labels?.new ?? 'New') : (labels?.edit ?? 'Edit')
+        /* A leaf that just repeats its parent adds nothing — /jobs/board/workshop
+           is still the Board screen, and the board's own name is the heading. The
+           same reasoning as the section-repeat skip above. */
+        if (leaf !== item.label) crumbs.push({ label: leaf })
       }
 
       return { icon: section.icon, crumbs }
