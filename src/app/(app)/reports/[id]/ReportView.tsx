@@ -28,6 +28,7 @@ import { toggleFavoriteAction } from '../actions'
 import ReportGrid from '../ReportGrid'
 import ReportChart from '../ReportChart'
 import ScheduleModal from '../schedules/ScheduleModal'
+import ReportColumnsButton from './ReportColumnsButton'
 
 /**
  * One report on screen.
@@ -40,6 +41,9 @@ export default function ReportView({
   name,
   description,
   columns,
+  allColumns,
+  storeColumns,
+  canSetColumns,
   rows,
   totals,
   range,
@@ -58,11 +62,29 @@ export default function ReportView({
   reportId: string
   name: string
   description: string
+  /** What is rendered: the store's chosen columns, in the store's order. */
   columns: ReportColumn[]
+  /**
+   * Every column this run produced, before the store's choice narrowed it.
+   *
+   * The picker's options. Separate from `columns` because a column the store
+   * has switched off must still be offerable — otherwise hiding one is the last
+   * decision anybody can make about it.
+   */
+  allColumns: ReportColumn[]
+  /** The store's stored order, or null when it has never chosen. */
+  storeColumns: string[] | null
+  /** Whether this role may change the columns for everybody. */
+  canSetColumns: boolean
   rows: Record<string, unknown>[]
   totals: Record<string, number>
   range: { from: string; to: string }
   truncated: boolean
+  /**
+   * Columns dropped because this ROLE may not see them — a permission fact,
+   * shown as a callout. Nothing to do with the store's column choice, which is
+   * deliberate and must never be announced as a restriction.
+   */
   hiddenColumns: string[]
   periodKey: PeriodKey
   spec: CustomReportSpec
@@ -182,6 +204,19 @@ export default function ReportView({
                   <Icons.Clock size={16} />
                   Schedule
                 </Button>
+              )}
+
+              {/* Beside Export, because both are about what leaves this screen
+                  rather than about which rows are on it. Only for a role that
+                  may set the store up — everyone else reads the store's
+                  choice. */}
+              {canSetColumns && (
+                <ReportColumnsButton
+                  reportId={reportId}
+                  allColumns={allColumns}
+                  storeColumns={storeColumns}
+                  shownKeys={columns.map((c) => c.key)}
+                />
               )}
 
               <ButtonLink href={exportHref} variant="ghost" prefetch={false}>

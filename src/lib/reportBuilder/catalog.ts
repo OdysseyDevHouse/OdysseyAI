@@ -405,7 +405,16 @@ const PRODUCT_LOOKUP_FIELDS: CatalogField[] = [
  * still matches on a site that has not run 022.
  */
 const SALE_DOC_TYPES = ['quote', 'sales_order', 'invoice', 'credit_sale', 'credit_note']
-const SALE_STATUSES = ['draft', 'parked', 'issued', 'finalised', 'void', 'cancelled']
+/*
+ * The statuses a sales document can actually hold.
+ *
+ * Checked against the live enum rather than kept as history: 022 merged 'void'
+ * into 'cancelled' and 'parked' became 'saved'. Both of the old values were
+ * still offered here, and offering a filter value the column cannot hold is
+ * worse than offering none — it returns an empty report with no hint that the
+ * question itself was unanswerable.
+ */
+const SALE_STATUSES = ['draft', 'saved', 'issued', 'finalised', 'cancelled']
 
 const CUSTOMER_JOIN: JoinUnit = {
   name: 'customer',
@@ -638,14 +647,16 @@ const SALES_SOURCE: CatalogSource = {
     },
     {
       key: 'voidReason',
-      // 029 renamed the column to cancel_reason and 022 the status value to
-      // cancelled. The field KEY is left alone: it is stored in saved reports
-      // and schedules, and renaming it would break them for a label change.
+      // 029 renamed the column to cancel_reason and 022 merged the status value
+      // 'void' into 'cancelled'. The field KEY is left alone: it is stored in
+      // saved reports and schedules, and renaming it would break them for a
+      // label change. Ids are data; names are display — the label below is what
+      // a person reads, and it says cancel.
       //
       // Kept alongside the coded field below rather than replaced, for the same
       // reason: this key is in saved reports. It is also still the only field
-      // that reads on a void raised before 102, and the only one that shows the
-      // free-text note beside a code.
+      // that reads on a cancellation raised before 102, and the only one that
+      // shows the free-text note beside a code.
       label: 'Cancel reason (text)',
       type: 'text',
       expr: 't.cancel_reason',
@@ -663,10 +674,10 @@ const SALES_SOURCE: CatalogSource = {
       key: 'cancelReasonName',
       label: 'Cancel reason name',
       type: 'text',
-      /* Labelled rather than left blank. Every void raised before 102 has free
-         text and no code, and those rows genuinely belong in the total — a
-         grouped report that showed them as an unnamed row would read as a bug
-         in the report rather than as the truth about the history. */
+      /* Labelled rather than left blank. Every cancellation raised before 102
+         has free text and no code, and those rows genuinely belong in the total
+         — a grouped report that showed them as an unnamed row would read as a
+         bug in the report rather than as the truth about the history. */
       expr: "COALESCE(vr.name, 'Not recorded')",
       needs: ['voidReason'],
       group: FIELD_GROUPS.OTHER,
@@ -1525,7 +1536,8 @@ const SUPPLIERS_SOURCE: CatalogSource = {
 }
 
 const PURCHASE_DOC_TYPES = ['purchase_order', 'grv', 'supplier_return']
-const PURCHASE_STATUSES = ['draft', 'issued', 'finalised', 'void', 'cancelled']
+/* As SALE_STATUSES: 'void' is not in the live enum and never can be. */
+const PURCHASE_STATUSES = ['draft', 'issued', 'finalised', 'cancelled']
 
 const PURCHASES_SOURCE: CatalogSource = {
   key: 'purchases',
@@ -1669,6 +1681,9 @@ const EXPENSE_LINES_SOURCE: CatalogSource = {
     { key: 'expenseDate', label: 'Date', type: 'date', expr: 'e.expense_date', starter: true, group: FIELD_GROUPS.DATES },
     { key: 'documentNumber', label: 'Document number', type: 'document', expr: 'e.document_number', group: FIELD_GROUPS.IDENTITY },
     { key: 'supplierName', label: 'Paid to', type: 'text', expr: 'e.supplier_name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    /* 'void' is right HERE, unlike on sales and purchases: expenses.status is
+       still enum('draft','finalised','void') — 022 only merged the value on
+       sales documents. Checked against the live column, not assumed. */
     enumField('status', 'Status', 'e.status', ['draft', 'finalised', 'void']),
     enumField('paymentType', 'Payment type', 'e.payment_type', ['on_account', 'direct']),
     { key: 'supplierInvoiceNo', label: 'Supplier invoice no.', type: 'text', expr: 'e.supplier_invoice_no', group: FIELD_GROUPS.IDENTITY },

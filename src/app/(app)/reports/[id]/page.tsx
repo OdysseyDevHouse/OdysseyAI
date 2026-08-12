@@ -4,6 +4,7 @@ import { can, type Capability } from '@/lib/site/permissions'
 import { resolveReport } from '@/lib/reportBuilder/resolve'
 import { runBuilderSpec, ReportAccessError } from '@/lib/reportBuilder/run'
 import { listFavorites } from '@/lib/site/reportFavorites'
+import { reportColumnsFor, applyStoreColumns } from '@/lib/site/reportColumns'
 import { listUsers } from '@/lib/site/users'
 import { PERIOD_KEYS, PERIOD_LABELS, type PeriodKey } from '@/lib/reportBuilder/spec'
 import { PageHeader, PageBody, Card, Callout, Icons } from '@/components/ui'
@@ -73,6 +74,24 @@ export default async function ReportPage({
     error = e instanceof Error ? e.message : 'This report could not be run.'
   }
 
+  /*
+   * The store's columns and their order, applied over what the engine produced.
+   *
+   * Read against the keys THIS RUN yielded, so a stored key for a column the
+   * report no longer has is dropped rather than leaving a hole. Null when the
+   * store has never chosen, in which case the report's own order stands.
+   *
+   * Applied here rather than inside runBuilderSpec because the builder preview
+   * must keep showing the SPEC's columns — you are editing the report there,
+   * and a preview filtered by the store's choice would hide the column you just
+   * added.
+   */
+  const producedKeys = result ? result.columns.map((c) => c.key) : []
+  const storeColumns = result
+    ? await reportColumnsFor(siteId, report.id, producedKeys)
+    : null
+  const shownColumns = result ? applyStoreColumns(result.columns, storeColumns) : []
+
   return (
     <>
       <PageHeader
@@ -97,7 +116,10 @@ export default async function ReportPage({
             reportId={report.id}
             name={report.name}
             description={report.description}
-            columns={result.columns}
+            columns={shownColumns}
+            allColumns={result.columns}
+            storeColumns={storeColumns}
+            canSetColumns={allow('setup.edit')}
             rows={result.rows}
             totals={result.totals}
             range={result.range}

@@ -1,7 +1,23 @@
 'use client'
 
-import { useEffect, useId, useRef, useState } from 'react'
-import { ColumnsIcon, Check } from './icons'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import {
+  DndContext,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { ColumnsIcon, Check, DragHandle } from './icons'
 import { buttonClass } from './styles'
 
 /**
@@ -37,11 +53,76 @@ export type ColumnOption = {
   group?: string
 }
 
+/**
+ * One row of the orderable list: a drag handle, a tick box, and the label.
+ *
+ * The handle is a separate target rather than the whole row being draggable,
+ * because the row is already a checkbox — a pointer-down that might be either a
+ * tick or the start of a drag has to guess, and it guesses wrong on a tap.
+ */
+function SortableRow({
+  column,
+  on,
+  onToggle,
+}: {
+  column: ColumnOption
+  on: boolean
+  onToggle: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: column.id,
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-1 rounded-[6px] pr-1 transition ${
+        isDragging ? 'relative z-10 bg-surface-2 shadow-pop' : 'hover:bg-surface-2'
+      }`}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        aria-label={`Move ${column.label}`}
+        className="cursor-grab touch-none px-1 py-1.5 text-faint transition hover:text-muted active:cursor-grabbing"
+      >
+        <DragHandle size={14} />
+      </button>
+
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={on}
+        disabled={column.locked}
+        onClick={onToggle}
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[6px] py-1.5 pr-1.5 text-left text-sm text-ink-2 transition disabled:pointer-events-none disabled:text-faint"
+      >
+        {/* Drawn to the checkbox's own size rather than the kit <Checkbox>:
+            this row is the control, so the box must not also be separately
+            clickable inside it. data-kit-ok */}
+        <span
+          data-kit-ok
+          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition ${
+            on ? 'border-brand bg-brand text-white' : 'border-border-strong bg-surface'
+          }`}
+        >
+          {on && <Check size={12} />}
+        </span>
+        <span className="truncate">{column.label}</span>
+      </button>
+    </div>
+  )
+}
+
 export function ColumnPicker({
   columns,
   visible,
   onChange,
   onReset,
+  onReorder,
+  order,
   label = 'Columns',
   align = 'right',
 }: {
@@ -51,6 +132,23 @@ export function ColumnPicker({
   onChange: (next: Set<string>) => void
   /** Offered as "Reset" when given — restores the table's own default set. */
   onReset?: () => void
+  /**
+   * Given when the columns may be REORDERED as well as switched on and off.
+   *
+   * Reordering and grouping are mutually exclusive, so supplying this switches
+   * the panel to one flat list in render order: a heading like "Pricing" is a
+   * claim about where a column sits, and a list that lets you drag a column out
+   * of its group while still showing the heading above it is lying about one of
+   * the two. The flat list is the honest shape once order is the point.
+   */
+  onReorder?: (nextOrder: string[]) => void
+  /**
+   * The current render order, ids first-to-last. Only read when `onReorder` is
+   * given. Ids missing from it fall to the end in catalogue order, so a column
+   * added in a later release appears without needing a stored order to mention
+   * it.
+   */
+  order?: readonly string[]
   label?: string
   align?: 'left' | 'right'
 }) {
@@ -81,6 +179,49 @@ export function ColumnPicker({
     if (next.has(id)) next.delete(id)
     else next.add(id)
     onChange(next)
+  }
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    /* Long-press before a drag starts, so the panel can still be SCROLLED with
+       a finger — the list is taller than the panel on most reports. */
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+    useSensor(KeyboardSensor),
+  )
+
+  /*
+   * The flat list, in render order, for the orderable mode.
+   *
+   * `order` first, then anything it does not mention in catalogue order — so a
+   * column added in a later release appears at the end rather than vanishing
+   * because a set stored last year has never heard of it.
+   */
+  const ordered = useMemo(() => {
+    if (!onReorder) return []
+    const byId = new Map(columns.map((c) => [c.id, c]))
+    const out: ColumnOption[] = []
+    for (const id of order ?? []) {
+      const col = byId.get(id)
+      if (col) {
+        out.push(col)
+        byId.delete(id)
+      }
+    }
+    for (const col of columns) if (byId.has(col.id)) out.push(col)
+    return out
+  }, [columns, order, onReorder])
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const ids = ordered.map((c) => c.id)
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0) return
+
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    onReorder?.(ids)
   }
 
   // Insertion-ordered, so the panel follows the order the table declares its
@@ -121,7 +262,30 @@ export function ColumnPicker({
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
-          {[...groups.entries()].map(([group, entries]) => (
+          {onReorder ? (
+            /* Ordered mode: one flat list, no group headings — see `onReorder`.
+               The context id is fixed because dnd-kit derives aria ids from a
+               module counter the server restarts at 0, so an unnamed context is
+               a hydration mismatch on every load. */
+            <DndContext
+              id="column-picker"
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={ordered.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                {ordered.map((column) => (
+                  <SortableRow
+                    key={column.id}
+                    column={column}
+                    on={column.locked || visible.has(column.id)}
+                    onToggle={() => toggle(column.id)}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          ) : (
+          [...groups.entries()].map(([group, entries]) => (
             <div key={group}>
               {group && (
                 <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-muted">{group}</p>
@@ -155,7 +319,7 @@ export function ColumnPicker({
                 )
               })}
             </div>
-          ))}
+          )))}
 
           {onReset && (
             <>

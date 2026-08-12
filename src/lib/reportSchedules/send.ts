@@ -4,6 +4,7 @@ import { escapeHtml } from '../orderEmailTemplate'
 import { formatCell, exportCell } from '../reportBuilder/format'
 import { resolveReport } from '../reportBuilder/resolve'
 import { runBuilderSpec } from '../reportBuilder/run'
+import { reportColumnsFor, applyStoreColumns } from '../site/reportColumns'
 import { toCsv, type ExportColumn } from '../export/table'
 import { capabilitiesForRole, can, type Capability } from '../site/permissions'
 import { getUser, listUsers } from '../site/users'
@@ -122,6 +123,21 @@ async function execute(
     result = await runBuilderSpec(siteId, spec, allow, { now: dueAt })
   } catch (e) {
     return { status: 'failed', error: e instanceof Error ? e.message : 'The report failed to run.' }
+  }
+
+  /*
+   * The store's columns and order, applied once here so the three renderers
+   * below — plain text, HTML and the CSV attachment — all agree with the screen
+   * and with each other. A scheduled email is the copy that lands in an inbox
+   * every Monday; it showing a column the store retired would be the last place
+   * anyone would think to look.
+   */
+  result = {
+    ...result,
+    columns: applyStoreColumns(
+      result.columns,
+      await reportColumnsFor(siteId, report.id, result.columns.map((c) => c.key)),
+    ),
   }
 
   // ── build the mail ────────────────────────────────────────────────────────

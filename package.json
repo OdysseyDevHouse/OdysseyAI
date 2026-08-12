@@ -79,6 +79,7 @@
     "test:transfers": "tsx --conditions=react-server --env-file=.env scripts/test-transfers.ts",
     "test:stock-takes": "tsx --conditions=react-server --env-file=.env scripts/test-stock-takes.ts",
     "test:adjustments": "tsx --conditions=react-server --env-file=.env scripts/test-adjustments.ts",
+    "test:report-columns": "tsx --conditions=react-server --env-file=.env scripts/test-report-columns.ts",
     "test:dashboard": "tsx --conditions=react-server --env-file=.env scripts/test-dashboard.ts",
     "test:online-store": "tsx --conditions=react-server --env-file=.env scripts/test-online-store.ts",
     "test:online-orders": "tsx --conditions=react-server --env-file=.env scripts/test-online-orders.ts",

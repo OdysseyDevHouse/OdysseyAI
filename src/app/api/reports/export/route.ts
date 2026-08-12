@@ -5,6 +5,7 @@ import { resolveReport } from '@/lib/reportBuilder/resolve'
 import { runBuilderSpec, ReportAccessError } from '@/lib/reportBuilder/run'
 import { PERIOD_KEYS, type PeriodKey } from '@/lib/reportBuilder/spec'
 import { exportCell } from '@/lib/reportBuilder/format'
+import { reportColumnsFor, applyStoreColumns } from '@/lib/site/reportColumns'
 import { toXlsx, toCsv, exportFilename, type ExportColumn } from '@/lib/export/table'
 
 /**
@@ -64,7 +65,16 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const columns: ExportColumn<Record<string, unknown>>[] = result.columns.map((col) => ({
+  /* The store's columns and order, exactly as the screen shows them. An export
+     that carried a column the store switched off would make hiding it a
+     screen-only gesture, and the spreadsheet is where these figures usually
+     end up. */
+  const shown = applyStoreColumns(
+    result.columns,
+    await reportColumnsFor(auth.siteId, report.id, result.columns.map((c) => c.key)),
+  )
+
+  const columns: ExportColumn<Record<string, unknown>>[] = shown.map((col) => ({
     header: col.label,
     value: (row) => exportCell(row[col.key], col.type),
     money: col.type === 'currency',

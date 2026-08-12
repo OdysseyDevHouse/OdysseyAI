@@ -1,0 +1,30 @@
+-- list_columns now stores ORDER as well as visibility.
+--
+-- No schema change: the `columns` column has always held a JSON array, and an
+-- array has always had an order. What changes is that the order is now HONOURED
+-- rather than discarded on read, and that the picker lets a store set it.
+--
+-- This migration exists to correct the record. 109_list_columns.sql says:
+--
+--     -- JSON array of visible column ids, in the order the catalogue declares
+--     -- them. Order is NOT stored: a list that renders its columns in a
+--     -- different order per store is a support call nobody can reproduce.
+--
+-- That reasoning was sound for what a list was then, and it is worth saying why
+-- it no longer holds rather than quietly contradicting it.
+--
+-- The argument against storing order was that a store would end up with columns
+-- in an arrangement nobody could reproduce from the code. What has changed is
+-- that reports — added in 111 — must be reorderable, because a report's column
+-- order is authored: the builder has always had move-up and move-down buttons.
+-- Once one column picker reorders, a second that refuses to is not a principled
+-- position, it is an inconsistency a user has to learn.
+--
+-- The original worry is answered by making the arrangement VISIBLE rather than
+-- by forbidding it: the picker shows the order it will render in, and a Reset
+-- returns the list to the catalogue's own order. A support call starts with
+-- "open the picker", not with reading the source.
+--
+-- Nothing to run. The column already holds what it needs; see
+-- src/lib/site/listColumns.ts for the read side.
+SELECT 1;

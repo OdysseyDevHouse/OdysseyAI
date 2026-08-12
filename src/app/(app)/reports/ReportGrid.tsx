@@ -65,6 +65,18 @@ export default function ReportGrid({
 
   const hasTotals = columns.some((c) => c.total)
 
+  /*
+   * Where the "N rows" label goes: the first column that carries no total.
+   *
+   * Was `i === 0`, which assumed the leftmost column is never a totalled one.
+   * That held while column order came only from the spec, where a grouping or a
+   * label leads. It stops holding once a store may reorder its own columns —
+   * put a money column first and the row count had nowhere to render, so it
+   * silently disappeared. Undefined when every column totals, in which case the
+   * footer is all figures and there is nowhere for the label to go anyway.
+   */
+  const rowCountKey = columns.find((c) => !c.total)?.key
+
   function toggleSort(key: string) {
     setSort((s) =>
       s?.key === key
@@ -134,9 +146,9 @@ export default function ReportGrid({
         {hasTotals && (
           <tfoot>
             <tr className="border-t-2 border-border bg-surface-2 font-semibold text-ink">
-              {columns.map((col, i) => (
+              {columns.map((col) => (
                 <td key={col.key} className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''}`}>
-                  {i === 0 && !col.total
+                  {col.key === rowCountKey
                     ? `${rows.length} row${rows.length === 1 ? '' : 's'}`
                     : col.total
                       ? formatCell(totals[col.key], col.type)

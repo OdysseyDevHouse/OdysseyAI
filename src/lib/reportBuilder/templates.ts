@@ -298,8 +298,9 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    /* Id kept for the reason void-history's is — see there. */
     id: 'discounts-and-voids',
-    name: 'Discounts and voids by cashier',
+    name: 'Discounts and cancellations by cashier',
     description:
       'None of these is wrong on its own. Someone far outside their colleagues’ numbers is the pattern worth a conversation.',
     category: 'Operations',
@@ -313,10 +314,11 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    /* Id kept for the reason void-history's is — see there. */
     id: 'voids-by-reason',
-    name: 'Voids by reason',
+    name: 'Cancellations by reason',
     description:
-      'What voiding is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.',
+      'What cancelling is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.',
     category: 'Operations',
     permission: 'reports.view',
     spec: spec({
@@ -911,10 +913,17 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    /* The ID keeps the old spelling on purpose.
+     *
+     * It is stored in report_favorites.report_id and in report_schedules, so
+     * renaming it would orphan every favourite and silently stop a scheduled
+     * email — for a change of wording. Ids are data; names are display. The
+     * name and description below say "cancelled", which is the only word the
+     * database has had since 022 merged the two states. */
     id: 'void-history',
-    name: 'Void history',
+    name: 'Cancellation history',
     description:
-      'Documents that were voided, with the reason given. A run of the same reason on one till is the pattern to ask about.',
+      'Documents that were cancelled, with the reason given. A run of the same reason on one till is the pattern to ask about.',
     category: 'Operations',
     permission: 'reports.view',
     spec: spec({
@@ -928,12 +937,14 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'cancelReasonName' },
         /* The free text as well as the code. The code is what groups; this is
            where the detail lives on the reasons that allow a note, and it is
-           the only column that reads at all on a void raised before 102. */
+           the only column that reads at all on a cancellation raised before
+           102. Its FIELD KEY is still voidReason for the same reason this
+           report's id is — it is stored inside saved reports and schedules. */
         { field: 'voidReason' },
         { field: 'totalIncl' },
       ],
-      /* 'cancelled', not 'void': 022 renamed the status value and this filter was
-         never updated, so this report has been returning nothing since. */
+      /* 'cancelled' is the only value there is: 022 merged 'void' into it —
+         "they always meant the same thing, and only 'void' was ever written". */
       filters: [{ field: 'status', op: 'eq', value: 'cancelled' }],
       sort: { key: 'documentDate', dir: 'desc' },
     }),
