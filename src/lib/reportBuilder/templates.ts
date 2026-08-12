@@ -1115,8 +1115,233 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'entityType' },
         { field: 'entityLabel' },
         { field: 'detail' },
+        /* The before-and-after values. This is the column that makes the log
+           answer "who changed this price" — the one question v2 had a whole
+           report for and this system could not answer at all. */
+        { field: 'changes' },
       ],
       sort: { key: 'createdAt', dir: 'desc' },
+    }),
+  },
+
+  /* ── Reports over the sources added alongside them ─────────────────────
+   *
+   * Each of these was a report v2 had and this system could not express, not
+   * for want of data but for want of a source over the table holding it.
+   */
+  {
+    id: 'cashup-by-tender',
+    name: 'Cash-up by tender',
+    description:
+      'What each tender was expected to hold and what was counted. One tender short on one till is the pattern; every tender short is a counting habit.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'shiftCounts',
+      columns: [
+        { field: 'openedAt' },
+        { field: 'terminalCode' },
+        { field: 'userName' },
+        { field: 'tenderName' },
+        { field: 'expected' },
+        { field: 'counted' },
+        { field: 'variance' },
+      ],
+      sort: { key: 'openedAt', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'variance-by-tender',
+    name: 'Variance by tender',
+    description:
+      'Where the drawer goes wrong, totalled by tender. Cash drifts; card should not.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'shiftCounts',
+      groupFields: ['tenderName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'expected', agg: 'sum' },
+        { field: 'counted', agg: 'sum' },
+        { field: 'variance', agg: 'sum' },
+      ],
+      sort: { key: 'variance_sum', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'drawer-movements',
+    name: 'Payouts and drops',
+    description:
+      'Money in and out of the drawer that was not a sale, with the reason given. v2 split this into three reports; the Kind column is the split.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'shiftMovements',
+      columns: [
+        { field: 'movedAt' },
+        { field: 'terminalCode' },
+        { field: 'userName' },
+        { field: 'movementType' },
+        { field: 'amount' },
+        { field: 'reason' },
+      ],
+      sort: { key: 'movedAt', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'tips-by-person',
+    name: 'Tips by person',
+    description: 'What each person was tipped, and how it reached them.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'tips',
+      groupFields: ['userName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'amount', agg: 'sum' },
+        { field: 'amount', agg: 'avg' },
+      ],
+      sort: { key: 'amount_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'tip-history',
+    name: 'Tip history',
+    description:
+      'Every tip, with how it arrived and whether it was ever reassigned — the detail behind a disputed total.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'tips',
+      columns: [
+        { field: 'takenAt' },
+        { field: 'userName' },
+        { field: 'documentNumber' },
+        { field: 'source' },
+        { field: 'tenderName' },
+        { field: 'amount' },
+        { field: 'reassignedByName' },
+        { field: 'reassignReason' },
+      ],
+      sort: { key: 'takenAt', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'stock-take-history',
+    name: 'Stock take history',
+    description:
+      'Every counted line — what the book said, what was counted, and what the difference was worth.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'stockTakeLines',
+      // A count sheet is worked through line by line; a truncated one is a
+      // stocktake missing pages.
+      limit: MAX_ROWS,
+      columns: [
+        { field: 'documentDate' },
+        { field: 'documentNumber' },
+        { field: 'productCode' },
+        { field: 'description' },
+        { field: 'postedQtyBefore' },
+        { field: 'countedQty' },
+        { field: 'varianceQty' },
+        { field: 'varianceValue' },
+        { field: 'countedBy' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
+      sort: { key: 'documentDate', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'count-accuracy',
+    name: 'Count accuracy by person',
+    description:
+      'Who counts accurately. Lines counted against lines that came out wrong — a training figure, not a disciplinary one.',
+    category: 'Operations',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'stockTakeLines',
+      groupFields: ['countedBy'],
+      columns: [
+        { field: '__rows' },
+        { field: 'varianceQty', agg: 'sum' },
+        { field: 'varianceValue', agg: 'sum' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
+      sort: { key: 'varianceValue_sum', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'adjustment-history',
+    name: 'Adjustment history',
+    description:
+      'Every write-off and correction, with the reason it was given and what it cost.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'adjustmentLines',
+      columns: [
+        { field: 'documentDate' },
+        { field: 'documentNumber' },
+        { field: 'productCode' },
+        { field: 'description' },
+        { field: 'reasonName' },
+        { field: 'qtyBefore' },
+        { field: 'qtyChange' },
+        { field: 'qtyAfter' },
+        { field: 'valueExcl' },
+        { field: 'userName' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
+      sort: { key: 'documentDate', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'shrinkage-by-reason',
+    name: 'Shrinkage by reason',
+    description:
+      'What stock is being lost to, and what each cause costs. One reason far ahead of the rest is either a process problem or a person one.',
+    category: 'Stock',
+    permission: 'stock.view',
+    spec: spec({
+      source: 'adjustmentLines',
+      groupFields: ['reasonName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'qtyChange', agg: 'sum' },
+        { field: 'valueExcl', agg: 'sum' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
+      sort: { key: 'valueExcl_sum', dir: 'asc' },
+      chartType: 'pie',
+    }),
+  },
+  {
+    id: 'supplier-price-list',
+    name: 'Supplier price list',
+    description:
+      'What each supplier charges for what — including products never yet ordered, which a purchase history cannot show.',
+    category: 'Suppliers',
+    permission: 'purchasing.view',
+    spec: spec({
+      source: 'productSuppliers',
+      limit: MAX_ROWS,
+      columns: [
+        { field: 'supplierName' },
+        { field: 'productCode' },
+        { field: 'description' },
+        { field: 'supplierCode' },
+        { field: 'packSize' },
+        { field: 'supplierCost' },
+        { field: 'currentSoh' },
+        { field: 'sellingPriceIncl' },
+        { field: 'marginPct' },
+      ],
+      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
+      sort: { key: 'supplierName', dir: 'asc' },
     }),
   },
 ]
