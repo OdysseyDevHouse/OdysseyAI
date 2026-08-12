@@ -81,6 +81,7 @@
     "test:adjustments": "tsx --conditions=react-server --env-file=.env scripts/test-adjustments.ts",
     "test:report-columns": "tsx --conditions=react-server --env-file=.env scripts/test-report-columns.ts",
     "test:template-fields": "tsx --conditions=react-server scripts/test-template-fields.ts",
+    "test:catalog-fields": "tsx --conditions=react-server --env-file=.env scripts/test-catalog-fields.ts",
     "test:dashboard": "tsx --conditions=react-server --env-file=.env scripts/test-dashboard.ts",
     "test:online-store": "tsx --conditions=react-server --env-file=.env scripts/test-online-store.ts",
     "test:online-orders": "tsx --conditions=react-server --env-file=.env scripts/test-online-orders.ts",

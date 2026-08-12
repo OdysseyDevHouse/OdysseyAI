@@ -518,8 +518,27 @@ function joinsFor(source: CatalogSource, referenced: string[]): string[] {
     }
   }
 
+  /*
+   * A join may read another join's alias — saleModifiers' `product` is written
+   * against the `sl` its `line` join introduces. Pulling the dependency in is
+   * what stops "Unknown column 'sl.product_id'" when a product field is picked
+   * without a line field beside it.
+   *
+   * Iterated to a fixed point rather than resolved in one pass, so a chain of
+   * three holds. Bounded by the join count: each pass either adds a name or
+   * stops.
+   */
+  for (let pass = 0; pass < source.joins.length; pass++) {
+    const before = needed.size
+    for (const join of source.joins) {
+      if (!needed.has(join.name) && !join.always) continue
+      for (const dep of join.needs ?? []) needed.add(dep)
+    }
+    if (needed.size === before) break
+  }
+
   return source.joins
-    .filter((j) => j.name === 'doc' || j.name === 'exp' || needed.has(j.name))
+    .filter((j) => j.always || j.name === 'doc' || j.name === 'exp' || needed.has(j.name))
     .map((j) => j.sql)
 }
 

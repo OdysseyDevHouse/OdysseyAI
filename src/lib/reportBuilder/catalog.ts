@@ -129,6 +129,27 @@ export interface JoinUnit {
   /** The name fields reference in `needs`. */
   name: string
   sql: string
+  /**
+   * Other joins this one's SQL reads an alias from.
+   *
+   * A join is emitted only when something asks for it, so one that reads
+   * another's alias has to say so or it lands in a query where that alias does
+   * not exist. saleModifiers is the case: its `product` join is written against
+   * `sl`, which its `line` join introduces, so picking a product field without
+   * a line field produced "Unknown column 'sl.product_id'".
+   *
+   * Resolved transitively — a join may depend on a join that depends on a join.
+   */
+  needs?: string[]
+  /**
+   * Emitted whether or not anything references it.
+   *
+   * For the joins a source cannot be queried without: the parent document that
+   * carries the date the period filters on. Previously a hardcoded list of two
+   * names inside joinsFor(), which meant a third source needing one had no way
+   * to say so.
+   */
+  always?: boolean
 }
 
 /** A pre-filled filter a source starts with (removable by the user). */
@@ -436,6 +457,18 @@ const CUSTOMER_REP_JOIN: JoinUnit = {
  * before 102 has free text and no code, and an INNER join would silently drop
  * exactly the history somebody is trying to compare against.
  */
+/*
+ * The document this one reverses — a self-join on sales_documents.
+ *
+ * LEFT, because the overwhelming majority of documents reverse nothing, and an
+ * INNER join here would silently turn any report using the column into
+ * "credit notes only".
+ */
+const REVERSES_JOIN: JoinUnit = {
+  name: 'reverses',
+  sql: 'LEFT JOIN sales_documents rev ON rev.id = t.reverses_id',
+}
+
 const VOID_REASON_JOIN = {
   name: 'voidReason',
   sql: 'LEFT JOIN sales_void_reasons vr ON vr.id = t.cancel_reason_id',
@@ -527,7 +560,14 @@ const SALES_SOURCE: CatalogSource = {
   shape: 'timeline',
   table: 'sales_documents',
   dateColumn: 'document_date',
-  joins: [CUSTOMER_JOIN, CUSTOMER_GROUP_JOIN, CUSTOMER_REP_JOIN, VOID_REASON_JOIN, RETURN_REASON_JOIN],
+  joins: [
+    CUSTOMER_JOIN,
+    CUSTOMER_GROUP_JOIN,
+    CUSTOMER_REP_JOIN,
+    VOID_REASON_JOIN,
+    RETURN_REASON_JOIN,
+    REVERSES_JOIN,
+  ],
   // A report about "sales" means money that counted. Drafts, quotes and voids
   // are all reachable by removing this, but none of them belongs in a turnover
   // figure by default.
@@ -707,6 +747,53 @@ const SALES_SOURCE: CatalogSource = {
       numeric: true,
       group: FIELD_GROUPS.OTHER,
     },
+    {
+      /* The SNAPSHOT taken when the document was raised, not the live customer
+         record. Those differ once somebody edits a customer, and on a tax
+         document the snapshot is the one that matters: it is what was printed
+         and what a return was filed against. accountCode reads the live row. */
+      key: 'customerVatNo',
+      label: 'Customer VAT number',
+      type: 'text',
+      expr: 't.customer_vat_no',
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'As captured on the document, not the customer’s current record.',
+    },
+    {
+      key: 'customerPhone',
+      label: 'Customer phone',
+      type: 'text',
+      expr: 't.customer_phone',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'notes',
+      label: 'Note',
+      type: 'text',
+      expr: 't.notes',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'The note printed on the document.',
+    },
+    {
+      key: 'internalNote',
+      label: 'Internal note',
+      type: 'text',
+      expr: 't.internal_note',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Never printed — the note staff leave for each other.',
+    },
+    {
+      /* Which document this one reverses: a credit note points at the invoice
+         it credits. v2's refund history carried it as "Orig. invoice", and
+         without it a credit note cannot be traced back to what it undid.
+         A self-join on the same table, so it needs its own alias. */
+      key: 'reversesNumber',
+      label: 'Reverses document',
+      type: 'document',
+      expr: 'rev.document_number',
+      needs: ['reverses'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
     ...CUSTOMER_LOOKUP_FIELDS,
     // document_date is a DATE, so "trading by hour" has to read the timestamp
     // the sale was actually finalised at.
@@ -813,6 +900,40 @@ const SALE_LINES_SOURCE: CatalogSource = {
       numeric: true,
       starter: true,
       group: FIELD_GROUPS.MONEY,
+    },
+    {
+      /* Where the line sat on the slip. v2's detailed history led with it, and
+         it is the only way to put a re-exported invoice back in its original
+         order once a spreadsheet has sorted it by something else. */
+      key: 'lineNumber',
+      label: 'Line number',
+      type: 'number',
+      expr: 't.line_number',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      /* Off the PARENT (`d`), not the line. The customer's own order number —
+         the same field the sales source calls `reference`. */
+      key: 'reference',
+      label: 'Customer reference',
+      type: 'text',
+      expr: 'd.reference',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'invoiceTotalIncl',
+      label: 'Document total (incl.)',
+      type: 'currency',
+      expr: 'd.total_incl',
+      numeric: true,
+      /* NOT totalled: the parent's total repeats on every line of the document,
+         so a column sum would count a R500 invoice once per line on it. It is
+         here to give a line its context, not to be added up. */
+      noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'The whole document’s total, repeated on each of its lines.',
     },
     {
       key: 'lineTotalExcl',
@@ -1117,6 +1238,14 @@ const PRODUCTS_SOURCE: CatalogSource = {
         'LEFT JOIN product_prices ppr ON ppr.product_id = t.id ' +
         'AND ppr.price_structure_id = (SELECT id FROM price_structures WHERE is_default = 1 ORDER BY position LIMIT 1)',
     },
+    {
+      /* The SELLING rate specifically. A product carries two rate ids and they
+         are not always the same (001), so deriving an exclusive selling price
+         from the purchase rate would be quietly wrong on exactly the products
+         where it matters. */
+      name: 'sellingVat',
+      sql: 'LEFT JOIN vat_rates svr ON svr.id = t.selling_vat_rate_id',
+    },
   ],
   defaultFilters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
   note: 'A snapshot of today. The report’s date range does not apply — use the date fields to filter on when something last moved.',
@@ -1221,6 +1350,43 @@ const PRODUCTS_SOURCE: CatalogSource = {
       needs: ['price'],
       group: FIELD_GROUPS.MONEY,
       hint: 'From the default price structure.',
+    },
+    {
+      /* Derived, because only the INCLUSIVE price is stored — 001 keeps one
+         copy so the two cannot drift. Divided by the product's own selling VAT
+         rate, which is not always the purchase one.
+         NULLIF guards a rate of -100, which would divide by zero; a rate that
+         has been deleted leaves svr.rate NULL and COALESCE reads it as zero,
+         so an unrated product returns its inclusive price unchanged. */
+      key: 'sellingPriceExcl',
+      label: 'Selling price (excl.)',
+      type: 'currency',
+      expr: 'ppr.selling_price_incl / NULLIF(1 + COALESCE(svr.rate, 0) / 100, 0)',
+      numeric: true,
+      noTotal: true,
+      needs: ['price', 'sellingVat'],
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'sellingVatRate',
+      label: 'Selling VAT rate',
+      type: 'percent',
+      expr: 'COALESCE(svr.rate, 0)',
+      numeric: true,
+      noTotal: true,
+      needs: ['sellingVat'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      /* What the shelf is worth at RETAIL, where stockValue is what it is worth
+         at cost. A shop counts one and insures the other. */
+      key: 'stockValueRetail',
+      label: 'Stock value at retail',
+      type: 'currency',
+      expr: 't.stock_on_hand * COALESCE(ppr.selling_price_incl, 0)',
+      numeric: true,
+      needs: ['price'],
+      group: FIELD_GROUPS.MONEY,
     },
     {
       key: 'averageCost',
@@ -1362,6 +1528,21 @@ const STOCK_MOVEMENTS_SOURCE: CatalogSource = {
     { key: 'userName', label: 'By', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
     { key: 'source', label: 'Source', type: 'text', expr: 't.source', group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    /* Which document caused the movement. Only the id is stored — the document
+       could be a sale, a GRV, a transfer or a stock take, in four different
+       tables, so there is nothing to join to without knowing `source` first.
+       The number is what a person traces with; the id is what they can search
+       for, and it beats having no thread back at all. */
+    {
+      key: 'sourceDocId',
+      label: 'Source document',
+      type: 'number',
+      expr: 't.source_doc_id',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The id of the document that caused this movement — read it with Source.',
+    },
     ...PRODUCT_LOOKUP_FIELDS.filter((f) => f.key !== 'currentLastSold'),
     ...timeBuckets('created_at', { hours: true }),
   ],
@@ -1424,7 +1605,33 @@ const CUSTOMERS_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.AGEING,
     },
     { key: 'termsDays', label: 'Payment terms (days)', type: 'number', expr: 't.payment_terms_days', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
-    yesNo('isCashOnly', 'Cash only', 't.is_cash_only'),
+    /*
+     * How the account settles. There is no is_cash_only column — this field
+     * referenced one and had been unusable since it was written, which nothing
+     * noticed because no template picks it. The concept lives in account_type,
+     * where 'cash' is the cash-only case.
+     *
+     * The KEY is kept as isCashOnly: it may be sitting in a saved report or a
+     * schedule, and renaming it would break those for a change of wording. It
+     * now answers the same question correctly.
+     */
+    {
+      key: 'isCashOnly',
+      label: 'Cash only',
+      type: 'text',
+      expr: "CASE WHEN t.account_type = 'cash' THEN 'Yes' ELSE 'No' END",
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+      group: FIELD_GROUPS.ACCOUNT,
+    },
+    enumField('accountType', 'Account type', 't.account_type', [
+      'open_item',
+      'balance_fwd',
+      'cash',
+      'lay_by',
+    ]),
     { key: 'loyaltyNumber', label: 'Loyalty number', type: 'text', expr: 't.loyalty_number', group: FIELD_GROUPS.OTHER },
     { key: 'createdAt', label: 'Account opened', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
   ],
@@ -1607,6 +1814,12 @@ const PURCHASE_LINES_SOURCE: CatalogSource = {
     { key: 'productCode', label: 'Product code', type: 'text', expr: 't.product_code', starter: true, group: FIELD_GROUPS.IDENTITY },
     { key: 'description', label: 'Description', type: 'text', expr: 't.description', starter: true, group: FIELD_GROUPS.IDENTITY },
     { key: 'supplierCode', label: 'Supplier’s code', type: 'text', expr: 't.supplier_code', group: FIELD_GROUPS.IDENTITY },
+    /* Off the parent (`d`), whose join is always emitted. Who booked the stock
+       in is the first question asked of a GRV that looks wrong, and v2's GRV
+       history carried it. */
+    { key: 'userName', label: 'Captured by', type: 'text', expr: 'd.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'reference', label: 'Reference', type: 'text', expr: 'd.reference', group: FIELD_GROUPS.OTHER },
+    { key: 'supplierInvoiceNo', label: 'Supplier invoice no.', type: 'text', expr: 'd.supplier_invoice_no', group: FIELD_GROUPS.IDENTITY },
     {
       key: 'lineDepartment',
       label: 'Department',
@@ -1763,6 +1976,21 @@ const ACTIVITY_SOURCE: CatalogSource = {
     { key: 'action', label: 'Action', type: 'text', expr: 't.action', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'entityType', label: 'Record type', type: 'text', expr: 't.entity', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
     {
+      /* What actually changed, field by field. Written as JSON and read here as
+         text: nothing queries INSIDE it (011), and a report that could filter
+         on a key within the document would be promising an index that does not
+         exist. Shown, not searched — which is what an audit trail is read for.
+         This is the column that answers "who changed this price", the one
+         question v2 had a dedicated report for and this system had no way to
+         answer at all. */
+      key: 'changes',
+      label: 'What changed',
+      type: 'text',
+      expr: 't.changes',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'The before and after values, as recorded.',
+    },
+    {
       key: 'entityLabel',
       label: 'Record',
       type: 'text',
@@ -1822,9 +2050,16 @@ const SALE_MODIFIERS_SOURCE: CatalogSource = {
     // optional — the date range filters through it — so it is always emitted.
     { name: 'doc', sql: 'INNER JOIN sales_documents d ON d.id = t.document_id' },
     // The LINE this answer hangs off, so "which product was it asked about" can
-    // be answered. Also not optional: it is the most obvious grouping.
-    { name: 'line', sql: 'INNER JOIN sales_document_lines sl ON sl.id = t.line_id' },
-    { name: 'product', sql: 'LEFT JOIN products pm ON pm.id = sl.product_id' },
+    // be answered. Marked `always` because the comment has claimed it is not
+    // optional since it was written, while joinsFor only ever forced `doc` and
+    // `exp` — so it was in fact dropped whenever nothing referenced it.
+    { name: 'line', sql: 'INNER JOIN sales_document_lines sl ON sl.id = t.line_id', always: true },
+    // Reads `sl`, so it depends on the line join above.
+    {
+      name: 'product',
+      sql: 'LEFT JOIN products pm ON pm.id = sl.product_id',
+      needs: ['line'],
+    },
     PRODUCT_DEPT_JOIN,
     { name: 'customer', sql: 'LEFT JOIN customers c ON c.id = d.customer_id' },
   ],
