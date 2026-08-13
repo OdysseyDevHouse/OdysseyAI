@@ -781,6 +781,29 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    id: 'customer-age-analysis-bucketed',
+    name: 'Age analysis, bucketed',
+    description:
+      'One row per account with Current/30/60/90/120+ columns — the classic ladder, aged from today. For an as-at ladder use the Age analysis page, which rolls allocations back.',
+    category: 'Customers',
+    permission: 'customers.view',
+    spec: spec({
+      source: 'customerTransactions',
+      period: { key: 'thisYear' },
+      groupFields: ['customerCode', 'customerName'],
+      columns: [
+        { field: 'agedCurrent', agg: 'sum' },
+        { field: 'aged30', agg: 'sum' },
+        { field: 'aged60', agg: 'sum' },
+        { field: 'aged90', agg: 'sum' },
+        { field: 'aged120', agg: 'sum' },
+        { field: 'amountOutstanding', agg: 'sum' },
+      ],
+      filters: [{ field: 'amountOutstanding', op: 'gt', value: '0' }],
+      sort: { key: 'amountOutstanding_sum', dir: 'desc' },
+    }),
+  },
+  {
     id: 'customer-payments',
     name: 'Customer payments',
     description: 'Money received from accounts in the period, and who receipted it.',
@@ -926,6 +949,67 @@ export const TEMPLATES: ReportTemplate[] = [
       filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
       sort: { key: 'lineIncl_sum', dir: 'desc' },
       chartType: 'pie',
+    }),
+  },
+  {
+    id: 'gl-detail',
+    name: 'Journal detail',
+    description:
+      'Every posted debit and credit in the period, with the journal that carried it. The ledger, line by line.',
+    category: 'Money',
+    permission: 'reports.financial',
+    spec: spec({
+      source: 'journalLines',
+      columns: [
+        { field: 'journalDate' },
+        { field: 'journalNumber' },
+        { field: 'source' },
+        { field: 'accountCode' },
+        { field: 'accountName' },
+        { field: 'lineDescription' },
+        { field: 'debit' },
+        { field: 'credit' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
+      sort: { key: 'journalDate', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'gl-by-account',
+    name: 'Movement by account',
+    description:
+      'Each account’s debits, credits and net movement for the period — the figure between two trial balances.',
+    category: 'Money',
+    permission: 'reports.financial',
+    spec: spec({
+      source: 'journalLines',
+      groupFields: ['accountCode', 'accountName', 'accountType'],
+      columns: [
+        { field: 'debit', agg: 'sum' },
+        { field: 'credit', agg: 'sum' },
+        { field: 'amount', agg: 'sum' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
+      sort: { key: 'accountCode', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'account-balances',
+    name: 'Account balances',
+    description: 'The chart of accounts and where each balance stands right now.',
+    category: 'Money',
+    permission: 'reports.financial',
+    spec: spec({
+      source: 'glAccounts',
+      columns: [
+        { field: 'accountCode' },
+        { field: 'name' },
+        { field: 'accountType' },
+        { field: 'subtype' },
+        { field: 'balanceDisplay' },
+      ],
+      totalFilters: [{ key: 'balanceDisplay', op: 'ne', value: '0' }],
+      sort: { key: 'accountCode', dir: 'asc' },
     }),
   },
   {
@@ -1122,7 +1206,9 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'minutesLate', agg: 'avg' },
         { field: 'onSiteMinutes', agg: 'avg' },
       ],
-      sort: { key: '__rows', dir: 'desc' },
+      /* The row-count column's OUTPUT key — '__rows' is the input marker, and
+         a sort naming it was silently dropped by validateSpec. */
+      sort: { key: 'rowCount', dir: 'desc' },
       chartType: 'bar',
     }),
   },
@@ -1582,6 +1668,29 @@ export const TEMPLATES: ReportTemplate[] = [
          The ageing is on the total, so it filters after summarising. */
       totalFilters: [{ key: 'amountOutstanding', op: 'gt', value: '0' }],
       sort: { key: 'daysOverdue', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'supplier-age-analysis-bucketed',
+    name: 'Creditors ageing, bucketed',
+    description:
+      'One row per supplier with Current/30/60/90/120+ columns — what is owed and how late, aged from today.',
+    category: 'Suppliers',
+    permission: 'suppliers.view',
+    spec: spec({
+      source: 'supplierTransactions',
+      period: { key: 'thisYear' },
+      groupFields: ['supplierCode', 'supplierName'],
+      columns: [
+        { field: 'agedCurrent', agg: 'sum' },
+        { field: 'aged30', agg: 'sum' },
+        { field: 'aged60', agg: 'sum' },
+        { field: 'aged90', agg: 'sum' },
+        { field: 'aged120', agg: 'sum' },
+        { field: 'amountOutstanding', agg: 'sum' },
+      ],
+      filters: [{ field: 'amountOutstanding', op: 'gt', value: '0' }],
+      sort: { key: 'amountOutstanding_sum', dir: 'desc' },
     }),
   },
   {

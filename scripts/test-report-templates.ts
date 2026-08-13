@@ -98,6 +98,35 @@ async function main() {
     }
   }
 
+  /* ── The ledger's own identities, through the engine ─────────────────────
+     gl-by-account is only trustworthy if the builder's SUMs preserve the one
+     fact every posted batch guarantees: debits equal credits. Run over a wide
+     window with no row cap on the aggregate and assert the totals agree. */
+  const glTemplate = TEMPLATES.find((t) => t.id === 'gl-by-account')
+  if (glTemplate) {
+    try {
+      const result = await runBuilderSpec(
+        SITE,
+        { ...templateSpec(glTemplate), period: { key: 'thisYear' } },
+        canAll,
+      )
+      let debits = 0
+      let credits = 0
+      for (const row of result.rows) {
+        debits += Number(row.debit_sum ?? 0)
+        credits += Number(row.credit_sum ?? 0)
+      }
+      ok(
+        'gl-by-account: total debits equal total credits',
+        Math.abs(debits - credits) < 0.01,
+        `${debits.toFixed(2)} vs ${credits.toFixed(2)}`,
+      )
+    } catch (err) {
+      ok('gl-by-account: total debits equal total credits', false,
+        err instanceof Error ? err.message : String(err))
+    }
+  }
+
   console.log(fails ? `\n${fails} FAILED\n` : '\nAll report templates run.\n')
   process.exit(fails ? 1 : 0)
 }

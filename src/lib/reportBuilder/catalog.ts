@@ -286,6 +286,46 @@ function humanise(v: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+/**
+ * The five ageing buckets as SUMmable columns, for both open-item ledgers.
+ *
+ * Boundaries are bucketFor()'s (site/ledger.ts): due or not yet due is
+ * Current, then 30-day rungs, everything past 90 in the top bucket. Grouping
+ * by customer or supplier and summing these IS the classic bucketed age
+ * analysis — the report the dedicated pages draw, now buildable and
+ * schedulable like any other.
+ *
+ * Aged from CURDATE(), deliberately: the as-at ladder on the dedicated pages
+ * rolls back allocations by date, which is not expressible in one authored
+ * expression here, and pretending otherwise would produce a ladder that
+ * disagrees with the page. The template note says so.
+ */
+function agedBucketFields(): CatalogField[] {
+  const due = 'DATEDIFF(CURDATE(), t.`due_date`)'
+  const out = 't.`amount_outstanding`'
+  const bucket = (key: string, label: string, cond: string, hint?: string): CatalogField => ({
+    key,
+    label,
+    type: 'currency',
+    expr: `(CASE WHEN ${out} > 0 AND ${cond} THEN ${out} ELSE 0 END)`,
+    numeric: true,
+    group: FIELD_GROUPS.AGEING,
+    ...(hint ? { hint } : {}),
+  })
+  return [
+    bucket(
+      'agedCurrent',
+      'Current',
+      `(t.\`due_date\` IS NULL OR ${due} <= 0)`,
+      'Outstanding but not yet due — including anything with no due date.',
+    ),
+    bucket('aged30', '30 days', `${due} BETWEEN 1 AND 30`),
+    bucket('aged60', '60 days', `${due} BETWEEN 31 AND 60`),
+    bucket('aged90', '90 days', `${due} BETWEEN 61 AND 90`),
+    bucket('aged120', '120+ days', `${due} > 90`),
+  ]
+}
+
 /* ── reusable join units ───────────────────────────────────────────────────── */
 
 const PRODUCT_JOIN: JoinUnit = {
@@ -1720,6 +1760,7 @@ const CUSTOMER_TXN_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.ACCOUNT,
     },
     { key: 'accountRep', label: 'Sales rep', type: 'text', expr: 'cr.name', needs: ['customer', 'customerRep'], group: FIELD_GROUPS.PEOPLE },
+    ...agedBucketFields(),
     ...timeBuckets('doc_date'),
   ],
 }
@@ -3715,6 +3756,7 @@ const SUPPLIER_TXN_SOURCE: CatalogSource = {
     { key: 'description', label: 'Description', type: 'text', expr: 't.description', group: FIELD_GROUPS.OTHER },
     { key: 'userName', label: 'Captured by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
     { key: 'supplierBalance', label: 'Account balance now', type: 'currency', expr: 's.balance', numeric: true, noTotal: true, needs: ['supplier'], group: FIELD_GROUPS.AGEING },
+    ...agedBucketFields(),
     ...timeBuckets('doc_date'),
   ],
 }
@@ -3815,6 +3857,142 @@ const LOYALTY_MEMBERS_SOURCE: CatalogSource = {
   ],
 }
 
+/* ── the general ledger ────────────────────────────────────────────────────── */
+
+/**
+ * Every source value a journal batch can carry — the mirrors in glPosting.ts
+ * plus 'manual'. Offered as a picker so nobody has to guess the spellings;
+ * an unlisted value (a future mirror) still passes through as text.
+ */
+const JOURNAL_SOURCES = [
+  'manual', 'sale', 'credit_note', 'grv', 'supplier_return', 'expense', 'receipt',
+  'payment', 'cashup', 'bank_txn', 'bank_txn_void', 'bank_transfer', 'bank_transfer_void',
+  'manufacture', 'manufacture_cancel', 'stock_take', 'stock_take_cancel',
+  'stock_adjustment', 'stock_adjust_cancel', 'interest', 'write_off',
+  'depreciation', 'asset_disposal', 'year_end',
+]
+
+const JOURNAL_LINES_SOURCE: CatalogSource = {
+  key: 'journalLines',
+  label: 'Journal lines',
+  description:
+    'Every debit and credit in the general ledger, with the journal that carried it and the account it landed on.',
+  category: 'Money',
+  /* The capability on every /accounting page. The joins expose customer and
+     supplier NAMES, which reports.financial already sees on the statements. */
+  permission: 'reports.financial',
+  shape: 'timeline',
+  table: 'journal_lines',
+  dateColumn: 'journal_date',
+  dateJoin: 'batch',
+  joins: [
+    { name: 'batch', sql: 'INNER JOIN journal_batches b ON b.id = t.batch_id', always: true },
+    { name: 'account', sql: 'INNER JOIN gl_accounts a ON a.id = t.account_id', always: true },
+    { name: 'dept', sql: 'LEFT JOIN departments jd ON jd.id = t.department_id' },
+    { name: 'customer', sql: 'LEFT JOIN customers jc ON jc.id = t.customer_id' },
+    { name: 'supplier', sql: 'LEFT JOIN suppliers js ON js.id = t.supplier_id' },
+  ],
+  /* Drafts have moved nothing and voids are reversals' tombstones. Only a
+     posted batch is a fact about the ledger — same rule every statement
+     query applies. Removable, for someone auditing drafts deliberately. */
+  defaultFilters: [{ field: 'status', op: 'eq', value: 'posted' }],
+  note: 'Posted journals only by default. The sign convention is the ledger’s own: positive is a debit, negative a credit, and any batch sums to zero.',
+  fields: [
+    { key: 'journalNumber', label: 'Journal', type: 'document', expr: 'b.journal_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'journalDate', label: 'Date', type: 'date', expr: 'b.journal_date', starter: true, group: FIELD_GROUPS.DATES },
+    enumField('source', 'Source', 'b.source', JOURNAL_SOURCES, { starter: true }),
+    enumField('status', 'Status', 'b.status', ['draft', 'posted', 'void']),
+    /* The LIVE chart, not the snapshot: filtering and grouping should follow
+       an account as it is named today. The snapshot the line carries is its
+       own field below, for reading a journal exactly as it was posted. */
+    { key: 'accountCode', label: 'Account code', type: 'text', expr: 'a.account_code', starter: true, group: FIELD_GROUPS.ACCOUNT },
+    { key: 'accountName', label: 'Account', type: 'text', expr: 'a.name', starter: true, group: FIELD_GROUPS.ACCOUNT },
+    enumField('accountType', 'Account type', 'a.account_type', ['asset', 'liability', 'equity', 'income', 'expense'], { group: FIELD_GROUPS.ACCOUNT }),
+    { key: 'subtype', label: 'Subtype', type: 'text', expr: 'a.subtype', group: FIELD_GROUPS.ACCOUNT },
+    { key: 'snapshotAccount', label: 'Account as posted', type: 'text', expr: "CONCAT(t.account_code, ' — ', t.account_name)", group: FIELD_GROUPS.ACCOUNT, hint: 'Frozen at posting — how the journal itself reads, even if the account was renamed since.' },
+    {
+      key: 'amount',
+      label: 'Amount',
+      type: 'currency',
+      expr: 't.amount',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Signed: positive is a debit, negative a credit. A column of these sums to the period’s movement.',
+    },
+    {
+      key: 'debit',
+      label: 'Debit',
+      type: 'currency',
+      expr: '(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'credit',
+      label: 'Credit',
+      type: 'currency',
+      expr: '(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END)',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Shown positive, as a ledger prints it.',
+    },
+    { key: 'lineDescription', label: 'Line description', type: 'text', expr: 't.description', group: FIELD_GROUPS.OTHER },
+    { key: 'batchDescription', label: 'Journal description', type: 'text', expr: 'b.description', group: FIELD_GROUPS.OTHER },
+    { key: 'reference', label: 'Reference', type: 'text', expr: 'b.reference', group: FIELD_GROUPS.OTHER },
+    { key: 'departmentName', label: 'Department', type: 'text', expr: 'jd.name', needs: ['dept'], group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'jc.name', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
+    { key: 'supplierName', label: 'Supplier', type: 'text', expr: 'js.name', needs: ['supplier'], group: FIELD_GROUPS.IDENTITY },
+    { key: 'postedBy', label: 'Posted by', type: 'text', expr: 'b.user_name', group: FIELD_GROUPS.PEOPLE },
+    ...timeBuckets('journal_date').map((f) => ({
+      ...f,
+      expr: f.expr.replace(/t\.`journal_date`/g, 'b.`journal_date`'),
+    })),
+  ],
+}
+
+const GL_ACCOUNTS_SOURCE: CatalogSource = {
+  key: 'glAccounts',
+  label: 'Ledger accounts',
+  description: 'The chart of accounts as it stands now — every account and its balance.',
+  category: 'Money',
+  permission: 'reports.financial',
+  shape: 'snapshot',
+  table: 'gl_accounts',
+  fields: [
+    { key: 'accountCode', label: 'Code', type: 'text', expr: 't.account_code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'name', label: 'Account', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('accountType', 'Type', 't.account_type', ['asset', 'liability', 'equity', 'income', 'expense'], { starter: true }),
+    { key: 'subtype', label: 'Subtype', type: 'text', expr: 't.subtype', group: FIELD_GROUPS.CLASSIFICATION },
+    enumField('controlType', 'Control account for', 't.control_type', ['debtors', 'creditors', 'bank', 'stock', 'vat_input', 'vat_output']),
+    {
+      key: 'balance',
+      label: 'Balance (debit-signed)',
+      type: 'currency',
+      expr: 't.balance',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'The ledger’s own sign: assets and expenses positive, liabilities, equity and income negative.',
+    },
+    {
+      /* The figure a reader expects: 480 000 of sales, not -480 000. */
+      key: 'balanceDisplay',
+      label: 'Balance',
+      type: 'currency',
+      expr: "(CASE WHEN t.account_type IN ('liability','equity','income') THEN -t.balance ELSE t.balance END)",
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Sign-corrected per account type, the way a statement prints it. Do not total across types.',
+      noTotal: true,
+    },
+    yesNo('isPostable', 'Postable', 't.is_postable'),
+    yesNo('isActive', 'Active', 't.is_active'),
+    { key: 'sortOrder', label: 'Sort order', type: 'number', expr: 't.sort_order', numeric: true, noTotal: true, group: FIELD_GROUPS.OTHER },
+    { key: 'notes', label: 'Notes', type: 'text', expr: 't.notes', group: FIELD_GROUPS.OTHER },
+  ],
+}
+
 /* ── the catalog ───────────────────────────────────────────────────────────── */
 
 export const SOURCES: CatalogSource[] = [
@@ -3846,6 +4024,8 @@ export const SOURCES: CatalogSource[] = [
   JOB_TRAVEL_SOURCE,
   JOB_VISITS_SOURCE,
   ACTIVITY_SOURCE,
+  JOURNAL_LINES_SOURCE,
+  GL_ACCOUNTS_SOURCE,
 ]
 
 const SOURCE_BY_KEY = new Map(SOURCES.map((s) => [s.key, s]))
