@@ -412,9 +412,57 @@ async function sendOne(
         WHERE id = ?`,
       [data.closingBalance.toFixed(4), data.dueNow.toFixed(4), item.id],
     )
+
+    /*
+     * The SMS heads-up (137), AFTER the email landed and strictly optional:
+     * the statement's own status is about the EMAIL, and a failed text is an
+     * activity-log note, never a failed statement. Best effort by design.
+     */
+    await notifyStatementBySms(siteId, siteName, item.customerId, data.account.code, period.to).catch(
+      () => undefined,
+    )
+
     return { ok: true }
   } catch (error) {
     return fail(error instanceof Error ? error.message : 'The statement could not be built.')
+  }
+}
+
+/** The "your statement is on its way" text — see the note in sendOne. */
+async function notifyStatementBySms(
+  siteId: number,
+  siteName: string,
+  customerId: number,
+  accountCode: string,
+  periodTo: string,
+): Promise<void> {
+  const { getSetting } = await import('./settings')
+  if ((await getSetting(siteId, 'statement_sms_notify')) !== '1') return
+
+  const { getSmsProvider } = await import('./sms')
+  const provider = await getSmsProvider(siteId)
+  if (!provider) return
+
+  const row = await siteQueryOne<Row>(siteId, 'SELECT name, phone FROM customers WHERE id = ? LIMIT 1', [
+    customerId,
+  ])
+  const { normaliseSaPhone } = await import('../sms/phone')
+  const phone = normaliseSaPhone((row?.phone as string | null) ?? null)
+  if (!phone) return
+
+  const outcome = await provider.send(
+    phone,
+    `Hi ${String(row?.name ?? '')}, your ${siteName} statement to ${periodTo} has been emailed to you.`,
+  )
+  if (!outcome.ok) {
+    const { logActivity } = await import('./activityLog')
+    // userId 0: the run itself is the actor, the paidOrders convention.
+    await logActivity(siteId, { userId: 0, userName: 'Statement run' }, {
+      entity: 'customer',
+      entityId: customerId,
+      action: 'statement_sms_failed',
+      detail: `${accountCode}: ${outcome.error}`,
+    }).catch(() => undefined)
   }
 }
 

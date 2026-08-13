@@ -11,6 +11,8 @@ import {
   type LaybyLineInput,
 } from '@/lib/site/laybys'
 import type { FeeWaiverReason } from '@/lib/laybyRules'
+import { remindDueLaybys } from '@/lib/site/laybys'
+import { getSmsProvider } from '@/lib/site/sms'
 
 /**
  * Lay-by actions.
@@ -150,4 +152,30 @@ export async function expireStaleAction(): Promise<Result> {
         ? 'Nothing has been left long enough to expire.'
         : `${expired.length} lay-by${expired.length === 1 ? '' : 's'} marked expired. The money is still held — cancel each one to refund it.`,
   }
+}
+
+/**
+ * Texts everyone whose lay-by is coming due — the nudge that keeps the
+ * expiry sweep above from ever having work. Human-triggered, like it.
+ */
+export async function remindDueAction(): Promise<Result> {
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const provider = await getSmsProvider(siteId)
+  if (!provider) {
+    return { ok: false, error: 'SMS is not set up yet. Choose a provider under Setup → SMS first.' }
+  }
+
+  const result = await remindDueLaybys(siteId, actor, {
+    sendSms: (to, body) => provider.send(to, body),
+  })
+  revalidatePath('/sales/laybys')
+
+  const parts = [`${result.sent} reminder${result.sent === 1 ? '' : 's'} sent`]
+  if (result.skipped.length > 0) {
+    parts.push(`${result.skipped.length} skipped — ${result.skipped[0].reason}`)
+  }
+  return { ok: true, message: parts.join(', ') + '.' }
 }

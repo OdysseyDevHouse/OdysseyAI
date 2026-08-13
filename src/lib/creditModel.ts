@@ -14,6 +14,8 @@ import { round } from './decimals'
 
 /* ── Dunning levels ──────────────────────────────────────────────────────── */
 
+export type DunningChannel = 'email' | 'sms' | 'both'
+
 export type DunningLevel = {
   id: number
   step: number
@@ -22,6 +24,14 @@ export type DunningLevel = {
   minAmount: number
   subject: string
   body: string
+  /** Which leg(s) this level sends. Email is the historical default. */
+  channel: DunningChannel
+  /**
+   * The text's own template — a letter and a text are different registers,
+   * and 320 characters is a real constraint. Same tokens as body, minus
+   * {lines}: a document list has no place in an SMS.
+   */
+  smsBody: string | null
   blocksAccount: boolean
   requiresCall: boolean
   isActive: boolean

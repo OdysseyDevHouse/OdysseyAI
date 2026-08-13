@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
 import { send, isConfigured } from '@/lib/mail'
+import { getSmsProvider } from '@/lib/site/sms'
 import {
   buildRun,
   processRun,
@@ -78,12 +79,24 @@ export async function releaseRunAction(runId: number): Promise<ActionResult> {
     return { ok: false, error: 'Email is not set up yet. Add SMTP details in Setup first.' }
   }
 
+  // The SMS leg rides along when a provider is configured; absent, levels
+  // that text record their leg as skipped rather than failing the run.
+  const smsProvider = await getSmsProvider(siteId)
+
   const result = await processRun(siteId, runId, actor, {
     companyName: await companyName(siteId),
     send: async (input) => {
       const outcome = await send(input)
       return outcome.ok ? { ok: true } : { ok: false, error: outcome.error }
     },
+    ...(smsProvider
+      ? {
+          sendSms: async (to: string, body: string) => {
+            const outcome = await smsProvider.send(to, body)
+            return outcome.ok ? { ok: true as const } : { ok: false as const, error: outcome.error }
+          },
+        }
+      : {}),
   })
 
   revalidatePath('/credit')

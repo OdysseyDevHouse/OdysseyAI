@@ -19,6 +19,7 @@ import {
   type PromiseState,
   type RiskBand,
 } from '../creditModel'
+import { normaliseSaPhone } from '../sms/phone'
 
 /**
  * Credit control — the database side.
@@ -48,6 +49,9 @@ function mapLevel(r: Row): DunningLevel {
     minAmount: toNum(r.min_amount),
     subject: String(r.subject),
     body: String(r.body),
+    // Rows written before 137 hold no channel; email is what they always did.
+    channel: (['email', 'sms', 'both'].includes(String(r.channel)) ? String(r.channel) : 'email') as DunningLevel['channel'],
+    smsBody: (r.sms_body as string | null) ?? null,
     blocksAccount: Number(r.blocks_account) === 1,
     requiresCall: Number(r.requires_call) === 1,
     isActive: Number(r.is_active) === 1,
@@ -76,6 +80,8 @@ export type SaveLevelInput = {
   minAmount: number
   subject: string
   body: string
+  channel?: DunningLevel['channel']
+  smsBody?: string | null
   blocksAccount: boolean
   requiresCall: boolean
   isActive: boolean
@@ -85,8 +91,17 @@ export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
 
 function validateLevel(input: SaveLevelInput): string | null {
   if (!input.name.trim()) return 'Give the level a name.'
-  if (!input.subject.trim()) return 'The email needs a subject.'
-  if (!input.body.trim()) return 'The email needs a body.'
+  const channel = input.channel ?? 'email'
+  if (channel !== 'sms') {
+    if (!input.subject.trim()) return 'The email needs a subject.'
+    if (!input.body.trim()) return 'The email needs a body.'
+  }
+  if (channel !== 'email' && !input.smsBody?.trim()) {
+    return 'A level that texts needs an SMS message.'
+  }
+  if ((input.smsBody?.length ?? 0) > 320) {
+    return 'An SMS message is capped at 320 characters — two segments.'
+  }
   if (!Number.isInteger(input.step) || input.step < 1) return 'The step must be 1 or more.'
   if (input.minDaysOverdue < 0) return 'Days overdue cannot be negative.'
   if (input.minAmount < 0) return 'The minimum amount cannot be negative.'
@@ -116,6 +131,8 @@ export async function saveLevel(
     input.minAmount.toFixed(4),
     input.subject.trim().slice(0, 200),
     input.body.trim(),
+    input.channel ?? 'email',
+    input.smsBody?.trim().slice(0, 320) || null,
     input.blocksAccount ? 1 : 0,
     input.requiresCall ? 1 : 0,
     input.isActive ? 1 : 0,
@@ -125,7 +142,7 @@ export async function saveLevel(
     await siteExecute(
       siteId,
       `UPDATE dunning_levels SET step=?, name=?, min_days_overdue=?, min_amount=?,
-         subject=?, body=?, blocks_account=?, requires_call=?, is_active=? WHERE id=?`,
+         subject=?, body=?, channel=?, sms_body=?, blocks_account=?, requires_call=?, is_active=? WHERE id=?`,
       [...values, id],
     )
     await logActivity(siteId, actor, {
@@ -140,8 +157,8 @@ export async function saveLevel(
   const res = await siteExecute(
     siteId,
     `INSERT INTO dunning_levels
-       (step, name, min_days_overdue, min_amount, subject, body, blocks_account, requires_call, is_active)
-     VALUES (?,?,?,?,?,?,?,?,?)`,
+       (step, name, min_days_overdue, min_amount, subject, body, channel, sms_body, blocks_account, requires_call, is_active)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
     values,
   )
   const newId = res.insertId
@@ -433,6 +450,8 @@ export type DunningItem = {
   customerCode: string
   customerName: string
   email: string | null
+  /** Normalised at build time. Null = no usable mobile. */
+  phone: string | null
   levelId: number | null
   levelStep: number
   levelName: string
@@ -440,6 +459,9 @@ export type DunningItem = {
   totalBalance: number
   oldestDays: number
   status: ItemStatus
+  /** The SMS leg's own outcome; `status` stays the overall one. */
+  smsStatus: 'none' | 'sent' | 'failed' | 'skipped'
+  smsError: string | null
   attempts: number
   error: string | null
   sentAt: Date | null
@@ -472,6 +494,7 @@ function mapItem(r: Row): DunningItem {
     customerCode: String(r.customer_code),
     customerName: String(r.customer_name),
     email: (r.email as string | null) ?? null,
+    phone: (r.phone as string | null) ?? null,
     levelId: r.level_id === null ? null : Number(r.level_id),
     levelStep: Number(r.level_step),
     levelName: String(r.level_name),
@@ -479,6 +502,10 @@ function mapItem(r: Row): DunningItem {
     totalBalance: toNum(r.total_balance),
     oldestDays: Number(r.oldest_days),
     status: String(r.status) as ItemStatus,
+    smsStatus: (['sent', 'failed', 'skipped'].includes(String(r.sms_status))
+      ? String(r.sms_status)
+      : 'none') as DunningItem['smsStatus'],
+    smsError: (r.sms_error as string | null) ?? null,
     attempts: Number(r.attempts),
     error: (r.error as string | null) ?? null,
     sentAt: (r.sent_at as Date | null) ?? null,
@@ -587,14 +614,27 @@ export async function buildRun(
     if (!decision.chase) {
       return { position: p, level: null, status: 'skipped', error: SKIP_LABELS[decision.reason] }
     }
-    // An account with no email cannot be emailed. It is still listed, because a
-    // level that requires a call is work for a person either way.
-    if (!p.email?.trim()) {
+    /*
+     * CHANNEL-AWARE reachability (137): an account is queued when ANY leg the
+     * level sends can reach it. An SMS-only level with a phone and no email
+     * used to be skipped for the missing email — the exact account SMS
+     * dunning exists for. Still listed when unreachable, because a level that
+     * requires a call is work for a person either way.
+     */
+    const channel = decision.level.channel
+    const canEmail = channel !== 'sms' && !!p.email?.trim()
+    const canSms = channel !== 'email' && normaliseSaPhone(p.phone) !== null
+    if (!canEmail && !canSms) {
       return {
         position: p,
         level: decision.level,
         status: 'skipped',
-        error: 'No email address on file.',
+        error:
+          channel === 'sms'
+            ? 'No usable mobile number on file.'
+            : channel === 'email'
+              ? 'No email address on file.'
+              : 'No email address or usable mobile number on file.',
       }
     }
     return { position: p, level: decision.level, status: 'queued', error: null }
@@ -625,16 +665,18 @@ export async function buildRun(
     for (const p of planned) {
       await tx.execute(
         `INSERT INTO dunning_run_items
-           (run_id, customer_id, customer_code, customer_name, email,
+           (run_id, customer_id, customer_code, customer_name, email, phone,
             level_id, level_step, level_name,
             overdue_amount, total_balance, oldest_days, status, error)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           runId,
           p.position.customerId,
           p.position.code,
           p.position.name,
           p.position.email,
+          // Snapshotted NORMALISED, so the send never re-derives it.
+          normaliseSaPhone(p.position.phone),
           p.level?.id ?? null,
           p.level?.step ?? 0,
           p.level?.name ?? 'Not chased',
@@ -745,6 +787,12 @@ export async function processRun(
       subject: string
       text: string
     }) => Promise<{ ok: true } | { ok: false; error: string }>
+    /**
+     * The SMS leg (137). Optional: absent means the channel is not set up,
+     * and SMS-carrying levels record their leg as skipped rather than the
+     * run failing over a channel nobody configured.
+     */
+    sendSms?: (to: string, body: string) => Promise<{ ok: true } | { ok: false; error: string }>
   },
 ): Promise<SendResult> {
   const run = await getRun(siteId, runId)
@@ -771,7 +819,7 @@ export async function processRun(
 
   for (const item of items) {
     const level = item.levelId === null ? null : levels.get(item.levelId)
-    if (!level || !item.email) {
+    if (!level) {
       failed++
       await siteExecute(
         siteId,
@@ -798,26 +846,79 @@ export async function processRun(
         .join('\n'),
     }
 
-    const result = await deps.send({
-      to: item.email,
-      subject: renderTemplate(level.subject, values),
-      text: renderTemplate(level.body, values),
-    })
+    /*
+     * ── TWO LEGS, EACH ON ITS OWN FEET (137) ────────────────────────────
+     * The email leg and the SMS leg run independently; `status` stays the
+     * OVERALL outcome (sent if any leg landed) so every existing reader of
+     * the run keeps meaning what it meant, and sms_status carries the text
+     * leg's own truth. The level moves ONCE per item, not per leg.
+     */
+    const wantsEmail = level.channel !== 'sms'
+    const wantsSms = level.channel !== 'email'
 
-    if (result.ok) {
+    let emailOk = false
+    let emailError: string | null = null
+    if (wantsEmail) {
+      if (!item.email) {
+        emailError = 'No email address on file.'
+      } else {
+        const result = await deps.send({
+          to: item.email,
+          subject: renderTemplate(level.subject, values),
+          text: renderTemplate(level.body, values),
+        })
+        emailOk = result.ok
+        if (!result.ok) emailError = result.error
+      }
+    }
+
+    let smsOutcome: DunningItem['smsStatus'] = 'none'
+    let smsError: string | null = null
+    if (wantsSms) {
+      if (!deps.sendSms) {
+        smsOutcome = 'skipped'
+        smsError = 'SMS is not set up on this system.'
+      } else if (!item.phone) {
+        smsOutcome = 'skipped'
+        smsError = 'No usable mobile number.'
+      } else if (!level.smsBody?.trim()) {
+        smsOutcome = 'skipped'
+        smsError = 'The level has no SMS message.'
+      } else {
+        const result = await deps.sendSms(item.phone, renderTemplate(level.smsBody, values))
+        smsOutcome = result.ok ? 'sent' : 'failed'
+        if (!result.ok) smsError = result.error
+      }
+    }
+
+    const anySent = emailOk || smsOutcome === 'sent'
+
+    if (anySent) {
       sent++
       await siteExecute(
         siteId,
-        `UPDATE dunning_run_items SET status='sent', attempts=attempts+1, sent_at=NOW(), error=NULL WHERE id=?`,
-        [item.id],
+        `UPDATE dunning_run_items
+            SET status='sent', attempts=attempts+1, sent_at=NOW(),
+                error=?, sms_status=?, sms_error=? WHERE id=?`,
+        [
+          // A landed item still records its half-failure — "sent, but the
+          // email bounced" is the truth the review screen shows.
+          emailOk || !wantsEmail ? null : emailError?.slice(0, 400) ?? null,
+          smsOutcome,
+          smsError?.slice(0, 400) ?? null,
+          item.id,
+        ],
       )
       await recordSend(siteId, actor, item, level, run.asAt)
     } else {
       failed++
+      const overallError =
+        [emailError, smsError].filter(Boolean).join(' · ') || 'Nothing could be sent.'
       await siteExecute(
         siteId,
-        `UPDATE dunning_run_items SET status='failed', attempts=attempts+1, error=? WHERE id=?`,
-        [result.error.slice(0, 400), item.id],
+        `UPDATE dunning_run_items
+            SET status='failed', attempts=attempts+1, error=?, sms_status=?, sms_error=? WHERE id=?`,
+        [overallError.slice(0, 400), smsOutcome, smsError?.slice(0, 400) ?? null, item.id],
       )
     }
 

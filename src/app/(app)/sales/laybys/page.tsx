@@ -18,6 +18,8 @@ import {
   Icons,
 } from '@/components/ui'
 import ExpireButton from './ExpireButton'
+import RemindButton from './RemindButton'
+import { isSmsConfigured } from '@/lib/site/sms'
 import LaybysTable, { type LaybyTableRow } from './LaybysTable'
 
 export const dynamic = 'force-dynamic'
@@ -91,6 +93,7 @@ export default async function LaybysPage({
         subtitle={`${total} lay-by${total === 1 ? '' : 's'}`}
         action={
           <>
+            <RemindButton smsConfigured={await isSmsConfigured(siteId)} />
             <ExpireButton />
             <PrimaryLink href="/pos">
               <Icons.Plus size={15} />

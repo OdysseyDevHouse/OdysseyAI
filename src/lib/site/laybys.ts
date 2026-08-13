@@ -15,7 +15,7 @@ import { getSettings } from './settings'
 import { saveDraft, getDocument, todayIso } from './salesDocuments'
 import { finaliseDocument } from './salesPosting'
 import { shiftToBankInto } from './shifts'
-import type { Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 
 /**
  * Lay-bys — goods set aside and paid off over time.
@@ -757,6 +757,91 @@ export async function expireStaleLaybys(
     laybyNumber: (r.document_number as string | null) ?? null,
     customerName: (r.customer_name as string | null) ?? null,
   }))
+}
+
+/**
+ * Texts everyone whose lay-by is coming due (or already overdue) — the nudge
+ * that keeps expireStaleLaybys from ever needing to run.
+ *
+ * `reminded_at` is the throttle: a lay-by nudged in the last seven days is
+ * left alone, so pressing the button daily cannot nag anybody daily. The
+ * stamp is written even when the send fails? No — ONLY on success, because
+ * an unsent reminder did not remind anyone, and stamping it would silently
+ * swallow a dead number until the lay-by expires.
+ *
+ * Human-triggered from the lay-bys screen, like the expiry sweep beside it.
+ */
+export async function remindDueLaybys(
+  siteId: number,
+  actor: Actor,
+  deps: { sendSms: (to: string, body: string) => Promise<{ ok: boolean; error?: string }> },
+): Promise<{ sent: number; skipped: { laybyNumber: string | null; reason: string }[] }> {
+  const settings = await getSettings(siteId, ['layby_reminder_days', 'layby_reminder_sms'])
+  const horizon = Math.max(Number(settings.layby_reminder_days) || 7, 0)
+  const template = settings.layby_reminder_sms
+
+  const { normaliseSaPhone } = await import('../sms/phone')
+  const { renderTemplate } = await import('../creditModel')
+  const companyName = await getCompanyName(siteId)
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT l.id, l.document_number, l.due_date, l.total_incl, l.paid_total,
+            c.name AS customer_name, c.phone
+       FROM laybys l JOIN customers c ON c.id = l.customer_id
+      WHERE l.status = 'open'
+        AND l.due_date IS NOT NULL
+        AND l.due_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
+        AND (l.reminded_at IS NULL OR l.reminded_at < DATE_SUB(NOW(), INTERVAL 7 DAY))`,
+    [horizon],
+  )
+
+  let sent = 0
+  const skipped: { laybyNumber: string | null; reason: string }[] = []
+
+  for (const r of rows) {
+    const number = (r.document_number as string | null) ?? null
+    const phone = normaliseSaPhone((r.phone as string | null) ?? null)
+    if (!phone) {
+      skipped.push({ laybyNumber: number, reason: 'No usable mobile number.' })
+      continue
+    }
+
+    const balance = round(toNum(r.total_incl) - toNum(r.paid_total), 2)
+    const body = renderTemplate(template, {
+      customer: String(r.customer_name ?? ''),
+      number: number ?? `#${r.id}`,
+      due_date: String(r.due_date).slice(0, 10),
+      balance: balance.toFixed(2),
+      company: companyName,
+    })
+
+    const outcome = await deps.sendSms(phone, body)
+    if (outcome.ok) {
+      sent++
+      await siteExecute(siteId, 'UPDATE laybys SET reminded_at = NOW() WHERE id = ?', [Number(r.id)])
+      await logActivity(siteId, actor, {
+        entity: 'customer',
+        entityId: null,
+        action: 'layby_reminded',
+        detail: `${number ?? `#${r.id}`} — reminder texted, ${balance.toFixed(2)} outstanding`,
+      }).catch(() => undefined)
+    } else {
+      skipped.push({ laybyNumber: number, reason: outcome.error ?? 'The message was refused.' })
+    }
+  }
+
+  return { sent, skipped }
+}
+
+/** The trading name the reminder signs off as, from the control database. */
+async function getCompanyName(siteId: number): Promise<string> {
+  const { queryOne } = await import('../db')
+  const row = await queryOne<{ company_name: string; trading_name: string | null }>(
+    'SELECT company_name, trading_name FROM cp2_sites WHERE id = ? LIMIT 1',
+    [siteId],
+  ).catch(() => null)
+  return row?.trading_name?.trim() || row?.company_name || 'the shop'
 }
 
 /** The store's fee percentage, clamped to the store's own ceiling. */

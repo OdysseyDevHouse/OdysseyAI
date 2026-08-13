@@ -63,6 +63,8 @@
     "test:loyalty": "tsx --conditions=react-server --env-file=.env scripts/test-loyalty.ts",
     "test:credit-model": "tsx scripts/test-credit-model.ts",
     "test:credit-control": "tsx --conditions=react-server --env-file=.env scripts/test-credit-control.ts",
+    "test:sms-model": "tsx scripts/test-sms-model.ts",
+    "test:dunning-sms": "tsx --conditions=react-server --env-file=.env scripts/test-dunning-sms.ts",
     "test:attachments": "tsx --conditions=react-server --env-file=.env scripts/test-attachments.ts",
     "test:settlement-discount": "tsx --conditions=react-server --env-file=.env scripts/test-settlement-discount.ts",
     "test:sales-orders": "tsx --conditions=react-server --env-file=.env scripts/test-sales-orders.ts",

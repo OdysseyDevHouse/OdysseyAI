@@ -61,6 +61,8 @@ function level(step: number, days: number, over: Partial<DunningLevel> = {}): Du
     minAmount: 50,
     subject: 's',
     body: 'b',
+    channel: 'email',
+    smsBody: null,
     blocksAccount: step >= 3,
     requiresCall: step >= 3,
     isActive: true,

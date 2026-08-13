@@ -493,6 +493,26 @@ export const SETTING_DEFAULTS = {
    * engine.
    */
   job_auto_invoice: '0',
+
+  /*
+   * ── SMS (137) ──────────────────────────────────────────────────────────
+   * '' = off, 'log' = print to the server log (trying it out), 'smsportal' =
+   * the real gateway. The credentials live here as plain settings rows — the
+   * setup screen says so out loud and renders them masked.
+   */
+  sms_provider: '',
+  sms_client_id: '',
+  sms_client_secret: '',
+
+  /** Text the customer when their statement has been emailed. */
+  statement_sms_notify: '0',
+
+  /** How many days before a layby's due date the reminder sweep picks it up. */
+  layby_reminder_days: '7',
+
+  /** The layby reminder template. Tokens: {customer} {number} {due_date} {balance} {company}. */
+  layby_reminder_sms:
+    'Hi {customer}, a friendly reminder: your lay-by {number} at {company} is due by {due_date}. Balance: {balance}.',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS

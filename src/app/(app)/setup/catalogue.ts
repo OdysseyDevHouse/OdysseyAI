@@ -437,6 +437,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/sms',
+        description: 'The provider that sends text messages, and the reminders that use it.',
+        keywords: 'sms text message smsportal reminders dunning notify phone mobile',
+        icon: 'MessageSquare',
+        tone: 'sky',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/style-guide',
         description: 'Every component the app is built from, rendered live.',
         keywords: 'design system components reference ui kit',
