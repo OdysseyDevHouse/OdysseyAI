@@ -29,14 +29,18 @@ export function DeptRail({
 }) {
   const top = childDepartments(departments, null)
 
+  /* A floating card like the basket and the catalogue, and visible from `lg`
+     rather than `xl`: a 1280px till is an ordinary size for a counter screen, and
+     hiding the department rail there left those shops with no way to browse at
+     all — only scanning and searching. */
   return (
     <nav
       aria-label="Departments"
-      className="hidden w-[240px] shrink-0 flex-col border-r border-border bg-surface xl:flex"
+      className="hidden w-[240px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-surface shadow-card lg:flex"
     >
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-4 py-3.5">
         <Icons.Tag size={16} className="text-muted" />
-        <h2 className="text-sm font-semibold text-ink">Departments</h2>
+        <h2 className="text-[16px] font-bold text-ink">Departments</h2>
       </div>
 
       {top.length === 0 ? (

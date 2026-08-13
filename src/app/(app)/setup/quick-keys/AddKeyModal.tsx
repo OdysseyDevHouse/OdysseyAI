@@ -200,7 +200,11 @@ export function AddKeyModal({
                 /* The hint, not the slug. A manager choosing between "Void sale" and
                    "Refund" needs to know which one reverses a posted invoice. */
                 subtitle={
-                  a.hospitalityOnly ? `${a.hint} — restaurant tills only` : a.hint
+                  a.hospitalityOnly
+                    ? `${a.hint} — restaurant tills only`
+                    : a.retailOnly
+                      ? `${a.hint} — retail tills only`
+                      : a.hint
                 }
                 tone={slug === a.slug ? 'active' : 'default'}
                 disabled={pending}

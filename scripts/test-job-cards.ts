@@ -189,6 +189,14 @@ import {
   reconcileJobHeadlines,
 } from '../src/lib/site/jobHeadlines'
 import { listUsers } from '../src/lib/site/users'
+import { buildIcs, escapeIcsText, foldIcsLine, toIcsStamp } from '../src/lib/icsFeed'
+import { createCalendarToken, readCalendarToken } from '../src/lib/calendarToken'
+import {
+  takeDeposit,
+  jobDeposits,
+  depositSummary,
+  reconcileJobDeposits,
+} from '../src/lib/site/jobDeposits'
 import {
   saveJobView,
   listJobViews,
@@ -216,6 +224,14 @@ import {
   notifyStatusChanged,
   notifyClosed,
 } from '../src/lib/site/jobPeople'
+import {
+  listJobTeams,
+  getJobTeam,
+  saveJobTeam,
+  deleteJobTeam,
+  applyTeamToJob,
+  reconcileJobTeams,
+} from '../src/lib/site/jobTeams'
 import {
   saveAssetType,
   saveAsset,
@@ -340,6 +356,17 @@ const BULK_JOB_PATTERN = '^JCT[0-9]{6} bulk (one|two|three)$'
 const VIEW_PATTERN = '^JCT[0-9]{6} overdue'
 /** (J25) fixture: one job titled "JCT<stamp> rules job". */
 const RULES_JOB_PATTERN = '^JCT[0-9]{6} rules job$'
+/** (J26) fixture: one job titled "JCT<stamp> deposit job". */
+const DEPOSIT_JOB_PATTERN = '^JCT[0-9]{6} deposit job$'
+/**
+ * (J28) fixtures: a crew named "JCT<stamp> north crew" and two jobs.
+ *
+ * The crew needs its own pattern because it is the one thing here that outlives
+ * its job: members CASCADE from job_teams, but nothing collects the team itself,
+ * and a leftover one is a reconcileJobTeams drift row the next suite gets blamed for.
+ */
+const CREW_PATTERN = '^JCT[0-9]{6} north crew$'
+const CREW_JOB_PATTERN = '^JCT[0-9]{6} crew( owner)? job$'
 
 /**
  * Deletes only this suite's fixtures.
@@ -400,6 +427,13 @@ async function sweepStrays() {
   // to be deleted by name — nothing would ever collect it otherwise.
   await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [BULK_JOB_PATTERN])
   await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [RULES_JOB_PATTERN])
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [DEPOSIT_JOB_PATTERN])
+  // (J28) crews. job_team_members CASCADE from the team; the JOBS are separate
+  // rows matched by title, and job_card_people CASCADEs from those.
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [CREW_JOB_PATTERN])
+  await siteExecute(SITE, `DELETE FROM job_teams WHERE name REGEXP ?`, [CREW_PATTERN]).catch(
+    () => {},
+  )
   await siteExecute(SITE, `DELETE FROM job_saved_views WHERE name REGEXP ?`, [VIEW_PATTERN]).catch(
     () => {},
   )
@@ -4727,6 +4761,515 @@ async function main() {
     await setSetting(SITE, 'job_notify_enabled', rulesNotifyWas)
   }
 
+  /*
+   * ── (J26) Deposits ────────────────────────────────────────────────────────
+   *
+   * Section 33, and no new table: a deposit is a customer RECEIPT, posted
+   * through the cashbook so both halves land — the customer owes less AND the
+   * money is in an account.
+   *
+   * That second half is the whole test. The first version of jobDeposits called
+   * postTransaction directly, which writes the debtors side only, and the cash
+   * position would have understated by every deposit ever taken.
+   */
+  {
+    const acct = await siteQueryOne<any>(
+      SITE,
+      `SELECT id, name, balance FROM bank_accounts WHERE status <> 'closed' LIMIT 1`,
+    )
+
+    const dJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} deposit job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!dJob.ok) throw new Error('deposit fixture failed')
+
+    ok('(J26) a new job has no deposits', (await jobDeposits(SITE, dJob.id)).length === 0)
+
+    if (!acct) {
+      ok('(J26) SKIPPED — this site has no open bank account', true)
+    } else {
+      // ── The refusals ──────────────────────────────────────────────────
+      const zero = await takeDeposit(SITE, actor, dJob.id, {
+        amount: 0, bankAccountId: Number(acct.id),
+      })
+      ok('(J26) a deposit of nothing is refused', !zero.ok, zero.ok ? 'ACCEPTED' : zero.error)
+
+      const noAcct = await takeDeposit(SITE, actor, dJob.id, {
+        amount: 100, bankAccountId: 999999,
+      })
+      ok(
+        '(J26) *** and so is one with nowhere to put the money ***',
+        !noAcct.ok,
+        noAcct.ok ? 'ACCEPTED' : noAcct.error,
+      )
+
+      // ── Both halves ───────────────────────────────────────────────────
+      const custBefore = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM customers WHERE id = ?`, [customerId])
+      const bankBefore = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM bank_accounts WHERE id = ?`, [acct.id])
+
+      const took = await takeDeposit(SITE, actor, dJob.id, {
+        amount: 1200, bankAccountId: Number(acct.id), reference: `JCT${stamp}DEP`,
+      })
+      ok('(J26) a deposit is taken', took.ok, took.ok ? '' : took.error)
+      if (!took.ok) throw new Error('deposit fixture failed')
+
+      const custAfter = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM customers WHERE id = ?`, [customerId])
+      const bankAfter = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM bank_accounts WHERE id = ?`, [acct.id])
+
+      ok(
+        '(J26) *** the customer owes 1200 LESS ***',
+        Math.abs(Number(custBefore.balance) - Number(custAfter.balance) - 1200) < 0.01,
+        `${custBefore.balance} -> ${custAfter.balance}`,
+      )
+      ok(
+        '(J26) *** and the bank account holds 1200 MORE — the half postTransaction misses ***',
+        Math.abs(Number(bankAfter.balance) - Number(bankBefore.balance) - 1200) < 0.01,
+        `${bankBefore.balance} -> ${bankAfter.balance}`,
+      )
+
+      // ── It is findable as this job's deposit ──────────────────────────
+      const mine = await jobDeposits(SITE, dJob.id)
+      ok('(J26) the job finds its own deposit', mine.length === 1 && mine[0].amount === 1200)
+
+      const summary = await depositSummary(SITE, dJob.id)
+      ok('(J26) the summary totals it', summary.taken === 1200)
+      ok(
+        '(J26) *** it is UNALLOCATED — which invoice it settles is a debtors decision ***',
+        summary.unallocated === 1200,
+        String(summary.unallocated),
+      )
+      /*
+       * No accepted quote on this fixture, so there is nothing to measure
+       * against — and the summary says so rather than inventing a balance.
+       */
+      ok(
+        '(J26) with no accepted quote, there is no made-up balance',
+        summary.quoted === null && summary.stillToPay === null,
+      )
+
+      // ── A closed job takes no deposit ─────────────────────────────────
+      await closeJob(SITE, actor, dJob.id)
+      const afterClose = await takeDeposit(SITE, actor, dJob.id, {
+        amount: 50, bankAccountId: Number(acct.id),
+      })
+      ok(
+        '(J26) a closed job refuses one, and says where to take it instead',
+        !afterClose.ok,
+        afterClose.ok ? 'ACCEPTED' : afterClose.error,
+      )
+
+      // ── Drift ─────────────────────────────────────────────────────────
+      const clean = await reconcileJobDeposits(SITE)
+      ok(
+        '(J26) a live deposit is not reported as orphaned',
+        !clean.orphaned.some((o) => o.jobId === dJob.id),
+      )
+
+      /*
+       * Teardown, in the order that keeps the books straight: the bank row and
+       * the ledger row go, then both balances are put back by hand. A deposit
+       * cannot simply be deleted in real life — it would be reversed — but this
+       * is a fixture, and leaving it would drift every balance on the site.
+       */
+      await siteExecute(SITE,
+        `DELETE FROM bank_transactions WHERE source_doc_id = ? AND source = 'receipt'`,
+        [took.transactionId])
+      await siteExecute(SITE, `DELETE FROM customer_transactions WHERE id = ?`, [took.transactionId])
+      await siteExecute(SITE, `UPDATE customers SET balance = ? WHERE id = ?`,
+        [custBefore.balance, customerId])
+      await siteExecute(SITE, `UPDATE bank_accounts SET balance = ? WHERE id = ?`,
+        [bankBefore.balance, acct.id])
+
+      const restored = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM bank_accounts WHERE id = ?`, [acct.id])
+      ok(
+        '(J26) the fixture put both balances back',
+        Math.abs(Number(restored.balance) - Number(bankBefore.balance)) < 0.01,
+        `${restored.balance}`,
+      )
+    }
+
+    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [dJob.id])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [dJob.id])
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [dJob.id])
+  }
+
+  /*
+   * ── (J27) The calendar feed ───────────────────────────────────────────────
+   *
+   * §14.2 asks for Google and Outlook integration. This is the read-only
+   * ninety per cent: a technician subscribes once and their own phone shows
+   * their day.
+   *
+   * Every check here is about the FILE being valid, because an invalid one
+   * fails in the worst possible way — a calendar app rejects it silently and
+   * shows an empty week with no error at all.
+   */
+  {
+    // ── Escaping. A customer called "Smith, Ltd" is ordinary. ────────────
+    ok(
+      '(J27) a comma is escaped — a bare one silently truncates the line',
+      escapeIcsText('Harbour Cafe, Ltd') === 'Harbour Cafe\\, Ltd',
+      escapeIcsText('Harbour Cafe, Ltd'),
+    )
+    ok('(J27) and a semicolon', escapeIcsText('a; b') === 'a\\; b')
+    ok(
+      '(J27) *** the backslash is escaped FIRST, or the others double-escape ***',
+      escapeIcsText('A\\B, C') === 'A\\\\B\\, C',
+      escapeIcsText('A\\B, C'),
+    )
+    ok(
+      '(J27) a newline becomes a literal \\n, not a real line break',
+      escapeIcsText('one\ntwo') === 'one\\ntwo',
+    )
+
+    // ── Folding, in OCTETS. ─────────────────────────────────────────────
+    const bytes = (s: string) => new TextEncoder().encode(s).length
+    const longest = (s: string) => Math.max(...s.split('\r\n').map(bytes))
+
+    ok('(J27) a short line is left alone', foldIcsLine('SUMMARY:short') === 'SUMMARY:short')
+    ok(
+      '(J27) a long one folds to 75 octets or fewer',
+      longest(foldIcsLine('SUMMARY:' + 'x'.repeat(200))) <= 75,
+      String(longest(foldIcsLine('SUMMARY:' + 'x'.repeat(200)))),
+    )
+    ok(
+      '(J27) every continuation begins with a space',
+      foldIcsLine('SUMMARY:' + 'x'.repeat(200))
+        .split('\r\n')
+        .slice(1)
+        .every((l) => l.startsWith(' ')),
+    )
+    /*
+     * The one a character count gets wrong. An emoji is four octets, so forty of
+     * them are 160 bytes in 40 characters — a naive fold produces lines that are
+     * legal by length and illegal by size, and splitting mid-surrogate produces
+     * invalid UTF-8 that can take a parser down.
+     */
+    ok(
+      '(J27) *** multi-byte text folds by OCTET, not by character ***',
+      longest(foldIcsLine('SUMMARY:' + '🔧'.repeat(40))) <= 75,
+      String(longest(foldIcsLine('SUMMARY:' + '🔧'.repeat(40)))),
+    )
+    ok(
+      '(J27) and no surrogate pair is cut in half',
+      !foldIcsLine('SUMMARY:' + '🔧'.repeat(40)).includes('�'),
+    )
+
+    // ── The stamp is UTC, always. ───────────────────────────────────────
+    ok(
+      '(J27) a stamp is Zulu time, so no VTIMEZONE block is needed',
+      toIcsStamp(new Date(Date.UTC(2026, 7, 20, 8, 5, 0))) === '20260820T080500Z',
+      toIcsStamp(new Date(Date.UTC(2026, 7, 20, 8, 5, 0))),
+    )
+
+    // ── A whole calendar. ───────────────────────────────────────────────
+    const ics = buildIcs(
+      [
+        {
+          uid: 'job-visit-1-99@odyssey',
+          startsAt: new Date(Date.UTC(2026, 7, 20, 8, 0, 0)),
+          endsAt: new Date(Date.UTC(2026, 7, 20, 9, 30, 0)),
+          summary: 'Harbour Cafe, Ltd — service; annual',
+          description: 'JC000123\nGate code 4471',
+          location: 'Unit 4, Main Rd',
+        },
+      ],
+      { name: 'Piet — jobs', stampedAt: new Date(Date.UTC(2026, 7, 13, 6, 0, 0)) },
+    )
+
+    ok('(J27) it opens and closes as a VCALENDAR', ics.startsWith('BEGIN:VCALENDAR') && ics.trimEnd().endsWith('END:VCALENDAR'))
+    ok(
+      '(J27) *** every line is CRLF and the file ends with one — Outlook rejects otherwise ***',
+      !/[^\r]\n/.test(ics) && ics.endsWith('\r\n'),
+    )
+    ok(
+      '(J27) no line exceeds 75 octets anywhere in the file',
+      ics.split('\r\n').every((l) => bytes(l) <= 75),
+    )
+    ok('(J27) the commas inside SUMMARY survived escaping', ics.includes('Harbour Cafe\\, Ltd'))
+    /*
+     * The most important property in the file. A calendar matches events by UID;
+     * if it moved when a visit was edited the subscriber would end up holding
+     * both the old booking and the new one.
+     */
+    ok('(J27) the UID is carried through verbatim', ics.includes('UID:job-visit-1-99@odyssey'))
+    ok(
+      '(J27) and a cancelled visit publishes as CANCELLED rather than vanishing',
+      buildIcs(
+        [
+          {
+            uid: 'x@odyssey',
+            startsAt: new Date(),
+            endsAt: new Date(),
+            summary: 'x',
+            status: 'CANCELLED',
+          },
+        ],
+        { name: 'x', stampedAt: new Date() },
+      ).includes('STATUS:CANCELLED'),
+    )
+
+    // ── The token names one person on one site. ─────────────────────────
+    const token = await createCalendarToken(SITE, 4)
+    const back = await readCalendarToken(token)
+    ok('(J27) a token round-trips', back?.siteId === SITE && back?.userId === 4)
+    ok('(J27) rubbish is refused', (await readCalendarToken('not-a-token')) === null)
+    ok(
+      '(J27) *** and a tampered signature is refused — the URL IS the credential ***',
+      (await readCalendarToken(token.slice(0, -3) + 'aaa')) === null,
+    )
+  }
+
+  /*
+   * ── (J28) Crews ───────────────────────────────────────────────────────────
+   *
+   * Section 16. A crew is a SHORTCUT, not an owner: choosing one expands into
+   * individual job_card_people rows and is then forgotten by the job. That is the
+   * whole design, and these checks are what hold it in place.
+   *
+   * The load-bearing assertion is the last pair: editing a crew after it has been
+   * applied must not reach backwards into the job. A job_cards.team_id would have
+   * made that impossible to guarantee — retiring the North crew would silently
+   * rewrite who did last month's work.
+   */
+  {
+    // Mail off for the whole block, for the (J22) reason: applyTeamToJob goes
+    // through setJobPerson, which notifies, and this box has real SMTP.
+    const notifyWasEnabled = await getSetting(SITE, 'job_notify_enabled').catch(() => '1')
+    await setSetting(SITE, 'job_notify_enabled', '0')
+
+    const users = await listUsers(SITE)
+    const active = users.filter((u) => u.isActive && u.userType === 'back_office')
+
+    const crewName = `JCT${stamp} north crew`
+
+    // ── The refusals, before anything is built ──────────────────────────────
+    const nobody = await saveJobTeam(SITE, actor, {
+      id: null, name: crewName, description: null, isActive: true, members: [],
+    })
+    ok(
+      '(J28) *** a crew with nobody on it is refused — it would do nothing ***',
+      !nobody.ok,
+      nobody.ok ? 'ACCEPTED' : nobody.error,
+    )
+
+    const nameless = await saveJobTeam(SITE, actor, {
+      id: null, name: '   ', description: null, isActive: true,
+      members: active.length ? [{ userId: active[0].id, isLead: true }] : [],
+    })
+    ok('(J28) and one with no name', !nameless.ok, nameless.ok ? 'ACCEPTED' : nameless.error)
+
+    const ghost = await saveJobTeam(SITE, actor, {
+      id: null, name: crewName, description: null, isActive: true,
+      members: [{ userId: 999999, isLead: true }],
+    })
+    ok(
+      '(J28) a crew cannot name somebody who is not a user here',
+      !ghost.ok,
+      ghost.ok ? 'ACCEPTED' : ghost.error,
+    )
+
+    if (active.length < 2) {
+      ok('(J28) SKIPPED — needs two active back-office users on this site', true)
+    } else {
+      const [alice, bob] = active
+
+      const twoLeads = await saveJobTeam(SITE, actor, {
+        id: null, name: crewName, description: null, isActive: true,
+        members: [{ userId: alice.id, isLead: true }, { userId: bob.id, isLead: true }],
+      })
+      ok(
+        '(J28) *** two leads is REFUSED, not silently corrected ***',
+        !twoLeads.ok,
+        twoLeads.ok ? 'ACCEPTED' : twoLeads.error,
+      )
+
+      // ── Building one ──────────────────────────────────────────────────────
+      const made = await saveJobTeam(SITE, actor, {
+        id: null, name: crewName, description: 'The northern round', isActive: true,
+        members: [{ userId: alice.id, isLead: true }, { userId: bob.id, isLead: false }],
+      })
+      ok('(J28) a crew with a lead and a member saves', made.ok, made.ok ? '' : made.error)
+      if (!made.ok) throw new Error('crew fixture failed')
+      const teamId = made.id
+
+      const dup = await saveJobTeam(SITE, actor, {
+        id: null, name: crewName, description: null, isActive: true,
+        members: [{ userId: alice.id, isLead: true }],
+      })
+      ok(
+        '(J28) two crews cannot share a name',
+        !dup.ok,
+        dup.ok ? 'ACCEPTED' : dup.error,
+      )
+
+      const read = await getJobTeam(SITE, teamId)
+      ok(
+        '(J28) it reads back with both people and exactly one lead',
+        read !== null &&
+          read.members.length === 2 &&
+          read.members.filter((m) => m.isLead).length === 1,
+        `${read?.members.length ?? 0} member(s)`,
+      )
+      ok(
+        '(J28) and the member name is SNAPSHOT, so a rename cannot blank the list',
+        read?.members.every((m) => m.userName.length > 0) === true,
+      )
+
+      // ── Putting it on a job ───────────────────────────────────────────────
+      const cJob = await saveJobCard(SITE, actor, {
+        id: null, customerId, customerName: null, customerPhone: null,
+        customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+        priority: 'normal', ownerUserId: null, ownerName: '',
+        title: `JCT${stamp} crew job`, description: null, dueAt: null,
+        source: 'manual', reference: null, internalNote: null,
+      })
+      if (!cJob.ok) throw new Error('crew job fixture failed')
+      const cJobId = cJob.id
+
+      const applied = await applyTeamToJob(SITE, actor, cJobId, teamId)
+      ok('(J28) the crew goes on the job', applied.ok && applied.added === 2,
+        `added ${applied.added}, skipped ${applied.skipped.length}`)
+
+      const onJob = await peopleFor(SITE, cJobId)
+      ok(
+        '(J28) *** and lands as INDIVIDUAL rows — a crew owns no job ***',
+        onJob.length === 2 && onJob.every((p) => p.role === 'assignee'),
+        `${onJob.length} row(s)`,
+      )
+
+      /*
+       * Twice is not an error; it is a no-op that says who it left alone.
+       *
+       * This was a real bug. setJobPerson is deliberately idempotent — its INSERT
+       * is ON DUPLICATE KEY UPDATE, which is how a follower gets promoted — so
+       * applying a crew twice reported "2 added" having added nobody, and would
+       * have sent two people a second email about work they already had.
+       */
+      const again = await applyTeamToJob(SITE, actor, cJobId, teamId)
+      ok(
+        '(J28) *** applying it twice adds NOBODY and names who was left alone ***',
+        again.ok && again.added === 0 && again.skipped.length === 2 &&
+          again.skipped.every((s) => s.userName.length > 0),
+        `added ${again.added}, skipped ${again.skipped.length}`,
+      )
+
+      /*
+       * But a FOLLOWER on the crew is not "already on this job" in the sense that
+       * matters: applying the crew genuinely changes their role, and they should
+       * be told. The skip is about assignees, not about the row existing.
+       */
+      await removeJobPerson(SITE, actor, cJobId, bob.id)
+      await setJobPerson(SITE, actor, cJobId, bob.id, 'follower')
+      const promoting = await applyTeamToJob(SITE, actor, cJobId, teamId)
+      ok(
+        '(J28) *** but a FOLLOWER on the crew IS promoted, and counted ***',
+        promoting.ok && promoting.added === 1,
+        `added ${promoting.added}, skipped ${promoting.skipped.length}`,
+      )
+      ok(
+        '(J28) and they are an assignee afterwards',
+        (await peopleFor(SITE, cJobId)).some(
+          (p) => p.userId === bob.id && p.role === 'assignee',
+        ),
+      )
+
+      /*
+       * The owner is skipped rather than refused, because applyTeamToJob goes
+       * through the same door setJobPerson does — and that door refuses the owner
+       * so nobody is counted twice on a workload figure. A crew containing the
+       * owner must therefore add one person fewer, and SAY so.
+       */
+      const soloJob = await saveJobCard(SITE, actor, {
+        id: null, customerId, customerName: null, customerPhone: null,
+        customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+        priority: 'normal', ownerUserId: alice.id, ownerName: alice.name,
+        title: `JCT${stamp} crew owner job`, description: null, dueAt: null,
+        source: 'manual', reference: null, internalNote: null,
+      })
+      if (!soloJob.ok) throw new Error('crew owner job fixture failed')
+      const ownerApplied = await applyTeamToJob(SITE, actor, soloJob.id, teamId)
+      ok(
+        '(J28) *** a crew containing the OWNER adds one fewer, and names them ***',
+        ownerApplied.ok && ownerApplied.added === 1 &&
+          ownerApplied.skipped.some((s) => s.userName === alice.name),
+        `added ${ownerApplied.added}, skipped ${ownerApplied.skipped.map((s) => s.userName).join(',')}`,
+      )
+
+      // ── Editing it does not reach backwards ───────────────────────────────
+      const shrunk = await saveJobTeam(SITE, actor, {
+        id: teamId, name: crewName, description: null, isActive: true,
+        members: [{ userId: alice.id, isLead: true }],
+      })
+      ok('(J28) somebody can be taken off the crew', shrunk.ok, shrunk.ok ? '' : shrunk.error)
+      const afterShrink = await peopleFor(SITE, cJobId)
+      ok(
+        '(J28) *** the JOB still has both — editing a crew never rewrites history ***',
+        afterShrink.length === 2,
+        `${afterShrink.length} row(s) on the job`,
+      )
+
+      // ── Retiring, and deleting ────────────────────────────────────────────
+      await saveJobTeam(SITE, actor, {
+        id: teamId, name: crewName, description: null, isActive: false,
+        members: [{ userId: alice.id, isLead: true }],
+      })
+      const retiredApply = await applyTeamToJob(SITE, actor, cJobId, teamId)
+      ok(
+        '(J28) a retired crew cannot be put on a job',
+        !retiredApply.ok,
+        retiredApply.ok ? 'ACCEPTED' : retiredApply.error,
+      )
+      ok(
+        '(J28) and it is out of the picker but still readable',
+        (await listJobTeams(SITE, false)).every((t) => t.id !== teamId) &&
+          (await listJobTeams(SITE, true)).some((t) => t.id === teamId),
+      )
+
+      const missing = await applyTeamToJob(SITE, actor, cJobId, 999999)
+      ok('(J28) a crew that does not exist is refused', !missing.ok)
+
+      // ── Drift ─────────────────────────────────────────────────────────────
+      const leaderless = await saveJobTeam(SITE, actor, {
+        id: teamId, name: crewName, description: null, isActive: true,
+        members: [{ userId: bob.id, isLead: false }],
+      })
+      ok(
+        '(J28) a crew with nobody leading it SAVES — it is drift, not an error',
+        leaderless.ok,
+        leaderless.ok ? '' : leaderless.error,
+      )
+      const drift = await reconcileJobTeams(SITE)
+      ok(
+        '(J28) *** and reconcile reports it — nobody is named to ask about the crew ***',
+        drift.emptyTeams.some((t) => t.teamId === teamId && t.reason === 'Nobody leads it'),
+        `${drift.emptyTeams.length} reported`,
+      )
+
+      const deleted = await deleteJobTeam(SITE, actor, teamId)
+      ok('(J28) a crew deletes with no refusal — it holds no jobs', deleted.ok)
+      const stillThere = await peopleFor(SITE, cJobId)
+      ok(
+        '(J28) *** and the people it put on the job STAY ***',
+        stillThere.length === 2,
+        `${stillThere.length} row(s)`,
+      )
+      ok('(J28) deleting it twice says so rather than throwing',
+        !(await deleteJobTeam(SITE, actor, teamId)).ok)
+    }
+
+    await setSetting(SITE, 'job_notify_enabled', notifyWasEnabled)
+  }
+
   await sweepStrays()
 
   /*
@@ -4824,6 +5367,27 @@ async function main() {
   await sweepCheck('rules jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
     RULES_JOB_PATTERN,
   ])
+  await sweepCheck('deposit jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    DEPOSIT_JOB_PATTERN,
+  ])
+  await sweepCheck('crew jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    CREW_JOB_PATTERN,
+  ])
+  await sweepCheck('crews', 'SELECT id FROM job_teams WHERE name REGEXP ?', [CREW_PATTERN])
+  await sweepCheck(
+    'orphaned crew members',
+    'SELECT user_id FROM job_team_members WHERE team_id NOT IN (SELECT id FROM job_teams)',
+  )
+  /*
+   * A deposit whose job is gone. customer_transactions has no FK to job_cards —
+   * the source pair is loose — so a deleted job leaves its deposit pointing at
+   * nothing. The money stays right; what is lost is why it was taken.
+   */
+  await sweepCheck(
+    'orphaned job deposits',
+    `SELECT id FROM customer_transactions
+      WHERE source = 'job_deposit' AND source_doc_id NOT IN (SELECT id FROM job_cards)`,
+  )
   /*
    * A party_documents row whose job is gone. The bytes were never written by this
    * suite (captureEvidence takes the metadata, not a File), so a leftover row is a

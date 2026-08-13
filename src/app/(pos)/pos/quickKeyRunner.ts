@@ -309,6 +309,17 @@ export function runQuickKey(key: QuickKeyRow, ctx: RunContext): void {
     return
   }
 
+  /* A parking key pressed on a restaurant till. Reachable when a shop set the key
+     up before switching to hospitality, so it explains itself rather than doing
+     something surprising to a live tab. */
+  if (action.retailOnly && ctx.hospitality) {
+    handlers.say(
+      'On a restaurant till, Close saves the table — and the floor lists every open one.',
+      'info',
+    )
+    return
+  }
+
   if (action.hospitalityOnly) {
     /* Two different messages, and the order matters: on a retail till the key is
        meaningless, so say that first. Telling somebody a feature is unbuilt when really
@@ -359,5 +370,9 @@ export function quickKeyEnabled(
   if (!action) return false
   if (key.capability && !ctx.can(key.capability)) return false
   if (action.hospitalityOnly && !ctx.hospitality) return false
+  /* Parking keys on a restaurant till: Close already parks the tab and the gate
+     already lists every open one, so these two would be a second route to a job
+     that is done — and "Saved sales" a second floor beside the real one. */
+  if (action.retailOnly && ctx.hospitality) return false
   return true
 }

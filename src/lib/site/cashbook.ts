@@ -348,6 +348,17 @@ export type ReceiptInput = {
   description?: string | null
   /** Match against the oldest open invoices straight away. */
   autoAllocate?: boolean
+  /**
+   * What kind of receipt this is, and what it belongs to.
+   *
+   * Defaults to 'receipt', which is every existing caller. A job deposit passes
+   * 'job_deposit' with the job id, so the job card can find its own deposits
+   * without scanning the customer's whole ledger — a customer with four open
+   * jobs has four separate deposits, and showing all of them on each job would
+   * make every balance wrong.
+   */
+  source?: string
+  sourceDocId?: number | null
 }
 
 /**
@@ -391,7 +402,8 @@ export async function recordCustomerReceipt(
     docDate: receiptDate,
     reference: input.reference ?? null,
     description: input.description ?? 'Receipt',
-    source: 'receipt',
+    source: input.source ?? 'receipt',
+    sourceDocId: input.sourceDocId ?? null,
     autoAllocate: input.autoAllocate ?? true,
   })
   if (!posted.ok) return posted

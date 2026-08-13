@@ -51,6 +51,7 @@ export function CatalogPane({
   onDrillTo,
   onShowKeys,
   onPick,
+  onSizeTiles,
   priceFor,
   browse,
   quickKeys,
@@ -67,6 +68,8 @@ export function CatalogPane({
   onDrillTo: (path: number[]) => void
   onShowKeys: () => void
   onPick: (product: TillProduct) => void
+  /** Opens the tile-size dialog. Omitted where there is nothing to size. */
+  onSizeTiles?: () => void
   /** What a product costs right now, scheduled changes included. See the tile. */
   priceFor: (product: TillProduct) => number
   /** Products directly in a department. Resolved by the shell. */
@@ -93,8 +96,11 @@ export function CatalogPane({
   return (
     <section className="flex min-w-0 flex-1 flex-col">
       {/* ── Scan / search ────────────────────────────────────────────────── */}
+      {/* FLOATING, not a bordered strip. The catalogue column is the one that is
+          not itself a card — its children are — so the search row lifts off the
+          canvas on its own, the same way the grid below it does. */}
       <form
-        className="flex shrink-0 items-center gap-2 border-b border-border bg-surface p-3"
+        className="flex shrink-0 items-center gap-2 pb-3"
         onSubmit={(e) => {
           e.preventDefault()
           const code = query.trim()
@@ -120,16 +126,38 @@ export function CatalogPane({
         />
         {/* Results appear as you type, so this is not "search" — it is the
             explicit ADD for a code that is already exact, which is what a
-            keyboard-driven cashier reaches for instead of Enter. */}
-        <Button variant="ghost" size="touch" type="submit" disabled={!query.trim()}>
+            keyboard-driven cashier reaches for instead of Enter.
+
+            PRIMARY, not ghost: it is the only filled control in this column, and
+            a scanner-less till uses it on every line. */}
+        <Button variant="primary" size="touch" type="submit" disabled={!query.trim()}>
           <Icons.Plus size={18} />
           Add
         </Button>
+
+        {/* TILE SIZE, beside the grid it sizes.
+            It used to live up in the status bar, a whole screen away from the
+            tiles it changes — so setting it meant looking at one corner while the
+            effect happened in another. Here it is the last control on the row
+            above the grid, which is where the thing it affects begins. */}
+        {onSizeTiles && (
+          <Button
+            variant="secondary"
+            size="touch"
+            iconOnly
+            type="button"
+            onClick={onSizeTiles}
+            aria-label="Tile size"
+            title="Tile size"
+          >
+            <Icons.SlidersHorizontal size={18} />
+          </Button>
+        )}
       </form>
 
       {/* ── Breadcrumb ───────────────────────────────────────────────────── */}
       {view.kind !== 'keys' && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 px-3 pt-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 pb-3">
           <Button variant="ghost" size="sm" onClick={onShowKeys}>
             <Icons.ChevronLeft size={16} />
             Back
@@ -145,7 +173,10 @@ export function CatalogPane({
       )}
 
       {/* ── The grid ─────────────────────────────────────────────────────── */}
-      <div className="till-pane flex-1 overflow-y-auto p-3">
+      {/* No left/top padding: the column is already inset by the shell's own p-4,
+          and padding it again would step the tiles in from the search row above
+          them. The right gutter is for the scrollbar. */}
+      <div className="till-pane flex-1 overflow-y-auto pb-5 pr-1">
         {view.kind === 'keys' && quickKeys}
 
         {view.kind === 'departments' && (

@@ -87,9 +87,14 @@ const BUTTON_SIZE: Record<ButtonSize, { text: string; icon: string }> = {
      small button that has been stretched, which is exactly how the till's
      buttons looked before these existed. */
   touch: { text: 'h-touch px-5 text-base', icon: 'h-touch w-touch' },
+  /* SHADOWED, and only at this size. `touch-lg` is reserved for the keys that
+     END a sale — Close and Pay — and on a screen built from floating cards those
+     two should sit on the surface the same way the cards do, rather than looking
+     printed onto the basket. Every smaller button stays flat: a shadow on all of
+     them would be a page of lifted rectangles, which is no hierarchy at all. */
   'touch-lg': {
-    text: 'h-touch-lg px-6 text-lg font-semibold',
-    icon: 'h-touch-lg w-touch-lg',
+    text: 'h-touch-lg px-6 text-lg font-semibold shadow-card',
+    icon: 'h-touch-lg w-touch-lg shadow-card',
   },
 }
 

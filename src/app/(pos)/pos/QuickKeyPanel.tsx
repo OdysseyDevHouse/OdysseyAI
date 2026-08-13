@@ -100,7 +100,7 @@ export function QuickKeyPanel({
         /* Says what the grid IS and what tapping does, in one line. The tiles below
            are now white cards like the product tiles, so without this a cashier
            landing on the till has no cue that these run rather than sell. */
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+        <p className="mb-1 text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
           Quick keys — tap to run
         </p>
       )}

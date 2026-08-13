@@ -16,6 +16,8 @@ import { reconcileAssets } from '@/lib/site/jobAssets'
 import { reconcileJobSeries } from '@/lib/site/jobSeries'
 import { reconcileJobPeople } from '@/lib/site/jobPeople'
 import { reconcileJobAutomations } from '@/lib/site/jobAutomations'
+import { reconcileJobDeposits } from '@/lib/site/jobDeposits'
+import { reconcileJobTeams } from '@/lib/site/jobTeams'
 import { listSequences, verifySequence } from '@/lib/site/sequences'
 import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
@@ -47,6 +49,9 @@ import {
   GonePeopleTable,
   NoAddressTable,
   AutomationRunTable,
+  OrphanDepositTable,
+  GoneCrewMemberTable,
+  EmptyCrewTable,
   SeriesCursorTable,
 } from './DriftTables'
 
@@ -109,6 +114,8 @@ export default async function ReconciliationPage() {
     jobSeries,
     jobPeople,
     jobAutomations,
+    jobDeposits,
+    jobTeams,
     sequences,
   ] = await Promise.all([
     reconcileStock(siteId),
@@ -139,6 +146,10 @@ export default async function ReconciliationPage() {
     reconcileJobPeople(siteId).catch(() => null),
     // Likewise 121.
     reconcileJobAutomations(siteId).catch(() => null),
+    // Likewise deposits (33): a site without the ledger reports nothing.
+    reconcileJobDeposits(siteId).catch(() => null),
+    // Likewise 126.
+    reconcileJobTeams(siteId).catch(() => null),
     listSequences(siteId),
   ])
 
@@ -240,6 +251,8 @@ export default async function ReconciliationPage() {
   const automationDrift = jobAutomations
     ? jobAutomations.stuckClaims.length + jobAutomations.failures.length
     : 0
+
+  const crewDrift = jobTeams ? jobTeams.goneMembers.length + jobTeams.emptyTeams.length : 0
 
   /*
    * Three of the four equipment checks are bugs.
@@ -756,6 +769,45 @@ export default async function ReconciliationPage() {
                     description="A recorded refusal rather than a swallowed one. Raising an invoice is refused for good reasons — no customer, nothing billable, a closed period — and each is something a person should be able to read back rather than guess at."
                   />
                   <AutomationRunTable rows={jobAutomations.failures} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {jobDeposits !== null && jobDeposits.orphaned.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Deposits whose job is gone"
+              description="A deposit points at its job through a loose pair, not a foreign key — one column has to serve several kinds of record — so deleting a job leaves the deposit behind. The MONEY is still right and still on the customer account; what is lost is the reason it was taken."
+            />
+            <OrphanDepositTable rows={jobDeposits.orphaned} />
+          </Card>
+        )}
+
+        {jobTeams !== null &&
+          (crewDrift === 0 ? (
+            <Callout tone="success" title="Crews">
+              Every crew has somebody on it, somebody leading it, and nobody who has left.
+            </Callout>
+          ) : (
+            <>
+              {jobTeams.goneMembers.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="On a crew, but no longer a user"
+                    description="Putting this crew on a job silently adds one person fewer than the name suggests, because the door every member goes through refuses somebody inactive. It is reported rather than removed for the reason a person on a job is: whether they left or were deactivated for a month is not something the code can know."
+                  />
+                  <GoneCrewMemberTable rows={jobTeams.goneMembers} />
+                </Card>
+              )}
+
+              {jobTeams.emptyTeams.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="A crew that does nothing useful"
+                    description="Neither is an error when it is saved — a crew mid-build legitimately has nobody marked yet. What it means when it persists is that choosing this crew either adds nobody at all, or adds people with nobody named as the person to ask about them."
+                  />
+                  <EmptyCrewTable rows={jobTeams.emptyTeams} />
                 </Card>
               )}
             </>

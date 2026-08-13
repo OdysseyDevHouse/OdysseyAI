@@ -4,6 +4,8 @@ import { listJobBoards, statusesOffEveryBoard, boardStatusIds } from '@/lib/site
 import { listSlaPolicies, untargetedJobCount } from '@/lib/site/jobSla'
 import { listHeadlines } from '@/lib/site/jobHeadlines'
 import { listAssetTypes } from '@/lib/site/jobAssets'
+import { listJobTeams } from '@/lib/site/jobTeams'
+import { listUsers } from '@/lib/site/users'
 import { getSettings } from '@/lib/site/settings'
 import { PageHeader, PageBody, Callout, TextLink } from '@/components/ui'
 import { ROLE_LABEL } from '@/lib/jobStatusModel'
@@ -11,6 +13,7 @@ import WorkflowClient from './WorkflowClient'
 import SlaPanel from './SlaPanel'
 import HeadlinesPanel from './HeadlinesPanel'
 import AssetTypesPanel from './AssetTypesPanel'
+import TeamsPanel from './TeamsPanel'
 import NotificationsPanel from './NotificationsPanel'
 import { isConfigured } from '@/lib/mail'
 
@@ -47,6 +50,8 @@ export default async function JobWorkflowPage() {
     untargeted,
     headlines,
     assetTypes,
+    teams,
+    siteUsers,
   ] = await Promise.all([
     listJobStatuses(siteId, true),
     listJobBoards(siteId, true),
@@ -79,6 +84,9 @@ export default async function JobWorkflowPage() {
     listHeadlines(siteId, true).catch(() => []),
     // Likewise 115.
     listAssetTypes(siteId, true).catch(() => []),
+    // Likewise 126.
+    listJobTeams(siteId, true).catch(() => []),
+    listUsers(siteId).catch(() => []),
   ])
 
   // Which statuses each board draws, so the editor opens with them ticked.
@@ -131,6 +139,15 @@ export default async function JobWorkflowPage() {
         {/* Kinds of EQUIPMENT, after kinds of WORK: both are what a business does,
             and a service interval is the thing that turns equipment into work. */}
         <AssetTypesPanel types={assetTypes} />
+
+        {/* WHO does it, after WHAT gets done. A crew is a shortcut into the
+            people picker on a job, so it reads after the work it will be put on. */}
+        <TeamsPanel
+          teams={teams}
+          users={siteUsers
+            .filter((u) => u.isActive && u.userType === 'back_office')
+            .map((u) => ({ id: u.id, name: u.name }))}
+        />
 
         {/* The promises, on the same screen as the stages rather than a route of
             their own: both answer "how does this business run a job", and four

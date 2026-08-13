@@ -42,6 +42,15 @@ export type QuickKeyAction = {
    * send-to-kitchen key.
    */
   hospitalityOnly?: boolean
+  /**
+   * The mirror: only meaningful on a RETAIL till.
+   *
+   * Parking and recalling a basket are retail acts. On a restaurant till the same
+   * job is done by naming a table and pressing Close, and the floor lists every
+   * open tab — so a "Save sale" key there is a second way to do what Close
+   * already did, and "Saved sales" a second floor beside the gate.
+   */
+  retailOnly?: boolean
   /** One line for the designer's list — what pressing it actually does. */
   hint: string
 }
@@ -77,6 +86,7 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     label: 'Save sale',
     icon: 'Save',
     capability: 'sales.till',
+    retailOnly: true,
     hint: 'Parks the basket so the next customer can be served.',
   },
   {
@@ -84,6 +94,7 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     label: 'Saved sales',
     icon: 'ListOrdered',
     capability: 'sales.view',
+    retailOnly: true,
     hint: 'The parked baskets, to bring one back.',
   },
   {

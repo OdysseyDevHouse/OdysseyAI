@@ -155,6 +155,9 @@ export type SalesDocument = {
   reversesId: number | null
   reference: string | null
   notes: string | null
+  /** Covers and visit type — set by the hospitality till only. See 125. */
+  personCount: number | null
+  visitTypeId: number | null
   internalNote: string | null
   cancelReason: string | null
   /**
@@ -290,6 +293,12 @@ function mapDocument(r: Row, lines: SalesLine[]): SalesDocument {
     reversesId: r.reverses_id === null ? null : Number(r.reverses_id),
     reference: (r.reference as string | null) ?? null,
     notes: (r.notes as string | null) ?? null,
+    /* Nullish rather than truthy: a table sat at by nobody yet is 0 covers,
+       which is a fact, and `r.person_count ? …` would file it as "not set". */
+    personCount: r.person_count === null || r.person_count === undefined
+      ? null
+      : Number(r.person_count),
+    visitTypeId: r.visit_type_id ? Number(r.visit_type_id) : null,
     internalNote: (r.internal_note as string | null) ?? null,
     cancelReason: (r.cancel_reason as string | null) ?? null,
     cancelReasonId: r.cancel_reason_id ? Number(r.cancel_reason_id) : null,
@@ -416,15 +425,78 @@ export async function listDocuments(
   return { items: rows.map((r) => mapDocument(r, [])), total: Number(countRow?.total ?? 0) }
 }
 
-/** Saved sales waiting to be recalled, for the till's recall list. */
+/**
+ * Saved sales waiting to be recalled, for the till's recall list.
+ *
+ * `terminalId` omitted means EVERY till in the shop. That is what the
+ * hospitality gate wants: a waiter who opened table 12 on the bar till has to
+ * be able to settle it at the pass, and a floor that only showed the tabs this
+ * particular screen happened to open would strand the rest.
+ *
+ * LIMIT 200 rather than 50. Fifty is plenty of *parked retail* sales, but a
+ * busy restaurant floor genuinely runs more than fifty open tabs at once, and a
+ * truncated floor is a bill nobody can find — the one failure this list must
+ * not have. Ordered by oldest-first so the tab that has been open longest is
+ * the one that survives any cap at all.
+ */
 export async function listSaved(siteId: number, terminalId?: number): Promise<SalesDocument[]> {
   const rows = await siteQuery<Row>(
     siteId,
     `${SELECT_DOC} WHERE status = 'saved' ${terminalId ? 'AND terminal_id = ?' : ''}
-      ORDER BY updated_at DESC LIMIT 50`,
+      ORDER BY updated_at DESC LIMIT 200`,
     terminalId ? [terminalId] : [],
   )
   return rows.map((r) => mapDocument(r, []))
+}
+
+/**
+ * The same list, with the line count, total and visit-type NAME each tab needs
+ * on a tile — resolved in one query instead of N+1 round trips per tab.
+ *
+ * A LEFT JOIN on the visit type, never an INNER: a tab whose visit type was
+ * retired in the back office is still a live bill, and joining it away would
+ * make it vanish off the floor rather than merely lose its label.
+ */
+export type OpenTabRow = {
+  id: number
+  reference: string | null
+  customerName: string | null
+  userName: string
+  totalIncl: number
+  lineCount: number
+  personCount: number | null
+  visitTypeId: number | null
+  visitTypeName: string | null
+  updatedAt: Date
+}
+
+export async function listOpenTabs(siteId: number): Promise<OpenTabRow[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT d.id, d.reference, d.customer_name, d.user_name, d.total_incl,
+            d.person_count, d.visit_type_id, d.updated_at,
+            v.name AS visit_type_name,
+            (SELECT COUNT(*) FROM sales_document_lines l WHERE l.document_id = d.id) AS line_count
+       FROM sales_documents d
+       LEFT JOIN pos_visit_types v ON v.id = d.visit_type_id
+      WHERE d.status = 'saved'
+      ORDER BY d.updated_at DESC
+      LIMIT 200`,
+    [],
+  )
+  return rows.map((r) => ({
+    id: Number(r.id),
+    reference: (r.reference as string | null) ?? null,
+    customerName: (r.customer_name as string | null) ?? null,
+    userName: String(r.user_name ?? ''),
+    totalIncl: toNum(r.total_incl),
+    lineCount: Number(r.line_count ?? 0),
+    personCount:
+      r.person_count === null || r.person_count === undefined ? null : Number(r.person_count),
+    visitTypeId: r.visit_type_id ? Number(r.visit_type_id) : null,
+    visitTypeName: (r.visit_type_name as string | null) ?? null,
+    updatedAt: r.updated_at as Date,
+  }))
 }
 
 /* ── Writes ──────────────────────────────────────────────────────────────── */
@@ -527,6 +599,19 @@ export type DocumentInput = {
   origin?: DocumentOrigin
   reference?: string | null
   notes?: string | null
+  /**
+   * How many people are on this bill, and what kind of visit it is.
+   *
+   * Both belong to the DOCUMENT rather than to the table: a takeaway never
+   * touches a table row, and a table that seats four can be sat at by two — so
+   * reading either off `pos_tables` answers a different question from the one
+   * being asked. See sql/site/125_sale_covers.sql.
+   *
+   * Undefined on every retail sale and every back-office document, which leaves
+   * both columns NULL — the honest answer where the idea does not apply.
+   */
+  personCount?: number | null
+  visitTypeId?: number | null
   /**
    * The till-generated uid of a sale rung up offline, and when the money actually
    * changed hands.
@@ -662,7 +747,7 @@ export async function saveDraft(
            doc_type = ?, document_date = ?, customer_id = ?, customer_name = ?,
            customer_vat_no = ?, customer_phone = ?, customer_address = ?,
            price_structure_id = ?, terminal_id = ?, terminal_code = ?,
-           reference = ?, notes = ?,
+           reference = ?, notes = ?, person_count = ?, visit_type_id = ?,
            subtotal_excl = ?, vat_total = ?, discount_total = ?, total_incl = ?
          WHERE id = ?`,
         [
@@ -678,6 +763,8 @@ export async function saveDraft(
           input.terminalCode ?? null,
           input.reference?.trim() || null,
           input.notes?.trim() || null,
+          input.personCount ?? null,
+          input.visitTypeId ?? null,
           totals.subtotalExcl.toFixed(4),
           totals.vatTotal.toFixed(4),
           totals.discountTotal.toFixed(4),
@@ -692,9 +779,10 @@ export async function saveDraft(
            (doc_type, status, document_date, customer_id, customer_name, customer_vat_no,
             customer_phone, customer_address, price_structure_id, user_id, user_name,
             terminal_id, terminal_code, origin, reference, notes,
+            person_count, visit_type_id,
             offline_sale_uid, offline_taken_at,
             subtotal_excl, vat_total, discount_total, total_incl)
-         VALUES (?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           input.docType,
           documentDate,
@@ -711,6 +799,8 @@ export async function saveDraft(
           input.origin ?? 'till',
           input.reference?.trim() || null,
           input.notes?.trim() || null,
+          input.personCount ?? null,
+          input.visitTypeId ?? null,
           input.offlineSaleUid ?? null,
           input.offlineTakenAt ?? null,
           totals.subtotalExcl.toFixed(4),

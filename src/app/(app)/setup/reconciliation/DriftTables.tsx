@@ -1190,3 +1190,106 @@ export function AutomationRunTable({ rows }: { rows: AutomationRunRow[] }) {
   ]
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.id} />
 }
+
+/* ── Deposits whose job is gone (33) ───────────────────────────────────────── */
+
+type OrphanDepositRow = {
+  transactionId: number
+  jobId: number
+  amount: number
+  docDate: string
+}
+
+export function OrphanDepositTable({ rows }: { rows: OrphanDepositRow[] }) {
+  const columns: Column<OrphanDepositRow>[] = [
+    {
+      key: 'date',
+      header: 'Taken',
+      sortable: true,
+      sortValue: (r) => r.docDate,
+      cell: (r) => <span className="text-ink-2">{r.docDate}</span>,
+    },
+    {
+      key: 'amount',
+      header: 'Amount',
+      sortable: true,
+      sortValue: (r) => r.amount,
+      cell: (r) => <span className="numeric text-ink">{formatMoney(r.amount)}</span>,
+    },
+    {
+      key: 'job',
+      header: 'Was on job',
+      // Deliberately NOT a link: the job is gone, and a link to a 404 is worse
+      // than a number somebody can search the activity log for.
+      cell: (r) => <Badge tone="warning">#{r.jobId}</Badge>,
+    },
+    {
+      key: 'txn',
+      header: 'On the account as',
+      cell: (r) => (
+        <TextLink href={`/customers?txn=${r.transactionId}`}>#{r.transactionId}</TextLink>
+      ),
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.transactionId} />
+}
+
+/* ── Crews (126) ───────────────────────────────────────────────────────────── */
+
+type GoneCrewMemberRow = { teamId: number; teamName: string; userId: number; userName: string }
+
+export function GoneCrewMemberTable({ rows }: { rows: GoneCrewMemberRow[] }) {
+  const columns: Column<GoneCrewMemberRow>[] = [
+    {
+      key: 'crew',
+      header: 'Crew',
+      sortable: true,
+      sortValue: (r) => r.teamName,
+      // The crew is edited on the workflow screen, so that is where the link
+      // goes. There is no per-crew route, and inventing one for a drift table
+      // would be a screen nobody else ever opens.
+      cell: (r) => <TextLink href="/setup/job-workflow">{r.teamName}</TextLink>,
+    },
+    {
+      key: 'who',
+      header: 'Still on it',
+      sortable: true,
+      sortValue: (r) => r.userName,
+      cell: (r) => <span className="text-ink-2">{r.userName}</span>,
+    },
+    {
+      key: 'state',
+      header: 'But',
+      cell: () => <Badge tone="warning">No longer an active user</Badge>,
+    },
+  ]
+  return (
+    <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.teamId}-${r.userId}`} />
+  )
+}
+
+type EmptyCrewRow = { teamId: number; teamName: string; reason: string }
+
+export function EmptyCrewTable({ rows }: { rows: EmptyCrewRow[] }) {
+  const columns: Column<EmptyCrewRow>[] = [
+    {
+      key: 'crew',
+      header: 'Crew',
+      sortable: true,
+      sortValue: (r) => r.teamName,
+      cell: (r) => <TextLink href="/setup/job-workflow">{r.teamName}</TextLink>,
+    },
+    {
+      key: 'reason',
+      header: 'What is wrong',
+      sortable: true,
+      sortValue: (r) => r.reason,
+      cell: (r) => (
+        // Nobody leading it still puts people on a job, so it is the milder of
+        // the two. Nobody on it does nothing at all.
+        <Badge tone={r.reason === 'Nobody is on it' ? 'danger' : 'warning'}>{r.reason}</Badge>
+      ),
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.teamId}-${r.reason}`} />
+}

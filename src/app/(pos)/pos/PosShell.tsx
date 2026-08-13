@@ -2,7 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { useToast, ConfirmModal, type PickableReason } from '@/components/ui'
+import {
+  useToast,
+  Button,
+  ConfirmModal,
+  Icons,
+  Modal,
+  type PickableReason,
+} from '@/components/ui'
 import { deviceId } from '@/lib/deviceId'
 import { useOfflineShell } from '@/lib/posOffline/useOfflineShell'
 import { useOfflineTill } from '@/lib/posOffline/useOfflineTill'
@@ -45,7 +52,14 @@ import {
   discardSaleAction,
   voidSaleAction,
 } from '@/app/(app)/sales/actions'
-import { recallSaleForTillAction, recordServiceChargeWaivedAction } from './actions'
+import {
+  listOpenTabsAction,
+  recallSaleForTillAction,
+  recordServiceChargeWaivedAction,
+  type OpenTab,
+} from './actions'
+import { NewTableModal, type NewTableDetails } from './NewTableModal'
+import { tillSignOutAction } from './pinActions'
 import { tillStandingAction, type TillStanding } from '@/app/(app)/loyalty/actions'
 import { TillStatusBar } from './TillStatusBar'
 import { SalePane } from './SalePane'
@@ -1031,11 +1045,21 @@ export default function PosShell({
     setSavedTally((n) => n + 1)
   }
 
-  function park() {
+  /**
+   * Park the basket.
+   *
+   * `label` overrides what the sale is currently called — the Close flow passes
+   * the name straight from the dialog rather than setting state and hoping the
+   * re-render lands before this runs, which it would not.
+   */
+  function park(label?: string, details?: { people: number | null; visitTypeId: number | null }) {
     if (!till.online) {
       startTransition(parkLocally)
       return
     }
+    const reference = (label ?? tabLabel ?? '').trim() || null
+    const people = details ? details.people : tabPeople
+    const visitTypeId = details ? details.visitTypeId : tabVisitTypeId
     startTransition(async () => {
       /* Same fallback as finalise: a transport failure mid-park must not leave the
          cashier with a basket they think is saved and is not. A REFUSAL still stands
@@ -1044,9 +1068,19 @@ export default function PosShell({
       try {
         saved = await saveSaleAction(state.documentId, {
           customerId: state.customer?.id ?? null,
-          customerName: state.customer?.name || state.customerName.trim() || 'Walk-in',
+          customerName:
+            state.customer?.name ||
+            state.customerName.trim() ||
+            tabCustomer.trim() ||
+            'Walk-in',
           customerVatNo: state.customer?.vatNumber ?? null,
           customerPhone: state.customer?.phone ?? null,
+          /* What the floor will CALL this bill. Without it the tab lists under
+             the customer's name, or "N/A" — findable, but not what the waiter
+             typed. */
+          reference,
+          personCount: people,
+          visitTypeId,
           terminalId: terminal?.id ?? null,
           terminalCode: terminal?.code ?? null,
           priceStructureId,
@@ -1080,12 +1114,136 @@ export default function PosShell({
         toast.error(parked.error)
         return
       }
-      toast.success('Sale saved.')
+      toast.success(reference ? `${reference} saved.` : 'Sale saved.')
       dispatch({ type: 'CLEAR' })
       // Counted optimistically rather than waiting for the server: the badge is
       // a hint, and the modal corrects it from the real query the moment it opens.
       setSavedTally((n) => n + 1)
+
+      /* Back to the floor, with the tab's identity dropped so the next sale does
+         not inherit this one's name. In hospitality the gate IS where a waiter
+         goes next; in retail there is no gate and the till simply empties. */
+      clearTabIdentity()
+      if (hospitality) {
+        setTable(null)
+        setChoosingTable(true)
+        refreshTables()
+      }
       router.refresh()
+    })
+  }
+
+  /** Forget what this basket was called. Always paired with a CLEAR. */
+  function clearTabIdentity() {
+    setTabLabel(null)
+    setTabCustomer('')
+    setTabPeople(null)
+    setTabVisitTypeId(null)
+  }
+
+  /**
+   * The Close key.
+   *
+   * ── CLOSE IS HOW A TAB IS PARKED ──────────────────────────────────────────
+   *
+   * In a restaurant a waiter rings up drinks and walks away; the bill stays open
+   * for an hour. There is no separate "save" step in that motion, and a Close
+   * that threw the basket away would lose a real order every time somebody hit
+   * the wrong key. So Close SAVES whatever it can identify:
+   *
+   *   empty basket        → nothing to save; just leave.
+   *   already has a name  → park it silently and go back to the floor.
+   *   no name yet         → ask: save it (naming it), void it, or carry on.
+   *
+   * The third case is the only one that interrupts, and it interrupts precisely
+   * because there is no way to answer it on the waiter's behalf: an unnamed
+   * basket cannot be found again once it leaves the screen.
+   */
+  function closeSale() {
+    if (state.lines.length === 0) {
+      // Nothing to lose. Leaving is the whole intent of the key.
+      clearTabIdentity()
+      dispatch({ type: 'CLEAR' })
+      if (hospitality) {
+        setTable(null)
+        setChoosingTable(true)
+      }
+      return
+    }
+
+    /* A seated table is already named by its own code, and its bill is already on
+       the server via the debounce — so Close is just "go back to the floor". */
+    if (table) {
+      clearTabIdentity()
+      dispatch({ type: 'CLEAR' })
+      setTable(null)
+      setChoosingTable(true)
+      refreshTables()
+      toast.success(`${table.code} saved.`)
+      return
+    }
+
+    if (tabLabel) {
+      park()
+      return
+    }
+
+    setClosePrompt(true)
+  }
+
+  /** The dialog came back with a name. Open a tab on it, or park onto it. */
+  function nameTab(details: NewTableDetails, closing: boolean) {
+    const label = details.tableNumber || details.customerName
+    setTabLabel(label)
+    setTabCustomer(details.customerName)
+    setTabPeople(details.personCount || null)
+    setTabVisitTypeId(details.visitTypeId)
+    setNaming(null)
+
+    if (closing) {
+      /* Passed through rather than read back off state: this runs in the same
+         tick as the setState calls above, so `tabLabel` is still the old value
+         when park() reads it. */
+      park(label, {
+        people: details.personCount || null,
+        visitTypeId: details.visitTypeId,
+      })
+      return
+    }
+
+    /* Opening a new table: drop into an empty till on it. Nothing is written
+       until the first line lands — same reasoning as a seated table. */
+    dispatch({ type: 'CLEAR' })
+    setTable(null)
+    setChoosingTable(false)
+  }
+
+  /** Put an open tab back on screen. */
+  function resumeTab(tab: OpenTab) {
+    startTransition(async () => {
+      const result = await recallSaleForTillAction(tab.documentId, priceStructureId)
+      if (!result.ok) {
+        toast.error(result.error)
+        // Another till took it while this waiter was looking. Re-read rather
+        // than leaving a tile they will only tap again.
+        refreshTables()
+        return
+      }
+      /* The tab keeps its identity, so closing it again re-parks under the same
+         label rather than prompting for a new one. */
+      setTabLabel(tab.label)
+      setTabCustomer(tab.customerName ?? '')
+      setTabPeople(tab.personCount)
+      setTabVisitTypeId(tab.visitTypeId)
+      setTable(null)
+      setChoosingTable(false)
+      dispatch({
+        type: 'LOAD',
+        documentId: result.documentId,
+        lines: result.lines,
+        customer: null,
+        customerName: result.customerName ?? '',
+      })
     })
   }
 
@@ -1211,6 +1369,34 @@ export default function PosShell({
   /** The table this basket belongs to, or null for a walk-in. */
   const [table, setTable] = useState<PosTable | null>(null)
 
+  /* ── Open tabs ────────────────────────────────────────────────────────────
+     Every bill running in the SHOP, which is what the gate lists. Distinct from
+     `tables` above: that is the shop's furniture (and the drawn floor plan),
+     this is the trade. A tab is a `sales_documents` row parked with a label a
+     waiter typed — see `listOpenTabsAction`. */
+  const [tabs, setTabs] = useState<OpenTab[]>([])
+
+  /**
+   * What this basket is CALLED, and who is on it.
+   *
+   * Held here rather than derived from the basket because the label is decided
+   * BEFORE anything is rung up — a waiter names the tab, then starts adding to
+   * it — and because Close has to know whether the sale already has a name to
+   * park under, or needs to ask for one.
+   *
+   * Null label means an unnamed sale: a quick sale, or a walk-in that has not
+   * been given a table. That is precisely the case Close prompts about.
+   */
+  const [tabLabel, setTabLabel] = useState<string | null>(null)
+  const [tabCustomer, setTabCustomer] = useState('')
+  const [tabPeople, setTabPeople] = useState<number | null>(null)
+  const [tabVisitTypeId, setTabVisitTypeId] = useState<number | null>(null)
+
+  /** The Create-new-table dialog. `closing` means Close asked for the name. */
+  const [naming, setNaming] = useState<null | { closing: boolean }>(null)
+  /** Close was tapped on an unnamed sale: save it, void it, or carry on. */
+  const [closePrompt, setClosePrompt] = useState(false)
+
   /**
    * The service charge actually applying to THIS bill.
    *
@@ -1276,10 +1462,18 @@ export default function PosShell({
         if (r.ok) setTables(r.tables)
       })
       .catch(() => {})
+    /* The tabs come with it: the gate shows both, and two Refresh buttons — or a
+       Refresh that updated half the screen — is worse than one read that costs a
+       second query. A failure leaves the last good list on screen rather than
+       blanking a floor mid-service. */
+    void listOpenTabsAction()
+      .then(setTabs)
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
     if (!hospitality) return
+    refreshTables()
     const timer = setInterval(refreshTables, 20_000)
     return () => clearInterval(timer)
   }, [hospitality, refreshTables])
@@ -1514,7 +1708,6 @@ export default function PosShell({
   return (
     <TileSizeContext.Provider value={tileSize.size}>
       <TillStatusBar
-        siteName={siteName}
         operatorName={operatorName}
         terminalLabel={
           terminal
@@ -1531,13 +1724,33 @@ export default function PosShell({
         catalogAgeHours={till.catalogAgeHours}
         itemCount={state.lines.length}
         onShowOutbox={() => setShowingOutbox(true)}
-        /* The table, when there is one. A waiter needs to know which bill they are
-           adding to before they add to it — and the header is the one place on this
-           screen that is never covered by a dialog. */
-        tableLabel={table ? table.code : hospitality ? 'Walk-in' : null}
-        onChangeTable={hospitality ? () => setChoosingTable(true) : undefined}
-        onSizeTiles={() => setSizingTiles(true)}
-        onExit={() => router.push('/dashboard')}
+        /*
+         * WHICH BILL IS ON SCREEN — and nothing at all when that question has no
+         * answer yet. A waiter needs to know which bill they are adding to before
+         * they add to it, and the header is the one place never covered by a
+         * dialog; but on the gate there is no basket, so a chip there would be
+         * labelling a sale that does not exist.
+         *
+         * A seated table shows its code, a named tab shows what the waiter typed,
+         * and a quick sale shows nothing — "Walk-in" was a word standing in for
+         * "no table", which is already what an empty slot says.
+         */
+        tableLabel={choosingTable ? null : table ? table.code : tabLabel}
+        /* Undefined ON the gate: a "back to the floor" button on the floor is a
+           control that can only ever do nothing. */
+        onChangeTable={
+          hospitality && !choosingTable ? () => setChoosingTable(true) : undefined
+        }
+        /* Hand the screen back to the PIN pad, not to the back office: this is
+           where a waiter ends their shift, and the next one signs in here.
+           Clearing the till cookie is what makes PosEntry fall back to the gate;
+           the refresh is what makes it happen now rather than on next load. */
+        onExit={() => {
+          startTransition(async () => {
+            await tillSignOutAction()
+            router.refresh()
+          })
+        }}
       />
 
       {/*
@@ -1548,6 +1761,7 @@ export default function PosShell({
       */}
       {choosingTable ? (
         <TableGate
+          tabs={tabs}
           tables={tables}
           rooms={floorRooms}
           visitTypes={visitTypes}
@@ -1555,17 +1769,24 @@ export default function PosShell({
           features={floorFeatures}
           busy={pending}
           onWalkIn={() => {
+            clearTabIdentity()
             setTable(null)
             setChoosingTable(false)
             dispatch({ type: 'CLEAR' })
           }}
+          onNewTable={() => setNaming({ closing: false })}
           splitting={armedForSplit}
           onToggleSplitting={setArmedForSplit}
           onSplitTable={openSplit}
+          onPickTab={resumeTab}
           onPickTable={resumeTable}
         />
       ) : (
-      <div className="flex min-h-0 flex-1">
+      /* THREE FLOATING CARDS on a padded canvas, rather than three panes flush
+         against each other. The gap is what separates the basket from the
+         catalogue visually — without it the till reads as one undifferentiated
+         sheet, and a cashier's eye has nothing to anchor on. */
+      <div className="flex min-h-0 flex-1 gap-4 p-4">
         <SalePane
           lines={state.lines}
           totals={totals}
@@ -1577,7 +1798,10 @@ export default function PosShell({
           onEdit={setEditing}
           onRemove={(key) => dispatch({ type: 'REMOVE', key })}
           onCustomer={() => setPickingCustomer(true)}
-          onClear={() => setConfirmClear(true)}
+          /* Close SAVES in hospitality rather than clearing — see closeSale. In
+             retail there is no floor to park onto, so it keeps its old meaning
+             and asks before throwing the basket away. */
+          onClear={hospitality ? closeSale : () => setConfirmClear(true)}
           /* One button, two destinations. A separate "Refund" button beside Pay would sit
              unused all day next to the one key a cashier presses hundreds of times, and
              the mode is already stated on the pane — so the primary action follows the
@@ -1585,6 +1809,9 @@ export default function PosShell({
           onPay={() => (state.returning ? setReturning(true) : setTendering(true))}
           returning={state.returning}
           onToggleReturning={(next) => dispatch({ type: 'SET_RETURNING', returning: next })}
+          /* Hospitality parks through Close, so the two park keys are retail-only —
+             see SalePane's `showParkKeys`. */
+          showParkKeys={!hospitality}
           onPark={park}
           onShowSaved={() => setShowingSaved(true)}
           savedCount={savedTally}
@@ -1615,6 +1842,7 @@ export default function PosShell({
             dispatch({ type: 'SHOW_KEYS' })
           }}
           onPick={add}
+          onSizeTiles={() => setSizingTiles(true)}
           priceFor={priceFor}
           quickKeys={
             <QuickKeyPanel
@@ -1646,6 +1874,77 @@ export default function PosShell({
           setConfirmClear(false)
         }}
       />
+
+      {/* Naming a tab — opening a new one, or giving a name to a sale being
+          closed. One dialog for both, because they ask the same question. */}
+      <NewTableModal
+        open={naming !== null}
+        visitTypes={visitTypes}
+        waiterName={operatorName}
+        busy={pending}
+        onClose={() => setNaming(null)}
+        onSave={(details) => nameTab(details, naming?.closing ?? false)}
+      />
+
+      {/*
+        ── CLOSING A SALE THAT HAS NO NAME ──────────────────────────────────
+        Three answers, because there are genuinely three things a waiter might
+        mean by Close here and no way to guess which:
+
+          Save   — it is a real order; name it so it can be found again.
+          Void   — it was a mistake; bin it.
+          Cancel — mis-tap; carry on ringing up.
+
+        Not a ConfirmModal: that offers two answers, and collapsing "save" and
+        "void" into one button is how an hour of orders gets thrown away.
+      */}
+      <Modal
+        open={closePrompt}
+        onClose={() => setClosePrompt(false)}
+        title="Close this sale?"
+        description={`${state.lines.length} item${
+          state.lines.length === 1 ? '' : 's'
+        } on this sale. It has no table or name yet.`}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" size="touch" onClick={() => setClosePrompt(false)}>
+              Continue the sale
+            </Button>
+            <Button
+              variant="danger"
+              size="touch"
+              onClick={() => {
+                setClosePrompt(false)
+                clearTabIdentity()
+                dispatch({ type: 'CLEAR' })
+                setTable(null)
+                setChoosingTable(true)
+              }}
+            >
+              <Icons.Trash size={18} />
+              Void it
+            </Button>
+            <Button
+              variant="primary"
+              size="touch"
+              onClick={() => {
+                setClosePrompt(false)
+                setNaming({ closing: true })
+              }}
+            >
+              <Icons.Save size={18} />
+              Save it
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-muted">
+          Saving asks for a table number or a customer name, so the tab can be picked up
+          again from the floor. Voiding throws it away — nothing has been posted, so
+          nothing is reversed.
+        </p>
+      </Modal>
 
       <TenderPad
         open={tendering}

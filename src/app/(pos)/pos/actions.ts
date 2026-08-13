@@ -1,7 +1,7 @@
 'use server'
 
 import { actorForOrThrow } from '@/lib/auth'
-import { listSaved, getDocument, recallDocument } from '@/lib/site/salesDocuments'
+import { listSaved, listOpenTabs, getDocument, recallDocument } from '@/lib/site/salesDocuments'
 import { getTillProduct } from '@/lib/site/tillSearch'
 import { siteQuery } from '@/lib/siteDb'
 import { recordServiceChargeRemoval } from '@/lib/site/tips'
@@ -68,6 +68,76 @@ export async function listSavedSalesAction(terminalId: number | null): Promise<S
     // honest about what the browser actually receives.
     updatedAt: d.updatedAt.toISOString(),
   }))
+}
+
+/* ── The hospitality floor ───────────────────────────────────────────────── */
+
+/**
+ * One open tab, as the table gate draws it.
+ *
+ * ── WHY A TAB IS A SAVED SALE AND NOT A `pos_tables` ROW ────────────────────
+ *
+ * A restaurant tab is opened by a waiter typing a number or a customer's name
+ * at the moment somebody sits down. It is not configuration, and making one
+ * would mean writing a permanent row into the back-office table list every time
+ * a walk-in orders a coffee — a setup screen that fills with rubbish, and a
+ * floor plan that grows a tile for "Tiaan Smith".
+ *
+ * So the tab IS the bill: a `sales_documents` row with `status = 'saved'`,
+ * labelled by `reference`. `pos_tables` keeps its own job — the drawn floor
+ * plan and the physical furniture — and the two meet only when a tab's label
+ * happens to match a table's code.
+ */
+export type OpenTab = {
+  documentId: number
+  /**
+   * What the tile says. The typed reference, else the customer's name, else
+   * "N/A" — a sale parked by an older till with no label at all still has to be
+   * reachable, and a blank tile is one nobody can tap with confidence.
+   */
+  label: string
+  /** Shown under the label, unless the customer IS the label. */
+  customerName: string | null
+  /** Who opened it — a waiter searches for their own tables. */
+  userName: string
+  lineCount: number
+  totalIncl: number
+  personCount: number | null
+  visitTypeId: number | null
+  visitTypeName: string | null
+  /** ISO — a Date crossing a server action arrives as a string regardless. */
+  updatedAt: string
+}
+
+/**
+ * Every open tab in the SHOP, not just on this till.
+ *
+ * Deliberately unscoped by terminal: a waiter opens table 12 on the bar till
+ * and settles it at the pass, and a floor that only listed the tabs this screen
+ * happened to open would strand every other one.
+ */
+export async function listOpenTabsAction(): Promise<OpenTab[]> {
+  const { siteId } = await actorForOrThrow('sales.till')
+  const rows = await listOpenTabs(siteId)
+
+  return rows.map((r) => {
+    const reference = (r.reference ?? '').trim()
+    const customer = (r.customerName ?? '').trim()
+    return {
+      documentId: r.id,
+      label: reference || customer || 'N/A',
+      // Blank when the customer's name is already the headline, so the tile
+      // does not print the same string twice.
+      customerName: reference ? customer || null : null,
+      userName: r.userName,
+      lineCount: r.lineCount,
+      totalIncl: r.totalIncl,
+      personCount: r.personCount,
+      visitTypeId: r.visitTypeId,
+      visitTypeName: r.visitTypeName,
+      updatedAt: r.updatedAt.toISOString(),
+    }
+  })
 }
 
 /* ── Recalling a parked basket ───────────────────────────────────────────── */

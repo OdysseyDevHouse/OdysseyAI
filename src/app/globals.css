@@ -166,7 +166,13 @@
   --radius-pill: 9999px; /* badges, segmented control pills */
 
   /* --- Elevation --------------------------------------------------------- */
-  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04);
+  /* TWO layers, not one: a tight contact shadow that draws the edge, over a
+     softer spread that does the lifting. A single 1px shadow at 4% was doing
+     neither — on the till, where the whole layout is floating cards on a canvas,
+     the panes read as flat regions of the same sheet rather than as cards. Still
+     restrained: this is a page of raised surfaces, so any more per card and the
+     screen turns muddy. */
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px -4px rgb(16 24 40 / 0.08);
   --shadow-pop: 0 12px 24px -8px rgb(16 24 40 / 0.16), 0 2px 6px rgb(16 24 40 / 0.06);
 
   /* --- Control sizing ---------------------------------------------------- */
@@ -298,7 +304,9 @@
     --color-cat-slate: #94a3b8;
     --color-cat-slate-bg: rgb(71 85 105 / 0.22);
 
-    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    /* Same two layers as light, carried deeper: on a dark canvas a shadow has
+       less contrast to work with, so the spread does more of the lifting. */
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 4px 12px -4px rgb(0 0 0 / 0.45);
     --shadow-pop: 0 12px 24px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
   }
 }

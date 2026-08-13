@@ -29,6 +29,15 @@ import {
   type ViewResult,
   type ViewActionResult,
 } from '@/lib/site/jobViews'
+import { takeDeposit, type DepositResult } from '@/lib/site/jobDeposits'
+import {
+  saveJobTeam,
+  deleteJobTeam,
+  applyTeamToJob,
+  type TeamResult,
+  type TeamActionResult,
+  type ApplyTeamResult,
+} from '@/lib/site/jobTeams'
 import { invoiceJob, type InvoiceLineInput, type InvoiceJobResult } from '@/lib/site/jobInvoicing'
 import {
   markResponded,
@@ -1117,6 +1126,101 @@ export async function deleteJobViewAction(id: number): Promise<ViewActionResult>
   const result = await deleteJobView(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
   revalidatePath('/jobs')
+  return result
+}
+
+/* ── Crews (§16) ──────────────────────────────────────────────────────────── */
+
+/**
+ * Create or edit a crew.
+ *
+ * jobs.setup, not jobs.assign: naming a crew is configuration — it changes what
+ * everybody sees in the picker — while USING one is an assignment. The two are
+ * separately granted for the same reason statuses and boards are.
+ */
+export async function saveJobTeamAction(input: {
+  id: number | null
+  name: string
+  description: string | null
+  isActive: boolean
+  members: { userId: number; isLead: boolean }[]
+}): Promise<TeamResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveJobTeam(ctx.siteId, ctx.actor, input)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs')
+  return result
+}
+
+export async function deleteJobTeamAction(id: number): Promise<TeamActionResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteJobTeam(ctx.siteId, ctx.actor, id)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  return result
+}
+
+/**
+ * Put a crew on a job.
+ *
+ * jobs.assign, because this IS assigning people — the fact that it happens
+ * several at a time does not make it a different act.
+ */
+export async function applyTeamToJobAction(
+  jobId: number,
+  teamId: number,
+): Promise<ApplyTeamResult & { ok: boolean; error?: string }> {
+  const ctx = await actorFor('jobs.assign')
+  if ('ok' in ctx) return { ...(ctx as { ok: false; error: string }), added: 0, skipped: [] }
+
+  const result = await applyTeamToJob(ctx.siteId, ctx.actor, jobId, teamId)
+  if (result.ok) revalidateJobs(jobId)
+  return result
+}
+
+/* ── Deposits (§33) ───────────────────────────────────────────────────────── */
+
+/**
+ * Take a deposit against a job.
+ *
+ * TWO capabilities, and both are the point. `jobs.edit` says this person may
+ * change this job; `cashbook.edit` says they may record money received — which
+ * is what a deposit is, and which the cashbook screen requires for the identical
+ * act. Guarding on `jobs.edit` alone would have let a dispatcher write into the
+ * bank account through a door the cashbook keeps shut.
+ */
+export async function takeDepositAction(
+  jobId: number,
+  input: {
+    amount: number
+    bankAccountId: number
+    docDate?: string
+    reference?: string | null
+    description?: string | null
+  },
+): Promise<DepositResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+  if (!can(ctx.capabilities, 'cashbook.edit')) {
+    return {
+      ok: false,
+      error: 'Taking a deposit records money received, which needs the cashbook permission.',
+    }
+  }
+
+  const result = await takeDeposit(ctx.siteId, ctx.actor, jobId, input)
+  if (!result.ok) return result
+
+  revalidateJobs(jobId)
+  // The money landed in an account and on a customer, so both of those screens
+  // are now stale as well.
+  revalidatePath('/cashbook')
+  revalidatePath('/customers')
   return result
 }
 

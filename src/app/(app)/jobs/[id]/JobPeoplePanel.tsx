@@ -17,6 +17,7 @@ import {
   removeJobPersonAction,
   setJobPersonAction,
   toggleFollowAction,
+  applyTeamToJobAction,
 } from '../actions'
 
 /**
@@ -46,6 +47,7 @@ export default function JobPeoplePanel({
   currentUserId,
   canAssign,
   notifyOff,
+  teams,
 }: {
   jobId: number
   jobClosed: boolean
@@ -62,12 +64,43 @@ export default function JobPeoplePanel({
   canAssign: boolean
   /** True when job_notify_enabled is off, so the card can say so rather than lie. */
   notifyOff: boolean
+  /** Active crews. Empty when none are set up, and the picker then stays hidden. */
+  teams: { id: number; name: string; memberCount: number }[]
 }) {
   const router = useRouter()
   const toast = useToast()
   const [pending, start] = useTransition()
   const [picked, setPicked] = useState('')
   const [role, setRole] = useState<JobRole>('assignee')
+  const [crew, setCrew] = useState('')
+
+  function addCrew() {
+    const teamId = Number(crew)
+    if (!Number.isFinite(teamId) || teamId <= 0) return
+    start(async () => {
+      const result = await applyTeamToJobAction(jobId, teamId)
+      if (!result.ok) {
+        toast.error(result.error ?? 'That crew could not be added.')
+        return
+      }
+      /*
+       * The skipped list is named, not counted. Somebody already on the job is
+       * the commonest reason — putting the North crew on twice should say so
+       * rather than silently adding two of the three.
+       */
+      if (result.skipped.length > 0) {
+        toast.success(
+          `${result.added} added. Left alone: ${result.skipped
+            .map((s) => s.userName)
+            .join(', ')}.`,
+        )
+      } else {
+        toast.success(`${result.added} added.`)
+      }
+      setCrew('')
+      router.refresh()
+    })
+  }
 
   const assignees = people.filter((p) => p.role === 'assignee')
   const followers = people.filter((p) => p.role === 'follower')
@@ -253,6 +286,32 @@ export default function JobPeoplePanel({
               <Button disabled={pending || !picked} onClick={add}>
                 <Icons.Plus size={15} />
                 Add
+              </Button>
+            </div>
+          )}
+
+          {/* A crew is a shortcut into the row above, not a different kind of
+              thing — so it sits under it rather than beside it, and putting one
+              on adds the same assignee rows a person would add by hand. */}
+          {canAssign && !jobClosed && teams.length > 0 && (
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Select
+                  value={crew}
+                  onChange={(e) => setCrew(e.target.value)}
+                  disabled={pending}
+                >
+                  <option value="">…or put a whole crew on</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.memberCount})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <Button variant="secondary" disabled={pending || !crew} onClick={addCrew}>
+                <Icons.Users size={15} />
+                Add the crew
               </Button>
             </div>
           )}

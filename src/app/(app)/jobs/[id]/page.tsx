@@ -32,6 +32,9 @@ import {
 import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
 import { getSetting, SETTING_DEFAULTS } from '@/lib/site/settings'
 import { peopleFor } from '@/lib/site/jobPeople'
+import { depositSummary } from '@/lib/site/jobDeposits'
+import { listJobTeams } from '@/lib/site/jobTeams'
+import { listAccounts } from '@/lib/site/bankAccounts'
 import { listUsers } from '@/lib/site/users'
 import { storedMillis } from '@/lib/jobStatusModel'
 import JobDetail from './JobDetail'
@@ -40,6 +43,7 @@ import JobPartsPanel from './JobPartsPanel'
 import JobSlaCard from './JobSlaCard'
 import JobChecks from './JobChecks'
 import JobPeoplePanel from './JobPeoplePanel'
+import JobDepositsPanel from './JobDepositsPanel'
 import JobAssetCard from './JobAssetCard'
 
 export const dynamic = 'force-dynamic'
@@ -147,6 +151,9 @@ export default async function JobPage({
     people,
     siteUsers,
     notifyEnabled,
+    deposits,
+    bankAccounts,
+    teams,
   ] = await Promise.all([
       listJobStatuses(siteId, false),
       can(capabilities, 'jobs.invoice') ? billableLines(siteId, jobId) : Promise.resolve([]),
@@ -182,6 +189,21 @@ export default async function JobPage({
       peopleFor(siteId, jobId),
       listUsers(siteId).catch(() => []),
       getSetting(siteId, 'job_notify_enabled').catch(() => '1'),
+      /*
+       * Deposits (§33). Both tolerant: a site without the ledger, or a reader
+       * without the cashbook, gets an empty panel rather than a broken job card.
+       *
+       * The ORDER of this array is the order of the destructuring above — an
+       * earlier version of this edit put these two in the middle and read them
+       * off the end, which silently swapped the deposits for the people.
+       */
+      depositSummary(siteId, jobId),
+      can(capabilities, 'cashbook.view') || can(capabilities, 'cashbook.edit')
+        ? listAccounts(siteId).catch(() => [])
+        : Promise.resolve([]),
+      // Crews (§16). Tolerant of a site without 126 — an empty list simply
+      // hides the picker.
+      listJobTeams(siteId, false),
     ])
 
   const overdue = !job.isClosed && job.dueAt !== null && storedMillis(job.dueAt) < Date.now()
@@ -336,6 +358,11 @@ export default async function JobPage({
             currentUserId={actor.userId}
             canAssign={can(capabilities, 'jobs.assign')}
             notifyOff={notifyEnabled === '0'}
+            teams={teams.map((t) => ({
+              id: t.id,
+              name: t.name,
+              memberCount: t.members.length,
+            }))}
           />
         )}
 
@@ -439,6 +466,21 @@ export default async function JobPage({
                 canIssue={can(capabilities, 'stock.transfer')}
               />
             )}
+            {/* On the Quotes tab, because a deposit is part of the money
+                conversation with the customer — it belongs beside what was
+                quoted, not beside what the job cost us. */}
+            {tab === 'quotes' && (
+              <JobDepositsPanel
+                jobId={job.id}
+                jobClosed={job.isClosed}
+                summary={deposits}
+                accounts={bankAccounts
+                  .filter((a) => a.status !== 'closed')
+                  .map((a) => ({ id: a.id, name: a.name }))}
+                canTake={can(capabilities, 'jobs.edit') && can(capabilities, 'cashbook.edit')}
+              />
+            )}
+
             <JobDetail
               job={job}
               tab={tab}

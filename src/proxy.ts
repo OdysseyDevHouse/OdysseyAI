@@ -40,6 +40,18 @@ const PUBLIC_PREFIXES = [
   // '/reserve' would also make any future '/reservations…' route public.
   '/reserve/',
   '/api/payments/payfast/',
+  // A technician's calendar subscription. Google, Outlook and Apple all fetch it
+  // on a schedule with no browser and no cookie, so behind the gate they would
+  // fetch the login page for ever and render an empty calendar with no error —
+  // the failure that looks exactly like "nothing is booked".
+  //
+  // It is not unguarded: the URL carries a signed token naming one user on one
+  // site, the query reads only that user's own appointments, and the feed
+  // carries no financial data at all. Rotating SESSION_SECRET revokes every
+  // subscription at once.
+  //
+  // The trailing slash matters, as it does for '/store/' and '/reserve/' above.
+  '/api/jobs/calendar/',
   // Product photographs for the public shop. Guarded the same way the shop
   // itself is: the URL carries the signed store token, and the route refuses
   // an image whose product that store does not publish.

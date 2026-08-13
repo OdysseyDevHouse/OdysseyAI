@@ -1064,9 +1064,9 @@ each unblocks:
 | Phase-1 dashboards | **2 of 4 shipped, phases 20 + 21.** Operations and My Work. The Scheduling dashboard is largely covered by the week grid and the board; the Financial one wants the costing reports first. |
 | Phase-1 reports | **8 of 15 named, phase 22** — and the blocker is gone. `jobTime`, `jobTravel` and `jobVisits` are now catalog sources, so every remaining report can be built without a developer. |
 | §27 | Receipt OCR | Deferred by agreement |
-| §33 | Deposits on a job | |
+| §33 | ~~Deposits on a job~~ | **shipped, phase 23** — as a customer receipt through the cashbook, so the ledger and the bank account both move. No new table. |
 | §41 | Offline mobile | Deferred by agreement |
-| — | ICS calendar feed | Promised as the two-way-sync substitute (~150 lines); not built |
+| §14.2 | ~~ICS calendar feed~~ | **shipped, phase 24.** Read-only, signed per-technician token, nothing stored. Two-way sync stays deferred — see the deferred table for why. |
 | — | Custom fields, feedback/rating, sign-off, ticket module, intake requests | From the PRD's own "AI can make a call" list |
 
 ## What phase 10 shipped
@@ -2057,6 +2057,201 @@ Over the expected · Travel charge · Over the tolerance. Zero drift on both sit
 
 **Reports now stand at 8 of 15 named**, with every remaining one expressible in
 the builder — the three missing sources were the real blocker, and they are gone.
+
+---
+
+## What phase 23 shipped
+
+Deposits (§33). **No migration** — a deposit is a customer receipt, which this
+app already knows how to record.
+
+### The mistake, and how it was caught
+
+The first version called `postTransaction` directly. That writes the **debtors
+side only**: the customer owes less, and the money appears in no bank account.
+Every deposit ever taken would have left the cash position understated, and
+somebody would have had to re-key the receipt on the cashbook to put it right.
+
+It was found by reading what `postTransaction` actually does rather than what
+its name suggests — a comment claiming it wrote "the balance update and the GL
+mirror" turned out to be wrong on the second half.
+
+It now goes through `recordCustomerReceipt`, which does both halves in the order
+the cashbook chose: ledger first, bank row second, so a failure in between leaves
+an unlinked receipt rather than a bank row pointing at a payment that does not
+exist. `(J26)` asserts **both** balances move, which is the assertion that would
+have caught it.
+
+`ReceiptInput` gained an optional `source`/`sourceDocId` so a deposit is findable
+as one. Additive: every existing caller still defaults to `'receipt'`.
+
+### Three decisions
+
+**It does not allocate itself.** A deposit sits as an unallocated credit until
+somebody settles it against an invoice. Auto-allocating on invoicing would look
+helpful and be wrong — a job can raise more than one invoice, and the deposit
+would land on whichever came first rather than the one the customer meant.
+
+**The bank account is required, not defaulted.** Money received has to be
+received into something, and a default would be this module inventing an
+accounting fact.
+
+**Two capabilities.** `jobs.edit` says you may change this job; `cashbook.edit`
+says you may record money received — which the cashbook screen requires for the
+identical act. Guarding on `jobs.edit` alone would have let a dispatcher write
+into a bank account through a door the cashbook keeps shut.
+
+The panel leads with what is **still to pay**, not with the deposit: a deposit
+alone is a number nobody can act on. Where the job has no accepted quote there is
+nothing to measure against, so the balance line is absent rather than invented.
+
+### Verified
+
+`(J26)` is 13 checks; the suite is **646**, up from 633. **45 suites, exit 0,
+zero failures.** Both sites end with zero deposits, zero orphans and zero stray
+bank rows — the fixture unwinds both balances.
+
+**Not verified in a browser.** A concurrent session has `(pos)/PosShell.tsx` and
+`TableGate.tsx` mid-edit with 16 type errors, so the production build cannot
+compile and the panel could not be rendered. The data layer is proven by test;
+the panel is not.
+
+---
+
+## What phase 24 shipped
+
+The calendar feed (§14.2). No migration, no stored token, ~200 lines.
+
+### Read-only, and that is the design
+
+The PRD spends four pages on two-way sync and never settles "which side wins".
+This is the ninety per cent that needs none of it: a technician subscribes once
+and their own phone shows their day, in whatever calendar app they already use.
+
+There is **no write path at all**, so the question the PRD wrestles with — a
+technician deleting an event and cancelling a job — cannot arise. Deleting the
+event unsubscribes them from a row that simply comes back.
+
+### The URL is the credential
+
+Google, Outlook and Apple all fetch on a schedule with no browser and no cookie.
+So the token is a signed JWT naming one user on one site, minted per request and
+**never stored** — it is derived, so rotating `SESSION_SECRET` revokes every
+subscription at once with no table to clear.
+
+It carries **no expiry**, deliberately. A subscription is set up once and polled
+for years; a URL that dies after a day is a feature that stops working with
+nothing to tell anybody why. The cost is stated in the file: a leaked URL exposes
+that person's schedule until the secret rotates. Which is why the feed carries no
+prices, no costs and no margins — the worst case is somebody learning where a
+technician will be.
+
+`'/api/jobs/calendar/'` is in `PUBLIC_PREFIXES` with its trailing slash. Without
+it, a calendar service fetches the login page for ever and renders an empty week
+with no error — the failure that looks exactly like "nothing is booked".
+
+### Five details that decide whether the file works at all
+
+An invalid `.ics` fails in the worst way: the app rejects it silently and shows
+an empty calendar.
+
+| | |
+|---|---|
+| **Escape the backslash first** | otherwise escaping `,` and `;` double-escapes what was just added |
+| **Fold at 75 OCTETS** | an emoji is four bytes; a character count produces lines legal by length and illegal by size |
+| **Split on code points** | half a surrogate pair is invalid UTF-8 and can take a parser down |
+| **CRLF throughout, and a trailing one** | Outlook rejects a file that ends without it |
+| **A stable UID** | a calendar matches by UID — if it moved when a visit was edited, the subscriber would hold the old booking *and* the new one |
+
+A cancelled visit publishes as `STATUS:CANCELLED` rather than being dropped: a
+calendar only removes an event it is told about, so a row that vanishes from the
+feed just stops being mentioned — and the technician drives to a call that was
+called off.
+
+### Verified
+
+`(J27)` is 19 checks; the suite is **665**, up from 646. **45 suites, exit 0,
+zero failures.** Smoke crawl **157 passed, 0 failed**.
+
+Fetched live: **200 `text/calendar`** (not a 307 to login), **404** for a bad
+token, and a valid calendar naming the technician with the visit at 09:30–11:00.
+The subscribe card on My Work hides the URL until asked for and warns that it is
+a password. Demo visit removed; no orphaned assignees.
+
+Also verified this turn: the **phase 23 deposits panel**, which the previous
+turn could not build because of a concurrent session's type errors. It renders on
+the Quotes tab as intended.
+
+---
+
+## What phase 25 shipped
+
+Named crews (§16) — "the North crew" — as a way of putting three people on a job
+in one press. `sql/site/126_job_teams.sql` (125 was taken by a parallel session),
+`src/lib/site/jobTeams.ts`, a panel on `/setup/job-workflow`, a picker on the job,
+and two drift tables.
+
+### A crew is a shortcut, not an owner
+
+The tempting schema is `job_cards.team_id`. It was rejected, and the reason is
+the whole design:
+
+Selecting a crew **expands** into individual `job_card_people` rows, and the job
+then knows only the people. Nothing else has to be taught anything. My Work, the
+board lanes, the workload figures and the notification recipient lists all read
+`job_card_people` and keep working untouched — a `team_id` would have required
+every one of them to learn about a second source of "who is on this job", and
+would have silently returned half the answer wherever somebody forgot.
+
+The second consequence is the one users feel: **editing a crew does not reach
+backwards.** Take somebody off the North crew and January's jobs are untouched,
+because those jobs copied the names when the crew was applied. Deleting a crew is
+therefore allowed with no refusal at all — unlike a status or a headline, both of
+which refuse while anything points at them. The confirm dialog says exactly that
+rather than implying a risk that is not there.
+
+### It goes through the same door
+
+`applyTeamToJob` calls `setJobPerson` per member rather than doing one bulk
+`INSERT`. That door refuses the owner, refuses an inactive user, logs the change
+and fires the assignment notification — and a crew that bypassed all of it would
+produce jobs subtly unlike the ones assigned one name at a time. The cost is
+honest: a five-person crew is five round trips and five emails. Both are correct.
+Five people were each given work.
+
+The crew is named in the activity log and **nowhere else**. After expansion the
+job knows only the people, so the log is the only record that a crew was chosen
+rather than three names picked individually.
+
+### Two bugs, one found by a test and one only by a picture
+
+**Applying a crew twice reported "2 added" having added nobody.** `setJobPerson`
+is deliberately idempotent — its `INSERT` is `ON DUPLICATE KEY UPDATE`, which is
+how a follower gets promoted — so re-applying succeeded on every member and
+counted each as an addition. It would also have sent two people a second email
+about work they already had. Fixed by reading who is already on the job first;
+an existing **assignee** is skipped and named, while an existing **follower** is
+still promoted and still counted, because that genuinely changes their role.
+
+**The panel claimed the lead becomes the job owner.** It does not — and the
+screenshot proved it, with "2 added" beside an "Assigned to: Nobody" field.
+Making the claim true would have been the worse fix: a crew put on a job that
+already has an owner would silently take the job off them. So the lead is what it
+actually is — who to ask about this crew — and the hint, the drift description
+and the test label were all corrected to match.
+
+### Verified
+
+`(J28)` is 24 checks; the suite is **689**, up from 665, exit 0. Typecheck clean,
+`check-ui-kit` clean, build clean, migration 126 applied to sites 1 and 2.
+
+Driven live in Chrome rather than only compiled: the dialog refuses an empty
+form, ticks the first person as lead automatically, keeps exactly one lead when
+the lead is moved, saves through the real action ("Second Person (leads), Tiaan
+Smith"), and the job's picker offers the crew with its size. Applying it put
+**two individual rows** on job 12 with the person picker correctly reporting
+"Everybody is already on this job". Site 1 restored exactly as found — crew,
+people, activity rows removed and job notifications switched back on.
 
 ---
 

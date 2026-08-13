@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Button, Icons } from '@/components/ui'
+import { Icons } from '@/components/ui'
 
 /**
  * The strip across the top of the till.
@@ -15,7 +15,6 @@ import { Button, Icons } from '@/components/ui'
  * even when nothing is wrong.
  */
 export function TillStatusBar({
-  siteName,
   operatorName,
   terminalLabel,
   unclaimed,
@@ -28,10 +27,8 @@ export function TillStatusBar({
   onShowOutbox,
   tableLabel,
   onChangeTable,
-  onSizeTiles,
   onExit,
 }: {
-  siteName: string
   operatorName: string
   /** The till's code and number, or null when this machine has claimed none. */
   terminalLabel: string | null
@@ -86,8 +83,6 @@ export function TillStatusBar({
   tableLabel: string | null
   /** Back to the floor. Undefined in retail, where there is no floor to go back to. */
   onChangeTable?: () => void
-  /** Opens the tile-size dialog. Omitted where there is nothing to size. */
-  onSizeTiles?: () => void
   onExit: () => void
 }) {
   /* Past a few hours the prices on this till and the prices on the shelf edge may
@@ -95,18 +90,24 @@ export function TillStatusBar({
      hours because that is about the length of a shift's half — long enough that a
      repricing run could have happened and been missed. */
   const catalogStale = catalogAgeHours !== null && catalogAgeHours >= 4
+  /* NO BORDER, NO SURFACE. The bar sits on the same canvas as the three cards
+     below it and is separated from them by the shell's own padding — the chips
+     are what carry the edges here, each floating on its own. A full-width bar
+     with a rule under it would put a fourth horizontal band on a screen whose
+     whole layout is three floating cards. */
   return (
-    <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-surface px-4">
-      <div className="min-w-0">
-        <h1 className="truncate text-base font-semibold text-ink">{siteName}</h1>
-        <p className="truncate text-xs text-muted">
-          {itemCount === 0
-            ? 'No items'
-            : `${itemCount} item${itemCount === 1 ? '' : 's'} on this sale`}
-        </p>
-      </div>
+    <header className="flex shrink-0 flex-wrap items-center gap-2.5 px-4 pb-3 pt-4">
+      {/* WHAT THIS SCREEN IS, then what is on it. "Current Sale" rather than the
+          shop's name: the cashier knows which shop they are standing in, and the
+          one thing the top-left of a till should answer is "what am I looking
+          at". The count rides beside it as a pill because it changes constantly
+          and a number that moves inside a heading makes the heading twitch. */}
+      <h1 className="text-[20px] font-extrabold leading-none text-ink">Current Sale</h1>
+      <span className="rounded-control bg-surface-2 px-2.5 py-1.5 text-[12.5px] font-semibold leading-none text-muted">
+        {itemCount === 0 ? '0 items' : `${itemCount} item${itemCount === 1 ? '' : 's'}`}
+      </span>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex flex-wrap items-center gap-2.5">
         {/* First in the row, because it answers "which bill am I on" — the question a
             waiter asks before any of the others. A BUTTON when there is a floor to go
             back to, so changing table is one tap from wherever they are. */}
@@ -117,7 +118,7 @@ export function TillStatusBar({
               data-kit-ok
               onClick={onChangeTable}
               title="Back to the floor"
-              className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-brand/40 bg-brand-soft px-3.5 text-sm font-semibold text-brand hover:bg-brand-soft/70"
+              className={`${CHIP_BASE} border-brand/40 bg-brand-soft font-semibold text-brand hover:bg-brand-soft/70`}
             >
               <Icons.LayoutGrid size={16} />
               {tableLabel}
@@ -128,6 +129,25 @@ export function TillStatusBar({
               {tableLabel}
             </Chip>
           ))}
+
+        {/* NO NAME, BUT STILL A WAY BACK.
+            A quick sale has no table and no tab, so there is nothing to label —
+            but the waiter still needs the floor to be one tap away, and making
+            them finish or close the sale to reach it is a longer trip than the
+            header should ever impose. Neutral rather than brand-tinted: this is
+            navigation, not a statement about which bill is on screen. */}
+        {!tableLabel && onChangeTable && (
+          <button
+            type="button"
+            data-kit-ok
+            onClick={onChangeTable}
+            title="Back to the floor"
+            className={`${CHIP_BASE} border-border bg-surface text-ink-2 hover:border-brand/40 hover:bg-brand-soft hover:text-brand`}
+          >
+            <Icons.LayoutGrid size={16} />
+            Tables
+          </button>
+        )}
 
         {/*
          * OFFLINE, and trading.
@@ -141,7 +161,7 @@ export function TillStatusBar({
         {!online && (
           <span
             title="This till has no connection. Sales are being kept on the till and will send themselves when it comes back."
-            className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-brand/40 bg-brand-soft px-3.5 text-sm font-medium text-brand"
+            className={`${CHIP_BASE} border-brand/40 bg-brand-soft text-brand`}
           >
             <Icons.Offline size={16} />
             Offline
@@ -156,34 +176,53 @@ export function TillStatusBar({
          * cash up too early. Danger once something has failed, because that one needs
          * a person rather than patience.
          */}
-        {(pendingSales > 0 || failedSales > 0) && (
-          /* A BUTTON, not a chip. The count is the question ("can I cash up?") and the
-             outbox is the answer, so the thing displaying the number is the thing that
-             opens the list — a cashier should not have to find it elsewhere. */
-          <button
-            type="button"
-            onClick={onShowOutbox}
-            title={
-              failedSales > 0
-                ? `${failedSales} sale${failedSales === 1 ? '' : 's'} could not be sent and need attention. Do not cash up yet.`
-                : `${pendingSales} sale${pendingSales === 1 ? '' : 's'} still to send. Do not cash up until these are through — the expected figure is wrong until then.`
-            }
-            className={
-              failedSales > 0
-                ? 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-danger/40 bg-danger-soft px-3.5 text-sm font-medium text-danger-ink hover:bg-danger-soft/70'
-                : 'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink hover:bg-warning-soft/70'
-            }
-          >
-            <Icons.Syncing size={16} />
-            {failedSales > 0 ? `${failedSales} stuck` : `${pendingSales} to send`}
-          </button>
-        )}
+        {/* ALWAYS SHOWN, including when everything is through.
+            "Nothing is wrong" is itself the answer to the question a cashier asks
+            before cashing up, and a chip that only appears when there IS a problem
+            cannot be checked — its absence could equally mean the till forgot to
+            render it. So the good state is stated, in green, and the bad states
+            take the same slot rather than appearing beside it. */}
+        <button
+          type="button"
+          onClick={onShowOutbox}
+          title={
+            failedSales > 0
+              ? `${failedSales} sale${failedSales === 1 ? '' : 's'} could not be sent and need attention. Do not cash up yet.`
+              : pendingSales > 0
+                ? `${pendingSales} sale${pendingSales === 1 ? '' : 's'} still to send. Do not cash up until these are through — the expected figure is wrong until then.`
+                : 'Every sale on this till has reached the server.'
+          }
+          className={`${CHIP_BASE} ${
+            failedSales > 0
+              ? 'border-danger/40 bg-danger-soft text-danger-ink hover:bg-danger-soft/70'
+              : pendingSales > 0
+                ? 'border-warning/40 bg-warning-soft text-warning-ink hover:bg-warning-soft/70'
+                : 'border-success/40 bg-success-soft text-success-ink hover:bg-success-soft/70'
+          }`}
+        >
+          {failedSales > 0 ? (
+            <>
+              <Icons.Syncing size={16} />
+              {failedSales} stuck
+            </>
+          ) : pendingSales > 0 ? (
+            <>
+              <Icons.Syncing size={16} />
+              {pendingSales} to send
+            </>
+          ) : (
+            <>
+              <Icons.Check size={16} />
+              Sales synced
+            </>
+          )}
+        </button>
 
         {/* A catalog old enough that the shelf edge may disagree with it. */}
         {catalogStale && (
           <span
             title={`Prices were last refreshed about ${Math.floor(catalogAgeHours!)} hour${Math.floor(catalogAgeHours!) === 1 ? '' : 's'} ago. They may not match the shelf.`}
-            className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink"
+            className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}
           >
             <Icons.Clock size={16} />
             Prices {Math.floor(catalogAgeHours!)}h old
@@ -196,7 +235,7 @@ export function TillStatusBar({
         {offlineReason && (
           <span
             title={offlineReason}
-            className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink"
+            className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}
           >
             <Icons.Offline size={16} />
             Online only
@@ -210,53 +249,69 @@ export function TillStatusBar({
           </Chip>
         ) : (
           unclaimed && (
-            <span className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3.5 text-sm font-medium text-warning-ink">
+            <span className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}>
               <Icons.StatusWarning size={16} />
               No till claimed
             </span>
           )
         )}
 
+        {/* Initials in a tinted square, then the name — the same block the gate
+            shows, so "who is signed in" looks identical wherever it is read. */}
         <Chip>
-          <Icons.Users size={16} className="text-muted" />
-          {operatorName}
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-brand-soft text-[11px] font-bold text-brand">
+            {initials(operatorName)}
+          </span>
+          <b className="font-semibold text-ink">{operatorName}</b>
         </Chip>
 
         <Clock />
 
-        {/* Icon-only, and next to Exit rather than beside the sale controls: tile
-            size is set when a till is commissioned and then never, so it has to be
-            findable without competing with anything used during a sale. */}
-        {onSizeTiles && (
-          <Button
-            variant="ghost"
-            size="touch"
-            iconOnly
-            onClick={onSizeTiles}
-            aria-label="Tile size"
-            title="Tile size"
-          >
-            <Icons.LayoutGrid size={18} />
-          </Button>
-        )}
-
-        <Button variant="ghost" size="touch" onClick={onExit}>
-          <Icons.LogOut size={18} />
-          Exit
-        </Button>
+        {/* LOGOUT, not "exit to the back office".
+            The gate is where a waiter finishes their shift, so this hands the
+            screen back to the PIN pad for the next one rather than dropping a
+            member of floor staff into the back office. Whoever genuinely wants
+            the back office signs in there from the login screen. */}
+        <button type="button" data-kit-ok onClick={onExit} className={LOGOUT_CHIP}>
+          <Icons.LogOut size={16} />
+          Logout
+        </button>
       </div>
     </header>
   )
 }
 
-/* One recipe, so a row of these cannot drift into different heights. h-touch
-   rather than a content height: these sit beside a 56px button. */
+/**
+ * One recipe, so a row of these cannot drift into different heights.
+ *
+ * `shadow-card` on every one: with no bar behind them, the chips ARE the header,
+ * and each has to lift off the canvas on its own the way the three panes below do
+ * — otherwise they read as flat labels printed on the background rather than as
+ * the controls several of them actually are.
+ *
+ * Exported as a string rather than only as a component because half of these are
+ * buttons with their own tint, and a component that took a colour prop would be a
+ * second place for the height and radius to drift.
+ */
+const CHIP_BASE =
+  'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border px-3.5 text-sm font-medium shadow-card'
+
 function Chip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex h-touch shrink-0 items-center gap-2 rounded-control border border-border bg-surface-2 px-3.5 text-sm font-medium text-ink-2">
-      {children}
-    </span>
-  )
+  return <span className={`${CHIP_BASE} border-border bg-surface text-ink-2`}>{children}</span>
+}
+
+/* data-kit-ok: the way OFF the till has to sit in the chip row at chip height,
+   and a kit Button carries its own height and padding scale that would make it
+   the one control in the row standing a few pixels proud of the rest. */
+const LOGOUT_CHIP = `${CHIP_BASE} border-border bg-surface text-ink-2 hover:border-danger/40 hover:bg-danger-soft hover:text-danger-ink`
+
+/** "Tiaan Bryson Smith" → "TS". First and last initial, never the middle. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  const first = parts[0][0]
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : ''
+  return (first + last).toUpperCase()
 }
 
 /**
@@ -281,10 +336,23 @@ function Clock() {
   return (
     <Chip>
       <Icons.Clock size={16} className="text-muted" />
+      {/* The DATE as well as the time. A till runs past midnight and a cashier
+          reading "00:14" has no way to tell which day's takings they are about to
+          cash up — which is the one question the clock on a till is for. */}
       <span className="numeric">
-        {now
-          ? now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-          : '--:--'}
+        {now ? (
+          <>
+            {now.toLocaleDateString(undefined, {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+            })}
+            {' · '}
+            {now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+          </>
+        ) : (
+          '--:--'
+        )}
       </span>
     </Chip>
   )

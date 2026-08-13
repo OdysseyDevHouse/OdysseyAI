@@ -123,6 +123,13 @@ export async function saveSaleAction(
     customerPhone?: string | null
     customerVatNo?: string | null
     reference?: string | null
+    /**
+     * Covers and visit type, set by the hospitality till when a tab is parked.
+     * They reach `saveDraft` on the `...input` spread below, with everything
+     * else — see sql/site/125_sale_covers.sql for why they live on the bill.
+     */
+    personCount?: number | null
+    visitTypeId?: number | null
     terminalId?: number | null
     terminalCode?: string | null
     priceStructureId?: number | null

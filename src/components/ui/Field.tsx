@@ -110,6 +110,29 @@ type InputProps = Omit<ComponentProps<'input'>, 'className' | 'size'> & {
 
 export function Input({ icon, invalid, size = 'md', className = '', id, ...rest }: InputProps) {
   const wiring = useFieldWiring(id, invalid)
+
+  /*
+   * LAYOUT CLASSES BELONG ON THE OUTER ELEMENT.
+   *
+   * With an icon this renders a positioning wrapper around the input, so a
+   * caller writing `className="flex-1"` — the ordinary way to make a search box
+   * fill a toolbar — was styling the inner <input> while the WRAPPER stayed at
+   * its content width. The field then sat stubbornly narrow in a wide row and no
+   * amount of flex on the parent could fix it, because the flex item was the
+   * wrapper, not the thing carrying the class.
+   *
+   * So the classes that describe how this sits among its siblings are peeled off
+   * and applied to whichever element is actually outermost; everything else
+   * (colours, padding, text) stays on the input where it belongs.
+   */
+  const outerClasses: string[] = []
+  const innerClasses: string[] = []
+  for (const cls of className.split(/\s+/).filter(Boolean)) {
+    ;(LAYOUT_CLASS.test(cls) ? outerClasses : innerClasses).push(cls)
+  }
+  const inner = innerClasses.join(' ')
+  const outer = outerClasses.join(' ')
+
   const input = (
     <input
       id={wiring.id}
@@ -119,7 +142,7 @@ export function Input({ icon, invalid, size = 'md', className = '', id, ...rest 
         /* The glyph is inset further at till size so it clears the wider box
            without crowding the text. */
         icon ? (size === 'touch' ? 'pl-11' : 'pl-9') : ''
-      } ${wiring.invalid ? INVALID : ''} ${className}`}
+      } ${wiring.invalid ? INVALID : ''} ${icon ? 'w-full' : outer} ${inner}`}
       {...rest}
     />
   )
@@ -127,7 +150,7 @@ export function Input({ icon, invalid, size = 'md', className = '', id, ...rest 
   if (!icon) return input
 
   return (
-    <div className="relative">
+    <div className={`relative ${outer}`}>
       <span
         className={`pointer-events-none absolute inset-y-0 flex items-center text-faint ${
           size === 'touch' ? 'left-4' : 'left-3'
@@ -139,6 +162,15 @@ export function Input({ icon, invalid, size = 'md', className = '', id, ...rest 
     </div>
   )
 }
+
+/**
+ * Classes that position an element among its siblings rather than paint it.
+ *
+ * Matched conservatively — anything not listed stays on the input, so an unknown
+ * utility can only ever behave as it did before this split existed.
+ */
+const LAYOUT_CLASS =
+  /^(flex-\d|flex-auto|flex-initial|flex-none|grow|grow-0|shrink|shrink-0|basis-|w-|min-w-|max-w-|col-span-|self-|order-)/
 
 /**
  * Selects the whole value on focus.

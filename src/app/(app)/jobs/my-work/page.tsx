@@ -1,5 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { myWork } from '@/lib/site/jobMyWork'
+import { createCalendarToken } from '@/lib/calendarToken'
 import { storedDate } from '@/lib/jobStatusModel'
 import {
   PageHeader,
@@ -15,6 +16,7 @@ import {
   Icons,
   type BadgeTone,
 } from '@/components/ui'
+import CalendarSubscribe from './CalendarSubscribe'
 
 export const dynamic = 'force-dynamic'
 
@@ -78,6 +80,22 @@ function dayLabel(value: string): string {
 export default async function MyWorkPage() {
   const { siteId, actor } = await requireCapability('jobs.view')
   const work = await myWork(siteId, actor.userId)
+
+  /*
+   * The calendar token is minted on the SERVER, per request.
+   *
+   * Not stored: it is derived from the site and the user, so it is the same
+   * string every time and there is nothing to keep. That also means rotating
+   * SESSION_SECRET revokes every subscription at once, with no table to clear.
+   *
+   * Falls back to an empty string when SESSION_SECRET is missing — the card then
+   * says so rather than the whole screen refusing to render over a feature
+   * nobody has asked for yet.
+   */
+  const calendarToken = await createCalendarToken(siteId, actor.userId).catch(() => '')
+  const calendarUrl = calendarToken
+    ? `${(process.env.APP_URL ?? '').replace(/\/$/, '')}/api/jobs/calendar/${calendarToken}.ics`
+    : ''
 
   const nothing =
     work.jobs.length === 0 &&
@@ -227,6 +245,11 @@ export default async function MyWorkPage() {
             </CardBody>
           </Card>
         )}
+
+        {/* The calendar subscription, under the work rather than above it: it is
+            set up once and then never looked at again, so it must not sit where
+            today's jobs should be. */}
+        {calendarUrl && <CalendarSubscribe url={calendarUrl} />}
 
         {/* LAST, because it is the only thing here waiting on somebody else. */}
         {work.unverifiedTravel > 0 && (

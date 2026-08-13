@@ -13,6 +13,7 @@ import {
   ToolbarSearch,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+import type { OpenTab } from './actions'
 import type { PosTable, TableState } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import type { VisitType } from '@/lib/site/visitTypes'
@@ -112,37 +113,46 @@ function useTablePrefs(): [TablePrefs, (patch: Partial<TablePrefs>) => void] {
  * three items and only then discover they were on the wrong table — and moving a line
  * between baskets is a feature this does not have.
  *
- * ── THE WALK-IN HERO ──────────────────────────────────────────────────────
+ * ── WHAT THIS LISTS: OPEN TABS, NOT CONFIGURED FURNITURE ──────────────────
+ *
+ * Every tile here is a BILL somebody is running — a `sales_documents` row parked
+ * with a label a waiter typed. It is deliberately not a list of the shop's
+ * configured tables: a floor showing forty "free" tiles buries the eight that
+ * actually need attention, and the answer to "which table" on a busy night is
+ * almost always one that is already open.
+ *
+ * Seating a *new* table is therefore an explicit act — the "Open new table" key —
+ * rather than something a waiter finds by hunting for a grey tile. Shops that
+ * have drawn a floor plan still get one: the Floor view renders the real room,
+ * where tapping an empty table is exactly how you seat it.
+ *
+ * ── THE TWO HEROES ────────────────────────────────────────────────────────
  *
  * A restaurant still sells coffee over the counter, and a takeaway is most of the
- * trade in some places. Making that pass through a table — or worse, through a "no
- * table" tile lost among forty — is the difference between a fast till and one that
- * fights its user. So it is one large key, first, in a fixed position.
- *
- * ── THREE STATES, THREE MEANINGS ──────────────────────────────────────────
- *
- *   free  — seat someone
- *   open  — they are eating; tap to add to their bill
- *   bill  — they have asked to pay; a waiter is NEEDED
- *
- * `bill` is the only one that is coloured for attention, because on a busy floor the
- * screen's job is to answer "who needs me next". Colouring all three would answer
- * nothing — see odyssey-craft on colour that has stopped meaning anything.
+ * trade in some places. Making that pass through a table is the difference between
+ * a fast till and one that fights its user. So Quick sale and Open new table are
+ * two large keys, first, in a fixed position — never scrolled away.
  */
 export function TableGate({
-  tables,
+  tabs,
+  tables = [],
   rooms = [],
   features = [],
   visitTypes = [],
   busy,
   onWalkIn,
+  onNewTable,
   onRefresh,
   splitting = false,
   onToggleSplitting,
   onSplitTable,
+  onPickTab,
   onPickTable,
 }: {
-  tables: readonly PosTable[]
+  /** Every bill open in the shop, newest first. */
+  tabs: readonly OpenTab[]
+  /** Configured tables — used by the Floor view only. */
+  tables?: readonly PosTable[]
   /** Rooms with a drawn plan. Empty on a shop that never opened the designer. */
   rooms?: readonly FloorRoom[]
   features?: readonly FloorFeature[]
@@ -151,14 +161,18 @@ export function TableGate({
   busy: boolean
   /** Start a sale with no table — the counter, or a takeaway. */
   onWalkIn: () => void
-  /** Re-read the floor. Another till may have opened or settled a table. */
+  /** Name a new tab, then drop into the till on it. */
+  onNewTable: () => void
+  /** Re-read the floor. Another till may have opened or settled a tab. */
   onRefresh?: () => void
-  /** Armed: the next table tap opens the split screen instead of resuming. */
+  /** Armed: the next FLOOR-PLAN tap opens the split screen instead of resuming. */
   splitting?: boolean
   onToggleSplitting?: (next: boolean) => void
-  /** Opens the split screen for a table that has a bill. */
+  /** Opens the split screen for a seated table. Floor view only — see the button. */
   onSplitTable?: (table: PosTable) => void
-  /** Seat a free table, or resume an open one. The shell decides which by state. */
+  /** Resume an open tab. */
+  onPickTab: (tab: OpenTab) => void
+  /** Seat or resume a table from the drawn floor plan. */
   onPickTable: (table: PosTable) => void
 }) {
   /* ── Finding a table ──────────────────────────────────────────────────────
@@ -188,21 +202,23 @@ export function TableGate({
 
   const defaultVisitId = visitTypes.find((v) => v.isDefault)?.id ?? null
 
+  /* A waiter looks for their table by number, for a guest by name, and for their
+     own tables by their own name — so all three are searched together rather
+     than behind a "search by" selector nobody would find mid-service. */
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return tables
-    return tables.filter((t) =>
-      [t.code, t.name, t.section, t.visitTypeName].some((v) =>
+    if (!q) return tabs
+    return tabs.filter((t) =>
+      [t.label, t.customerName, t.userName, t.visitTypeName].some((v) =>
         (v ?? '').toLowerCase().includes(q),
       ),
     )
-  }, [tables, query])
+  }, [tabs, query])
 
-  /* An unlabelled table answers to the DEFAULT type. Most tables carry no type at
-     all — nothing back-filled the column and nobody labels a table they are about
-     to seat — so filing them under "none" would put the whole floor in a segment
-     that does not exist. */
-  const matchesVisit = (t: PosTable, key: string) =>
+  /* A tab with no visit type answers to the DEFAULT one. Nothing back-fills the
+     column, and a quick sale never picks one — so filing them under "none" would
+     hide most of the floor in a segment that does not exist. */
+  const matchesVisit = (t: OpenTab, key: string) =>
     key === ALL_VISITS || (t.visitTypeId ?? defaultVisitId) === Number(key)
 
   const shown = useMemo(
@@ -219,28 +235,11 @@ export function TableGate({
       count: searched.filter((t) => matchesVisit(t, String(v.id))).length,
     })),
   ]
-  /*
-   * ONE FLAT GRID, in the order the server sorted them — the same shape the
-   * Odyssey till uses. A waiter finds a table by its number, which the search
-   * box answers faster than a heading can; grouping only pushed the tiles down
-   * the page. The section still shows on the tile's own line and is still
-   * searchable, so nothing is lost but the headings.
-   *
-   * EVERY table, including the ones drawn on a plan. The old grouped grid hid
-   * placed tables because it rendered UNDER the canvas, where a table drawn
-   * above and listed below would appear twice on one screen. The list view has
-   * no canvas — it is the alternative TO the floor, not a strip beneath it — so
-   * excluding placed tables here empties the whole screen on any shop that has
-   * drawn its floor, which is exactly what it did: four tables, all placed, and
-   * a list reading "No table matches that".
-   */
-  const listed = shown
 
-  const waiting = tables.filter((t) => t.state === 'bill').length
-  /* Counted over EVERY table, not the filtered view: "how much is in progress on this
-     floor" is a fact about the shop, and a number that moved as somebody typed in the
-     search box would be answering a different question each keystroke. */
-  const open = tables.filter((t) => t.state !== 'free').length
+  /* Counted over EVERY tab, not the filtered view: "how much is in progress in
+     this shop" is a fact about the shop, and a number that moved as somebody
+     typed in the search box would answer a different question each keystroke. */
+  const open = tabs.length
 
   const hasPlan = rooms.some((room) =>
     tables.some((t) => t.roomId === room.id && t.x !== null),
@@ -333,8 +332,8 @@ export function TableGate({
           <ToolbarSearch
             value={query}
             onChange={setQuery}
-            placeholder="Search by table, area or type..."
-            aria-label="Search the floor"
+            placeholder="Search by table number, customer or waiter…"
+            aria-label="Search open tables"
             className="w-[360px] max-w-[45%]"
           />
           {/* Only where the shop HAS types. One segment reading "All tables" is a
@@ -348,13 +347,6 @@ export function TableGate({
             />
           )}
           <span className="ml-auto flex items-center gap-2">
-            {/* The one number worth putting above the floor: who is waiting to pay.
-                A waiter arriving at the screen wants that before the layout. */}
-            {waiting > 0 && (
-              <Badge tone="warning">
-                {waiting} waiting for the bill
-              </Badge>
-            )}
             <Badge tone="brand">
               {open} open table{open === 1 ? '' : 's'}
             </Badge>
@@ -372,10 +364,14 @@ export function TableGate({
           also how the gesture cancels, by disarming rather than by finding a way out
           of a dialog.
 
-          Only offered when some table HAS a bill. On an empty floor it is a button
-          that can only ever explain why it does nothing.
+          ── ONLY ON THE FLOOR VIEW ─────────────────────────────────────────
+          A split MOVES lines from one table onto another, and `splitTableAction`
+          identifies both by `pos_tables.id`. A free-text tab has no such id — it
+          is a bill with a name on it — so there is nothing for the lines to land
+          on. Offering the mode over the tab list would arm a gesture that could
+          only ever fail on the second tap, in front of a customer.
         */}
-        {onSplitTable && tables.some((t) => t.documentId !== null && t.state !== 'free') && (
+        {onSplitTable && effectiveView === 'floor' && (
           <div className="px-6 pb-3">
             <Button
               variant={splitting ? 'warning' : 'ghost'}
@@ -394,17 +390,25 @@ export function TableGate({
         <div className="till-pane min-h-0 flex-1 overflow-y-auto px-6 pb-6">
           {effectiveView === 'floor' ? (
             <div className="flex flex-col gap-4">
-              {/* The opener stays ABOVE the plan: a walk-in is wanted just as often
-                  on the floor view, and hiding it behind the List toggle would be a
-                  trap. */}
+              {/* Both openers stay ABOVE the plan: a walk-in and a new tab are wanted
+                  just as often on the floor view, and hiding them behind the List
+                  toggle would be a trap. */}
               <div className="flex flex-wrap gap-3">
                 <Button variant="secondary" size="touch" disabled={busy} onClick={onWalkIn}>
                   <Icons.Zap size={18} />
                   Quick sale
                 </Button>
+                <Button variant="secondary" size="touch" disabled={busy} onClick={onNewTable}>
+                  <Icons.Plus size={18} />
+                  Open new table
+                </Button>
               </div>
+              {/* The plan draws the shop's CONFIGURED tables — the furniture — not
+                  the tabs listed above. Occupancy comes from matching a tab's label
+                  to a table's code, which `tables` already carries via its own
+                  document pointer. */}
               {rooms.map((room) => {
-                const placed = shown.filter((t) => t.roomId === room.id && t.x !== null)
+                const placed = tables.filter((t) => t.roomId === room.id && t.x !== null)
                 if (placed.length === 0) return null
                 return (
                   <div key={room.id} className="flex flex-col gap-2">
@@ -432,9 +436,10 @@ export function TableGate({
               className="grid gap-4"
               style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
             >
-              {/* Quick sale first, always, in a fixed position: a restaurant still
-                  sells coffee over the counter, and making that pass through a table
-                  is the difference between a fast till and one that fights its user. */}
+              {/* The two openers first, always, in a fixed position. A restaurant
+                  still sells coffee over the counter, and making that pass through a
+                  table is the difference between a fast till and one that fights its
+                  user — so neither of these ever scrolls away behind the tabs. */}
               <HeroTile
                 tone="success"
                 icon={<Icons.Zap size={dense ? 20 : 24} />}
@@ -444,44 +449,44 @@ export function TableGate({
                 disabled={busy}
                 onClick={onWalkIn}
               />
+              <HeroTile
+                tone="brand"
+                icon={<Icons.Plus size={dense ? 20 : 24} />}
+                label="Open new table"
+                minHeight={tileMinH}
+                dense={dense}
+                disabled={busy}
+                onClick={onNewTable}
+              />
 
-              {tables.length === 0 ? (
+              {tabs.length === 0 ? (
                 <div className="col-span-full">
                   <EmptyState
                     icon={<Icons.LayoutGrid size={26} />}
-                    title="No tables set up"
-                    hint="A manager can add the floor in Setup → Tables. Walk-in sales work either way."
+                    title="Nothing open yet"
+                    hint="Open a new table to start a tab, or ring up a walk-in with a quick sale."
                   />
                 </div>
-              ) : listed.length === 0 ? (
-                /* Tables DO exist — the search or the filter hid them all, which is a
+              ) : shown.length === 0 ? (
+                /* Tabs DO exist — the search or the filter hid them all, which is a
                    different problem from an empty floor and needs a different sentence. */
                 <div className="col-span-full">
                   <EmptyState
                     icon={<Icons.Search size={26} />}
-                    title="No table matches that"
+                    title="No open table matches that"
                     hint="Try a different search, or switch back to All tables."
                   />
                 </div>
               ) : (
-                listed.map((table) => (
-                  <TableCard
-                    key={table.id}
-                    table={table}
+                shown.map((tab) => (
+                  <TabCard
+                    key={tab.documentId}
+                    tab={tab}
                     busy={busy}
                     showTotal={showTotals}
                     dense={dense}
                     minHeight={tileMinH}
-                    /* While the split mode is armed, a tap opens the SPLIT screen
-                       for that table rather than resuming it — and a free table
-                       stays inert, because there is nothing on it to divide. */
-                    onPick={() =>
-                      splitting
-                        ? table.documentId !== null && table.state !== 'free'
-                          ? onSplitTable?.(table)
-                          : undefined
-                        : onPickTable(table)
-                    }
+                    onPick={() => onPickTab(tab)}
                   />
                 ))
               )}
@@ -619,27 +624,6 @@ const FEATURE_SKIN: Record<FloorFeature['kind'], string> = {
   text: '',
 }
 
-/**
- * Per-state CARD surface, for the list.
- *
- * Only the bill-asked state is tinted. A free table and a table being eaten at are
- * both "nothing to do here yet", and colouring all three would answer nothing — see
- * odyssey-craft on colour that has stopped meaning anything. The one that needs a
- * waiter to move is the one that gets a colour.
- */
-const CARD: Record<TableState, string> = {
-  free: 'border-border bg-surface hover:border-brand/50',
-  open: 'border-border bg-surface hover:border-brand/50',
-  bill: 'border-warning/50 bg-warning-soft',
-}
-
-/** The leading disc, matching the state above. */
-const DISC: Record<TableState, string> = {
-  free: 'bg-surface-2 text-muted',
-  open: 'bg-brand-soft text-brand',
-  bill: 'bg-warning/20 text-warning-ink',
-}
-
 /** Per-state surface for the FLOOR plan. Tokens only — a restaurant floor on a bright
     screen still has to read, and a hex here would not follow the theme. */
 const TILE: Record<TableState, string> = {
@@ -706,26 +690,22 @@ function HeroTile({
 }
 
 /**
- * One table, as a card.
+ * One open tab, as a card.
  *
- * ── WHY A CARD AND NOT THE OLD 132px TILE ─────────────────────────────────
- *
- * The tile fitted a code and a total and nothing else, so a waiter scanning for their
- * table read a grid of numbers and had to open one to find out whose it was. The card
- * carries the same four facts a waiter actually asks for — which table, is it waiting,
- * how big is the bill, how long have they been sat — in a shape that has room for
- * them, at the price of fewer tables per screen. "Show the running total" buys that
- * back on a till that would rather see more of the floor.
+ * Carries the four facts a waiter actually asks for — which table, whose it is, how
+ * much is on it, and how long it has been running — in a shape that has room for
+ * them, at the price of fewer tabs per screen. "Hide total" buys that back on a till
+ * that would rather see more of the floor.
  */
-function TableCard({
-  table,
+function TabCard({
+  tab,
   busy,
   showTotal,
   dense,
   minHeight,
   onPick,
 }: {
-  table: PosTable
+  tab: OpenTab
   busy: boolean
   showTotal: boolean
   /** At 7 across the roomy type stops fitting — step every size down one. */
@@ -734,32 +714,29 @@ function TableCard({
   minHeight: string
   onPick: () => void
 }) {
-  const free = table.state === 'free'
-
   return (
     <button
       type="button"
       data-kit-ok
+      data-tab-label={tab.label}
       disabled={busy}
       onClick={onPick}
       style={{ minHeight }}
-      className={`group flex flex-col rounded-card border ${
+      className={`group flex flex-col rounded-card border border-border bg-surface ${
         dense ? 'p-3.5' : 'p-5'
-      } text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
-        CARD[table.state]
-      }`}
+      } text-left shadow-card transition hover:border-brand/50 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50`}
     >
-      {/* Header: the table's code, and its status pill. The pill sits BESIDE the
-          code while there is room and WRAPS BELOW it when there isn't (flex-wrap
-          plus a minimum width on the code block) — at 7 across the two cannot
-          share a line, and it is the number the waiter came to read, so the
-          number keeps the line and the pill takes the next one. */}
+      {/* Header: the label, and its status pill. The pill sits BESIDE the label
+          while there is room and WRAPS BELOW it when there isn't (flex-wrap plus
+          a minimum width on the label block) — at 7 across the two cannot share a
+          line, and it is the number the waiter came to read, so the number keeps
+          the line and the pill takes the next one. */}
       <span className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
         <span className="flex min-w-[6.5rem] flex-1 items-center gap-2.5">
           <span
             className={`flex ${
               dense ? 'h-8 w-8' : 'h-9 w-9'
-            } shrink-0 items-center justify-center rounded-card ${DISC[table.state]}`}
+            } shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand`}
           >
             <Icons.LayoutGrid size={dense ? 16 : 18} />
           </span>
@@ -768,38 +745,37 @@ function TableCard({
               dense ? 'text-[16px]' : 'text-[19px]'
             } font-bold text-ink`}
           >
-            {table.code}
+            {tab.label}
           </b>
         </span>
 
-        {/* One pill, and only where it MEANS something. A "free" badge on every empty
-            table is a row of labels saying nothing; the bill-asked one is the whole
-            reason a waiter is looking at this screen. */}
-        {table.state === 'bill' ? (
-          <Badge tone="warning">Bill asked</Badge>
-        ) : !free ? (
-          <Badge tone="success">In progress</Badge>
-        ) : null}
+        <Badge tone="success">In progress</Badge>
       </span>
 
-      {/* The line under the number: what the table IS when free, what is on it when
-          not. Both are what a waiter reads next after the number itself. */}
+      {/* Who the tab is for. A waiter looks for the guest as often as for the
+          number, so it gets its own line — right under the label, in the
+          customer's own words. Omitted when the customer IS the label. */}
+      {tab.customerName && (
+        <span
+          className={`${
+            dense ? 'mt-1.5 text-[12px]' : 'mt-2 text-[13.5px]'
+          } truncate font-medium text-ink`}
+        >
+          {tab.customerName}
+        </span>
+      )}
+
       <span
-        className={`${
-          dense ? 'mt-2 text-[11.5px]' : 'mt-3 text-[13px]'
-        } truncate text-muted`}
+        className={`${dense ? 'mt-2 text-[11.5px]' : 'mt-3 text-[13px]'} truncate text-muted`}
       >
-        {free
-          ? [table.name, table.seats > 0 ? `${table.seats} seats` : '']
-              .filter(Boolean)
-              .join(' · ') || 'Free'
-          : [
-              `${table.lineCount} item${table.lineCount === 1 ? '' : 's'}`,
-              table.openedAt ? sinceLabel(table.openedAt) : '',
-              table.visitTypeName ?? '',
-            ]
-              .filter(Boolean)
-              .join(' · ')}
+        {[
+          `${tab.lineCount} item${tab.lineCount === 1 ? '' : 's'}`,
+          sinceLabel(tab.updatedAt),
+          tab.personCount ? `${tab.personCount} pax` : '',
+          tab.visitTypeName ?? '',
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       </span>
 
       {showTotal && (
@@ -808,13 +784,13 @@ function TableCard({
           <span className={`${dense ? 'my-2' : 'my-3'} h-px w-full bg-border`} aria-hidden />
           <span className="mt-auto flex items-end justify-between gap-2">
             <span className="flex min-w-0 flex-col">
-              <span className="text-[12px] text-muted">{free ? '' : 'Total'}</span>
+              <span className="text-[12px] text-muted">Total</span>
               <span
                 className={`numeric truncate ${
                   dense ? 'text-[17px]' : 'text-[22px]'
                 } font-bold text-ink`}
               >
-                {free ? '' : formatMoney(table.totalIncl)}
+                {formatMoney(tab.totalIncl)}
               </span>
             </span>
             <span
@@ -832,7 +808,7 @@ function TableCard({
 }
 
 /**
- * "12m", "1h 20m" — how long they have been sat.
+ * "12m", "1h 20m" — how long the tab has been running.
  *
  * Relative and short because it is read at a glance on a tile, and because the exact
  * time they sat down is not a thing a waiter needs. Coarse past an hour: the difference
