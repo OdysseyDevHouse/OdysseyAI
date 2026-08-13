@@ -60,7 +60,13 @@ export function QuickKeyPanel({
   /* Hidden keys are filtered HERE rather than in the query, so the same list serves the
      designer — which must show a hidden key in order to un-hide it. */
   const visible = (rows: QuickKeyRow[]) => rows.filter((k) => !k.isHidden)
-  const shown = openGroup ? visible(groupMembers(keys, openGroup.id)) : visible(topLevelKeys(keys))
+  /* A folder with nothing visible inside is a dead end — a tile whose tap can only
+     show an empty screen — so the TILL drops it. The designer keeps rendering it,
+     because an empty folder has to be visible somewhere to get filled. */
+  const topShown = visible(topLevelKeys(keys)).filter(
+    (k) => k.kind !== 'group' || visible(groupMembers(keys, k.id)).length > 0,
+  )
+  const shown = openGroup ? visible(groupMembers(keys, openGroup.id)) : topShown
 
   const labelFor = (key: QuickKeyRow) =>
     quickKeyLabel(
@@ -72,7 +78,10 @@ export function QuickKeyPanel({
           : null,
     )
 
-  if (keys.length === 0) {
+  /* Covers both "none configured" and "everything configured is hidden or an
+     empty folder" — to a cashier those are the same screen, and the second one
+     rendering a bare eyebrow label over nothing would read as a broken till. */
+  if (!openGroup && topShown.length === 0) {
     return (
       <EmptyState
         icon={<Icons.Sparkles size={28} />}

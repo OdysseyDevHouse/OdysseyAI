@@ -1708,6 +1708,9 @@ export default function PosShell({
   return (
     <TileSizeContext.Provider value={tileSize.size}>
       <TillStatusBar
+        /* The bar names the SCREEN under it. On the gate that is the floor, and
+           there is no basket to count — so no item pill either. */
+        screenTitle={choosingTable ? 'Tables' : 'Current Sale'}
         operatorName={operatorName}
         terminalLabel={
           terminal
@@ -1722,7 +1725,7 @@ export default function PosShell({
         pendingSales={till.pending}
         failedSales={till.failed}
         catalogAgeHours={till.catalogAgeHours}
-        itemCount={state.lines.length}
+        itemCount={choosingTable ? null : state.lines.length}
         onShowOutbox={() => setShowingOutbox(true)}
         /*
          * WHICH BILL IS ON SCREEN — and nothing at all when that question has no

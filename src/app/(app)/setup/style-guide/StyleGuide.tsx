@@ -280,6 +280,17 @@ function FormSection() {
         <Field label="Error state" error="Enter a valid email address.">
           <Input defaultValue="bad@" invalid />
         </Field>
+        <Field
+          label="Quiet focus, at till size"
+          hint="quietFocus + size=&quot;touch&quot; — for the scan box that HOLDS focus all shift; click in to compare"
+        >
+          <Input
+            placeholder="Scan or search products"
+            icon={<Icons.Search size={18} />}
+            size="touch"
+            quietFocus
+          />
+        </Field>
         <Field label="Textarea" className="md:col-span-2">
           <Textarea placeholder="Notes..." />
         </Field>

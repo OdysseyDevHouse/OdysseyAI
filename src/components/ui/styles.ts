@@ -245,6 +245,16 @@ export const CONTROL_INVALID =
   'focus:shadow-[inset_0_0_0_1px_var(--color-danger)]'
 
 /**
+ * Applied on top of CONTROL for a field that HOLDS focus by design — the till's
+ * scan box, which is re-focused after every add so a scanner gun always lands in
+ * it. The standard focus edge is maximum emphasis, and a field wearing it all
+ * shift long is the loudest thing on the screen forever. This trades the 2px
+ * brand edge for a calm half-strength 1px line: still visibly "scans land here",
+ * no longer shouting over the basket and the Pay key.
+ */
+export const CONTROL_QUIET_FOCUS = 'focus:shadow-none focus:border-brand/50'
+
+/**
  * How wide an editing screen is allowed to get.
  *
  * Capped rather than full-bleed: the pricing tables are wide, but past about

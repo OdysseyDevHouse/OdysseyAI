@@ -15,6 +15,7 @@ import { Icons } from '@/components/ui'
  * even when nothing is wrong.
  */
 export function TillStatusBar({
+  screenTitle,
   operatorName,
   terminalLabel,
   unclaimed,
@@ -29,6 +30,12 @@ export function TillStatusBar({
   onChangeTable,
   onExit,
 }: {
+  /**
+   * What the screen under this bar IS — "Tables" on the gate, "Current Sale" on
+   * the till. One hardcoded title meant the gate opened under a heading about a
+   * sale that did not exist yet.
+   */
+  screenTitle: string
   operatorName: string
   /** The till's code and number, or null when this machine has claimed none. */
   terminalLabel: string | null
@@ -70,7 +77,9 @@ export function TillStatusBar({
   failedSales: number
   /** Hours since the catalog last refreshed, or null if it never has. */
   catalogAgeHours: number | null
-  itemCount: number
+  /** How many lines the basket holds — or null where there IS no basket (the
+   *  gate), which hides the pill rather than counting a sale that does not exist. */
+  itemCount: number | null
   /** Opens the outbox — the answer to the question the queue chip poses. */
   onShowOutbox: () => void
   /**
@@ -97,15 +106,17 @@ export function TillStatusBar({
      whole layout is three floating cards. */
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-2.5 px-4 pb-3 pt-4">
-      {/* WHAT THIS SCREEN IS, then what is on it. "Current Sale" rather than the
-          shop's name: the cashier knows which shop they are standing in, and the
-          one thing the top-left of a till should answer is "what am I looking
+      {/* WHAT THIS SCREEN IS, then what is on it. The screen's own name rather
+          than the shop's: the cashier knows which shop they are standing in, and
+          the one thing the top-left of a till should answer is "what am I looking
           at". The count rides beside it as a pill because it changes constantly
           and a number that moves inside a heading makes the heading twitch. */}
-      <h1 className="text-[20px] font-extrabold leading-none text-ink">Current Sale</h1>
-      <span className="rounded-control bg-surface-2 px-2.5 py-1.5 text-[12.5px] font-semibold leading-none text-muted">
-        {itemCount === 0 ? '0 items' : `${itemCount} item${itemCount === 1 ? '' : 's'}`}
-      </span>
+      <h1 className="text-[20px] font-extrabold leading-none text-ink">{screenTitle}</h1>
+      {itemCount !== null && (
+        <span className="rounded-control bg-surface-2 px-2.5 py-1.5 text-[12.5px] font-semibold leading-none text-muted">
+          {itemCount === 0 ? '0 items' : `${itemCount} item${itemCount === 1 ? '' : 's'}`}
+        </span>
+      )}
 
       <div className="ml-auto flex flex-wrap items-center gap-2.5">
         {/* First in the row, because it answers "which bill am I on" — the question a

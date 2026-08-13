@@ -9,7 +9,13 @@ import {
   type ReactNode,
 } from 'react'
 import { ChevronDown } from './icons'
-import { CONTROL, CONTROL_H, CONTROL_H_TOUCH, CONTROL_INVALID as INVALID } from './styles'
+import {
+  CONTROL,
+  CONTROL_H,
+  CONTROL_H_TOUCH,
+  CONTROL_INVALID as INVALID,
+  CONTROL_QUIET_FOCUS,
+} from './styles'
 
 /**
  * Form controls — inputs, selects, switches, checkboxes, radios.
@@ -105,10 +111,24 @@ type InputProps = Omit<ComponentProps<'input'>, 'className' | 'size'> & {
   icon?: ReactNode
   invalid?: boolean
   size?: ControlSize
+  /**
+   * For the rare field that HOLDS focus by design (the till's scan box): a calm
+   * 1px half-strength focus line instead of the full 2px brand edge, which would
+   * otherwise glow all shift long. Never removes the indication entirely.
+   */
+  quietFocus?: boolean
   className?: string
 }
 
-export function Input({ icon, invalid, size = 'md', className = '', id, ...rest }: InputProps) {
+export function Input({
+  icon,
+  invalid,
+  size = 'md',
+  quietFocus = false,
+  className = '',
+  id,
+  ...rest
+}: InputProps) {
   const wiring = useFieldWiring(id, invalid)
 
   /*
@@ -142,7 +162,7 @@ export function Input({ icon, invalid, size = 'md', className = '', id, ...rest 
         /* The glyph is inset further at till size so it clears the wider box
            without crowding the text. */
         icon ? (size === 'touch' ? 'pl-11' : 'pl-9') : ''
-      } ${wiring.invalid ? INVALID : ''} ${icon ? 'w-full' : outer} ${inner}`}
+      } ${wiring.invalid ? INVALID : quietFocus ? CONTROL_QUIET_FOCUS : ''} ${icon ? 'w-full' : outer} ${inner}`}
       {...rest}
     />
   )

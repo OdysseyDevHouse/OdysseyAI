@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Badge,
   Button,
+  CategoryTile,
   EmptyState,
   Icons,
   Menu,
@@ -11,6 +12,7 @@ import {
   Select,
   Switch,
   ToolbarSearch,
+  toneForId,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { OpenTab } from './actions'
@@ -214,6 +216,20 @@ export function TableGate({
       ),
     )
   }, [tabs, query])
+
+  /* ── Which configured table carries each bill ─────────────────────────────
+     A tab and a table meet on sales_documents.id: `PosTable.documentId` points at
+     the same row `OpenTab.documentId` is. That is what lets the LIST view show
+     the floor view's bill-asked state — the one state a waiter must not miss —
+     without a second query. A counter basket parked into the tab list, or a tab
+     on a deactivated table, simply has no match and falls back to elapsed time. */
+  const tableStateByDoc = useMemo(() => {
+    const map = new Map<number, TableState>()
+    for (const t of tables) {
+      if (t.documentId !== null) map.set(t.documentId, t.state)
+    }
+    return map
+  }, [tables])
 
   /* A tab with no visit type answers to the DEFAULT one. Nothing back-fills the
      column, and a quick sale never picks one — so filing them under "none" would
@@ -444,6 +460,7 @@ export function TableGate({
                 tone="success"
                 icon={<Icons.Zap size={dense ? 20 : 24} />}
                 label="Quick sale"
+                subtitle="Counter or takeaway — no table"
                 minHeight={tileMinH}
                 dense={dense}
                 disabled={busy}
@@ -453,6 +470,7 @@ export function TableGate({
                 tone="brand"
                 icon={<Icons.Plus size={dense ? 20 : 24} />}
                 label="Open new table"
+                subtitle="Seat guests and start a tab"
                 minHeight={tileMinH}
                 dense={dense}
                 disabled={busy}
@@ -482,6 +500,7 @@ export function TableGate({
                   <TabCard
                     key={tab.documentId}
                     tab={tab}
+                    tableState={tableStateByDoc.get(tab.documentId) ?? null}
                     busy={busy}
                     showTotal={showTotals}
                     dense={dense}
@@ -645,6 +664,7 @@ function HeroTile({
   tone,
   icon,
   label,
+  subtitle,
   dense,
   minHeight,
   disabled,
@@ -653,6 +673,9 @@ function HeroTile({
   tone: 'success' | 'brand'
   icon: ReactNode
   label: string
+  /** One muted line saying what the key does — the difference between the two
+   *  openers, taught on the tile instead of on a training day. */
+  subtitle?: string
   /** At 7 across the roomy type stops fitting — step the icon and label down. */
   dense: boolean
   /** Matches the table cards beside it, so the row is flush. */
@@ -684,7 +707,14 @@ function HeroTile({
       >
         {icon}
       </span>
-      <span className={`${dense ? 'text-[14px]' : 'text-[16px]'} font-bold`}>{label}</span>
+      <span className="flex flex-col gap-1">
+        <span className={`${dense ? 'text-[14px]' : 'text-[16px]'} font-bold`}>{label}</span>
+        {/* Dropped when dense — at 7 across the tile has no room for a sentence,
+            and the label alone is what a practised hand needs anyway. */}
+        {subtitle && !dense && (
+          <span className="text-[12.5px] font-medium text-muted">{subtitle}</span>
+        )}
+      </span>
     </button>
   )
 }
@@ -699,6 +729,7 @@ function HeroTile({
  */
 function TabCard({
   tab,
+  tableState,
   busy,
   showTotal,
   dense,
@@ -706,6 +737,8 @@ function TabCard({
   onPick,
 }: {
   tab: OpenTab
+  /** The matched table's floor state, or null when no configured table holds this bill. */
+  tableState: TableState | null
   busy: boolean
   showTotal: boolean
   /** At 7 across the roomy type stops fitting — step every size down one. */
@@ -714,6 +747,12 @@ function TabCard({
   minHeight: string
   onPick: () => void
 }) {
+  const billAsked = tableState === 'bill'
+  const mins = minutesSince(tab.updatedAt)
+  /* Untouched too long is worth a colour, but only bill-asked earns the dot: one
+     is "worth a look", the other is "somebody is waiting to pay". */
+  const stale = mins !== null && mins >= STALE_AFTER_MIN
+
   return (
     <button
       type="button"
@@ -722,9 +761,13 @@ function TabCard({
       disabled={busy}
       onClick={onPick}
       style={{ minHeight }}
-      className={`group flex flex-col rounded-card border border-border bg-surface ${
+      className={`group flex flex-col rounded-card border ${
+        /* The same amber the floor view paints a bill-asked tile — the two views
+           must say "waiting to pay" in one colour, whichever one is open. */
+        billAsked ? 'border-warning/60 hover:border-warning' : 'border-border hover:border-brand/50'
+      } bg-surface ${
         dense ? 'p-3.5' : 'p-5'
-      } text-left shadow-card transition hover:border-brand/50 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50`}
+      } text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50`}
     >
       {/* Header: the label, and its status pill. The pill sits BESIDE the label
           while there is room and WRAPS BELOW it when there isn't (flex-wrap plus
@@ -733,13 +776,15 @@ function TabCard({
           the line and the pill takes the next one. */}
       <span className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
         <span className="flex min-w-[6.5rem] flex-1 items-center gap-2.5">
-          <span
-            className={`flex ${
-              dense ? 'h-8 w-8' : 'h-9 w-9'
-            } shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand`}
-          >
-            <Icons.LayoutGrid size={dense ? 16 : 18} />
-          </span>
+          {/* The card's identity: its own colour and its own code, so a waiter
+              finds "111" by shape on a full floor rather than by reading every
+              label. Tone comes from the LABEL, not the document — the document
+              is new every visit, and table 111 must stay the same colour. */}
+          <CategoryTile
+            tone={toneForLabel(tab.label)}
+            size={dense ? 'sm' : 'md'}
+            icon={<span className="text-[11px] font-bold tracking-wide">{shortLabel(tab.label)}</span>}
+          />
           <b
             className={`min-w-0 flex-1 truncate ${
               dense ? 'text-[16px]' : 'text-[19px]'
@@ -749,7 +794,15 @@ function TabCard({
           </b>
         </span>
 
-        <Badge tone="success">In progress</Badge>
+        {/* The pill carries the one fact that VARIES. "In progress" on every card
+            said nothing — every tab on this screen is in progress. */}
+        {billAsked ? (
+          <Badge tone="warning" dot>
+            Bill asked
+          </Badge>
+        ) : (
+          <Badge tone={stale ? 'warning' : 'neutral'}>{sinceLabel(tab.updatedAt) || 'Open'}</Badge>
+        )}
       </span>
 
       {/* Who the tab is for. A waiter looks for the guest as often as for the
@@ -768,9 +821,10 @@ function TabCard({
       <span
         className={`${dense ? 'mt-2 text-[11.5px]' : 'mt-3 text-[13px]'} truncate text-muted`}
       >
+        {/* No time here — the status pill above already carries it, and the same
+            fact twice on one card is the card teaching people not to read it. */}
         {[
           `${tab.lineCount} item${tab.lineCount === 1 ? '' : 's'}`,
-          sinceLabel(tab.updatedAt),
           tab.personCount ? `${tab.personCount} pax` : '',
           tab.visitTypeName ?? '',
         ]
@@ -807,6 +861,17 @@ function TabCard({
   )
 }
 
+/** Untouched this long, a tab's time pill turns amber. About two drink rounds —
+ *  long enough that a table nobody has rung anything up for is worth a look. */
+const STALE_AFTER_MIN = 45
+
+/** Whole minutes since `at`, or null when the date cannot be read. */
+function minutesSince(at: Date | string): number | null {
+  const then = typeof at === 'string' ? Date.parse(at) : at.getTime()
+  if (!Number.isFinite(then)) return null
+  return Math.max(0, Math.floor((Date.now() - then) / 60_000))
+}
+
 /**
  * "12m", "1h 20m" — how long the tab has been running.
  *
@@ -816,9 +881,37 @@ function TabCard({
  * wrapping.
  */
 function sinceLabel(at: Date | string): string {
-  const then = typeof at === 'string' ? Date.parse(at) : at.getTime()
-  if (!Number.isFinite(then)) return ''
-  const mins = Math.max(0, Math.floor((Date.now() - then) / 60_000))
+  const mins = minutesSince(at)
+  if (mins === null) return ''
   if (mins < 60) return `${mins}m`
   return `${Math.floor(mins / 60)}h ${mins % 60}m`
+}
+
+/**
+ * What the identity disc shows: "111" stays "111", "Walk-in Bar" becomes "WB".
+ *
+ * A short numeric label IS the identity a waiter knows, so it survives whole;
+ * anything wordier collapses to two initials the way the operator chip does.
+ */
+function shortLabel(label: string): string {
+  const trimmed = label.trim()
+  if (trimmed.length === 0) return '?'
+  if (/^\d{1,4}$/.test(trimmed)) return trimmed
+  const parts = trimmed.split(/\s+/).filter(Boolean)
+  const first = parts[0][0] ?? '?'
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : (parts[0][1] ?? '')
+  return (first + last).toUpperCase()
+}
+
+/**
+ * A stable tone per LABEL, not per document id.
+ *
+ * Each visit to table "111" is a new sales document, so hashing the id would
+ * repaint the table every service. The label is what stays the same, so it is
+ * what the colour hangs off.
+ */
+function toneForLabel(label: string) {
+  let hash = 0
+  for (const ch of label.trim().toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) | 0
+  return toneForId(hash)
 }

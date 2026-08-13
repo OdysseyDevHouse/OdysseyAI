@@ -115,6 +115,10 @@ export function CatalogPane({
           ref={inputRef}
           size="touch"
           className="flex-1"
+          /* This field HOLDS focus by design (see the effect above), so the
+             standard focus edge would glow all shift long — the quiet line keeps
+             "scans land here" visible without out-shouting the basket. */
+          quietFocus
           icon={<Icons.Search size={18} />}
           placeholder="Scan or search products"
           value={query}
