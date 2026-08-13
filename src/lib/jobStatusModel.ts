@@ -672,3 +672,283 @@ export function validateJobCardFields(input: {
 
   return null
 }
+
+/* ── SLA: TRADING HOURS AND THE TWO CLOCKS ────────────────────────────────
+ *
+ * An SLA says "respond within 4 hours". A job logged Friday at 16:00 by a shop
+ * trading 08:00-17:00 is due MONDAY at 11:00, not Friday at 20:00: one hour of
+ * Friday plus three of Monday.
+ *
+ * WHY BUSINESS HOURS AND NOT WALL CLOCK. A calendar clock makes every job logged
+ * after Friday lunch a breach by Monday morning. The breach list then fills with
+ * jobs nobody could have done anything about, and a worklist that cries wolf is a
+ * worklist people stop opening — the same argument the appointment overlap check
+ * makes about back-to-back bookings.
+ *
+ * The cost of the choice, stated plainly: the due time is no longer obvious from
+ * the logged time. Somebody has to be able to see WHY Monday 11:00, which is why
+ * the screen shows the target and the elapsed business minutes rather than only a
+ * red badge.
+ *
+ * EVERYTHING HERE IS IN UTC MILLIS. Stored DATETIMEs are read with storedMillis()
+ * and the pool runs at 'Z', so a "wall clock" here means the UTC field values of
+ * that instant. Using getHours() would shift every SLA by two hours on a South
+ * African machine and by a different amount in every other timezone — the exact
+ * bug that made the schedule draw every block at the right edge.
+ */
+
+const MS_PER_MIN = 60_000
+const MINS_PER_DAY = 1440
+
+/**
+ * When the business is open, as a week.
+ *
+ * `days` is a 7-character Mon..Sun mask, the shape `report_schedules.days_of_week`
+ * and `specials.days_of_week` already use — one mask, one validator, and a reader
+ * who has seen it once recognises it here.
+ *
+ * `opensAt`/`closesAt` are minutes from midnight rather than HH:MM strings: the
+ * arithmetic below needs numbers, and converting at every comparison is how one
+ * of them ends up forgotten.
+ */
+export type TradingHours = {
+  /** Mon..Sun, '1' = open. '1111100' is weekdays. */
+  days: string
+  /** Minutes from midnight. 480 = 08:00. */
+  opensAt: number
+  /** Minutes from midnight. 1020 = 17:00. */
+  closesAt: number
+  /** Dates the business is shut regardless of the mask, as YYYY-MM-DD. */
+  holidays: ReadonlySet<string>
+}
+
+export const DEFAULT_TRADING_HOURS: TradingHours = {
+  days: '1111100',
+  opensAt: 8 * 60,
+  closesAt: 17 * 60,
+  holidays: new Set(),
+}
+
+/** HH:MM to minutes from midnight. Returns null on anything malformed. */
+export function parseClock(text: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(text.trim())
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h > 23 || min > 59) return null
+  return h * 60 + min
+}
+
+/** Minutes from midnight back to HH:MM, for display and for storing. */
+export function formatClock(minutes: number): string {
+  const m = ((Math.round(minutes) % MINS_PER_DAY) + MINS_PER_DAY) % MINS_PER_DAY
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
+/**
+ * The UTC day-of-week as a Mon..Sun index, which is what the mask is indexed by.
+ *
+ * getUTCDay() is Sunday-first (0=Sun). Every mask in this codebase is Monday-
+ * first, so this is the one place the two conventions meet.
+ */
+function maskIndex(at: Date): number {
+  return (at.getUTCDay() + 6) % 7
+}
+
+/** YYYY-MM-DD of the UTC date. Deliberately not localDay() — see the header. */
+export function utcDay(at: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`
+}
+
+/** Is the business open on the day this instant falls in? */
+export function isTradingDay(at: Date, hours: TradingHours): boolean {
+  if (hours.holidays.has(utcDay(at))) return false
+  return hours.days[maskIndex(at)] === '1'
+}
+
+/** Midnight UTC of the day this instant falls in, as millis. */
+function startOfUtcDay(ms: number): number {
+  const d = new Date(ms)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+}
+
+/**
+ * A guard on the trading week, used by every function below.
+ *
+ * A week with no open day, or a close time at or before the open time, would make
+ * the loops below run forever looking for a minute that does not exist. Callers
+ * get a null due date instead, which the screens already render as "no target" —
+ * refusing to compute beats spinning.
+ */
+export function tradingWeekIsUsable(hours: TradingHours): boolean {
+  if (hours.closesAt <= hours.opensAt) return false
+  return hours.days.includes('1')
+}
+
+/**
+ * Business minutes elapsed between two instants.
+ *
+ * Walks day by day and clips each to the trading window. A day loop rather than
+ * a minute loop, so a six-month-old job costs ~180 iterations and not 260,000.
+ */
+export function businessMinutesBetween(
+  fromMs: number,
+  toMs: number,
+  hours: TradingHours = DEFAULT_TRADING_HOURS,
+): number {
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return 0
+  if (toMs <= fromMs) return 0
+  if (!tradingWeekIsUsable(hours)) return 0
+
+  let total = 0
+  for (let day = startOfUtcDay(fromMs); day <= toMs; day += MINS_PER_DAY * MS_PER_MIN) {
+    const at = new Date(day)
+    if (!isTradingDay(at, hours)) continue
+
+    const openMs = day + hours.opensAt * MS_PER_MIN
+    const closeMs = day + hours.closesAt * MS_PER_MIN
+
+    // The part of this day's window that also lies inside [from, to].
+    const start = Math.max(openMs, fromMs)
+    const end = Math.min(closeMs, toMs)
+    if (end > start) total += (end - start) / MS_PER_MIN
+  }
+  return Math.round(total * 100) / 100
+}
+
+/**
+ * Add business minutes to an instant, returning the deadline.
+ *
+ * A job logged outside the window starts its clock at the next opening — a job
+ * logged at 02:00 is not already an hour into its four, and treating it as such
+ * would breach jobs that arrived overnight before anybody could read them.
+ */
+export function addBusinessMinutes(
+  fromMs: number,
+  minutes: number,
+  hours: TradingHours = DEFAULT_TRADING_HOURS,
+): number | null {
+  if (!Number.isFinite(fromMs)) return null
+  if (!Number.isFinite(minutes) || minutes < 0) return null
+  if (!tradingWeekIsUsable(hours)) return null
+
+  let remaining = minutes
+  let day = startOfUtcDay(fromMs)
+
+  /*
+   * 400 days, not `while (true)`. A trading week can be legal and still never
+   * reach the target — a mask with one open day and a holiday list covering that
+   * weekday for a year — and an unbounded loop in a page render is a hung
+   * request. Returning null means "no target", which every reader already handles.
+   */
+  for (let guard = 0; guard < 400; guard++, day += MINS_PER_DAY * MS_PER_MIN) {
+    const at = new Date(day)
+    if (!isTradingDay(at, hours)) continue
+
+    const openMs = day + hours.opensAt * MS_PER_MIN
+    const closeMs = day + hours.closesAt * MS_PER_MIN
+
+    // Where the clock starts today: the later of opening and the job's own start.
+    const start = Math.max(openMs, fromMs)
+    if (start >= closeMs) continue
+
+    const availableMins = (closeMs - start) / MS_PER_MIN
+    if (remaining <= availableMins) return start + remaining * MS_PER_MIN
+    remaining -= availableMins
+  }
+  return null
+}
+
+/**
+ * Where a job stands against a target.
+ *
+ * `met` is a THIRD state, not "not breached": a job responded to inside its
+ * target is settled, and showing it in a worklist beside jobs still counting down
+ * is how the list stops being actionable.
+ */
+export type SlaState = 'none' | 'met' | 'due' | 'breached'
+
+export const SLA_STATE_LABEL: Record<SlaState, string> = {
+  none: 'No target',
+  met: 'Met',
+  due: 'Counting down',
+  breached: 'Breached',
+}
+
+export const SLA_STATE_TONE: Record<SlaState, JobStatusTone> = {
+  none: 'neutral',
+  met: 'success',
+  due: 'brand',
+  breached: 'danger',
+}
+
+/**
+ * Derived on read, never stored.
+ *
+ * A stored breach flag is wrong the minute after it is written and needs a cron
+ * to stay true; the same argument `isClosed()` makes about open/closed. The
+ * `satisfiedAtMs` argument is when the thing the target measures actually
+ * happened — first response, or closure — and NaN means it has not happened yet.
+ */
+export function slaState(dueAtMs: number, satisfiedAtMs: number, nowMs: number): SlaState {
+  if (!Number.isFinite(dueAtMs)) return 'none'
+  if (Number.isFinite(satisfiedAtMs)) return satisfiedAtMs <= dueAtMs ? 'met' : 'breached'
+  return nowMs > dueAtMs ? 'breached' : 'due'
+}
+
+/**
+ * Business minutes left, or overdue by. Negative means late.
+ *
+ * Reported in business minutes rather than wall-clock ones so it agrees with the
+ * clock that set the deadline: "2 hours left" on a Friday afternoon must not mean
+ * two hours that include Saturday.
+ */
+export function minutesUntilDue(
+  dueAtMs: number,
+  nowMs: number,
+  hours: TradingHours = DEFAULT_TRADING_HOURS,
+): number | null {
+  if (!Number.isFinite(dueAtMs)) return null
+  if (nowMs <= dueAtMs) return businessMinutesBetween(nowMs, dueAtMs, hours)
+  return -businessMinutesBetween(dueAtMs, nowMs, hours)
+}
+
+/** "3h 20m", "45m", "2 days 1h" — a duration a person reads, not 200 minutes. */
+export function formatBusinessMinutes(minutes: number, hoursPerDay: number): string {
+  const abs = Math.abs(Math.round(minutes))
+  if (abs < 60) return `${abs}m`
+
+  const perDay = hoursPerDay > 0 ? hoursPerDay * 60 : MINS_PER_DAY
+  if (abs < perDay) {
+    const h = Math.floor(abs / 60)
+    const m = abs % 60
+    return m === 0 ? `${h}h` : `${h}h ${m}m`
+  }
+  const days = Math.floor(abs / perDay)
+  const h = Math.round((abs - days * perDay) / 60)
+  const dayPart = `${days} ${days === 1 ? 'day' : 'days'}`
+  return h === 0 ? dayPart : `${dayPart} ${h}h`
+}
+
+/** Is this mask well-formed? Seven characters, each '0' or '1'. */
+export function isDayMask(value: string): boolean {
+  return /^[01]{7}$/.test(value)
+}
+
+export const DAY_MASK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const
+
+/** 'Mon-Fri', 'Mon, Wed, Fri', 'Every day' — the mask as a sentence. */
+export function describeDayMask(mask: string): string {
+  if (!isDayMask(mask)) return 'Not set'
+  const open = [...mask].map((c, i) => (c === '1' ? i : -1)).filter((i) => i >= 0)
+  if (open.length === 0) return 'Never'
+  if (open.length === 7) return 'Every day'
+
+  // A single unbroken run reads as a range; anything else lists the days.
+  const contiguous = open.every((d, i) => i === 0 || d === open[i - 1] + 1)
+  if (contiguous && open.length > 2) {
+    return `${DAY_MASK_LABELS[open[0]]}-${DAY_MASK_LABELS[open[open.length - 1]]}`
+  }
+  return open.map((d) => DAY_MASK_LABELS[d]).join(', ')
+}

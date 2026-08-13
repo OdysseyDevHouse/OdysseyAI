@@ -2594,6 +2594,801 @@ const PRODUCT_SUPPLIERS_SOURCE: CatalogSource = {
   ],
 }
 
+/* ── job cards ─────────────────────────────────────────────────────────────── */
+
+/**
+ * TWO SOURCES, NOT ONE, for the reason sales and sale lines are two.
+ *
+ * A job is one row with one customer and one status; a job LINE is a part or an
+ * hour. Asking "how many urgent jobs did we close last month" against the lines
+ * counts every job once per line, and asking "what did we spend on parts" against
+ * the jobs cannot see a part at all. One source cannot answer both without every
+ * count silently meaning something different depending on which fields were
+ * picked.
+ *
+ * WHY REVENUE IS NOT A FIELD ON EITHER
+ *
+ * Because it does not live here. A job line carries `unit_price_incl`, which is an
+ * INTENTION; what the customer owes is on the invoice after documentMath has
+ * applied its discounts and VAT. A revenue column read off the line would agree
+ * with itself and disagree with the sales report, and the sales report is right.
+ * `invoicedQty` and the invoice id are offered instead, so a report can join the
+ * thread back to the paper.
+ */
+
+const JOB_STATUS_JOIN: JoinUnit = {
+  name: 'jobStatus',
+  sql: 'LEFT JOIN job_statuses js ON js.id = t.status_id',
+}
+
+const JOB_SLA_JOIN: JoinUnit = {
+  name: 'jobSla',
+  sql: 'LEFT JOIN job_sla_policies jsp ON jsp.id = t.sla_policy_id',
+}
+
+const JOB_ADDRESS_JOIN: JoinUnit = {
+  name: 'jobAddress',
+  sql: 'LEFT JOIN service_addresses jsa ON jsa.id = t.service_address_id',
+}
+
+const JOB_CARDS_SOURCE: CatalogSource = {
+  key: 'jobCards',
+  label: 'Job cards',
+  description: 'Every job — who it was for, what stage it reached, and how long it took.',
+  category: 'Operations',
+  permission: 'jobs.view',
+  shape: 'timeline',
+  table: 'job_cards',
+  dateColumn: 'reported_at',
+  /*
+   * CUSTOMER_REP_JOIN is here because CUSTOMER_LOOKUP_FIELDS includes accountRep,
+   * whose `needs` names it. A spread field set brings its join requirements with
+   * it, and omitting one fails only when somebody picks that single column —
+   * which no template does, so it would have shipped broken.
+   */
+  joins: [
+    JOB_STATUS_JOIN,
+    JOB_SLA_JOIN,
+    JOB_ADDRESS_JOIN,
+    CUSTOMER_JOIN,
+    CUSTOMER_GROUP_JOIN,
+    CUSTOMER_REP_JOIN,
+  ],
+  fields: [
+    {
+      // 'document' rather than 'text': it renders as the link back to the record.
+      key: 'documentNumber',
+      label: 'Job number',
+      type: 'document',
+      expr: 't.document_number',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'title',
+      label: 'What it is',
+      type: 'text',
+      expr: 't.title',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'customerPhone',
+      label: 'Customer phone',
+      type: 'text',
+      expr: 't.customer_phone',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'customerName',
+      label: 'Customer',
+      type: 'text',
+      expr: 't.customer_name',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The name as it was when the job was logged. Empty for a walk-in.',
+    },
+    {
+      key: 'statusName',
+      label: 'Stage',
+      type: 'text',
+      expr: 'js.name',
+      needs: ['jobStatus'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'This shop can rename its stages, so this is whatever it calls them.',
+    },
+    enumField(
+      'lifecycle',
+      'Open or closed',
+      't.status',
+      ['open', 'closed', 'cancelled'],
+      { starter: true },
+    ),
+    enumField('priority', 'Priority', 't.priority', ['low', 'normal', 'high', 'urgent'], {
+      starter: true,
+    }),
+    // All eight values the column actually holds. A picker missing one silently
+    // offers a filter that can never match.
+    enumField('source', 'How it came in', 't.source', [
+      'manual',
+      'phone',
+      'email',
+      'walk_in',
+      'internal',
+      'quote',
+      'portal',
+      'public_form',
+    ]),
+    {
+      key: 'lineCount',
+      label: 'Lines',
+      type: 'number',
+      expr: '(SELECT COUNT(*) FROM job_card_lines jl WHERE jl.job_card_id = t.id)',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'ownerName',
+      label: 'Assigned to',
+      type: 'text',
+      expr: 't.owner_name',
+      starter: true,
+      group: FIELD_GROUPS.PEOPLE,
+      hint: 'Empty means nobody has been made responsible yet.',
+    },
+    {
+      key: 'addressName',
+      label: 'Where the work is',
+      type: 'text',
+      expr: 'jsa.name',
+      needs: ['jobAddress'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'addressCity',
+      label: 'Town',
+      type: 'text',
+      expr: 'jsa.city',
+      needs: ['jobAddress'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+
+    /* ── Cost, and why there is no revenue beside it ─────────────────────── */
+    {
+      key: 'totalCost',
+      label: 'Cost of the job',
+      type: 'currency',
+      expr:
+        '(SELECT COALESCE(SUM(jl.qty * jl.unit_cost_excl), 0) ' +
+        'FROM job_card_lines jl WHERE jl.job_card_id = t.id)',
+      numeric: true,
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+      hint: 'Every line, including work we chose not to charge for.',
+    },
+    {
+      key: 'absorbedCost',
+      label: 'Cost we absorbed',
+      type: 'currency',
+      expr:
+        '(SELECT COALESCE(SUM(jl.qty * jl.unit_cost_excl), 0) ' +
+        "FROM job_card_lines jl WHERE jl.job_card_id = t.id " +
+        "AND jl.billing_state IN ('internal','written_off'))",
+      numeric: true,
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+      hint: 'Rework, goodwill and warranty — the figure that quietly eats a margin.',
+    },
+    {
+      key: 'undecidedCost',
+      label: 'Cost awaiting a decision',
+      type: 'currency',
+      expr:
+        '(SELECT COALESCE(SUM(jl.qty * jl.unit_cost_excl), 0) ' +
+        "FROM job_card_lines jl WHERE jl.job_card_id = t.id AND jl.billing_state = 'pending')",
+      numeric: true,
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+      hint: 'Nobody has said yet who pays for this. A job cannot close while it is above zero.',
+    },
+
+    /* ── The SLA, as facts rather than a live verdict ─────────────────────── */
+    {
+      key: 'slaPolicy',
+      label: 'Service target',
+      type: 'text',
+      expr: 'jsp.name',
+      needs: ['jobSla'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'respondBy',
+      label: 'Reply promised by',
+      type: 'datetime',
+      expr: 't.respond_by',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'respondedAt',
+      label: 'First reply',
+      type: 'datetime',
+      expr: 't.responded_at',
+      group: FIELD_GROUPS.DATES,
+      hint: 'Empty means nobody has picked it up yet.',
+    },
+    {
+      key: 'respondedByName',
+      label: 'Picked up by',
+      type: 'text',
+      expr: 't.responded_by_name',
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    {
+      /*
+       * A COMPARISON OF TWO STORED FACTS, not a live breach verdict.
+       *
+       * The app derives breach on read against business hours, and SQL has no
+       * business-hours arithmetic — reimplementing it here would give a second
+       * answer that disagrees with every screen. So this compares the two
+       * timestamps that were actually recorded, which is the same answer for a
+       * job that has been replied to and is honestly blank for one that has not.
+       * A report asking "did we answer late" wants exactly that; a report asking
+       * "what is late right now" is the worklist, and belongs on the worklist.
+       */
+      key: 'respondedLate',
+      label: 'Reply was late',
+      type: 'text',
+      expr:
+        'CASE WHEN t.responded_at IS NULL OR t.respond_by IS NULL THEN NULL ' +
+        "WHEN t.responded_at > t.respond_by THEN 'Yes' ELSE 'No' END",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+      hint: 'Blank until somebody has replied. Compares what was promised against what happened.',
+    },
+    {
+      key: 'resolveBy',
+      label: 'Fix promised by',
+      type: 'datetime',
+      expr: 't.resolve_by',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'closedLate',
+      label: 'Fix was late',
+      type: 'text',
+      expr:
+        'CASE WHEN t.closed_at IS NULL OR t.resolve_by IS NULL THEN NULL ' +
+        "WHEN t.closed_at > t.resolve_by THEN 'Yes' ELSE 'No' END",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+      hint: 'Blank until the job is closed.',
+    },
+
+    /* ── Dates and durations ─────────────────────────────────────────────── */
+    {
+      key: 'reportedAt',
+      label: 'Logged',
+      type: 'datetime',
+      expr: 't.reported_at',
+      starter: true,
+      group: FIELD_GROUPS.DATES,
+    },
+    { key: 'dueAt', label: 'Due', type: 'datetime', expr: 't.due_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'startedAt',
+      label: 'Work started',
+      type: 'datetime',
+      expr: 't.started_at',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'closedAt',
+      label: 'Closed',
+      type: 'datetime',
+      expr: 't.closed_at',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      /*
+       * ONE column for two questions, via COALESCE on the closing date: an open
+       * job's age and a closed job's turnaround are the same measurement, and two
+       * columns each blank half the time is how a report ends up with gaps nobody
+       * can explain.
+       *
+       * CALENDAR days, and the label says so. Business-day arithmetic lives in
+       * jobStatusModel and cannot be reproduced in SQL without a second,
+       * disagreeing implementation — so this measures what it can measure honestly
+       * rather than pretending to be the SLA clock.
+       */
+      key: 'daysOpen',
+      label: 'Days open',
+      type: 'number',
+      expr: 'DATEDIFF(COALESCE(t.closed_at, NOW()), t.reported_at)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.DATES,
+      hint: 'To close, or to now if it is still open. Calendar days, not working ones.',
+    },
+    {
+      /*
+       * Against the DUE date rather than the SLA deadline, and deliberately not
+       * clamped at zero: "what did we close early" is as real a question as "what
+       * ran late", and GREATEST(0, ...) would throw away half the answer.
+       */
+      key: 'daysOverdue',
+      label: 'Days overdue',
+      type: 'number',
+      expr: 'DATEDIFF(COALESCE(t.closed_at, NOW()), t.due_at)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.DATES,
+      hint: 'Negative means it was closed early, or is not due yet. Empty when no due date was set.',
+    },
+    {
+      key: 'closeReason',
+      label: 'Closing note',
+      type: 'text',
+      expr: 't.close_reason',
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'cancelReason',
+      label: 'Why it was called off',
+      type: 'text',
+      expr: 't.cancel_reason',
+      group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'reference',
+      label: 'Their reference',
+      type: 'text',
+      expr: 't.reference',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    { key: 'userName', label: 'Logged by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    ...CUSTOMER_LOOKUP_FIELDS,
+    // Hours included: "when do the calls come in" is a real staffing question,
+    // and it is the one bucket a job source can answer that a daily one cannot.
+    ...timeBuckets('reported_at', { hours: true }),
+  ],
+}
+
+const JOB_LINES_SOURCE: CatalogSource = {
+  key: 'jobCardLines',
+  label: 'Job card lines',
+  description: 'Every part, hour, kilometre and charge on a job, and who pays for it.',
+  category: 'Operations',
+  permission: 'jobs.view',
+  shape: 'timeline',
+  table: 'job_card_lines',
+  /*
+   * A line dates from its JOB, not from when the line was typed. A part added on
+   * Friday to a job logged on Monday belongs in Monday's week — otherwise a
+   * month-end report on job costs splits one job across two periods.
+   */
+  dateColumn: 'reported_at',
+  dateJoin: 'job',
+  joins: [
+    { name: 'job', sql: 'INNER JOIN job_cards j ON j.id = t.job_card_id', always: true },
+    { name: 'jobStatus', sql: 'LEFT JOIN job_statuses js ON js.id = j.status_id' },
+    { name: 'product', sql: 'LEFT JOIN products pm ON pm.id = t.product_id' },
+    { name: 'productDept', sql: 'LEFT JOIN departments pdm ON pdm.id = pm.department_id', needs: ['product'] },
+    { name: 'invoice', sql: 'LEFT JOIN sales_documents jinv ON jinv.id = t.invoiced_doc_id' },
+  ],
+  fields: [
+    {
+      key: 'jobNumber',
+      label: 'Job number',
+      type: 'document',
+      expr: 'j.document_number',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'jobTitle',
+      label: 'What the job is',
+      type: 'text',
+      expr: 'j.title',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'customerName',
+      label: 'Customer',
+      type: 'text',
+      expr: 'j.customer_name',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    enumField('lineKind', 'Kind', 't.line_kind', ['part', 'labour', 'travel', 'charge'], {
+      starter: true,
+    }),
+    /*
+     * THE FIELD THIS SOURCE EXISTS FOR. Six states, and the difference between
+     * them is the whole of job profitability: internal and written_off carry cost
+     * and no revenue, pending is a decision nobody has made.
+     */
+    enumField(
+      'billingState',
+      'Who pays',
+      't.billing_state',
+      ['quoted', 'variation', 'additional', 'internal', 'pending', 'written_off'],
+      { starter: true },
+    ),
+    {
+      key: 'description',
+      label: 'Description',
+      type: 'text',
+      expr: 't.description',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'productCode',
+      label: 'Product code',
+      type: 'text',
+      expr: 't.product_code',
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The code as it was at the time. Empty for labour, travel or a free-text charge.',
+    },
+    {
+      key: 'productDepartment',
+      label: 'Department',
+      type: 'text',
+      expr: 'pdm.name',
+      needs: ['product', 'productDept'],
+      group: FIELD_GROUPS.PRODUCT,
+    },
+    { key: 'qty', label: 'Quantity', type: 'number', expr: 't.qty', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    {
+      key: 'unitCostExcl',
+      label: 'Unit cost',
+      type: 'currency',
+      expr: 't.unit_cost_excl',
+      numeric: true,
+      noTotal: true,
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    {
+      key: 'lineCost',
+      label: 'Line cost',
+      type: 'currency',
+      expr: '(t.qty * t.unit_cost_excl)',
+      numeric: true,
+      starter: true,
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    {
+      /*
+       * An INTENTION, and labelled as one. What the customer actually owes is on
+       * the invoice after documentMath; this is what somebody meant to charge when
+       * they typed the line. Naming it "revenue" is how a job report comes to
+       * disagree with the sales report.
+       */
+      key: 'intendedPriceIncl',
+      label: 'Intended price (incl.)',
+      type: 'currency',
+      expr: '(t.qty * t.unit_price_incl)',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What was meant to be charged. The invoice is what the customer actually owes.',
+    },
+    {
+      key: 'unitPriceIncl',
+      label: 'Unit price (incl.)',
+      type: 'currency',
+      expr: 't.unit_price_incl',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      /* Excluding VAT, so it can be compared against cost. The incl. figure
+         divided by the line's own rate — not a site-wide rate, because two lines
+         on one job can carry different ones. */
+      key: 'intendedPriceExcl',
+      label: 'Intended price (excl.)',
+      type: 'currency',
+      expr: '(t.qty * t.unit_price_incl / NULLIF(1 + t.vat_rate_pct / 100, 0))',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'The ex-VAT equivalent, so it lines up against cost.',
+    },
+    {
+      /*
+       * INTENDED margin, and the label has to say so.
+       *
+       * Both sides are off the line: cost is real, but the price is what somebody
+       * meant to charge, so this is the margin as planned rather than as banked.
+       * Realised margin needs the invoice, and lives in the sales sources.
+       */
+      key: 'intendedProfit',
+      label: 'Intended profit',
+      type: 'currency',
+      expr:
+        '((t.qty * t.unit_price_incl / NULLIF(1 + t.vat_rate_pct / 100, 0)) ' +
+        '- (t.qty * t.unit_cost_excl))',
+      numeric: true,
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+      hint: 'Price as intended, less cost. Zero-priced lines (internal, written off) show as a loss, which is the point.',
+    },
+    {
+      key: 'invoicedQty',
+      label: 'Quantity invoiced',
+      type: 'number',
+      expr: 't.invoiced_qty',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'invoiceNumber',
+      label: 'Invoice',
+      type: 'text',
+      expr: 'jinv.document_number',
+      needs: ['invoice'],
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The thread back to what the customer was actually charged.',
+    },
+    {
+      key: 'issuedQty',
+      label: 'Quantity on a vehicle',
+      type: 'number',
+      expr: 't.issued_qty',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'Parts that have left the shelf for a van and not yet come back.',
+    },
+    {
+      key: 'stillToInvoice',
+      label: 'Still to invoice',
+      type: 'number',
+      expr:
+        "CASE WHEN t.billing_state IN ('quoted','variation','additional') " +
+        'THEN GREATEST(0, t.qty - t.invoiced_qty) ELSE 0 END',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'Billable and not yet billed. Zero for anything internal or written off.',
+    },
+    {
+      key: 'decidedReason',
+      label: 'Why',
+      type: 'text',
+      expr: 't.decided_reason',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'The reason given when somebody decided who pays. The thing an owner asks about a write-off.',
+    },
+    {
+      key: 'decidedAt',
+      label: 'Decided',
+      type: 'datetime',
+      expr: 't.decided_at',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'jobStatusName',
+      label: 'Job stage',
+      type: 'text',
+      expr: 'js.name',
+      needs: ['jobStatus'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    enumField('jobLifecycle', 'Job open or closed', 'j.status', ['open', 'closed', 'cancelled']),
+    enumField('jobPriority', 'Job priority', 'j.priority', ['low', 'normal', 'high', 'urgent']),
+    {
+      key: 'jobOwnerName',
+      label: 'Job assigned to',
+      type: 'text',
+      expr: 'j.owner_name',
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    {
+      key: 'reportedAt',
+      label: 'Job logged',
+      type: 'datetime',
+      expr: 'j.reported_at',
+      starter: true,
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'jobClosedAt',
+      label: 'Job closed',
+      type: 'datetime',
+      expr: 'j.closed_at',
+      group: FIELD_GROUPS.DATES,
+    },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    /*
+     * The buckets come off the PARENT's date column, so the alias is rewritten —
+     * the same move every line-level source makes. timeBuckets() builds `t.<col>`
+     * and a job line has no reported_at of its own; without this every bucket
+     * failed with "Unknown column 't.reported_at'".
+     */
+    ...timeBuckets('reported_at', { hours: true }).map((f) => ({
+      ...f,
+      expr: f.expr.replace(/t\.`reported_at`/g, 'j.`reported_at`'),
+    })),
+  ],
+}
+
+/* ── what a supplier is owed ───────────────────────────────────────────────── */
+
+/*
+ * The mirror of customerTransactions, and an asymmetry worth naming: debtors
+ * have had a ledger source since the catalog was written, creditors have not.
+ * So "what do we owe, and how old is it" — the question a payment run is built
+ * from — could be answered for money coming in and not for money going out.
+ */
+const SUPPLIER_TXN_SOURCE: CatalogSource = {
+  key: 'supplierTransactions',
+  label: 'Supplier ledger',
+  description:
+    'Every invoice, payment, credit and journal on a supplier account, with what is still outstanding.',
+  category: 'Suppliers',
+  permission: 'suppliers.view',
+  shape: 'timeline',
+  table: 'supplier_transactions',
+  dateColumn: 'doc_date',
+  joins: [{ name: 'supplier', sql: 'LEFT JOIN suppliers s ON s.id = t.supplier_id' }],
+  fields: [
+    { key: 'docNumber', label: 'Document number', type: 'document', expr: 't.doc_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'docDate', label: 'Date', type: 'date', expr: 't.doc_date', starter: true, group: FIELD_GROUPS.DATES },
+    enumField('docType', 'Type', 't.doc_type', ['invoice', 'credit_note', 'payment', 'journal', 'opening', 'interest'], {
+      starter: true,
+    }),
+    { key: 'supplierName', label: 'Supplier', type: 'text', expr: 's.name', needs: ['supplier'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'supplierCode', label: 'Supplier code', type: 'text', expr: 's.code', needs: ['supplier'], group: FIELD_GROUPS.IDENTITY },
+    {
+      /* SIGNED, so a column of these adds up to the movement on the account.
+         amount_gross is always positive and would total to nonsense across a
+         mix of invoices and payments. */
+      key: 'amountSigned',
+      label: 'Amount',
+      type: 'currency',
+      expr: 't.amount_signed',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Positive increases what is owed; a payment is negative.',
+    },
+    { key: 'amountGross', label: 'Gross', type: 'currency', expr: 't.amount_gross', numeric: true, group: FIELD_GROUPS.MONEY },
+    { key: 'amountVat', label: 'VAT', type: 'currency', expr: 't.amount_vat', numeric: true, group: FIELD_GROUPS.MONEY },
+    { key: 'amountNet', label: 'Net', type: 'currency', expr: 't.amount_net', numeric: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'amountOutstanding',
+      label: 'Outstanding',
+      type: 'currency',
+      expr: 't.amount_outstanding',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.AGEING,
+      hint: 'What is still unsettled on this document.',
+    },
+    {
+      /* Age of the DEBT, from the due date. Negative means not yet due, which
+         is why it is not clamped: "how much is not due yet" is as real a
+         question as "how much is overdue". */
+      key: 'daysOverdue',
+      label: 'Days overdue',
+      type: 'number',
+      expr: 'DATEDIFF(CURDATE(), t.due_date)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.AGEING,
+      hint: 'Negative means it is not due yet.',
+    },
+    { key: 'dueDate', label: 'Due date', type: 'date', expr: 't.due_date', group: FIELD_GROUPS.DATES },
+    { key: 'reference', label: 'Reference', type: 'text', expr: 't.reference', group: FIELD_GROUPS.OTHER },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', group: FIELD_GROUPS.OTHER },
+    { key: 'userName', label: 'Captured by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'supplierBalance', label: 'Account balance now', type: 'currency', expr: 's.balance', numeric: true, noTotal: true, needs: ['supplier'], group: FIELD_GROUPS.AGEING },
+    ...timeBuckets('doc_date'),
+  ],
+}
+
+/* ── loyalty ───────────────────────────────────────────────────────────────── */
+
+const LOYALTY_LEDGER_SOURCE: CatalogSource = {
+  key: 'loyaltyLedger',
+  label: 'Loyalty activity',
+  description:
+    'Every point earned, redeemed, expired or adjusted — what the programme is costing and who is using it.',
+  category: 'Customers',
+  permission: 'customers.view',
+  shape: 'timeline',
+  table: 'loyalty_ledger',
+  dateColumn: 'created_at',
+  joins: [{ name: 'customer', sql: 'LEFT JOIN customers c ON c.id = t.customer_id' }],
+  fields: [
+    { key: 'happenedAt', label: 'When', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerCode', label: 'Account code', type: 'text', expr: 'c.code', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
+    enumField('entryType', 'Type', 't.entry_type', ['earn', 'redeem', 'expire', 'adjust', 'reverse'], {
+      starter: true,
+    }),
+    {
+      /* SIGNED: an earn is positive, a redemption negative, so a column of
+         these totals to the movement in the programme's liability. */
+      key: 'points',
+      label: 'Points',
+      type: 'number',
+      expr: 't.points',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    { key: 'basisAmount', label: 'Qualifying spend', type: 'currency', expr: 't.basis_amount', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    { key: 'tierName', label: 'Tier', type: 'text', expr: 't.tier_name', group: FIELD_GROUPS.CLASSIFICATION, hint: 'The tier as it was at the time, not today’s.' },
+    { key: 'multiplier', label: 'Multiplier', type: 'number', expr: 't.multiplier', numeric: true, noTotal: true, group: FIELD_GROUPS.OTHER },
+    { key: 'documentNumber', label: 'Document', type: 'document', expr: 't.document_number', group: FIELD_GROUPS.IDENTITY },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    { key: 'userName', label: 'By', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    ...timeBuckets('created_at', { hours: true }),
+  ],
+}
+
+const LOYALTY_MEMBERS_SOURCE: CatalogSource = {
+  key: 'loyaltyMembers',
+  label: 'Loyalty members',
+  description:
+    'Who is on the programme, what tier they are in, and what their points are worth.',
+  category: 'Customers',
+  permission: 'customers.view',
+  shape: 'snapshot',
+  table: 'loyalty_members',
+  joins: [
+    { name: 'customer', sql: 'INNER JOIN customers c ON c.id = t.customer_id', always: true },
+    { name: 'tier', sql: 'LEFT JOIN loyalty_tiers lt ON lt.id = t.tier_id' },
+  ],
+  fields: [
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerCode', label: 'Account code', type: 'text', expr: 'c.code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'phone', label: 'Phone', type: 'text', expr: 'c.phone', group: FIELD_GROUPS.IDENTITY },
+    { key: 'tierName', label: 'Tier', type: 'text', expr: 'lt.name', needs: ['tier'], starter: true, group: FIELD_GROUPS.CLASSIFICATION },
+    {
+      key: 'pointsBalance',
+      label: 'Points balance',
+      type: 'number',
+      expr: 't.points_balance',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'walletBalance',
+      label: 'Wallet balance',
+      type: 'currency',
+      expr: 't.wallet_balance',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Money on account, which is a real liability — unlike points, which are only worth what redemption makes them.',
+    },
+    { key: 'tierMultiplier', label: 'Tier multiplier', type: 'number', expr: 'lt.multiplier', numeric: true, noTotal: true, needs: ['tier'], group: FIELD_GROUPS.OTHER },
+    { key: 'tierDiscountPct', label: 'Tier discount %', type: 'percent', expr: 'lt.discount_pct', numeric: true, noTotal: true, needs: ['tier'], group: FIELD_GROUPS.OTHER },
+    { key: 'joinedAt', label: 'Joined', type: 'datetime', expr: 't.joined_at', group: FIELD_GROUPS.DATES },
+    { key: 'lastActivityAt', label: 'Last activity', type: 'datetime', expr: 't.last_activity_at', starter: true, group: FIELD_GROUPS.DATES },
+    {
+      key: 'daysSinceActivity',
+      label: 'Days since activity',
+      type: 'number',
+      expr: 'DATEDIFF(CURDATE(), t.last_activity_at)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.DATES,
+    },
+    { key: 'tierSince', label: 'In tier since', type: 'datetime', expr: 't.tier_since', group: FIELD_GROUPS.DATES },
+    yesNo('isActive', 'Active', 't.is_active'),
+  ],
+}
+
 /* ── the catalog ───────────────────────────────────────────────────────────── */
 
 export const SOURCES: CatalogSource[] = [
@@ -2616,6 +3411,11 @@ export const SOURCES: CatalogSource[] = [
   STOCK_TAKE_LINES_SOURCE,
   ADJUSTMENT_LINES_SOURCE,
   PRODUCT_SUPPLIERS_SOURCE,
+  SUPPLIER_TXN_SOURCE,
+  LOYALTY_LEDGER_SOURCE,
+  LOYALTY_MEMBERS_SOURCE,
+  JOB_CARDS_SOURCE,
+  JOB_LINES_SOURCE,
   ACTIVITY_SOURCE,
 ]
 

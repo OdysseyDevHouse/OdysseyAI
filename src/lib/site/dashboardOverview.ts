@@ -14,6 +14,8 @@ import { quoteSummary } from './quotes'
 import { listOrders } from './salesOrders'
 import { listLaybys } from './laybys'
 import { listLocations } from './stockLocations'
+import { jobCounts } from './jobCards'
+import { slaCounts } from './jobSla'
 import { reorderSuggestions } from './reorderSuggestions'
 
 /**
@@ -125,6 +127,7 @@ export async function getDashboardOverview(
   // Reorder is a stock reading that produces a buying decision, so it needs
   // both — a storeman who may not raise an order has no use for a suggestion.
   const seeReorder = seeStock && can(capabilities, 'purchasing.view')
+  const seeJobs = can(capabilities, 'jobs.view')
 
   /*
    * One batch, so the slowest call sets the wall clock rather than the sum.
@@ -145,6 +148,8 @@ export async function getDashboardOverview(
     laybysActive,
     laybysOverdue,
     locations,
+    jobs,
+    jobSla,
   ] = await Promise.all([
     seeCustomers ? agingSummary(siteId) : null,
     seeSuppliers ? supplierAging(siteId, {}) : null,
@@ -164,6 +169,14 @@ export async function getDashboardOverview(
     seeSales ? listLaybys(siteId, { status: 'active', limit: 1 }) : null,
     seeSales ? listLaybys(siteId, { overdueOnly: true, limit: 1 }) : null,
     seeReorder ? listLocations(siteId, false, true) : null,
+    /*
+     * Tolerant, unlike every other call in this batch: the job tables arrived in
+     * migration 104 and the SLA ones in 113, so a site part-way through migrating
+     * would otherwise take the WHOLE dashboard down — and the dashboard is the
+     * screen somebody opens to find out what is wrong.
+     */
+    seeJobs ? jobCounts(siteId).catch(() => null) : null,
+    seeJobs ? slaCounts(siteId).catch(() => null) : null,
   ])
 
   /*
@@ -261,6 +274,50 @@ export async function getDashboardOverview(
       amount: null,
       tone: 'warning',
       href: '/cashbook',
+    })
+  }
+
+  /*
+   * Jobs. THREE rows at most, and each one is a different action by a different
+   * person: a breached promise is the owner's problem, an unassigned job is the
+   * dispatcher's, an undecided cost is the manager's. Merging them into "12 jobs
+   * need attention" would be a number nobody can act on.
+   *
+   * `overdue` is deliberately NOT one of them. It counts jobs past their due date,
+   * which the SLA breach already covers for anything carrying a promise — two rows
+   * saying almost the same thing is how a list gets skimmed.
+   */
+  if (jobSla) {
+    add({
+      key: 'job-response-breached',
+      count: jobSla.responseBreached,
+      label:
+        jobSla.responseBreached === 1
+          ? 'job past its reply promise'
+          : 'jobs past their reply promise',
+      amount: null,
+      // Danger: a customer was promised a reply and has not had one.
+      tone: 'danger',
+      href: '/jobs/sla',
+    })
+    add({
+      key: 'job-resolve-breached',
+      count: jobSla.resolveBreached,
+      label: jobSla.resolveBreached === 1 ? 'job past its fix date' : 'jobs past their fix date',
+      amount: null,
+      tone: 'danger',
+      href: '/jobs/sla?tab=resolve',
+    })
+  }
+
+  if (jobs) {
+    add({
+      key: 'jobs-unassigned',
+      count: jobs.unassigned,
+      label: jobs.unassigned === 1 ? 'job with nobody on it' : 'jobs with nobody on them',
+      amount: null,
+      tone: 'warning',
+      href: '/jobs?state=open',
     })
   }
 

@@ -96,19 +96,27 @@ export default function LocationsClient({ locations }: { locations: StockLocatio
               >
                 <div className="flex items-center gap-1.5">
                   {location.isMain && <Badge tone="success">Main</Badge>}
+                  {location.isMobile && <Badge tone="brand">Vehicle</Badge>}
                   {!location.isActive && <Badge tone="neutral">Off</Badge>}
 
-                  {!location.isMain && location.isActive && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() => setMakingMain(location)}
-                    >
-                      <Icons.Check size={15} />
-                      Make main
-                    </Button>
-                  )}
+                  {/* Not offered for a vehicle or the transit pile: setMainLocation
+                      refuses both, and a button whose only outcome is a toast
+                      saying no is worse than no button. (Transit had this bug
+                      before vans existed — same condition, same fix.) */}
+                  {!location.isMain &&
+                    location.isActive &&
+                    !location.isMobile &&
+                    !location.isTransit && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={pending}
+                        onClick={() => setMakingMain(location)}
+                      >
+                        <Icons.Check size={15} />
+                        Make main
+                      </Button>
+                    )}
 
                   <Button
                     variant="ghost"
@@ -206,6 +214,7 @@ function LocationModal({
     note: string | null
     isActive: boolean
     sortOrder: number
+    isMobile: boolean
   }) => void
 }) {
   const [code, setCode] = useState('')
@@ -214,6 +223,7 @@ function LocationModal({
   const [note, setNote] = useState('')
   const [isActive, setIsActive] = useState(true)
   const [sortOrder, setSortOrder] = useState(0)
+  const [isMobile, setIsMobile] = useState(false)
   const [seeded, setSeeded] = useState<number | null>(null)
 
   // Seeds the fields the first time the modal opens for a given record, and
@@ -227,6 +237,7 @@ function LocationModal({
     setNote(location?.note ?? '')
     setIsActive(location?.isActive ?? true)
     setSortOrder(location?.sortOrder ?? 0)
+    setIsMobile(location?.isMobile ?? false)
   }
   if (!open && seeded !== null) setSeeded(null)
 
@@ -253,6 +264,7 @@ function LocationModal({
                 note: note || null,
                 isActive,
                 sortOrder,
+                isMobile,
               })
             }
           >
@@ -308,6 +320,25 @@ function LocationModal({
             onChange={setIsActive}
             label="Active"
             hint="A deactivated location is hidden from new work. Stock already in it stays counted."
+          />
+        )}
+
+        {/* Only when creating. A room that has held stock for two years does not
+            become a vehicle, and flipping the flag would silently change which
+            pickers the pile appears in and whether it could be the main location. */}
+        {location ? (
+          location.isMobile ? (
+            <p className="text-sm text-muted">
+              This is a vehicle. Stock reaches it by transfer, it can be counted like any other
+              location, and it can never be the location sales come from.
+            </p>
+          ) : null
+        ) : (
+          <Switch
+            checked={isMobile}
+            onChange={setIsMobile}
+            label="This is a vehicle"
+            hint="A technician van. Stock gets there by transfer and can be counted, but a van is never sellable stock and cannot be made the main location."
           />
         )}
       </div>

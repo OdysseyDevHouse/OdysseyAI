@@ -317,6 +317,15 @@ export const NAV: NavSection[] = [
         keywords: 'calendar diary schedule appointments visits technician dispatch day roster',
         description: 'Who is going where today, and what has no slot yet',
       },
+      {
+        label: 'Service targets',
+        href: '/jobs/sla',
+        icon: Clock,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'sla service level agreement response time resolution deadline breach overdue target promise',
+        description: 'Who is waiting for a reply, and what is about to be late',
+      },
     ],
   },
 ]

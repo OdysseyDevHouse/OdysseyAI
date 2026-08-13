@@ -650,15 +650,300 @@ that last one matters, since 107 altered `stock_locations`.
 
 ---
 
-## Phases 7–9
+## What phase 7 shipped
 
-Sizes relative to phase 1 = 1.
+`sql/site/110_technician_vans.sql` — `stock_locations.is_mobile`,
+`job_card_lines.issued_qty`, `stock_transfer_lines.job_card_line_id`. Three
+`ALTER`s, no new table: a van is a `stock_locations` row and issuing is a
+`stock_transfers` row, so the only new information is *which job a transfer line
+was for*. (110, not 109 — a parallel session took that number.)
 
-| # | Phase | Size | What lands |
-|---|---|---|---|
-| 7 | **Parts, stock and the technician's van** | 0.6 | Per the PRD's Q&A: **Reserved** on quote acceptance, derived, added to `reservedQtyFor` as a fourth source *tolerantly*; **Issued** = a `stock_transfers` row to the van; **Consumed** = the sale movement `finaliseDocument()` already writes; **Returned** = the existing credit path. New `job_issue`/`job_return` movement types. A van needs a **new `is_mobile` flag** — `is_transit` is taken and is hidden from every picker. |
-| 8 | **SLA and the worklist** | 0.4 | `job_sla_policies`, `respond_by`/`resolve_by` computed with `holidays.ts`. Breach derived on read. |
-| 9 | **Reports and proof** | 0.5 | A `job_card` + `job_card_line` `CatalogSource` gated on `jobs.view`, cost fields on `jobs.cost` so a saved report degrades rather than breaks. **Three templates and one dashboard**, not fifteen — the report builder answers the rest. `reconcileJobCards()` onto `/setup/reconciliation`. |
+**Nothing in this phase writes a stock movement.** `issueParts()` builds a
+transfer input and hands it to `postTransfer()`, which is the only thing that
+calls `recordMovement()`. That was the whole design goal, because this is the one
+phase where a wrong number moves physical goods.
+
+### `is_mobile`, and why not `is_transit`
+
+`is_transit` means *dispatched to another site* and is **hidden from every
+picker** — "nobody sells from a truck, counts one, or transfers into one by
+hand". A van is the opposite on two of those three: it must be transferable-into
+and countable, and must never be sellable. So the picker question is not a
+boolean at all, and a third boolean would have been the wrong shape:
+
+```ts
+export const LOCATION_PURPOSE = {
+  transfer: { mobile: true },  count: { mobile: true },  adjust: { mobile: true },
+  sell:     { mobile: false }, receive: { mobile: false }, reorder: { mobile: false },
+} as const
+```
+
+`listLocations(siteId, includeInactive, excludeTransit, purpose?)` — the caller
+says what it is *going to do*, and the list follows. `setMainLocation()` now
+refuses a vehicle outright: sales come from main, so a bakkie as main would have
+the till promising goods that are on the road.
+
+`is_mobile` is **create-only** in the UI. A room that has held stock for two
+years does not become a vehicle, and flipping the flag would silently change
+which pickers its pile appears in.
+
+### Two bugs an adversarial review caught before any code was written
+
+Both were verified independently before being acted on, and both are the kind
+that leave every existing check green:
+
+1. **`salesPosting.ts:582` passes no `locationId`**, so `recordMovement()`
+   defaults to MAIN. A part invoiced while it is still on a bakkie debits a pile
+   it is not in — and **all three stock invariants still hold**, because the
+   totals are right and only the attribution is wrong. `reconcileStock()` cannot
+   see it. This is why returning is a deliberate step, why the Costs tab carries
+   a Callout saying so, and why `reconcileJobParts()` exists.
+2. **Issuing does not release a reservation**, so a reserved-then-issued unit
+   would be deducted twice, permanently.
+
+### The reservation source was cut
+
+The plan had "Reserved on quote acceptance, added to `reservedQtyFor` as a fourth
+source". It is **not built**, deliberately. `reservedQtyFor` is on the till's hot
+path, `availableToSell` has exactly one reader
+(`sales/orders/[id]/page.tsx:49`), and bug 2 above means a job source would have
+had to reconcile against issuing to avoid double-deducting. The benefit was a
+figure one screen reads; the risk was the shop not being able to sell.
+
+The useful 20% instead: **`partsPromised()`** — a plain read of what open jobs
+still need, `SUM(GREATEST(0, qty - GREATEST(issued_qty, invoiced_qty)))`, so a
+unit already on a bakkie is not counted twice. No hot path touched.
+
+### Screens
+
+The **Parts card** on the Costs tab: Needed / On a van / To pick / On the shelf,
+with issue and bring-back dialogs. Gated on **`stock.transfer`, not a jobs
+capability** — somebody who may edit a job card is not thereby allowed to load a
+bakkie. The "On the vans" table is narrowed to the products this job needs, and
+its heading says *whichever job they were loaded for*, because a pile on a
+vehicle carries no job tag.
+
+`/setup/locations` grows the vehicle switch and a badge.
+`reconcileJobParts()` is on `/setup/reconciliation` — three drift checks plus two
+informational reports (stock living on a vehicle; a part promised to both a job
+and a sales order, which nothing links and so can only be reported).
+
+### Verified
+
+`npm run test:job-cards` — **269 checks**, adding 47 under `(J13)`. The piles are
+read after every act rather than the return value trusted; the drift function is
+made to **fail on purpose** and then repaired, because a reconciliation nobody
+has seen fail is one nobody should trust. It ends by asserting
+`reconcileStock()` is unchanged after issuing, over-issuing, returning,
+tampering and repairing.
+
+`tsc` clean · `next build` green · `check-ui-kit.mjs` clean · smoke crawl
+**151 passed, 0 failed** · `locations`/`transfers`/`serials`/`posting`/
+`adjustments`/`stock-takes` all pass, each ending on its own zero-drift
+assertion. The Costs tab was driven in a browser: 8 needed, 5 issued to a
+bakkie, 3 to pick, and the shelf down by exactly 5.
+
+---
+
+## What phase 8 shipped
+
+`sql/site/113_job_sla.sql` — one table (`job_sla_policies`, four seeded rows) and
+six columns on `job_cards`. (113, not 111 or 112 — a parallel session took those.)
+
+### The clock counts business hours, and that was the whole decision
+
+A job logged **Friday 16:00** with a four-hour promise is due **Monday 11:00** —
+one hour of Friday, three of Monday. Not Friday 20:00.
+
+Chosen deliberately: a calendar clock breaches every job logged after Friday
+lunch, and a worklist full of jobs nobody could have acted on is a worklist
+people stop opening. The cost is real and is paid on screen — the deadline is no
+longer obvious from the logged time, so the job card and the worklist both show
+the **absolute deadline next to the business-hours remainder**, and the setup
+screen carries a worked example that recalculates as you edit the hours. A red
+badge alone is an assertion the reader cannot check, and the first time somebody
+disputes it the badge loses.
+
+The arithmetic lives in `jobStatusModel.ts` (browser-safe, no db import) and
+works entirely in **UTC millis**, matching `storedMillis()`. `getHours()` would
+shift every deadline by two hours on a South African machine — the same bug that
+made the schedule draw every block at the right edge.
+
+`holidays.ts` turned out to have no working-day arithmetic at all, only holiday
+lookups, so `addBusinessMinutes` / `businessMinutesBetween` are new. Both walk
+**day by day**, so a six-month-old job costs ~180 iterations rather than 260,000.
+
+### What is stored, and what is not
+
+| | |
+|---|---|
+| **Stored** | the promise, and the two deadlines it produced |
+| **Derived on read** | whether it breached |
+
+The deadlines are stored for the reason 015 stores document totals and 107 stores
+`chargeable_km`: a job promised Monday 11:00 must keep saying Monday 11:00 after
+somebody edits the trading hours. Recomputing on read would silently restate what
+a customer was told — the one figure a dispute is actually about.
+
+The breach is not stored because a stored flag is wrong the minute after it is
+written and would need a cron. `isClosed()` makes the same argument.
+
+**`met` is a third state, not "not breached".** A job answered inside its target
+is settled, and showing it beside jobs still counting down is how the list stops
+being actionable.
+
+### Two refusals worth naming
+
+**A degenerate trading week returns `null`, not a hang.** A mask of zeroes, or a
+closing time before opening, has no working minute to find — and an unbounded
+search for one inside a page render is a hung request, not a wrong number. Bounded
+at 400 days and guarded by `tradingWeekIsUsable()`.
+
+**A second response is refused, in SQL.** `responded_at IS NULL` in the WHERE
+clause rather than a check in code, because two dispatchers opening the same job
+would race. Overwriting it would quietly turn a met target into a breach. It is
+also deliberately **not** derived from the activity log, whose first entry is the
+job's own creation — a job would count as answered the instant it was typed in.
+
+### A priority change re-promises the job
+
+An urgent job downgraded to normal stops being measured against an urgent
+promise. Recomputed from the **original `reported_at`**, never from now — the
+clock started when the customer phoned, and restarting it on every edit would make
+the deadline a thing you can reset with a dropdown.
+
+### Six pre-existing jobs were left untargeted, on purpose
+
+Every job created before this migration carries no deadline, and that is the
+correct state: nobody promised those customers anything. Back-dating would
+fabricate a promise, and most would have appeared **already breached the moment
+the feature shipped** — worse than no figure. Reported on `/setup/job-workflow`
+and `/setup/reconciliation`, absent from the worklists, and it drains as they
+close.
+
+### Screens
+
+`/jobs/sla` — two tabs, because response and resolution are different questions
+asked by different people. No "breached" tab: breach is derived, so soonest-first
+already puts the most overdue at the top, and a row appearing in two tabs is a row
+worked twice. The SLA panel went onto the existing `/setup/job-workflow` rather
+than a new route, and a card sits above the address on the job's Overview.
+
+`reconcileJobSla()` reports three things and colours **one** of them red: a
+response recorded before the job was reported cannot happen through the app. The
+other two — a deadline predating a trading-hours edit, and a job with no target —
+are the design working, so they are listed and not alarmed.
+
+### Verified
+
+`npm run test:job-cards` — **360 checks**, adding 59 under `(J14)`. The
+load-bearing ones: Friday 16:00 + 4h = Monday 11:00; **the two clocks agree**
+(measuring back from that deadline returns the same 240, so the countdown cannot
+contradict the deadline beside it); a degenerate week refuses rather than loops;
+and a priority downgrade re-promises from the original report time.
+
+`tsc` clean · `next build` green · `check-ui-kit.mjs` clean · smoke crawl
+**152 passed, 0 failed** · `holidays` and `staff-time` pass. Driven in a browser
+with three seeded jobs: "2 days over" in red, "1h left" plain, an unassigned
+urgent job flagged, and a late first reply badged on the Fix dates tab.
+
+Also corrected while here: the `job_travel_round_to` comment claimed rounding
+**up**, contradicting both the PRD example and `chargeableKm`, which rounds to
+nearest.
+
+---
+
+## What phase 9 shipped
+
+**No migration.** The report builder, the dashboard and the reconciliation screen
+all already existed; this phase is two catalog sources, three template specs and
+three widget rows. That was the point of building them as one engine.
+
+### Two sources, for the reason sales and sale lines are two
+
+`jobCards` (47 fields) and `jobCardLines` (35). A job is one row with one customer
+and one status; a line is a part or an hour. "How many urgent jobs closed last
+month" asked against the lines counts a job once per line, and "what did we spend
+on parts" asked against the jobs cannot see a part at all.
+
+**No revenue field on either.** A job line carries `unit_price_incl`, which is an
+*intention* — what the customer owes is on the invoice after `documentMath`. A
+revenue column read off the line would agree with itself and disagree with the
+sales report, so the margin field is named **`intendedProfit`** and says so in its
+hint. `invoicedQty` and the invoice number are offered instead, as the thread back
+to the paper.
+
+Cost is gated **per field** on `jobs.cost`, never per source: `job-cost-absorbed`
+opens for a technician with 4 of its 7 columns rather than refusing. A saved
+report shared across a shop should degrade for the junior.
+
+### Three built-ins, not fifteen
+
+`jobs-by-technician` · `job-cost-absorbed` ("Work we did not charge for") ·
+`job-parts-used`. Each is a builder spec, so Schedule, Columns, Export and
+Customise came free.
+
+`job-cost-absorbed` deliberately has **no** total filter. Filtering to
+"absorbed > 0" would hide the jobs whose cost is still *undecided* — the ones
+somebody can still act on. Sorting does the work without discarding rows.
+
+### The bug-finding that mattered
+
+The templates all passed on the first run. Then I executed **every catalog field
+individually** and eight failed:
+
+- all seven `jobCardLines` time buckets — `timeBuckets()` builds `t.<col>` and a
+  job line has no `reported_at` of its own, so every bucket asked for a column
+  that does not exist. Fixed with the alias-rewrite `.map()` every other
+  line-level source uses.
+- `accountRep` — `CUSTOMER_LOOKUP_FIELDS` declares `needs: ['customer',
+  'customerRep']` and I had supplied only the first join. A spread field set
+  brings its join requirements with it.
+
+None of the three templates selects any of those eight, so all of it would have
+shipped and broken only for whoever picked one in the builder. `(J15)` now runs
+every field on every push.
+
+### Dashboard: three rows, not a section
+
+Two breach rows (danger) and one unassigned row (warning), added to the existing
+`attention` list. Kept separate because each is a different person's job — the
+owner's, the dispatcher's — and "12 jobs need attention" is a number nobody can
+act on. `jobs.overdue` was deliberately **left out**: SLA breach already covers
+anything carrying a promise, and two rows saying nearly the same thing is how a
+list gets skimmed. Both reads are `.catch(() => null)` — the dashboard is the
+screen somebody opens to find out what is wrong, so a site mid-migration must not
+be met with a stack trace.
+
+### `reconcileJobCards()` finally reaches a screen
+
+Written in phase 1, wired now. Four bug checks (over-invoiced, orphaned invoice
+link, billed-unbillable, and a stored open/closed flag its stage contradicts) and
+one configuration report — a stage no board lists, whose jobs are therefore
+invisible on every board. Only the four are red.
+
+### Verified
+
+`npm run test:job-cards` — **388 checks**, adding 28 under `(J15)`. The load-bearing
+one runs all 82 catalog fields as real SQL. `builder`, `report-templates` and
+`dashboard` suites pass · `tsc` clean · `check-ui-kit` clean · `next build` green ·
+smoke crawl **152 passed, 0 failed**. Driven in a browser: all three templates
+appear in the catalogue, `job-cost-absorbed` renders 7 rows with a correct totals
+footer, and the dashboard shows "1 job with nobody on it" sorted into the warning
+band.
+
+### One thing to note
+
+While adding these sources I ran a line-based `sed -i` on `catalog.ts` while a
+concurrent session was editing the same file, and **destroyed their uncommitted
+version of the same two sources** (~190 lines). It was unrecoverable — nothing in
+git, and my backup was taken after the first bad edit. Their distinguishable
+ideas were folded into what shipped: `type: 'document'` on the job numbers, the
+`COALESCE(closed_at, NOW())` day count that answers open-age and turnaround in one
+column, `daysOverdue` against the due date, `customerPhone`, hourly buckets, the
+price/profit fields — and the two `source` enum values I had missed
+(`walk_in`, `internal`), whose absence would have offered filters that could never
+match. **Never run `sed -i` against a shared file.**
 
 ---
 
@@ -691,28 +976,49 @@ Not "later" — **blocked on infrastructure that does not exist**.
    quantities. Nothing in the module imports `recordMovement`,
    `nextDocumentNumber`, `postTransaction` or `mirrorSale`.
 2. **`reservedQtyFor` is on the till's hot path.** It deliberately keeps online
-   holds out of its UNION so an unmigrated site cannot stop the shop selling. A
-   job source must be added with the same defensive swallow. Highest blast radius
-   in phase 7.
-3. **`is_transit` is taken** and hidden from every picker. A technician van needs
-   a new flag, or every van vanishes from the stock-take scope picker.
-4. **A serial is not an asset.** Link by nullable reference, or every
+   holds out of its UNION so an unmigrated site cannot stop the shop selling.
+   Phase 7 **did not add a job source** — see above — precisely because the
+   benefit was one screen's figure and the downside was the shop not selling. If
+   one is ever added it needs the same defensive swallow *and* must reconcile
+   against `issued_qty`, or an issued unit is deducted twice.
+3. **A sale consumes from MAIN regardless of where the goods are.**
+   `salesPosting.ts` passes no `locationId`, so invoicing a part still on a van
+   debits the wrong pile while every invariant holds. `reconcileJobParts()` is
+   the only thing that can see this; do not "fix" it by having the job module
+   write its own movement.
+4. **`is_transit` is taken** and hidden from every picker — which is why phase 7
+   added `is_mobile` plus `LOCATION_PURPOSE` rather than a third boolean. Reusing
+   `is_transit` would have hidden every van from the stock-take scope picker.
+5. **A serial is not an asset.** Link by nullable reference, or every
    third-party air conditioner needs a fake product and a fake serial that then
-   counts toward invariant (S1).
+   counts toward invariant (S1). Relatedly, phase 7 **refuses to issue a
+   serial-tracked part to a van**: which unit was fitted is the whole point of a
+   serial, and choosing it on the pavement is how a warranty lands against the
+   wrong customer.
 
-## Still open — answer before the phase named
+## Answered as the phases shipped
 
-1. **Who bypasses the one-open-timer rule, and how?** (phase 5) `uq_open_entry`
-   enforces it in the database; a bypass needs the constraint relaxed, and it
-   cannot be re-tightened once two overlapping entries exist. Is the bypass
-   genuinely required, or is the answer "stop the first timer"?
-2. **Travel rounding and tolerance, as numbers.** (phase 6) "Nearest 5 km,
-   minimum 10, flag over 20%" — the settings need real figures, and whether
-   rounding is per-leg or per-day.
-3. **Is a distance provider available at all?** (phase 6) Without one
-   `expected_km` stays NULL and verification is manager judgement.
-4. **Which of the six billing states does the business actually use?** (review
+- **The one-open-timer bypass** (phase 5) — there is none. Starting a second timer
+  stops the first, so `uq_open_entry` stays intact. Relaxing it could never be
+  re-tightened once two overlapping entries existed.
+- **Travel rounding** (phase 6) — to the **nearest** block, matching the PRD's own
+  worked example (29.1 becomes 29). Rounding up would bill kilometres nobody drove.
+- **A distance provider** (phase 6) — none available, so `expected_km` is haversine
+  times a road factor and is labelled *estimated*. Good enough to catch a 60 km
+  claim on a 12 km trip, which is what the tolerance check is for.
+- **The SLA clock** (phase 8) — **business hours**, not wall clock. A calendar
+  clock breaches every job logged after Friday lunch.
+- **Jobs predating the SLA feature** (phase 8) — left untargeted and reported,
+  rather than back-dated. Nobody promised those customers anything.
+
+## Still open
+
+1. **Which of the six billing states does the business actually use?** (review
    after ~50 real jobs) If `variation` and `additional` are the same thing in
    practice, or `pending` is never used, they are dead weight on every screen.
    This is the one place the PRD's completeness may exceed the business's —
    worth measuring rather than guessing.
+2. **Do the seeded SLA figures match what this business actually promises?**
+   (review after the first month) 1h/4h/1day/2day response and 1/2/5 day
+   resolution are defensible defaults, not this shop's commitments. The screen
+   exists to change them; whether anybody has is the question.

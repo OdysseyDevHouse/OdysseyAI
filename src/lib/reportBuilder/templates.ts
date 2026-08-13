@@ -951,6 +951,86 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
 
+  /* ── Job cards ───────────────────────────────────────────────────────────────
+   *
+   * THREE, not fifteen. The builder is the answer to the other twelve, and a
+   * catalogue of near-identical job reports is how somebody ends up scrolling past
+   * the one they wanted. Each of these answers a question a service business
+   * actually asks out loud, and between them they exercise both sources and the
+   * cost gate.
+   */
+  {
+    id: 'jobs-by-technician',
+    name: 'Jobs by technician',
+    description:
+      'How many jobs each person carried in the period, and how long they took on average.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCards',
+      groupFields: ['ownerName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'daysOpen', agg: 'avg' },
+        { field: 'daysOverdue', agg: 'avg' },
+      ],
+      // Worst average turnaround first: the row somebody opened this for.
+      sort: { key: 'daysOpen_avg', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'job-cost-absorbed',
+    name: 'Work we did not charge for',
+    description:
+      'Every job carrying internal, written-off or undecided cost — the figure that quietly eats a service margin.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    /*
+     * No `financial: true` — the flag is declared on ReportTemplate but read by
+     * nothing, so setting it would look like a guard and be none. The real gate is
+     * per-field: the cost columns carry permission 'jobs.cost', so this opens for
+     * a technician with those columns silently absent rather than refusing.
+     */
+    spec: spec({
+      source: 'jobCards',
+      columns: [
+        { field: 'documentNumber' },
+        { field: 'customerName' },
+        { field: 'title' },
+        { field: 'statusName' },
+        { field: 'totalCost' },
+        { field: 'absorbedCost' },
+        { field: 'undecidedCost' },
+      ],
+      /*
+       * Not filtered to "absorbed > 0": a total filter would hide the jobs where
+       * the cost is still UNDECIDED, which are the ones somebody can still act on.
+       * Sorting does the job without throwing rows away.
+       */
+      sort: { key: 'absorbedCost', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'job-parts-used',
+    name: 'Parts and labour used on jobs',
+    description:
+      'Every line on every job, grouped by what kind of thing it was and who pays for it.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCardLines',
+      groupFields: ['lineKind', 'billingState'],
+      columns: [
+        { field: '__rows' },
+        { field: 'qty', agg: 'sum' },
+        { field: 'lineCost', agg: 'sum' },
+        { field: 'intendedProfit', agg: 'sum' },
+      ],
+      sort: { key: 'lineCost_sum', dir: 'desc' },
+      chartType: 'bar',
+    }),
+  },
+
   /* ── Operations ──────────────────────────────────────────────────────────── */
   {
     id: 'cashup-history',

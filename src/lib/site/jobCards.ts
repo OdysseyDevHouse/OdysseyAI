@@ -4,6 +4,8 @@ import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { statusForRole, listJobStatuses } from './jobStatuses'
+// One-directional: jobSla reads settings and holidays, never jobCards.
+import { applyDeadlinesTx } from './jobSla'
 import { logActivity, logActivityTx, diffFields, type Actor } from './activityLog'
 import {
   BILLABLE_STATES,
@@ -703,6 +705,22 @@ export async function saveJobCard(
       )
       const id = Number((result as { insertId: number }).insertId)
 
+      /*
+       * The SLA deadlines, read back from the row rather than computed from the
+       * input: reported_at defaults to CURRENT_TIMESTAMP, so the only place the
+       * real value exists is the row that was just written. Computing from
+       * `new Date()` here would set a deadline a few milliseconds off the
+       * reported time, and reconcileJobSla would then report every job as drifted.
+       */
+      const [stampRows] = await tx.query<Row[]>(
+        `SELECT reported_at FROM job_cards WHERE id = ?`,
+        [id],
+      )
+      const reportedAt = stampRows[0]?.reported_at
+      if (reportedAt !== undefined && reportedAt !== null) {
+        await applyDeadlinesTx(tx, siteId, id, input.priority, reportedAt as string | Date)
+      }
+
       // LAST write before commit — see the header note about the sequence lock.
       const documentNumber = await nextDocumentNumber(tx, 'job_card')
       await tx.execute(`UPDATE job_cards SET document_number = ? WHERE id = ?`, [documentNumber, id])
@@ -719,7 +737,7 @@ export async function saveJobCard(
 
     const [beforeRows] = await tx.query<Row[]>(
       `SELECT title, description, priority, customer_id, service_address_id, location_id,
-              due_at, reference, internal_note, document_number
+              due_at, reference, internal_note, document_number, reported_at
          FROM job_cards WHERE id = ?`,
       [input.id],
     )
@@ -749,6 +767,27 @@ export async function saveJobCard(
         input.id,
       ],
     )
+
+    /*
+     * A priority change re-promises the job.
+     *
+     * An urgent job downgraded to normal must stop being measured against an
+     * urgent promise, and vice versa — keeping the old deadline would breach a job
+     * for a promise nobody is making any more.
+     *
+     * Recomputed from the ORIGINAL reported_at, not from now: the clock started
+     * when the customer phoned. Restarting it on every priority edit would make
+     * the deadline a thing you could reset by fiddling with a dropdown.
+     */
+    if (String(before.priority) !== input.priority && before.reported_at !== null) {
+      await applyDeadlinesTx(
+        tx,
+        siteId,
+        input.id,
+        input.priority,
+        before.reported_at as string | Date,
+      )
+    }
 
     const changes = diffFields(
       {

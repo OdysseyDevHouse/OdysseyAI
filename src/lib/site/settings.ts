@@ -308,9 +308,13 @@ export const SETTING_DEFAULTS = {
   job_travel_cost_per_km: '',
 
   /**
-   * How a claimed distance becomes a chargeable one: 'none', or the block to
-   * round UP to. Up rather than nearest, because a business that set "nearest 5"
-   * means it bills in blocks of five, not that it absorbs the remainder.
+   * How a claimed distance becomes a chargeable one: the block to round to, or
+   * 0 to charge the verified figure exactly.
+   *
+   * To the NEAREST block, not up. The PRD's own worked example rounds 29.1 to 29,
+   * so rounding up would contradict the document this was built from — and a
+   * business that bills every 21.1km trip as 25 is charging for kilometres nobody
+   * drove. See chargeableKm() in jobStatusModel.
    */
   job_travel_round_to: '1',
 
@@ -328,6 +332,32 @@ export const SETTING_DEFAULTS = {
    * this is the number that decides whether the tolerance check is fair.
    */
   job_travel_road_factor: '1.30',
+
+  /* ── The week the SLA clock runs on ──────────────────────────────────────
+   *
+   * An SLA promise of "4 hours" means four BUSINESS hours, so the business has
+   * to say when it is open. One week for the whole business, not one per policy:
+   * urgent and normal disagreeing about when Tuesday starts is not a feature,
+   * and four copies is four chances to typo.
+   */
+
+  /** Mon..Sun mask, 1 = open. The shape report_schedules.days_of_week uses. */
+  job_sla_trading_days: '1111100',
+
+  /** HH:MM. The SLA clock does not run before this. */
+  job_sla_opens_at: '08:00',
+
+  /** HH:MM. Work left at closing resumes at the next opening. */
+  job_sla_closes_at: '17:00',
+
+  /**
+   * Do public holidays stop the clock?
+   *
+   * On by default: the safe default is the one that does not breach somebody for
+   * a day the doors were locked. A business trading through Christmas turns it
+   * off deliberately.
+   */
+  job_sla_skip_holidays: '1',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS

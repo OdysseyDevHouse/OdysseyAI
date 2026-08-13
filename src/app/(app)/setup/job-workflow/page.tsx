@@ -1,9 +1,12 @@
 import { requireCapability } from '@/lib/auth'
 import { listJobStatuses, missingRoles } from '@/lib/site/jobStatuses'
 import { listJobBoards, statusesOffEveryBoard, boardStatusIds } from '@/lib/site/jobBoards'
+import { listSlaPolicies, untargetedJobCount } from '@/lib/site/jobSla'
+import { getSettings } from '@/lib/site/settings'
 import { PageHeader, PageBody, Callout, TextLink } from '@/components/ui'
 import { ROLE_LABEL } from '@/lib/jobStatusModel'
 import WorkflowClient from './WorkflowClient'
+import SlaPanel from './SlaPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,11 +31,23 @@ export const dynamic = 'force-dynamic'
 export default async function JobWorkflowPage() {
   const { siteId } = await requireCapability('jobs.setup')
 
-  const [statuses, boards, missing, offBoard] = await Promise.all([
+  const [statuses, boards, missing, offBoard, policies, settings, untargeted] = await Promise.all([
     listJobStatuses(siteId, true),
     listJobBoards(siteId, true),
     missingRoles(siteId),
     statusesOffEveryBoard(siteId),
+    listSlaPolicies(siteId, true),
+    getSettings(siteId, [
+      'job_sla_trading_days',
+      'job_sla_opens_at',
+      'job_sla_closes_at',
+      'job_sla_skip_holidays',
+    ]),
+    /*
+     * Tolerant: a nicety on a setup screen. A site mid-migration must still be
+     * able to configure its statuses.
+     */
+    untargetedJobCount(siteId).catch(() => 0),
   ])
 
   // Which statuses each board draws, so the editor opens with them ticked.
@@ -72,6 +87,18 @@ export default async function JobWorkflowPage() {
           boards={boards}
           columnsByBoard={columnsByBoard}
           offBoardIds={offBoard.map((s) => s.statusId)}
+        />
+
+        {/* The promises, on the same screen as the stages rather than a route of
+            their own: both answer "how does this business run a job", and four
+            settings plus four rows do not earn a sidebar entry. */}
+        <SlaPanel
+          policies={policies}
+          tradingDays={settings.job_sla_trading_days}
+          opensAt={settings.job_sla_opens_at}
+          closesAt={settings.job_sla_closes_at}
+          skipHolidays={settings.job_sla_skip_holidays === '1'}
+          untargetedCount={untargeted}
         />
       </PageBody>
     </>

@@ -33,6 +33,24 @@
  *        means nobody has looked; the expectation is labelled estimated, never
  *        measured; the leg count comes from the claim rather than an assumption;
  *        reducing a claim needs a reason; and correcting one clears the signature.
+ *  (J13) Parts move by TRANSFER and nothing else. A vehicle can never be the main
+ *        location; a part is issued only to a vehicle and only up to what the job
+ *        needs; a serial-tracked unit is never carried; promised-to-open-jobs
+ *        falls as parts leave the shelf, so a unit on a bakkie is not counted
+ *        twice; and the piles are checked after every act rather than the return
+ *        value trusted. Ends by proving stock still reconciles.
+ *  (J14) An SLA promise counts BUSINESS hours. Friday 16:00 plus four hours is
+ *        Monday 11:00; a job arriving overnight starts at opening; a degenerate
+ *        trading week refuses rather than looping; the two clocks agree, so the
+ *        countdown cannot disagree with the deadline beside it; met is a state of
+ *        its own and a late answer stays a breach; creating a job stamps its
+ *        deadlines; and changing the priority re-promises from the ORIGINAL
+ *        report time, so the clock cannot be reset with a dropdown.
+ *  (J15) EVERY catalog field is executed, one column at a time — a template only
+ *        selects what it names, so a broken expression elsewhere ships silently.
+ *        Cost fields are gated per FIELD, so a report degrades for a technician
+ *        rather than refusing to open; a job line dates from its job; and three
+ *        built-ins ship rather than fifteen.
  *
  * (J2) is the one that catches real bugs. A margin built on the lines' intended
  * prices rather than the invoice will agree with itself and disagree with the
@@ -41,7 +59,7 @@
  *
  *   npm run test:job-cards
  */
-import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
+import { siteExecute, siteQuery, siteQueryOne, siteTransaction } from '../src/lib/siteDb'
 import {
   saveJobCard,
   getJobCard,
@@ -113,6 +131,38 @@ import {
   listServiceAddresses,
   deleteServiceAddress,
 } from '../src/lib/site/serviceAddresses'
+import {
+  jobParts,
+  partsPromised,
+  vanHoldings,
+  issueParts,
+  returnParts,
+  reconcileJobParts,
+} from '../src/lib/site/jobParts'
+import {
+  createLocation,
+  listLocations,
+  listVans,
+  isVanTx,
+  mainLocationId,
+  setMainLocation,
+} from '../src/lib/site/stockLocations'
+import { reconcileStock } from '../src/lib/site/stockMovements'
+import { runBuilderSpec } from '../src/lib/reportBuilder/run'
+import { TEMPLATES } from '../src/lib/reportBuilder/templates'
+import { getSource, fieldsFor } from '../src/lib/reportBuilder/catalog'
+import {
+  deadlinesFor,
+  jobStanding,
+  listSlaPolicies,
+  markResponded,
+  reconcileJobSla,
+  slaCounts,
+  slaWorklist,
+  tradingHours,
+  untargetedJobCount,
+  validatePolicy,
+} from '../src/lib/site/jobSla'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
 import { verifySequence } from '../src/lib/site/sequences'
 import { createCustomer } from '../src/lib/site/customers'
@@ -126,6 +176,15 @@ import {
   gapBetween,
   haversineKm,
   overlaps,
+  addBusinessMinutes,
+  businessMinutesBetween,
+  DEFAULT_TRADING_HOURS,
+  describeDayMask,
+  isDayMask,
+  minutesUntilDue,
+  parseClock,
+  slaState,
+  tradingWeekIsUsable,
 } from '../src/lib/jobStatusModel'
 
 const SITE = 1
@@ -145,6 +204,9 @@ const CUSTOMER_PATTERN = '^JCT[0-9]{6}$'
 const ADDRESS_PATTERN = 'JCT %'
 const STATUS_PATTERN = 'JCT %'
 const BOARD_PATTERN = 'JCT %'
+/** (J13) fixtures: JCP thermostat / JCS compressor, JCV bakkie / JCR store room. */
+const PART_PATTERN = '^JC[PS][0-9]{6}$'
+const VAN_PATTERN = '^JC[VR][0-9]{6}$'
 
 /**
  * Deletes only this suite's fixtures.
@@ -155,6 +217,31 @@ const BOARD_PATTERN = 'JCT %'
  * dev database, and resetting a counter is how a duplicate number gets issued.
  */
 async function sweepStrays() {
+  /*
+   * (J13) fixtures first: a crashed run leaves stock on a bakkie, and a leftover
+   * pile on a leftover location is a reconcileStock() drift row that would then
+   * be blamed on whichever suite ran next. Movements before piles before
+   * products; transfer lines before transfers.
+   */
+  const jcProducts = `(SELECT id FROM products WHERE code REGEXP '${PART_PATTERN}')`
+  const jcLocs = `(SELECT id FROM stock_locations WHERE code REGEXP '${VAN_PATTERN}' AND is_main = 0)`
+  await siteExecute(
+    SITE,
+    `DELETE tl FROM stock_transfer_lines tl JOIN stock_transfers t ON t.id = tl.transfer_id
+      WHERE t.from_location_id IN ${jcLocs} OR t.to_location_id IN ${jcLocs}`,
+  )
+  await siteExecute(
+    SITE,
+    `DELETE FROM stock_transfers WHERE from_location_id IN ${jcLocs} OR to_location_id IN ${jcLocs}`,
+  )
+  await siteExecute(SITE, `DELETE FROM stock_movements WHERE product_id IN ${jcProducts}`)
+  await siteExecute(SITE, `DELETE FROM stock_movements WHERE location_id IN ${jcLocs}`)
+  await siteExecute(SITE, `DELETE FROM product_location_stock WHERE product_id IN ${jcProducts}`)
+  await siteExecute(SITE, `DELETE FROM product_location_stock WHERE location_id IN ${jcLocs}`)
+  await siteExecute(SITE, `DELETE l FROM job_card_lines l WHERE l.product_id IN ${jcProducts}`)
+  await siteExecute(SITE, `DELETE FROM products WHERE code REGEXP '${PART_PATTERN}'`)
+  await siteExecute(SITE, `DELETE FROM stock_locations WHERE code REGEXP '${VAN_PATTERN}' AND is_main = 0`)
+
   // Invoices first: fk_jcl_invoice is SET NULL but the lines must go before the
   // job, and the documents reference the job.
   await siteExecute(
@@ -191,6 +278,25 @@ async function sweepStrays() {
   ])
 }
 
+/**
+ * A DATETIME column as the wall clock that was stored.
+ *
+ * String(driverDate) is a LOCALE string, so comparing it against a
+ * 'YYYY-MM-DD HH:MM:SS' the code produced would never match — and would fail in a
+ * way that looks like a deadline bug rather than a formatting one.
+ */
+const wallOf = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null
+  if (value instanceof Date) {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return (
+      `${value.getUTCFullYear()}-${pad(value.getUTCMonth() + 1)}-${pad(value.getUTCDate())}` +
+      ` ${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}:${pad(value.getUTCSeconds())}`
+    )
+  }
+  return String(value)
+}
+
 const jobLineCount = async (jobId: number) =>
   Number(
     (
@@ -205,6 +311,12 @@ async function main() {
 
   // ── Fixtures ───────────────────────────────────────────────────────────
   const stamp = String(Date.now()).slice(-6)
+  /*
+   * Baselined, not asserted to be zero. This suite shares a live dev database
+   * with the others, so a drift row somebody else left must not be reported as
+   * this suite's fault — what matters is that (J13) adds none.
+   */
+  const stockDriftBefore = (await reconcileStock(SITE)).length
   const customer = await createCustomer(SITE, actor, {
     code: `JCT${stamp}`,
     name: `JCT Test Customer ${stamp}`,
@@ -1904,6 +2016,835 @@ async function main() {
     )
     // Unhook it so the sweep can clear the fixture.
     await siteExecute(SITE, 'UPDATE job_cards SET service_address_id = NULL WHERE id = ?', [jobId])
+  }
+
+  // ── 21. (J13) Parts, vans and issuing ─────────────────────────────────
+  //
+  // The only phase where a wrong number moves PHYSICAL GOODS, so this block
+  // checks the piles after every act rather than trusting the return value.
+  {
+    const vatRate = await siteQueryOne<any>(
+      SITE,
+      "SELECT id FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1",
+    )
+    const mainId = await mainLocationId(SITE)
+
+    // A van and a stock room. Two, because "is a van" must change behaviour.
+    const van = await createLocation(SITE, {
+      code: `JCV${stamp}`,
+      name: 'JCT bakkie',
+      isMobile: true,
+    })
+    const room = await createLocation(SITE, { code: `JCR${stamp}`, name: 'JCT store room' })
+    ok('(J13) a vehicle location can be created', van.ok, van.ok ? '' : van.error)
+    ok('(J13) so can an ordinary room', room.ok, room.ok ? '' : room.error)
+    if (!van.ok || !room.ok) throw new Error('van fixture failed')
+
+    const vanRow = await siteQueryOne<any>(
+      SITE,
+      'SELECT is_mobile FROM stock_locations WHERE id=?',
+      [van.id],
+    )
+    ok('(J13) the flag is stored, not inferred from the name', Number(vanRow?.is_mobile) === 1)
+
+    const vans = await listVans(SITE)
+    ok(
+      '(J13) listVans finds it and not the room',
+      vans.some((v) => v.id === van.id) && !vans.some((v) => v.id === room.id),
+    )
+    ok('(J13) isVanTx agrees, inside a transaction', await siteTransaction(SITE, (tx) => isVanTx(tx, van.id)))
+    ok('(J13) and says no to the room', !(await siteTransaction(SITE, (tx) => isVanTx(tx, room.id))))
+
+    /*
+     * The load-bearing refusal. Sales come from the main location, so a bakkie
+     * as main would mean the till sells from whatever is on board — and
+     * `availableToSell` reads main only, so the error would be invisible.
+     */
+    const vanAsMain = await setMainLocation(SITE, van.id)
+    ok(
+      '(J13) *** a vehicle cannot be made the main location ***',
+      !vanAsMain.ok,
+      vanAsMain.ok ? '' : vanAsMain.error,
+    )
+
+    // Purpose filtering: a van is transferable-into and countable, never sellable.
+    const sellable = await listLocations(SITE, false, true, 'sell')
+    const transferable = await listLocations(SITE, false, true, 'transfer')
+    const countable = await listLocations(SITE, false, true, 'count')
+    ok('(J13) a vehicle is not offered as a place to sell from', !sellable.some((l) => l.id === van.id))
+    ok('(J13) but it IS offered as a transfer destination', transferable.some((l) => l.id === van.id))
+    ok('(J13) and it can be counted like any other pile', countable.some((l) => l.id === van.id))
+    ok('(J13) the room is offered for all three',
+      sellable.some((l) => l.id === room.id) &&
+      transferable.some((l) => l.id === room.id) &&
+      countable.some((l) => l.id === room.id))
+
+    // A stocked part, sitting on the main shelf.
+    const created = await siteExecute(
+      SITE,
+      `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)
+       VALUES (?,?,'normal',40,60,60,?,1)`,
+      [`JCP${stamp}`, 'JCT thermostat', vatRate?.id ?? null],
+    )
+    const part = created.insertId
+    await siteExecute(
+      SITE,
+      `INSERT INTO product_location_stock (product_id, location_id, stock_on_hand) VALUES (?,?,40)`,
+      [part, mainId],
+    )
+    await siteExecute(
+      SITE,
+      `INSERT INTO stock_movements (product_id, location_id, movement_type, qty_change, qty_after, unit_cost_excl, source, user_id, user_name)
+       VALUES (?,?,'opening',40,40,60,'opening',?,?)`,
+      [part, mainId, actor.userId, actor.userName],
+    )
+
+    const pileAt = async (locationId: number) =>
+      toNum(
+        (
+          await siteQueryOne<any>(
+            SITE,
+            'SELECT stock_on_hand FROM product_location_stock WHERE product_id=? AND location_id=?',
+            [part, locationId],
+          )
+        )?.stock_on_hand ?? 0,
+      )
+    const siteTotal = async () =>
+      toNum((await siteQueryOne<any>(SITE, 'SELECT stock_on_hand FROM products WHERE id=?', [part]))?.stock_on_hand)
+
+    // A fresh job needing 10 of them.
+    const partsJob = await saveJobCard(SITE, actor, {
+      id: null,
+      customerId: customer.id,
+      customerName: null,
+      customerPhone: null,
+      customerEmail: null,
+      serviceAddressId: null,
+      locationId: null,
+      statusId: null,
+      priority: 'normal',
+      ownerUserId: null,
+      ownerName: '',
+      title: 'JCT thermostat replacement',
+      description: null,
+      dueAt: null,
+      source: 'phone',
+      reference: null,
+      internalNote: null,
+    })
+    if (!partsJob.ok) throw new Error('parts job fixture failed')
+    const pJob = partsJob.id
+
+    const pLines = await saveLines(SITE, actor, pJob, [
+      {
+        id: null,
+        lineKind: 'part',
+        billingState: 'quoted',
+        productId: part,
+        productCode: `JCP${stamp}`,
+        description: 'JCT thermostat',
+        qty: 10,
+        unitCostExcl: 60,
+        unitPriceIncl: 138,
+        vatRatePct: 15,
+        discountPct: 0,
+        note: null,
+      },
+    ])
+    ok('(J13) a part line with a real product saves', pLines.ok, pLines.ok ? '' : pLines.error)
+
+    const beforePart = await jobParts(SITE, pJob)
+    ok('(J13) the job reports one part to pick', beforePart.length === 1)
+    ok('(J13) all ten are outstanding before anything moves', beforePart[0]?.outstandingQty === 10)
+    ok('(J13) and it knows what is on the shelf', beforePart[0]?.mainOnHand === 40)
+
+    /*
+     * Promised-to-open-jobs. This is the figure that stops a buyer seeing 40 on
+     * the shelf and selling all of them while a technician is booked to fit ten.
+     */
+    const promised = await partsPromised(SITE, [part])
+    ok('(J13) ten are promised to an open job', promised.get(part) === 10)
+
+    // ── Issuing ─────────────────────────────────────────────────────────
+    const overIssue = await issueParts(SITE, actor, pJob, van.id, [
+      { jobCardLineId: beforePart[0]!.lineId, productId: part, qty: 25 },
+    ])
+    ok(
+      '(J13) *** issuing more than the job needs is refused ***',
+      !overIssue.ok,
+      overIssue.ok ? '' : overIssue.error,
+    )
+
+    const toARoom = await issueParts(SITE, actor, pJob, room.id, [
+      { jobCardLineId: beforePart[0]!.lineId, productId: part, qty: 4 },
+    ])
+    ok(
+      '(J13) parts can only be issued to a VEHICLE, not another stock room',
+      !toARoom.ok,
+      toARoom.ok ? '' : toARoom.error,
+    )
+
+    const issued = await issueParts(SITE, actor, pJob, van.id, [
+      { jobCardLineId: beforePart[0]!.lineId, productId: part, qty: 6 },
+    ])
+    ok('(J13) six go onto the bakkie', issued.ok, issued.ok ? '' : issued.error)
+
+    ok('(J13) the shelf drops to 34', (await pileAt(mainId)) === 34)
+    ok('(J13) the bakkie holds 6', (await pileAt(van.id)) === 6)
+    ok('(J13) and the SITE total is unchanged — nothing was created or destroyed', (await siteTotal()) === 40)
+
+    if (issued.ok) {
+      const tRow = await siteQueryOne<any>(
+        SITE,
+        'SELECT status, from_location_id, to_location_id FROM stock_transfers WHERE id=?',
+        [issued.transferId],
+      )
+      ok('(J13) it went through the ONE transfer engine, posted', String(tRow?.status) === 'posted')
+      ok('(J13) off the main location, onto the van', Number(tRow?.to_location_id) === van.id)
+      const linked = await siteQueryOne<any>(
+        SITE,
+        'SELECT job_card_line_id FROM stock_transfer_lines WHERE transfer_id=?',
+        [issued.transferId],
+      )
+      ok(
+        '(J13) the transfer line names the job line, which is what makes drift findable',
+        Number(linked?.job_card_line_id) === beforePart[0]!.lineId,
+      )
+    }
+
+    const afterIssue = await jobParts(SITE, pJob)
+    ok('(J13) the line records six issued', afterIssue[0]?.issuedQty === 6)
+    ok('(J13) four are still to pick', afterIssue[0]?.outstandingQty === 4)
+
+    /*
+     * Promised must fall to what has NOT left the building. Leaving it at ten
+     * would double-count: six are on a bakkie, already off the shelf.
+     */
+    ok('(J13) promised falls to the four still on the shelf', (await partsPromised(SITE, [part])).get(part) === 4)
+
+    const holdings = await vanHoldings(SITE, van.id)
+    ok('(J13) vanHoldings sees the six on board', holdings.find((h) => h.productId === part)?.qty === 6)
+
+    // Topping up to the job's full need is allowed; going past it is not.
+    const topUp = await issueParts(SITE, actor, pJob, van.id, [
+      { jobCardLineId: afterIssue[0]!.lineId, productId: part, qty: 5 },
+    ])
+    ok(
+      '(J13) six already out plus five more exceeds the ten needed, so it is refused',
+      !topUp.ok,
+      topUp.ok ? '' : topUp.error,
+    )
+
+    // ── Returning ───────────────────────────────────────────────────────
+    const overReturn = await returnParts(SITE, actor, pJob, van.id, [
+      { jobCardLineId: afterIssue[0]!.lineId, productId: part, qty: 9 },
+    ])
+    ok(
+      '(J13) *** more cannot come back than went out ***',
+      !overReturn.ok,
+      overReturn.ok ? '' : overReturn.error,
+    )
+
+    const returned = await returnParts(SITE, actor, pJob, van.id, [
+      { jobCardLineId: afterIssue[0]!.lineId, productId: part, qty: 2 },
+    ])
+    ok('(J13) two come back', returned.ok, returned.ok ? '' : returned.error)
+    ok('(J13) the shelf climbs to 36', (await pileAt(mainId)) === 36)
+    ok('(J13) four are left on board', (await pileAt(van.id)) === 4)
+    ok('(J13) the site total STILL has not moved', (await siteTotal()) === 40)
+
+    const afterReturn = await jobParts(SITE, pJob)
+    ok('(J13) issued falls to four', afterReturn[0]?.issuedQty === 4)
+    ok('(J13) so six are outstanding again', afterReturn[0]?.outstandingQty === 6)
+
+    // ── Drift ───────────────────────────────────────────────────────────
+    const cleanDrift = await reconcileJobParts(SITE)
+    ok(
+      '(J13) a correctly issued job reports no drift',
+      cleanDrift.issuedMismatch.filter((d) => d.jobId === pJob).length === 0 &&
+        cleanDrift.overIssued.filter((d) => d.jobId === pJob).length === 0,
+    )
+    ok(
+      '(J13) four on a van for an OPEN job is not stranded',
+      !cleanDrift.strandedOnVans.some((s) => s.productCode === `JCP${stamp}`),
+    )
+
+    /*
+     * Now break it on purpose, the way a hand-edit or a half-applied write would.
+     * The reconciliation exists for exactly this, and a drift function nobody has
+     * seen fail is a drift function nobody should trust.
+     */
+    await siteExecute(SITE, 'UPDATE job_card_lines SET issued_qty = 9 WHERE id = ?', [
+      afterReturn[0]!.lineId,
+    ])
+    const broken = await reconcileJobParts(SITE)
+    const caught = broken.issuedMismatch.find((d) => d.lineId === afterReturn[0]!.lineId)
+    ok('(J13) a tampered issued figure is CAUGHT', caught !== undefined)
+    ok('(J13) and it names both numbers', caught?.issued === 9 && caught?.moved === 4)
+    await siteExecute(SITE, 'UPDATE job_card_lines SET issued_qty = 4 WHERE id = ?', [
+      afterReturn[0]!.lineId,
+    ])
+
+    /*
+     * The case that defeats every other check on the reconciliation screen.
+     * finaliseDocument consumes from MAIN, so invoicing a part still on a bakkie
+     * debits the wrong pile — and all three stock invariants still hold, because
+     * the totals are right and only the attribution is wrong.
+     */
+    await siteExecute(SITE, 'UPDATE job_card_lines SET invoiced_qty = 1 WHERE id = ?', [
+      afterReturn[0]!.lineId,
+    ])
+    const outAndInvoiced = await reconcileJobParts(SITE)
+    ok(
+      '(J13) *** invoiced while still on a van is reported — nothing else can see it ***',
+      outAndInvoiced.invoicedWhileOut.some((d) => d.lineId === afterReturn[0]!.lineId),
+    )
+    await siteExecute(SITE, 'UPDATE job_card_lines SET invoiced_qty = 0 WHERE id = ?', [
+      afterReturn[0]!.lineId,
+    ])
+
+    // Closing the job leaves the four with nobody expecting them.
+    ok('(J13) promised ignores a line already out', (await partsPromised(SITE, [part])).get(part) === 6)
+
+    /*
+     * A serial-tracked part is not carried on a bakkie: which unit was fitted is
+     * the whole point of a serial, and choosing it on the pavement is how a
+     * warranty ends up against the wrong customer.
+     */
+    const serialCreated = await siteExecute(
+      SITE,
+      /*
+       * 'serial' is a PRODUCT TYPE, not a flag — the same enum that separates a
+       * normal line from a service, which is why jobParts reads product_type.
+       *
+       * ZERO stock, deliberately. A serial-tracked product holding 5 with no
+       * product_serials rows is a reconcileSerials() drift row, and it would
+       * surface as a failure in test:serials — a suite this block does not
+       * touch. The refusal below fires on the product type before any quantity
+       * is looked at, so the stock is not needed to prove it.
+       */
+      `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)
+       VALUES (?,?,'serial',0,900,900,?,1)`,
+      [`JCS${stamp}`, 'JCT compressor', vatRate?.id ?? null],
+    )
+    const serialPart = serialCreated.insertId
+    const withSerial = await saveLines(SITE, actor, pJob, [
+      { ...afterReturn[0]!, id: afterReturn[0]!.lineId, lineKind: 'part', billingState: 'quoted',
+        productId: part, productCode: `JCP${stamp}`, description: 'JCT thermostat', qty: 10,
+        unitCostExcl: 60, unitPriceIncl: 138, vatRatePct: 15, discountPct: 0, note: null },
+      { id: null, lineKind: 'part', billingState: 'quoted', productId: serialPart,
+        productCode: `JCS${stamp}`, description: 'JCT compressor', qty: 1, unitCostExcl: 900,
+        unitPriceIncl: 2070, vatRatePct: 15, discountPct: 0, note: null },
+    ])
+    ok('(J13) a serial-tracked part can be ON a job', withSerial.ok, withSerial.ok ? '' : withSerial.error)
+
+    const serialLine = (await jobParts(SITE, pJob)).find((p) => p.productId === serialPart)
+    ok('(J13) and the job knows it is serialised', serialLine?.isSerial === true)
+    const serialIssue = await issueParts(SITE, actor, pJob, van.id, [
+      { jobCardLineId: serialLine!.lineId, productId: serialPart, qty: 1 },
+    ])
+    ok(
+      '(J13) *** but it cannot be loaded onto a bakkie ***',
+      !serialIssue.ok,
+      serialIssue.ok ? '' : serialIssue.error,
+    )
+    ok(
+      '(J13) and the reason given is the serial, not the empty shelf',
+      !serialIssue.ok && /serial/i.test(serialIssue.error),
+    )
+
+    // Bring the van back to empty so the fixture teardown leaves no stock behind.
+    const finalOut = (await jobParts(SITE, pJob)).find((p) => p.productId === part)
+    const emptied = await returnParts(SITE, actor, pJob, van.id, [
+      { jobCardLineId: finalOut!.lineId, productId: part, qty: finalOut!.issuedQty },
+    ])
+    ok('(J13) the bakkie can be emptied', emptied.ok, emptied.ok ? '' : emptied.error)
+    ok('(J13) every unit is back on the shelf', (await pileAt(mainId)) === 40 && (await pileAt(van.id)) === 0)
+
+    /*
+     * The whole-system invariant, last: after issuing, over-issuing, returning,
+     * tampering and repairing, stock_on_hand must still equal the sum of every
+     * movement ever recorded. This is the check that would catch a stray UPDATE.
+     */
+    const stockNow = await reconcileStock(SITE)
+    ok(
+      '(J13) *** stock still reconciles after all of that ***',
+      stockNow.length === stockDriftBefore,
+      `${stockNow.length} rows, was ${stockDriftBefore}`,
+    )
+
+    // Teardown, in FK order.
+    await siteExecute(
+      SITE,
+      `DELETE tl FROM stock_transfer_lines tl JOIN stock_transfers t ON t.id = tl.transfer_id
+        WHERE t.from_location_id = ? OR t.to_location_id = ?`,
+      [van.id, van.id],
+    )
+    await siteExecute(SITE, `DELETE FROM stock_transfers WHERE from_location_id = ? OR to_location_id = ?`, [van.id, van.id])
+    await siteExecute(SITE, `DELETE FROM stock_movements WHERE product_id IN (?,?)`, [part, serialPart])
+    await siteExecute(SITE, `DELETE FROM product_location_stock WHERE product_id IN (?,?)`, [part, serialPart])
+    await siteExecute(SITE, `DELETE FROM job_card_lines WHERE job_card_id = ?`, [pJob])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [pJob])
+    await siteExecute(SITE, `DELETE FROM products WHERE id IN (?,?)`, [part, serialPart])
+    await siteExecute(SITE, `DELETE FROM stock_locations WHERE id IN (?,?)`, [van.id, room.id])
+  }
+
+  // ── 22. (J14) Service targets on business hours ───────────────────────
+  //
+  // The arithmetic first, with no database at all: a wrong business-minute sum
+  // makes every deadline in the system wrong, and it is the one thing here that
+  // can be pinned down exactly.
+  {
+    const at = (iso: string) => new Date(`${iso}Z`).getTime()
+    const iso = (msv: number | null) =>
+      msv === null ? 'null' : new Date(msv).toISOString().slice(0, 16)
+
+    // Mon-Fri 08:00-17:00, the seeded default.
+    const wk = DEFAULT_TRADING_HOURS
+
+    /*
+     * THE CASE THE WHOLE DESIGN EXISTS FOR. Friday 16:00 plus four business hours
+     * is MONDAY 11:00 — one hour of Friday and three of Monday. A calendar clock
+     * would say Friday 20:00 and breach it before anybody was back at work.
+     */
+    ok(
+      '(J14) *** friday 16:00 + 4 business hours is monday 11:00, not friday 20:00 ***',
+      iso(addBusinessMinutes(at('2026-08-14T16:00:00'), 240, wk)) === '2026-08-17T11:00',
+      iso(addBusinessMinutes(at('2026-08-14T16:00:00'), 240, wk)),
+    )
+
+    // A job that arrives overnight is not already an hour into its four.
+    ok(
+      '(J14) a job logged at 02:00 starts its clock at opening',
+      iso(addBusinessMinutes(at('2026-08-11T02:00:00'), 240, wk)) === '2026-08-11T12:00',
+    )
+    ok(
+      '(J14) and one logged after closing starts the next morning',
+      iso(addBusinessMinutes(at('2026-08-11T18:00:00'), 240, wk)) === '2026-08-12T12:00',
+    )
+    ok(
+      '(J14) exactly at closing time rolls to the next day',
+      iso(addBusinessMinutes(at('2026-08-11T17:00:00'), 60, wk)) === '2026-08-12T09:00',
+    )
+    ok(
+      '(J14) zero minutes is the reported time itself',
+      iso(addBusinessMinutes(at('2026-08-11T10:00:00'), 0, wk)) === '2026-08-11T10:00',
+    )
+
+    ok('(J14) a full trading day is nine hours', businessMinutesBetween(
+      at('2026-08-12T08:00:00'), at('2026-08-12T17:00:00'), wk) === 540)
+    ok('(J14) a weekend on its own is zero', businessMinutesBetween(
+      at('2026-08-15T00:00:00'), at('2026-08-16T23:59:00'), wk) === 0)
+
+    /*
+     * THE CONSISTENCY CHECK, and the one most likely to catch a real bug: the
+     * two functions must agree. If addBusinessMinutes says the deadline is Monday
+     * 11:00, then businessMinutesBetween from the start to that deadline has to be
+     * the 240 that produced it — otherwise the countdown on screen disagrees with
+     * the deadline beside it.
+     */
+    ok(
+      '(J14) *** the two clocks agree — measuring back to the deadline gives the same 240 ***',
+      businessMinutesBetween(at('2026-08-14T16:00:00'), at('2026-08-17T11:00:00'), wk) === 240,
+    )
+
+    const withHoliday = { ...wk, holidays: new Set(['2026-08-12']) }
+    ok(
+      '(J14) a public holiday pushes the deadline out by a day',
+      iso(addBusinessMinutes(at('2026-08-11T16:00:00'), 240, withHoliday)) === '2026-08-13T11:00',
+    )
+
+    /*
+     * Degenerate weeks must REFUSE rather than spin. A mask of zeroes has no
+     * minute to find, and an unbounded search for one in a page render is a hung
+     * request, not a wrong number.
+     */
+    ok(
+      '(J14) *** a week with no open day returns no target rather than looping ***',
+      addBusinessMinutes(at('2026-08-11T10:00:00'), 60, { ...wk, days: '0000000' }) === null,
+    )
+    ok(
+      '(J14) so does a closing time before the opening one',
+      addBusinessMinutes(at('2026-08-11T10:00:00'), 60, { ...wk, opensAt: 1020, closesAt: 480 }) === null,
+    )
+    ok('(J14) and tradingWeekIsUsable says so first', !tradingWeekIsUsable({ ...wk, days: '0000000' }))
+
+    // A 24/7 business is the degenerate case the other way, and must behave.
+    const roundClock = { days: '1111111', opensAt: 0, closesAt: 1440, holidays: new Set<string>() }
+    ok(
+      '(J14) a business open around the clock behaves like wall time',
+      iso(addBusinessMinutes(at('2026-08-14T16:00:00'), 240, roundClock)) === '2026-08-14T20:00',
+    )
+
+    // The three states, and why 'met' is not 'not breached'.
+    const dueAt = at('2026-08-17T11:00:00')
+    ok('(J14) before the deadline it is counting down', slaState(dueAt, NaN, at('2026-08-17T10:00:00')) === 'due')
+    ok('(J14) past it with nobody having replied is a breach', slaState(dueAt, NaN, at('2026-08-17T12:00:00')) === 'breached')
+    ok(
+      '(J14) *** answered in time is MET, a state of its own — not merely unbreached ***',
+      slaState(dueAt, at('2026-08-17T09:00:00'), at('2026-08-20T09:00:00')) === 'met',
+    )
+    ok(
+      '(J14) answered late stays a breach forever, rather than reverting',
+      slaState(dueAt, at('2026-08-17T12:00:00'), at('2026-08-20T09:00:00')) === 'breached',
+    )
+    ok('(J14) answering at the exact deadline counts as met', slaState(dueAt, dueAt, at('2026-08-20T09:00:00')) === 'met')
+    ok('(J14) no deadline is no target, not a pass', slaState(NaN, NaN, dueAt) === 'none')
+
+    ok('(J14) the countdown is in business minutes', minutesUntilDue(dueAt, at('2026-08-14T16:00:00'), wk) === 240)
+    ok('(J14) and goes negative once late', minutesUntilDue(dueAt, at('2026-08-17T12:00:00'), wk) === -60)
+
+    ok('(J14) a mask reads as a sentence', describeDayMask('1111100') === 'Mon-Fri')
+    ok('(J14) a scattered mask lists its days', describeDayMask('1010100') === 'Mon, Wed, Fri')
+    ok('(J14) a malformed mask is refused', !isDayMask('11111') && !isDayMask('1111102'))
+    ok('(J14) a clock parses, and a nonsense one does not',
+      parseClock('08:30') === 510 && parseClock('25:00') === null && parseClock('rubbish') === null)
+
+    // ── The policy rules ────────────────────────────────────────────────
+    ok(
+      '(J14) *** a response target longer than the resolution one is refused ***',
+      validatePolicy({
+        priority: 'normal', name: 'JCT', respondMinutes: 600, resolveMinutes: 60,
+        isActive: true, note: null,
+      }) !== null,
+    )
+    ok(
+      '(J14) a blank resolution target is allowed — a fix often waits on a part',
+      validatePolicy({
+        priority: 'normal', name: 'JCT', respondMinutes: 600, resolveMinutes: null,
+        isActive: true, note: null,
+      }) === null,
+    )
+    ok(
+      '(J14) zero is refused, because it is a promise of instant rather than none',
+      validatePolicy({
+        priority: 'normal', name: 'JCT', respondMinutes: 0, resolveMinutes: null,
+        isActive: true, note: null,
+      }) !== null,
+    )
+    ok(
+      '(J14) a nameless policy is refused',
+      validatePolicy({
+        priority: 'normal', name: '   ', respondMinutes: 60, resolveMinutes: null,
+        isActive: true, note: null,
+      }) !== null,
+    )
+
+    // ── Against the database ────────────────────────────────────────────
+    const week = await tradingHours(SITE)
+    ok('(J14) the trading week loads and is usable', tradingWeekIsUsable(week), JSON.stringify({
+      days: week.days, opensAt: week.opensAt, closesAt: week.closesAt,
+    }))
+
+    const seeded = await listSlaPolicies(SITE, false)
+    ok('(J14) all four priorities carry a live policy', seeded.length === 4, String(seeded.length))
+    ok(
+      '(J14) and each respects respond <= resolve',
+      seeded.every((p) => p.respondMinutes === null || p.resolveMinutes === null ||
+        p.respondMinutes <= p.resolveMinutes),
+    )
+
+    const derived = await deadlinesFor(SITE, 'high', '2026-08-14 16:00:00', week)
+    ok('(J14) a high-priority job reported friday 16:00 gets a policy', derived.policyId !== null)
+    ok(
+      '(J14) *** and its deadline is monday 11:00, from the seeded 4 hours ***',
+      derived.respondBy === '2026-08-17 11:00:00',
+      String(derived.respondBy),
+    )
+
+    // A real job, so the wiring is exercised and not just the arithmetic.
+    const slaJob = await saveJobCard(SITE, actor, {
+      id: null, customerId: customer.id, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'high', ownerUserId: null, ownerName: '',
+      title: 'JCT geyser burst', description: null, dueAt: null, source: 'phone',
+      reference: null, internalNote: null,
+    })
+    ok('(J14) the job is created', slaJob.ok, slaJob.ok ? '' : slaJob.error)
+    if (!slaJob.ok) throw new Error('sla job fixture failed')
+    const sJob = slaJob.id
+
+    const stamped = await siteQueryOne<any>(
+      SITE,
+      `SELECT sla_policy_id, respond_by, resolve_by, reported_at FROM job_cards WHERE id = ?`,
+      [sJob],
+    )
+    ok(
+      '(J14) *** creating a job STAMPS its deadlines — the columns are not left for a cron ***',
+      stamped?.sla_policy_id !== null && stamped?.respond_by !== null,
+      JSON.stringify(stamped),
+    )
+
+    /*
+     * The deadline must be computed from the stored reported_at, not from a fresh
+     * `new Date()`. Off by even a second and reconcileJobSla would report every
+     * job in the business as drifted.
+     */
+    const expected = await deadlinesFor(SITE, 'high', stamped.reported_at, week)
+    ok(
+      '(J14) and it matches what the policy says exactly, so nothing reads as drift',
+      String(wallOf(stamped.respond_by)) === String(expected.respondBy),
+      `${wallOf(stamped.respond_by)} vs ${expected.respondBy}`,
+    )
+
+    const standing = await jobStanding(SITE, sJob)
+    ok('(J14) the job reports a standing', standing !== null)
+    ok('(J14) which is counting down, not breached, on a fresh job', standing?.respondState === 'due')
+    ok('(J14) and names the policy that set it', standing?.policyName === 'High')
+
+    ok('(J14) it appears on the response worklist',
+      (await slaWorklist(SITE, 'respond', 200)).some((r) => r.jobId === sJob))
+
+    const before = await slaCounts(SITE)
+    ok('(J14) and is counted as awaiting a reply', before.awaitingResponse >= 1)
+
+    // ── Responding ──────────────────────────────────────────────────────
+    const responded = await markResponded(SITE, actor, sJob)
+    ok('(J14) somebody picks it up', responded.ok, responded.ok ? '' : responded.error)
+
+    const twiceResponded = await markResponded(SITE, actor, sJob)
+    ok(
+      '(J14) *** a second response is refused — it would turn a met target into a breach ***',
+      !twiceResponded.ok,
+      twiceResponded.ok ? '' : twiceResponded.error,
+    )
+
+    const after = await jobStanding(SITE, sJob)
+    ok('(J14) the response clock has stopped', after?.respondedAt !== null)
+    ok('(J14) the target reads met', after?.respondState === 'met')
+    ok('(J14) it names who did it', after?.respondedByName === actor.userName)
+    ok('(J14) and how long it took in working time', (after?.responseTookMinutes ?? -1) >= 0)
+    ok('(J14) there is no countdown left to show', after?.respondMinutesLeft === null)
+
+    ok('(J14) it has left the response worklist',
+      !(await slaWorklist(SITE, 'respond', 200)).some((r) => r.jobId === sJob))
+
+    // ── A priority change re-promises the job ───────────────────────────
+    const beforeChange = wallOf(
+      (await siteQueryOne<any>(SITE, `SELECT respond_by FROM job_cards WHERE id=?`, [sJob]))?.respond_by,
+    )
+    const downgraded = await saveJobCard(SITE, actor, {
+      id: sJob, customerId: customer.id, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'low', ownerUserId: null, ownerName: '',
+      title: 'JCT geyser burst', description: null, dueAt: null, source: 'phone',
+      reference: null, internalNote: null,
+    })
+    ok('(J14) the job is downgraded to low', downgraded.ok, downgraded.ok ? '' : downgraded.error)
+
+    const afterChange = await siteQueryOne<any>(
+      SITE, `SELECT respond_by, sla_policy_id FROM job_cards WHERE id=?`, [sJob])
+    ok(
+      '(J14) *** dropping the priority re-promises it — the urgent deadline does not linger ***',
+      wallOf(afterChange?.respond_by) !== beforeChange,
+      `${beforeChange} -> ${wallOf(afterChange?.respond_by)}`,
+    )
+    /*
+     * Recomputed from the ORIGINAL report time, not from now. Otherwise the
+     * deadline becomes a thing you can reset by fiddling with a dropdown.
+     */
+    const lowExpected = await deadlinesFor(SITE, 'low', stamped.reported_at, week)
+    ok(
+      '(J14) and from the original report time, so a priority edit cannot reset the clock',
+      wallOf(afterChange?.respond_by) === lowExpected.respondBy,
+      `${wallOf(afterChange?.respond_by)} vs ${lowExpected.respondBy}`,
+    )
+
+    // ── Drift ───────────────────────────────────────────────────────────
+    const cleanSla = await reconcileJobSla(SITE)
+    ok(
+      '(J14) a correctly stamped job is not reported as drifted',
+      !cleanSla.staleDeadlines.some((d) => d.jobId === sJob),
+    )
+    ok(
+      '(J14) nor as missing a target',
+      !cleanSla.missingDeadlines.some((d) => d.jobId === sJob),
+    )
+
+    /*
+     * Break it the only way the app cannot: a response stamped before the job was
+     * reported. Proving the drift function actually fires beats trusting it.
+     */
+    await siteExecute(SITE, `UPDATE job_cards SET responded_at = '2020-01-01 09:00:00' WHERE id = ?`, [sJob])
+    const brokenSla = await reconcileJobSla(SITE)
+    ok(
+      '(J14) *** a response recorded before the job existed is CAUGHT ***',
+      brokenSla.impossibleResponse.some((d) => d.jobId === sJob),
+    )
+
+    // A wiped deadline is reported as untargeted rather than passing silently.
+    await siteExecute(
+      SITE,
+      `UPDATE job_cards SET responded_at = NULL, respond_by = NULL, resolve_by = NULL WHERE id = ?`,
+      [sJob],
+    )
+    const wiped = await reconcileJobSla(SITE)
+    ok(
+      '(J14) a job with no deadline is reported as untargeted',
+      wiped.missingDeadlines.some((d) => d.jobId === sJob),
+    )
+    ok('(J14) and the count agrees with the list', (await untargetedJobCount(SITE)) >= 1)
+    ok('(J14) a job with no target has no standing to report', (await jobStanding(SITE, sJob)) === null)
+
+    await siteExecute(SITE, `DELETE FROM job_card_lines WHERE job_card_id = ?`, [sJob])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [sJob])
+  }
+
+  // ── 23. (J15) Reports, and the cost gate ──────────────────────────────
+  //
+  // EVERY FIELD IS EXECUTED, one at a time. A template only selects the columns
+  // it names, so a broken expression on any other field ships undetected until
+  // somebody picks it in the builder — which is exactly how the two bugs this
+  // block was written to catch got in (a bucket built as `t.reported_at` on a
+  // table with no such column, and a spread field set whose join was missing).
+  {
+    const everything = () => true
+    const technician = (c: string) => c !== 'jobs.cost' && c !== 'products.cost'
+
+    for (const key of ['jobCards', 'jobCardLines']) {
+      const src = getSource(key)
+      ok(`(J15) the ${key} source is in the catalogue`, src !== undefined)
+      if (!src) continue
+
+      ok(
+        `(J15) ${key} is gated on jobs.view`,
+        src.permission === 'jobs.view',
+        String(src.permission),
+      )
+
+      /*
+       * The cost gate, at FIELD level rather than source level. A technician who
+       * may see a job must not thereby learn its margin — but the report has to
+       * open for them with those columns absent, because a saved report shared
+       * across a shop should degrade for the junior rather than break.
+       */
+      const full = fieldsFor(src, everything as never)
+      const reduced = fieldsFor(src, technician as never)
+      ok(
+        `(J15) *** ${key} hides its cost fields from somebody without jobs.cost ***`,
+        reduced.length < full.length,
+        `${full.length} -> ${reduced.length}`,
+      )
+      ok(
+        `(J15) and every hidden one is a cost field, not something incidental`,
+        full
+          .filter((f) => !reduced.some((r) => r.key === f.key))
+          .every((f) => f.permission === 'jobs.cost'),
+      )
+
+      let broken = 0
+      for (const field of src.fields) {
+        try {
+          await runBuilderSpec(
+            SITE,
+            {
+              version: 1,
+              name: `J15 ${field.key}`,
+              source: key,
+              period: { key: 'thisYear' },
+              columns: [{ field: field.key }],
+              filters: [],
+              groupFields: [],
+              totalFilters: [],
+              limit: 5,
+            },
+            everything as never,
+          )
+        } catch (err) {
+          broken++
+          console.log(`       ${key}.${field.key}: ${(err as Error).message}`)
+        }
+      }
+      ok(
+        `(J15) *** all ${src.fields.length} ${key} fields produce runnable SQL ***`,
+        broken === 0,
+        `${broken} failed`,
+      )
+    }
+
+    /*
+     * The date a LINE belongs to is its job's, not the line's own. A part added on
+     * Friday to a job logged on Monday belongs in Monday's week — otherwise a
+     * month-end job-cost report splits one job across two periods.
+     */
+    const lineSrc = getSource('jobCardLines')
+    ok('(J15) a job line dates from its job, not from itself', lineSrc?.dateJoin === 'job')
+    ok('(J15) and the column it filters on is the job report date', lineSrc?.dateColumn === 'reported_at')
+
+    // The three built-ins, run for real rather than merely type-checked.
+    const jobTemplates = TEMPLATES.filter((t) => t.spec.source.startsWith('jobCard'))
+    ok('(J15) three job built-ins ship, not fifteen', jobTemplates.length === 3, String(jobTemplates.length))
+
+    for (const template of jobTemplates) {
+      ok(`(J15) ${template.id} is gated on jobs.view`, template.permission === 'jobs.view')
+
+      let ran = true
+      let cols = 0
+      try {
+        const result = await runBuilderSpec(
+          SITE,
+          // A wide period, so a template whose default is "this month" still has
+          // this suite's fixtures inside it. The period lives on the SPEC.
+          { ...template.spec, name: template.name, period: { key: 'thisYear' } },
+          everything as never,
+        )
+        cols = result.columns.length
+      } catch (err) {
+        ran = false
+        console.log(`       ${template.id}: ${(err as Error).message}`)
+      }
+      ok(`(J15) ${template.id} runs`, ran)
+
+      // And degrades rather than throwing for somebody without the cost right.
+      let degraded = true
+      let reducedCols = 0
+      try {
+        const result = await runBuilderSpec(
+          SITE,
+          { ...template.spec, name: template.name, period: { key: 'thisYear' } },
+          technician as never,
+        )
+        reducedCols = result.columns.length
+      } catch {
+        degraded = false
+      }
+      ok(`(J15) *** and still opens for a technician, with fewer columns ***`, degraded)
+      ok(
+        `(J15) ${template.id} keeps at least one column for them`,
+        reducedCols > 0 && reducedCols <= cols,
+        `${cols} -> ${reducedCols}`,
+      )
+    }
+
+    /*
+     * The absorbed-cost built-in must NOT filter to "absorbed > 0": the jobs where
+     * the cost is still UNDECIDED are the ones somebody can act on, and a total
+     * filter would hide exactly those.
+     */
+    const absorbed = jobTemplates.find((t) => t.id === 'job-cost-absorbed')
+    ok(
+      '(J15) the absorbed-cost report does not filter away undecided jobs',
+      absorbed !== undefined && absorbed.spec.totalFilters.length === 0,
+    )
+
+    // ── The job drift function, finally on a screen ──────────────────────
+    const drift = await reconcileJobCards(SITE)
+    ok(
+      '(J15) reconcileJobCards reports no invoicing drift',
+      drift.overInvoiced.length === 0 &&
+        drift.orphanedInvoiceLinks.length === 0 &&
+        drift.billedUnbillable.length === 0,
+      JSON.stringify({
+        over: drift.overInvoiced.length,
+        orphan: drift.orphanedInvoiceLinks.length,
+        unbillable: drift.billedUnbillable.length,
+      }),
+    )
+    ok(
+      '(J15) and no job is stored in a state its stage contradicts',
+      drift.stateMismatch.length === 0,
+      JSON.stringify(drift.stateMismatch.slice(0, 3)),
+    )
   }
 
   await sweepStrays()

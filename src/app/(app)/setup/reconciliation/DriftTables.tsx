@@ -472,3 +472,371 @@ export function StoreTransferDriftTable({ rows }: { rows: StoreTransferDriftRow[
   ]
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.transferId} />
 }
+
+/*
+ * ── JOB PARTS ──────────────────────────────────────────────────────────────
+ *
+ * Four tables rather than one, because the four drifts have nothing in common
+ * except the word "parts". Squashing them into a single table with a "problem"
+ * column would put a quantity mismatch next to a stranded pile and make both
+ * unreadable — and only one of them is a bug.
+ */
+
+type IssuedMismatchRow = {
+  lineId: number
+  jobId: number
+  description: string
+  issued: number
+  moved: number
+}
+
+export function JobIssuedDriftTable({ rows }: { rows: IssuedMismatchRow[] }) {
+  const columns: Column<IssuedMismatchRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}?tab=costs`}>#{r.jobId}</TextLink>,
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    { key: 'issued', header: 'Line says issued', numeric: true, cell: (r) => formatQty(r.issued) },
+    { key: 'moved', header: 'Transfers moved', numeric: true, cell: (r) => formatQty(r.moved) },
+    {
+      key: 'drift',
+      header: 'Difference',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => Math.abs(r.issued - r.moved),
+      cell: (r) => <Badge tone="danger">{formatQty(r.issued - r.moved)}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
+type InvoicedOutRow = {
+  lineId: number
+  jobId: number
+  jobNumber: string | null
+  description: string
+  issued: number
+}
+
+export function JobInvoicedOutTable({ rows }: { rows: InvoicedOutRow[] }) {
+  const columns: Column<InvoicedOutRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}?tab=costs`}>{r.jobNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'issued',
+      header: 'Still out on a van',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.issued,
+      cell: (r) => <Badge tone="warning">{formatQty(r.issued)}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
+type StrandedRow = {
+  locationName: string
+  productCode: string
+  description: string
+  qty: number
+}
+
+export function JobStrandedTable({ rows }: { rows: StrandedRow[] }) {
+  const columns: Column<StrandedRow>[] = [
+    {
+      key: 'van',
+      header: 'Vehicle',
+      sortable: true,
+      sortValue: (r) => r.locationName,
+      cell: (r) => <span className="text-ink">{r.locationName}</span>,
+    },
+    {
+      key: 'product',
+      header: 'Product',
+      sortable: true,
+      sortValue: (r) => r.productCode,
+      cell: (r) => (
+        <span className="text-ink-2">
+          {r.productCode} — {r.description}
+        </span>
+      ),
+    },
+    {
+      key: 'qty',
+      header: 'On board',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.qty,
+      cell: (r) => formatQty(r.qty),
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.locationName}-${r.productCode}`} />
+}
+
+type AlsoOnOrderRow = {
+  lineId: number
+  jobId: number
+  description: string
+  orderNumber: string | null
+}
+
+export function JobAlsoOnOrderTable({ rows }: { rows: AlsoOnOrderRow[] }) {
+  const columns: Column<AlsoOnOrderRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}?tab=costs`}>#{r.jobId}</TextLink>,
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'order',
+      header: 'Also reserved by',
+      sortable: true,
+      sortValue: (r) => r.orderNumber ?? '',
+      cell: (r) => <span className="text-ink-2">{r.orderNumber ?? '—'}</span>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
+/* ── JOB SERVICE TARGETS ────────────────────────────────────────────────────
+ *
+ * Two shapes: a deadline that no longer matches what the current trading hours
+ * would produce, and a response recorded before the job existed. Only the second
+ * is a bug — see the page for why the first is the feature working.
+ */
+
+type StaleDeadlineRow = {
+  jobId: number
+  documentNumber: string | null
+  priority: string
+  stored: string | null
+  wouldBe: string | null
+}
+
+export function JobSlaStaleTable({ rows }: { rows: StaleDeadlineRow[] }) {
+  const columns: Column<StaleDeadlineRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? String(r.jobId),
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}`}>{r.documentNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'priority',
+      header: 'Priority',
+      sortable: true,
+      sortValue: (r) => r.priority,
+      cell: (r) => <span className="text-ink-2">{r.priority}</span>,
+    },
+    {
+      key: 'stored',
+      header: 'Promised',
+      cell: (r) => <span className="text-ink-2">{r.stored ?? '—'}</span>,
+    },
+    {
+      key: 'wouldBe',
+      header: 'Todays hours would say',
+      cell: (r) => <span className="text-muted">{r.wouldBe ?? 'no target'}</span>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+type ImpossibleResponseRow = {
+  jobId: number
+  documentNumber: string | null
+  reportedAt: string | null
+  respondedAt: string | null
+}
+
+export function JobSlaImpossibleTable({ rows }: { rows: ImpossibleResponseRow[] }) {
+  const columns: Column<ImpossibleResponseRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? String(r.jobId),
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}`}>{r.documentNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'reported',
+      header: 'Reported',
+      cell: (r) => <span className="text-ink-2">{r.reportedAt ?? '—'}</span>,
+    },
+    {
+      key: 'responded',
+      header: 'Responded',
+      cell: (r) => <Badge tone="danger">{r.respondedAt ?? '—'}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+type UntargetedRow = { jobId: number; documentNumber: string | null; priority: string }
+
+/**
+ * Open jobs with no target.
+ *
+ * Its own table rather than the stale one with blanks: a "Promised" column full of
+ * dashes reads as data that failed to load, when the truth is there was never
+ * anything to load.
+ */
+export function JobSlaUntargetedTable({ rows }: { rows: UntargetedRow[] }) {
+  const columns: Column<UntargetedRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? String(r.jobId),
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}`}>{r.documentNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'priority',
+      header: 'Priority',
+      sortable: true,
+      sortValue: (r) => r.priority,
+      cell: (r) => <span className="text-ink-2">{r.priority}</span>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+/* ── JOB CARDS ──────────────────────────────────────────────────────────────
+ *
+ * Two shapes cover the four bug checks: a line-level one for the three invoicing
+ * problems, and a job-level one for a status whose role disagrees with the stored
+ * open/closed flag. The board check is configuration, not drift, and gets the
+ * stranded-status table below.
+ */
+
+type JobLineDriftRow = {
+  lineId: number
+  jobId: number
+  description: string
+  detail: string
+}
+
+export function JobLineDriftTable({ rows }: { rows: JobLineDriftRow[] }) {
+  const columns: Column<JobLineDriftRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}?tab=costs`}>#{r.jobId}</TextLink>,
+    },
+    {
+      key: 'line',
+      header: 'Line',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'detail',
+      header: 'What is wrong',
+      cell: (r) => <Badge tone="danger">{r.detail}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
+type JobStateDriftRow = {
+  jobId: number
+  number: string | null
+  status: string
+  role: string
+}
+
+export function JobStateDriftTable({ rows }: { rows: JobStateDriftRow[] }) {
+  const columns: Column<JobStateDriftRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.number ?? String(r.jobId),
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}`}>{r.number ?? `#${r.jobId}`}</TextLink>,
+    },
+    {
+      key: 'stored',
+      header: 'Stored as',
+      sortable: true,
+      sortValue: (r) => r.status,
+      cell: (r) => <span className="text-ink-2">{r.status}</span>,
+    },
+    {
+      key: 'role',
+      header: 'But its stage means',
+      cell: (r) => <Badge tone="danger">{r.role || 'no role'}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+type StrandedStatusRow = { statusId: number; name: string; jobCount: number }
+
+export function JobStrandedStatusTable({ rows }: { rows: StrandedStatusRow[] }) {
+  const columns: Column<StrandedStatusRow>[] = [
+    {
+      key: 'name',
+      header: 'Stage',
+      sortable: true,
+      sortValue: (r) => r.name,
+      cell: (r) => <span className="text-ink">{r.name}</span>,
+    },
+    {
+      key: 'jobs',
+      header: 'Jobs in it',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.jobCount,
+      cell: (r) =>
+        r.jobCount === 0 ? (
+          <span className="text-muted">0</span>
+        ) : (
+          <Badge tone="warning">{r.jobCount}</Badge>
+        ),
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.statusId} />
+}

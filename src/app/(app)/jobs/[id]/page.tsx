@@ -10,6 +10,8 @@ import { jobQuotes, quoteVariance } from '@/lib/site/jobQuotes'
 import { jobAppointments } from '@/lib/site/jobAppointments'
 import { jobTime } from '@/lib/site/jobTime'
 import { jobTravel } from '@/lib/site/jobTravel'
+import { jobParts, vanHoldings } from '@/lib/site/jobParts'
+import { jobStanding, tradingHours } from '@/lib/site/jobSla'
 import { getServiceAddress, formatAddress, mapsHref } from '@/lib/site/serviceAddresses'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -29,6 +31,8 @@ import { getSetting } from '@/lib/site/settings'
 import { storedMillis } from '@/lib/jobStatusModel'
 import JobDetail from './JobDetail'
 import JobVisits from './JobVisits'
+import JobPartsPanel from './JobPartsPanel'
+import JobSlaCard from './JobSlaCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -111,6 +115,10 @@ export default async function JobPage({
     time,
     travel,
     travelRate,
+    parts,
+    holdings,
+    standing,
+    week,
   ] = await Promise.all([
       listJobStatuses(siteId, false),
       can(capabilities, 'jobs.invoice') ? billableLines(siteId, jobId) : Promise.resolve([]),
@@ -126,6 +134,11 @@ export default async function JobPage({
       jobTime(siteId, jobId),
       jobTravel(siteId, jobId),
       getSetting(siteId, 'job_travel_rate_per_km'),
+      jobParts(siteId, jobId),
+      vanHoldings(siteId),
+      // Tolerant: a site without 113 must still be able to open a job card.
+      jobStanding(siteId, jobId).catch(() => null),
+      tradingHours(siteId).catch(() => null),
     ])
 
   const overdue = !job.isClosed && job.dueAt !== null && storedMillis(job.dueAt) < Date.now()
@@ -221,6 +234,17 @@ export default async function JobPage({
           aria-label="Job card sections"
         />
 
+        {/* Above the address: what was promised outranks where to drive, and a
+            technician opening a breached job should see that first. */}
+        {tab === 'overview' && standing !== null && week !== null && (
+          <JobSlaCard
+            jobId={job.id}
+            standing={standing}
+            hoursPerDay={(week.closesAt - week.opensAt) / 60}
+            canRespond={can(capabilities, 'jobs.edit') && !job.isClosed}
+          />
+        )}
+
         {tab === 'overview' && address && (
           <Card>
             <CardHeader
@@ -290,23 +314,37 @@ export default async function JobPage({
             }))}
           />
         ) : (
-          <JobDetail
-            job={job}
-            tab={tab}
-            statuses={statuses}
-            billable={billable}
-            activity={activity}
-            quotes={quotes}
-            variance={variance}
-            can={{
-              edit: can(capabilities, 'jobs.edit'),
-              assign: can(capabilities, 'jobs.assign'),
-              close: can(capabilities, 'jobs.close'),
-              invoice: can(capabilities, 'jobs.invoice'),
-              decide: can(capabilities, 'jobs.bill_decide'),
-              cost: showCost,
-            }}
-          />
+          <>
+            {/* Moving goods is a different act from pricing them, with a different
+                permission, so it is its own card rather than buttons inside the
+                line editor — one mis-click apart is too close. */}
+            {tab === 'costs' && (
+              <JobPartsPanel
+                jobId={job.id}
+                jobClosed={job.isClosed}
+                parts={parts}
+                vanHoldings={holdings}
+                canIssue={can(capabilities, 'stock.transfer')}
+              />
+            )}
+            <JobDetail
+              job={job}
+              tab={tab}
+              statuses={statuses}
+              billable={billable}
+              activity={activity}
+              quotes={quotes}
+              variance={variance}
+              can={{
+                edit: can(capabilities, 'jobs.edit'),
+                assign: can(capabilities, 'jobs.assign'),
+                close: can(capabilities, 'jobs.close'),
+                invoice: can(capabilities, 'jobs.invoice'),
+                decide: can(capabilities, 'jobs.bill_decide'),
+                cost: showCost,
+              }}
+            />
+          </>
         )}
       </PageBody>
     </>
