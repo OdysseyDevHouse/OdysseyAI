@@ -49,8 +49,8 @@ export async function saveOrderAction(
 export async function issueOrderAction(id: number): Promise<PurchaseResult> {
   const ctx = await actorFor('purchasing.edit')
   if ('ok' in ctx) return ctx
-  const { siteId } = ctx
-  const result = await issueOrder(siteId, id)
+  const { siteId, actor } = ctx
+  const result = await issueOrder(siteId, actor, id)
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidatePath('/purchasing')
@@ -61,8 +61,8 @@ export async function issueOrderAction(id: number): Promise<PurchaseResult> {
 export async function cancelOrderAction(id: number, reason: string): Promise<PurchaseResult> {
   const ctx = await actorFor('purchasing.edit')
   if ('ok' in ctx) return ctx
-  const { siteId } = ctx
-  const result = await cancelOrder(siteId, id, reason)
+  const { siteId, actor } = ctx
+  const result = await cancelOrder(siteId, actor, id, reason)
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidatePath('/purchasing')

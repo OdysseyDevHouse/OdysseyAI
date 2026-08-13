@@ -392,7 +392,7 @@ async function main() {
     draft.id,
   )
 
-  const issued = await issueOrder(SITE, draft.id)
+  const issued = await issueOrder(SITE, actor, draft.id)
   ok('*** an order issues ***', issued.ok, issued.ok ? '' : issued.error)
 
   doc = await getPurchaseDocument(SITE, draft.id)
@@ -403,7 +403,7 @@ async function main() {
     String(doc?.documentNumber),
   )
 
-  ok('issuing twice is refused', !(await issueOrder(SITE, draft.id)).ok)
+  ok('issuing twice is refused', !(await issueOrder(SITE, actor, draft.id)).ok)
 
   const open = await openOrders(SITE, sup.id)
   ok(
@@ -456,7 +456,7 @@ async function main() {
   )
   ok(
     '  a part-received order CANNOT be cancelled',
-    !(await cancelOrder(SITE, draft.id, 'changed my mind')).ok,
+    !(await cancelOrder(SITE, actor, draft.id, 'changed my mind')).ok,
   )
 
   const rest = await receiveGoods(SITE, actor, {
@@ -501,7 +501,7 @@ async function main() {
   ok('a second draft saves', spare.ok)
   if (spare.ok) {
     ok('a reason is required in spirit — an empty one still cancels with a default',
-      (await cancelOrder(SITE, spare.id, '')).ok)
+      (await cancelOrder(SITE, actor, spare.id, '')).ok)
     const cancelled = await getPurchaseDocument(SITE, spare.id)
     ok('  status is cancelled', cancelled?.status === 'cancelled')
     ok(
@@ -529,7 +529,7 @@ async function main() {
       lines: [{ description: 'x', qtyOrdered: 1, unitCostExcl: 1, vatRatePct: rate }],
     })).ok,
   )
-  ok('issuing an order that does not exist is refused', !(await issueOrder(SITE, 999999999)).ok)
+  ok('issuing an order that does not exist is refused', !(await issueOrder(SITE, actor, 999999999)).ok)
   ok(
     'editing an order that does not exist is refused',
     !(await saveOrder(SITE, actor, {

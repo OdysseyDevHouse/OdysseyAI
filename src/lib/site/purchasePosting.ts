@@ -1042,6 +1042,23 @@ export async function receiveGoods(
         [documentNumber, documentId] as never,
       )
 
+      // The audit row rides the same transaction as the status it records —
+      // a receipt that finalised without its audit row would defeat the point.
+      // Guarded like purchase_document_charges: a site 139 has not reached yet
+      // must still be able to receive goods (see the 088 precedent above).
+      if (await tableExistsTx(tx, 'purchase_document_audit')) {
+        await tx.execute(
+          `INSERT INTO purchase_document_audit (document_id, action, detail, user_id, user_name)
+           VALUES (?, 'finalised', ?, ?, ?)`,
+          [
+            documentId,
+            `${documentNumber} · ${totalIncl.toFixed(2)} · ${supplier.name}`,
+            actor.userId,
+            actor.userName.slice(0, 120),
+          ] as never,
+        )
+      }
+
       return { documentId, documentNumber }
     })
 
@@ -1251,6 +1268,19 @@ export async function voidReceipt(
         `UPDATE purchase_documents SET status = 'cancelled', cancel_reason = ?, cancelled_at = NOW() WHERE id = ?`,
         [reason.trim().slice(0, 190), documentId] as never,
       )
+
+      if (await tableExistsTx(tx, 'purchase_document_audit')) {
+        await tx.execute(
+          `INSERT INTO purchase_document_audit (document_id, action, detail, user_id, user_name)
+           VALUES (?, 'void', ?, ?, ?)`,
+          [
+            documentId,
+            `${doc.document_number} · ${toNum(doc.total_incl).toFixed(2)} · ${reason.trim().slice(0, 300)}`,
+            actor.userId,
+            actor.userName.slice(0, 120),
+          ] as never,
+        )
+      }
     })
   } catch (error) {
     // A refusal from the serial check arrives here. Nothing has committed, so

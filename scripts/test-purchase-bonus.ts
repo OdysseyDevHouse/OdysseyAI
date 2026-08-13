@@ -224,7 +224,7 @@ async function main() {
   })
   ok('an order saves', order.ok)
   if (!order.ok) process.exit(1)
-  await issueOrder(SITE, order.id)
+  await issueOrder(SITE, actor, order.id)
 
   const orderDoc = await getPurchaseDocument(SITE, order.id)
   const orderLineId = orderDoc!.lines[0].id

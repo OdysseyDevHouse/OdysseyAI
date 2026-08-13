@@ -162,6 +162,18 @@ async function main() {
   ok('  average cost deliberately NOT unwound', toNum(state.average_cost) === toNum(beforeVoid.average_cost), `${beforeVoid.average_cost} -> ${state.average_cost}`)
   ok('  double void refused', !(await voidReceipt(SITE, actor, second.ok ? second.documentId : 0, 'again')).ok)
 
+  // ── The audit trail (139): a receipt that was received then voided carries
+  // exactly two rows, in that order, each naming who did it.
+  if (second.ok) {
+    const trail = await siteQuery<any>(SITE,
+      'SELECT action, user_name FROM purchase_document_audit WHERE document_id = ? ORDER BY id',
+      [second.documentId])
+    ok('*** audit trail: finalised then void ***',
+      trail.length === 2 && trail[0].action === 'finalised' && trail[1].action === 'void',
+      JSON.stringify(trail.map((t: any) => t.action)))
+    ok('  each row names the actor', trail.every((t: any) => String(t.user_name).length > 0))
+  }
+
   // ── Invariants
   ok('*** reconcileStock zero drift ***', (await reconcileStock(SITE)).length === 0, JSON.stringify(await reconcileStock(SITE)))
   ok('*** reconcileSupplierBalances zero drift ***', (await reconcileSupplierBalances(SITE)).length === 0)

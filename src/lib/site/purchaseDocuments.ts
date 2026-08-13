@@ -598,11 +598,15 @@ export async function saveOrder(
  * This is where a PO gets its number — not at draft. An order that was never
  * sent should not consume one, for the same reason a saved sale does not.
  */
-export async function issueOrder(siteId: number, id: number): Promise<SaveResult> {
+export async function issueOrder(siteId: number, actor: Actor, id: number): Promise<SaveResult> {
   const doc = await getPurchaseDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That order no longer exists.' }
   if (doc.status !== 'draft') return { ok: false, error: `A ${doc.status} order cannot be issued.` }
   if (doc.lines.length === 0) return { ok: false, error: 'Add at least one line first.' }
+
+  // Probed outside the transaction — information_schema does not change
+  // mid-flight, and a site 139 has not reached must still be able to issue.
+  const auditable = await purchaseAuditTableExists(siteId)
 
   await siteTransaction(siteId, async (tx) => {
     const documentNumber = await nextDocumentNumber(tx, 'purchase_order')
@@ -610,6 +614,18 @@ export async function issueOrder(siteId: number, id: number): Promise<SaveResult
       "UPDATE purchase_documents SET status = 'issued', document_number = ? WHERE id = ?",
       [documentNumber, id] as never,
     )
+    if (auditable) {
+      await tx.execute(
+        `INSERT INTO purchase_document_audit (document_id, action, detail, user_id, user_name)
+         VALUES (?, 'issued', ?, ?, ?)`,
+        [
+          id,
+          `${documentNumber} · ${doc.supplierName ?? ''}`,
+          actor.userId,
+          actor.userName.slice(0, 120),
+        ] as never,
+      )
+    }
   })
 
   return { ok: true, id }
@@ -618,7 +634,12 @@ export async function issueOrder(siteId: number, id: number): Promise<SaveResult
 export type DeleteResult = { ok: true } | { ok: false; error: string }
 
 /** Cancels an order. Only ever a draft or an issued one — nothing was received. */
-export async function cancelOrder(siteId: number, id: number, reason: string): Promise<DeleteResult> {
+export async function cancelOrder(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  reason: string,
+): Promise<DeleteResult> {
   const doc = await getPurchaseDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That order no longer exists.' }
   if (doc.status === 'finalised') {
@@ -638,7 +659,54 @@ export async function cancelOrder(siteId: number, id: number, reason: string): P
     "UPDATE purchase_order_details SET fulfilment_status = 'cancelled' WHERE document_id = ?",
     [id],
   )
+  if (await purchaseAuditTableExists(siteId)) {
+    await siteExecute(
+      siteId,
+      `INSERT INTO purchase_document_audit (document_id, action, detail, user_id, user_name)
+       VALUES (?, 'cancelled', ?, ?, ?)`,
+      [
+        id,
+        `${doc.documentNumber ?? `#${id}`} · ${reason.trim().slice(0, 300) || 'Cancelled'}`,
+        actor.userId,
+        actor.userName.slice(0, 120),
+      ],
+    )
+  }
   return { ok: true }
+}
+
+/** One purchase document's audit trail, newest last — the sales-side read. */
+export type PurchaseAuditRow = {
+  action: string
+  detail: string | null
+  userName: string
+  createdAt: Date
+}
+
+export async function purchaseAudit(siteId: number, documentId: number): Promise<PurchaseAuditRow[]> {
+  if (!(await purchaseAuditTableExists(siteId))) return []
+  const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT action, detail, user_name, created_at
+       FROM purchase_document_audit
+      WHERE document_id = ? ORDER BY created_at, id`,
+    [documentId],
+  )
+  return rows.map((r) => ({
+    action: String(r.action),
+    detail: (r.detail as string | null) ?? null,
+    userName: String(r.user_name ?? ''),
+    createdAt: r.created_at as Date,
+  }))
+}
+
+async function purchaseAuditTableExists(siteId: number): Promise<boolean> {
+  const row = await siteQueryOne<RowDataPacket>(
+    siteId,
+    `SELECT 1 AS ok FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'purchase_document_audit' LIMIT 1`,
+  )
+  return !!row
 }
 
 /**

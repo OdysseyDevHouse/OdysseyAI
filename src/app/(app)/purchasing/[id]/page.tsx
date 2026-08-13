@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
-import { getPurchaseDocument } from '@/lib/site/purchaseDocuments'
+import { getPurchaseDocument, purchaseAudit } from '@/lib/site/purchaseDocuments'
 import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
 import { listLocations } from '@/lib/site/stockLocations'
 import { formatMoney, formatQty } from '@/lib/decimals'
@@ -47,7 +47,10 @@ export default async function PurchaseDocumentPage({
   // supplier's quote, a GRV's is the invoice it was keyed from. Filing both
   // under one entity would mix them on a screen that shows one document.
   const attachTo = doc.docType === 'purchase_order' ? 'purchase_order' : 'grv'
-  const attachments = await listAttachments(siteId, attachTo, documentId)
+  const [attachments, auditTrail] = await Promise.all([
+    listAttachments(siteId, attachTo, documentId),
+    purchaseAudit(siteId, documentId),
+  ])
 
   /*
    * Where each line went, or is meant to go.
@@ -282,11 +285,59 @@ export default async function PurchaseDocumentPage({
               />
             </CardBody>
           </Card>
+
+          {auditTrail.length > 0 && (
+            <Card>
+              <CardHeader
+                title="History"
+                description="What has happened to this document, and who did it."
+              />
+              <CardBody>
+                <ul className="space-y-2 text-sm">
+                  {auditTrail.map((entry, i) => (
+                    <li key={i} className="flex items-start justify-between gap-4">
+                      <div className="flex items-center gap-2">
+                        <Badge tone={AUDIT_TONE[entry.action] ?? 'neutral'}>
+                          {AUDIT_LABEL[entry.action] ?? entry.action}
+                        </Badge>
+                        <span className="text-ink-2">{entry.detail}</span>
+                      </div>
+                      <span className="shrink-0 text-muted">
+                        {entry.userName} · {stamp(entry.createdAt)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </CardBody>
+            </Card>
+          )}
         </div>
         </div>
       </PageBody>
     </>
   )
+}
+
+const AUDIT_LABEL: Record<string, string> = {
+  finalised: 'Received',
+  void: 'Voided',
+  issued: 'Issued',
+  cancelled: 'Cancelled',
+  edited: 'Edited',
+  reprinted: 'Reprinted',
+}
+
+const AUDIT_TONE: Record<string, 'success' | 'danger' | 'brand' | 'neutral'> = {
+  finalised: 'success',
+  void: 'danger',
+  issued: 'brand',
+  cancelled: 'neutral',
+}
+
+/** The pool parses DATETIME as UTC, so wall-clock comes back out with getUTC*. */
+function stamp(value: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${value.getUTCFullYear()}-${p(value.getUTCMonth() + 1)}-${p(value.getUTCDate())} ${p(value.getUTCHours())}:${p(value.getUTCMinutes())}`
 }
 
 function Row({ label, value, href }: { label: string; value: string; href?: string }) {

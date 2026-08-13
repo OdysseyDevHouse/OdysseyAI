@@ -131,7 +131,7 @@ async function main() {
     String(out.find((s) => s.productId === low)?.suggested),
   )
 
-  await issueOrder(SITE, order.id)
+  await issueOrder(SITE, actor, order.id)
 
   // includeSufficient, because the point of the subtraction is that this
   // product should now be proposing NOTHING — and a row proposing nothing is
