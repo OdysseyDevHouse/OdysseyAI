@@ -20,8 +20,12 @@ export function ReceiptModal({
   change,
   canVoid,
   posted,
+  canPrint,
   onClose,
   onPrint,
+  onOpen,
+  onGiftReceipt,
+  onEmail,
   onVoid,
 }: {
   open: boolean
@@ -44,8 +48,22 @@ export function ReceiptModal({
    * act on.
    */
   posted: boolean
+  /**
+   * Whether Print can do anything. True for a posted sale (the slip route
+   * exists) and for an OFFLINE sale on a till with a print bridge — the slip
+   * was built from the basket and the bridge is local, so paper still comes
+   * out with the server gone.
+   */
+  canPrint: boolean
   onClose: () => void
+  /** Prints the 80mm slip. */
   onPrint: () => void
+  /** Opens the document in the back office — the void/credit surface. */
+  onOpen: () => void
+  /** The price-suppressed variant, for a present. */
+  onGiftReceipt: () => void
+  /** Emails the invoice. Undefined offline — there is no document to attach. */
+  onEmail?: () => void
   onVoid: () => void
 }) {
   return (
@@ -56,16 +74,29 @@ export function ReceiptModal({
       size="sm"
       footer={
         <>
-          {/* "Open" rather than "Print": it opens the document, from which a
-              browser print is one more step. Labelling it Print would promise a
-              slip coming out of a printer, which is a separate piece of work.
-
-              Hidden for a sale rung up offline — there is no document to open yet,
-              and a button that reliably 404s is worse than no button. */}
+          {/* Print IS print now — the 80mm slip route (or the ESC/POS bridge).
+              Open keeps its old job: the back-office document, the void/credit
+              surface. Both hidden for a sale rung up offline — no document
+              exists yet, and a button that reliably 404s is worse than none. */}
           {posted && (
-            <Button variant="ghost" size="touch" onClick={onPrint}>
+            <>
+              <Button variant="ghost" size="touch" onClick={onOpen}>
+                Open
+              </Button>
+              {onEmail && (
+                <Button variant="ghost" size="touch" onClick={onEmail}>
+                  Email
+                </Button>
+              )}
+              <Button variant="ghost" size="touch" onClick={onGiftReceipt}>
+                Gift
+              </Button>
+            </>
+          )}
+          {canPrint && (
+            <Button variant="secondary" size="touch" onClick={onPrint}>
               <Icons.Printer size={18} />
-              Open
+              Print
             </Button>
           )}
           <Button variant="success" size="touch-lg" className="flex-1 justify-center" onClick={onClose}>

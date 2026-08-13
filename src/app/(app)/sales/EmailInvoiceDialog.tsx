@@ -89,8 +89,8 @@ export function EmailInvoiceDialog({
         </Field>
 
         <p className="text-xs text-muted">
-          The PDF rides along as an attachment. If online payments are set up, the email
-          carries a pay link too.
+          The PDF rides along as an attachment. If anything is still owed and online
+          payments are set up, the email carries a pay link for the outstanding amount.
         </p>
 
         <div className="flex justify-end gap-2">

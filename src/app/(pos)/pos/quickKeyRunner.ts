@@ -56,6 +56,10 @@ export type QuickKeyHandlers = {
   showShift: () => void
   /** Opens the whole-sale discount dialog. */
   docDiscount: () => void
+  /** Reprints the last slip this machine printed. */
+  reprintLastSlip: () => void
+  /** Prints the NEW lines of the open tab on the kitchen printer. */
+  sendToKitchen: () => void
   /**
    * Switches the pane into return mode. CLEARS the basket — see SET_RETURNING.
    *
@@ -163,9 +167,11 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       ? handlers.showShift()
       : handlers.showOutbox(),
 
+  /* Reprints THIS machine's last slip — no hunting through the invoicing
+     list. The reprint counts through recordPrint, so the paper says COPY. */
   'reprint-last-slip': ({ handlers, online }) =>
     online
-      ? handlers.navigate('/sales/invoicing?status=finalised')
+      ? handlers.reprintLastSlip()
       : handlers.say('A reprint needs the connection. The sale is safe on this till.', 'info'),
 
   'reprint-invoice': ({ handlers, online }) =>
@@ -244,6 +250,14 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
     online
       ? handlers.say('Open the table, then tap Bill beside the basket to print it.', 'info')
       : handlers.say('Printing a bill needs the connection — the tab lives on the server.', 'info'),
+
+  /* Prints what the kitchen has NOT seen yet — the delta since the last send.
+     Needs the connection (the tab and its sent-state live on the server) and
+     a kitchen printer on this till's bridge, which the handler checks. */
+  'send-to-kitchen': ({ handlers, online }) =>
+    online
+      ? handlers.sendToKitchen()
+      : handlers.say('Sending to the kitchen needs the connection — the tab lives on the server.', 'info'),
 }
 
 /**
@@ -288,10 +302,10 @@ const HOSPITALITY_MESSAGE =
  * physical ESC-POS ticket or a mark-and-display stamp is a question about the shop's
  * hardware, and building the wrong one would be worse than building neither.
  */
-const HOSPITALITY_UNBUILT: Record<string, string> = {
-  'send-to-kitchen':
-    'Sending to the kitchen is not set up on this system yet — it needs a kitchen printer or a kitchen screen.',
-}
+// Empty since send-to-kitchen shipped — kept so the next hospitality slug has
+// somewhere honest to wait, per the rule above: remove entries the moment the
+// feature lands, or the key lies.
+const HOSPITALITY_UNBUILT: Record<string, string> = {}
 
 /**
  * Presses a key.

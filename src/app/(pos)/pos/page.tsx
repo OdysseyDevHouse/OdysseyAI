@@ -172,6 +172,8 @@ export default async function PosPage() {
          opens a different database rather than mixing two shops' outboxes. */
       siteId={site.id}
       siteName={site.displayName}
+      /* For the till-printed slip's header — a tax invoice names the vendor. */
+      siteVatNumber={site.vatNumber}
       /* Null when the till cookie has lapsed. PosEntry then looks for an offline
          session before deciding to show the PIN gate. */
       serverOperator={

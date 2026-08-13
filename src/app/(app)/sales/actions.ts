@@ -565,7 +565,11 @@ export async function emailInvoiceAction(
   documentId: number,
   input: { to: string; message?: string },
 ): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
-  const ctx = await actorFor('sales.edit')
+  /* Any-of: the back office emails under sales.edit, and the TILL emails the
+     receipt of the sale it just rang under sales.till — same engine, same
+     audit trail, and a settled sale's email carries no pay link (invoiceEmail
+     reads what is actually outstanding). */
+  const ctx = await actorForAny('sales.edit', 'sales.till')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 

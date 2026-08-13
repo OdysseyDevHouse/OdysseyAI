@@ -129,16 +129,7 @@ export async function payableInvoice(
   const document = await getDocument(siteId, documentId)
   if (!document || document.status !== 'finalised') return null
 
-  // What is STILL owed on this invoice, not what it was raised for. A customer
-  // who part-paid by EFT must not be asked for the full amount again.
-  const row = await siteQueryOne<Row>(
-    siteId,
-    `SELECT amount_outstanding FROM customer_transactions
-      WHERE source_doc_id = ? AND doc_type = 'invoice' LIMIT 1`,
-    [documentId],
-  )
-
-  const outstanding = row ? Number(row.amount_outstanding) : document.totalIncl
+  const outstanding = await outstandingForDocument(siteId, document)
 
   return {
     documentNumber: document.documentNumber,
@@ -146,6 +137,36 @@ export async function payableInvoice(
     dueDate: document.dueDate,
     customerName: document.customerName,
     totalIncl: document.totalIncl,
-    outstanding: Math.max(outstanding, 0),
+    outstanding,
   }
+}
+
+/**
+ * What is STILL owed on one finalised invoice.
+ *
+ * An ACCOUNT sale has a debtor entry, and its amount_outstanding is the
+ * answer. A cash/till sale has NO ledger row — the old fallback here treated
+ * that as "the whole total is owed", which asked a customer who paid cash at
+ * the counter to pay again through the pay link. The tenders on the document
+ * are the truth for that case: total less what was actually taken.
+ */
+export async function outstandingForDocument(
+  siteId: number,
+  document: {
+    id: number
+    totalIncl: number
+    tenderedTotal: number
+    changeGiven: number
+  },
+): Promise<number> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT amount_outstanding FROM customer_transactions
+      WHERE source_doc_id = ? AND doc_type = 'invoice' LIMIT 1`,
+    [document.id],
+  )
+  if (row) return Math.max(Number(row.amount_outstanding), 0)
+
+  const paid = Math.max(0, document.tenderedTotal - document.changeGiven)
+  return Math.max(0, Math.round((document.totalIncl - paid) * 100) / 100)
 }

@@ -46,6 +46,7 @@ export function SalePane({
   onBill,
   onDocDiscount,
   onFindReceipt,
+  onSendKitchen,
   exchange = null,
   showParkKeys = true,
   busy,
@@ -81,6 +82,8 @@ export function SalePane({
   onDocDiscount?: () => void
   /** Opens the receipted-return flow. Shown in return mode only. */
   onFindReceipt?: () => void
+  /** Prints the tab's NEW lines on the kitchen printer. Hospitality only. */
+  onSendKitchen?: () => void
   /** Exchange credit held from a return — shown as a banner until Pay. */
   exchange?: { label: string; onClear: () => void } | null
   /**
@@ -126,8 +129,13 @@ export function SalePane({
               ]}
             />
           </div>
-          {/* The pro-forma bill — the slip a waiter drops on the table before
+          {/* The kitchen and the bill — the two slips a tab produces before
               payment. Only rendered when the shell says this basket IS a tab. */}
+          {onSendKitchen && !returning && (
+            <Button variant="secondary" disabled={busy} onClick={onSendKitchen}>
+              Send
+            </Button>
+          )}
           {onBill && !returning && (
             <Button variant="secondary" disabled={busy} onClick={onBill}>
               <Icons.Printer size={15} />

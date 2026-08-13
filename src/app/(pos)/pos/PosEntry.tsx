@@ -43,6 +43,7 @@ import type { PickableReason } from '@/components/ui'
 export default function PosEntry({
   siteId,
   siteName,
+  siteVatNumber = null,
   serverOperator,
   terminals,
   departments,
@@ -67,6 +68,8 @@ export default function PosEntry({
 }: {
   siteId: number
   siteName: string
+  /** For the till-printed slip's header. Forwarded to PosShell. */
+  siteVatNumber?: string | null
   /**
    * The operator the SERVER resolved, or null when the till cookie has lapsed.
    *
@@ -159,6 +162,7 @@ export default function PosEntry({
     <PosShell
       siteId={siteId}
       siteName={siteName}
+      siteVatNumber={siteVatNumber}
       operatorName={operator.name}
       operatorUserId={operator.userId}
       terminals={terminals}

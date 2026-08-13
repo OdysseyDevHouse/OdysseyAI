@@ -445,6 +445,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/printing',
+        description: 'The slip’s footer, and the thermal printer plugged into each till.',
+        keywords: 'receipt printer thermal esc pos slip 80mm cash drawer kick kitchen bridge print',
+        icon: 'Receipt',
+        tone: 'amber',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/style-guide',
         description: 'Every component the app is built from, rendered live.',
         keywords: 'design system components reference ui kit',

@@ -513,6 +513,9 @@ export const SETTING_DEFAULTS = {
   /** The layby reminder template. Tokens: {customer} {number} {due_date} {balance} {company}. */
   layby_reminder_sms:
     'Hi {customer}, a friendly reminder: your lay-by {number} at {company} is due by {due_date}. Balance: {balance}.',
+
+  /** The line at the bottom of every till slip — returns policy, a thank-you. */
+  receipt_footer_text: '',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -592,6 +595,9 @@ export async function setSetting(
  */
 export function validateSetting(key: SettingKey, value: string): string | null {
   switch (key) {
+    case 'receipt_footer_text':
+      return value.length <= 500 ? null : 'The slip footer is capped at 500 characters.'
+
     case 'cost_basis':
       return value === 'average' || value === 'last'
         ? null

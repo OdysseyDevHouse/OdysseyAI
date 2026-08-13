@@ -86,6 +86,8 @@
     "test:doc-discount": "tsx --conditions=react-server --env-file=.env scripts/test-doc-discount.ts",
     "test:receipted-returns": "tsx --conditions=react-server --env-file=.env scripts/test-receipted-returns.ts",
     "test:till-codes": "tsx --conditions=react-server --env-file=.env scripts/test-till-codes.ts",
+    "test:escpos": "tsx scripts/test-escpos.ts",
+    "test:receipt-data": "tsx scripts/test-receipt-data.ts",
     "test:reservations": "tsx --conditions=react-server --env-file=.env scripts/test-reservations.ts",
     "test:locations": "tsx --conditions=react-server --env-file=.env scripts/test-locations.ts",
     "test:party-records": "tsx --conditions=react-server --env-file=.env scripts/test-party-records.ts",

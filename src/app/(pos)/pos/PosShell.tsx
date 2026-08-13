@@ -51,6 +51,7 @@ import {
   saveForLaterAction,
   discardSaleAction,
   voidSaleAction,
+  recordPrintAction,
 } from '@/app/(app)/sales/actions'
 import {
   listOpenTabsAction,
@@ -84,6 +85,16 @@ import {
 } from './saleSelectors'
 import DocDiscountModal from './DocDiscountModal'
 import ReceiptReturnModal, { type ReceiptReturnPick } from './ReceiptReturnModal'
+import { EmailInvoiceDialog } from '@/app/(app)/sales/EmailInvoiceDialog'
+import { receiptDataFromBasket, type ReceiptData } from '@/lib/receiptData'
+import {
+  kickDrawer,
+  printSlipViaBridge,
+  hasBridgeSlipPrinter,
+  hasBridgeKitchenPrinter,
+  printKitchenViaBridge,
+} from './printing'
+import { kitchenTicketAction, markKitchenSentAction } from './kitchenActions'
 import { tillCreditNoteAction, tillExchangeAction } from './returnActions'
 import { validateTillCodeAction } from './discountCodeActions'
 import { formatMoney, round } from '@/lib/decimals'
@@ -164,6 +175,7 @@ import type { Department } from './types'
 export default function PosShell({
   siteId,
   siteName,
+  siteVatNumber = null,
   operatorName,
   operatorUserId,
   terminals,
@@ -193,6 +205,8 @@ export default function PosShell({
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
   siteId: number
   siteName: string
+  /** For the till-printed slip's header — a tax invoice names the vendor. */
+  siteVatNumber?: string | null
   operatorName: string
   operatorUserId: number
   terminals: Terminal[]
@@ -337,8 +351,70 @@ export default function PosShell({
     documentId: number
     /** Kept so the void dialog can show what is being reversed. */
     total: number
+    /** The attached account's address at finalise, for the Email button. */
+    email?: string | null
   } | null>(null)
+  /** The email-receipt dialog, over the receipt. */
+  const [emailingReceipt, setEmailingReceipt] = useState(false)
+
+  /**
+   * The slip the LAST sale would print, built from the basket BEFORE it
+   * cleared — the bridge's Print consumes this, so an offline till still puts
+   * paper in a customer's hand. Online sales prefer the server slip route
+   * (loyalty footer, COPY numbering); the snapshot is the bridge/offline path.
+   */
+  const slipRef = useRef<ReceiptData | null>(null)
+
+  /** Builds the snapshot for the sale being finalised. Called pre-CLEAR. */
+  function snapshotSlip(
+    documentNumber: string,
+    paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
+    change: number,
+    roundingAdj: number,
+  ) {
+    try {
+      slipRef.current = receiptDataFromBasket({
+        siteName,
+        vatNumber: siteVatNumber,
+        documentNumber,
+        // LOCAL date, matching how the sale is stamped.
+        documentDate: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`,
+        printedAt: new Date().toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' }),
+        cashierName: operatorName,
+        terminalCode: terminal?.code ?? null,
+        customerName: state.customer?.name || state.customerName.trim() || null,
+        lines: salePayloadLines(state.lines, lineSpecials, docShares),
+        tenders: paid.map((p) => ({
+          name: tenders.find((t) => t.id === p.tenderTypeId)?.name ?? 'Tender',
+          amount: p.amount,
+          changeGiven: 0,
+          reference: p.reference ?? null,
+        })),
+        changeGiven: change,
+        roundingAdj,
+      })
+    } catch {
+      slipRef.current = null
+    }
+  }
   const [voiding, setVoiding] = useState(false)
+
+  /* The last POSTED sale on this machine, surviving a reload — what the
+     reprint-last-slip quick key reprints. Offline sales (documentId 0) are
+     not recorded: their slip lives only in the moment, until the bridge can
+     reprint a stored snapshot. One effect covers every path that sets a
+     receipt, which is what keeps the four finalise sites out of this. */
+  useEffect(() => {
+    if (!receipt || receipt.documentId <= 0) return
+    try {
+      window.localStorage.setItem(
+        `pos-last-sale-${siteId}`,
+        JSON.stringify({ documentId: receipt.documentId, number: receipt.number }),
+      )
+    } catch {
+      // Storage blocked — the key just says nothing to reprint.
+    }
+  }, [receipt, siteId])
 
   const toast = useToast()
   const router = useRouter()
@@ -880,6 +956,12 @@ export default function PosShell({
       documentId: 0,
       total: totals.doc.totalIncl,
     })
+    /* The offline slip and the drawer. The bridge is LOCAL, which is the whole
+       point: paper still comes out with the server gone. */
+    snapshotSlip(result.documentNumber, paid, result.change, 0)
+    if (paid.some((p) => tenders.find((t) => t.id === p.tenderTypeId)?.opensCashDrawer)) {
+      void kickDrawer()
+    }
     dispatch({ type: 'CLEAR' })
     // The badge must move immediately: this sale is now the till's responsibility
     // and the cashier has to be able to see that it is waiting.
@@ -1068,7 +1150,17 @@ export default function PosShell({
            Reading it in the void dialog instead would show R0.00, because by then
            the basket it was computed from is gone. */
         total: totals.doc.totalIncl,
+        /* TillCustomer carries no email (deliberately lean); the dialog's empty
+           To field says to type one. */
+        email: null,
       })
+      /* The slip snapshot and the drawer — BEFORE the CLEAR empties the basket
+         they are built from. The kick fires now (a cashier owed change cannot
+         wait); paper prints on the modal's Print tap. */
+      snapshotSlip(result.documentNumber, paid, result.change, result.roundingAdj ?? 0)
+      if (paid.some((p) => tenders.find((t) => t.id === p.tenderTypeId)?.opensCashDrawer)) {
+        void kickDrawer()
+      }
       dispatch({ type: 'CLEAR' })
 
       /*
@@ -1833,6 +1925,53 @@ export default function PosShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [till.online, terminal?.id])
 
+  /**
+   * Send-to-kitchen: fetch the delta, PRINT, then mark — in that order, so a
+   * failed print marks nothing (the retry reprints) and a failed mark risks
+   * only a duplicate ticket. The tab is saved first so line ids exist and the
+   * ticket matches the screen.
+   */
+  function sendToKitchen() {
+    if (!hasBridgeKitchenPrinter()) {
+      toast.info('Set up the kitchen printer on this till first — Setup → Printing.')
+      return
+    }
+    const documentId = state.documentId
+    if (!documentId) {
+      toast.info('Save the table first — the kitchen ticket comes off the parked tab.')
+      return
+    }
+    startTransition(async () => {
+      // Push any unsaved lines so the ticket matches the screen.
+      if (table && state.lines.length > 0) {
+        const saved = await updateTableBillAction(documentId, {
+          customerName: table.code,
+          terminalId: terminal?.id ?? null,
+          terminalCode: terminal?.code ?? null,
+          priceStructureId,
+          lines: salePayloadLines(state.lines, lineSpecials, docShares),
+        })
+        if (!saved.ok) {
+          toast.error(saved.error)
+          return
+        }
+      }
+      const result = await kitchenTicketAction(documentId)
+      if (!result.ok) {
+        toast.info(result.error)
+        return
+      }
+      const printed = await printKitchenViaBridge(result.ticket)
+      if (!printed.ok) {
+        toast.error(printed.error)
+        return
+      }
+      await markKitchenSentAction(documentId, result.lines).catch(() => {})
+      const count = result.lines.reduce((sum, l) => sum + l.qty, 0)
+      toast.success(`Sent ${count} item${count === 1 ? '' : 's'} to the kitchen.`)
+    })
+  }
+
   /** The gate's move mode is armed — the next table tap picks the tab to move. */
   const [armedForTransfer, setArmedForTransfer] = useState(false)
   /** The table whose whole tab is moving. Null when the picker is closed. */
@@ -2074,6 +2213,20 @@ export default function PosShell({
         showOutbox: () => setShowingOutbox(true),
         showShift: () => setManagingShift(true),
         docDiscount: () => setDiscountingDoc(true),
+        sendToKitchen,
+        reprintLastSlip: () => {
+          try {
+            const raw = window.localStorage.getItem(`pos-last-sale-${siteId}`)
+            const last = raw ? (JSON.parse(raw) as { documentId: number; number: string }) : null
+            if (last?.documentId) {
+              window.open(`/sales/${last.documentId}/slip?auto=1`, '_blank')
+            } else {
+              toast.info('Nothing has been sold on this till yet.')
+            }
+          } catch {
+            toast.info('Nothing has been sold on this till yet.')
+          }
+        },
         startReturn: () => dispatch({ type: 'SET_RETURNING', returning: true }),
         navigate: (href: string) => router.push(href),
         say: (message: string, tone: 'info' | 'error') =>
@@ -2245,6 +2398,7 @@ export default function PosShell({
           /* Only a parked tab has a document to print — a counter basket lives
              in this component until it is paid, and has no bill to show. */
           onBill={hospitality && state.documentId ? printBill : undefined}
+          onSendKitchen={hospitality && state.documentId ? sendToKitchen : undefined}
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
           exchange={
@@ -2736,23 +2890,56 @@ export default function PosShell({
           })
         }}
         onClose={() => setReceipt(null)}
-        /*
-         * The document, in a new tab — NOT `/sales/print/{number}`.
-         *
-         * The desk till's own Print button opens that path and it 404s: no such
-         * route exists anywhere in the app. Copying it here would have shipped a
-         * second broken button. `/sales/[id]` is the real screen and is what the
-         * finalise result's documentId is for.
-         *
-         * A new tab rather than window.print(), because printing the till itself
-         * would send three panes of chrome to a receipt printer. Proper
-         * thermal/ESC-POS printing is its own piece of work — see the open
-         * questions on the plan.
-         */
+        canPrint={
+          (receipt?.documentId ?? 0) > 0 || (slipRef.current !== null && hasBridgeSlipPrinter())
+        }
+        /* Bridge first — silent thermal paper, no tab. Falls back to the 80mm
+           slip route in its own bare tab, which is also the only path for a
+           machine with no bridge. */
         onPrint={() => {
+          const snapshot = slipRef.current
+          if (snapshot && hasBridgeSlipPrinter()) {
+            void printSlipViaBridge(snapshot).then((result) => {
+              if (result.ok) {
+                if (receipt && receipt.documentId > 0) {
+                  void recordPrintAction(receipt.documentId).catch(() => {})
+                }
+                toast.success('Slip sent to the printer.')
+              } else {
+                toast.error(result.error)
+                if (receipt && receipt.documentId > 0) {
+                  window.open(`/sales/${receipt.documentId}/slip?auto=1`, '_blank')
+                }
+              }
+            })
+            return
+          }
+          if (receipt && receipt.documentId > 0) {
+            window.open(`/sales/${receipt.documentId}/slip?auto=1`, '_blank')
+          }
+        }}
+        onGiftReceipt={() => {
+          if (receipt) window.open(`/sales/${receipt.documentId}/slip?gift=1`, '_blank')
+        }}
+        /* The back-office document — still the void/credit surface. */
+        onOpen={() => {
           if (receipt) window.open(`/sales/${receipt.documentId}`, '_blank')
         }}
+        onEmail={till.online ? () => setEmailingReceipt(true) : undefined}
       />
+
+      {/* Emailing the slip — the same engine the back office uses, gated for
+          the till, and a settled sale's email carries no pay link. */}
+      {receipt && receipt.documentId > 0 && (
+        <EmailInvoiceDialog
+          open={emailingReceipt}
+          onClose={() => setEmailingReceipt(false)}
+          documentId={receipt.documentId}
+          documentNumber={receipt.number}
+          defaultTo={receipt.email ?? ''}
+          lastEmailedNote={null}
+        />
+      )}
 
       {/* Replaces the receipt rather than stacking on it — two dialogs deep, on a
           screen where the one underneath holds the change figure, is how a cashier

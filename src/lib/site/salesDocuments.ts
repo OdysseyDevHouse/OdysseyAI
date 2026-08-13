@@ -102,6 +102,8 @@ export type SalesLine = {
    * anything, which is most of them.
    */
   instructions: SalesLineInstruction[]
+  /** How much of this line the kitchen has been told about (142). */
+  kitchenSentQty: number
   /** The free-text note on this line. Empty string when there is none. */
   note: string
 }
@@ -257,6 +259,9 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
     specialId: r.special_id === null || r.special_id === undefined ? null : Number(r.special_id),
     instructions,
     note: String(r.line_note ?? ''),
+    // Tolerant of a site that has not run 142 — toNum(undefined) reads 0,
+    // which is also the truthful answer: nothing was ever sent.
+    kitchenSentQty: toNum(r.kitchen_sent_qty),
   }
 }
 

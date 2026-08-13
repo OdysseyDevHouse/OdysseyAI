@@ -8,6 +8,7 @@ import { renderInvoicePdf } from '../invoices/pdf'
 import { buildInvoice, type IssuingSite } from '../invoices/build'
 import { createCallbackToken } from '../callbackToken'
 import { createIntent, getGateway } from './payments'
+import { outstandingForDocument } from './paidInvoices'
 import { getDocument } from './salesDocuments'
 import { getCustomer } from './customers'
 import { logActivity, type Actor } from './activityLog'
@@ -68,10 +69,14 @@ export async function emailInvoiceDocument(
   // Minted per SEND — the callback token expires in 24 hours, so baking one in
   // earlier would hand out dead links. Failure must not stop the send: an
   // invoice with no pay link is still an invoice. Never on a credit note —
-  // nobody pays a credit.
+  // nobody pays a credit. And never on a SETTLED sale: a cash sale emailed as
+  // a receipt must not carry a button asking to be paid again, and the link's
+  // amount is what is STILL OWED, not what was raised.
+  const outstanding =
+    document.docType === 'invoice' ? await outstandingForDocument(siteId, document) : 0
   const paymentUrl =
-    document.docType === 'invoice' && document.totalIncl > 0 && opts.origin
-      ? await mintPaymentLink(siteId, documentId, document.totalIncl, opts.origin).catch(() => null)
+    document.docType === 'invoice' && outstanding > 0.005 && opts.origin
+      ? await mintPaymentLink(siteId, documentId, outstanding, opts.origin).catch(() => null)
       : null
 
   const data = await buildInvoice(siteId, site, documentId, { paymentUrl })
@@ -92,8 +97,8 @@ export async function emailInvoiceDocument(
   const result = await deps.send({
     to,
     subject: `${label} ${number} from ${site.displayName}`,
-    text: invoicePlainBody(site.displayName, customer?.name ?? '', number, document, paymentUrl, opts.message),
-    html: invoiceHtmlBody(site.displayName, customer?.name ?? '', number, document, paymentUrl, opts.message),
+    text: invoicePlainBody(site.displayName, customer?.name ?? '', number, { ...document, outstanding }, paymentUrl, opts.message),
+    html: invoiceHtmlBody(site.displayName, customer?.name ?? '', number, { ...document, outstanding }, paymentUrl, opts.message),
     attachments: [{ filename: `${number}.pdf`, content: pdf, contentType: 'application/pdf' }],
   })
   if (!result.ok) return { ok: false, error: result.error }
@@ -218,10 +223,17 @@ export function invoicePlainBody(
   siteName: string,
   customerName: string,
   number: string,
-  document: { documentDate: string; dueDate: string | null; totalIncl: number },
+  document: {
+    documentDate: string
+    dueDate: string | null
+    totalIncl: number
+    /** What is STILL owed. Undefined keeps the pre-140 wording (contracts). */
+    outstanding?: number
+  },
   paymentUrl: string | null,
   message?: string | null,
 ): string {
+  const settled = document.outstanding !== undefined && document.outstanding <= 0.005
   return [
     `Good day${customerName ? ` ${customerName}` : ''},`,
     '',
@@ -230,10 +242,11 @@ export function invoicePlainBody(
     '',
     `Invoice date: ${document.documentDate}`,
     ...(document.dueDate ? [`Due date: ${document.dueDate}`] : []),
-    `Amount due: ${formatMoney(document.totalIncl)}`,
+    settled
+      ? 'Paid in full — nothing is owed.'
+      : `Amount due: ${formatMoney(document.outstanding ?? document.totalIncl)}`,
     ...(paymentUrl ? ['', 'Pay this invoice online:', paymentUrl] : []),
-    '',
-    `Please quote ${number} with your payment.`,
+    ...(settled ? [] : ['', `Please quote ${number} with your payment.`]),
     '',
     'Kind regards,',
     siteName,
@@ -244,10 +257,17 @@ export function invoiceHtmlBody(
   siteName: string,
   customerName: string,
   number: string,
-  document: { documentDate: string; dueDate: string | null; totalIncl: number },
+  document: {
+    documentDate: string
+    dueDate: string | null
+    totalIncl: number
+    /** What is STILL owed. Undefined keeps the pre-140 wording (contracts). */
+    outstanding?: number
+  },
   paymentUrl: string | null,
   message?: string | null,
 ): string {
+  const settled = document.outstanding !== undefined && document.outstanding <= 0.005
   // Inline styles and a table layout, because email clients support almost
   // nothing else. Deliberately plain — a statement of fact with a button, not a
   // marketing template.
@@ -258,14 +278,18 @@ export function invoiceHtmlBody(
   <table cellpadding="0" cellspacing="0" style="font-size:14px;margin:16px 0">
     <tr><td style="padding:2px 16px 2px 0;color:#667085">Invoice date</td><td>${escapeHtml(document.documentDate)}</td></tr>
     ${document.dueDate ? `<tr><td style="padding:2px 16px 2px 0;color:#667085">Due date</td><td>${escapeHtml(document.dueDate)}</td></tr>` : ''}
-    <tr><td style="padding:2px 16px 2px 0;color:#667085">Amount due</td><td><strong>${formatMoney(document.totalIncl)}</strong></td></tr>
+    ${
+      settled
+        ? `<tr><td style="padding:2px 16px 2px 0;color:#667085">Payment</td><td><strong>Paid in full — nothing is owed</strong></td></tr>`
+        : `<tr><td style="padding:2px 16px 2px 0;color:#667085">Amount due</td><td><strong>${formatMoney(document.outstanding ?? document.totalIncl)}</strong></td></tr>`
+    }
   </table>
   ${
     paymentUrl
       ? `<p style="margin:20px 0"><a href="${escapeHtml(paymentUrl)}" style="background:#16191d;color:#ffffff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Pay this invoice online</a></p>`
       : ''
   }
-  <p style="color:#667085;font-size:13px">Please quote ${escapeHtml(number)} with your payment.</p>
+  ${settled ? '' : `<p style="color:#667085;font-size:13px">Please quote ${escapeHtml(number)} with your payment.</p>`}
   <p>Kind regards,<br>${escapeHtml(siteName)}</p>
 </div>`
 }
