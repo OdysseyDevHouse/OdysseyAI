@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
+  Callout,
   Card,
   CardBody,
   CardFooter,
@@ -69,6 +70,7 @@ export default function CreditNoteForm({
   lines,
   tenders,
   reasons,
+  lockWarning,
 }: {
   invoiceId: number
   invoiceNumber: string
@@ -80,6 +82,8 @@ export default function CreditNoteForm({
   tenders: { id: number; name: string }[]
   /** The site's return reasons, active only. */
   reasons: PickableReason[]
+  /** Set when the period is soft-locked: the credit still posts, with a caution. */
+  lockWarning?: string | null
 }) {
   const [qty, setQty] = useState<Record<number, number>>({})
   const [reasonId, setReasonId] = useState<number | null>(null)
@@ -151,6 +155,13 @@ export default function CreditNoteForm({
 
   return (
     <PageBody className="grid lg:grid-cols-3">
+      {lockWarning && (
+        <div className="lg:col-span-3">
+          <Callout tone="warning" title="This period is being finalised">
+            {lockWarning}
+          </Callout>
+        </div>
+      )}
       <div className="lg:col-span-2">
         <Card>
           <CardHeader

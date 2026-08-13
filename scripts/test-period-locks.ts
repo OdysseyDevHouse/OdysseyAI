@@ -12,7 +12,7 @@ import { createCustomer } from '../src/lib/site/customers'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { postTransaction, reverseTransaction } from '../src/lib/site/customerLedger'
 import { postSupplierTransaction } from '../src/lib/site/supplierLedger'
-import { lockPeriod, unlockPeriod } from '../src/lib/site/periodLocks'
+import { lockPeriod, unlockPeriod, guardPosting, isLocked } from '../src/lib/site/periodLocks'
 import { isPeriodLocked } from '../src/lib/site/settings'
 import { requestWriteOff } from '../src/lib/site/writeOffs'
 
@@ -116,6 +116,38 @@ async function main() {
   })
   ok('*** posting works again once reopened ***', afterUnlock.ok,
       afterUnlock.ok ? '' : afterUnlock.error)
+
+  console.log('\n── Scoped locks (the unified guard) ────────────────────────\n')
+
+  // Every posting path now goes through guardPosting with its own scope, so
+  // the semantics that matter are provable without raising real documents: a
+  // hard sales lock refuses sales work and leaves stock work alone; a soft
+  // lock warns without refusing anywhere.
+  const salesLock = await lockPeriod(SITE, actor, {
+    periodFrom: from, periodTo: to, lockType: 'hard', scope: 'sales',
+    reason: 'Scoped-lock test',
+  })
+  ok('a sales-scoped hard lock takes', salesLock.ok)
+  const salesScopeLockId = salesLock.ok ? salesLock.id : 0
+  ok('*** the sales scope refuses under it ***',
+    (await guardPosting(SITE, inside, 'sales')) !== null)
+  ok('*** the stock scope posts straight through it ***',
+    (await guardPosting(SITE, inside, 'stock')) === null)
+  ok('  purchases too', (await guardPosting(SITE, inside, 'purchases')) === null)
+  await siteExecute(SITE, 'DELETE FROM period_locks WHERE id = ?', [salesScopeLockId])
+
+  const softLock = await lockPeriod(SITE, actor, {
+    periodFrom: from, periodTo: to, lockType: 'soft', scope: 'all',
+    reason: 'Being finalised',
+  })
+  ok('a soft lock takes', softLock.ok)
+  const softLockId = softLock.ok ? softLock.id : 0
+  const softCheck = await isLocked(SITE, inside, 'sales')
+  ok('*** a soft lock warns without refusing ***',
+    softCheck.locked && !softCheck.refused, JSON.stringify(softCheck))
+  ok('  and guardPosting lets it through',
+    (await guardPosting(SITE, inside, 'sales')) === null)
+  await siteExecute(SITE, 'DELETE FROM period_locks WHERE id = ?', [softLockId])
 
   await finish(cust.id, sup.id, lock.id)
 }

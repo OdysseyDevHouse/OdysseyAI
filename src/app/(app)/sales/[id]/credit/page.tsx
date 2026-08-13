@@ -5,7 +5,7 @@ import { creditableLines } from '@/lib/site/salesReversal'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { listSalesReasons } from '@/lib/site/salesReasons'
 import { can } from '@/lib/site/permissions'
-import { isPeriodLocked } from '@/lib/site/settings'
+import { isLocked } from '@/lib/site/periodLocks'
 import { PageHeader, PageBody, Card, ButtonLink, EmptyState, Icons } from '@/components/ui'
 import CreditNoteForm from './CreditNoteForm'
 
@@ -30,10 +30,13 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
     redirect(`/sales/${invoiceId}?error=${encodeURIComponent(`A ${invoice.status} document cannot be credited.`)}`)
   }
 
-  const [lines, tenders, locked, reasons] = await Promise.all([
+  // A hard lock blocks the screen; a soft one lets the credit through with a
+  // caution — the scoped-lock distinction, credited at sales scope since the
+  // credit is dated today.
+  const [lines, tenders, lockCheck, reasons] = await Promise.all([
     creditableLines(site.id, invoiceId),
     listTenderTypes(site.id),
-    isPeriodLocked(site.id, new Date().toISOString().slice(0, 10)),
+    isLocked(site.id, new Date().toISOString().slice(0, 10), 'sales'),
     listSalesReasons(site.id, 'return'),
   ])
 
@@ -48,12 +51,12 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
         backLabel="Invoice"
       />
 
-      {locked ? (
+      {lockCheck.refused ? (
         <PageBody>
           <Card>
             <EmptyState
               title="The current VAT period is locked"
-              hint="Nothing can be credited into it. Unlock the period in Setup → Numbering once the return has been dealt with."
+              hint={lockCheck.message ?? 'Nothing can be credited into it. Reopen the period under Accounting → Periods once the return has been dealt with.'}
               icon={<Icons.Lock size={22} />}
               action={
                 <ButtonLink variant="secondary" href={`/sales/${invoiceId}`}>
@@ -104,6 +107,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
             unitCostExcl: l.unitCostExcl,
           }))}
           tenders={tenders.filter((t) => t.allowsRefund).map((t) => ({ id: t.id, name: t.name }))}
+          lockWarning={lockCheck.locked ? lockCheck.message : null}
         />
       )}
     </>

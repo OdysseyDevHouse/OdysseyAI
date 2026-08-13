@@ -793,9 +793,12 @@ export function validateSetting(key: SettingKey, value: string): string | null {
  *   returns a boolean with nowhere to put one.
  *
  * The table is queried directly rather than through periodLocks.ts because that
- * module imports this one — going the other way would be a cycle. Callers
- * wanting the reason, or wanting to distinguish soft from hard, should use
- * periodLocks.isLocked() instead; this stays boolean for its existing callers.
+ * module imports this one — going the other way would be a cycle.
+ *
+ * LEGACY: no production path calls this any more — every posting guard now
+ * goes through periodLocks.guardPosting()/isLocked() with a scope, which
+ * honours the same setting. This stays only as the boolean compatibility shim
+ * the period-locks suite proves against; new code must not import it.
  */
 export async function isPeriodLocked(siteId: number, date: string): Promise<boolean> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false

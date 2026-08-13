@@ -1,7 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQueryOne, siteTransaction } from '../siteDb'
-import { isPeriodLocked } from './settings'
+import { isLocked } from './periodLocks'
 import { can, capabilitiesForRole } from './permissions'
 import { createCreditNote } from './salesReversal'
 import { adoptDocumentNumber } from './sequences'
@@ -394,8 +394,11 @@ export async function postOfflineReturn(
         carries the whole record, and the exceptions screen shows it as refused with
         the reason. The cash is still out of the drawer; what a manager gets is the
         evidence, and a decision to make. */
-  if (await isPeriodLocked(siteId, ret.documentDate)) {
-    const reason = `The VAT period covering ${ret.documentDate} is locked, so this return could not be posted.`
+  const lockCheck = await isLocked(siteId, ret.documentDate, 'sales')
+  if (lockCheck.refused) {
+    const reason =
+      lockCheck.message ??
+      `The VAT period covering ${ret.documentDate} is locked, so this return could not be posted.`
     await rejectClaim(siteId, ret, null, reason)
     return {
       returnUid: ret.returnUid,
@@ -404,6 +407,11 @@ export async function postOfflineReturn(
       retryable: false,
       exception: reason,
     }
+  }
+  if (lockCheck.locked) {
+    // A soft lock cautions rather than files — the money already left the
+    // drawer, so the return posts and the disagreement rides as an exception.
+    reasons.push(`Posted into a period being finalised: ${lockCheck.message ?? ret.documentDate}`)
   }
 
   /* 7. Post it, through the one credit-note path there is. */

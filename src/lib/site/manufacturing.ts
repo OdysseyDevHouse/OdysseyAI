@@ -6,7 +6,7 @@ import { weightedAverageCost } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
 import { resolveComponents, type ResolvedComponent } from './productComposition'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import type { Actor } from './activityLog'
 import type { ProductTypeId } from '../productTypes'
 
@@ -354,9 +354,10 @@ export async function postBuild(
   if (invalid) return { ok: false, error: invalid }
 
   const docDate = input.documentDate ?? todayIso()
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  // A build moves stock value, so the stock scope guards it — not sales or
+  // purchases, which can stay locked while production continues.
+  const lockRefusal = await guardPosting(siteId, docDate, 'stock')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   const product = await siteQueryOne<Row>(
     siteId,
@@ -638,9 +639,12 @@ export async function unbuild(
   if (String(order.status) === 'cancelled') return { ok: false, error: 'That build is already cancelled.' }
   if (String(order.status) !== 'posted') return { ok: false, error: 'Only a posted build can be unbuilt.' }
 
-  if (await isPeriodLocked(siteId, String(order.document_date).slice(0, 10))) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const cancelLockRefusal = await guardPosting(
+    siteId,
+    String(order.document_date).slice(0, 10),
+    'stock',
+  )
+  if (cancelLockRefusal) return { ok: false, error: cancelLockRefusal }
 
   const lines = await siteQuery<Row>(
     siteId,

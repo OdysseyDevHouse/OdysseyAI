@@ -12,7 +12,8 @@ import {
 } from './productComposition'
 import { mainLocationIdTx } from './stockLocations'
 import { receiveSerialsTx, removeReceivedSerialsTx } from './serials'
-import { isPeriodLocked, getSetting } from './settings'
+import { getSetting } from './settings'
+import { guardPosting } from './periodLocks'
 import { postSupplierTransaction } from './supplierLedger'
 import { dueDateFor } from './ledger'
 import type { Actor } from './activityLog'
@@ -517,9 +518,8 @@ export async function receiveGoods(
   }
 
   const docDate = input.documentDate ?? todayIso()
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: `The VAT period covering ${docDate} is locked.` }
-  }
+  const lockRefusal = await guardPosting(siteId, docDate, 'purchases')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   // Line values BEFORE charges, so the apportionment has something to weight by.
   // The absolute amount wins over the percentage — see 087.
@@ -1213,9 +1213,8 @@ export async function voidReceipt(
       error: `${doc.document_number} was received on ${docDate}. Raise a supplier return instead.`,
     }
   }
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const voidLockRefusal = await guardPosting(siteId, docDate, 'purchases')
+  if (voidLockRefusal) return { ok: false, error: voidLockRefusal }
 
   // COALESCE, not a plain column: qty_bonus arrives with 090, and a site it
   // has not reached must still be able to void. Selected as one figure so the

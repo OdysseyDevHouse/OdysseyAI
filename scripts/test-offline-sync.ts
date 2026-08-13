@@ -410,7 +410,7 @@ async function main() {
       saleAt(3, { documentDate: '2019-06-01', claimedTotalIncl: 40 }),
     )
     ok('a locked period does NOT post', !quarantined.ok, quarantined.documentNumber ?? '')
-    ok('and says why', /locked/i.test(quarantined.error ?? ''), quarantined.error ?? '')
+    ok('and says why', /locked|closed/i.test(quarantined.error ?? ''), quarantined.error ?? '')
     ok(
       'it is not retryable — a human has to decide',
       quarantined.retryable === false,

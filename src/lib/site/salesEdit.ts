@@ -1,7 +1,7 @@
 import 'server-only'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
 import { round, toNum } from '@/lib/decimals'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import { can, type CapabilitySet } from './permissions'
 import { getDocument, saveDraft, type SalesDocument, type LineInput } from './salesDocuments'
 import { createCreditNote } from './salesReversal'
@@ -147,11 +147,12 @@ export async function canEditFinalised(
 
   // The period lock is the only thing standing between a correction and a
   // restated VAT return.
-  if (await isPeriodLocked(siteId, document.documentDate)) {
+  const lockRefusal = await guardPosting(siteId, document.documentDate, 'sales')
+  if (lockRefusal) {
     return {
       ok: false,
       refusal: {
-        reason: `The VAT period covering ${document.documentDate} is locked.`,
+        reason: lockRefusal,
         suggestion: 'Raise a credit note dated today instead.',
       },
     }

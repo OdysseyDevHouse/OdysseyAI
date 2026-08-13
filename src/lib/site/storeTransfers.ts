@@ -7,7 +7,7 @@ import { linkedStores } from '../storeGroups'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
 import { transitLocationIdTx } from './stockLocations'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import type { Actor } from './activityLog'
 
 /**
@@ -374,9 +374,8 @@ export async function dispatchToStore(
   }
 
   const docDate = input.documentDate ?? todayIso()
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const lockRefusal = await guardPosting(siteId, docDate, 'stock')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   const source = await siteQueryOne<Row>(
     siteId,
@@ -568,9 +567,8 @@ export async function receiveFromStore(
   }
 
   const docDate = todayIso()
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const lockRefusal = await guardPosting(siteId, docDate, 'stock')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   const destination = await siteQueryOne<Row>(
     siteId,
@@ -938,9 +936,8 @@ export async function cancelDispatch(
   }
   if (transfer.status === 'cancelled') return { ok: false, error: 'That dispatch is already recalled.' }
 
-  if (await isPeriodLocked(siteId, transfer.documentDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const cancelLockRefusal = await guardPosting(siteId, transfer.documentDate, 'stock')
+  if (cancelLockRefusal) return { ok: false, error: cancelLockRefusal }
   if (transfer.fromLocationId === null) {
     return { ok: false, error: 'That dispatch has no source location to return the stock to.' }
   }

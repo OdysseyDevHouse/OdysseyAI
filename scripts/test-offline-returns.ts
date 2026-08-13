@@ -351,7 +351,7 @@ async function main() {
     ok('non-retryably, because retrying changes nothing', lockedResult.retryable === false)
     ok(
       'with the reason recorded on the claim',
-      /locked/i.test(lockedResult.error ?? ''),
+      /locked|closed/i.test(lockedResult.error ?? ''),
       lockedResult.error ?? '',
     )
     const claim = await siteQueryOne<any>(

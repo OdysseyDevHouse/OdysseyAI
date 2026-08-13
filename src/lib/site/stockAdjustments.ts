@@ -4,7 +4,7 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb
 import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import { mirrorStockAdjustment } from './glPosting'
 import type { Actor } from './activityLog'
 
@@ -751,9 +751,8 @@ export async function postAdjustment(
   if (adjustment.status === 'cancelled') return { ok: false, error: 'That adjustment was cancelled.' }
   if (adjustment.lines.length === 0) return { ok: false, error: 'This adjustment has no lines.' }
 
-  if (await isPeriodLocked(siteId, adjustment.documentDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const lockRefusal = await guardPosting(siteId, adjustment.documentDate, 'stock')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   const location = await siteQueryOne<Row>(
     siteId,
@@ -1012,9 +1011,8 @@ export async function cancelAdjustment(
     return { ok: true }
   }
 
-  if (await isPeriodLocked(siteId, adjustment.documentDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const lockRefusal = await guardPosting(siteId, adjustment.documentDate, 'stock')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   try {
     const result = await siteTransaction(siteId, async (tx) => {

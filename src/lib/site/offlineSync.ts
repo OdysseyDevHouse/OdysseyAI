@@ -2,7 +2,8 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQueryOne, siteTransaction } from '../siteDb'
 import { round } from '../decimals'
-import { isPeriodLocked } from './settings'
+import { isLocked } from './periodLocks'
+import { logActivity } from './activityLog'
 import { capabilitiesForRole } from './permissions'
 import { checkPricing } from './priceGuard'
 import { saveDraft, getDocument, type LineInput } from './salesDocuments'
@@ -255,11 +256,18 @@ export async function postOfflineSale(
    */
   const actor = { userId: operator?.id ?? 0, userName: actorName.slice(0, 120) }
 
-  /* 4. A locked VAT period is the one thing that gets quarantined rather than
-        posted: writing into a submitted return changes a figure already declared,
-        and no exception flag makes that acceptable. */
-  if (await isPeriodLocked(siteId, sale.documentDate)) {
-    const reason = `The VAT period covering ${sale.documentDate} is locked, so this sale could not be posted.`
+  /* 4. A HARD-locked VAT period is the one thing that gets quarantined rather
+        than posted: writing into a submitted return changes a figure already
+        declared, and no exception flag makes that acceptable. A SOFT lock is
+        the other case the scoped-lock table exists for — the period is being
+        finalised, not filed — so the sale posts (refusing would strand an
+        offline till for a lock meant as a caution) and the disagreement is
+        recorded as an exception instead. */
+  const lockCheck = await isLocked(siteId, sale.documentDate, 'sales')
+  if (lockCheck.refused) {
+    const reason =
+      lockCheck.message ??
+      `The VAT period covering ${sale.documentDate} is locked, so this sale could not be posted.`
     const draft = await saveDraft(siteId, actor, {
       docType: 'invoice',
       documentDate: sale.documentDate,
@@ -272,6 +280,15 @@ export async function postOfflineSale(
     })
     await rejectClaim(siteId, sale, draft.ok ? draft.id : null, reason)
     return { saleUid: sale.saleUid, ok: false, error: reason, retryable: false, exception: reason }
+  }
+  if (lockCheck.locked) {
+    reasons.push(`Posted into a period being finalised: ${lockCheck.message ?? sale.documentDate}`)
+    await logActivity(siteId, actor, {
+      entity: 'period',
+      entityId: null,
+      action: 'soft_lock_posting',
+      detail: `Offline sale ${sale.saleUid} dated ${sale.documentDate} posted through a soft lock.`,
+    }).catch(() => undefined)
   }
 
   /* 5. Classify against the pricing rules — flagged, never refused (see header).

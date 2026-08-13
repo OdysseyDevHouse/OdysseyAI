@@ -6,7 +6,7 @@ import { assertBalanced, documentTotals, lineTotals } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement, stockDirectionFor } from './stockMovements'
 import { getTenderType } from './tenderTypes'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import { getDocument, todayIso, type SalesDocument } from './salesDocuments'
 import { resolveComponents, explodingProducts, type ResolvedComponent } from './productComposition'
 import type { ProductTypeId } from '../productTypes'
@@ -224,9 +224,8 @@ export async function createCreditNote(
   // credit raised now — that is the whole point of crediting rather than
   // voiding.
   const docDate = todayIso()
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: `The VAT period covering ${docDate} is locked.` }
-  }
+  const lockRefusal = await guardPosting(siteId, docDate, 'sales')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   const customerId = input.customerId ?? invoice?.customerId ?? null
 

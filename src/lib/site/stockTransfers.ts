@@ -5,7 +5,7 @@ import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
 import { markTransferred } from './serials'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import type { Actor } from './activityLog'
 
 /**
@@ -290,9 +290,8 @@ export async function postTransfer(
   if (invalid) return { ok: false, error: invalid }
 
   const docDate = input.documentDate ?? todayIso()
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const lockRefusal = await guardPosting(siteId, docDate, 'stock')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   const locations = await siteQuery<Row>(
     siteId,
@@ -481,9 +480,8 @@ export async function voidTransfer(
   }
   const { fromLocationId, toLocationId } = transfer
 
-  if (await isPeriodLocked(siteId, transfer.documentDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const cancelLockRefusal = await guardPosting(siteId, transfer.documentDate, 'stock')
+  if (cancelLockRefusal) return { ok: false, error: cancelLockRefusal }
 
   try {
     return await siteTransaction(siteId, async (tx) => {

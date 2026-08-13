@@ -4,7 +4,7 @@ import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import { postSupplierTransaction } from './supplierLedger'
 import { returnSerialsToSupplierTx } from './serials'
 import { getPurchaseDocument } from './purchaseDocuments'
@@ -171,9 +171,8 @@ export async function createSupplierReturn(
   // Dated today, so a locked PAST period does not block a return raised now —
   // that is the whole point of returning rather than voiding.
   const docDate = todayIso()
-  if (await isPeriodLocked(siteId, docDate)) {
-    return { ok: false, error: `The VAT period covering ${docDate} is locked.` }
-  }
+  const lockRefusal = await guardPosting(siteId, docDate, 'purchases')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   // Guard against returning more than was received, across ALL returns on this
   // GRV rather than just this one.

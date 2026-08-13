@@ -22,7 +22,8 @@ import { writeTips } from './tips'
    importing it from here keeps the dependency pointing at the shared arithmetic that the
    tender pad also runs. */
 import { planTips } from '../tipMath'
-import { getNumericSetting, isPeriodLocked } from './settings'
+import { getNumericSetting } from './settings'
+import { guardPosting } from './periodLocks'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
 import { requireSalesReason } from './salesReasons'
 import {
@@ -1078,9 +1079,8 @@ async function finaliseGuards(siteId: number, document: SalesDocument): Promise<
     return `A ${document.docLabel.toLowerCase()} is not posted — convert it to an invoice.`
   }
 
-  if (await isPeriodLocked(siteId, document.documentDate)) {
-    return `The VAT period covering ${document.documentDate} is locked. Date the sale today instead.`
-  }
+  const lockRefusal = await guardPosting(siteId, document.documentDate, 'sales')
+  if (lockRefusal) return lockRefusal
 
   // A deactivated till stops working on its next sale, not at the next sign-in.
   //
@@ -1191,9 +1191,8 @@ export async function voidDocument(
     }
   }
 
-  if (await isPeriodLocked(siteId, document.documentDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const voidLockRefusal = await guardPosting(siteId, document.documentDate, 'sales')
+  if (voidLockRefusal) return { ok: false, error: voidLockRefusal }
 
   // An ACCOUNT sale put a debit on the customer's card. Voiding the sale
   // without reversing that debit would leave them owing money for goods that

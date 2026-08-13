@@ -5,7 +5,7 @@ import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
 import { stockedReferSql } from './productComposition'
-import { isPeriodLocked } from './settings'
+import { guardPosting } from './periodLocks'
 import { offlineExceptionCounts } from './offlineExceptions'
 import { countSerialsTx } from './serials'
 import { mirrorStockTake } from './glPosting'
@@ -790,9 +790,8 @@ export async function postStockTake(
     return { ok: false, error: 'Nothing has been counted on this sheet yet.' }
   }
 
-  if (await isPeriodLocked(siteId, take.documentDate)) {
-    return { ok: false, error: 'That VAT period is locked.' }
-  }
+  const lockRefusal = await guardPosting(siteId, take.documentDate, 'stock')
+  if (lockRefusal) return { ok: false, error: lockRefusal }
 
   const unposted = await unpostedOfflineSales(siteId)
   if (unposted > 0) {
@@ -988,8 +987,9 @@ export async function cancelStockTake(
   if (!take) return { ok: false, error: 'That stock take no longer exists.' }
   if (take.status === 'cancelled') return { ok: false, error: 'That stock take is already cancelled.' }
 
-  if (take.status === 'posted' && (await isPeriodLocked(siteId, take.documentDate))) {
-    return { ok: false, error: 'That VAT period is locked.' }
+  if (take.status === 'posted') {
+    const cancelLockRefusal = await guardPosting(siteId, take.documentDate, 'stock')
+    if (cancelLockRefusal) return { ok: false, error: cancelLockRefusal }
   }
 
   try {
