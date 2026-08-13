@@ -21,7 +21,9 @@ import ProductForm, { SaveProductButton } from '../ProductForm'
 import ProductImages from '../ProductImages'
 import VariantsPanel from '../VariantsPanel'
 import BarcodesPanel from '../BarcodesPanel'
+import PriceHistoryPanel from '../PriceHistoryPanel'
 import { listProductBarcodes } from '@/lib/site/productBarcodes'
+import { listPriceHistory } from '@/lib/site/priceHistory'
 import ProductActions from './ProductActions'
 
 export const dynamic = 'force-dynamic'
@@ -83,7 +85,7 @@ export default async function EditProductPage({
   // The setup each product type needs. Only fetched for the type that uses it —
   // a normal product has no ingredient list to read — and each is tolerant of
   // its table not existing yet, so an unmigrated store still edits products.
-  const [recipeLines, referChainRows, serials, productSuppliers, extraBarcodes, images, autoCode] = await Promise.all([
+  const [recipeLines, referChainRows, serials, productSuppliers, extraBarcodes, priceHistory, images, autoCode] = await Promise.all([
     product.productType === 'recipe'
       ? listRecipe(siteId, product.id).catch(() => [])
       : Promise.resolve([]),
@@ -108,6 +110,8 @@ export default async function EditProductPage({
     listProductSuppliers(siteId, product.id).catch(() => []),
     // Tolerant of 143 not having run.
     listProductBarcodes(siteId, product.id).catch(() => []),
+    // Tolerant of 144 not having run.
+    listPriceHistory(siteId, product.id).catch(() => []),
     // Tolerant like its neighbours: an unmigrated store still edits products,
     // it simply has no gallery yet.
     listImages(siteId, product.id).catch(() => []),
@@ -239,6 +243,9 @@ export default async function EditProductPage({
 
               {/* The alias barcodes (143). Self-saving, like its siblings. */}
               <BarcodesPanel productId={product.id} initial={extraBarcodes} />
+
+              {/* Who moved the price, and through which door (144). */}
+              <PriceHistoryPanel rows={priceHistory} />
             </>
           }
         />

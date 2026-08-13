@@ -169,7 +169,7 @@ export async function applyRepriceAction(
   const { siteId, actor } = ctx
 
   const plan = await planReprice(siteId, scope, rule)
-  const result = await applyReprice(siteId, scope.targetStructureId, plan.changes)
+  const result = await applyReprice(siteId, scope.targetStructureId, plan.changes, actor.userName)
   if (!result.ok) return { ok: false, error: result.error }
 
   if (result.written > 0) {

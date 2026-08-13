@@ -5,7 +5,7 @@ import { toNum } from '../decimals'
 import { safeDateTime } from '../storefrontModel'
 import type { PendingSchedule } from '../priceSchedules'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
-import { planReprice, writePriceRows, type RepriceScope } from './reprice'
+import { planReprice, writePriceRows, recordPriceRemoval, type RepriceScope } from './reprice'
 import type { RepriceRule } from '../repricing'
 
 /**
@@ -820,7 +820,9 @@ export async function applyOneSchedule(
       priceIncl: toNum(r.new_price_incl),
     }))
 
-    if (rows.length > 0) await writePriceRows(tx, rows)
+    if (rows.length > 0) {
+      await writePriceRows(tx, rows, { source: 'schedule', sourceDocId: id, userName: 'Schedule' })
+    }
     written = rows.length
 
     await tx.execute(`UPDATE price_schedules SET applied_count = ? WHERE id = ?`, [
@@ -945,11 +947,35 @@ export async function revertSchedule(
       restored++
     }
 
-    if (toWrite.length > 0) await writePriceRows(tx, toWrite)
+    if (toWrite.length > 0) {
+      await writePriceRows(tx, toWrite, {
+        source: 'revert',
+        sourceDocId: id,
+        userName: actor.userName,
+      })
+    }
     for (const d of toDelete) {
       await tx.execute(
         `DELETE FROM product_prices WHERE product_id = ? AND price_structure_id = ?`,
         [d.productId, d.priceStructureId] as never,
+      )
+    }
+    // A deletion is a price event too — the panel renders NULL as "removed".
+    if (toDelete.length > 0) {
+      const wroteBy = new Map(
+        (rows as Row[]).map((r) => [
+          `${r.product_id}:${r.price_structure_id}`,
+          toNum(r.new_price_incl),
+        ]),
+      )
+      await recordPriceRemoval(
+        tx,
+        toDelete.map((d) => ({
+          productId: d.productId,
+          priceStructureId: d.priceStructureId,
+          oldPriceIncl: wroteBy.get(`${d.productId}:${d.priceStructureId}`) ?? 0,
+        })),
+        { source: 'revert', sourceDocId: id, userName: actor.userName },
       )
     }
 

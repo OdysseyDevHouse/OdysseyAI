@@ -297,15 +297,18 @@ async function applyToStore(
     }
 
     if (pricesToWrite && structureMap) {
-      for (const [originId, price] of Object.entries(pricesToWrite)) {
-        const targetStructureId = structureMap.get(Number(originId))
-        if (!targetStructureId) continue
-        await tx.execute(
-          `INSERT INTO product_prices (product_id, price_structure_id, selling_price_incl)
-           VALUES (?,?,?)
-           ON DUPLICATE KEY UPDATE selling_price_incl = VALUES(selling_price_incl)`,
-          [productId, targetStructureId, price.toFixed(4)] as never,
-        )
+      const rows = Object.entries(pricesToWrite)
+        .map(([originId, price]) => ({
+          productId,
+          priceStructureId: structureMap.get(Number(originId)) ?? 0,
+          priceIncl: price,
+        }))
+        .filter((r) => r.priceStructureId > 0)
+      if (rows.length > 0) {
+        // Through the one definition of a price write (144): the receiving
+        // site's history says the shelf moved because a linked store said so.
+        const { writePriceRows } = await import('./reprice')
+        await writePriceRows(tx, rows, { source: 'fanout', userName: 'Linked store' })
       }
     }
 

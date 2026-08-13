@@ -178,6 +178,13 @@ export type ApplyResult = { ok: true; written: number } | { ok: false; error: st
 /** One price, going in. */
 export type PriceRow = { productId: number; priceStructureId: number; priceIncl: number }
 
+/** Who moved a price, and through which door — the history row's two facts. */
+export type PriceAudit = {
+  source: 'editor' | 'import' | 'reprice' | 'schedule' | 'revert' | 'fanout'
+  sourceDocId?: number | null
+  userName: string
+}
+
 /**
  * How a price is written. The one definition of it.
  *
@@ -189,11 +196,39 @@ export type PriceRow = { productId: number; priceStructureId: number; priceIncl:
  * Batched because a 40 000-row catalogue is one statement per product
  * otherwise, and the MySQL round-trips are what turn seconds into minutes.
  * Rows spanning several price types are fine: the structure is per row.
+ *
+ * ── EVERY WRITE LEAVES HISTORY (144) ──────────────────────────────────────
+ *
+ * The old figure is read before the upsert and a product_price_history row is
+ * written per GENUINE change — a write restating the same price records
+ * nothing, so a seeded reprice cannot manufacture forty thousand identical
+ * rows. This being the one definition of a price write is exactly what makes
+ * the history complete: editor, import, reprice, schedule, revert and fanout
+ * all pass through here, each naming itself.
  */
-export async function writePriceRows(tx: PoolConnection, rows: readonly PriceRow[]): Promise<void> {
+export async function writePriceRows(
+  tx: PoolConnection,
+  rows: readonly PriceRow[],
+  audit: PriceAudit,
+): Promise<void> {
   const BATCH = 500
   for (let i = 0; i < rows.length; i += BATCH) {
     const slice = rows.slice(i, i + BATCH)
+
+    // The BEFORE picture, read inside the same transaction as the write.
+    const pairFilter = slice.map(() => '(product_id = ? AND price_structure_id = ?)').join(' OR ')
+    const pairParams: unknown[] = []
+    for (const r of slice) pairParams.push(r.productId, r.priceStructureId)
+    const [beforeRows] = await tx.query(
+      `SELECT product_id, price_structure_id, selling_price_incl
+         FROM product_prices WHERE ${pairFilter}`,
+      pairParams as never,
+    )
+    const before = new Map<string, number>()
+    for (const b of beforeRows as { product_id: number; price_structure_id: number; selling_price_incl: unknown }[]) {
+      before.set(`${b.product_id}:${b.price_structure_id}`, Number(b.selling_price_incl))
+    }
+
     const values = slice.map(() => '(?, ?, ?)').join(',')
     const params: unknown[] = []
     for (const r of slice) {
@@ -205,7 +240,61 @@ export async function writePriceRows(tx: PoolConnection, rows: readonly PriceRow
        ON DUPLICATE KEY UPDATE selling_price_incl = VALUES(selling_price_incl)`,
       params as never,
     )
+
+    const changed = slice.filter((r) => {
+      const old = before.get(`${r.productId}:${r.priceStructureId}`)
+      return old === undefined || Math.abs(old - r.priceIncl) > 0.00005
+    })
+    if (changed.length > 0) {
+      const hv = changed.map(() => '(?,?,?,?,?,?,?)').join(',')
+      const hp: unknown[] = []
+      for (const r of changed) {
+        const old = before.get(`${r.productId}:${r.priceStructureId}`)
+        hp.push(
+          r.productId,
+          r.priceStructureId,
+          old === undefined ? null : old.toFixed(4),
+          r.priceIncl.toFixed(4),
+          audit.source,
+          audit.sourceDocId ?? null,
+          audit.userName.slice(0, 120),
+        )
+      }
+      await tx.execute(
+        `INSERT INTO product_price_history
+           (product_id, price_structure_id, old_price_incl, new_price_incl, source, source_doc_id, user_name)
+         VALUES ${hv}`,
+        hp as never,
+      )
+    }
   }
+}
+
+/** A price row's DELETION, on the record — a schedule revert of a first fill. */
+export async function recordPriceRemoval(
+  tx: PoolConnection,
+  rows: readonly { productId: number; priceStructureId: number; oldPriceIncl: number }[],
+  audit: PriceAudit,
+): Promise<void> {
+  if (rows.length === 0) return
+  const values = rows.map(() => '(?,?,?,NULL,?,?,?)').join(',')
+  const params: unknown[] = []
+  for (const r of rows) {
+    params.push(
+      r.productId,
+      r.priceStructureId,
+      r.oldPriceIncl.toFixed(4),
+      audit.source,
+      audit.sourceDocId ?? null,
+      audit.userName.slice(0, 120),
+    )
+  }
+  await tx.execute(
+    `INSERT INTO product_price_history
+       (product_id, price_structure_id, old_price_incl, new_price_incl, source, source_doc_id, user_name)
+     VALUES ${values}`,
+    params as never,
+  )
 }
 
 /**
@@ -218,6 +307,8 @@ export async function applyReprice(
   siteId: number,
   targetStructureId: number,
   changes: RepriceChange[],
+  /** Who ran it, for the history. Defaulted so old callers keep compiling. */
+  userName = '',
 ): Promise<ApplyResult> {
   const toWrite = changes.filter((c) => c.changed)
   if (toWrite.length === 0) return { ok: true, written: 0 }
@@ -231,6 +322,7 @@ export async function applyReprice(
           priceStructureId: targetStructureId,
           priceIncl: c.newIncl,
         })),
+        { source: 'reprice', userName },
       )
     })
   } catch (e) {

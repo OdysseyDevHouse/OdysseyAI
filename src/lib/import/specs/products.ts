@@ -330,11 +330,17 @@ export const productSpec: ImportSpec<ProductDraft> = {
       // ones the file actually mapped are overwritten.
       merged.prices = { ...toInput(existing).prices, ...(input.prices ?? {}) }
 
-      const result = await updateProduct(ctx.siteId, existingId, merged)
+      const result = await updateProduct(ctx.siteId, existingId, merged, {
+        source: 'import',
+        userName: ctx.actor.userName,
+      })
       if (!result.ok) return { ...base, status: 'failed', reason: result.error }
       productId = existingId
     } else {
-      const result = await createProduct(ctx.siteId, input)
+      const result = await createProduct(ctx.siteId, input, {
+        source: 'import',
+        userName: ctx.actor.userName,
+      })
       if (!result.ok) return { ...base, status: 'failed', reason: result.error }
       productId = result.id
     }

@@ -12,6 +12,7 @@ import {
   type PriceCalcId,
 } from '../productProperties'
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
+import { writePriceRows } from './reprice'
 import { resolveMasterCode } from './masterCodes'
 
 export type Product = {
@@ -857,20 +858,27 @@ async function writePrices(
   tx: PoolConnection,
   productId: number,
   prices: Record<number, number> | undefined,
+  audit?: { source: 'editor' | 'import'; userName: string },
 ) {
-  for (const [structureId, incl] of Object.entries(prices ?? {})) {
-    await tx.execute(
-      `INSERT INTO product_prices (product_id, price_structure_id, selling_price_incl)
-            VALUES (?, ?, ?)
-       ON DUPLICATE KEY UPDATE selling_price_incl = VALUES(selling_price_incl)`,
-      [productId, Number(structureId), incl.toFixed(4)] as never,
-    )
-  }
+  const rows = Object.entries(prices ?? {}).map(([structureId, incl]) => ({
+    productId,
+    priceStructureId: Number(structureId),
+    priceIncl: incl,
+  }))
+  if (rows.length === 0) return
+  // Through the ONE definition of a price write (reprice.ts), which is what
+  // puts editor and import saves on the history (144) beside every other path.
+  await writePriceRows(tx, rows, {
+    source: audit?.source ?? 'editor',
+    userName: audit?.userName ?? '',
+  })
 }
 
 export async function createProduct(
   siteId: number,
   input: ProductInput,
+  /** Who is writing the prices, for the history (144). Editor by default. */
+  audit?: { source: 'editor' | 'import'; userName: string },
 ): Promise<SaveResult> {
   // BEFORE validate, which rejects a blank code — see masterCodes.ts.
   const code = await resolveMasterCode(siteId, 'product', input.code)
@@ -888,7 +896,7 @@ export async function createProduct(
   const vat = await resolveVat(siteId, input)
 
   return siteTransaction(siteId, async (tx) => {
-    const id = await insertProductTx(tx, { ...input, code }, vat)
+    const id = await insertProductTx(tx, { ...input, code }, vat, audit)
     return { ok: true as const, id }
   })
 }
@@ -910,6 +918,8 @@ export async function insertProductTx(
   tx: PoolConnection,
   input: ProductInput & { code: string },
   vat: { purchase: number | null; selling: number | null },
+  /** Who is writing the prices, for the history (144). */
+  audit?: { source: 'editor' | 'import'; userName: string },
 ): Promise<number> {
   {
     const [res] = await tx.execute(
@@ -947,7 +957,7 @@ export async function insertProductTx(
       ] as never,
     )
     const id = (res as { insertId: number }).insertId
-    await writePrices(tx, id, input.prices)
+    await writePrices(tx, id, input.prices, audit)
 
     /*
      * Opening stock has to LAND somewhere, and be explainable.
@@ -1000,6 +1010,8 @@ export async function updateProduct(
   siteId: number,
   id: number,
   input: ProductInput,
+  /** Who is writing the prices, for the history (144). Editor by default. */
+  audit?: { source: 'editor' | 'import'; userName: string },
 ): Promise<SaveResult> {
   const invalid = validateProduct(input)
   if (invalid) return { ok: false, error: invalid }
@@ -1111,7 +1123,7 @@ export async function updateProduct(
       if (!rows?.length) throw new Error('Product not found.')
     }
 
-    await writePrices(tx, id, input.prices)
+    await writePrices(tx, id, input.prices, audit)
     return { ok: true as const, id }
   }).catch((err) => ({ ok: false as const, error: (err as Error).message }))
 }

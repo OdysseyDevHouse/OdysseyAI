@@ -310,9 +310,11 @@ export async function saveProductAction(
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readInput(form)
 
+  // Named on the price history (144): who moved the shelf, through the editor.
+  const audit = { source: 'editor' as const, userName: ctx.actor.userName }
   const result = idRaw
-    ? await updateProduct(siteId, Number(idRaw), input)
-    : await createProduct(siteId, input)
+    ? await updateProduct(siteId, Number(idRaw), input, audit)
+    : await createProduct(siteId, input, audit)
 
   if (!result.ok) return { error: result.error }
 
