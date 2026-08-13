@@ -30,6 +30,7 @@ import {
   createLayby, getLayby, takePayment, completeLayby, cancelLayby,
   listLaybys, reconcileLaybys, expireStaleLaybys, cancellationFeePct,
 } from '../src/lib/site/laybys'
+import { verifySequence } from '../src/lib/site/sequences'
 import {
   cancellationOutcome, clampFeePct, businessDaysBetween, outstanding,
   isSettled, percentPaid, paymentRefusal, DEFAULT_MAX_CANCELLATION_FEE_PCT,
@@ -373,7 +374,28 @@ async function main() {
   ok('*** reconcileStock zero drift ***', (await reconcileStock(SITE)).length === stockDriftBefore)
   ok('*** reconcileBalances zero drift ***', (await reconcileBalances(SITE)).length === 0)
 
+  // ── Sequence registration (136): layby numbers live in laybys' own table,
+  // and the register must prove none missing. Before 136 every layby ever
+  // issued reported as missing, because the type fell back to sales_documents.
+  const seq = await verifySequence(SITE, 'layby')
+  ok('*** verifySequence(layby) reports no missing numbers ***', seq.missing === 0,
+    JSON.stringify(seq))
+
   // ── Cleanup
+  // Give the numbers back before deleting the documents, so the next run — and
+  // verifySequence on a live site — sees no hole where these laybys used to be.
+  const myNumbers = await siteQueryOne<any>(SITE,
+    'SELECT COUNT(document_number) AS n FROM laybys WHERE customer_id = ?', [cust.id])
+  const burnt = Number(myNumbers?.n ?? 0)
+  if (burnt > 0) {
+    await siteExecute(SITE,
+      `UPDATE document_sequences
+          SET next_number = next_number - ?,
+              last_issued_number = CASE WHEN last_issued_number IS NULL THEN NULL
+                                        ELSE GREATEST(last_issued_number - ?, 0) END
+        WHERE doc_type = 'layby' AND next_number > ?`,
+      [burnt, burnt, burnt]).catch(() => undefined)
+  }
   await setSetting(SITE, 'layby_cancellation_fee_pct', '0')
   await setSetting(SITE, 'layby_max_fee_pct', '1')
   await setSetting(SITE, 'layby_default_days', '90')

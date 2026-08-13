@@ -569,6 +569,11 @@ const OWN_TABLE_TYPES: Record<string, string> = {
    * omission has bitten twice before, on stock takes and again on job cards.
    */
   customer_asset: 'customer_assets',
+  // Laybys number from the 'layby' sequence (LAY, seeded in 024) but were never
+  // registered here — the third time this omission has bitten. 136 renamed
+  // laybys.layby_number to document_number to satisfy this function's column
+  // contract; the status enum already carries 'cancelled'.
+  layby: 'laybys',
 }
 
 export async function verifySequence(

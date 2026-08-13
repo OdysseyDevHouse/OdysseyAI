@@ -128,7 +128,7 @@ function mapLayby(r: Row, lines: LaybyLine[], payments: LaybyPayment[]): Layby {
   const paidTotal = toNum(r.paid_total)
   return {
     id: Number(r.id),
-    laybyNumber: (r.layby_number as string | null) ?? null,
+    laybyNumber: (r.document_number as string | null) ?? null,
     customerId: Number(r.customer_id),
     customerCode: (r.customer_code as string | null) ?? null,
     customerName: (r.customer_name as string | null) ?? null,
@@ -226,7 +226,7 @@ export async function listLaybys(
     where.push("l.status = 'open' AND l.due_date IS NOT NULL AND l.due_date < CURDATE()")
   }
   if (options.q?.trim()) {
-    where.push('(l.layby_number LIKE ? OR c.name LIKE ? OR c.code LIKE ?)')
+    where.push('(l.document_number LIKE ? OR c.name LIKE ? OR c.code LIKE ?)')
     const like = `%${options.q.trim()}%`
     params.push(like, like, like)
   }
@@ -346,7 +346,7 @@ export async function createLayby(
 
     const [res] = await tx.execute(
       `INSERT INTO laybys
-         (layby_number, customer_id, status, total_incl, paid_total, due_date,
+         (document_number, customer_id, status, total_incl, paid_total, due_date,
           terminal_id, user_id, user_name, note)
        VALUES (?,?,'open',?,0,?,?,?,?,?)`,
       [
@@ -712,14 +712,14 @@ export type LaybyDrift = {
 export async function reconcileLaybys(siteId: number): Promise<LaybyDrift[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT l.id, l.layby_number, l.paid_total,
+    `SELECT l.id, l.document_number, l.paid_total,
             COALESCE((SELECT SUM(p.amount) FROM layby_payments p WHERE p.layby_id = l.id), 0) AS computed
        FROM laybys l
       HAVING ABS(l.paid_total - computed) > 0.005`,
   )
   return rows.map((r) => ({
     laybyId: Number(r.id),
-    laybyNumber: (r.layby_number as string | null) ?? null,
+    laybyNumber: (r.document_number as string | null) ?? null,
     stored: toNum(r.paid_total),
     computed: toNum(r.computed),
     drift: round(toNum(r.paid_total) - toNum(r.computed), 2),
@@ -740,7 +740,7 @@ export async function expireStaleLaybys(
 ): Promise<{ id: number; laybyNumber: string | null; customerName: string | null }[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT l.id, l.layby_number, c.name AS customer_name
+    `SELECT l.id, l.document_number, c.name AS customer_name
        FROM laybys l JOIN customers c ON c.id = l.customer_id
       WHERE l.status = 'open'
         AND l.due_date IS NOT NULL
@@ -754,7 +754,7 @@ export async function expireStaleLaybys(
 
   return rows.map((r) => ({
     id: Number(r.id),
-    laybyNumber: (r.layby_number as string | null) ?? null,
+    laybyNumber: (r.document_number as string | null) ?? null,
     customerName: (r.customer_name as string | null) ?? null,
   }))
 }
