@@ -174,7 +174,6 @@ async function main() {
   const sale = await finaliseDocument(SITE, actor, {
     documentId: draft.id,
     tenders: [{ tenderTypeId: cash.id, amount: 900 }],
-    terminalId,
   })
   ok('*** the discounted sale posts ***', sale.ok, sale.ok ? sale.documentNumber : sale.error)
   if (!sale.ok) process.exit(1)

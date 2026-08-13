@@ -77,6 +77,7 @@ export function TenderPad({
   pending,
   serviceCharge: serviceChargeProp = 0,
   canRemoveServiceCharge = false,
+  credit = null,
   onFinalise,
 }: {
   open: boolean
@@ -116,6 +117,13 @@ export function TenderPad({
    * building can correct. Every removal is recorded with the name of whoever did it.
    */
   canRemoveServiceCharge?: boolean
+  /**
+   * Credit already covering part of this sale — an exchange's held return.
+   * DISPLAY-ONLY here: the pad collects the real-money balance, and the server
+   * adds the EXCHANGE tender itself when it posts the pair. Like a voucher, it
+   * reduces what is owed rather than being a payment the cashier keys.
+   */
+  credit?: { amount: number; label: string } | null
   onFinalise: (
     taken: Taken[],
     voucherCodes: string[],
@@ -217,7 +225,9 @@ export function TenderPad({
       ? roundToCash(totalIncl, cashRounding)
       : { rounded: totalIncl, adjustment: 0 }
 
-  const payable = round(Math.max(0, roundedTotal - voucherCredit), 2)
+  /* The exchange credit comes off like a voucher: after rounding, before the
+     tender check — the same order the server nets the pair of documents. */
+  const payable = round(Math.max(0, roundedTotal - voucherCredit - (credit?.amount ?? 0)), 2)
 
   /*
    * The RAW excess, computed here rather than taken from `check.change`.
@@ -521,6 +531,14 @@ export function TenderPad({
           </div>
           <p className="mt-0.5 text-xs text-muted">
             {formatMoney(totalIncl)} due
+            {/* The exchange credit, named where the money is counted. */}
+            {credit && credit.amount > 0.005 && (
+              <>
+                {' · '}
+                {credit.label} covers {formatMoney(Math.min(credit.amount, roundedTotal))} —{' '}
+                {formatMoney(payable)} to pay
+              </>
+            )}
             {adjustment !== 0 && (
               <>
                 {' · '}rounded to {formatMoney(payable)} at the drawer (

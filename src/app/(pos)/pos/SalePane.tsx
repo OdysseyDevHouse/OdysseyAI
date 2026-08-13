@@ -45,6 +45,8 @@ export function SalePane({
   savedCount,
   onBill,
   onDocDiscount,
+  onFindReceipt,
+  exchange = null,
   showParkKeys = true,
   busy,
 }: {
@@ -77,6 +79,10 @@ export function SalePane({
   onBill?: () => void
   /** Opens the whole-sale discount dialog. Undefined leaves the row inert. */
   onDocDiscount?: () => void
+  /** Opens the receipted-return flow. Shown in return mode only. */
+  onFindReceipt?: () => void
+  /** Exchange credit held from a return — shown as a banner until Pay. */
+  exchange?: { label: string; onClear: () => void } | null
   /**
    * Whether to offer Save / Saved at all.
    *
@@ -134,10 +140,35 @@ export function SalePane({
             today's shelf price. That is inherent to a till return, not a defect — but a
             manager reviewing it later should not be the first to discover it. */}
         {returning && (
-          <p className="mt-2 text-xs text-muted">
-            No receipt is checked here — the credit is at today’s price. For a specific
-            invoice, use Returns in the back office.
-          </p>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <p className="text-xs text-muted">
+              No receipt is checked here — the credit is at today’s price.
+            </p>
+            {/* The other kind of return: with the slip, at the prices they PAID. */}
+            {onFindReceipt && (
+              <Button variant="secondary" size="sm" disabled={busy} onClick={onFindReceipt}>
+                <Icons.Search size={14} />
+                Find receipt
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Credit held from a receipted return, waiting for the replacement.
+            Loud, because everything rung up below it is being paid with it. */}
+        {!returning && exchange && (
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-control border border-warning/50 bg-warning-soft px-3 py-1.5">
+            <span className="text-xs font-semibold text-warning-ink">{exchange.label}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Drop the exchange credit"
+              onClick={exchange.onClear}
+            >
+              <Icons.Close size={14} />
+            </Button>
+          </div>
         )}
       </div>
 

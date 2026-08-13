@@ -83,6 +83,9 @@ import {
   type DocDiscount,
 } from './saleSelectors'
 import DocDiscountModal from './DocDiscountModal'
+import ReceiptReturnModal, { type ReceiptReturnPick } from './ReceiptReturnModal'
+import { tillCreditNoteAction, tillExchangeAction } from './returnActions'
+import { formatMoney, round } from '@/lib/decimals'
 import { serviceChargeFor, planTips, type ServiceTier } from '@/lib/tipMath'
 import { RefundPad } from './RefundPad'
 import { TableGate } from './TableGate'
@@ -839,6 +842,61 @@ export default function PosShell({
       void recordServiceChargeWaivedAction(state.documentId, serviceCharge).catch(() => {})
     }
 
+    /*
+     * ── AN EXCHANGE IN FLIGHT TAKES ITS OWN PATH ───────────────────────────
+     * The held credit and the replacement basket post as ONE server call: the
+     * credit note refunds into the EXCHANGE tender, the sale pays out of it,
+     * and the pad's `paid` covers only the real-money balance. Online only —
+     * the over-credit guard needs every credit note on the invoice.
+     */
+    if (exchangeCredit && !state.returning) {
+      if (!till.online) {
+        toast.error('An exchange needs the connection. Take a no-receipt return instead, or wait for the line.')
+        return
+      }
+      const held = exchangeCredit
+      startTransition(async () => {
+        const result = await tillExchangeAction(
+          { invoiceId: held.invoiceId, reasonId: held.reasonId, note: held.note, lines: held.lines },
+          {
+            customerId: state.customer?.id ?? null,
+            customerName: state.customer?.name || state.customerName.trim() || 'Walk-in',
+            terminalId: terminal?.id ?? null,
+            terminalCode: terminal?.code ?? null,
+            priceStructureId,
+            lines: salePayloadLines(state.lines, lineSpecials, docShares),
+          },
+          paid,
+          spendOverrideToken(),
+        )
+        if (!result.ok) {
+          if (result.creditNotePosted) {
+            /* The return HAS posted — the credit is real. Drop exchange mode so
+               the retry pays with the Exchange tender by hand, and say so. */
+            setExchangeCredit(null)
+          }
+          toast.error(result.error)
+          return
+        }
+        setTendering(false)
+        setEditing(null)
+        setExchangeCredit(null)
+        setReceipt({
+          number: result.sale.documentNumber,
+          change: round(result.sale.change + result.cashBack, 2),
+          documentId: result.sale.documentId,
+          total: totals.doc.totalIncl,
+        })
+        dispatch({ type: 'CLEAR' })
+        toast.success(
+          `${result.creditNote.documentNumber} credited ${formatMoney(result.creditNote.total)}` +
+            (result.cashBack > 0 ? ` — hand back ${formatMoney(result.cashBack)}.` : '.'),
+        )
+        router.refresh()
+      })
+      return
+    }
+
     /* Known to be offline: go straight to the local path rather than spending four
        seconds on a doomed request with a customer waiting. */
     if (!till.online) {
@@ -969,6 +1027,58 @@ export default function PosShell({
    * against the actual sale. Making that work here needs the invoice on screen first, and
    * pretending otherwise would credit the same invoice twice.
    */
+  /*
+   * ── RECEIPTED RETURNS AND EXCHANGE ─────────────────────────────────────────
+   * The modal finds the invoice and picks quantities; the server re-reads every
+   * price from it. A refund posts the credit note immediately; an exchange
+   * HOLDS the credit while the cashier rings the replacement, then one action
+   * posts both documents netted through the EXCHANGE tender.
+   */
+  const [receiptReturn, setReceiptReturn] = useState(false)
+  const [exchangeCredit, setExchangeCredit] = useState<ReceiptReturnPick | null>(null)
+
+  /** Runs a receipted-return action, chaining to the supervisor pad on refusal. */
+  function runReceiptedRefund(pick: ReceiptReturnPick, refundTenderTypeId: number, token?: string) {
+    startTransition(async () => {
+      const result = await tillCreditNoteAction(
+        {
+          invoiceId: pick.invoiceId,
+          reasonId: pick.reasonId,
+          note: pick.note,
+          lines: pick.lines,
+          refunds: [{ tenderTypeId: refundTenderTypeId, amount: pick.total }],
+          terminalId: terminal?.id ?? null,
+          terminalCode: terminal?.code ?? null,
+        },
+        token,
+      )
+      if (!result.ok) {
+        if (!token && result.error.includes('supervisor')) {
+          setOverride({
+            capability: 'sales.credit_note',
+            actionLabel: `Return against ${pick.invoiceNumber}`,
+            amount: pick.total,
+            documentId: pick.invoiceId,
+            onAuthorised: (auth) =>
+              runReceiptedRefund(pick, refundTenderTypeId, auth.token || undefined),
+          })
+          return
+        }
+        toast.error(result.error)
+        return
+      }
+      setReceiptReturn(false)
+      setReceipt({
+        number: result.documentNumber,
+        change: pick.total,
+        documentId: result.documentId,
+        total: -result.total,
+      })
+      toast.success(`${result.documentNumber} — hand back ${formatMoney(pick.total)}.`)
+      router.refresh()
+    })
+  }
+
   async function confirmReturn(
     given: { tenderTypeId: number; amount: number; reference?: string | null }[],
     reason: { reasonId: number; note: string | null },
@@ -2050,6 +2160,15 @@ export default function PosShell({
              in this component until it is paid, and has no bill to show. */
           onBill={hospitality && state.documentId ? printBill : undefined}
           onDocDiscount={() => setDiscountingDoc(true)}
+          onFindReceipt={() => setReceiptReturn(true)}
+          exchange={
+            exchangeCredit
+              ? {
+                  label: `Exchange · ${formatMoney(exchangeCredit.total)} credit from ${exchangeCredit.invoiceNumber}`,
+                  onClear: () => setExchangeCredit(null),
+                }
+              : null
+          }
           busy={pending}
         />
 
@@ -2196,6 +2315,13 @@ export default function PosShell({
         /* `sales.discount_override` — the same right that lets somebody override a price.
            A waiter cannot take a forced charge off; somebody who can override money can. */
         canRemoveServiceCharge={canOverrideDiscount}
+        /* An exchange's held credit — the pad shows the balance, the server
+           adds the EXCHANGE tender when it posts the pair. */
+        credit={
+          exchangeCredit
+            ? { amount: exchangeCredit.total, label: `Credit from ${exchangeCredit.invoiceNumber}` }
+            : null
+        }
         onFinalise={finalise}
       />
 
@@ -2372,6 +2498,25 @@ export default function PosShell({
               toast.success(`Approved by ${auth.name}.`)
             },
           })
+        }}
+      />
+
+      {/* A return WITH the slip: find the invoice, pick what is coming back,
+          refund now or hold the credit for an exchange. */}
+      <ReceiptReturnModal
+        open={receiptReturn}
+        online={till.online}
+        reasons={returnReasons}
+        tenders={tenders}
+        busy={pending}
+        onClose={() => setReceiptReturn(false)}
+        onRefund={(pick, refundTenderTypeId) => runReceiptedRefund(pick, refundTenderTypeId)}
+        onExchange={(pick) => {
+          setExchangeCredit(pick)
+          setReceiptReturn(false)
+          toast.info(
+            `${formatMoney(pick.total)} credit held from ${pick.invoiceNumber} — ring up the replacement, then Pay.`,
+          )
         }}
       />
 
