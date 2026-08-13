@@ -200,6 +200,14 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         capability: 'reports.financial',
       },
       {
+        href: '/accounting/budgets',
+        description: 'What each account is expected to do, month by month.',
+        keywords: 'budget budgets targets forecast variance plan',
+        icon: 'BarChart',
+        tone: 'indigo',
+        capability: 'reports.financial',
+      },
+      {
         href: '/accounting/assets',
         description: 'What the business owns and uses — vehicles, fittings, equipment.',
         keywords: 'fixed assets register equipment vehicles capital',

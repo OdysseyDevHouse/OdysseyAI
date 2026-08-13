@@ -39,11 +39,12 @@ export const dynamic = 'force-dynamic'
 export default async function IncomeStatementPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; period?: string }>
+  searchParams: Promise<{ from?: string; to?: string; period?: string; budget?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('reports.financial')
   const params = await searchParams
+  const withBudget = params.budget === '1'
 
   const now = today()
   const preset = params.period ?? 'month'
@@ -59,10 +60,18 @@ export default async function IncomeStatementPage({
     to: /^\d{4}-\d{2}-\d{2}$/.test(params.to ?? '') ? params.to! : chosen.to,
   }
 
-  const statement = await incomeStatement(siteId, range, { compare: true })
+  // One comparison at a time: prior period OR budget. Both at once is seven
+  // numeric columns, and the one that matters drowns.
+  const statement = await incomeStatement(siteId, range, {
+    compare: !withBudget,
+    budget: withBudget,
+  })
   const href = hrefBuilder('/accounting/income-statement', params)
 
   const hasActivity = statement.revenueTotal !== 0 || statement.expenseTotal !== 0
+
+  const mode: CompareMode = withBudget ? 'budget' : statement.prior ? 'prior' : 'none'
+  const compareTotals = withBudget ? statement.budget : statement.prior
 
   return (
     <>
@@ -72,15 +81,25 @@ export default async function IncomeStatementPage({
       />
 
       <PageBody>
-        <LinkTabs
-          items={Object.entries(presets).map(([key, p]) => ({
-            value: key,
-            label: p.label,
-            href: href({ period: key, from: null, to: null }),
-          }))}
-          value={params.from ? 'custom' : preset}
-          aria-label="Period"
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <LinkTabs
+            items={Object.entries(presets).map(([key, p]) => ({
+              value: key,
+              label: p.label,
+              href: href({ period: key, from: null, to: null }),
+            }))}
+            value={params.from ? 'custom' : preset}
+            aria-label="Period"
+          />
+          <LinkTabs
+            items={[
+              { value: 'prior', label: 'vs prior period', href: href({ budget: null }) },
+              { value: 'budget', label: 'vs budget', href: href({ budget: '1' }) },
+            ]}
+            value={withBudget ? 'budget' : 'prior'}
+            aria-label="Comparison"
+          />
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile label="Revenue" value={formatMoney(statement.revenueTotal)} />
@@ -112,7 +131,13 @@ export default async function IncomeStatementPage({
           <Card>
             <CardHeader
               title="Profit and loss"
-              description={statement.prior ? 'Against the preceding period of the same length.' : undefined}
+              description={
+                withBudget
+                  ? 'Against what was budgeted for the calendar months this period touches — whole months, not prorated.'
+                  : statement.prior
+                    ? 'Against the preceding period of the same length.'
+                    : undefined
+              }
             />
             <div className="overflow-x-auto">
               <table className={TABLE}>
@@ -120,57 +145,60 @@ export default async function IncomeStatementPage({
                   <tr className={TABLE_HEAD_ROW}>
                     <th className={TABLE_TH}>Account</th>
                     <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>This period</th>
-                    {statement.prior && (
+                    {mode === 'prior' && (
                       <>
                         <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Prior</th>
                         <th className={`${TABLE_TH} ${TABLE_NUMERIC} w-24`}>Change</th>
                       </>
                     )}
+                    {mode === 'budget' && (
+                      <>
+                        <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Budget</th>
+                        <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Variance</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
-                  <Section
-                    groups={statement.revenue}
-                    hasPrior={statement.prior !== null}
-                  />
+                  <Section groups={statement.revenue} mode={mode} />
                   <Subtotal
                     label="Revenue"
                     amount={statement.revenueTotal}
-                    prior={statement.prior?.revenueTotal}
-                    hasPrior={statement.prior !== null}
+                    compare={compareTotals?.revenueTotal}
+                    mode={mode}
                   />
 
-                  <Section groups={statement.costOfSales} hasPrior={statement.prior !== null} />
+                  <Section groups={statement.costOfSales} mode={mode} />
                   {statement.costOfSalesTotal !== 0 && (
                     <Subtotal
                       label="Cost of sales"
                       amount={statement.costOfSalesTotal}
-                      prior={statement.prior?.costOfSalesTotal}
-                      hasPrior={statement.prior !== null}
+                      compare={compareTotals?.costOfSalesTotal}
+                      mode={mode}
                     />
                   )}
 
                   <Subtotal
                     label="Gross profit"
                     amount={statement.grossProfit}
-                    prior={statement.prior?.grossProfit}
-                    hasPrior={statement.prior !== null}
+                    compare={compareTotals?.grossProfit}
+                    mode={mode}
                     strong
                   />
 
-                  <Section groups={statement.expenses} hasPrior={statement.prior !== null} />
+                  <Section groups={statement.expenses} mode={mode} />
                   <Subtotal
                     label="Total expenses"
                     amount={statement.expenseTotal}
-                    prior={statement.prior?.expenseTotal}
-                    hasPrior={statement.prior !== null}
+                    compare={compareTotals?.expenseTotal}
+                    mode={mode}
                   />
 
                   <Subtotal
                     label={statement.netProfit >= 0 ? 'Net profit' : 'Net loss'}
                     amount={statement.netProfit}
-                    prior={statement.prior?.netProfit}
-                    hasPrior={statement.prior !== null}
+                    compare={compareTotals?.netProfit}
+                    mode={mode}
                     strong
                     highlight
                   />
@@ -195,19 +223,21 @@ export default async function IncomeStatementPage({
   )
 }
 
+type CompareMode = 'prior' | 'budget' | 'none'
+
 function Section({
   groups,
-  hasPrior,
+  mode,
 }: {
-  groups: { subtype: string | null; label: string; lines: { accountId: number; accountCode: string; name: string; amount: number; priorAmount?: number }[]; total: number }[]
-  hasPrior: boolean
+  groups: { subtype: string | null; label: string; lines: { accountId: number; accountCode: string; name: string; amount: number; priorAmount?: number; budgetAmount?: number }[]; total: number }[]
+  mode: CompareMode
 }) {
   return (
     <>
       {groups.map((group) => (
         <Fragment key={group.subtype ?? group.label}>
           <tr className="bg-surface-2">
-            <td className={`${TABLE_TD} font-medium text-ink`} colSpan={hasPrior ? 4 : 2}>
+            <td className={`${TABLE_TD} font-medium text-ink`} colSpan={mode === 'none' ? 2 : 4}>
               {group.label}
             </td>
           </tr>
@@ -218,13 +248,23 @@ function Section({
                 <span className="ml-2 text-xs text-muted">{line.accountCode}</span>
               </td>
               <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatMoney(line.amount)}</td>
-              {hasPrior && (
+              {mode === 'prior' && (
                 <>
                   <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
                     {formatMoney(line.priorAmount ?? 0)}
                   </td>
                   <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                     <Change current={line.amount} prior={line.priorAmount ?? 0} />
+                  </td>
+                </>
+              )}
+              {mode === 'budget' && (
+                <>
+                  <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
+                    {formatMoney(line.budgetAmount ?? 0)}
+                  </td>
+                  <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                    <Variance actual={line.amount} budget={line.budgetAmount ?? 0} />
                   </td>
                 </>
               )}
@@ -239,15 +279,16 @@ function Section({
 function Subtotal({
   label,
   amount,
-  prior,
-  hasPrior,
+  compare,
+  mode,
   strong,
   highlight,
 }: {
   label: string
   amount: number
-  prior?: number
-  hasPrior: boolean
+  /** The prior-period or budget figure, per the mode. */
+  compare?: number
+  mode: CompareMode
   strong?: boolean
   highlight?: boolean
 }) {
@@ -265,15 +306,38 @@ function Subtotal({
       <td className={`${TABLE_TD} ${TABLE_NUMERIC} ${strong ? 'text-base font-semibold' : ''}`}>
         {formatMoney(amount)}
       </td>
-      {hasPrior && (
+      {mode !== 'none' && (
         <>
-          <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>{formatMoney(prior ?? 0)}</td>
+          <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>{formatMoney(compare ?? 0)}</td>
           <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-            <Change current={amount} prior={prior ?? 0} />
+            {mode === 'prior' ? (
+              <Change current={amount} prior={compare ?? 0} />
+            ) : (
+              <Variance actual={amount} budget={compare ?? 0} />
+            )}
           </td>
         </>
       )}
     </tr>
+  )
+}
+
+/**
+ * Actual against budget, as a signed amount.
+ *
+ * A plain figure, deliberately: whether "over" is good news depends on
+ * whether the line is revenue or a cost, and colouring it without knowing
+ * would congratulate an expense overrun as often as a sales beat.
+ */
+function Variance({ actual, budget }: { actual: number; budget: number }) {
+  const diff = Math.round((actual - budget) * 100) / 100
+  if (budget === 0 && actual === 0) return <span className="text-faint">—</span>
+  if (diff === 0) return <span className="text-faint">On budget</span>
+  return (
+    <span className="text-ink-2">
+      {diff > 0 ? '+' : ''}
+      {formatMoney(diff)}
+    </span>
   )
 }
 

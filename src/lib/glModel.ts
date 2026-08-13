@@ -227,6 +227,24 @@ export function subtypeRank(subtype: string | null): number {
   return index === -1 ? SUBTYPE_ORDER.length : index
 }
 
+/* ── Budgets ─────────────────────────────────────────────────────────────── */
+
+/**
+ * An annual figure spread across twelve months, cents landing on December.
+ *
+ * Pure and shared, so the grid's client-side preview and the server's save
+ * produce the same twelve numbers — an annual R100 000 must come out as
+ * 8 333.33 eleven times and 8 333.37 once, in both places, or the preview
+ * lies by a few cents.
+ */
+export function spreadAnnual(total: number): number[] {
+  const annual = round(total, 2)
+  const monthly = round(Math.floor((annual / 12) * 100) / 100, 2)
+  const months = Array.from({ length: 12 }, () => monthly)
+  months[11] = round(annual - monthly * 11, 2)
+  return months
+}
+
 /* ── Cash flow classification ────────────────────────────────────────────── */
 
 /**

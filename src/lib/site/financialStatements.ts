@@ -8,6 +8,7 @@ import {
   subtypeRank,
   type AccountType,
 } from '../glModel'
+import { budgetsForRange } from './budgets'
 
 /**
  * The three statements every accountant asks for first.
@@ -124,6 +125,8 @@ export type StatementLine = {
   amount: number
   /** The same account over the comparison period, when one was asked for. */
   priorAmount?: number
+  /** What was budgeted for the months the range spans, when asked for. */
+  budgetAmount?: number
 }
 
 export type StatementGroup = {
@@ -132,6 +135,7 @@ export type StatementGroup = {
   lines: StatementLine[]
   total: number
   priorTotal?: number
+  budgetTotal?: number
 }
 
 export type IncomeStatement = {
@@ -149,6 +153,18 @@ export type IncomeStatement = {
   netMarginPct: number | null
   /** The same figures for the preceding period of equal length. */
   prior: {
+    revenueTotal: number
+    costOfSalesTotal: number
+    grossProfit: number
+    expenseTotal: number
+    netProfit: number
+  } | null
+  /**
+   * What was budgeted for the calendar months the range spans, when asked
+   * for. Whole months always — a mid-month range compares against the full
+   * months it touches, stated rather than prorated.
+   */
+  budget: {
     revenueTotal: number
     costOfSalesTotal: number
     grossProfit: number
@@ -210,14 +226,36 @@ async function periodMovements(
 export async function incomeStatement(
   siteId: number,
   range: DateRange,
-  opts: { compare?: boolean; departmentId?: number | null } = {},
+  opts: { compare?: boolean; departmentId?: number | null; budget?: boolean } = {},
 ): Promise<IncomeStatement> {
-  const [current, previous] = await Promise.all([
+  const [current, previous, budgets] = await Promise.all([
     periodMovements(siteId, range, opts.departmentId),
     opts.compare
       ? periodMovements(siteId, priorRange(range), opts.departmentId)
       : Promise.resolve(new Map()),
+    opts.budget ? budgetsForRange(siteId, range) : Promise.resolve(new Map<number, number>()),
   ])
+
+  /*
+   * Budgeted accounts with NO movement still belong on a budget comparison —
+   * a line that was budgeted 12 000 and spent nothing is exactly the row a
+   * manager wants to see. Fetch the account details the movement query never
+   * saw, so those rows can be synthesised at zero actual.
+   */
+  const unbudgetedIds = opts.budget
+    ? [...budgets.keys()].filter((id) => !current.has(id))
+    : []
+  if (unbudgetedIds.length > 0) {
+    const extra = await siteQuery<RowDataPacket & Record<string, unknown>>(
+      siteId,
+      `SELECT id, account_code, name, account_type, subtype
+         FROM gl_accounts
+        WHERE account_type IN ('income','expense')
+          AND id IN (${unbudgetedIds.map(() => '?').join(',')})`,
+      unbudgetedIds,
+    )
+    for (const r of extra) current.set(Number(r.id), { row: r, amount: 0 })
+  }
 
   const revenue: StatementLine[] = []
   const costOfSales: StatementLine[] = []
@@ -240,6 +278,8 @@ export async function incomeStatement(
       priorAmount: opts.compare
         ? displayBalance(accountType, previous.get(accountId)?.amount ?? 0)
         : undefined,
+      // Budgets are stored as display figures already — see 131.
+      budgetAmount: opts.budget ? round(budgets.get(accountId) ?? 0, 2) : undefined,
     }
 
     if (accountType === 'income') revenue.push(line)
@@ -259,11 +299,15 @@ export async function incomeStatement(
         lines: [],
         total: 0,
         priorTotal: opts.compare ? 0 : undefined,
+        budgetTotal: opts.budget ? 0 : undefined,
       }
       existing.lines.push(line)
       existing.total = round(existing.total + line.amount, 2)
       if (opts.compare) {
         existing.priorTotal = round((existing.priorTotal ?? 0) + (line.priorAmount ?? 0), 2)
+      }
+      if (opts.budget) {
+        existing.budgetTotal = round((existing.budgetTotal ?? 0) + (line.budgetAmount ?? 0), 2)
       }
       groups.set(key, existing)
     }
@@ -285,6 +329,12 @@ export async function incomeStatement(
   const priorCos = sum(costOfSales, true)
   const priorExpense = sum(expenses, true)
 
+  const budgetSum = (lines: StatementLine[]): number =>
+    lines.reduce((t, l) => round(t + (l.budgetAmount ?? 0), 2), 0)
+  const budgetRevenue = budgetSum(revenue)
+  const budgetCos = budgetSum(costOfSales)
+  const budgetExpense = budgetSum(expenses)
+
   return {
     range,
     revenue: group(revenue),
@@ -304,6 +354,15 @@ export async function incomeStatement(
           grossProfit: round(priorRevenue - priorCos, 2),
           expenseTotal: priorExpense,
           netProfit: round(priorRevenue - priorCos - priorExpense, 2),
+        }
+      : null,
+    budget: opts.budget
+      ? {
+          revenueTotal: budgetRevenue,
+          costOfSalesTotal: budgetCos,
+          grossProfit: round(budgetRevenue - budgetCos, 2),
+          expenseTotal: budgetExpense,
+          netProfit: round(budgetRevenue - budgetCos - budgetExpense, 2),
         }
       : null,
   }
