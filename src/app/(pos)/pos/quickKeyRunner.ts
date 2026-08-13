@@ -52,6 +52,8 @@ export type QuickKeyHandlers = {
   addProduct: (productId: number) => void
   /** Opens the outbox, which is also where a cash-up warning lives. */
   showOutbox: () => void
+  /** Opens the shift modal — float, payouts, and the blind cash-up count. */
+  showShift: () => void
   /**
    * Switches the pane into return mode. CLEARS the basket — see SET_RETURNING.
    *
@@ -146,11 +148,12 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       ? handlers.say('Already taking a return — scan what is coming back.', 'info')
       : handlers.startReturn(),
 
-  /* The outbox is where "can I cash up yet" is answered — it shows what is still
+  /* Online, the shift modal handles the whole thing at the till. Offline, the
+     outbox is where "can I cash up yet" is answered — it shows what is still
      waiting to send, and closeShift's expected figure is wrong until it is empty. */
   cashup: ({ handlers, online }) =>
     online
-      ? handlers.navigate('/sales/cashup')
+      ? handlers.showShift()
       : handlers.showOutbox(),
 
   'reprint-last-slip': ({ handlers, online }) =>

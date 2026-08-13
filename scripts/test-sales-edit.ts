@@ -210,7 +210,7 @@ async function main() {
 
   // ── GUARD 5: a locked VAT period blocks it
   const lockTarget = await sellOnAccount(product, `EDT${stamp}`, cust.id, 1, 115, rate, account.id)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   await setSetting(SITE, 'vat_period_locked_to', today)
   const locked = await canEditFinalised(SITE, OWNER, lockTarget)
   ok('*** a LOCKED VAT period refuses the correction ***', !locked.ok)

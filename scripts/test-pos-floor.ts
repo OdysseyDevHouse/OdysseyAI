@@ -197,7 +197,7 @@ async function main() {
   /* A table with a LIVE BILL on it — the case that makes this matter. */
   const draft = await saveDraft(SITE, ACTOR, {
     docType: 'invoice',
-    documentDate: new Date().toISOString().slice(0, 10),
+    documentDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
     customerName: 'Floor test party',
     lines: [
       {

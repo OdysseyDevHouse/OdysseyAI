@@ -125,7 +125,7 @@ async function main() {
     [terminalId],
   )
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   const base = (over: Partial<OfflineReturn> = {}): OfflineReturn => ({
     returnUid: uuid(),
     documentNumber: `CRN_01_${tillNo}_${String(900 + uidCounter).padStart(6, '0')}`,

@@ -9,6 +9,7 @@ import { lastEmailed } from '@/lib/site/invoiceEmail'
 import { isConfigured as mailIsConfigured } from '@/lib/mail'
 import { siteQuery } from '@/lib/siteDb'
 import { can } from '@/lib/site/permissions'
+import { today as localToday } from '@/lib/site/ledger'
 import { formatMoney, formatQty, toNum } from '@/lib/decimals'
 import {
   PageHeader,
@@ -75,7 +76,9 @@ export default async function SalesDocumentPage({
     [documentId],
   )
 
-  const today = new Date().toISOString().slice(0, 10)
+  // Local date, matching voidDocument's own check — toISOString() is UTC and
+  // hid the Void button from a sale rung up after local midnight.
+  const today = localToday()
   const voidable =
     document.status === 'finalised' &&
     document.documentDate === today &&

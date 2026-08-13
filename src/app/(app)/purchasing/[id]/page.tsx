@@ -4,6 +4,7 @@ import { requireCapability } from '@/lib/auth'
 import { getPurchaseDocument, purchaseAudit } from '@/lib/site/purchaseDocuments'
 import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
 import { listLocations } from '@/lib/site/stockLocations'
+import { today as localToday } from '@/lib/site/ledger'
 import { formatMoney, formatQty } from '@/lib/decimals'
 import {
   PageHeader,
@@ -70,7 +71,9 @@ export default async function PurchaseDocumentPage({
     locations.filter((l) => !l.isTransit).length > 1 &&
     doc.lines.some((l) => l.locationId !== null)
 
-  const today = new Date().toISOString().slice(0, 10)
+  // Local date, matching how the GRV was stamped — toISOString() is UTC and
+  // hid the Void button in the hours after local midnight.
+  const today = localToday()
   const voidable = doc.docType === 'grv' && doc.status === 'finalised' && doc.documentDate === today
 
   // A GRV can be returned against until every line has gone back. Both reads

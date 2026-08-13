@@ -13,6 +13,7 @@ import {
   type StampLine,
 } from '../loyaltyRules'
 import { logActivity, type Actor } from './activityLog'
+import { today as localToday } from './ledger'
 import { getLoyaltySettings, listTiers, insertLedger, refreshMember } from './loyalty'
 
 /**
@@ -717,7 +718,8 @@ export async function redeemVoucherForSale(
   if (status === 'expired') throw new Error(`Voucher ${code} has expired.`)
 
   const expires = row.expires_on ? String(row.expires_on) : null
-  if (expires && expires < new Date().toISOString().slice(0, 10)) {
+  // Local date — a voucher must not die two hours early at UTC midnight.
+  if (expires && expires < localToday()) {
     await tx.execute(`UPDATE loyalty_vouchers SET status = 'expired' WHERE id = ?`, [
       Number(row.id),
     ] as never)

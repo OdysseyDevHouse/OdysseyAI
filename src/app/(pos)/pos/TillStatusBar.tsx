@@ -27,6 +27,8 @@ export function TillStatusBar({
   catalogAgeHours,
   itemCount,
   onShowOutbox,
+  shiftLabel,
+  onShift,
   tableLabel,
   onChangeTable,
   onExit,
@@ -85,6 +87,13 @@ export function TillStatusBar({
   itemCount: number | null
   /** Opens the outbox — the answer to the question the queue chip poses. */
   onShowOutbox: () => void
+  /**
+   * "Shift · Ruth" while one is open, or null. Optional so any in-flight
+   * chrome work keeps compiling — an absent prop just hides the chip.
+   */
+  shiftLabel?: string | null
+  /** Opens the shift modal. The chip renders only when this is given. */
+  onShift?: () => void
   /**
    * Which table this basket belongs to, or null on a retail till.
    *
@@ -273,6 +282,29 @@ export function TillStatusBar({
             <Icons.Offline size={16} />
             Online only
           </span>
+        )}
+
+        {/* The drawer. Open = who is reconciling; closed = a nudge that sales
+            are banking into no shift. One tap opens the shift modal. */}
+        {onShift && (
+          <button
+            type="button"
+            data-kit-ok
+            onClick={onShift}
+            title={
+              shiftLabel
+                ? 'The drawer — payouts, pay-ins, and cash up.'
+                : 'No shift is open. Sales are banking into no reconciliation — open one with a float.'
+            }
+            className={`${CHIP_BASE} ${
+              shiftLabel
+                ? 'border-border bg-surface text-ink-2 hover:border-brand/40 hover:bg-brand-soft hover:text-brand'
+                : 'border-warning/40 bg-warning-soft text-warning-ink hover:bg-warning-soft/70'
+            }`}
+          >
+            <Icons.Coins size={16} />
+            {shiftLabel ?? 'No shift'}
+          </button>
         )}
 
         {terminalLabel ? (

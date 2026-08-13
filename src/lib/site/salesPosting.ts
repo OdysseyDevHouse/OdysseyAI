@@ -23,6 +23,7 @@ import { writeTips } from './tips'
    tender pad also runs. */
 import { planTips } from '../tipMath'
 import { getNumericSetting } from './settings'
+import { today } from './ledger'
 import { guardPosting } from './periodLocks'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
 import { requireSalesReason } from './salesReasons'
@@ -1043,7 +1044,9 @@ async function previewVouchers(
 ): Promise<{ ok: true; credit: number } | { ok: false; error: string }> {
   if (codes.length === 0) return { ok: true, credit: 0 }
 
-  const today = new Date().toISOString().slice(0, 10)
+  // Local date, not toISOString(): a voucher must not expire two hours early
+  // because UTC midnight came first.
+  const todayStr = today()
   let credit = 0
 
   for (const code of codes) {
@@ -1054,7 +1057,7 @@ async function previewVouchers(
     }
     if (voucher.status === 'void') return { ok: false, error: `Voucher ${code} has been cancelled.` }
     if (voucher.status === 'expired') return { ok: false, error: `Voucher ${code} has expired.` }
-    if (voucher.expiresOn && voucher.expiresOn < today) {
+    if (voucher.expiresOn && voucher.expiresOn < todayStr) {
       return { ok: false, error: `Voucher ${code} expired on ${voucher.expiresOn}.` }
     }
 
@@ -1183,7 +1186,10 @@ export async function voidDocument(
     return { ok: false, error: 'Only a finalised document can be voided.' }
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10)
+  // Local date, matching how the sale was stamped. toISOString() is UTC, and in
+  // the hours after local midnight it refused voiding a sale rung up minutes
+  // earlier — the cashup suite caught it at 00:30 SAST.
+  const todayStr = today()
   if (document.documentDate !== todayStr) {
     return {
       ok: false,

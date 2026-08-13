@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { toNum } from '../decimals'
+import { today as localToday } from './ledger'
 import {
   BCEA_ORDINARY_HOURS_PW,
   validateEmployment,
@@ -52,7 +53,8 @@ type Row = RowDataPacket & {
 }
 
 function mapRow(r: Row, withCost: boolean): Employment {
-  const today = new Date().toISOString().slice(0, 10)
+  // Local date — toISOString() is UTC and reads "yesterday" after local midnight.
+  const today = localToday()
   return {
     userId: r.user_id,
     userName: r.user_name,

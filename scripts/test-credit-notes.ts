@@ -173,7 +173,7 @@ async function main() {
   ok('non-refundable tender refused', !badRefund.ok, !badRefund.ok ? badRefund.error : '')
 
   // ── The VAT period lock
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   await setSetting(SITE, 'vat_period_locked_to', today)
   const locked = await createCreditNote(SITE, actor, {
     invoiceId: null, customerName: 'Walk-in', reasonId: RETURN_REASON_ID, note: 'After lock',

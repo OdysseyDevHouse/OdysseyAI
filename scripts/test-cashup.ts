@@ -75,7 +75,10 @@ async function freeTillNumber(): Promise<string> {
 async function main() {
   await loadReasonIds()
   const stamp = Date.now().toString().slice(-8)
-  const today = new Date().toISOString().slice(0, 10)
+  // LOCAL date, matching how sales are stamped. toISOString() is UTC, and in
+  // the hours after local midnight the report range missed today's documents.
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 
   /* Sweep terminals an earlier crashed run left behind, so the unique till number is
      free. Only ones with no documents — a scratch till that somehow issued a sale is

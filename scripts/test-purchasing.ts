@@ -147,7 +147,7 @@ async function main() {
   ok('unknown supplier refused', !(await receiveGoods(SITE, actor, { supplierId: 999999, lines: [{ productId, description: 'x', qtyReceived: 1, unitCostExcl: 5, vatRatePct: rate }] })).ok)
 
   // ── The VAT period lock
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   await setSetting(SITE, 'vat_period_locked_to', today)
   ok('*** locked VAT period REFUSES a receipt ***',
     !(await receiveGoods(SITE, actor, { supplierId: sup.id, lines: [{ productId, description: 'x', qtyReceived: 1, unitCostExcl: 5, vatRatePct: rate }] })).ok)

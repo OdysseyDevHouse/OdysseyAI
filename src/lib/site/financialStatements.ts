@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
 import { round, toNum } from '../decimals'
+import { today as localToday } from './ledger'
 import {
   displayBalance,
   subtypeLabel,
@@ -545,7 +546,8 @@ export async function ledgerHealth(siteId: number): Promise<LedgerHealth> {
        HAVING ABS(difference) > 0.004
         LIMIT 50`,
     ),
-    trialBalance(siteId, new Date().toISOString().slice(0, 10)),
+    // Local date — toISOString() is UTC and reads "yesterday" after local midnight.
+    trialBalance(siteId, localToday()),
   ])
 
   // Documents that posted to a subledger but produced no journal. Counted per

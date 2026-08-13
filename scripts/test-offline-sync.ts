@@ -165,7 +165,7 @@ async function main() {
     operatorName: 'Offline cashier',
     shiftId: null,
     takenAt: new Date().toISOString(),
-    documentDate: new Date().toISOString().slice(0, 10),
+    documentDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
     priceStructureId: structure?.id ?? null,
     customerId: null,
     customerName: 'Walk-in',

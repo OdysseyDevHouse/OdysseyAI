@@ -97,7 +97,7 @@ async function main() {
   async function openBill() {
     const draft = await saveDraft(SITE, ACTOR, {
       docType: 'invoice',
-      documentDate: new Date().toISOString().slice(0, 10),
+      documentDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
       customerName: 'Table party',
       lines: [
         { productId: beer.insertId, description: 'Beer', qty: 3, unitPriceIncl: 30, vatRatePct: vatRate, unitCostExcl: 8 },
@@ -266,7 +266,7 @@ async function main() {
   const occupiedTable = t4.insertId
   const otherDraft = await saveDraft(SITE, ACTOR, {
     docType: 'invoice',
-    documentDate: new Date().toISOString().slice(0, 10),
+    documentDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
     customerName: 'Another party',
     lines: [
       { productId: beer.insertId, description: 'Beer', qty: 1, unitPriceIncl: 30, vatRatePct: vatRate, unitCostExcl: 8 },

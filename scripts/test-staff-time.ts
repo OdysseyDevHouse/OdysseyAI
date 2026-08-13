@@ -301,7 +301,7 @@ async function main() {
   // A night shift beginning at 22:00 on the 31st belongs to that month. A range
   // test on started_at alone would drop it from both.
   console.log('\nranges')
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   const mine = await entriesBetween(SITE, today, today, userId)
   check('today’s entries come back', mine.length > 0, `${mine.length} entries`)
   check('and only this person’s', mine.every((e) => e.userId === userId))

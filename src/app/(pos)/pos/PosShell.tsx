@@ -93,6 +93,9 @@ import type { VisitType } from '@/lib/site/visitTypes'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import { SplitBillModal, type SplitLine } from './SplitBillModal'
 import TransferTableModal from './TransferTableModal'
+import ShiftModal from './ShiftModal'
+import { tillShiftStatusAction } from './shiftActions'
+import { kvPut, KV } from '@/lib/posOffline/db'
 import { WeighModal } from './WeighModal'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { TileSizeModal } from './TileSizeModal'
@@ -1526,6 +1529,39 @@ export default function PosShell({
     })
   }
 
+  /** The shift modal — float, payouts, and the blind cash-up count. */
+  const [managingShift, setManagingShift] = useState(false)
+  /** "Shift open · Ruth" for the header chip, or null when none is open. */
+  const [shiftLabel, setShiftLabel] = useState<string | null>(null)
+
+  /**
+   * Stashes the open shift for the OFFLINE path and redraws the chip.
+   *
+   * KV.shift is what `currentShiftId` reads when an offline sale banks — it was
+   * declared from day one and never written, so every offline sale banked into
+   * no shift. Writing it here (on load and on every open/close) is what makes
+   * an offline sale land in the right drawer's reconciliation.
+   */
+  const noteShift = useCallback(
+    (shiftId: number | null, userName?: string) => {
+      setShiftLabel(shiftId ? `Shift · ${userName ?? 'open'}` : null)
+      void kvPut(siteId, KV.shift, shiftId ? { id: shiftId } : null).catch(() => {})
+    },
+    [siteId],
+  )
+
+  /* Seed the chip and KV.shift once the till is up — a shift somebody opened
+     from the back office must still catch this till's offline sales. */
+  useEffect(() => {
+    if (!till.online) return
+    void tillShiftStatusAction(terminal?.id ?? null)
+      .then((result) => {
+        if (!('ok' in result)) noteShift(result.shift?.id ?? null, result.shift?.userName)
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [till.online, terminal?.id])
+
   /** The gate's move mode is armed — the next table tap picks the tab to move. */
   const [armedForTransfer, setArmedForTransfer] = useState(false)
   /** The table whose whole tab is moving. Null when the picker is closed. */
@@ -1764,6 +1800,7 @@ export default function PosShell({
           })
         },
         showOutbox: () => setShowingOutbox(true),
+        showShift: () => setManagingShift(true),
         startReturn: () => dispatch({ type: 'SET_RETURNING', returning: true }),
         navigate: (href: string) => router.push(href),
         say: (message: string, tone: 'info' | 'error') =>
@@ -1836,6 +1873,8 @@ export default function PosShell({
         catalogAgeHours={till.catalogAgeHours}
         itemCount={choosingTable ? null : state.lines.length}
         onShowOutbox={() => setShowingOutbox(true)}
+        shiftLabel={shiftLabel}
+        onShift={() => setManagingShift(true)}
         /*
          * WHICH BILL IS ON SCREEN — and nothing at all when that question has no
          * answer yet. A waiter needs to know which bill they are adding to before
@@ -2092,6 +2131,17 @@ export default function PosShell({
         tables={tables}
         busy={pending}
         onConfirm={confirmSplit}
+      />
+
+      {/* The drawer: open a shift, move money, cash up blind. Online only —
+          the modal itself says so when the line is down. */}
+      <ShiftModal
+        open={managingShift}
+        online={till.online}
+        terminalId={terminal?.id ?? null}
+        pendingSales={till.pending}
+        onClose={() => setManagingShift(false)}
+        onShiftChanged={(shiftId) => noteShift(shiftId, operatorName)}
       />
 
       {/* Moving a whole tab. The document keeps its identity — only the table's

@@ -6,6 +6,7 @@ import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { listSalesReasons } from '@/lib/site/salesReasons'
 import { can } from '@/lib/site/permissions'
 import { isLocked } from '@/lib/site/periodLocks'
+import { today as localToday } from '@/lib/site/ledger'
 import { PageHeader, PageBody, Card, ButtonLink, EmptyState, Icons } from '@/components/ui'
 import CreditNoteForm from './CreditNoteForm'
 
@@ -36,7 +37,9 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
   const [lines, tenders, lockCheck, reasons] = await Promise.all([
     creditableLines(site.id, invoiceId),
     listTenderTypes(site.id),
-    isLocked(site.id, new Date().toISOString().slice(0, 10), 'sales'),
+    // Local date — the credit posts dated locally, so the lock must be asked
+    // about the same day the posting will claim.
+    isLocked(site.id, localToday(), 'sales'),
     listSalesReasons(site.id, 'return'),
   ])
 

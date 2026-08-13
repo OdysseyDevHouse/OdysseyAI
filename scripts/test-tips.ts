@@ -189,7 +189,7 @@ async function main() {
 
   const draft = await saveDraft(SITE, ACTOR, {
     docType: 'invoice',
-    documentDate: new Date().toISOString().slice(0, 10),
+    documentDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
     customerName: `Tips test ${stamp}`,
     lines: [
       { productId: null, description: 'Dinner', qty: 1, unitPriceIncl: 100, vatRatePct: 15, unitCostExcl: 20 },
@@ -358,7 +358,7 @@ async function main() {
 
   /* ── 6. The owed report, including the pool ─────────────────────────────── */
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   const owed = await tipsOwed(SITE, { from: today, to: today })
   ok('the owed report returns rows', owed.length > 0, String(owed.length))
   ok(
@@ -404,7 +404,7 @@ async function main() {
 
     const sale = await saveDraft(SITE, ACTOR, {
       docType: 'invoice',
-      documentDate: new Date().toISOString().slice(0, 10),
+      documentDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
       customerName: `Tips test finalise ${stamp}`,
       lines: [
         { productId: null, description: 'Dinner', qty: 1, unitPriceIncl: 50, vatRatePct: 15, unitCostExcl: 10 },
@@ -527,7 +527,7 @@ async function main() {
       operatorName: 'Offline tipper',
       shiftId: null,
       takenAt: new Date().toISOString(),
-      documentDate: new Date().toISOString().slice(0, 10),
+      documentDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
       priceStructureId: null,
       customerId: null,
       customerName: 'Offline tip test',
@@ -663,7 +663,7 @@ async function main() {
      the data afterwards. Both figures look right; the money is just gone twice. */
 
   {
-    const day = new Date().toISOString().slice(0, 10)
+    const day = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
     const range = { from: day, to: day }
 
     /* Three tips on one finalised sale: two for a named waiter, one for the pool. `draft`

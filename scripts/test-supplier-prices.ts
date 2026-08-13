@@ -235,7 +235,7 @@ async function main() {
   const onlyCurrent = await listSupplierPrices(SITE, { supplierId: supA.id, currentOnly: true })
   ok(
     'currentOnly hides superseded and future rows',
-    onlyCurrent.items.every((i) => i.isCurrent || i.effectiveFrom <= new Date().toISOString().slice(0, 10)),
+    onlyCurrent.items.every((i) => i.isCurrent || i.effectiveFrom <= new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)),
     String(onlyCurrent.total),
   )
 
