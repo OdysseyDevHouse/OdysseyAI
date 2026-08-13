@@ -1,9 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId, requireSiteUser, actorFor, actorForOrThrow } from '@/lib/auth'
-import { can, capabilitiesForRole, type CapabilitySet } from '@/lib/site/permissions'
+import { requireActor, requireSiteId, requireSiteUser, actorFor, actorForAny, actorForOrThrow } from '@/lib/auth'
+import { can, capabilitiesForRole, type Capability, type CapabilitySet } from '@/lib/site/permissions'
 import { checkPricing } from '@/lib/site/priceGuard'
+import { verifyOverrideToken } from '@/lib/overrideToken'
 import { getTillSession } from '@/lib/tillSession'
 import { getUser } from '@/lib/site/users'
 import { createCreditNote, creditableLines, type CreditNoteInput } from '@/lib/site/salesReversal'
@@ -138,6 +139,8 @@ export async function saveSaleAction(
     priceStructureId?: number | null
     lines: LineInput[]
   },
+  /** A supervisor's authorisation for a price/discount beyond the operator's rights. */
+  overrideToken?: string,
 ): Promise<SaleResult> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
@@ -147,7 +150,12 @@ export async function saveSaleAction(
   // public endpoint and the price arrives from the client.
   const refused = await checkPricing(
     siteId,
-    await operatorCapabilities(siteId, ctx.capabilities),
+    await withOverride(
+      siteId,
+      await operatorCapabilities(siteId, ctx.capabilities),
+      overrideToken,
+      ['sales.discount_override', 'sales.price_override'],
+    ),
     input.priceStructureId ?? null,
     input.lines,
   )
@@ -197,6 +205,33 @@ async function operatorCapabilities(siteId: number, fallback: CapabilitySet) {
   if (!till) return fallback
   const operator = await getUser(siteId, till.userId)
   return operator ? capabilitiesForRole(siteId, operator.roleId) : fallback
+}
+
+/**
+ * The operator's capabilities, widened by a verified supervisor token.
+ *
+ * The token is a manager's PIN turned into a two-minute, single-capability
+ * authorisation (see overrideToken.ts). It is tried against each capability the
+ * caller could need — a token carries exactly one, so at most one union
+ * happens, and a token for a void cannot widen a discount. A bad, expired or
+ * revoked token widens nothing and the ordinary refusal stands, which is the
+ * right failure: the cashier asks the manager again.
+ */
+async function withOverride(
+  siteId: number,
+  capabilities: CapabilitySet,
+  overrideToken: string | undefined,
+  accepts: readonly Capability[],
+): Promise<CapabilitySet> {
+  if (!overrideToken) return capabilities
+  for (const capability of accepts) {
+    if (can(capabilities, capability)) continue
+    const authorised = await verifyOverrideToken(siteId, overrideToken, capability)
+    if (authorised) {
+      return { isOwner: capabilities.isOwner, granted: new Set([...capabilities.granted, capability]) }
+    }
+  }
+  return capabilities
 }
 
 /**
@@ -328,6 +363,8 @@ export async function finaliseSaleAction(
    * call — this is what was CHARGED, not a claim the server trusts.
    */
   tips: { declaredTips?: Record<number, number>; serviceCharge?: number } = {},
+  /** A supervisor's authorisation for a price/discount beyond the operator's rights. */
+  overrideToken?: string,
 ): Promise<FinaliseSaleResult> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
@@ -337,7 +374,12 @@ export async function finaliseSaleAction(
   // than assumed: a basket can be saved by one person and finalised by another.
   const refusedPrice = await checkPricing(
     siteId,
-    await operatorCapabilities(siteId, ctx.capabilities),
+    await withOverride(
+      siteId,
+      await operatorCapabilities(siteId, ctx.capabilities),
+      overrideToken,
+      ['sales.discount_override', 'sales.price_override'],
+    ),
     sale.priceStructureId ?? null,
     sale.lines,
   )
@@ -369,13 +411,27 @@ export async function finaliseSaleAction(
 export async function voidSaleAction(
   documentId: number,
   reason: { reasonId: number; note?: string | null },
+  /** A supervisor's authorisation, for a cashier without sales.void. */
+  overrideToken?: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  // The Void button on /sales/[id] is already hidden without this capability.
-  // Hiding a button changes what is EASY, not what is possible — and voiding
-  // reverses stock and a debtor's balance, so this is the check that counts.
-  const ctx = await actorFor('sales.void')
+  // Voiding reverses stock and a debtor's balance, so the check that counts is
+  // here — hiding the button only changes what is EASY. The right belongs to
+  // whoever is ACTING: the PIN operator when a till session exists (widened by
+  // a verified supervisor token), else the browser session. The entry gate is
+  // any-of so a till cashier reaches the operator check at all.
+  const ctx = await actorForAny('sales.void', 'sales.till')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
+
+  const effective = await withOverride(
+    siteId,
+    await operatorCapabilities(siteId, ctx.capabilities),
+    overrideToken,
+    ['sales.void'],
+  )
+  if (!can(effective, 'sales.void')) {
+    return { ok: false, error: 'Voiding a sale needs a supervisor. Ask a manager to approve it.' }
+  }
 
   const result = await voidDocument(siteId, actor, documentId, reason)
   if (!result.ok) return { ok: false, error: result.error }

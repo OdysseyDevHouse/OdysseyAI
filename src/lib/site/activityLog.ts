@@ -82,6 +82,13 @@ export type ActivityEntity =
      records a cost that somebody else later decides not to charge for. Both
      halves of that need a name against them. */
   | 'job_card'
+  /* A supervisor authorising one refused action at the till — a discount over
+     the cap, a void, a return. The MANAGER is the actor: "who authorised" is
+     the question this row answers, and the cashier, the action, the amount and
+     the till live in `changes`. entityId is the sale when one exists. Logged at
+     authorisation, not at use — a manager who typed their PIN authorised
+     something even if the sale then died, and the trail must say so. */
+  | 'pos_override'
   /* A piece of customer equipment. Worth auditing separately from the jobs done
      on it, because the questions differ: the job log answers what was done, this
      answers who changed the warranty date, who moved it to another site, and who

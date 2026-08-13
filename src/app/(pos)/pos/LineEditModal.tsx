@@ -38,6 +38,7 @@ export function LineEditModal({
   canOverridePrice,
   onClose,
   onSave,
+  onSupervisor,
 }: {
   /** Null closes the dialog. */
   line: BasketLine | null
@@ -45,6 +46,17 @@ export function LineEditModal({
   canOverridePrice: boolean
   onClose: () => void
   onSave: (changes: Partial<BasketLine>) => void
+  /**
+   * "Ask a supervisor" — offered on the two refusals a manager's PIN can lift.
+   * The shell opens the override pad; on approval it applies `changes` itself
+   * and attaches the authorisation to the sale.
+   */
+  onSupervisor?: (request: {
+    capability: 'sales.discount_override' | 'sales.price_override'
+    actionLabel: string
+    amount: number
+    changes: Partial<BasketLine>
+  }) => void
 }) {
   type FieldName = 'qty' | 'price' | 'discount'
   const [field, setField] = useState<FieldName>('qty')
@@ -105,6 +117,31 @@ export function LineEditModal({
             ? 'Changing the price needs a supervisor.'
             : null
 
+  /* Which refusal a manager's PIN can lift, if any. The discount is asked
+     about first when both apply — the second breach surfaces on its own the
+     moment the first is approved. */
+  const supervisorRequest =
+    nextQty > 0 && (line.allowFractions || Number.isInteger(nextQty))
+      ? overCeiling && !canOverrideDiscount
+        ? {
+            capability: 'sales.discount_override' as const,
+            actionLabel: `${formatQty(nextDiscount)}% discount on ${line.description}`,
+            amount: lineTotals({
+              qty: nextQty,
+              unitPriceIncl: nextPrice,
+              discountPct: nextDiscount,
+              vatRatePct: line.vatRatePct,
+            }).discountIncl,
+          }
+        : priceChanged && !canOverridePrice
+          ? {
+              capability: 'sales.price_override' as const,
+              actionLabel: `Price change on ${line.description}`,
+              amount: nextPrice,
+            }
+          : null
+      : null
+
   return (
     <Modal
       open
@@ -116,6 +153,28 @@ export function LineEditModal({
           <Button variant="ghost" size="touch" onClick={onClose}>
             Cancel
           </Button>
+          {/* The refusal's remedy, right where the refusal is. On approval the
+              SHELL applies these changes and rides the authorisation on the
+              sale — this dialog closes out of the way. */}
+          {supervisorRequest && onSupervisor && (
+            <Button
+              variant="warning"
+              size="touch"
+              onClick={() =>
+                onSupervisor({
+                  ...supervisorRequest,
+                  changes: {
+                    qty: nextQty,
+                    unitPriceIncl: nextPrice,
+                    discountPct: nextDiscount,
+                    note: note.trim(),
+                  },
+                })
+              }
+            >
+              Ask a supervisor
+            </Button>
+          )}
           <Button
             variant="primary"
             size="touch-lg"

@@ -58,6 +58,8 @@ export type OfflineFinaliseInput = {
   declaredTips?: Record<number, number>
   /** The forced service charge the slip showed. */
   serviceCharge?: number
+  /** Supervisor authorisations given at the counter — see OfflineSale.overrides. */
+  overrides?: OfflineSale['overrides']
 }
 
 export type OfflineFinaliseResult =
@@ -154,6 +156,8 @@ export async function finaliseOffline(
     ...(input.serviceCharge && input.serviceCharge > 0.005
       ? { serviceCharge: input.serviceCharge }
       : {}),
+    // Same convention: absent when empty, so old queued sales stay byte-identical.
+    ...(input.overrides && input.overrides.length > 0 ? { overrides: input.overrides } : {}),
   }
 
   /* 2. The queue. THE durable record. */

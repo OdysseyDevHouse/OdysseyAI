@@ -107,6 +107,24 @@ export type OfflineSale = {
    * bill a customer settled at 17:30. The figure on the slip is the figure that posts.
    */
   serviceCharge?: number
+  /**
+   * Supervisor authorisations given at the till while offline.
+   *
+   * OPTIONAL like `declaredTips`, for the same reason: old queued sales must
+   * still post. The identity here was verified against the stored PBKDF2
+   * verifiers at the counter, but the stored capability list is only as fresh
+   * as the last catalog — so the server RE-DERIVES each authoriser's right at
+   * sync (an offline sale always posts; a claim that fails re-derivation
+   * becomes an exception on the document, not a refusal).
+   */
+  overrides?: {
+    capability: string
+    userId: number
+    name: string
+    /** What was authorised, in words: "25% discount on Bread". */
+    action: string
+    amount?: number
+  }[]
 }
 
 /* ── One request ─────────────────────────────────────────────────────────── */

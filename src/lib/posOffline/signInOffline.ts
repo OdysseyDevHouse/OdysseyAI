@@ -175,6 +175,33 @@ export async function findOperator(
   return null
 }
 
+export type OfflineOverride =
+  | { ok: true; userId: number; name: string }
+  | { ok: false; error: string; lockedForSeconds?: number }
+
+/**
+ * A supervisor authorising ONE action, offline.
+ *
+ * Same PIN check, same lockout counter as signing in — it is the same guessing
+ * surface, and splitting the counters would double the guesses. The stored
+ * capability list is only as fresh as the last catalog; the SERVER re-derives
+ * the authoriser's rights at sync (offlineSync's override step), which is the
+ * check that actually counts. This one exists so the refusal happens at the
+ * counter rather than in tomorrow's exception list.
+ */
+export async function overrideOffline(
+  siteId: number,
+  pin: string,
+  capability: string,
+): Promise<OfflineOverride> {
+  const result = await signInOffline(siteId, pin)
+  if (!result.ok) return result
+  if (!result.operator.capabilities.includes(capability)) {
+    return { ok: false, error: `${result.operator.name} cannot authorise that either.` }
+  }
+  return { ok: true, userId: result.operator.userId, name: result.operator.name }
+}
+
 /* ── The session ─────────────────────────────────────────────────────────── */
 
 /**

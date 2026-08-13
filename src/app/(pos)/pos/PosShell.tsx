@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   useToast,
@@ -95,7 +95,10 @@ import { SplitBillModal, type SplitLine } from './SplitBillModal'
 import TransferTableModal from './TransferTableModal'
 import ShiftModal from './ShiftModal'
 import { tillShiftStatusAction } from './shiftActions'
+import OverrideModal from './OverrideModal'
 import { kvPut, KV } from '@/lib/posOffline/db'
+import type { Capability } from '@/lib/site/permissions'
+import type { OfflineSale } from '@/lib/posOffline/types'
 import { WeighModal } from './WeighModal'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { TileSizeModal } from './TileSizeModal'
@@ -743,12 +746,15 @@ export default function PosShell({
       change: plan.ok ? plan.changeRemaining : Math.max(0, tendered - totals.doc.totalIncl),
       declaredTips: tipInfo.declared,
       serviceCharge: charge,
+      // Supervisor approvals given at this counter — the sync re-derives them.
+      overrides: offlineOverridesRef.current.length > 0 ? [...offlineOverridesRef.current] : undefined,
     })
 
     if (!result.ok) {
       toast.error(result.error)
       return
     }
+    offlineOverridesRef.current = []
 
     setTendering(false)
     setEditing(null)
@@ -849,6 +855,8 @@ export default function PosShell({
                it disappears with a name against it. */
             serviceCharge: tipInfo.serviceChargeWaived ? 0 : serviceCharge,
           },
+          // A supervisor's approval, if one was given for this basket.
+          spendOverrideToken(),
         )
       } catch {
         await finaliseLocally(paid, tipInfo)
@@ -1118,7 +1126,10 @@ export default function PosShell({
           terminalCode: terminal?.code ?? null,
           priceStructureId,
           lines: salePayloadLines(state.lines, lineSpecials),
-        })
+        },
+        /* PEEKED, not spent: the same approval must still cover the finalise —
+           the token verifies statelessly, so parking does not use it up. */
+        overrideTokenRef.current ?? undefined)
       } catch {
         await parkLocally()
         void till.refresh()
@@ -1348,7 +1359,7 @@ export default function PosShell({
   function voidSale(reason: { reasonId: number; note: string | null }) {
     if (!receipt) return
     startTransition(async () => {
-      const result = await voidSaleAction(receipt.documentId, reason)
+      const result = await voidSaleAction(receipt.documentId, reason, spendOverrideToken())
       if (!result.ok) {
         // Left open with the reason still chosen: the likely refusals are a locked
         // VAT period or a payment already allocated against the sale, and both
@@ -1527,6 +1538,31 @@ export default function PosShell({
         toast.error('The bill could not be prepared. Try again.')
       }
     })
+  }
+
+  /*
+   * ── SUPERVISOR OVERRIDES ──────────────────────────────────────────────────
+   * One pad, launched from wherever a refusal happened. On approval:
+   * online, the minted token rides the NEXT save/finalise/void call and is
+   * consumed there; offline, the authorisation is queued and rides the sale's
+   * payload, where the sync re-derives the manager's right. Both refs clear
+   * when the basket does — an approval must not outlive the sale it was for.
+   */
+  const [override, setOverride] = useState<{
+    capability: Capability
+    actionLabel: string
+    amount?: number
+    documentId?: number | null
+    onAuthorised: (auth: { userId: number; name: string; token: string }) => void
+  } | null>(null)
+  const overrideTokenRef = useRef<string | null>(null)
+  const offlineOverridesRef = useRef<NonNullable<OfflineSale['overrides']>>([])
+
+  /** Takes (and clears) the pending token — an approval covers ONE action. */
+  function spendOverrideToken(): string | undefined {
+    const token = overrideTokenRef.current ?? undefined
+    overrideTokenRef.current = null
+    return token
   }
 
   /** The shift modal — float, payouts, and the blind cash-up count. */
@@ -2266,7 +2302,57 @@ export default function PosShell({
           if (editing) dispatch({ type: 'UPDATE', key: editing.key, changes })
           setEditing(null)
         }}
+        /* The refusal's remedy: a manager's PIN lifts it for THIS change. On
+           approval the change lands on the line, the token (or the queued
+           offline claim) rides the next save/finalise, and the audit row is
+           already written under the manager's name. */
+        onSupervisor={(request) => {
+          const line = editing
+          setOverride({
+            capability: request.capability,
+            actionLabel: request.actionLabel,
+            amount: request.amount,
+            documentId: state.documentId,
+            onAuthorised: (auth) => {
+              if (auth.token) {
+                overrideTokenRef.current = auth.token
+              } else {
+                offlineOverridesRef.current.push({
+                  capability: request.capability,
+                  userId: auth.userId,
+                  name: auth.name,
+                  action: request.actionLabel,
+                  amount: request.amount,
+                })
+              }
+              if (line) dispatch({ type: 'UPDATE', key: line.key, changes: request.changes })
+              setEditing(null)
+              toast.success(`Approved by ${auth.name}.`)
+            },
+          })
+        }}
       />
+
+      {/* The supervisor pad — one pad for every refusal that a manager's PIN
+          can lift. See the override block near the top of the component. */}
+      {override && (
+        <OverrideModal
+          open
+          siteId={siteId}
+          online={till.online}
+          capability={override.capability}
+          actionLabel={override.actionLabel}
+          amount={override.amount}
+          documentId={override.documentId}
+          terminalCode={terminal?.code ?? null}
+          cashierName={operatorName}
+          onClose={() => setOverride(null)}
+          onAuthorised={(auth) => {
+            override.onAuthorised(auth)
+            setOverride(null)
+          }}
+        />
+      )}
 
       {/* Only mounted while a product is being asked about, so its state starts
           fresh each time — a modal kept alive would carry the last burger's
@@ -2311,9 +2397,27 @@ export default function PosShell({
         open={receipt !== null && !voiding}
         documentNumber={receipt?.number ?? ''}
         change={receipt?.change ?? 0}
-        canVoid={canVoid}
+        /* Always offered on a POSTED sale: a cashier without the right gets the
+           supervisor pad instead of a missing button they cannot explain. */
+        canVoid={true}
         posted={(receipt?.documentId ?? 0) > 0}
-        onVoid={() => setVoiding(true)}
+        onVoid={() => {
+          if (canVoid) {
+            setVoiding(true)
+            return
+          }
+          setOverride({
+            capability: 'sales.void',
+            actionLabel: `Void ${receipt?.number ?? 'this sale'}`,
+            amount: receipt?.total,
+            documentId: receipt?.documentId ?? null,
+            onAuthorised: (auth) => {
+              // Online only — an unposted offline sale hides the button anyway.
+              overrideTokenRef.current = auth.token || null
+              setVoiding(true)
+            },
+          })
+        }}
         onClose={() => setReceipt(null)}
         /*
          * The document, in a new tab — NOT `/sales/print/{number}`.

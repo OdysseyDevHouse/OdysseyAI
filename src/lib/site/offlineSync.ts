@@ -293,7 +293,54 @@ export async function postOfflineSale(
 
   /* 5. Classify against the pricing rules — flagged, never refused (see header).
         Capabilities come from the user's role, never from the payload. */
-  const capabilities = await capabilitiesForRole(siteId, operator?.role_id ?? null)
+  let capabilities = await capabilitiesForRole(siteId, operator?.role_id ?? null)
+
+  /* 5a. Supervisor authorisations given at the counter while offline. The
+        IDENTITY was verified against the stored PBKDF2 verifiers at the till;
+        the RIGHT is re-derived here from the authoriser's role — the stored
+        capability list on the till is only as fresh as its last catalog, and
+        this is the check that counts (the exact contract offlineReturns
+        applies to a return's authoriser). A claim that holds widens the
+        pricing check and is logged under the MANAGER's name; one that does
+        not becomes an exception, and the sale still posts. */
+  for (const claim of sale.overrides ?? []) {
+    const authoriser = await siteQueryOne<
+      RowDataPacket & { id: number; name: string; role_id: number | null; is_active: number }
+    >(siteId, 'SELECT id, name, role_id, is_active FROM users WHERE id = ?', [claim.userId])
+    const theirCaps = authoriser?.is_active
+      ? await capabilitiesForRole(siteId, authoriser.role_id ?? null)
+      : null
+    const holds =
+      theirCaps !== null &&
+      (theirCaps.isOwner || theirCaps.granted.has(claim.capability))
+
+    if (holds && authoriser) {
+      capabilities = {
+        isOwner: capabilities.isOwner,
+        granted: new Set([...capabilities.granted, claim.capability]),
+      }
+      await logActivity(
+        siteId,
+        { userId: authoriser.id, userName: authoriser.name },
+        {
+          entity: 'pos_override',
+          entityId: null,
+          action: claim.capability,
+          detail:
+            `${claim.action}${claim.amount !== undefined ? ` · R${claim.amount.toFixed(2)}` : ''}` +
+            ` · cashier ${actorName} · offline sale ${sale.saleUid}`,
+        },
+      ).catch(() => undefined)
+    } else {
+      reasons.push(
+        `${claim.name || `User #${claim.userId}`} authorised "${claim.action}" offline but ` +
+          (authoriser?.is_active
+            ? 'no longer holds that permission'
+            : 'is no longer an active user'),
+      )
+    }
+  }
+
   const priceRefusal = await checkPricing(
     siteId,
     capabilities,
