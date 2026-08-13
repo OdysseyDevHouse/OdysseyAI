@@ -10,10 +10,14 @@ import { applyDeadlinesTx } from './jobSla'
 import { itemsBlockClose, outstandingRequiredTx } from './jobHeadlines'
 // And jobAssets, which reads its own tables plus job_cards but never imports back.
 import { recordServiceOnClose } from './jobAssets'
+// And jobPeople, which reads its own table plus job_cards and never imports back.
+// Everything it exposes here is fire-and-forget: see the call sites.
+import { notifyAssigned, notifyClosed, notifyStatusChanged } from './jobPeople'
 import { logActivity, logActivityTx, diffFields, type Actor } from './activityLog'
 import {
   BILLABLE_STATES,
   BILLING_STATE_LABEL,
+  JOB_PRIORITIES,
   canReclassify,
   isBillable,
   isClosed,
@@ -260,6 +264,7 @@ const SELECT_JOB = `
          j.cancelled_at, j.cancel_reason, j.user_id, j.user_name,
          j.created_at, j.updated_at,
          s.name AS status_name, s.tone AS status_tone, s.role AS status_role,
+         s.is_closed_stage AS status_closed_stage,
          a.name AS service_address_name,
          l.name AS location_name
     FROM job_cards j
@@ -337,7 +342,10 @@ function mapJob(row: Row): JobCard {
     userName: String(row.user_name ?? ''),
     createdAt: wallClock(row.created_at) ?? '',
     updatedAt: wallClock(row.updated_at) ?? '',
-    isClosed: isClosed(role),
+    // The role OR the stage flag (123). The role still answers for the two
+    // reserved meanings; the flag answers for a closing stage a business added
+    // itself, which would otherwise read as open everywhere.
+    isClosed: isClosed(role) || Number(row.status_closed_stage) === 1,
   }
 }
 
@@ -558,6 +566,155 @@ export async function jobCounts(siteId: number): Promise<JobCounts> {
     cancelled: Number(row?.cancelled_count ?? 0),
     unassigned: Number(row?.unassigned_count ?? 0),
     overdue: Number(row?.overdue_count ?? 0),
+  }
+}
+
+/**
+ * The figures the operations dashboard leads with (PRD, Phase 1 dashboards).
+ *
+ * ── WHY THESE ARE COUNTED BY STATUS CODE, NOT BY ROLE ──────────────────────
+ *
+ * "Awaiting parts" and "ready to invoice" are STAGES a business chose to have,
+ * not meanings the code needs — they carry no role, deliberately (see 123). So
+ * they are matched on the seeded code, and a site that renamed or deleted one
+ * simply reports zero rather than breaking. A role would have been the wrong
+ * tool: it exists so code can FIND a stage it depends on, and nothing here
+ * depends on these.
+ *
+ * ── WHY completedNotInvoiced IS NOT "closed jobs with no invoice" ──────────
+ *
+ * A job is billable when it has lines somebody agreed to charge for and they
+ * have not all been invoiced. A closed job with nothing billable on it — a
+ * warranty call, a goodwill visit — is finished, not outstanding, and counting
+ * it would put permanent noise on the one figure that protects cash flow.
+ *
+ * One query rather than seven, because this is a dashboard tile: seven round
+ * trips to draw a strip of numbers is how a dashboard starts feeling slow.
+ */
+export type JobOpsCounts = {
+  inProgress: number
+  awaitingParts: number
+  awaitingCustomer: number
+  scheduledToday: number
+  readyToInvoice: number
+  /** Closed with billable work still unbilled. The cash-flow figure. */
+  completedNotInvoiced: number
+}
+
+export async function jobOpsCounts(siteId: number): Promise<JobOpsCounts> {
+  try {
+    const row = await siteQueryOne<Row>(
+      siteId,
+      `SELECT
+         SUM(CASE WHEN j.status = 'open' AND s.role = 'in_progress' THEN 1 ELSE 0 END) AS in_progress,
+         SUM(CASE WHEN j.status = 'open' AND s.code = 'parts' THEN 1 ELSE 0 END) AS awaiting_parts,
+         SUM(CASE WHEN j.status = 'open' AND s.code = 'awaiting_customer' THEN 1 ELSE 0 END) AS awaiting_customer,
+         SUM(CASE WHEN j.status = 'open' AND s.code = 'ready_invoice' THEN 1 ELSE 0 END) AS ready_invoice,
+         SUM(CASE WHEN j.status = 'open' AND EXISTS (
+               SELECT 1 FROM job_card_appointments a
+                WHERE a.job_card_id = j.id
+                  AND a.status IN ('scheduled','confirmed','en_route','on_site')
+                  AND DATE(a.starts_at) = CURDATE()
+             ) THEN 1 ELSE 0 END) AS scheduled_today,
+         SUM(CASE WHEN j.status = 'closed' AND EXISTS (
+               SELECT 1 FROM job_card_lines l
+                WHERE l.job_card_id = j.id
+                  AND l.billing_state IN ('quoted','variation','additional')
+                  AND l.invoiced_qty < l.qty
+             ) THEN 1 ELSE 0 END) AS completed_not_invoiced
+       FROM job_cards j
+       JOIN job_statuses s ON s.id = j.status_id`,
+    )
+    return {
+      inProgress: Number(row?.in_progress ?? 0),
+      awaitingParts: Number(row?.awaiting_parts ?? 0),
+      awaitingCustomer: Number(row?.awaiting_customer ?? 0),
+      scheduledToday: Number(row?.scheduled_today ?? 0),
+      readyToInvoice: Number(row?.ready_invoice ?? 0),
+      completedNotInvoiced: Number(row?.completed_not_invoiced ?? 0),
+    }
+  } catch {
+    /*
+     * Tolerant, like every other job read on this screen: a site that has not
+     * run 106 has no appointments table and one missing feature must not take
+     * down the dashboard — which is the screen somebody opens BECAUSE something
+     * looks wrong.
+     */
+    return {
+      inProgress: 0,
+      awaitingParts: 0,
+      awaitingCustomer: 0,
+      scheduledToday: 0,
+      readyToInvoice: 0,
+      completedNotInvoiced: 0,
+    }
+  }
+}
+
+/**
+ * Open jobs grouped by stage and by owner, for the two dashboard charts.
+ *
+ * ── OPEN ONLY, AND THAT IS THE WHOLE POINT ─────────────────────────────────
+ *
+ * "Jobs by stage" over all time would be dominated by Work Completed forever,
+ * and would answer a question nobody asks. A dispatcher wants to know where the
+ * LIVE work is stuck.
+ *
+ * ── UNASSIGNED IS A BAR, NOT A GAP ─────────────────────────────────────────
+ *
+ * Jobs with no owner are grouped under a label rather than dropped. Dropping
+ * them would make the chart total less than the open count with nothing
+ * explaining the difference — and unassigned work is the single thing a
+ * dispatcher opens this chart to find.
+ */
+export type JobBreakdown = { label: string; count: number; href: string }
+
+export async function jobBreakdowns(
+  siteId: number,
+): Promise<{ byStatus: JobBreakdown[]; byTechnician: JobBreakdown[] }> {
+  try {
+    const [statusRows, ownerRows] = await Promise.all([
+      siteQuery<Row>(
+        siteId,
+        `SELECT s.id, s.name, COUNT(*) AS n
+           FROM job_cards j JOIN job_statuses s ON s.id = j.status_id
+          WHERE j.status = 'open'
+          GROUP BY s.id, s.name
+          ORDER BY n DESC, s.sort_order`,
+      ),
+      siteQuery<Row>(
+        siteId,
+        `SELECT j.owner_user_id, j.owner_name, COUNT(*) AS n
+           FROM job_cards j
+          WHERE j.status = 'open'
+          GROUP BY j.owner_user_id, j.owner_name
+          ORDER BY n DESC`,
+      ),
+    ])
+
+    return {
+      byStatus: statusRows.map((r) => ({
+        label: String(r.name),
+        count: Number(r.n),
+        href: `/jobs?state=open&status=${Number(r.id)}`,
+      })),
+      byTechnician: ownerRows
+        .map((r) => ({
+          label: text(r.owner_name) ?? 'Nobody assigned',
+          count: Number(r.n),
+          // No owner filter on the list yet, so the unassigned bar lands on the
+          // open list rather than pretending to filter. Better an honest link
+          // than one that silently ignores half of what it says.
+          href: '/jobs?state=open',
+          unassigned: r.owner_user_id === null,
+        }))
+        // Unassigned last regardless of size: it is a different KIND of row, and
+        // sorting it among the people would bury it on a busy site.
+        .sort((a, b) => (a.unassigned ? 1 : 0) - (b.unassigned ? 1 : 0))
+        .map(({ label, count, href }) => ({ label, count, href })),
+    }
+  } catch {
+    return { byStatus: [], byTechnician: [] }
   }
 }
 
@@ -836,6 +993,14 @@ export async function setStatus(
   jobId: number,
   statusId: number,
   reason?: string,
+  /**
+   * May this caller move a job to an office-only stage? See the audience check
+   * below for why it is a parameter rather than a lookup.
+   *
+   * Defaults to true so every existing call site behaves as it did; the action
+   * layer passes the real answer.
+   */
+  isOffice = true,
 ): Promise<JobActionResult> {
   return siteTransaction(siteId, async (tx) => {
     const [jobRows] = await tx.query<Row[]>(
@@ -848,7 +1013,9 @@ export async function setStatus(
     if (!job) return { ok: false as const, error: 'That job no longer exists.' }
 
     const [statusRows] = await tx.query<Row[]>(
-      `SELECT id, name, role, is_active FROM job_statuses WHERE id = ?`,
+      `SELECT id, name, role, is_active, requires_reason, blocks_on_incomplete,
+              audience, is_closed_stage
+         FROM job_statuses WHERE id = ?`,
       [statusId],
     )
     const status = statusRows[0]
@@ -860,7 +1027,52 @@ export async function setStatus(
     if (Number(job.status_id) === statusId) return { ok: true as const }
 
     const role = String(status.role) as JobStatusRole
-    const recordState = role === 'cancelled' ? 'cancelled' : isClosed(role) ? 'closed' : 'open'
+
+    /*
+     * Closed-ness comes from the role OR from is_closed_stage (123).
+     *
+     * The role still wins where it exists, because code depends on it —
+     * statusForRole('completed') has to keep finding the completion stage. The
+     * column answers for stages that carry no role, which is what lets a business
+     * add a closing stage of its own without claiming one of the two reserved
+     * roles.
+     */
+    const closedStage = Number(status.is_closed_stage) === 1
+    const recordState =
+      role === 'cancelled' ? 'cancelled' : isClosed(role) || closedStage ? 'closed' : 'open'
+
+    /*
+     * A reason, where the stage asks for one (10.1).
+     *
+     * Checked here rather than on the screen because the action is the boundary,
+     * and because setStatus is reached from the board drag and the bulk bar as
+     * well as the job card — three call sites, one rule.
+     */
+    if (Number(status.requires_reason) === 1 && text(reason) === null) {
+      return {
+        ok: false as const,
+        error: `${String(status.name)} needs a reason. Say why in a sentence.`,
+      }
+    }
+
+    /*
+     * Office-only stages (10.1).
+     *
+     * `isOffice` is passed in rather than read here: this module takes a siteId
+     * and an actor, never a CapabilitySet, and reaching for permissions inside a
+     * data module is how the boundary between "what is true" and "who may do it"
+     * gets lost. The action layer holds the capabilities and answers the
+     * question; this enforces the answer.
+     *
+     * Defaults to true, so every existing caller keeps working and only the ones
+     * that know about the rule pass false.
+     */
+    if (String(status.audience) === 'office' && !isOffice) {
+      return {
+        ok: false as const,
+        error: `${String(status.name)} is an office stage. Somebody who bills jobs has to move it there.`,
+      }
+    }
 
     /*
      * A closed job with lines nobody has classified is the commonest way a job
@@ -894,7 +1106,25 @@ export async function setStatus(
        * Switchable, and TOLERANT of a site without migration 114: a missing
        * feature must never stop a job being closed.
        */
-      if (await itemsBlockClose(siteId)) {
+      /*
+       * The STAGE decides, falling back to the site setting.
+       *
+       * Per-status rather than one global switch, because the two closing stages
+       * want opposite answers: Work Completed must demand its checks, and
+       * Cancelled must not — refusing to cancel a job because a check is unticked
+       * is how a job nobody wants stays open forever. 123 seeds exactly that.
+       *
+       * NULL means the status has not decided, so the site setting answers. That
+       * is what every status created before 123 carries, which is why migrating
+       * changed nothing.
+       */
+      const stageRule =
+        status.blocks_on_incomplete === null || status.blocks_on_incomplete === undefined
+          ? null
+          : Number(status.blocks_on_incomplete) === 1
+      const blocking = stageRule ?? (await itemsBlockClose(siteId))
+
+      if (blocking) {
         const outstanding = await outstandingRequiredTx(tx, jobId)
         if (outstanding.length > 0) {
           const listed = outstanding.slice(0, 3).join(', ')
@@ -940,7 +1170,11 @@ export async function setStatus(
 
     // Carried out of the transaction so the follow-up work below knows what to do
     // without re-reading the row it just wrote.
-    return { ok: true as const, closed: recordState === 'closed' }
+    return {
+      ok: true as const,
+      closed: recordState === 'closed',
+      statusName: String(status.name),
+    }
   }).then(async (result) => {
     /*
      * Rolling an asset's service dates forward happens AFTER the commit, on its own
@@ -952,6 +1186,21 @@ export async function setStatus(
      */
     if (result.ok && 'closed' in result && result.closed) {
       await recordServiceOnClose(siteId, jobId).catch(() => {})
+    }
+
+    /*
+     * Telling people, on the same terms and for the same reason: after the commit,
+     * on its own connection, and swallowed. jobPeople is itself defensive at every
+     * step, so this catch is the outermost of several -- a mail server being down
+     * must never be why a technician cannot move a job.
+     */
+    if (result.ok && 'statusName' in result && typeof result.statusName === 'string') {
+      const name = result.statusName
+      if ('closed' in result && result.closed) {
+        void notifyClosed(siteId, actor, jobId).catch(() => {})
+      } else {
+        void notifyStatusChanged(siteId, actor, jobId, name).catch(() => {})
+      }
     }
     return result
   })
@@ -1010,6 +1259,14 @@ export async function assignOwner(
     })
 
     return { ok: true as const }
+  }).then((result) => {
+    // The owner is an assignee in everything but which table holds them, so being
+    // made owner sends the same email being made an assignee does. After the
+    // commit and swallowed, like every other notification here.
+    if (result.ok && ownerUserId !== null) {
+      void notifyAssigned(siteId, jobId, ownerUserId).catch(() => {})
+    }
+    return result
   })
 }
 
@@ -1281,6 +1538,160 @@ export type JobDrift = {
  * configuration trap — a job in a status no board lists is invisible on every
  * board, which the board setup screen shows so nobody discovers it by losing work.
  */
+/**
+ * Change only the priority, re-stamping the SLA promise that depends on it.
+ *
+ * saveJobCard already does this, but it needs the whole record — which a bulk
+ * action does not have and should not have to reconstruct, because sending back
+ * fields nobody edited is how a bulk action quietly overwrites somebody else's
+ * change to the same job.
+ *
+ * The deadlines are recomputed from the ORIGINAL reported_at, not from now. A
+ * job logged on Monday and escalated to urgent on Wednesday promised a response
+ * from when it was REPORTED; re-stamping from today would silently forgive two
+ * days of a promise already broken.
+ */
+export async function setPriority(
+  siteId: number,
+  actor: Actor,
+  jobId: number,
+  priority: JobPriority,
+): Promise<JobActionResult> {
+  return siteTransaction(siteId, async (tx) => {
+    const [rows] = await tx.query<Row[]>(
+      `SELECT id, priority, status, reported_at FROM job_cards WHERE id = ?`,
+      [jobId],
+    )
+    const job = rows[0]
+    if (!job) return { ok: false as const, error: 'That job no longer exists.' }
+    if (String(job.status) !== 'open') {
+      return { ok: false as const, error: 'This job is closed, so its priority cannot change.' }
+    }
+    if (String(job.priority) === priority) return { ok: true as const }
+
+    await tx.execute(`UPDATE job_cards SET priority = ? WHERE id = ?`, [priority, jobId])
+
+    const reportedAt = job.reported_at
+    if (reportedAt !== undefined && reportedAt !== null) {
+      await applyDeadlinesTx(tx, siteId, jobId, priority, reportedAt as string | Date)
+    }
+
+    await logActivityTx(tx, actor, {
+      entity: 'job_card',
+      entityId: jobId,
+      action: 'priority_changed',
+      detail: priority,
+      changes: { priority: { from: String(job.priority), to: priority } },
+    })
+
+    return { ok: true as const }
+  })
+}
+
+/* ── Bulk actions (37.2) ───────────────────────────────────────────────────── */
+
+/**
+ * What a bulk action did, and what it refused to do.
+ *
+ * Reporting the refusals BY NAME is the whole point — "38 changed, 2 skipped"
+ * with no list of which two, and why, is worse than not offering the action at
+ * all, because the user cannot tell whether the two that mattered went through.
+ * The shape matches bulkUpdateCustomers deliberately.
+ */
+export type JobBulkResult = {
+  changed: number
+  skipped: { id: number; documentNumber: string | null; reason: string }[]
+}
+
+export type JobBulkChange =
+  | { kind: 'status'; statusId: number }
+  | { kind: 'priority'; priority: JobPriority }
+  | { kind: 'owner'; ownerUserId: number | null; ownerName: string }
+
+/**
+ * Applies one change to many jobs.
+ *
+ * ── WHY THIS LOOPS RATHER THAN ISSUING ONE UPDATE ──────────────────────────
+ *
+ * A single `UPDATE ... WHERE id IN (...)` would be one statement and would be
+ * wrong. Moving a job to a status runs setStatus, which stamps SLA deadlines,
+ * refuses a close over outstanding required checks, records the change in the
+ * activity log and notifies whoever is watching. A blind UPDATE would skip every
+ * one of those, and the jobs changed in bulk would quietly differ from the ones
+ * changed one at a time.
+ *
+ * So each job goes through the same door a person uses, and a refusal is
+ * reported rather than swallowed. Slower, and correct.
+ */
+export async function bulkUpdateJobs(
+  siteId: number,
+  actor: Actor,
+  ids: readonly number[],
+  change: JobBulkChange,
+  /** Passed straight through to setStatus. See its own parameter for why. */
+  isOffice = true,
+): Promise<JobBulkResult> {
+  const unique = [...new Set(ids)].filter((id) => Number.isFinite(id) && id > 0)
+  if (unique.length === 0) return { changed: 0, skipped: [] }
+
+  // A cap, reported rather than silently applied. Fifty jobs through the full
+  // status machinery is already a slow request; five hundred is a timeout that
+  // leaves half the work done and says nothing.
+  const CAP = 100
+  const skipped: JobBulkResult['skipped'] = []
+  const targets = unique.slice(0, CAP)
+  for (const id of unique.slice(CAP)) {
+    skipped.push({ id, documentNumber: null, reason: `More than ${CAP} at once — not attempted.` })
+  }
+
+  if (change.kind === 'priority' && !JOB_PRIORITIES.includes(change.priority)) {
+    return {
+      changed: 0,
+      skipped: targets.map((id) => ({ id, documentNumber: null, reason: 'That is not a priority.' })),
+    }
+  }
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT id, document_number, status FROM job_cards WHERE id IN (${targets.map(() => '?').join(',')})`,
+    [...targets],
+  )
+  const byId = new Map(rows.map((r) => [Number(r.id), r]))
+
+  let changed = 0
+  for (const id of targets) {
+    const row = byId.get(id)
+    if (!row) {
+      skipped.push({ id, documentNumber: null, reason: 'No longer exists.' })
+      continue
+    }
+    const documentNumber = row.document_number === null ? null : String(row.document_number)
+
+    // A closed job is not editable in bulk any more than it is one at a time.
+    if (String(row.status) !== 'open' && change.kind !== 'status') {
+      skipped.push({ id, documentNumber, reason: 'This job is closed.' })
+      continue
+    }
+
+    let result: JobActionResult
+    if (change.kind === 'status') {
+      // Same door, same rules — including the office and reason checks. A stage
+      // needing a reason is refused BY NAME here rather than skipped silently,
+      // which is exactly what the skipped list exists to show.
+      result = await setStatus(siteId, actor, id, change.statusId, undefined, isOffice)
+    } else if (change.kind === 'priority') {
+      result = await setPriority(siteId, actor, id, change.priority)
+    } else {
+      result = await assignOwner(siteId, actor, id, change.ownerUserId, change.ownerName)
+    }
+
+    if (result.ok) changed++
+    else skipped.push({ id, documentNumber, reason: result.error })
+  }
+
+  return { changed, skipped }
+}
+
 export async function reconcileJobCards(siteId: number): Promise<JobDrift> {
   const [over, orphaned, unbillable, mismatch, offBoard] = await Promise.all([
     siteQuery<Row>(

@@ -1,7 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Badge, DataTable, Icons, type Column, type BadgeTone } from '@/components/ui'
+import JobBulkBar from './JobBulkBar'
 import type { JobCard } from '@/lib/site/jobCards'
 import { PRIORITY_LABEL, PRIORITY_TONE, storedDate, type JobPriority } from '@/lib/jobStatusModel'
 
@@ -62,8 +64,24 @@ function dueLabel(job: JobCard): { text: string; overdue: boolean } | null {
   return { text, overdue: !job.isClosed && due.getTime() < Date.now() }
 }
 
-export default function JobsTable({ jobs }: { jobs: JobCard[] }) {
+export default function JobsTable({
+  jobs,
+  statuses = [],
+  users = [],
+  canEdit = false,
+  canAssign = false,
+}: {
+  jobs: JobCard[]
+  /** For the bulk bar. Empty means no bulk actions are offered. */
+  statuses?: { id: number; name: string }[]
+  users?: { id: number; name: string }[]
+  canEdit?: boolean
+  canAssign?: boolean
+}) {
   const router = useRouter()
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+
+  const canBulk = (canEdit || canAssign) && statuses.length > 0
 
   const columns: Column<JobCard>[] = [
     {
@@ -146,16 +164,35 @@ export default function JobsTable({ jobs }: { jobs: JobCard[] }) {
   ]
 
   return (
-    <DataTable
-      columns={columns}
-      rows={jobs}
-      getRowKey={(job) => job.id}
-      onRowClick={(job) => router.push(`/jobs/${job.id}`)}
-      empty={{
-        title: 'No jobs here',
-        hint: 'A job card holds everything about one piece of work — what was asked for, who is doing it, what was used, and what it cost. Start one when the phone rings.',
-        icon: <Icons.Wrench size={22} />,
-      }}
-    />
+    <>
+      {canBulk && (
+        <JobBulkBar
+          selected={selected}
+          statuses={statuses}
+          users={users}
+          canEdit={canEdit}
+          canAssign={canAssign}
+          onDone={() => {
+            setSelected(new Set())
+            router.refresh()
+          }}
+        />
+      )}
+      <DataTable
+        columns={columns}
+        rows={jobs}
+        getRowKey={(job) => job.id}
+        onRowClick={(job) => router.push(`/jobs/${job.id}`)}
+        // Selection only when there is something to do with it. A checkbox
+        // column that leads nowhere is a column of dead weight on every row.
+        selectedKeys={canBulk ? selected : undefined}
+        onSelectionChange={canBulk ? setSelected : undefined}
+        empty={{
+          title: 'No jobs here',
+          hint: 'A job card holds everything about one piece of work — what was asked for, who is doing it, what was used, and what it cost. Start one when the phone rings.',
+          icon: <Icons.Wrench size={22} />,
+        }}
+      />
+    </>
   )
 }

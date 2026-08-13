@@ -68,7 +68,7 @@ export default function UnlockScreen() {
             go as soon as it unlocks.
           </Callout>
 
-          <PinPad onSubmit={submit} error={error} busy={pending} submitLabel="Unlock" />
+          <PinPad onSubmit={submit} error={error} busy={pending} />
 
           {/* The way out for somebody who is not a cashier. Not a link to the login
               form — this is a till, and the person here may not have an account. */}

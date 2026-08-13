@@ -19,6 +19,10 @@ import {
   Icons,
 } from '@/components/ui'
 import JobsTable from './JobsTable'
+import JobViewStrip from './JobViewStrip'
+import { listUsers } from '@/lib/site/users'
+import { listJobViews } from '@/lib/site/jobViews'
+import { can } from '@/lib/site/permissions'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +34,8 @@ type Search = {
   priority?: string
   q?: string
   page?: string
+  /** Which saved view is active. Carried so the strip can highlight it. */
+  view?: string
 }
 
 /**
@@ -49,7 +55,7 @@ export default async function JobsPage({
   searchParams: Promise<Search>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('jobs.view')
+  const { siteId, actor, capabilities } = await requireCapability('jobs.view')
   const params = await searchParams
 
   const state = params.state === 'closed' || params.state === 'all' ? params.state : 'open'
@@ -67,12 +73,16 @@ export default async function JobsPage({
     offset: offsetFor(page, PAGE_SIZE),
   }
 
-  const [jobs, total, counts, statuses, unscheduled] = await Promise.all([
+  const [jobs, total, counts, statuses, unscheduled, siteUsers, views] = await Promise.all([
     listJobCards(siteId, filter),
     countJobCards(siteId, filter),
     jobCounts(siteId),
     listJobStatuses(siteId, false),
     unscheduledJobCount(siteId),
+    // Both for the bulk bar and the saved-view strip. Tolerant: a site without
+    // migration 122 gets no views rather than no job list.
+    listUsers(siteId).catch(() => []),
+    listJobViews(siteId, actor.userId),
   ])
 
   const href = hrefBuilder('/jobs', params as Record<string, string | undefined>)
@@ -169,7 +179,27 @@ export default async function JobsPage({
             </FilterBar>
           )}
 
-          <JobsTable jobs={jobs} />
+          <JobViewStrip
+            views={views}
+            current={{
+              state: params.state,
+              status: params.status,
+              priority: params.priority,
+              q: params.q,
+            }}
+            activeViewId={params.view ? Number(params.view) : null}
+            currentUserId={actor.userId}
+          />
+
+          <JobsTable
+            jobs={jobs}
+            statuses={statuses.map((s) => ({ id: s.id, name: s.name }))}
+            users={siteUsers
+              .filter((u) => u.isActive && u.userType === 'back_office')
+              .map((u) => ({ id: u.id, name: u.name }))}
+            canEdit={can(capabilities, 'jobs.edit')}
+            canAssign={can(capabilities, 'jobs.assign')}
+          />
 
           <Pagination
             page={page}

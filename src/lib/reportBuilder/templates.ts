@@ -1031,6 +1031,122 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
 
+  /* ── The Phase-1 job reports the new sources unlocked (22) ────────────────
+   *
+   * Still not fifteen, and deliberately. The PRD itself says "avoid building
+   * too many specialised reports initially — a smaller set of reliable,
+   * filterable reports will deliver more value", and templates.ts has argued
+   * the same since phase 9.
+   *
+   * These five are the ones somebody would otherwise have to build from
+   * scratch on a Monday morning: two protect money, two answer "did we turn
+   * up", and one is the timesheet a payroll run needs.
+   */
+  {
+    id: 'job-time-and-labour',
+    name: 'Time and labour on jobs',
+    description:
+      'Hours booked against jobs, by person — what was worked, what was on break, and what is still running.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobTime',
+      groupFields: ['userName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'hours', agg: 'sum' },
+        { field: 'breakMinutes', agg: 'sum' },
+      ],
+      sort: { key: 'hours_sum', dir: 'desc' },
+      chartType: 'bar',
+    }),
+  },
+  {
+    id: 'job-travel',
+    name: 'Travel on jobs',
+    description:
+      'Every trip with its expected, recorded and chargeable kilometres — and whether anybody checked it.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobTravel',
+      columns: [
+        { field: 'travelledOn' },
+        { field: 'jobNumber' },
+        { field: 'userName' },
+        { field: 'expectedKm' },
+        { field: 'recordedKm' },
+        { field: 'chargeableKm' },
+        { field: 'varianceKm' },
+        { field: 'travelCharge' },
+        { field: 'verified' },
+      ],
+      // Biggest overrun first — the row an approver is looking for.
+      sort: { key: 'varianceKm', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'job-travel-unverified',
+    name: 'Travel nobody has checked',
+    description:
+      'Kilometres claimed and never approved. Each one is either money owed to a technician or money the business should not pay.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobTravel',
+      filters: [{ field: 'verified', op: 'eq', value: 'No' }],
+      columns: [
+        { field: 'travelledOn' },
+        { field: 'jobNumber' },
+        { field: 'userName' },
+        { field: 'recordedKm' },
+        { field: 'varianceKm' },
+        { field: 'travelCharge' },
+        { field: 'toleranceBreached' },
+      ],
+      sort: { key: 'travelledOn', dir: 'asc' },
+    }),
+  },
+  {
+    id: 'job-visit-performance',
+    name: 'Did we turn up on time',
+    description:
+      'Every booked visit by outcome — attended, late, cancelled or a no-show. On time means within fifteen minutes.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobVisits',
+      groupFields: ['status'],
+      columns: [
+        { field: '__rows' },
+        { field: 'minutesLate', agg: 'avg' },
+        { field: 'onSiteMinutes', agg: 'avg' },
+      ],
+      sort: { key: '__rows', dir: 'desc' },
+      chartType: 'bar',
+    }),
+  },
+  {
+    id: 'job-visits-missed',
+    name: 'Visits that did not happen',
+    description:
+      'Bookings cancelled or missed, with the reason recorded at the time. A customer whose name repeats here is one about to leave.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobVisits',
+      filters: [{ field: 'attended', op: 'eq', value: 'No' }],
+      columns: [
+        { field: 'startsAt' },
+        { field: 'jobNumber' },
+        { field: 'customerName' },
+        { field: 'status' },
+        { field: 'outcomeReason' },
+      ],
+      sort: { key: 'startsAt', dir: 'desc' },
+    }),
+  },
+
   /* ── Operations ──────────────────────────────────────────────────────────── */
   {
     id: 'cashup-history',

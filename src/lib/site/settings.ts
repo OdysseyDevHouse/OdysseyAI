@@ -437,6 +437,62 @@ export const SETTING_DEFAULTS = {
    */
   job_signature_statement:
     'I confirm the work described on this job card has been completed to my satisfaction.',
+
+  /* ── Who is on a job, and who hears about it ────────────────────────────── */
+
+  /**
+   * Whether job emails go out at all.
+   *
+   * ON by default, unlike almost every other switch here — because nothing
+   * happens unless somebody explicitly put a person on a job. The surprising
+   * behaviour would be adding a follower and having them told nothing.
+   */
+  job_notify_enabled: '1',
+
+  /**
+   * Which moments send mail. Three, not everything that changes.
+   *
+   * A notification on every edit trains people to filter the lot into a folder
+   * they never open — at which point the feature is worse than absent, because
+   * everybody believes they were told. A list rather than three columns so a
+   * fourth moment is a settings change, not a migration.
+   */
+  job_notify_events: 'assigned,status,closed',
+
+  /**
+   * Whether an assignee is emailed when work is given to them.
+   *
+   * Separate from the follower switch because it is a different promise: a
+   * follower opted in, an assignee has been handed something.
+   */
+  job_notify_assignee: '1',
+
+  /* ── The three time-based automations (121) ─────────────────────────────── */
+
+  /**
+   * Escalate a breached SLA to the owner and followers.
+   *
+   * ON, because the SLA data has existed since phase 8 and nothing ever acted on
+   * it. A breach worklist nobody is told about is one nobody opens.
+   */
+  job_auto_escalate: '1',
+
+  /** Remind the assigned technician the evening before a booked visit. */
+  job_auto_visit_reminder: '1',
+
+  /** How many hours ahead a visit is reminded about. 16 catches tomorrow morning. */
+  job_auto_visit_hours: '16',
+
+  /**
+   * Raise the draft invoice when a job closes with billable lines.
+   *
+   * OFF, and the only one of the three that is. The others send an email, where a
+   * wrong one is noise; this creates paperwork against a real customer account,
+   * and a job closed by mistake leaves an invoice somebody must find and void.
+   * It raises a DRAFT — finalising stays a human act through the one posting
+   * engine.
+   */
+  job_auto_invoice: '0',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS

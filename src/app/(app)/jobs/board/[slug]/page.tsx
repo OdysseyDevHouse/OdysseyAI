@@ -15,11 +15,11 @@ import {
   TextLink,
 } from '@/components/ui'
 import { JOB_PRIORITIES, PRIORITY_LABEL } from '@/lib/jobStatusModel'
-import JobBoard from './JobBoard'
+import JobBoard, { type BoardGrouping } from './JobBoard'
 
 export const dynamic = 'force-dynamic'
 
-type Search = { priority?: string; mine?: string }
+type Search = { priority?: string; mine?: string; group?: string }
 
 /**
  * One board.
@@ -48,6 +48,11 @@ export default async function BoardPage({
   const { siteId, actor, capabilities } = await requireCapability('jobs.view')
   const { slug } = await params
   const query = await searchParams
+
+  // Narrowed rather than cast: ?group=nonsense must fall back to no lanes, not
+  // reach the component as a value it will silently render nothing for.
+  const grouping: BoardGrouping =
+    query.group === 'owner' || query.group === 'priority' ? query.group : 'none'
 
   const board = await getJobBoard(siteId, slug)
   if (!board) notFound()
@@ -123,6 +128,18 @@ export default async function BoardPage({
                   aria-label="Whose jobs to show"
                 />
               )}
+              {/* Grouping SPLITS the board into lanes; it never filters. Every job
+                  on the board before is on it after, which is why this sits beside
+                  the filters rather than among them. */}
+              <LinkSegmentedControl
+                options={[
+                  { value: 'none', label: 'No lanes', href: href({ group: undefined }) },
+                  { value: 'owner', label: 'By person', href: href({ group: 'owner' }) },
+                  { value: 'priority', label: 'By priority', href: href({ group: 'priority' }) },
+                ]}
+                value={grouping}
+                aria-label="How to group the board"
+              />
             </div>
           }
         >
@@ -145,6 +162,7 @@ export default async function BoardPage({
           boardSlug={slug}
           columns={columns}
           canMove={can(capabilities, 'jobs.edit')}
+          groupBy={grouping}
         />
       </PageBody>
     </>

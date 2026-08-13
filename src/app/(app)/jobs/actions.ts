@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { actorFor, actorForOrThrow } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { searchCustomersForTill, type TillCustomer } from '@/lib/site/tillCustomers'
 import { listServiceAddresses, type ServiceAddress } from '@/lib/site/serviceAddresses'
 import {
@@ -13,11 +14,21 @@ import {
   closeJob,
   cancelJob,
   reopenJob,
+  bulkUpdateJobs,
   type JobCardInput,
   type JobLineInput,
   type JobSaveResult,
   type JobActionResult,
+  type JobBulkChange,
+  type JobBulkResult,
 } from '@/lib/site/jobCards'
+import {
+  saveJobView,
+  deleteJobView,
+  type ViewFilters,
+  type ViewResult,
+  type ViewActionResult,
+} from '@/lib/site/jobViews'
 import { invoiceJob, type InvoiceLineInput, type InvoiceJobResult } from '@/lib/site/jobInvoicing'
 import {
   markResponded,
@@ -65,6 +76,13 @@ import {
 } from '@/lib/site/jobSeries'
 import { setSetting } from '@/lib/site/settings'
 import { storeUpload, deleteStoredFile } from '@/lib/uploads'
+import {
+  setJobPerson,
+  removeJobPerson,
+  toggleFollow,
+  type JobRole,
+  type PeopleResult,
+} from '@/lib/site/jobPeople'
 import {
   formatClock,
   isDayMask,
@@ -198,7 +216,17 @@ export async function setStatusAction(
   const ctx = await actorFor('jobs.edit')
   if ('ok' in ctx) return ctx
 
-  const result = await setStatus(ctx.siteId, ctx.actor, jobId, statusId, reason)
+  // jobs.invoice is the office test: the stages marked office-only are the
+  // billing ones, and somebody who may raise the invoice may say a job is ready
+  // for it.
+  const result = await setStatus(
+    ctx.siteId,
+    ctx.actor,
+    jobId,
+    statusId,
+    reason,
+    can(ctx.capabilities, 'jobs.invoice'),
+  )
   if (!result.ok) return result
   revalidateJobs(jobId)
   return result
@@ -324,7 +352,24 @@ export async function moveCardAction(
   const ctx = await actorFor('jobs.edit')
   if ('ok' in ctx) return ctx
 
-  const result = await setStatus(ctx.siteId, ctx.actor, jobId, statusId)
+  /*
+   * The drag gets the SAME rules as the dropdown — 37.2 says so explicitly, and
+   * it is the whole reason moveCard goes through setStatus rather than writing
+   * the column itself.
+   *
+   * A stage that needs a reason therefore cannot be reached by dragging, because
+   * a drag carries no sentence. That refusal is correct rather than a gap: the
+   * card bounces back with the reason named, and the user moves it from the job
+   * where they can type one.
+   */
+  const result = await setStatus(
+    ctx.siteId,
+    ctx.actor,
+    jobId,
+    statusId,
+    undefined,
+    can(ctx.capabilities, 'jobs.invoice'),
+  )
   if (!result.ok) return result
   revalidatePath(`/jobs/board/${boardSlug}`)
   revalidateJobs(jobId)
@@ -1015,6 +1060,120 @@ export async function captureEvidenceAction(
   return { ok: true }
 }
 
+/* ── Bulk actions and saved views (37.2) ──────────────────────────────────── */
+
+/**
+ * One change, many jobs.
+ *
+ * Guarded on the capability the SINGLE version of each change needs, not on a
+ * blanket one: changing a status in bulk requires exactly what changing it one
+ * at a time requires. A single `jobs.bulk` capability would let somebody who may
+ * not reassign work do it fifty times at once.
+ */
+export async function bulkUpdateJobsAction(
+  ids: number[],
+  change: JobBulkChange,
+): Promise<JobBulkResult | { ok: false; error: string }> {
+  const needed = change.kind === 'owner' ? 'jobs.assign' : 'jobs.edit'
+  const ctx = await actorFor(needed)
+  if ('ok' in ctx) return ctx
+
+  const result = await bulkUpdateJobs(
+    ctx.siteId,
+    ctx.actor,
+    ids,
+    change,
+    can(ctx.capabilities, 'jobs.invoice'),
+  )
+  revalidatePath('/jobs')
+  revalidatePath('/jobs/board')
+  ids.forEach((id) => revalidateJobs(id))
+  return result
+}
+
+export async function saveJobViewAction(input: {
+  id: number | null
+  name: string
+  filters: ViewFilters
+  isShared: boolean
+  isPinned: boolean
+}): Promise<ViewResult> {
+  // jobs.view, not jobs.setup: naming a filter set over work you can already see
+  // is not a configuration act, and requiring setup would mean only an
+  // administrator could keep a shortlist.
+  const ctx = await actorFor('jobs.view')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveJobView(ctx.siteId, ctx.actor, input)
+  if (!result.ok) return result
+  revalidatePath('/jobs')
+  return result
+}
+
+export async function deleteJobViewAction(id: number): Promise<ViewActionResult> {
+  const ctx = await actorFor('jobs.view')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteJobView(ctx.siteId, ctx.actor, id)
+  if (!result.ok) return result
+  revalidatePath('/jobs')
+  return result
+}
+
+/* ── Who is on a job ───────────────────────────────────────────────────────── */
+
+/**
+ * Put somebody on a job, or change what they are.
+ *
+ * jobs.assign, not jobs.edit: deciding who does the work is a different
+ * authority from doing it. Matches how assignOwnerAction is guarded.
+ */
+export async function setJobPersonAction(
+  jobId: number,
+  userId: number,
+  role: JobRole,
+): Promise<PeopleResult> {
+  const ctx = await actorFor('jobs.assign')
+  if ('ok' in ctx) return ctx
+
+  const result = await setJobPerson(ctx.siteId, ctx.actor, jobId, userId, role)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
+}
+
+export async function removeJobPersonAction(
+  jobId: number,
+  userId: number,
+): Promise<PeopleResult> {
+  const ctx = await actorFor('jobs.assign')
+  if ('ok' in ctx) return ctx
+
+  const result = await removeJobPerson(ctx.siteId, ctx.actor, jobId, userId)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
+}
+
+/**
+ * Follow or unfollow a job yourself.
+ *
+ * Guarded on jobs.view, NOT jobs.assign. Choosing to watch something you can
+ * already see needs no authority over it — requiring jobs.assign would mean only
+ * the people who hand out work could subscribe to it, which is backwards.
+ */
+export async function toggleFollowAction(
+  jobId: number,
+): Promise<PeopleResult & { following?: boolean }> {
+  const ctx = await actorFor('jobs.view')
+  if ('ok' in ctx) return ctx
+
+  const result = await toggleFollow(ctx.siteId, ctx.actor, jobId)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
+}
+
 export async function deleteJobItemAction(jobId: number, itemId: number): Promise<ItemResult> {
   const ctx = await actorFor('jobs.edit')
   if ('ok' in ctx) return ctx
@@ -1112,6 +1271,84 @@ export async function saveTradingHoursAction(input: {
   revalidatePath('/jobs/sla')
   revalidatePath('/jobs')
   return { ok: true, message: 'Trading hours saved. New jobs will use them from now on.' }
+}
+
+/**
+ * The eleven settings that decide how a job behaves.
+ *
+ * Accumulated across phases 11 to 15 with no screen at all, so every one of them
+ * has been whatever the migration seeded. They save together because they read
+ * together: a person setting up notifications wants to say what goes out AND
+ * when in one act, and a half-saved group would leave the screen disagreeing
+ * with itself.
+ *
+ * Validated here rather than trusted from the client for the usual reason — the
+ * action is the boundary, and a number field is a text input to anybody with
+ * curl.
+ */
+export async function saveJobSettingsAction(input: {
+  itemsBlockClose: boolean
+  headlineRequired: boolean
+  signatureStatement: string
+  notifyEnabled: boolean
+  notifyAssignee: boolean
+  notifyEvents: string[]
+  autoEscalate: boolean
+  autoVisitReminder: boolean
+  autoVisitHours: number
+  autoInvoice: boolean
+}): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const statement = input.signatureStatement.trim()
+  if (!statement) {
+    return {
+      ok: false,
+      error: 'A signature needs wording above it — a mark with nothing stating what it means is not worth capturing.',
+    }
+  }
+  if (statement.length > 400) {
+    return { ok: false, error: 'That wording is too long for the pad. Keep it under 400 characters.' }
+  }
+
+  // The set is closed on purpose: a typo would create a fourth "moment" that
+  // silently never fires, and nothing would say why.
+  const allowed = new Set(['assigned', 'status', 'closed'])
+  const events = input.notifyEvents.filter((e) => allowed.has(e))
+  if (input.notifyEnabled && events.length === 0) {
+    return {
+      ok: false,
+      error: 'Emails are on but nothing would send one. Pick at least one moment, or switch emails off.',
+    }
+  }
+
+  const hours = Math.round(input.autoVisitHours)
+  if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
+    return { ok: false, error: 'Remind between 1 and 168 hours before a visit.' }
+  }
+
+  // All eleven or none, on the trading-hours precedent: a half-saved group would
+  // behave in a way nobody chose.
+  for (const [key, value] of [
+    ['job_items_block_close', input.itemsBlockClose ? '1' : '0'],
+    ['job_headline_required', input.headlineRequired ? '1' : '0'],
+    ['job_signature_statement', statement],
+    ['job_notify_enabled', input.notifyEnabled ? '1' : '0'],
+    ['job_notify_assignee', input.notifyAssignee ? '1' : '0'],
+    ['job_notify_events', events.join(',')],
+    ['job_auto_escalate', input.autoEscalate ? '1' : '0'],
+    ['job_auto_visit_reminder', input.autoVisitReminder ? '1' : '0'],
+    ['job_auto_visit_hours', String(hours)],
+    ['job_auto_invoice', input.autoInvoice ? '1' : '0'],
+  ] as const) {
+    const saved = await setSetting(ctx.siteId, key, value)
+    if (!saved.ok) return saved
+  }
+
+  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs')
+  return { ok: true, message: 'Saved.' }
 }
 
 export async function reorderStatusesAction(ids: number[]): Promise<StatusSaveResult> {

@@ -52,6 +52,21 @@ export type JobStatus = {
   role: JobStatusRole
   isSystem: boolean
   isActive: boolean
+  /* ── Rules per stage (123). Section 10.1 of the PRD. ────────────────────── */
+  /** Ask for a sentence when a job enters this stage. */
+  requiresReason: boolean
+  /**
+   * Refuse the move while required checks are outstanding.
+   *
+   * NULL means "use the site setting", which is what every status created before
+   * 123 carries — so nothing changed for a site that migrated and touched
+   * nothing.
+   */
+  blocksOnIncomplete: boolean | null
+  /** Who may move a job here. 'office' keeps a technician out of the billing stages. */
+  audience: 'anyone' | 'office'
+  /** Closed without claiming a role. See the header of 123. */
+  isClosedStage: boolean
   /** Jobs sitting in it. Shown before offering to retire or delete one. */
   jobCount: number
 }
@@ -63,6 +78,12 @@ export type JobStatusInput = {
   tone: JobStatusTone
   role: JobStatusRole
   isActive: boolean
+  /* ── The rules, 123. All optional so an older caller behaves as before. ─── */
+  requiresReason?: boolean
+  /** null = fall back to the site setting. */
+  blocksOnIncomplete?: boolean | null
+  audience?: 'anyone' | 'office'
+  isClosedStage?: boolean
 }
 
 export type StatusSaveResult = { ok: true; id: number } | { ok: false; error: string }
@@ -71,6 +92,7 @@ type Row = RowDataPacket & Record<string, unknown>
 
 const SELECT_STATUS = `
   SELECT s.id, s.code, s.name, s.tone, s.sort_order, s.role, s.is_system, s.is_active,
+         s.requires_reason, s.blocks_on_incomplete, s.audience, s.is_closed_stage,
          (SELECT COUNT(*) FROM job_cards j WHERE j.status_id = s.id) AS job_count
     FROM job_statuses s`
 
@@ -84,6 +106,16 @@ function mapStatus(row: Row): JobStatus {
     role: String(row.role) as JobStatusRole,
     isSystem: Number(row.is_system) === 1,
     isActive: Number(row.is_active) === 1,
+    requiresReason: Number(row.requires_reason) === 1,
+    // NULL is preserved rather than coerced: "not decided" and "decided no" are
+    // different answers, and flattening them would silently switch the close
+    // guard off for every status created before 123.
+    blocksOnIncomplete:
+      row.blocks_on_incomplete === null || row.blocks_on_incomplete === undefined
+        ? null
+        : Number(row.blocks_on_incomplete) === 1,
+    audience: String(row.audience ?? 'anyone') as 'anyone' | 'office',
+    isClosedStage: Number(row.is_closed_stage) === 1,
     jobCount: Number(row.job_count ?? 0),
   }
 }
@@ -210,9 +242,27 @@ export async function saveJobStatus(
 
     const result = await siteExecute(
       siteId,
-      `INSERT INTO job_statuses (code, name, tone, sort_order, role, is_system, is_active)
-       VALUES (?, ?, ?, ?, ?, 0, ?)`,
-      [code, name, input.tone, maxSort + 10, input.role, input.isActive ? 1 : 0],
+      `INSERT INTO job_statuses
+         (code, name, tone, sort_order, role, is_system, is_active,
+          requires_reason, blocks_on_incomplete, audience, is_closed_stage)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+      [
+        code,
+        name,
+        input.tone,
+        maxSort + 10,
+        input.role,
+        input.isActive ? 1 : 0,
+        input.requiresReason ? 1 : 0,
+        // undefined and null both mean "not decided", which is the site setting.
+        input.blocksOnIncomplete === null || input.blocksOnIncomplete === undefined
+          ? null
+          : input.blocksOnIncomplete
+            ? 1
+            : 0,
+        input.audience ?? 'anyone',
+        input.isClosedStage ? 1 : 0,
+      ],
     )
     const id = Number(result.insertId)
     await logActivity(siteId, actor, {
@@ -229,8 +279,25 @@ export async function saveJobStatus(
 
   await siteExecute(
     siteId,
-    `UPDATE job_statuses SET name = ?, tone = ?, role = ?, is_active = ? WHERE id = ?`,
-    [name, input.tone, input.role, input.isActive ? 1 : 0, input.id],
+    `UPDATE job_statuses
+        SET name = ?, tone = ?, role = ?, is_active = ?,
+            requires_reason = ?, blocks_on_incomplete = ?, audience = ?, is_closed_stage = ?
+      WHERE id = ?`,
+    [
+      name,
+      input.tone,
+      input.role,
+      input.isActive ? 1 : 0,
+      input.requiresReason ? 1 : 0,
+      input.blocksOnIncomplete === null || input.blocksOnIncomplete === undefined
+        ? null
+        : input.blocksOnIncomplete
+          ? 1
+          : 0,
+      input.audience ?? 'anyone',
+      input.isClosedStage ? 1 : 0,
+      input.id,
+    ],
   )
   await logActivity(siteId, actor, {
     entity: 'job_card',

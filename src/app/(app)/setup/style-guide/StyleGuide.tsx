@@ -42,6 +42,7 @@ import {
   Modal,
   PinPad,
   SignaturePad,
+  LaneWeek,
   NumberInput,
   PageBody,
   PageHeader,
@@ -140,6 +141,7 @@ export default function StyleGuidePage() {
         <ModalSection />
         <PinPadSection />
         <SignaturePadSection />
+        <LaneWeekSection />
         <ComboboxSection />
         <FilterBarSection />
         <DateRangeSection />
@@ -188,6 +190,12 @@ function ButtonsSection() {
     { variant: 'danger', note: 'Destructive confirm', label: 'Delete', icon: false },
     { variant: 'danger-ghost', note: 'Inline destructive (tables)', label: 'Delete', icon: false },
     { variant: 'ghost', note: 'Low-emphasis / toolbar', label: 'Cancel', icon: false },
+    {
+      variant: 'key',
+      note: 'A keypad key — neutral fill so ten of them read as a pad (the till’s PinPad)',
+      label: '7',
+      icon: false,
+    },
     {
       variant: 'bare',
       note: 'Chromeless icon — inside other chrome (editor toolbar, sidebar)',
@@ -1370,20 +1378,25 @@ function ModalSection() {
 function PinPadSection() {
   const [entered, setEntered] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [rejects, setRejects] = useState(0)
 
   return (
     <Card>
       <CardHeader
         title="PinPad"
-        description="<PinPad /> — till sign-in and supervisor overrides. Touch targets sized for a counter screen; the physical keyboard works too"
+        description="<PinPad /> — till sign-in, unlock and the staff clock. Touch targets sized for a counter screen; the physical keyboard works too. The entry box masks what is typed, because the customer is on the other side of the screen"
       />
       <div className="flex flex-wrap items-start gap-6 px-5 py-5">
-        <Spec name="<PinPad>" note="4 digits submit automatically; 6 need Enter" />
+        <Spec name="<PinPad>" note="4 digits submit automatically; 5–6 need OK" />
+        <Spec name="submitLabel" note="one grid cell — keep it as short as OK" />
+        <Spec name="wide" note="the sign-in lock screen — 510px, taller keys" />
+        <Spec name="rejectedAt" note="bump per refusal to shake; a count, not a flag" />
         <PinPad
           onSubmit={(pin) => {
-            // 1234 fails here purely to show the error state.
+            // 1234 fails here purely to show the error and shake states.
             if (pin === '1234') {
               setError('That PIN was not recognised.')
+              setRejects((n) => n + 1)
               setEntered(null)
             } else {
               setError(null)
@@ -1391,6 +1404,7 @@ function PinPadSection() {
             }
           }}
           error={error}
+          rejectedAt={rejects}
           onCancel={() => {
             setEntered(null)
             setError(null)
@@ -1398,6 +1412,49 @@ function PinPadSection() {
         />
         <p className="text-xs text-muted">
           {entered ? `Accepted ${entered.length} digits.` : 'Try 1234 to see the error state.'}
+        </p>
+      </div>
+    </Card>
+  )
+}
+
+function LaneWeekSection() {
+  const days = ['Mon 3', 'Tue 4', 'Wed 5', 'Thu 6', 'Fri 7'].map((label, i) => ({
+    date: `2026-08-0${3 + i}`,
+    label,
+    isToday: i === 2,
+  }))
+  const block = (text: string) => (
+    <div className="rounded-control border border-border bg-surface-2 px-1.5 py-1 text-xs text-ink">
+      {text}
+    </div>
+  )
+  return (
+    <Card>
+      <CardHeader
+        title="LaneWeek"
+        description="<LaneWeek /> — a week across, one row per person, blocks where the work is. Knows nothing about jobs: it takes lanes, days and blocks"
+      />
+      <div className="space-y-3 px-5 py-5">
+        <Spec name="<LaneWeek>" note="read-only; scrolls horizontally rather than crushing days" />
+        <LaneWeek
+          lanes={[
+            { id: 'p', label: 'Piet', hint: '3 visits' },
+            { id: 'n', label: 'Naledi', hint: '1 visit' },
+            { id: 'x', label: 'Nobody assigned', hint: '1 visit' },
+          ]}
+          days={days}
+          blocks={[
+            { id: 1, laneId: 'p', date: '2026-08-03', order: 480, content: block('08:00 Harbour Cafe') },
+            { id: 2, laneId: 'p', date: '2026-08-03', order: 660, content: block('11:00 Mr Botha') },
+            { id: 3, laneId: 'p', date: '2026-08-06', order: 540, content: block('09:00 Depot') },
+            { id: 4, laneId: 'n', date: '2026-08-04', order: 600, content: block('10:00 Harbour Cafe') },
+            { id: 5, laneId: 'x', date: '2026-08-05', order: 840, content: block('14:00 unassigned') },
+          ]}
+        />
+        <p className="text-xs text-muted">
+          Wednesday is marked as today. The unassigned lane is pinned last by the caller — a
+          visit nobody is going to is what a dispatcher opens the week to find.
         </p>
       </div>
     </Card>

@@ -11,6 +11,8 @@ import WorkflowClient from './WorkflowClient'
 import SlaPanel from './SlaPanel'
 import HeadlinesPanel from './HeadlinesPanel'
 import AssetTypesPanel from './AssetTypesPanel'
+import NotificationsPanel from './NotificationsPanel'
+import { isConfigured } from '@/lib/mail'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,6 +58,17 @@ export default async function JobWorkflowPage() {
       'job_sla_opens_at',
       'job_sla_closes_at',
       'job_sla_skip_holidays',
+      // The eleven that had no screen until now.
+      'job_items_block_close',
+      'job_headline_required',
+      'job_signature_statement',
+      'job_notify_enabled',
+      'job_notify_assignee',
+      'job_notify_events',
+      'job_auto_escalate',
+      'job_auto_visit_reminder',
+      'job_auto_visit_hours',
+      'job_auto_invoice',
     ]),
     /*
      * Tolerant: a nicety on a setup screen. A site mid-migration must still be
@@ -129,6 +142,29 @@ export default async function JobWorkflowPage() {
           closesAt={settings.job_sla_closes_at}
           skipHolidays={settings.job_sla_skip_holidays === '1'}
           untargetedCount={untargeted}
+        />
+
+        {/* Last, because it is the only panel that is purely behaviour: the four
+            above define what a job IS, this one what it DOES on its own. */}
+        <NotificationsPanel
+          itemsBlockClose={settings.job_items_block_close !== '0'}
+          headlineRequired={settings.job_headline_required === '1'}
+          signatureStatement={settings.job_signature_statement}
+          notifyEnabled={settings.job_notify_enabled !== '0'}
+          notifyAssignee={settings.job_notify_assignee !== '0'}
+          notifyEvents={settings.job_notify_events.split(',').map((e) => e.trim()).filter(Boolean)}
+          autoEscalate={settings.job_auto_escalate === '1'}
+          autoVisitReminder={settings.job_auto_visit_reminder === '1'}
+          autoVisitHours={Number(settings.job_auto_visit_hours) || 16}
+          autoInvoice={settings.job_auto_invoice === '1'}
+          /*
+           * Both read on the SERVER. isConfigured() reads process.env, which a
+           * client component cannot see — and a panel that cannot tell whether
+           * mail works would let somebody switch on notifications and believe
+           * they were covered.
+           */
+          mailConfigured={isConfigured()}
+          cronConfigured={Boolean(process.env.JOB_AUTOMATION_CRON_SECRET)}
         />
       </PageBody>
     </>

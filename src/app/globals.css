@@ -513,3 +513,43 @@ input[type='range'] {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-strong) transparent;
 }
+
+/* Rejected PIN: shake the pad.
+   A wrong PIN at a counter is entered by someone already looking at the
+   customer rather than the screen, and a line of red text below the pad is
+   easy to miss on the way to typing again. The movement is what carries
+   "that was refused" without being read.
+
+   Reduced-motion users still get the error text — which is why the message is
+   never carried by the animation alone. */
+@keyframes pin-shake {
+  10%,
+  90% {
+    transform: translateX(-2px);
+  }
+  20%,
+  80% {
+    transform: translateX(4px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-7px);
+  }
+  40%,
+  60% {
+    transform: translateX(7px);
+  }
+  100% {
+    transform: none;
+  }
+}
+.pin-shake {
+  animation: pin-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin-shake {
+    animation: none;
+  }
+}

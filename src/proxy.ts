@@ -90,6 +90,14 @@ const PUBLIC_PREFIXES = [
   // customer rings to ask why nobody came. There is no error, no missing
   // invoice, no wrong price: just work that was never raised.
   '/api/jobs/series/tick',
+  // The three time-based job automations: escalate a breached SLA, remind before
+  // a visit, raise the draft invoice on a closed job. JOB_AUTOMATION_CRON_SECRET,
+  // its own secret, compared in constant time, 503 when it is not set.
+  //
+  // Behind a cookie gate this fails the same quiet way the series tick does, and
+  // the escalation is the one that matters: a job breaches its promise, the
+  // worklist shows it, and the person who could still act on it is never told.
+  '/api/jobs/automations/tick',
   // The landing page for an emailed "pay this invoice" link. The payer is a
   // customer, not a user of the back office, and will never have a session.
   //

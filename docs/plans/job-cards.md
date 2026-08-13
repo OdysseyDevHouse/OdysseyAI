@@ -1053,14 +1053,16 @@ each unblocks:
 | §23 | ~~Tasks and checklists~~ | **shipped, phase 10** |
 | §24 | ~~Custom forms~~ | **shipped as checklist templates, phases 10 + 13.** All eight response types, and since 13 a photo holds a photo and a signature holds a signature. What remains undone is the *builder* — conditional logic and per-response versioning — which is a different product, not a missing half of this one. |
 | §18 | ~~Customer assets + service history~~ | **shipped, phase 11** |
-| §13 | Followers | Assignment exists; subscribing without editing does not |
-| §16 | Teams, job-level multi-assignee | Only per-appointment assignees today |
+| §13 | ~~Followers~~ | **shipped, phase 14** — with email on three moments, never on every edit |
+| §16 | ~~Teams, job-level multi-assignee~~ | **shipped, phase 14.** What remains is a *named* team as a reusable entity ("the North crew"), which is a different feature from putting several people on a job. |
 | §15 | ~~Recurring jobs~~ | **shipped, phase 12** |
-| §12 | Workflow automation | Not even the six hard-coded rules I proposed as the substitute |
+| §12 | ~~Workflow automation~~ | **shipped as six named rules, phases 14 + 15.** Three notifications and three time-based automations, each separately switchable. A general *engine* remains deliberately unbuilt — see the deferred table. |
 | §4.2, §4.3 | Customer portal, public forms | The `source` enum reserves `portal`/`public_form`, so a job can *claim* an origin with no way to arrive that way |
-| §36 | Notifications | Nothing, not even the email-only subset promised |
-| §37.2 | Kanban grouping, saved views, bulk actions | Drag-to-status works; the rest does not |
-| §60 | Week / technician-lane calendar | Only a day view |
+| §36 | ~~Notifications~~ | **email subset shipped, phases 14 + 15.** In-app notifications and SMS remain separate platform projects; the header bell is still a dead button. |
+| §37.2 | ~~Kanban grouping, saved views, bulk actions~~ | **shipped, phase 17.** All three. |
+| §60 | ~~Week / technician-lane calendar~~ | **shipped, phase 18** — read-only. Drag-to-reschedule is a phase of its own: it needs a conflict check, an audit trail and a notification. |
+| Phase-1 dashboards | **2 of 4 shipped, phases 20 + 21.** Operations and My Work. The Scheduling dashboard is largely covered by the week grid and the board; the Financial one wants the costing reports first. |
+| Phase-1 reports | **8 of 15 named, phase 22** — and the blocker is gone. `jobTime`, `jobTravel` and `jobVisits` are now catalog sources, so every remaining report can be built without a developer. |
 | §27 | Receipt OCR | Deferred by agreement |
 | §33 | Deposits on a job | |
 | §41 | Offline mobile | Deferred by agreement |
@@ -1529,6 +1531,532 @@ Smoke crawl **155 passed, 0 failed**. Demo data removed from both sites;
 defaults but no settings screen — neither does `job_items_block_close` or
 `job_headline_required` from phase 11, so the whole group wants one panel rather
 than a field bolted on here.
+
+---
+
+## What phase 14 shipped
+
+`sql/site/120_job_people.sql` — one table, three settings.
+
+### Two PRD sections, one shape
+
+§16 wants a job-level team: two technicians on one job without booking a visit
+first. §13 wants followers: a manager who hears about a job without being
+responsible for it. Both are "more people attached to a job", so they share one
+table with a `role ENUM('assignee','follower')`.
+
+The split into two tables was rejected **on the read**. "Every job I am involved
+in" feeds the job list filter, the dashboard tile and every notification
+decision, and across two tables it is a UNION that every future caller has to
+remember to write both halves of. Getting it wrong does not error — it silently
+shows somebody half their work. One table also makes promotion an `UPDATE`
+rather than a delete-and-insert, so the row recording *when they first got
+involved* survives it.
+
+### The owner stays a column
+
+It would be tidier to delete `owner_user_id` and make the owner "the assignee
+with a flag". It stays, for the reason 104 gave it: the owner is the ONE person
+answerable, it is on every list screen and index, and turning a single-valued
+fact into a row somebody must aggregate is how a list screen acquires a
+subquery.
+
+So the owner is **not** a row here, and `setJobPerson` refuses to make one —
+a person in both places is counted twice on every workload figure.
+`everyoneOn()` adds them from the column instead.
+
+### The bug that only pressing the button found
+
+`setJobPerson` refused the owner. **`toggleFollow` did not.** Following your own
+job wrote exactly the `ownerDuplicated` row that `reconcileJobPeople` exists to
+report — caught by clicking Follow on a live screen, not by any assertion.
+
+`everyoneOn` deduplicates, so nobody was ever emailed twice. But a row that a
+reconciliation screen calls drift must not be creatable by pressing a button.
+Both the server and the panel now refuse it, and `(J22)` asserts it.
+
+Relatedly, the panel takes `ownerUserId` and not just `ownerName`: a live job on
+this site has **"Naledi K" stored against user 1, Tiaan Smith**, so matching on
+the snapshot name would have got the check wrong.
+
+### Notification, on three moments
+
+Assigned, status changed, closed — not every edit. A notification on every change
+trains people to filter the lot into a folder they never open, at which point the
+feature is worse than absent because everybody believes they were told.
+
+Every send follows the `orderNotify` contract exactly: **never throws, never
+blocks the state change**, and returns a reason rather than failing silently. It
+is fired after the commit with `void … .catch(() => {})` from `setStatus` and
+`assignOwner`, beside `recordServiceOnClose` and for the same reason. A job that
+cannot be closed because a mail server is down is a far worse outcome than an
+email nobody receives.
+
+In-app notifications remain the separate platform project the plan called them.
+`052_status_notifications.sql` is customer-facing order email and is not reusable
+here; the header bell is still a dead button.
+
+**A follower row grants nothing.** What somebody may see is still decided by
+`jobs.view` / `jobs.view_own`. If following granted access, adding a follower
+would become a way to widen permissions without touching the permissions screen.
+
+`toggleFollow` is guarded on `jobs.view`, not `jobs.assign`: choosing to watch
+something you can already see needs no authority over it, and requiring
+`jobs.assign` would mean only the people who hand out work could subscribe to it.
+
+### The test suite was emailing a real person
+
+`(J22)`'s first run reported **"sent 1"**. This dev box has real SMTP credentials
+in `.env`, so `setJobPerson` and `assignOwner` were mailing an actual user on
+every run. Mail is now switched off for the whole block and restored in the
+teardown — which also exercises the switch, so nothing was lost. A test suite
+that mails people is a test suite somebody eventually stops running.
+
+### Verified
+
+`(J22)` is 24 checks; the suite is **546**, up from 521. The chain: **45 suites,
+exit 0, zero failures, and no mail sent** — the last confirmed by grepping the
+log for a non-zero send.
+
+Driven live: added an assignee, watched the owner refusal fire with its own
+message, followed and unfollowed a job and saw the count and button flip, then
+confirmed the Follow button is **hidden for the owner** and the picker excludes
+them. Smoke crawl **155 passed, 0 failed**. `reconcileJobPeople` reports zero
+drift on both sites.
+
+**Not done:** the three `job_notify_*` settings have no screen, joining
+`job_signature_*` from phase 13 and `job_items_block_close` from phase 11. That
+group now wants one job-notification panel rather than a field bolted onto any of
+them.
+
+---
+
+## What phase 15 shipped
+
+`sql/site/121_job_automations.sql` — one claim table, four settings.
+
+### Three named rules, not an engine
+
+§12 asks for a workflow automation engine. The plan argued that out in favour of
+six named, separately-switchable rules: a general engine needs an event bus this
+app does not have, plus loop detection and an execution log, and costs more
+forever in support than the six anybody actually wants.
+
+Three of the six arrived with phase 14 as notifications. These are the other
+three, and what they share is that **a clock fires them rather than a person** —
+which is exactly why they need a claim table and the notifications did not. An
+event that fires because somebody clicked needs no record; one that fires because
+a clock passed needs to know whether it already did.
+
+| | |
+|---|---|
+| Escalate a breached SLA | ON — the data has existed since phase 8 and nothing ever acted on it |
+| Remind before a visit | ON — claimed against the **visit** date, so moving a booking earns a fresh reminder |
+| Invoice on completion | **OFF** — see below |
+
+### Claim first, act second
+
+Every run inserts its claim under `(job, event, day)` before doing anything. The
+ordering is the whole point: claiming *after* the work means a crash in between
+does it twice; claiming *before* means a crash leaves a claim with no delivery —
+which `reconcileJobAutomations` reports and a person can act on.
+
+Sending an email twice is the failure nobody notices until somebody complains.
+Not sending it is the failure a screen can find.
+
+Verified: two sweeps racing claimed it **zero times between them**, and a
+backdated unsettled claim is caught as drift.
+
+### Why auto-invoicing is the one that is off
+
+The other two send an email, where a wrong one is noise. This creates **paperwork
+against a real customer account**. It raises a *draft* and stops — finalising
+stays a human act through the one posting engine — but a job closed by mistake
+would still leave an invoice somebody has to find and void.
+
+It also only looks at jobs closed in the **last 7 days**. Switching it on for the
+first time on a site with four years of history must not raise four years of
+invoices; that window is in the code rather than a TODO for exactly that reason.
+
+### Two bugs the tests caught, and one the tests caused
+
+**Both deadlines were escalated whenever either passed.** The `WHERE` matches a
+row on `respond_by` OR `resolve_by`, but the per-row classification then pushed
+both events on `IS NOT NULL` alone. A job that had only missed its response time
+permanently consumed the resolution claim for that day — so when it later
+breached its resolution promise for real, nobody would ever be told.
+
+**Fixing it in JavaScript was also wrong.** DATETIME columns come back as driver
+Dates parsed as UTC (the pool sets timezone `'Z'`) while `NOW()` runs in the
+session timezone, so the two clocks disagreed and a genuinely breached job failed
+the JS test while passing the SQL one. Both flags are now computed by SQL, using
+the same expressions as the `WHERE`, so filter and classification cannot drift.
+
+**And the test raised a real invoice.** `(J23)` switched `job_auto_invoice` on and
+ran the sweep, which picked up an unrelated closed job in the seven-day window —
+R720.00 against a real customer, with the job line stamped as invoiced. A draft
+with no document number, so nothing posted and no sequence number was consumed,
+but it had to be unwound by hand. The block no longer runs that sweep switched
+on: what matters is provable without it, and a test that flips a money-making
+switch on shared data is an outage waiting for the right dataset.
+
+### Verified
+
+`(J23)` is 18 checks; the suite is **564**, up from 546. Cron route driven live:
+**503** with no secret configured, **401 not 307** without one and with a wrong
+one, and with the right one it escalated `JC000014` — then a second tick did
+nothing and reported nothing.
+
+**43 of 44 suites pass, zero failures.** `test:navigation` fails on a search
+keyword clash from another session's uncommitted `/setup/menu-designer` entry,
+whose keywords include "till pos" and now outrank Tills for "rang up". Not this
+phase's code and not mine to fix in a shared file.
+
+Demo data removed, `job_notify_enabled` restored to 1 and `job_auto_invoice` to 0
+on both sites; `reconcileJobAutomations` reports zero drift on each.
+
+**Not done:** the four `job_auto_*` settings have no screen, joining
+`job_notify_*` (14), `job_signature_*` (13) and `job_items_block_close` (11).
+That is now eleven settings across four phases with no UI — a single job-settings
+panel is the obvious next piece of work.
+
+---
+
+## What phases 16, 17 and 18 shipped
+
+Three phases in one run, verified between each and together at the end.
+
+### 16 — the settings finally have a screen
+
+Eleven `job_*` settings had accumulated across phases 11 to 15 with no UI at all,
+so every one of them had been whatever its migration seeded. They are now one
+panel on `/setup/job-workflow`, beside SLA, headlines and asset types — grouped
+by the question they answer rather than by the phase that shipped them: **before
+a job can be closed**, **telling people**, **what happens on its own**.
+
+No migration. `job_signature_width` is deliberately not on the screen: it is a
+rendering detail with no sensible control.
+
+**The two config warnings are the point.** Escalation and reminders do nothing
+without a cron secret, and their failure is silent — every switch reads healthy
+and nothing ever fires. The panel says so. Likewise, with no SMTP configured
+every notification switch is decoration, and it says that too. Both are read on
+the server, because `isConfigured()` reads `process.env` and a client component
+cannot see it.
+
+### 17 — bulk actions, saved views, swimlanes
+
+`sql/site/122_job_saved_views.sql` — one table, for the only one of the three
+that needs storage. Bulk actions change jobs rather than describing anything, and
+grouping is a choice carried in the URL, which is the right lifetime for a way of
+looking at something.
+
+**A view stores the question, never the answer.** The same argument boards
+settled in phase 1: "mine, overdue, urgent" is filters, and the jobs matching it
+change every hour without anybody editing the view. A view holding job ids would
+go stale the moment one closed. `(J24)` asserts the filters contain no job id.
+
+The filters are JSON, against the grain of this schema, because a filter set is
+not data the business owns — it is a saved URL. Nothing joins on it, nothing
+aggregates it, and a column per filter would mean a migration every time the list
+learns a new one.
+
+**Bulk loops rather than issuing one UPDATE**, and that is the whole design.
+Moving a job to a status runs `setStatus`, which stamps SLA deadlines, refuses a
+close over outstanding checks, logs the change and notifies whoever is watching.
+A blind `UPDATE ... WHERE id IN (...)` would skip every one of those, and jobs
+changed in bulk would quietly differ from jobs changed one at a time. Slower, and
+correct. Proved live: **3 changed, 1 skipped — "JC000015: This job is closed."**
+
+The skipped list stays on screen rather than in a toast, because it is the half
+somebody has to read and act on.
+
+`setPriority` is new and small: a bulk priority change needs the SLA re-stamp
+without reconstructing the whole record, and sending back fields nobody edited is
+how a bulk action overwrites somebody else's change to the same job.
+
+### 18 — the week grid
+
+`LaneWeek` is new in the kit and on the style guide: lanes, days and blocks, and
+nothing that knows what a job is. The same component would serve a staff roster
+without change.
+
+The day and week grids are separate components over the same data rather than one
+grid with a zoom level. The day has a time axis and answers *who is free this
+afternoon*; the week drops it entirely and answers *how loaded is next week*.
+Keeping a time axis across seven days is what turns a week view into columns of
+illegible slivers.
+
+**Unassigned is a lane, pinned last** — a visit nobody is going to is exactly
+what a dispatcher opens the week to find, and dropping it for having no
+technician would hide it. **A visit with two people appears in both lanes**,
+deliberately: showing it against the lead only would make the second person look
+free on a day they are committed.
+
+Read-only. Dragging a visit to another day or person is a reassignment needing a
+conflict check, an audit trail and somebody told — a phase of its own rather than
+a rider on this one.
+
+### Verified
+
+`(J24)` is 15 checks; the suite is **579**, up from 564. The chain: **45 suites,
+exit 0, zero failures**. Smoke crawl **156 passed, 0 failed**.
+
+Driven in the browser: the settings panel saved and survived a refresh with the
+cron warning showing correctly; the board rendered swimlanes per person with
+counts and Nobody last; the week grid rendered six lanes with today marked and
+weekends dimmed. Demo visits removed afterwards, and `reconcileJobViews`,
+`reconcileJobPeople` and `reconcileJobAutomations` all report zero drift on both
+sites.
+
+**A note on what the harness could not do.** React's controlled inputs do not
+respond to synthetic `click` or `change` dispatched from CDP, so bulk selection
+could not be driven from the browser. The server path was tested directly instead
+and behaved exactly as the UI would — but the click-through itself is unproven,
+and worth a human trying once.
+
+---
+
+## What phase 19 shipped
+
+`sql/site/123_job_status_rules.sql` and `124_job_status_rules_fix.sql`.
+
+Found by auditing the PRD itself rather than my own gap notes — which had
+recorded neither of these.
+
+### The five missing stages
+
+104 seeded eight of the thirteen §10.1 names. Paused, Awaiting Customer, Ready
+to Invoice, Invoiced and Closed are now seeded too.
+
+**None of them claimed a role.** A role exists so code can find a stage whose
+name a business changed — `assignOwner` looks for `assigned`, `closeJob` for
+`completed`. Nothing needs to *find* "Awaiting Customer". Adding roles would also
+have broken every existing site, because `REQUIRED_ROLES` is validated and a new
+required role has no holder until somebody creates one.
+
+Closed is the interesting one: the PRD lists it as a status, but closed-ness was
+derived from the role. A "Closed" status carrying role `completed` would mean two
+stages both claiming the completion meaning, and `statusForRole` would return
+whichever sorted first. So it carries **no role and a new `is_closed_stage`
+flag** — which is what now lets a business add a closing stage of its own.
+
+### Rules per stage, not one global switch
+
+§10.1 asks for three things per status that this schema decided globally:
+
+| | |
+|---|---|
+| `requires_reason` | "why is this on hold?" matters; "why is this in progress?" does not |
+| `blocks_on_incomplete` | **nullable** — NULL means "use the site setting" |
+| `audience` | `office` keeps a technician out of the billing stages |
+
+The blocking rule is why it had to move off a global switch: **the two closing
+stages want opposite answers.** Work Completed must demand its checks; Cancelled
+must not — refusing to cancel a job over an unticked check is how a job nobody
+wants stays open forever.
+
+`blocks_on_incomplete` is nullable rather than a plain boolean so "not decided"
+stays distinguishable from "decided no". A boolean defaulting to 0 would have
+silently switched the close guard off for every existing site.
+
+All four rules are enforced in `setStatus`, which is the one door the job card,
+the board drag and the bulk bar all go through. A consequence worth naming: **a
+stage that needs a reason cannot be reached by dragging**, because a drag carries
+no sentence. The card bounces back with the reason named.
+
+### The migration that changed existing behaviour
+
+123 turned `requires_reason` ON for On Hold and Cancelled. **(J8) failed
+immediately** — a board test moves a job to On Hold with no reason.
+
+The failure was the correct behaviour of a wrong decision. §10.1 says the rule is
+*configurable*; it does not say On Hold must demand one. A migration that quietly
+makes an existing stage refuse moves it used to accept breaks every site that
+migrates, and the drag path can never satisfy it.
+
+`124` reverts it. The rule stays, the seeding of it does not — a business that
+wants a reason on On Hold ticks the box. Only the five **new** stages keep their
+seeded rules, because nothing was moving jobs to them before.
+
+The correction is a new file because **migrations are recorded by filename**:
+editing 123 after it applied would have done nothing at all.
+
+### Verified
+
+`(J25)` is 20 checks; the suite is **600**, up from 579. The chain: **45 suites,
+exit 0, zero failures**. Driven in the browser: 13 stages listed, three reading
+as Closed (including the flag-only one), and all four rule controls rendering
+with the right values.
+
+Both sites end with `requires_reason` set on **only the two new stages** — no
+existing stage was made stricter.
+
+---
+
+## What phases 20 and 21 shipped
+
+The PRD asks for four Phase-1 dashboards. **Zero existed.** These are two of them,
+and the shape of the answer was decided by something the audit turned up: the
+dashboard at `/dashboard` is already a draggable, per-user, capability-filtered
+widget grid. It simply had no job widgets.
+
+### 20 — job widgets, not a second dashboard
+
+Seven widgets on the existing grid rather than a new page. A dispatcher drags the
+job ones up and hides the tender mix; a shop owner does the reverse. One
+dashboard, arranged per person — which is what the grid was built for.
+
+| | |
+|---|---|
+| Five KPI tiles | open · unassigned · under way · waiting on parts · **done, not billed** |
+| Two splits | by stage, by technician |
+| New reads | `jobOpsCounts()`, `jobBreakdowns()`, folded into the single overview fetch |
+
+**Every figure is a link.** The PRD requires it — selecting "Awaiting Parts: 8"
+opens those eight jobs — and a number nobody can act on is a number they stop
+reading.
+
+**`completedNotInvoiced` is not "closed jobs with no invoice".** It counts closed
+jobs still carrying *billable* lines. A warranty call with nothing chargeable on
+it is finished, not outstanding, and counting it would put permanent noise on the
+one figure that protects cash flow. Verified against real data: it found
+JC000015, closed with four filters quoted and none invoiced.
+
+**Unassigned appears both as a tile and in the attention list, deliberately.**
+They answer different questions: the attention row appears only when the count is
+non-zero — it is a to-do list — while the tile is the only place a dispatcher can
+see **0** and be reassured rather than wonder whether the row is missing.
+
+No storage-key bump. A new widget id is not in anybody saved layout, so it lands
+at its default and every existing arrangement is untouched.
+
+**Two things only the screenshot caught:** the tile label repeated the card title
+("Open jobs / Open / 6"), and `MiniStat` produced a stutter. Both now read as a
+figure with a description under it.
+
+### 21 — My work
+
+`/jobs/my-work`, first in the Jobs section, because it is the screen a technician
+opens and the job list is the one an office user opens.
+
+**Actions, not statistics.** The PRD says so explicitly, and every section is
+something somebody can do:
+
+1. **A timer still running** — first, always. The commonest thing a technician
+   forgets, and every hour it runs unnoticed is an hour costed to the wrong job.
+2. **Where you are going** — today and tomorrow only. Further ahead is what the
+   schedule screen is for.
+3. **Still to do** — required checks with no answer, **named rather than
+   counted**: "3 outstanding" sends somebody hunting, "Gas leak test, Customer
+   signature" tells them what to do.
+4. **Your open jobs** — owner or assignee, urgent first, with a *helping* badge
+   where they are not the owner.
+5. **Travel waiting to be checked** — last, because it is the only thing here
+   waiting on somebody else.
+
+There is no utilisation figure and no chart. A technician in a plant room does
+not need their own throughput, and putting it on the screen they work from would
+be measuring them with it.
+
+**And it is not configurable.** `/dashboard` is a grid somebody arranges once and
+reads all week; this is opened for thirty seconds between two jobs on a phone,
+and a screen that must be set up before it is useful will not be.
+
+`myJobs` is a UNION rather than an OR across a join — the join would multiply a
+job by its people and need a DISTINCT, and the two halves answer genuinely
+different questions ("answerable for" versus "working on").
+
+### Verified
+
+**45 suites, exit 0, zero failures** — `test:navigation` included, the other
+session having fixed the keyword clash. Smoke crawl **157 passed, 0 failed**,
+with `/jobs/my-work` discovered automatically.
+
+Driven in the browser on real data: the dashboard showing 6 open, 1 unassigned,
+3 under way, 1 waiting on parts, 1 done-not-billed; My Work showing today's 14:00
+visit, JC000014 naming both outstanding checks, and five open jobs urgent-first.
+Demo data removed, and all three reconcile functions report zero drift on both
+sites.
+
+**Outstanding from the audit:** 3 of 15 reports. Time & labour, travel and
+appointment performance still need catalog sources — those tables are not exposed
+to the report builder at all.
+
+---
+
+## What phase 22 shipped
+
+Three report sources, and the templates they unlocked.
+
+### The sources are the durable half
+
+`jobTime`, `jobTravel` and `jobVisits` expose `staff_time_entries`,
+`job_card_travel` and `job_card_appointments` to the report builder. Those
+tables had existed since phases 5, 6 and 4 and were never in the catalog —
+which is why twelve of the PRD's fifteen Phase-1 reports could not be expressed
+**even by hand**.
+
+A source outlasts any template built on it: once a table is in the catalog,
+anybody can answer a question nobody anticipated without a developer. That is
+why this phase led with sources rather than with the fifteen reports.
+
+**153 fields across the five job sources**, every one verified to produce
+runnable SQL against the real database — the `(J15)` probe runs each field as
+its own one-column report.
+
+Three decisions worth naming:
+
+**Time and travel date from their own event, not from the job.** A line dates
+from its job, because a part added on Friday to a Monday job belongs to Monday's
+cost. But a trip made on Friday *is* a Friday trip — a travel report scoped to
+last week must show last week's driving, not the driving on jobs logged last
+week.
+
+**`jobTime` joins to `job_cards` with an INNER JOIN, and the join is the
+filter.** `staff_time_entries` holds every clock-in in the business, most with
+no job at all — it is the till's timesheet table too. A LEFT JOIN would have
+reported a shop assistant's Tuesday as job time.
+
+**A running timer contributes NULL minutes, not zero.** Counting it as zero
+understates a technician's day; counting it up to `NOW()` makes the same report
+give a different answer every time it runs.
+
+### Five templates, not twelve
+
+| | |
+|---|---|
+| Time and labour on jobs | hours by person, net of breaks |
+| Travel on jobs | all four distances, biggest overrun first |
+| **Travel nobody has checked** | money owed, or money that should not be paid |
+| Did we turn up on time | on time = within 15 minutes, per the PRD |
+| **Visits that did not happen** | a customer whose name repeats is one about to leave |
+
+Eight job built-ins now, still short of fifteen — the PRD's own advice is "avoid
+building too many specialised reports initially", and the builder is the answer
+to the rest. The count is asserted so adding one is a decision rather than a
+drift.
+
+### A gap the tests had
+
+`(J15)` filtered templates on `startsWith('jobCard')`, which covered the two
+phase-9 sources and would have **silently missed all five new templates**. Now
+matched against the source list itself, so the next source cannot slip through
+the same hole.
+
+### Verified
+
+The suite is **633**, up from 600. **45 suites, exit 0, zero failures.** Smoke
+crawl **157 passed, 0 failed**.
+
+Every job template run against real data — all eight return rows, including the
+two that protect money: `job-travel-unverified` found two unchecked trips and
+`job-visits-missed` found four. Opened `Travel nobody has checked` in the
+browser: two rows, columns reading Date · Job number · Who drove · Recorded km ·
+Over the expected · Travel charge · Over the tolerance. Zero drift on both sites.
+
+**Reports now stand at 8 of 15 named**, with every remaining one expressible in
+the builder — the three missing sources were the real blocker, and they are gone.
 
 ---
 

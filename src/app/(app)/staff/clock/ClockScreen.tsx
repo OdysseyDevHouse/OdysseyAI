@@ -108,7 +108,7 @@ export default function ClockScreen({
               </p>
             </div>
 
-            <PinPad onSubmit={submit} error={error} busy={pending} submitLabel="Clock" />
+            <PinPad onSubmit={submit} error={error} busy={pending} />
           </div>
         </Card>
 

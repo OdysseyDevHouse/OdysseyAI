@@ -266,6 +266,35 @@ export async function getAppointment(siteId: number, id: number): Promise<JobApp
  * hiding it would make the lane look free when somebody is still expecting a call.
  * `isLive` says which is which.
  */
+/**
+ * Every visit in a date range, for the week grid.
+ *
+ * `BETWEEN ? AND ?` on DATE(a.starts_at) rather than seven separate day queries:
+ * a lane grid renders one query and slices it in the component, and seven round
+ * trips to draw one screen is how a planning surface starts feeling slow.
+ *
+ * Inclusive at both ends — the caller passes the Monday and the Sunday, and
+ * expects both to appear.
+ */
+export async function appointmentsBetween(
+  siteId: number,
+  from: string,
+  to: string,
+): Promise<JobAppointment[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_APPOINTMENT}
+      WHERE DATE(a.starts_at) BETWEEN ? AND ?
+      ORDER BY a.starts_at, a.id`,
+    [from, to],
+  )
+  const assignees = await assigneesFor(
+    siteId,
+    rows.map((r) => Number(r.id)),
+  )
+  return rows.map((row) => mapAppointment(row, assignees.get(Number(row.id)) ?? []))
+}
+
 export async function appointmentsOn(siteId: number, date: string): Promise<JobAppointment[]> {
   const rows = await siteQuery<Row>(
     siteId,

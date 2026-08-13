@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Card, PinPad, Button, Icons } from '@/components/ui'
+import Image from 'next/image'
+import { Card, PinPad, TextLink, Icons } from '@/components/ui'
 import { tillSignInAction } from './pinActions'
 import {
   signInOffline,
@@ -54,6 +55,18 @@ export default function PosGate({
   const [offlineReady, setOfflineReady] = useState<boolean | null>(null)
   const router = useRouter()
 
+  /* Refusals so far, which is what shakes the pad.
+     A COUNT rather than a flag: two wrong PINs in a row carry the same message,
+     so `error` does not change between them and only this moving tells the pad
+     a second attempt was refused. Every refusal goes through `refuse` below so
+     neither the server path nor the offline one can set the message and forget
+     the shake. */
+  const [rejects, setRejects] = useState(0)
+  function refuse(message: string) {
+    setError(message)
+    setRejects((n) => n + 1)
+  }
+
   /* Whether an offline sign-in is even possible here, so the screen can say so
      BEFORE somebody types a correct PIN and has it refused. Resolved after mount
      because it reads IndexedDB. */
@@ -91,7 +104,7 @@ export default function PosGate({
          * not caught up yet. `clearPin` deletes those verifiers for exactly this
          * reason, but only the next catalog refresh delivers that deletion.
          */
-        setError(result.error)
+        refuse(result.error)
         return
       } catch {
         // Unreachable. Fall through.
@@ -99,7 +112,7 @@ export default function PosGate({
 
       const offline = await signInOffline(siteId, pin)
       if (!offline.ok) {
-        setError(offline.error)
+        refuse(offline.error)
         return
       }
       const session = await startOfflineSession(siteId, offline.operator)
@@ -116,42 +129,100 @@ export default function PosGate({
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <div className="flex flex-col items-center gap-6 px-6 py-8">
-          <div className="text-center">
-            {/* Round because it is an identity mark, not a control — the same
-                tinted-glyph idiom as SettingRow's icon tile. */}
-            <div
-              data-kit-ok
-              className="mx-auto mb-3 flex size-14 items-center justify-center rounded-full bg-brand-soft"
-            >
-              <Icons.KeyRound size={26} className="text-brand" />
-            </div>
-            <h2 className="text-xl font-semibold text-ink">Enter your PIN</h2>
-            <p className="text-sm text-muted">{siteName}</p>
-          </div>
+    <div className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
+      {/* The wordmark ABOVE the card, not inside it.
+          This is the same front door as the back-office login, and a till standing
+          unattended on a counter is the one screen in the product a customer sees
+          from across the room. The logo is what it says at that distance. */}
+      <Image
+        src="/logo-full.png"
+        alt="Odyssey Point of Sale"
+        width={1109}
+        height={304}
+        className="h-20 w-auto object-contain dark:rounded-card dark:bg-white dark:px-3 dark:py-2"
+        priority
+        unoptimized
+      />
 
-          <PinPad onSubmit={submit} error={error} busy={pending} />
+      <Card>
+        <div className="p-6">
+          <h2 className="mb-1 text-center text-[17px] font-bold text-ink">Clerk sign-in</h2>
+          <p className="mb-4 text-center text-[12.5px] text-muted">
+            Enter your PIN to open the till
+          </p>
+
+          <PinPad wide onSubmit={submit} error={error} busy={pending} rejectedAt={rejects} />
 
           {/* Said only when it is FALSE and known.
               A till that cannot sign anybody in without the network is one somebody
               needs to fix before the line drops, not after — and while it is true
               there is nothing useful to announce. */}
           {offlineReady === false && (
-            <p className="text-center text-xs text-muted">
+            <p className="mt-4 max-w-[560px] text-center text-[12px] text-muted">
               This till needs a connection to sign in. Each person should enter their
               PIN once while online so it works offline afterwards.
             </p>
           )}
-
-          {/* The way out. A till with no exit is a machine somebody has to
-              restart to get back to the back office. */}
-          <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard')}>
-            Back to the back office
-          </Button>
         </div>
       </Card>
+
+      {/* Both below the card, and quiet.
+          The way out first — a till with no exit is a machine somebody has to
+          restart to get back to the back office — then the clock, which is the
+          one fact a cashier checks against the till before they start a shift.
+
+          A LINK rather than a button: it navigates, and a bordered button down
+          here would sit at the same visual weight as the keys it is trying not
+          to compete with. */}
+      <div className="flex flex-col items-center gap-3">
+        <TextLink
+          href="/dashboard"
+          className="inline-flex items-center gap-1 text-[13px] font-semibold"
+        >
+          <Icons.ChevronLeft size={15} />
+          Back to Back Office
+        </TextLink>
+        <p className="text-[13px] text-muted">{siteName}</p>
+        <TillClock />
+      </div>
     </div>
+  )
+}
+
+/**
+ * The date and time under the sign-in card.
+ *
+ * Rendered as nothing on the server and filled in after mount, deliberately.
+ * The server's clock formatted into HTML is the server's SECOND, and by the time
+ * the browser hydrates it is a different one — which React reports as a mismatch
+ * on the one screen that is open all day. It also would not tick.
+ *
+ * A till sitting on a counter overnight has to still be right in the morning, so
+ * this re-reads the clock every 30 seconds rather than trusting the value it was
+ * first given.
+ */
+function TillClock() {
+  const [now, setNow] = useState<Date | null>(null)
+
+  useEffect(() => {
+    setNow(new Date())
+    const timer = setInterval(() => setNow(new Date()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Holds the line's height before the clock resolves, so the card above does
+  // not jump a few pixels the moment it does.
+  if (!now) return <p className="text-[13px] text-muted">&nbsp;</p>
+
+  return (
+    <p className="text-[13px] text-muted">
+      {/* Explicit locale — the server and the browser disagree otherwise, and
+          this is a South African till. */}
+      {now.toLocaleDateString('en-ZA', { weekday: 'short', day: '2-digit', month: 'short' })}
+      {' · '}
+      {/* toTimeString rather than toLocaleTimeString: it is 24-hour with no
+          locale in play, so the till reads the same on every machine. */}
+      {now.toTimeString().slice(0, 5)}
+    </p>
   )
 }

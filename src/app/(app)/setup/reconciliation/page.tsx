@@ -14,6 +14,8 @@ import { reconcileJobCards } from '@/lib/site/jobCards'
 import { reconcileJobHeadlines } from '@/lib/site/jobHeadlines'
 import { reconcileAssets } from '@/lib/site/jobAssets'
 import { reconcileJobSeries } from '@/lib/site/jobSeries'
+import { reconcileJobPeople } from '@/lib/site/jobPeople'
+import { reconcileJobAutomations } from '@/lib/site/jobAutomations'
 import { listSequences, verifySequence } from '@/lib/site/sequences'
 import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
@@ -42,6 +44,9 @@ import {
   AssetJobDriftTable,
   AssetRetiredWorkedTable,
   SeriesRunDriftTable,
+  GonePeopleTable,
+  NoAddressTable,
+  AutomationRunTable,
   SeriesCursorTable,
 } from './DriftTables'
 
@@ -102,6 +107,8 @@ export default async function ReconciliationPage() {
     jobItems,
     assets,
     jobSeries,
+    jobPeople,
+    jobAutomations,
     sequences,
   ] = await Promise.all([
     reconcileStock(siteId),
@@ -128,6 +135,10 @@ export default async function ReconciliationPage() {
     reconcileAssets(siteId).catch(() => null),
     // Tolerant for the same reason: 118 may not have run on this site yet.
     reconcileJobSeries(siteId).catch(() => null),
+    // Likewise 120.
+    reconcileJobPeople(siteId).catch(() => null),
+    // Likewise 121.
+    reconcileJobAutomations(siteId).catch(() => null),
     listSequences(siteId),
   ])
 
@@ -211,6 +222,23 @@ export default async function ReconciliationPage() {
     ? jobItems.completedWithoutAnswer.length +
       jobItems.completedWithoutEvidence.length +
       jobItems.failedFlagWrong.length
+    : 0
+
+  /*
+   * noAddress is counted as drift, which is arguable — a user with no email is a
+   * setup gap rather than a broken figure. It is here because the failure it
+   * causes is SILENT: assignment mail is swallowed by design so a mail problem
+   * can never stop somebody being given work, and this screen is the only place
+   * that silence becomes visible.
+   */
+  const peopleDrift = jobPeople
+    ? jobPeople.goneUsers.length +
+      jobPeople.ownerDuplicated.length +
+      jobPeople.noAddress.length
+    : 0
+
+  const automationDrift = jobAutomations
+    ? jobAutomations.stuckClaims.length + jobAutomations.failures.length
     : 0
 
   /*
@@ -657,6 +685,77 @@ export default async function ReconciliationPage() {
                     description="last_generated_for is what the catch-up walks from, so a cursor past the newest period actually raised skips everything between them — permanently. Only the generator should ever move it."
                   />
                   <SeriesCursorTable rows={jobSeries.cursorAhead} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {jobPeople !== null &&
+          (peopleDrift === 0 ? (
+            <Callout tone="success" title="Who is on a job">
+              Everybody assigned to or following a job is still an active user, no owner is
+              double-counted, and every assignee has an address to be told at.
+            </Callout>
+          ) : (
+            <>
+              {jobPeople.goneUsers.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="On a job, but no longer a user"
+                    description="Not repaired, because the right fix depends on why. Somebody who left needs taking off; somebody deactivated for a month should stay and be reactivated. Removing these automatically would quietly rewrite the record of who did what."
+                  />
+                  <GonePeopleTable rows={jobPeople.goneUsers} />
+                </Card>
+              )}
+
+              {jobPeople.ownerDuplicated.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="The owner is also in the team list"
+                    description="Adding the owner is refused, so a row here means the OWNER changed to somebody already on the job. They are counted twice on every workload figure until one of the two is removed."
+                  />
+                  <GonePeopleTable
+                    rows={jobPeople.ownerDuplicated.map((r) => ({ ...r, role: 'assignee' }))}
+                  />
+                </Card>
+              )}
+
+              {jobPeople.noAddress.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Assigned work, no email address"
+                    description="Assignment mail to these people does nothing. It fails silently by design — a missing address must never stop somebody being given work — which is exactly why it has to be visible somewhere."
+                  />
+                  <NoAddressTable rows={jobPeople.noAddress} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {jobAutomations !== null &&
+          (automationDrift === 0 ? (
+            <Callout tone="success" title="Automations">
+              Every escalation, reminder and automatic invoice that was claimed also finished.
+            </Callout>
+          ) : (
+            <>
+              {jobAutomations.stuckClaims.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Claimed, then never finished"
+                    description="The serious one, and the reason a run claims its slot BEFORE acting. The unique key means this job will never be retried for that day, so an escalation that died mid-send is lost unless something reports it. Anything under an hour old is left alone, so a tick running right now is not accused."
+                  />
+                  <AutomationRunTable rows={jobAutomations.stuckClaims} />
+                </Card>
+              )}
+
+              {jobAutomations.failures.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Ran, and could not do it"
+                    description="A recorded refusal rather than a swallowed one. Raising an invoice is refused for good reasons — no customer, nothing billable, a closed period — and each is something a person should be able to read back rather than guess at."
+                  />
+                  <AutomationRunTable rows={jobAutomations.failures} />
                 </Card>
               )}
             </>

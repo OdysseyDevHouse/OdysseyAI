@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Badge,
   Button,
@@ -8,8 +8,8 @@ import {
   Icons,
   Menu,
   SegmentedControl,
+  Select,
   Switch,
-  TileGrid,
   ToolbarSearch,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -19,6 +19,88 @@ import type { VisitType } from '@/lib/site/visitTypes'
 
 /** The "no filter" segment. A string because every other segment key is one. */
 const ALL_VISITS = 'ALL'
+
+/* ── the gate's tile grid: how many tables fit across ────────────────────────
+   A PER-DEVICE preference, not a shop setting: the same restaurant runs a 22"
+   touchscreen at the pass (7 tables across) and a small till at the bar (3). So
+   it lives in this browser's localStorage and the Customize menu next to
+   Refresh sets it. Tiles shrink in HEIGHT as they shrink in width, so the cards
+   stay in proportion instead of turning into tall thin slivers at 7-across.
+
+   Hiding the total is the same kind of preference: some floors want the running
+   tab on the tile, others want more tables on screen and drop it to buy back
+   the height. */
+const COLUMN_CHOICES = [3, 4, 5, 6, 7] as const
+const TILE_MAX_H = 168
+const TILE_H_STEP = 9
+/** Past this many across, a tile is too narrow for the roomy type — step the
+ *  text and icons down a size so the content still fits. */
+const DENSE_FROM_COLS = 7
+/** What "Hide total" takes off a tile: the whole footer — the divider and its
+ *  margins, plus the total/chevron row under it. Subtracted from the tile's
+ *  minimum height, so the cards actually CLOSE UP instead of keeping the space
+ *  they no longer fill. */
+const TILE_TOTAL_H = 64
+
+const TABLE_COLS_KEY = 'pos-table-cols'
+const TABLE_HIDE_TOTAL_KEY = 'pos-table-hide-total'
+/** "floor" | "list" — which Tables view this device opens on. */
+const TABLE_VIEW_KEY = 'pos-table-view'
+
+/** How this device likes its table tiles laid out — set from Customize. */
+interface TablePrefs {
+  cols: number
+  hideTotal: boolean
+  /**
+   * Floor plan or the flat list. A DEVICE preference, like the columns above:
+   * the big screen at the pass wants the room, the small till at the bar wants
+   * the list. Defaults to the list — a shop with no plan drawn must never open
+   * on an empty floor, and the toggle only appears when a plan exists.
+   */
+  view: 'list' | 'floor'
+}
+
+/** The gate's tile-layout preferences, persisted for this device. */
+function useTablePrefs(): [TablePrefs, (patch: Partial<TablePrefs>) => void] {
+  const [prefs, setPrefs] = useState<TablePrefs>({
+    cols: COLUMN_CHOICES[0],
+    hideTotal: false,
+    view: 'list',
+  })
+
+  // Hydrate after mount — reading localStorage during render would mismatch SSR.
+  useEffect(() => {
+    try {
+      const cols = Number(window.localStorage.getItem(TABLE_COLS_KEY))
+      setPrefs({
+        cols: (COLUMN_CHOICES as readonly number[]).includes(cols)
+          ? cols
+          : COLUMN_CHOICES[0],
+        hideTotal: window.localStorage.getItem(TABLE_HIDE_TOTAL_KEY) === '1',
+        view:
+          window.localStorage.getItem(TABLE_VIEW_KEY) === 'floor' ? 'floor' : 'list',
+      })
+    } catch {
+      // Storage blocked (private mode / locked-down kiosk) — keep the defaults.
+    }
+  }, [])
+
+  function update(patch: Partial<TablePrefs>) {
+    setPrefs((p) => {
+      const next = { ...p, ...patch }
+      try {
+        window.localStorage.setItem(TABLE_COLS_KEY, String(next.cols))
+        window.localStorage.setItem(TABLE_HIDE_TOTAL_KEY, next.hideTotal ? '1' : '0')
+        window.localStorage.setItem(TABLE_VIEW_KEY, next.view)
+      } catch {
+        // Not persisted, but the change still applies for this session.
+      }
+      return next
+    })
+  }
+
+  return [prefs, update]
+}
 
 /**
  * The floor, before a waiter starts a sale.
@@ -87,11 +169,22 @@ export function TableGate({
      rather than "none exist". */
   const [query, setQuery] = useState('')
   const [visit, setVisit] = useState<string>(ALL_VISITS)
-  /* Floor or list, remembered per device. A big screen at the pass wants the
-     plan; a small one at the bar wants the list, and the choice is a property of
-     the till rather than of the shop. */
-  const [view, setView] = useState<'floor' | 'list'>('list')
-  const [showTotals, setShowTotals] = useState(true)
+  /* Floor or list, how many across, and whether the running total shows — all
+     remembered per device. A big screen at the pass wants the plan and seven
+     tables across; a small one at the bar wants the list and three, and the
+     choice is a property of the till rather than of the shop. */
+  const [prefs, setPrefs] = useTablePrefs()
+  const { cols, hideTotal } = prefs
+  const showTotals = !hideTotal
+
+  /* More tables across → each one is narrower, so it gets shorter and its text
+     steps down with it; the cards stay in proportion instead of turning into
+     tall thin slivers at 7-across. Dropping the total takes a whole block off
+     the bottom of the card, so the tile shrinks by that much again. */
+  const tileMinH = `${
+    TILE_MAX_H - (cols - COLUMN_CHOICES[0]) * TILE_H_STEP - (hideTotal ? TILE_TOTAL_H : 0)
+  }px`
+  const dense = cols >= DENSE_FROM_COLS
 
   const defaultVisitId = visitTypes.find((v) => v.isDefault)?.id ?? null
 
@@ -127,25 +220,21 @@ export function TableGate({
     })),
   ]
   /*
-   * Grouped by section, preserving the order the server sorted them in. A Map keeps
-   * insertion order, so "Patio" stays where the floor put it rather than sorting
-   * alphabetically — a waiter finds a section by position.
+   * ONE FLAT GRID, in the order the server sorted them — the same shape the
+   * Odyssey till uses. A waiter finds a table by its number, which the search
+   * box answers faster than a heading can; grouping only pushed the tiles down
+   * the page. The section still shows on the tile's own line and is still
+   * searchable, so nothing is lost but the headings.
    *
-   * UNPLACED tables only, once a plan exists. A table drawn on the canvas AND listed in
-   * the grid below it would appear twice on one screen, and a waiter tapping the wrong
-   * copy of the same table is a bug that looks like a duplicate table.
+   * EVERY table, including the ones drawn on a plan. The old grouped grid hid
+   * placed tables because it rendered UNDER the canvas, where a table drawn
+   * above and listed below would appear twice on one screen. The list view has
+   * no canvas — it is the alternative TO the floor, not a strip beneath it — so
+   * excluding placed tables here empties the whole screen on any shop that has
+   * drawn its floor, which is exactly what it did: four tables, all placed, and
+   * a list reading "No table matches that".
    */
-  const sections = useMemo(() => {
-    const bySection = new Map<string, PosTable[]>()
-    for (const table of shown) {
-      if (table.roomId !== null && table.x !== null) continue
-      const key = table.section || ''
-      const list = bySection.get(key)
-      if (list) list.push(table)
-      else bySection.set(key, [table])
-    }
-    return [...bySection.entries()]
-  }, [shown])
+  const listed = shown
 
   const waiting = tables.filter((t) => t.state === 'bill').length
   /* Counted over EVERY table, not the filtered view: "how much is in progress on this
@@ -158,19 +247,19 @@ export function TableGate({
   )
   /* A toggle that leads to an empty room is a dead end, so a shop that never drew a
      plan is held on the list and never learns this button could be here. */
-  const effectiveView = hasPlan ? view : 'list'
+  const effectiveView = hasPlan ? prefs.view : 'list'
 
   return (
     <div className="till-pane flex flex-1 flex-col overflow-y-auto p-4">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-border bg-surface shadow-card">
         {/* ── Who this screen is and what it does ─────────────────────────── */}
-        <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-6 py-5">
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand">
               <Icons.LayoutGrid size={22} />
             </span>
             <div>
-              <h2 className="text-xl font-bold leading-tight text-ink">Tables</h2>
+              <h2 className="text-[22px] font-bold leading-tight text-ink">Tables</h2>
               <p className="mt-0.5 text-[13px] text-muted">
                 Resume a table in progress, open a new one, or ring up a walk-in with a
                 quick sale.
@@ -178,7 +267,7 @@ export function TableGate({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-3">
             {hasPlan && (
               <SegmentedControl
                 aria-label="How to show the floor"
@@ -187,7 +276,7 @@ export function TableGate({
                   { value: 'list', label: 'List' },
                 ]}
                 value={effectiveView}
-                onChange={(next) => setView(next as 'floor' | 'list')}
+                onChange={(next) => setPrefs({ view: next as 'floor' | 'list' })}
               />
             )}
 
@@ -204,14 +293,28 @@ export function TableGate({
                 </>
               }
             >
-              {/* Not a MenuItem: this is a setting to leave open and toggle, not a
-                  command that dismisses the menu the moment it is touched. */}
-              <div className="w-[260px] p-4">
+              {/* Not MenuItems: these are settings to leave open and adjust, not
+                  commands that dismiss the menu the moment they are touched. */}
+              <div className="flex w-[280px] flex-col gap-4 p-5">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[13px] font-semibold text-ink">Columns</span>
+                  <Select
+                    value={String(cols)}
+                    onChange={(e) => setPrefs({ cols: Number(e.target.value) })}
+                    aria-label="Tables per row"
+                  >
+                    {COLUMN_CHOICES.map((n) => (
+                      <option key={n} value={String(n)}>
+                        {n} across
+                      </option>
+                    ))}
+                  </Select>
+                </label>
                 <Switch
-                  checked={showTotals}
-                  label="Show the running total"
-                  hint="Off makes each table smaller, so more of the floor fits on screen."
-                  onChange={setShowTotals}
+                  checked={hideTotal}
+                  label="Hide total"
+                  hint="Smaller tiles — no running total on the table."
+                  onChange={(next) => setPrefs({ hideTotal: next })}
                 />
               </div>
             </Menu>
@@ -226,13 +329,13 @@ export function TableGate({
         </div>
 
         {/* ── Finding one ─────────────────────────────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-3 px-5 py-3">
+        <div className="flex flex-wrap items-center gap-3 px-6 pb-4">
           <ToolbarSearch
             value={query}
             onChange={setQuery}
             placeholder="Search by table, area or type..."
             aria-label="Search the floor"
-            className="w-[320px] max-w-full"
+            className="w-[360px] max-w-[45%]"
           />
           {/* Only where the shop HAS types. One segment reading "All tables" is a
               control that can never change anything. */}
@@ -273,7 +376,7 @@ export function TableGate({
           that can only ever explain why it does nothing.
         */}
         {onSplitTable && tables.some((t) => t.documentId !== null && t.state !== 'free') && (
-          <div className="px-5 pb-3">
+          <div className="px-6 pb-3">
             <Button
               variant={splitting ? 'warning' : 'ghost'}
               size="touch"
@@ -288,14 +391,14 @@ export function TableGate({
           </div>
         )}
 
-        <div className="till-pane min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+        <div className="till-pane min-h-0 flex-1 overflow-y-auto px-6 pb-6">
           {effectiveView === 'floor' ? (
             <div className="flex flex-col gap-4">
-              {/* The two openers stay ABOVE the plan: a walk-in and a new table are
-                  wanted just as often on the floor view, and hiding them behind the
-                  List toggle would be a trap. */}
+              {/* The opener stays ABOVE the plan: a walk-in is wanted just as often
+                  on the floor view, and hiding it behind the List toggle would be a
+                  trap. */}
               <div className="flex flex-wrap gap-3">
-                <Button variant="success" size="touch" disabled={busy} onClick={onWalkIn}>
+                <Button variant="secondary" size="touch" disabled={busy} onClick={onWalkIn}>
                   <Icons.Zap size={18} />
                   Quick sale
                 </Button>
@@ -322,66 +425,64 @@ export function TableGate({
               })}
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              <TileGrid tileWidth={200} tileHeight={showTotals ? 150 : 108}>
-                {/* Quick sale first, always, in a fixed position: a restaurant still
-                    sells coffee over the counter, and making that pass through a table
-                    is the difference between a fast till and one that fights its user. */}
-                <HeroTile
-                  tone="success"
-                  icon={<Icons.Zap size={22} />}
-                  label="Quick sale"
-                  hint="Ring up a walk-in"
-                  disabled={busy}
-                  onClick={onWalkIn}
-                />
-              </TileGrid>
+            /* ONE grid, at the column count this device chose — not auto-fill.
+               The count IS the preference being set, so the track list is
+               explicit and the tiles stretch to fill the row. */
+            <div
+              className="grid gap-4"
+              style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+            >
+              {/* Quick sale first, always, in a fixed position: a restaurant still
+                  sells coffee over the counter, and making that pass through a table
+                  is the difference between a fast till and one that fights its user. */}
+              <HeroTile
+                tone="success"
+                icon={<Icons.Zap size={dense ? 20 : 24} />}
+                label="Quick sale"
+                minHeight={tileMinH}
+                dense={dense}
+                disabled={busy}
+                onClick={onWalkIn}
+              />
 
               {tables.length === 0 ? (
-                <EmptyState
-                  icon={<Icons.LayoutGrid size={26} />}
-                  title="No tables set up"
-                  hint="A manager can add the floor in Setup → Tables. Walk-in sales work either way."
-                />
-              ) : shown.length === 0 ? (
+                <div className="col-span-full">
+                  <EmptyState
+                    icon={<Icons.LayoutGrid size={26} />}
+                    title="No tables set up"
+                    hint="A manager can add the floor in Setup → Tables. Walk-in sales work either way."
+                  />
+                </div>
+              ) : listed.length === 0 ? (
                 /* Tables DO exist — the search or the filter hid them all, which is a
                    different problem from an empty floor and needs a different sentence. */
-                <EmptyState
-                  icon={<Icons.Search size={26} />}
-                  title="No table matches that"
-                  hint="Try a different search, or switch back to All tables."
-                />
+                <div className="col-span-full">
+                  <EmptyState
+                    icon={<Icons.Search size={26} />}
+                    title="No table matches that"
+                    hint="Try a different search, or switch back to All tables."
+                  />
+                </div>
               ) : (
-                sections.map(([section, list]) => (
-                  <div key={section || '_'} className="flex flex-col gap-2">
-                    {/* Only when there ARE sections. A single unnamed heading over the
-                        whole floor is a line that says nothing. */}
-                    {section && (
-                      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                        {section}
-                      </h3>
-                    )}
-                    <TileGrid tileWidth={200} tileHeight={showTotals ? 150 : 108}>
-                      {list.map((table) => (
-                        <TableCard
-                          key={table.id}
-                          table={table}
-                          busy={busy}
-                          showTotal={showTotals}
-                          /* While the split mode is armed, a tap opens the SPLIT screen
-                             for that table rather than resuming it — and a free table
-                             stays inert, because there is nothing on it to divide. */
-                          onPick={() =>
-                            splitting
-                              ? table.documentId !== null && table.state !== 'free'
-                                ? onSplitTable?.(table)
-                                : undefined
-                              : onPickTable(table)
-                          }
-                        />
-                      ))}
-                    </TileGrid>
-                  </div>
+                listed.map((table) => (
+                  <TableCard
+                    key={table.id}
+                    table={table}
+                    busy={busy}
+                    showTotal={showTotals}
+                    dense={dense}
+                    minHeight={tileMinH}
+                    /* While the split mode is armed, a tap opens the SPLIT screen
+                       for that table rather than resuming it — and a free table
+                       stays inert, because there is nothing on it to divide. */
+                    onPick={() =>
+                      splitting
+                        ? table.documentId !== null && table.state !== 'free'
+                          ? onSplitTable?.(table)
+                          : undefined
+                        : onPickTable(table)
+                    }
+                  />
                 ))
               )}
             </div>
@@ -560,21 +661,25 @@ function HeroTile({
   tone,
   icon,
   label,
-  hint,
+  dense,
+  minHeight,
   disabled,
   onClick,
 }: {
   tone: 'success' | 'brand'
   icon: ReactNode
   label: string
-  hint: string
+  /** At 7 across the roomy type stops fitting — step the icon and label down. */
+  dense: boolean
+  /** Matches the table cards beside it, so the row is flush. */
+  minHeight: string
   disabled: boolean
   onClick: () => void
 }) {
   const skin =
     tone === 'success'
-      ? 'border-success/40 hover:border-success text-success'
-      : 'border-brand/40 hover:border-brand text-brand'
+      ? 'border-success/40 hover:border-success hover:bg-success-soft text-success'
+      : 'border-brand/40 hover:border-brand hover:bg-brand-soft text-brand'
   const disc = tone === 'success' ? 'bg-success-soft' : 'bg-brand-soft'
 
   return (
@@ -583,13 +688,19 @@ function HeroTile({
       data-kit-ok
       disabled={disabled}
       onClick={onClick}
-      className={`flex h-full flex-col items-center justify-center gap-2 rounded-card border-2 border-dashed bg-surface px-3 text-center transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${skin}`}
+      style={{ minHeight }}
+      className={`flex flex-col items-center justify-center gap-3 rounded-card border-2 border-dashed bg-surface ${
+        dense ? 'p-3.5' : 'p-5'
+      } text-center transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${skin}`}
     >
-      <span className={`flex h-11 w-11 items-center justify-center rounded-pill ${disc}`}>
+      <span
+        className={`flex ${
+          dense ? 'h-10 w-10' : 'h-12 w-12'
+        } items-center justify-center rounded-pill ${disc}`}
+      >
         {icon}
       </span>
-      <span className="text-[15px] font-bold">{label}</span>
-      <span className="text-[12px] text-muted">{hint}</span>
+      <span className={`${dense ? 'text-[14px]' : 'text-[16px]'} font-bold`}>{label}</span>
     </button>
   )
 }
@@ -610,11 +721,17 @@ function TableCard({
   table,
   busy,
   showTotal,
+  dense,
+  minHeight,
   onPick,
 }: {
   table: PosTable
   busy: boolean
   showTotal: boolean
+  /** At 7 across the roomy type stops fitting — step every size down one. */
+  dense: boolean
+  /** Set by the column count, so the whole row is the same height. */
+  minHeight: string
   onPick: () => void
 }) {
   const free = table.state === 'free'
@@ -625,18 +742,32 @@ function TableCard({
       data-kit-ok
       disabled={busy}
       onClick={onPick}
-      className={`group flex h-full flex-col rounded-card border p-3.5 text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
+      style={{ minHeight }}
+      className={`group flex flex-col rounded-card border ${
+        dense ? 'p-3.5' : 'p-5'
+      } text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
         CARD[table.state]
       }`}
     >
-      <span className="flex items-start justify-between gap-2">
-        <span className="flex min-w-0 flex-1 items-center gap-2.5">
+      {/* Header: the table's code, and its status pill. The pill sits BESIDE the
+          code while there is room and WRAPS BELOW it when there isn't (flex-wrap
+          plus a minimum width on the code block) — at 7 across the two cannot
+          share a line, and it is the number the waiter came to read, so the
+          number keeps the line and the pill takes the next one. */}
+      <span className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
+        <span className="flex min-w-[6.5rem] flex-1 items-center gap-2.5">
           <span
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-card ${DISC[table.state]}`}
+            className={`flex ${
+              dense ? 'h-8 w-8' : 'h-9 w-9'
+            } shrink-0 items-center justify-center rounded-card ${DISC[table.state]}`}
           >
-            <Icons.LayoutGrid size={17} />
+            <Icons.LayoutGrid size={dense ? 16 : 18} />
           </span>
-          <b className="min-w-0 flex-1 truncate text-[17px] font-bold text-ink">
+          <b
+            className={`min-w-0 flex-1 truncate ${
+              dense ? 'text-[16px]' : 'text-[19px]'
+            } font-bold text-ink`}
+          >
             {table.code}
           </b>
         </span>
@@ -653,7 +784,11 @@ function TableCard({
 
       {/* The line under the number: what the table IS when free, what is on it when
           not. Both are what a waiter reads next after the number itself. */}
-      <span className="mt-2 truncate text-[12.5px] text-muted">
+      <span
+        className={`${
+          dense ? 'mt-2 text-[11.5px]' : 'mt-3 text-[13px]'
+        } truncate text-muted`}
+      >
         {free
           ? [table.name, table.seats > 0 ? `${table.seats} seats` : '']
               .filter(Boolean)
@@ -669,16 +804,25 @@ function TableCard({
 
       {showTotal && (
         <>
-          <span className="my-2.5 h-px w-full bg-border" aria-hidden />
+          {/* The rule fences the total off from the detail above. */}
+          <span className={`${dense ? 'my-2' : 'my-3'} h-px w-full bg-border`} aria-hidden />
           <span className="mt-auto flex items-end justify-between gap-2">
             <span className="flex min-w-0 flex-col">
-              <span className="text-[11px] text-muted">{free ? '' : 'Total'}</span>
-              <span className="numeric truncate text-lg font-bold text-ink">
+              <span className="text-[12px] text-muted">{free ? '' : 'Total'}</span>
+              <span
+                className={`numeric truncate ${
+                  dense ? 'text-[17px]' : 'text-[22px]'
+                } font-bold text-ink`}
+              >
                 {free ? '' : formatMoney(table.totalIncl)}
               </span>
             </span>
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-surface-2 text-ink transition group-hover:bg-brand group-hover:text-white">
-              <Icons.ChevronRight size={16} />
+            <span
+              className={`flex ${
+                dense ? 'h-8 w-8' : 'h-9 w-9'
+              } shrink-0 items-center justify-center rounded-pill bg-surface-2 text-ink transition group-hover:bg-brand group-hover:text-white`}
+            >
+              <Icons.ChevronRight size={dense ? 15 : 16} />
             </span>
           </span>
         </>

@@ -1973,6 +1973,432 @@ const SHIFTS_SOURCE: CatalogSource = {
   ],
 }
 
+/* ── Job time, travel and visits ─────────────────────────────────────────────
+ *
+ * Three tables that existed since phases 5, 6 and 4 and were never exposed to
+ * the builder — which is why twelve of the PRD's fifteen Phase-1 reports could
+ * not be expressed even by hand. A source is the durable half of a report:
+ * once a table is in the catalog, anybody can answer a question nobody
+ * anticipated, without a developer.
+ *
+ * All three hang off a job and date from their OWN event rather than from the
+ * job, unlike job_card_lines. A line dates from its job because a part added on
+ * Friday to a Monday job belongs to Monday's cost. But a trip made on Friday IS
+ * a Friday trip — a travel report scoped to last week must show last week's
+ * driving, not the driving on jobs logged last week.
+ */
+
+const JOB_TIME_SOURCE: CatalogSource = {
+  key: 'jobTime',
+  label: 'Job time',
+  description: 'Hours worked on jobs — who, when, how long, and what it cost.',
+  category: 'Operations',
+  // jobs.view, not staff.view: this answers "what did this job take", and the
+  // job capability is what already gates every other job figure. The COST
+  // fields carry their own jobs.cost requirement below.
+  permission: 'jobs.view',
+  shape: 'timeline',
+  table: 'staff_time_entries',
+  dateColumn: 'started_at',
+  /*
+   * INNER JOIN, and `always`.
+   *
+   * staff_time_entries holds every clock-in in the business, most of which have
+   * no job at all — it is the till's timesheet table too. Without the inner
+   * join this source would report a shop assistant's Tuesday as job time. The
+   * join IS the filter.
+   */
+  joins: [
+    { name: 'job', sql: 'INNER JOIN job_cards j ON j.id = t.job_card_id', always: true },
+    { name: 'jobStatus', sql: 'LEFT JOIN job_statuses js ON js.id = j.status_id' },
+    { name: 'jobCustomer', sql: 'LEFT JOIN customers jc ON jc.id = j.customer_id' },
+  ],
+  note: 'Only time booked against a job. A shift with no job on it is on the timesheet, not here.',
+  fields: [
+    {
+      key: 'jobNumber',
+      label: 'Job number',
+      type: 'document',
+      expr: 'j.document_number',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'jobTitle',
+      label: 'What the job is',
+      type: 'text',
+      expr: 'j.title',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'customerName',
+      label: 'Customer',
+      type: 'text',
+      expr: 'COALESCE(jc.name, j.customer_name)',
+      starter: true,
+      needs: ['jobCustomer'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'statusName',
+      label: 'Stage',
+      type: 'text',
+      expr: 'js.name',
+      needs: ['jobStatus'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'userName',
+      label: 'Who worked',
+      type: 'text',
+      expr: 't.user_name',
+      starter: true,
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    {
+      key: 'startedAt',
+      label: 'Started',
+      type: 'datetime',
+      expr: 't.started_at',
+      starter: true,
+      group: FIELD_GROUPS.DATES,
+    },
+    { key: 'endedAt', label: 'Ended', type: 'datetime', expr: 't.ended_at', group: FIELD_GROUPS.DATES },
+    {
+      /*
+       * Minutes, net of breaks, and NULL while the timer is still running.
+       *
+       * A running entry has no end, so TIMESTAMPDIFF against NULL is NULL — and
+       * that is right: counting an open timer as "zero minutes" would quietly
+       * understate a technician's day, and counting it up to NOW() would make
+       * the same report give a different answer every time it ran.
+       */
+      key: 'minutes',
+      label: 'Minutes worked',
+      type: 'number',
+      expr: 'CASE WHEN t.ended_at IS NULL THEN NULL ELSE GREATEST(0, TIMESTAMPDIFF(MINUTE, t.started_at, t.ended_at) - COALESCE(t.break_minutes, 0)) END',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'hours',
+      label: 'Hours worked',
+      type: 'number',
+      expr: 'CASE WHEN t.ended_at IS NULL THEN NULL ELSE ROUND(GREATEST(0, TIMESTAMPDIFF(MINUTE, t.started_at, t.ended_at) - COALESCE(t.break_minutes, 0)) / 60, 2) END',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'breakMinutes',
+      label: 'Break minutes',
+      type: 'number',
+      expr: 'COALESCE(t.break_minutes, 0)',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    yesNo('stillRunning', 'Timer still running', 'CASE WHEN t.ended_at IS NULL THEN 1 ELSE 0 END'),
+    /*
+     * An entry somebody corrected after the fact. BCEA s31 requires the original
+     * to survive, which it does in original_started_at — this flag is what makes
+     * the corrected ones findable.
+     */
+    yesNo('wasEdited', 'Time was corrected', 'CASE WHEN t.edited_at IS NULL THEN 0 ELSE 1 END'),
+    {
+      key: 'editedReason',
+      label: 'Why it was corrected',
+      type: 'text',
+      expr: 't.edited_reason',
+      group: FIELD_GROUPS.OTHER,
+    },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    ...timeBuckets('started_at', { hours: true }),
+  ],
+}
+
+const JOB_TRAVEL_SOURCE: CatalogSource = {
+  key: 'jobTravel',
+  label: 'Job travel',
+  description: 'Every trip — expected, recorded, verified and what was charged.',
+  category: 'Operations',
+  permission: 'jobs.view',
+  shape: 'timeline',
+  table: 'job_card_travel',
+  // The date the driving happened, not the date the job was logged. See the
+  // block comment above.
+  dateColumn: 'travelled_on',
+  joins: [
+    { name: 'job', sql: 'INNER JOIN job_cards j ON j.id = t.job_card_id', always: true },
+    { name: 'jobCustomer', sql: 'LEFT JOIN customers jc ON jc.id = j.customer_id' },
+  ],
+  fields: [
+    {
+      key: 'jobNumber',
+      label: 'Job number',
+      type: 'document',
+      expr: 'j.document_number',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'customerName',
+      label: 'Customer',
+      type: 'text',
+      expr: 'COALESCE(jc.name, j.customer_name)',
+      starter: true,
+      needs: ['jobCustomer'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'userName',
+      label: 'Who drove',
+      type: 'text',
+      expr: 't.user_name',
+      starter: true,
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    {
+      key: 'travelledOn',
+      label: 'Date',
+      type: 'date',
+      expr: 't.travelled_on',
+      starter: true,
+      group: FIELD_GROUPS.DATES,
+    },
+    { key: 'fromLabel', label: 'From', type: 'text', expr: 't.from_label', group: FIELD_GROUPS.OTHER },
+    { key: 'toLabel', label: 'To', type: 'text', expr: 't.to_label', group: FIELD_GROUPS.OTHER },
+    /*
+     * FOUR distances, and they are four different facts — see the header of
+     * 108_job_travel. Expected is the map, recorded is the claim, verified is a
+     * manager accepting it, chargeable is after the rounding rule. A report that
+     * showed one of them would be answering a question nobody asked.
+     */
+    {
+      key: 'expectedKm',
+      label: 'Expected km',
+      type: 'number',
+      expr: 't.expected_km',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'recordedKm',
+      label: 'Recorded km',
+      type: 'number',
+      expr: 't.recorded_km',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'verifiedKm',
+      label: 'Verified km',
+      type: 'number',
+      expr: 't.verified_km',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'chargeableKm',
+      label: 'Chargeable km',
+      type: 'number',
+      expr: 't.chargeable_km',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      /* Recorded minus expected. The figure the tolerance check is really about,
+         and NULL where there is no expectation to compare against. */
+      key: 'varianceKm',
+      label: 'Over the expected',
+      type: 'number',
+      expr: 'CASE WHEN t.expected_km IS NULL THEN NULL ELSE t.recorded_km - t.expected_km END',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'travelMinutes',
+      label: 'Travel minutes',
+      type: 'number',
+      expr: 't.travel_minutes',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'ratePerKm',
+      label: 'Rate per km',
+      type: 'currency',
+      expr: 't.rate_per_km',
+      numeric: true,
+      // A rate is not a total. Summing R6.50 across forty trips is meaningless.
+      noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'travelCharge',
+      label: 'Travel charge',
+      type: 'currency',
+      expr: 'ROUND(COALESCE(t.chargeable_km, 0) * COALESCE(t.rate_per_km, 0), 2)',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'travelCost',
+      label: 'Travel cost',
+      type: 'currency',
+      expr: 'ROUND(COALESCE(t.chargeable_km, 0) * COALESCE(t.cost_per_km, 0), 2)',
+      numeric: true,
+      // Cost is not the same permission as the job itself: a dispatcher may see
+      // the kilometres without seeing what they cost the business.
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    yesNo('verified', 'Checked by somebody', 'CASE WHEN t.verified_at IS NULL THEN 0 ELSE 1 END'),
+    yesNo('toleranceBreached', 'Over the tolerance', 't.tolerance_breached'),
+    {
+      key: 'verifiedByName',
+      label: 'Checked by',
+      type: 'text',
+      expr: 't.verified_by_name',
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    ...timeBuckets('travelled_on'),
+  ],
+}
+
+const JOB_VISITS_SOURCE: CatalogSource = {
+  key: 'jobVisits',
+  label: 'Job visits',
+  description: 'Every appointment — booked, attended, late, missed or cancelled.',
+  category: 'Operations',
+  permission: 'jobs.view',
+  shape: 'timeline',
+  table: 'job_card_appointments',
+  dateColumn: 'starts_at',
+  joins: [
+    { name: 'job', sql: 'INNER JOIN job_cards j ON j.id = t.job_card_id', always: true },
+    { name: 'jobCustomer', sql: 'LEFT JOIN customers jc ON jc.id = j.customer_id' },
+    { name: 'visitAddress', sql: 'LEFT JOIN service_addresses jsa ON jsa.id = t.service_address_id' },
+  ],
+  fields: [
+    {
+      key: 'jobNumber',
+      label: 'Job number',
+      type: 'document',
+      expr: 'j.document_number',
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'customerName',
+      label: 'Customer',
+      type: 'text',
+      expr: 'COALESCE(jc.name, j.customer_name)',
+      starter: true,
+      needs: ['jobCustomer'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'addressName',
+      label: 'Where',
+      type: 'text',
+      expr: 'jsa.name',
+      needs: ['visitAddress'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'visitNumber',
+      label: 'Visit number',
+      type: 'number',
+      expr: 't.visit_number',
+      // A visit NUMBER is an identifier, not a quantity. Summing them is
+      // nonsense, and a grid that totals the column invites the question.
+      noTotal: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'status',
+      label: 'Outcome',
+      type: 'text',
+      expr: 't.status',
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'visitType',
+      label: 'Kind of visit',
+      type: 'text',
+      expr: 't.visit_type',
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'startsAt',
+      label: 'Booked for',
+      type: 'datetime',
+      expr: 't.starts_at',
+      starter: true,
+      group: FIELD_GROUPS.DATES,
+    },
+    { key: 'arrivedAt', label: 'Arrived', type: 'datetime', expr: 't.arrived_at', group: FIELD_GROUPS.DATES },
+    { key: 'departedAt', label: 'Left', type: 'datetime', expr: 't.departed_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'durationMinutes',
+      label: 'Booked minutes',
+      type: 'number',
+      expr: 't.duration_minutes',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      /*
+       * Minutes late. NEGATIVE means early, and that is deliberate — a report
+       * that clamped early arrivals to zero would make the average look worse
+       * than the service actually is.
+       *
+       * NULL where nobody arrived, which is what keeps a no-show out of the
+       * punctuality average instead of counting as infinitely late.
+       */
+      key: 'minutesLate',
+      label: 'Minutes late',
+      type: 'number',
+      expr: 'CASE WHEN t.arrived_at IS NULL THEN NULL ELSE TIMESTAMPDIFF(MINUTE, t.starts_at, t.arrived_at) END',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    {
+      key: 'onSiteMinutes',
+      label: 'Minutes on site',
+      type: 'number',
+      expr: 'CASE WHEN t.arrived_at IS NULL OR t.departed_at IS NULL THEN NULL ELSE TIMESTAMPDIFF(MINUTE, t.arrived_at, t.departed_at) END',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    /* "On time" needs a definition, and the PRD gives one: within fifteen
+       minutes of the booking. Hard-coded rather than a setting, because a report
+       whose definition moves is a report two people read differently. */
+    yesNo(
+      'onTime',
+      'On time (within 15 min)',
+      'CASE WHEN t.arrived_at IS NULL THEN 0 WHEN TIMESTAMPDIFF(MINUTE, t.starts_at, t.arrived_at) <= 15 THEN 1 ELSE 0 END',
+    ),
+    yesNo('attended', 'Somebody arrived', 'CASE WHEN t.arrived_at IS NULL THEN 0 ELSE 1 END'),
+    yesNo('missed', 'No-show', "CASE WHEN t.status = 'no_show' THEN 1 ELSE 0 END"),
+    yesNo('cancelled', 'Cancelled', "CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END"),
+    {
+      key: 'outcomeReason',
+      label: 'Why it ended that way',
+      type: 'text',
+      expr: 't.outcome_reason',
+      group: FIELD_GROUPS.OTHER,
+    },
+    { key: 'notes', label: 'Notes', type: 'text', expr: 't.notes', group: FIELD_GROUPS.OTHER },
+    ...timeBuckets('starts_at', { hours: true }),
+  ],
+}
+
 const ACTIVITY_SOURCE: CatalogSource = {
   key: 'activity',
   label: 'Activity log',
@@ -3416,6 +3842,9 @@ export const SOURCES: CatalogSource[] = [
   LOYALTY_MEMBERS_SOURCE,
   JOB_CARDS_SOURCE,
   JOB_LINES_SOURCE,
+  JOB_TIME_SOURCE,
+  JOB_TRAVEL_SOURCE,
+  JOB_VISITS_SOURCE,
   ACTIVITY_SOURCE,
 ]
 

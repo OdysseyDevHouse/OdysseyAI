@@ -266,3 +266,105 @@ export function ReorderTable({ reorder }: { reorder: ReorderPanel }) {
     />
   )
 }
+
+/* ── Job cards ────────────────────────────────────────────────────────────── */
+
+/**
+ * One job figure, as a KPI tile.
+ *
+ * Every one of these is a LINK, and that is the requirement rather than a
+ * nicety: the PRD says the dashboard figures must be clickable — selecting
+ * "Awaiting Parts: 8" opens those eight job cards. A number somebody cannot act
+ * on is a number they stop reading.
+ */
+export function JobStat({
+  label,
+  value,
+  href,
+  tone,
+}: {
+  /**
+   * The line UNDER the figure, and deliberately not the widget title.
+   *
+   * The card header already says "Open jobs"; repeating it here produced
+   * "Open jobs / Open / 6", which reads as a stutter. So the header names the
+   * subject and this says what the number is OF.
+   */
+  label: string
+  value: number
+  href: string
+  /** Only for the figures that mean somebody should do something. */
+  tone?: 'warning' | 'danger'
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex h-full flex-col justify-center gap-0.5 px-4 py-3 transition hover:bg-surface-2"
+    >
+      <span
+        className={`numeric text-2xl font-semibold ${
+          value > 0 && tone === 'danger'
+            ? 'text-danger'
+            : value > 0 && tone === 'warning'
+              ? 'text-warning'
+              : 'text-ink'
+        }`}
+      >
+        {count(value)}
+      </span>
+      <span className="truncate text-xs text-muted">{label}</span>
+    </Link>
+  )
+}
+
+/**
+ * Open jobs split by stage or by person.
+ *
+ * A bar per row rather than a donut: these are counts a dispatcher compares
+ * ("who has the most on"), and a donut answers proportion instead — which is
+ * the wrong question when the total is twelve.
+ *
+ * The bar is scaled against the LARGEST row, not the total, so a split of
+ * 5/4/3 reads as three comparable piles instead of three thin slivers.
+ */
+export function JobSplit({
+  rows,
+  emptyHint,
+}: {
+  rows: { label: string; count: number; href: string }[]
+  emptyHint: string
+}) {
+  if (rows.length === 0) {
+    return (
+      <EmptyState icon={<Icons.Wrench size={22} />} title="No open jobs" hint={emptyHint} />
+    )
+  }
+
+  const most = Math.max(...rows.map((r) => r.count), 1)
+
+  return (
+    <ul className="divide-y divide-border">
+      {rows.map((row) => (
+        <li key={row.label}>
+          <Link
+            href={row.href}
+            className="group flex items-center gap-3 px-4 py-2 transition hover:bg-surface-2"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="mb-1 flex items-baseline justify-between gap-2">
+                <span className="min-w-0 truncate text-sm text-ink-2">{row.label}</span>
+                <span className="numeric text-sm font-semibold text-ink">{count(row.count)}</span>
+              </span>
+              <span className="block h-1.5 overflow-hidden rounded-pill bg-surface-2">
+                <span
+                  className="block h-full rounded-pill bg-brand"
+                  style={{ width: `${Math.round((row.count / most) * 100)}%` }}
+                />
+              </span>
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}

@@ -28,6 +28,7 @@ export type ButtonVariant =
   | 'danger' /* destructive confirm */
   | 'danger-ghost' /* inline destructive, e.g. delete in a table row */
   | 'ghost' /* low emphasis, toolbars */
+  | 'key' /* a keypad key — neutral fill, till PIN pad */
   | 'bare' /* chromeless icon affordance — editor toolbars, sidebar/topbar */
 
 /**
@@ -61,6 +62,14 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   ghost:
     'border-border bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink ' +
     'disabled:bg-surface disabled:text-faint',
+  /* A key on a keypad, which `ghost` cannot be: ghost rests on `surface` and so
+     disappears into the card it sits on, and `secondary` is brand-tinted, which
+     would make every digit compete with the one key that acts. Filled and
+     bordered, so ten of them read as a physical pad; the brand only arrives on
+     hover, to confirm the finger is on the right key. */
+  key:
+    'border-border bg-surface-2 text-ink hover:border-brand hover:bg-brand-soft ' +
+    'disabled:border-border disabled:bg-surface-2 disabled:text-faint',
   /* No border and no resting fill — for icons that sit inside other chrome
      (an editor toolbar, the sidebar rail) where a bordered button would read
      as a second frame inside the first. */

@@ -12,8 +12,13 @@ import * as Icons from './icons'
  * works too — a till with a keyboard is just as common — so digits, Backspace
  * and Enter are bound as well.
  *
- * The entered PIN is shown as dots, never digits: the customer is standing on
- * the other side of the screen.
+ * The entered PIN is shown as dots inside an entry box, never digits: the
+ * customer is standing on the other side of the screen. The box carries the
+ * "Enter PIN" prompt while it is empty, so the pad says what it wants rather
+ * than showing a row of dots that could be read as decoration.
+ *
+ * Bottom row is backspace / 0 / confirm — the confirm sits IN the grid, so a
+ * thumb ends every entry in the same corner it has been working in.
  */
 export function PinPad({
   length = 4,
@@ -21,7 +26,9 @@ export function PinPad({
   onCancel,
   error,
   busy = false,
-  submitLabel = 'Sign in',
+  submitLabel = 'OK',
+  wide = false,
+  rejectedAt = 0,
 }: {
   /** Digits before it submits itself. Six-digit PINs need an explicit Enter. */
   length?: number
@@ -29,9 +36,40 @@ export function PinPad({
   onCancel?: () => void
   error?: string | null
   busy?: boolean
+  /**
+   * The confirm key's caption.
+   *
+   * Short — it is one cell of a three-wide grid, not a full-width button, so
+   * anything much past "OK" either wraps or shrinks the type below the size a
+   * finger aims at. The screen around the pad is where the verb belongs.
+   */
   submitLabel?: string
+  /**
+   * The sign-in lock screen's pad: wider, with taller keys.
+   *
+   * A till's PIN screen is the whole viewport with nothing else on it, and a
+   * 320px pad marooned in the middle of a 1024px counter display looks like a
+   * dialog somebody forgot to finish. The override popup inside a modal keeps
+   * the narrow default.
+   */
+  wide?: boolean
+  /**
+   * Bump on every rejected attempt to shake the pad.
+   *
+   * A counter, not a boolean: the caller leaves `error` set between tries, so
+   * two wrong PINs in a row carry the identical message and only a changing
+   * value tells them apart — otherwise the second attempt would not shake.
+   */
+  rejectedAt?: number
 }) {
   const [pin, setPin] = useState('')
+
+  // Cleared on animationend so each rejection restarts the animation rather
+  // than finding the class already applied and doing nothing.
+  const [shake, setShake] = useState(false)
+  useEffect(() => {
+    if (rejectedAt > 0) setShake(true)
+  }, [rejectedAt])
 
   // The caller re-renders while the PIN is being checked — `busy` flips, a
   // router.refresh() lands — and a plain arrow function passed as `onSubmit`
@@ -89,86 +127,122 @@ export function PinPad({
   const press = (digit: string) =>
     setPin((current) => (current.length >= 6 ? current : current + digit))
 
+  // Taller keys on the lock screen, which owns the whole viewport; the override
+  // popup inside a modal keeps the standard till size.
+  const keySize = wide ? 'touch-lg' : 'touch'
+
   return (
-    <div className="flex w-full max-w-xs flex-col gap-5">
+    <div
+      className={`flex flex-col gap-3 ${wide ? 'w-[510px] max-w-[92vw]' : 'w-full max-w-xs'} ${
+        shake ? 'pin-shake' : ''
+      }`}
+      /* animationend BUBBLES in React — a key's own tap animation would clear
+         the flag and cut the shake short, so only this element's own end counts. */
+      onAnimationEnd={(event) => {
+        if (event.target === event.currentTarget) setShake(false)
+      }}
+    >
       <div className="flex flex-col items-center gap-2">
-        <div className="flex h-control items-center justify-center gap-2.5" aria-live="polite">
-          {Array.from({ length: Math.max(length, pin.length) }).map((_, i) => (
-            <span
-              key={i}
-              className={`size-3 rounded-full transition ${
-                i < pin.length ? 'bg-brand' : 'bg-surface-2 ring-1 ring-border'
-              }`}
-            />
-          ))}
+        {/* A single entry BOX rather than a bare row of dots.
+            The box is what makes the pad read as a field being filled in — it
+            holds the prompt while empty, so a first-time user is told what to do
+            rather than shown four dots that could equally be decoration.
+
+            Bullet CHARACTERS, letter-spaced, rather than rendered circles: at
+            this size the text sits on the same baseline the prompt uses, so the
+            box does not change height between its two states. They are the whole
+            reason this is not an <input> — the customer is standing on the other
+            side of the screen, and a till that renders the digits hands them the
+            PIN. */}
+        <div className="flex h-[58px] w-full items-center justify-center rounded-card border border-border bg-canvas px-4">
+          {pin.length === 0 ? (
+            <span className="text-sm font-semibold text-muted">Enter PIN</span>
+          ) : (
+            /* pl-[8px]: letter-spacing is applied after the LAST bullet too, so
+               the glyph row carries a trailing gap and centring lands it 4px
+               left of true. The padding gives that space back. */
+            <span className="pl-[8px] text-[26px] font-extrabold tracking-[8px] text-ink">
+              {'•'.repeat(pin.length)}
+            </span>
+          )}
         </div>
+        {/* The count, for a screen reader only — the dots above are shapes with
+            no text, so without this the pad is silent as it fills.
+            The COUNT rather than the digits: reading a PIN out loud at a counter
+            is the audible version of printing it on the screen. */}
+        <span className="sr-only" aria-live="polite">
+          {pin.length === 0 ? 'PIN empty' : `${pin.length} digits entered`}
+        </span>
         {error && <p className="text-center text-sm text-danger">{error}</p>}
       </div>
 
-      {/* size="touch" rather than a className height on each key: this pad was
-          hand-writing h-14 five times before --spacing-touch existed, which is
-          what a missing token looks like from the inside. */}
-      <div className="grid grid-cols-3 gap-2.5">
+      {/* size="touch"/"touch-lg" rather than a className height on each key:
+          this pad was hand-writing h-14 five times before --spacing-touch
+          existed, which is what a missing token looks like from the inside.
+
+          The digits are `ghost` — NEUTRAL, not `secondary`.
+          Secondary is brand-tinted, and ten tinted keys next to a brand-filled
+          confirm is eleven things asking to be pressed. Colour on this pad means
+          "this is the one that acts", which only OK may claim. */}
+      <div className="grid grid-cols-3 gap-2">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
           <Button
             key={digit}
-            variant="secondary"
-            size="touch"
+            variant="key"
+            size={keySize}
             onClick={() => press(digit)}
             disabled={busy}
-            className="font-medium"
+            className={`font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
           >
             {digit}
           </Button>
         ))}
 
+        {/* Backspace, 0, submit — the till layout, and the submit key is IN the
+            grid rather than a full-width button under it. A cashier's thumb
+            returns to the same corner every time instead of travelling to a
+            different control once the last digit is in.
+
+            Clear is gone with it. Backspace covers the mistyped digit, which is
+            the real error, and holding a whole key for "start again" spent a
+            third of the bottom row on the rarer of the two. */}
         <Button
-          variant="ghost"
-          size="touch"
-          onClick={() => setPin('')}
-          disabled={busy || !pin}
-          aria-label="Clear"
-        >
-          Clear
-        </Button>
-        <Button
-          variant="secondary"
-          size="touch"
-          onClick={() => press('0')}
-          disabled={busy}
-          className="font-medium"
-        >
-          0
-        </Button>
-        <Button
-          variant="ghost"
-          size="touch"
+          variant="key"
+          size={keySize}
           onClick={() => setPin((current) => current.slice(0, -1))}
           disabled={busy || !pin}
           aria-label="Backspace"
         >
-          <Icons.ChevronLeft size={20} />
+          <Icons.Backspace size={22} />
+        </Button>
+        <Button
+          variant="key"
+          size={keySize}
+          onClick={() => press('0')}
+          disabled={busy}
+          className={`font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
+        >
+          0
+        </Button>
+        {/* Still rendered for a four-digit PIN, which submits itself: a visible
+            confirm is what tells a first-time user the pad is finished rather
+            than stuck, and a five- or six-digit PIN has no other way in. */}
+        <Button
+          variant="primary"
+          size={keySize}
+          onClick={() => send(pin)}
+          disabled={busy || pin.length < 4}
+          className={`font-extrabold ${wide ? 'text-lg' : 'text-base'}`}
+        >
+          {busy ? '…' : submitLabel}
         </Button>
       </div>
 
-      <div className="flex flex-col gap-2">
-        {/* Always rendered, not only for six-digit PINs: a four-digit PIN
-            submits itself, but a visible confirm is what tells a first-time
-            user the keypad is finished rather than stuck. */}
-        <Button
-          variant="primary"
-          onClick={() => send(pin)}
-          disabled={busy || pin.length < 4}
-          className="h-control"
-        >
-          {busy ? 'Checking…' : submitLabel}
+      {onCancel && (
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>
+          Cancel
         </Button>
-        {onCancel && (
-          <Button variant="ghost" onClick={onCancel} disabled={busy}>
-            Cancel
-          </Button>
-        )}
-      </div>
+      )}
     </div>
   )
 }

@@ -233,6 +233,18 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/menu-designer',
+        description: 'The till’s browse menu — departments and products, in the order they appear.',
+        /* No "arrange" here, deliberately: every SUBSTRING of a keyword matches,
+           so it makes this screen a hit for "rang" — and "rang up" is how
+           somebody looks for the Tills screen. */
+        keywords:
+          'menu designer browse grid departments categories order sort drag tiles till pos catalogue',
+        icon: 'LayoutGrid',
+        tone: 'emerald',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/tables',
         description: 'The floor a waiter sees — and whether the till shows it at all.',
         keywords: 'tables restaurant hospitality floor sections covers waiter bills',

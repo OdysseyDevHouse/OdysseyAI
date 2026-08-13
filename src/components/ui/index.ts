@@ -107,6 +107,12 @@ export { HtmlEditor, type InsertToken } from './HtmlEditor'
 export { Modal, ConfirmModal } from './Modal'
 export { PinPad } from './PinPad'
 export { SignaturePad } from './SignaturePad'
+export {
+  LaneWeek,
+  type LaneWeekDay,
+  type LaneWeekLane,
+  type LaneWeekBlock,
+} from './LaneWeek'
 
 /* Till surfaces. Touch-sized and meant for the POS — see --spacing-touch in
    globals.css and the .till-surface rules at the foot of it. */

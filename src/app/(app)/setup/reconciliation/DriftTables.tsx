@@ -1082,3 +1082,111 @@ export function SeriesCursorTable({ rows }: { rows: CursorAheadRow[] }) {
   ]
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.seriesId} />
 }
+
+/* ── Who is on a job (120) ─────────────────────────────────────────────────── */
+
+type GonePersonRow = { jobId: number; userId: number; userName: string; role: string }
+
+export function GonePeopleTable({ rows }: { rows: GonePersonRow[] }) {
+  const columns: Column<GonePersonRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}`}>Job {r.jobId}</TextLink>,
+    },
+    {
+      key: 'who',
+      header: 'Person',
+      sortable: true,
+      sortValue: (r) => r.userName,
+      cell: (r) => <span className="text-ink-2">{r.userName}</span>,
+    },
+    {
+      key: 'role',
+      header: 'As',
+      cell: (r) => (
+        <Badge tone={r.role === 'assignee' ? 'danger' : 'warning'}>
+          {r.role === 'assignee' ? 'Assignee' : 'Follower'}
+        </Badge>
+      ),
+    },
+  ]
+  return (
+    <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.jobId}-${r.userId}`} />
+  )
+}
+
+type NoAddressRow = { userId: number; userName: string; jobCount: number }
+
+export function NoAddressTable({ rows }: { rows: NoAddressRow[] }) {
+  const columns: Column<NoAddressRow>[] = [
+    {
+      key: 'who',
+      header: 'Person',
+      sortable: true,
+      sortValue: (r) => r.userName,
+      cell: (r) => <TextLink href="/staff">{r.userName}</TextLink>,
+    },
+    {
+      key: 'jobs',
+      header: 'Jobs assigned',
+      sortable: true,
+      sortValue: (r) => r.jobCount,
+      cell: (r) => <Badge tone="warning">{r.jobCount}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.userId} />
+}
+
+/* ── Time-based automations (121) ──────────────────────────────────────────── */
+
+type AutomationRunRow = {
+  id: number
+  jobId: number
+  documentNumber: string | null
+  jobTitle: string
+  event: string
+  forDate: string
+  detail: string | null
+}
+
+const AUTOMATION_LABEL: Record<string, string> = {
+  respond_breach: 'Response overdue',
+  resolve_breach: 'Resolution overdue',
+  visit_reminder: 'Visit reminder',
+  auto_invoice: 'Invoice on close',
+}
+
+export function AutomationRunTable({ rows }: { rows: AutomationRunRow[] }) {
+  const columns: Column<AutomationRunRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? String(r.jobId),
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}`}>{r.documentNumber ?? `Job ${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'what',
+      header: 'What should have happened',
+      cell: (r) => <span className="text-ink-2">{AUTOMATION_LABEL[r.event] ?? r.event}</span>,
+    },
+    {
+      key: 'for',
+      header: 'For',
+      sortable: true,
+      sortValue: (r) => r.forDate,
+      cell: (r) => <span className="text-muted">{r.forDate}</span>,
+    },
+    {
+      key: 'detail',
+      header: 'Why',
+      cell: (r) => <Badge tone="danger">{r.detail ?? 'no reason recorded'}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.id} />
+}

@@ -35,6 +35,14 @@ export type WidgetId =
   | 'topDepartments'
   | 'topCashiers'
   | 'voidsAndReturns'
+  /* Job cards. All as-at-now: a job board is a picture of right now. */
+  | 'jobsOpen'
+  | 'jobsUnassigned'
+  | 'jobsInProgress'
+  | 'jobsAwaitingParts'
+  | 'jobsNotInvoiced'
+  | 'jobsByStatus'
+  | 'jobsByTechnician'
   /* The as-at-now half — see `scope` below. */
   | 'attention'
   | 'debtorsAgeing'
@@ -187,6 +195,9 @@ const THIRD = GRID_COLS / 3
 const TWO_THIRDS = THIRD * 2
 const QUARTER = GRID_COLS / 4
 const THREE_QUARTERS = QUARTER * 3
+/* Five job KPIs share a row. Exact at sixty columns, which is why the grid is
+   sixty — see the note at GRID_COLS. */
+const FIFTH = GRID_COLS / 5
 
 /**
  * The curated default layout — what a new user sees and what "Reset layout"
@@ -329,6 +340,90 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: 0, y: KPI_BLOCK_H + 31, w: HALF, h: 4, minW: QUARTER, minH: 3 },
     scope: 'asAt',
     capability: 'cashbook.view',
+  },
+
+  /* ── Job cards ───────────────────────────────────────────────────────────
+   *
+   * The PRD asks for an Operations dashboard and a Scheduling dashboard. They
+   * are widgets here rather than two more pages, because this grid is already
+   * per-person: a dispatcher drags the job widgets up and hides the tender mix,
+   * a shop owner does the reverse, and neither has to learn a second screen.
+   *
+   * All of them are scope 'asAt' and gated on jobs.view. A job board is a
+   * picture of RIGHT NOW — "how many jobs were open last Tuesday" is a question
+   * nobody asks, and answering it against a date range would need a history
+   * table that does not exist.
+   *
+   * They are added WITHOUT bumping the storage key, deliberately. A new id is
+   * not in anybody saved layout, so it lands at its default and every existing
+   * arrangement is left exactly as its owner tuned it.
+   */
+  {
+    id: 'jobsOpen',
+    title: 'Open jobs',
+    default: { x: 0, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    scope: 'asAt',
+    capability: 'jobs.view',
+  },
+  {
+    /*
+     * Also a row in the attention list, and deliberately not removed from
+     * there.
+     *
+     * They answer different questions. The attention row appears only when the
+     * count is NON-ZERO — it is a to-do list, and a to-do list that lists things
+     * already done is noise. This tile shows the figure either way, which is the
+     * only place a dispatcher can see "0" and be reassured rather than left
+     * wondering whether the row is missing or the answer is none.
+     */
+    id: 'jobsUnassigned',
+    title: 'Nobody assigned',
+    default: { x: FIFTH, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    scope: 'asAt',
+    capability: 'jobs.view',
+  },
+  {
+    id: 'jobsInProgress',
+    title: 'Work under way',
+    default: { x: FIFTH * 2, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    scope: 'asAt',
+    capability: 'jobs.view',
+  },
+  {
+    id: 'jobsAwaitingParts',
+    title: 'Waiting on parts',
+    default: { x: FIFTH * 3, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    scope: 'asAt',
+    capability: 'jobs.view',
+  },
+  {
+    /*
+     * The cash-flow figure, and the one worth putting on a dashboard at all.
+     *
+     * It counts CLOSED jobs still carrying billable lines — not simply closed
+     * jobs with no invoice. A warranty call with nothing chargeable on it is
+     * finished, not outstanding, and counting it would put permanent noise on
+     * the number somebody is supposed to act on.
+     */
+    id: 'jobsNotInvoiced',
+    title: 'Done, not billed',
+    default: { x: FIFTH * 4, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    scope: 'asAt',
+    capability: 'jobs.invoice',
+  },
+  {
+    id: 'jobsByStatus',
+    title: 'Jobs by stage',
+    default: { x: 0, y: KPI_BLOCK_H + 35 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
+    scope: 'asAt',
+    capability: 'jobs.view',
+  },
+  {
+    id: 'jobsByTechnician',
+    title: 'Jobs by technician',
+    default: { x: HALF, y: KPI_BLOCK_H + 35 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
+    scope: 'asAt',
+    capability: 'jobs.view',
   },
 ]
 

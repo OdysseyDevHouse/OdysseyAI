@@ -1,0 +1,37 @@
+-- ============================================================================
+-- 124_job_status_rules_fix.sql — do not change how existing stages behave
+-- ============================================================================
+--
+-- 123 added rules per stage and then, at the bottom, turned two of them ON for
+-- stages that already existed: On Hold and Cancelled both started demanding a
+-- reason. That was a mistake, and the test suite caught it -- (J8) began failing
+-- because a board test moves a job to On Hold without one.
+--
+-- The failure was the correct behaviour of a wrong decision. Section 10.1 says
+-- requires_reason is CONFIGURABLE; it does not say On Hold must demand one. A
+-- migration that quietly makes an existing stage refuse moves it used to accept
+-- breaks every site that migrates, every saved workflow, and the board drag --
+-- which carries no sentence and so can never satisfy the rule.
+--
+-- The rule stays, the seeding of it does not. A business that wants a reason on
+-- On Hold ticks the box on the setup screen, which is exactly what "configurable"
+-- means.
+--
+-- ── WHY THIS IS A NEW FILE ──────────────────────────────────────────────────
+--
+-- Migrations are recorded BY FILENAME. Editing 123 after it has been applied
+-- does nothing at all -- the runner has already seen that name and skips it. A
+-- correction is always a new file.
+--
+-- The five stages 123 SEEDED keep their rules: Paused and Awaiting Customer are
+-- new, nothing was moving jobs to them before, so requiring a reason there
+-- changes nobody behaviour. Only the pre-existing stages are reverted.
+-- ============================================================================
+
+-- On Hold and Cancelled existed before 123 and must behave as they did.
+UPDATE job_statuses SET requires_reason = 0 WHERE code IN ('on_hold', 'cancelled');
+
+-- The blocking rules stay as 123 set them. Those are not a behaviour change:
+-- blocks_on_incomplete = 1 on Work Completed is what the site setting already
+-- did by default, and 0 on Cancelled fixes a real trap -- refusing to cancel a
+-- job over an unticked check is how a job nobody wants stays open forever.

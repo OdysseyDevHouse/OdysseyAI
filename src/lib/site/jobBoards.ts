@@ -138,7 +138,7 @@ export async function boardColumns(
 ): Promise<BoardColumn[]> {
   const statusRows = await siteQuery<Row>(
     siteId,
-    `SELECT s.id, s.code, s.name, s.tone, s.role, bs.column_order
+    `SELECT s.id, s.code, s.name, s.tone, s.role, s.is_closed_stage, bs.column_order
        FROM job_board_statuses bs
        JOIN job_statuses s ON s.id = bs.status_id
       WHERE bs.board_id = ? AND s.is_active = 1
@@ -218,7 +218,9 @@ export async function boardColumns(
       tone: String(row.tone) as JobStatusTone,
       role,
       columnOrder: Number(row.column_order),
-      isClosed: isClosed(role),
+      // Role OR stage flag, matching mapJobCard and setStatus. A column marked
+      // closed only by the flag would otherwise be styled as an open one.
+      isClosed: isClosed(role) || Number(row.is_closed_stage) === 1,
       cards,
       overflow: Math.max(0, (totalByStatus.get(statusId) ?? 0) - cards.length),
     }

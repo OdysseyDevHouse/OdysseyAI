@@ -47,6 +47,8 @@ import {
   CashPositionPanel,
   PipelinePanel,
   ReorderTable,
+  JobStat,
+  JobSplit,
 } from './OverviewWidgets'
 import { WidgetPanel } from './WidgetPanel'
 import { DetailModal } from './DetailModal'
@@ -86,6 +88,8 @@ const SCROLLS: WidgetId[] = [
   'attention',
   'cashPosition',
   'reorder',
+  'jobsByStatus',
+  'jobsByTechnician',
 ]
 
 const EMPTY: SalesDashboardData = {
@@ -411,6 +415,75 @@ export function SalesDashboard({
       case 'reorder':
         return overview?.reorder ? (
           <ReorderTable reorder={overview.reorder} />
+        ) : (
+          notAllowed(overviewError, overview !== null)
+        )
+
+      /* ── Job cards ────────────────────────────────────────────────────────
+         Every figure links to the list filtered to itself — the PRD requires
+         it, and a count nobody can open is a count nobody reads. */
+      case 'jobsOpen':
+        return overview?.jobs ? (
+          <JobStat label="jobs open now" value={overview.jobs.open} href="/jobs?state=open" />
+        ) : (
+          notAllowed(overviewError, overview !== null)
+        )
+      case 'jobsUnassigned':
+        return overview?.jobs ? (
+          <JobStat
+            label="waiting for an owner"
+            value={overview.jobs.unassigned}
+            href="/jobs?state=open"
+            tone="warning"
+          />
+        ) : (
+          notAllowed(overviewError, overview !== null)
+        )
+      case 'jobsInProgress':
+        return overview?.jobs ? (
+          <JobStat label="being worked on" value={overview.jobs.inProgress} href="/jobs?state=open" />
+        ) : (
+          notAllowed(overviewError, overview !== null)
+        )
+      case 'jobsAwaitingParts':
+        return overview?.jobs ? (
+          <JobStat
+            label="blocked on a part"
+            value={overview.jobs.awaitingParts}
+            href="/jobs?state=open"
+            tone="warning"
+          />
+        ) : (
+          notAllowed(overviewError, overview !== null)
+        )
+      case 'jobsNotInvoiced':
+        return overview?.jobs ? (
+          <JobStat
+            label="closed with work unbilled"
+            value={overview.jobs.notInvoiced}
+            href="/jobs?state=closed"
+            // Danger rather than warning: this one is money already earned and
+            // not yet asked for.
+            tone="danger"
+          />
+        ) : (
+          notAllowed(overviewError, overview !== null)
+        )
+      case 'jobsByStatus':
+        return overview?.jobs ? (
+          <JobSplit
+            rows={overview.jobs.byStatus}
+            emptyHint="Nothing is open. Every job has been closed or cancelled."
+          />
+        ) : (
+          notAllowed(overviewError, overview !== null)
+        )
+      case 'jobsByTechnician':
+        return overview?.jobs ? (
+          <JobSplit
+            rows={overview.jobs.byTechnician}
+            emptyHint="Nothing is open, so nobody is carrying anything."
+          />
         ) : (
           notAllowed(overviewError, overview !== null)
         )

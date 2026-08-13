@@ -60,6 +60,10 @@ export {
   // The Enter key, drawn. Only ever a keyboard hint — the global search palette
   // shows it against the highlighted row to say "this is what Enter opens".
   CornerDownLeft,
+  // The Backspace key, drawn. The till's PIN pad has no room for the word and no
+  // keyboard to point at, so the key wears the glyph a cashier already knows.
+  // Not ChevronLeft, which on a touch screen reads as "go back a screen".
+  Delete as Backspace,
   // The grab affordance on a re-orderable row. Distinct from MoreHorizontal:
   // this one is never a menu, it only ever means "drag me".
   GripVertical as DragHandle,

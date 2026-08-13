@@ -31,12 +31,15 @@ import {
 } from '@/components/ui'
 import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
 import { getSetting, SETTING_DEFAULTS } from '@/lib/site/settings'
+import { peopleFor } from '@/lib/site/jobPeople'
+import { listUsers } from '@/lib/site/users'
 import { storedMillis } from '@/lib/jobStatusModel'
 import JobDetail from './JobDetail'
 import JobVisits from './JobVisits'
 import JobPartsPanel from './JobPartsPanel'
 import JobSlaCard from './JobSlaCard'
 import JobChecks from './JobChecks'
+import JobPeoplePanel from './JobPeoplePanel'
 import JobAssetCard from './JobAssetCard'
 
 export const dynamic = 'force-dynamic'
@@ -98,7 +101,7 @@ export default async function JobPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ tab?: string }>
 }) {
-  const { siteId, capabilities } = await requireCapability('jobs.view')
+  const { siteId, actor, capabilities } = await requireCapability('jobs.view')
   const { id } = await params
   const { tab: rawTab } = await searchParams
 
@@ -141,6 +144,9 @@ export default async function JobPage({
     jobAsset,
     fromSeries,
     signatureStatement,
+    people,
+    siteUsers,
+    notifyEnabled,
   ] = await Promise.all([
       listJobStatuses(siteId, false),
       can(capabilities, 'jobs.invoice') ? billableLines(siteId, jobId) : Promise.resolve([]),
@@ -172,6 +178,10 @@ export default async function JobPage({
       // Likewise 119. A site without it shows the pad with the default wording
       // rather than refusing to open the job.
       getSetting(siteId, 'job_signature_statement').catch(() => null),
+      // And 120. peopleFor is itself tolerant; the settings read is guarded here.
+      peopleFor(siteId, jobId),
+      listUsers(siteId).catch(() => []),
+      getSetting(siteId, 'job_notify_enabled').catch(() => '1'),
     ])
 
   const overdue = !job.isClosed && job.dueAt !== null && storedMillis(job.dueAt) < Date.now()
@@ -308,6 +318,24 @@ export default async function JobPage({
             asset={jobAsset}
             canEdit={can(capabilities, 'jobs.edit')}
             jobClosed={job.isClosed}
+          />
+        )}
+
+        {/* Who, after what — a technician reading down the page wants the job and
+            the equipment before the roster. */}
+        {tab === 'overview' && (
+          <JobPeoplePanel
+            jobId={job.id}
+            jobClosed={job.isClosed}
+            ownerName={job.ownerName}
+            ownerUserId={job.ownerUserId}
+            people={people}
+            users={siteUsers
+              .filter((u) => u.isActive && u.userType === 'back_office')
+              .map((u) => ({ id: u.id, name: u.name }))}
+            currentUserId={actor.userId}
+            canAssign={can(capabilities, 'jobs.assign')}
+            notifyOff={notifyEnabled === '0'}
           />
         )}
 

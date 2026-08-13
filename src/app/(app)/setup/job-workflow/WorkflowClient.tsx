@@ -12,6 +12,7 @@ import {
   Field,
   Input,
   Select,
+  Switch,
   Modal,
   Icons,
   useToast,
@@ -80,6 +81,10 @@ export default function WorkflowClient({
   const [tone, setTone] = useState<JobStatusTone>('neutral')
   const [role, setRole] = useState<JobStatusRole>('')
   const [isActive, setIsActive] = useState(true)
+  const [requiresReason, setRequiresReason] = useState(false)
+  const [blocksOnIncomplete, setBlocksOnIncomplete] = useState<boolean | null>(null)
+  const [audience, setAudience] = useState<'anyone' | 'office'>('anyone')
+  const [isClosedStage, setIsClosedStage] = useState(false)
 
   const [board, setBoard] = useState<JobBoard | 'new' | null>(null)
   const [boardName, setBoardName] = useState('')
@@ -97,11 +102,21 @@ export default function WorkflowClient({
       setTone('neutral')
       setRole('')
       setIsActive(true)
+      // A new stage inherits nothing: no reason, the site setting for blocking,
+      // open to anybody, and open. Every one of those is the safe answer.
+      setRequiresReason(false)
+      setBlocksOnIncomplete(null)
+      setAudience('anyone')
+      setIsClosedStage(false)
     } else {
       setName(status.name)
       setTone(status.tone)
       setRole(status.role)
       setIsActive(status.isActive)
+      setRequiresReason(status.requiresReason)
+      setBlocksOnIncomplete(status.blocksOnIncomplete)
+      setAudience(status.audience)
+      setIsClosedStage(status.isClosedStage)
     }
   }
 
@@ -113,6 +128,10 @@ export default function WorkflowClient({
         tone,
         role,
         isActive,
+        requiresReason,
+        blocksOnIncomplete,
+        audience,
+        isClosedStage,
       })
       if (!result.ok) {
         toast.error(result.error)
@@ -163,7 +182,13 @@ export default function WorkflowClient({
       // A new board starts showing every OPEN stage: that is what somebody
       // setting one up almost always wants, and unticking is quicker than
       // ticking eight boxes.
-      setBoardColumns(statuses.filter((s) => s.isActive && !isClosed(s.role)).map((s) => s.id))
+      // A new board opens with the OPEN stages ticked, so closing stages —
+      // however they are marked closed — do not clutter it by default.
+      setBoardColumns(
+        statuses
+          .filter((s) => s.isActive && !isClosed(s.role) && !s.isClosedStage)
+          .map((s) => s.id),
+      )
     } else {
       setBoardName(target.name)
       setBoardLayout(target.layout)
@@ -250,8 +275,15 @@ export default function WorkflowClient({
                     )}
                   </td>
                   <td className={TABLE_TD}>
-                    <span className={isClosed(status.role) ? 'text-muted' : 'text-ink-2'}>
-                      {isClosed(status.role) ? 'Closed' : 'Open'}
+                    {/* The role OR the stage flag — the same OR setStatus uses.
+                        Reading only the role would have shown the new Closed
+                        stage as Open, on the screen that configures it. */}
+                    <span
+                      className={
+                        isClosed(status.role) || status.isClosedStage ? 'text-muted' : 'text-ink-2'
+                      }
+                    >
+                      {isClosed(status.role) || status.isClosedStage ? 'Closed' : 'Open'}
                     </span>
                   </td>
                   <td className={TABLE_TD}>
@@ -424,6 +456,61 @@ export default function WorkflowClient({
               ))}
             </Select>
           </Field>
+
+          {/* ── The rules for this stage (10.1) ────────────────────────────
+              Per stage rather than one global switch, because the closing
+              stages want opposite answers: Work Completed must demand its
+              checks, Cancelled must not. */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">
+              Rules for this stage
+            </p>
+
+            <Switch
+              checked={requiresReason}
+              onChange={setRequiresReason}
+              label="Ask why when a job is moved here"
+              hint="Worth it for Paused or On Hold. A stage that needs a reason cannot be reached by dragging a card, because a drag carries no sentence."
+            />
+
+            <Field
+              label="Outstanding tasks and checks"
+              hint="Only applies to stages that close a job."
+            >
+              <Select
+                value={blocksOnIncomplete === null ? '' : blocksOnIncomplete ? '1' : '0'}
+                onChange={(e) =>
+                  setBlocksOnIncomplete(e.target.value === '' ? null : e.target.value === '1')
+                }
+              >
+                <option value="">Follow the job setting</option>
+                <option value="1">Must be done first</option>
+                <option value="0">Do not stop the move</option>
+              </Select>
+            </Field>
+
+            <Field label="Who may move a job here">
+              <Select
+                value={audience}
+                onChange={(e) => setAudience(e.target.value as 'anyone' | 'office')}
+              >
+                <option value="anyone">Anybody who may edit a job</option>
+                <option value="office">Only somebody who bills jobs</option>
+              </Select>
+            </Field>
+
+            {/* Hidden for a stage that already carries a closing meaning: the
+                role wins, and offering a switch that changes nothing is worse
+                than not offering it. */}
+            {role !== 'completed' && role !== 'cancelled' && (
+              <Switch
+                checked={isClosedStage}
+                onChange={setIsClosedStage}
+                label="A job here counts as closed"
+                hint="Takes it off the open list and out of every open-jobs figure."
+              />
+            )}
+          </div>
 
           {editing !== 'new' && editing !== null && editing.isSystem && (
             <p className="text-xs text-muted">

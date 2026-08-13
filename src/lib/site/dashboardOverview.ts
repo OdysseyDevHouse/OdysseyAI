@@ -14,7 +14,7 @@ import { quoteSummary } from './quotes'
 import { listOrders } from './salesOrders'
 import { listLaybys } from './laybys'
 import { listLocations } from './stockLocations'
-import { jobCounts } from './jobCards'
+import { jobCounts, jobOpsCounts, jobBreakdowns } from './jobCards'
 import { slaCounts } from './jobSla'
 import { reorderSuggestions } from './reorderSuggestions'
 
@@ -107,6 +107,35 @@ export type DashboardOverview = {
   cash: CashPosition | null
   pipeline: Pipeline | null
   reorder: ReorderPanel | null
+  /** Null when the reader may not see jobs, or the module is not migrated. */
+  jobs: JobPanel | null
+}
+
+/**
+ * What the job widgets read.
+ *
+ * One shape rather than a fetch per widget, because seven widgets on one screen
+ * asking seven questions is seven round trips to draw a strip of numbers. The
+ * dashboard already gathers everything in one pass; this joins it.
+ */
+export type JobPanel = {
+  open: number
+  unassigned: number
+  overdue: number
+  inProgress: number
+  awaitingParts: number
+  /** Closed with billable work still unbilled — the cash-flow figure. */
+  notInvoiced: number
+  /** Open jobs per stage, biggest first. Empty stages are dropped. */
+  byStatus: { label: string; count: number; href: string }[]
+  /**
+   * Open jobs per owner, biggest first, with the unassigned pile LAST.
+   *
+   * Unassigned is included rather than filtered out: work nobody is doing is
+   * exactly what a dispatcher opens this to find, and dropping it would make
+   * the chart add up to less than the open count with no explanation.
+   */
+  byTechnician: { label: string; count: number; href: string }[]
 }
 
 /** How many reorder lines the panel shows before it is a worse /purchasing. */
@@ -150,6 +179,8 @@ export async function getDashboardOverview(
     locations,
     jobs,
     jobSla,
+    jobOps,
+    jobSplit,
   ] = await Promise.all([
     seeCustomers ? agingSummary(siteId) : null,
     seeSuppliers ? supplierAging(siteId, {}) : null,
@@ -177,6 +208,10 @@ export async function getDashboardOverview(
      */
     seeJobs ? jobCounts(siteId).catch(() => null) : null,
     seeJobs ? slaCounts(siteId).catch(() => null) : null,
+    // Both already swallow their own errors — a site without the job tables
+    // returns zeroes rather than taking down the dashboard.
+    seeJobs ? jobOpsCounts(siteId) : null,
+    seeJobs ? jobBreakdowns(siteId) : null,
   ])
 
   /*
@@ -326,6 +361,20 @@ export async function getDashboardOverview(
   const TONE_RANK = { danger: 0, warning: 1 }
   attention.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone] || b.count - a.count)
 
+  const jobPanel: JobPanel | null =
+    jobs && jobOps && jobSplit
+      ? {
+          open: jobs.open,
+          unassigned: jobs.unassigned,
+          overdue: jobs.overdue,
+          inProgress: jobOps.inProgress,
+          awaitingParts: jobOps.awaitingParts,
+          notInvoiced: jobOps.completedNotInvoiced,
+          byStatus: jobSplit.byStatus,
+          byTechnician: jobSplit.byTechnician,
+        }
+      : null
+
   return {
     asAt: today(),
     attention,
@@ -370,5 +419,6 @@ export async function getDashboardOverview(
           })),
         }
       : null,
+    jobs: jobPanel,
   }
 }

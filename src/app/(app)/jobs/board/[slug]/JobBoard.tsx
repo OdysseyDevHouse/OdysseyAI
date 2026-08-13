@@ -18,7 +18,13 @@ import {
 } from '@dnd-kit/core'
 import { Badge, EmptyState, Icons, useToast, type BadgeTone } from '@/components/ui'
 import type { BoardColumn, BoardCard } from '@/lib/site/jobBoards'
-import { PRIORITY_LABEL, PRIORITY_TONE, storedMillis, type JobPriority } from '@/lib/jobStatusModel'
+import {
+  JOB_PRIORITIES,
+  PRIORITY_LABEL,
+  PRIORITY_TONE,
+  storedMillis,
+  type JobPriority,
+} from '@/lib/jobStatusModel'
 import { moveCardAction } from '../../actions'
 
 const TONE: Record<string, BadgeTone> = {
@@ -59,14 +65,19 @@ const TONE: Record<string, BadgeTone> = {
  * and the card springs back. The PRD requires exactly this, and a board that
  * bypassed it would be the way around every guard on the job screen.
  */
+export type BoardGrouping = 'none' | 'owner' | 'priority'
+
 export default function JobBoard({
   boardSlug,
   columns,
   canMove,
+  groupBy = 'none',
 }: {
   boardSlug: string
   columns: BoardColumn[]
   canMove: boolean
+  /** Swimlanes. Read from the URL, so a lane view is a link somebody can send. */
+  groupBy?: BoardGrouping
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -188,15 +199,49 @@ export default function JobBoard({
     )
   }
 
-  /* One horizontal scroller. Columns keep a fixed width so a board of nine
-     statuses scrolls rather than squeezing each to unreadable. */
-  const grid = (
+  /*
+   * Swimlanes (37.2).
+   *
+   * Grouping splits the SAME columns into horizontal bands — it never changes
+   * which jobs are on the board, only how they are stacked. That matters because
+   * board membership is derived from status, and a lane that filtered would
+   * quietly hide work.
+   *
+   * A lane per person is what a dispatcher plans from; "Nobody" is a lane rather
+   * than an omission, because unassigned work is exactly what they are looking
+   * for. Grouping lives in the URL so a lane view is a link somebody can send.
+   */
+  const laneKey = (card: (typeof columns)[number]['cards'][number]): string =>
+    groupBy === 'owner'
+      ? card.ownerName.trim() || 'Nobody'
+      : groupBy === 'priority'
+        ? PRIORITY_LABEL[card.priority]
+        : ''
+
+  const lanes: string[] =
+    groupBy === 'none'
+      ? ['']
+      : groupBy === 'priority'
+        ? // Fixed order, so the lanes read urgent-first rather than alphabetically.
+          JOB_PRIORITIES.map((p) => PRIORITY_LABEL[p]).reverse()
+        : [
+            /*
+             * Built from cardsFor(), not the raw column cards, so a card dragged
+             * between lanes is counted where it now sits rather than where it
+             * started. The two agree until somebody drags something.
+             */
+            ...new Set(columns.flatMap((c) => cardsFor(c)).map((card) => laneKey(card))),
+          ].sort((a, b) => (a === 'Nobody' ? 1 : b === 'Nobody' ? -1 : a.localeCompare(b)))
+
+  const laneGrid = (lane: string) => (
+    /* One horizontal scroller. Columns keep a fixed width so a board of nine
+       statuses scrolls rather than squeezing each to unreadable. */
     <div className="flex gap-3 overflow-x-auto pb-2">
       {columns.map((column) => (
         <Column
           key={column.statusId}
           column={column}
-          cards={cardsFor(column)}
+          cards={cardsFor(column).filter((card) => lane === '' || laneKey(card) === lane)}
           lateIds={lateIds}
           canMove={canMove && ready}
           onOpen={(id) => router.push(`/jobs/${id}`)}
@@ -204,6 +249,33 @@ export default function JobBoard({
       ))}
     </div>
   )
+
+  const grid =
+    groupBy === 'none' ? (
+      laneGrid('')
+    ) : (
+      <div className="space-y-4">
+        {lanes.map((lane) => {
+          const count = columns
+            .flatMap((c) => cardsFor(c))
+            .filter((card) => laneKey(card) === lane).length
+          // An empty lane is dropped rather than rendered as a band of nothing —
+          // except when grouping by owner, where "Nobody: 0" is worth seeing.
+          if (count === 0 && lane !== 'Nobody') return null
+          return (
+            <div key={lane}>
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted">
+                  {lane}
+                </span>
+                <Badge tone={count === 0 ? 'neutral' : 'brand'}>{count}</Badge>
+              </div>
+              {laneGrid(lane)}
+            </div>
+          )
+        })}
+      </div>
+    )
 
   // The server pass, and the first client pass, render exactly this.
   if (!ready || !canMove) return grid

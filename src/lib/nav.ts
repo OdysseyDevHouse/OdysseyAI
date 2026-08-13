@@ -291,6 +291,18 @@ export const NAV: NavSection[] = [
     icon: Wrench,
     items: [
       {
+        /* FIRST in the section, because it is the screen a technician opens and
+           the job list is the one an office user opens. The section is read from
+           the top by whoever is holding the phone. */
+        label: 'My work',
+        href: '/jobs/my-work',
+        icon: Clock,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'my work today mine assigned to me technician next visit outstanding checks timer running',
+        description: 'What is on your plate right now',
+      },
+      {
         label: 'Job list',
         href: '/jobs',
         icon: ListOrdered,
@@ -406,6 +418,7 @@ export const SUBPAGE_LABELS = {
   '/setup/terminals': 'Tills',
   '/setup/numbering': 'Numbering',
   '/setup/quick-keys': 'Quick keys',
+  '/setup/menu-designer': 'Menu designer',
   '/setup/tables': 'Tables',
   '/setup/reservations': 'Reservations',
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
@@ -581,6 +594,10 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/terminals': 'terminals registers pos devices',
   '/setup/numbering': 'sequences document numbers prefix autocode',
   '/setup/quick-keys': 'buttons tiles favourites shortcuts till pos grid',
+  /* No "arrange": every substring of a keyword matches, and it would make this
+     screen a hit for "rang" — which is how somebody finds Tills. */
+  '/setup/menu-designer':
+    'menu designer browse grid departments categories order sort drag tiles till pos catalogue',
   '/setup/tables': 'restaurant hospitality floor sections covers waiter bills',
   '/setup/reservations': 'bookings diary online booking form opening hours sittings covers restaurant',
   '/setup/reconciliation': 'drift integrity check invariants audit',

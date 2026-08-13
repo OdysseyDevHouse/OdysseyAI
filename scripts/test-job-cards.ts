@@ -97,6 +97,7 @@ import {
   saveLines,
   reclassifyLine,
   closeJob,
+  bulkUpdateJobs,
   cancelJob,
   reopenJob,
   reconcileJobCards,
@@ -187,6 +188,34 @@ import {
   deleteJobItem,
   reconcileJobHeadlines,
 } from '../src/lib/site/jobHeadlines'
+import { listUsers } from '../src/lib/site/users'
+import {
+  saveJobView,
+  listJobViews,
+  deleteJobView,
+  cleanFilters,
+  reconcileJobViews,
+} from '../src/lib/site/jobViews'
+import { getSetting, setSetting } from '../src/lib/site/settings'
+import {
+  escalateBreaches,
+  autoInvoiceClosed,
+  automationRuns,
+  reconcileJobAutomations,
+  overdueCount,
+} from '../src/lib/site/jobAutomations'
+import {
+  peopleFor,
+  setJobPerson,
+  removeJobPerson,
+  toggleFollow,
+  jobIdsFor,
+  peopleCounts,
+  everyoneOn,
+  reconcileJobPeople,
+  notifyStatusChanged,
+  notifyClosed,
+} from '../src/lib/site/jobPeople'
 import {
   saveAssetType,
   saveAsset,
@@ -296,6 +325,21 @@ const SERIES_PATTERN = '^JCT recurring'
  */
 const EVIDENCE_HEADLINE_PATTERN = '^JCE[0-9]{6}H$'
 const EVIDENCE_JOB_PATTERN = '^JCE[0-9]{6} '
+/**
+ * (J22) fixtures: a job titled "JCT<stamp> people job".
+ *
+ * job_card_people CASCADEs from job_cards, so deleting the job is enough — but
+ * the job itself is matched by title and must be swept, or a crashed run leaves
+ * a row that reconcileJobPeople may then report as drift somebody else caused.
+ */
+const PEOPLE_JOB_PATTERN = '^JCT[0-9]{6} people job$'
+/** (J23) fixtures: a job titled "JCT<stamp> automation job". Runs CASCADE from it. */
+const AUTOMATION_JOB_PATTERN = '^JCT[0-9]{6} automation job$'
+/** (J24) fixtures: three jobs "JCT<stamp> bulk one|two|three", and a saved view. */
+const BULK_JOB_PATTERN = '^JCT[0-9]{6} bulk (one|two|three)$'
+const VIEW_PATTERN = '^JCT[0-9]{6} overdue'
+/** (J25) fixture: one job titled "JCT<stamp> rules job". */
+const RULES_JOB_PATTERN = '^JCT[0-9]{6} rules job$'
 
 /**
  * Deletes only this suite's fixtures.
@@ -346,6 +390,19 @@ async function sweepStrays() {
     [EVIDENCE_HEADLINE_PATTERN],
   )
   await siteExecute(SITE, `DELETE FROM job_headlines WHERE code REGEXP ?`, [EVIDENCE_HEADLINE_PATTERN])
+
+  // (J22) people. job_card_people CASCADEs, so the job is the only thing to delete.
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [PEOPLE_JOB_PATTERN])
+  // (J23) automations. job_automation_runs CASCADEs from the job likewise.
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [AUTOMATION_JOB_PATTERN])
+
+  // (J24) bulk fixtures and saved views. A view has no FK to anything, so it has
+  // to be deleted by name — nothing would ever collect it otherwise.
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [BULK_JOB_PATTERN])
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [RULES_JOB_PATTERN])
+  await siteExecute(SITE, `DELETE FROM job_saved_views WHERE name REGEXP ?`, [VIEW_PATTERN]).catch(
+    () => {},
+  )
 
   /*
    * Any job_card attachment whose job is gone.
@@ -2892,7 +2949,14 @@ async function main() {
     const everything = () => true
     const technician = (c: string) => c !== 'jobs.cost' && c !== 'products.cost'
 
-    for (const key of ['jobCards', 'jobCardLines']) {
+    /*
+     * Every job source, not just the two that shipped in phase 9.
+     *
+     * jobTime, jobTravel and jobVisits were added in phase 22 — the tables had
+     * existed since phases 5, 6 and 4 and were never exposed, which is why most
+     * of the PRD's Phase-1 reports could not be expressed even by hand.
+     */
+    for (const key of ['jobCards', 'jobCardLines', 'jobTime', 'jobTravel', 'jobVisits']) {
       const src = getSource(key)
       ok(`(J15) the ${key} source is in the catalogue`, src !== undefined)
       if (!src) continue
@@ -2911,13 +2975,25 @@ async function main() {
        */
       const full = fieldsFor(src, everything as never)
       const reduced = fieldsFor(src, technician as never)
+      /*
+       * Only asserted where the source HAS gated fields.
+       *
+       * jobTime and jobVisits carry no cost at all — hours and arrival times are
+       * not commercially sensitive — so "hides something" would be false for
+       * them and the assertion would be testing the fixture rather than the
+       * rule. What must always hold is the second one: whatever IS hidden is
+       * hidden for the right reason.
+       */
+      const gated = full.filter((f) => f.permission === 'jobs.cost')
+      if (gated.length > 0) {
+        ok(
+          `(J15) *** ${key} hides its cost fields from somebody without jobs.cost ***`,
+          reduced.length < full.length,
+          `${full.length} -> ${reduced.length}`,
+        )
+      }
       ok(
-        `(J15) *** ${key} hides its cost fields from somebody without jobs.cost ***`,
-        reduced.length < full.length,
-        `${full.length} -> ${reduced.length}`,
-      )
-      ok(
-        `(J15) and every hidden one is a cost field, not something incidental`,
+        `(J15) ${key}: every hidden field is a cost field, not something incidental`,
         full
           .filter((f) => !reduced.some((r) => r.key === f.key))
           .every((f) => f.permission === 'jobs.cost'),
@@ -2962,9 +3038,23 @@ async function main() {
     ok('(J15) a job line dates from its job, not from itself', lineSrc?.dateJoin === 'job')
     ok('(J15) and the column it filters on is the job report date', lineSrc?.dateColumn === 'reported_at')
 
-    // The three built-ins, run for real rather than merely type-checked.
-    const jobTemplates = TEMPLATES.filter((t) => t.spec.source.startsWith('jobCard'))
-    ok('(J15) three job built-ins ship, not fifteen', jobTemplates.length === 3, String(jobTemplates.length))
+    /*
+     * Every job built-in, run for real rather than merely type-checked.
+     *
+     * The filter was `startsWith('jobCard')`, which covered jobCards and
+     * jobCardLines and silently MISSED the three sources phase 22 added — five
+     * new templates would have shipped unrun. Matching the source list itself is
+     * what stops the next source slipping through the same gap.
+     */
+    const JOB_SOURCES = ['jobCards', 'jobCardLines', 'jobTime', 'jobTravel', 'jobVisits']
+    const jobTemplates = TEMPLATES.filter((t) => JOB_SOURCES.includes(t.spec.source))
+    /*
+     * Eight, not fifteen, and still deliberately short of the PRD's list — its
+     * own advice is "avoid building too many specialised reports initially".
+     * The number is asserted so that adding one is a decision somebody makes on
+     * purpose rather than a drift nobody notices.
+     */
+    ok('(J15) eight job built-ins ship, not fifteen', jobTemplates.length === 8, String(jobTemplates.length))
 
     for (const template of jobTemplates) {
       ok(`(J15) ${template.id} is gated on jobs.view`, template.permission === 'jobs.view')
@@ -3975,6 +4065,668 @@ async function main() {
     await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [evJobId])
   }
 
+  /*
+   * ── (J22) Who is on a job ─────────────────────────────────────────────────
+   *
+   * Sections 16 and 13: a job-level team, and people who watch without being
+   * responsible. One table with a role, so "every job I am involved in" is one
+   * indexed read rather than a UNION every future caller must remember to write
+   * both halves of.
+   *
+   * The checks that matter are the refusals. Anybody can build a list of names;
+   * the value is in what the module will not let you record.
+   */
+  {
+    /*
+     * Mail off for the WHOLE block, restored at the end.
+     *
+     * setJobPerson and assignOwner both fire notifyAssigned, and this dev box has
+     * real SMTP credentials in .env — so without this the suite emails a real
+     * person every time it runs. Found the hard way: an earlier version reported
+     * "sent 1".
+     */
+    const notifyWasEnabled = await getSetting(SITE, 'job_notify_enabled').catch(() => '1')
+    await setSetting(SITE, 'job_notify_enabled', '0')
+
+    const users = await listUsers(SITE)
+    const active = users.filter((u) => u.isActive && u.userType === 'back_office')
+
+    const pJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} people job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!pJob.ok) throw new Error('people job fixture failed')
+    const pJobId = pJob.id
+
+    ok('(J22) a new job has nobody on it', (await peopleFor(SITE, pJobId)).length === 0)
+
+    if (active.length === 0) {
+      ok('(J22) SKIPPED — no active back-office user on this site', true)
+    } else {
+      const alice = active[0]
+
+      // ── Adding, promoting, removing ─────────────────────────────────────
+      const added = await setJobPerson(SITE, actor, pJobId, alice.id, 'follower')
+      ok('(J22) somebody can be added as a follower', added.ok, added.ok ? '' : added.error)
+
+      const asFollower = await peopleFor(SITE, pJobId)
+      ok('(J22) and appears with their role and who added them',
+        asFollower.length === 1 &&
+        asFollower[0].role === 'follower' &&
+        asFollower[0].addedByName === actor.userName)
+
+      const promoted = await setJobPerson(SITE, actor, pJobId, alice.id, 'assignee')
+      ok('(J22) promoting to assignee works', promoted.ok)
+      const afterPromote = await peopleFor(SITE, pJobId)
+      ok(
+        '(J22) *** and it is ONE row, not two — the key refuses a second ***',
+        afterPromote.length === 1 && afterPromote[0].role === 'assignee',
+        `${afterPromote.length} row(s)`,
+      )
+      ok(
+        '(J22) the promotion kept when they first got involved',
+        afterPromote[0].createdAt.getTime() === asFollower[0].createdAt.getTime(),
+      )
+
+      // ── The refusals ────────────────────────────────────────────────────
+      const notAUser = await setJobPerson(SITE, actor, pJobId, 999999, 'assignee')
+      ok('(J22) a user who is not on this site is refused', !notAUser.ok,
+        notAUser.ok ? 'ACCEPTED' : notAUser.error)
+
+      await assignOwner(SITE, actor, pJobId, alice.id, alice.name)
+      const asOwner = await setJobPerson(SITE, actor, pJobId, alice.id, 'assignee')
+      ok(
+        '(J22) *** the OWNER cannot also be added — they would count twice ***',
+        !asOwner.ok,
+        asOwner.ok ? 'ACCEPTED' : asOwner.error,
+      )
+
+      // Reconcile catches the case setJobPerson cannot: the owner CHANGED to
+      // somebody already on the job.
+      const drift = await reconcileJobPeople(SITE)
+      ok(
+        '(J22) *** and an owner who was already on the team is CAUGHT by reconcile ***',
+        drift.ownerDuplicated.some((r) => r.jobId === pJobId && r.userId === alice.id),
+        `${drift.ownerDuplicated.length} reported`,
+      )
+
+      /*
+       * The owner cannot follow their own job either.
+       *
+       * This was a real bug, found by pressing the button on a live screen rather
+       * than by any assertion: setJobPerson refused the owner and toggleFollow did
+       * not, so following your own job wrote exactly the ownerDuplicated row that
+       * reconcileJobPeople exists to report. A row a reconciliation screen calls
+       * drift must not be creatable by pressing a button.
+       */
+      const ownerFollows = await toggleFollow(SITE, { userId: alice.id, userName: alice.name }, pJobId)
+      ok(
+        '(J22) *** the OWNER cannot follow their own job — it would report as drift ***',
+        !ownerFollows.ok,
+        ownerFollows.ok ? 'ACCEPTED' : ownerFollows.error,
+      )
+
+      // ── Following is not assigning ──────────────────────────────────────
+      const meFollow = await toggleFollow(SITE, actor, pJobId)
+      ok('(J22) a person can follow a job themselves', meFollow.ok && meFollow.following === true)
+
+      const meUnfollow = await toggleFollow(SITE, actor, pJobId)
+      ok('(J22) and unfollow it', meUnfollow.ok && meUnfollow.following === false)
+
+      await setJobPerson(SITE, actor, pJobId, actor.userId, 'assignee').catch(() => {})
+      const assignedUnfollow = await toggleFollow(SITE, actor, pJobId)
+      ok(
+        '(J22) *** an ASSIGNEE cannot unfollow — that would drop their own work ***',
+        !assignedUnfollow.ok,
+        assignedUnfollow.ok ? 'ACCEPTED' : assignedUnfollow.error,
+      )
+
+      // ── The read this table exists for ──────────────────────────────────
+      const mine = await jobIdsFor(SITE, actor.userId)
+      ok('(J22) "jobs I am on" is one read and finds it', mine.includes(pJobId))
+      const asAssignee = await jobIdsFor(SITE, actor.userId, 'assignee')
+      ok('(J22) and it can be narrowed to one role', asAssignee.includes(pJobId))
+
+      const counts = await peopleCounts(SITE, [pJobId])
+      ok('(J22) a list screen gets its counts in one query', (counts.get(pJobId) ?? 0) >= 1)
+
+      // The owner is NOT a row, but IS someone to tell.
+      const all = await everyoneOn(SITE, pJobId)
+      ok(
+        '(J22) *** everyoneOn includes the owner, who is deliberately not a row ***',
+        all.includes(alice.id),
+        `owner ${alice.id} in [${all.join(',')}]`,
+      )
+      ok('(J22) and does not repeat anybody', all.length === new Set(all).size)
+
+      const removed = await removeJobPerson(SITE, actor, pJobId, actor.userId)
+      ok('(J22) somebody can be taken off', removed.ok)
+      ok('(J22) and is then gone', !(await jobIdsFor(SITE, actor.userId)).includes(pJobId))
+    }
+
+    // ── Notifying never blocks ────────────────────────────────────────────
+    /*
+     * The load-bearing property of the whole notification path: it returns a
+     * reason instead of throwing, whatever goes wrong. A job that cannot be
+     * closed because a mail server is down is a far worse outcome than an email
+     * nobody receives.
+     *
+     * Mail is already switched off for this whole block — see the top. That also
+     * exercises the switch, so nothing is lost: these paths still run end to end
+     * and still have to come back with a reason rather than an exception.
+     */
+    const notified = await notifyStatusChanged(SITE, actor, pJobId, 'In progress')
+    ok(
+      '(J22) *** with mail switched off, nothing is sent and it says so ***',
+      notified.sent === 0 && notified.skipped === 'disabled',
+      `sent ${notified.sent}, skipped ${notified.skipped ?? 'nothing'}`,
+    )
+
+    const gone = await notifyClosed(SITE, actor, 999999)
+    ok(
+      '(J22) *** and a job that does not exist does not throw either ***',
+      typeof gone.sent === 'number' && gone.sent === 0,
+      `skipped ${gone.skipped ?? 'nothing'}`,
+    )
+
+    // The recipient list is still worked out correctly while sending is off, so
+    // the switch is not hiding a broken query.
+    const stillKnows = await everyoneOn(SITE, pJobId)
+    ok(
+      '(J22) the switch stops the SENDING, not the working out of who to tell',
+      stillKnows.length > 0,
+      `${stillKnows.length} would be told`,
+    )
+
+    // ── Deleting the job takes its people with it ─────────────────────────
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [pJobId])
+    const orphans = await siteQuery<any>(
+      SITE, `SELECT user_id FROM job_card_people WHERE job_card_id = ?`, [pJobId])
+    ok(
+      '(J22) *** deleting a job CASCADEs its people — no orphan rows ***',
+      orphans.length === 0,
+      `${orphans.length} left`,
+    )
+
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [pJobId])
+
+    // Restored last. Leaving a live site with notifications off would be the worst
+    // kind of litter, because nothing about it looks broken.
+    await setSetting(SITE, 'job_notify_enabled', notifyWasEnabled)
+    ok(
+      '(J22) the notification setting was put back as it was',
+      (await getSetting(SITE, 'job_notify_enabled')) === notifyWasEnabled,
+      notifyWasEnabled,
+    )
+  }
+
+  /*
+   * ── (J23) The three time-based automations ────────────────────────────────
+   *
+   * Section 12 wanted a workflow engine; the plan promised six named rules
+   * instead. Three arrived as phase 14 notifications. These are the three a
+   * CLOCK fires, which is why they claim a slot and the notifications did not.
+   *
+   * The load-bearing checks are the claim race and the auto-invoice guards. An
+   * escalation sent twice is annoying; an invoice raised twice is money.
+   */
+  {
+    // Mail off for the whole block, restored at the end. Same reason as (J22):
+    // this box has real SMTP credentials and escalation would mail a real person.
+    const autoNotifyWas = await getSetting(SITE, 'job_notify_enabled').catch(() => '1')
+    await setSetting(SITE, 'job_notify_enabled', '0')
+
+    const aJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'high', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} automation job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!aJob.ok) throw new Error('automation job fixture failed')
+    const aJobId = aJob.id
+
+    // ── The claim is the whole guarantee ────────────────────────────────────
+    /*
+     * Forced overdue by writing the deadline into the past. Waiting for a real
+     * SLA to breach is not a test, and re-deriving the deadline here would be a
+     * second copy of the business-hours arithmetic.
+     */
+    // respond_by in the PAST, resolve_by in the FUTURE. The pairing is what makes
+    // "no resolution breach yet" mean something: the row matches the query on one
+    // deadline and must not be escalated on the other.
+    await siteExecute(
+      SITE,
+      `UPDATE job_cards
+          SET respond_by = DATE_SUB(NOW(), INTERVAL 2 HOUR),
+              resolve_by = DATE_ADD(NOW(), INTERVAL 2 DAY),
+              responded_at = NULL
+        WHERE id = ?`,
+      [aJobId],
+    )
+
+    const before = await overdueCount(SITE)
+    ok('(J23) an overdue job is counted', before >= 1, String(before))
+
+    const first = await escalateBreaches(SITE)
+    const firstRespond = first.find((o) => o.event === 'respond_breach')!
+    ok(
+      '(J23) the first sweep claims the breach',
+      firstRespond.claimed >= 1,
+      `claimed ${firstRespond.claimed}, done ${firstRespond.done}`,
+    )
+
+    const second = await escalateBreaches(SITE)
+    const secondRespond = second.find((o) => o.event === 'respond_breach')!
+    ok(
+      '(J23) *** the same sweep again claims NOTHING — the claim held ***',
+      secondRespond.claimed === 0,
+      `claimed ${secondRespond.claimed}`,
+    )
+
+    const [raceA, raceB] = await Promise.all([escalateBreaches(SITE), escalateBreaches(SITE)])
+    const raced =
+      (raceA.find((o) => o.event === 'respond_breach')?.claimed ?? 0) +
+      (raceB.find((o) => o.event === 'respond_breach')?.claimed ?? 0)
+    ok(
+      '(J23) *** two sweeps at once claim it ZERO times between them ***',
+      raced === 0,
+      `${raced} claims`,
+    )
+
+    const runs = await automationRuns(SITE, 200)
+    const mine = runs.filter((r) => r.jobId === aJobId)
+    /*
+     * ONE respond_breach run, not one run overall — the job earns a separate
+     * resolve_breach claim below, which is the point of the two events.
+     *
+     * The first version of this asserted one run in total and caught a real bug:
+     * the sweep was claiming BOTH events for a job that had only breached its
+     * response time, permanently consuming the resolution slot for the day.
+     */
+    const responds = mine.filter((r) => r.event === 'respond_breach')
+    ok('(J23) exactly one response-breach run is recorded', responds.length === 1, `${responds.length}`)
+    ok(
+      '(J23) *** and NO resolution breach yet — that deadline has not passed ***',
+      mine.filter((r) => r.event === 'resolve_breach').length === 0,
+      `${mine.filter((r) => r.event === 'resolve_breach').length} claimed early`,
+    )
+    ok('(J23) the run settled rather than staying claimed', responds[0]?.status === 'done', responds[0]?.status)
+
+    /*
+     * A response breach and a resolution breach are separate claims.
+     *
+     * They must be: a job can breach its response promise, get responded to, and
+     * then breach its resolution promise as well. One shared claim would swallow
+     * the second escalation and nobody would ever be told.
+     */
+    await siteExecute(
+      SITE,
+      `UPDATE job_cards SET resolve_by = DATE_SUB(NOW(), INTERVAL 1 HOUR) WHERE id = ?`,
+      [aJobId],
+    )
+    const third = await escalateBreaches(SITE)
+    ok(
+      '(J23) *** a RESOLUTION breach is claimed separately from a response one ***',
+      (third.find((o) => o.event === 'resolve_breach')?.claimed ?? 0) >= 1,
+      `resolve claimed ${third.find((o) => o.event === 'resolve_breach')?.claimed}`,
+    )
+
+    // ── The switches actually switch ────────────────────────────────────────
+    const escalateWas = await getSetting(SITE, 'job_auto_escalate')
+    await setSetting(SITE, 'job_auto_escalate', '0')
+    const offSweep = await escalateBreaches(SITE)
+    ok(
+      '(J23) with escalation off, nothing is claimed and it says why',
+      offSweep.every((o) => o.claimed === 0 && o.skipped === 'off'),
+    )
+    await setSetting(SITE, 'job_auto_escalate', escalateWas)
+
+    // ── Auto-invoice: the one that can cost money ───────────────────────────
+    const invoiceWas = await getSetting(SITE, 'job_auto_invoice')
+    ok(
+      '(J23) *** auto-invoicing is OFF out of the box — it creates real paperwork ***',
+      invoiceWas === '0',
+      invoiceWas,
+    )
+
+    const offInvoice = await autoInvoiceClosed(SITE)
+    ok('(J23) and does nothing while off', offInvoice.claimed === 0 && offInvoice.skipped === 'off')
+
+    /*
+     * The sweep is deliberately NOT run with auto-invoicing switched on.
+     *
+     * An earlier version did, and it raised a real draft invoice against an
+     * unrelated closed job that happened to be in the seven-day window on this
+     * dev database — 720.00 to a real customer, with the job line stamped as
+     * invoiced. It was a draft with no document number, so nothing was posted and
+     * no sequence number was consumed, but it still had to be unwound by hand.
+     *
+     * A test that flips a money-making switch on shared data and then runs the
+     * thing it switched on is not a test, it is an outage waiting for the right
+     * dataset. What matters here is provable without it: the guard is that a job
+     * with nothing to bill is never claimed, and the claim table says so.
+     */
+    const emptyClose = await closeJob(SITE, actor, aJobId)
+    ok('(J23) the fixture job closes', emptyClose.ok, emptyClose.ok ? '' : emptyClose.error)
+
+    const billable = await billableLines(SITE, aJobId)
+    ok('(J23) and it has nothing billable on it', billable.length === 0, `${billable.length} line(s)`)
+
+    const claimedEmpty = (await automationRuns(SITE, 200)).filter(
+      (r) => r.jobId === aJobId && r.event === 'auto_invoice',
+    )
+    ok(
+      '(J23) *** a job with nothing to bill is NOT claimed — it stays eligible ***',
+      claimedEmpty.length === 0,
+      `${claimedEmpty.length} claim(s)`,
+    )
+    ok('(J23) and the switch is back off', (await getSetting(SITE, 'job_auto_invoice')) === invoiceWas)
+
+    // ── Drift ───────────────────────────────────────────────────────────────
+    const clean = await reconcileJobAutomations(SITE)
+    ok(
+      '(J23) a healthy site reports no stuck claims',
+      !clean.stuckClaims.some((r) => r.jobId === aJobId),
+      `${clean.stuckClaims.length} stuck overall`,
+    )
+
+    /*
+     * A claim that never settled, backdated past the hour of grace.
+     *
+     * This is the shape that matters: the unique key means it will NEVER be
+     * retried, so an escalation that died mid-send is silently lost unless
+     * something reports it.
+     */
+    await siteExecute(
+      SITE,
+      `INSERT INTO job_automation_runs (job_card_id, event, for_date, status, created_at)
+       VALUES (?, 'visit_reminder', '2020-01-01', 'claimed', DATE_SUB(NOW(), INTERVAL 3 HOUR))`,
+      [aJobId],
+    )
+    const stuck = await reconcileJobAutomations(SITE)
+    ok(
+      '(J23) *** a claim that never finished is CAUGHT — nothing else would see it ***',
+      stuck.stuckClaims.some((r) => r.jobId === aJobId),
+      `${stuck.stuckClaims.length} reported`,
+    )
+
+    // ── Teardown ────────────────────────────────────────────────────────────
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [aJobId])
+    const orphans = await siteQuery<any>(
+      SITE, `SELECT id FROM job_automation_runs WHERE job_card_id = ?`, [aJobId])
+    ok(
+      '(J23) *** deleting a job CASCADEs its automation runs ***',
+      orphans.length === 0,
+      `${orphans.length} left`,
+    )
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [aJobId])
+
+    await setSetting(SITE, 'job_notify_enabled', autoNotifyWas)
+  }
+
+  /*
+   * ── (J24) Bulk actions and saved views ────────────────────────────────────
+   *
+   * Section 37.2. The two halves are tested for opposite reasons: a bulk action
+   * must REFUSE the right rows and say why, and a saved view must store the
+   * question rather than the answer.
+   */
+  {
+    const bulkNotifyWas = await getSetting(SITE, 'job_notify_enabled').catch(() => '1')
+    await setSetting(SITE, 'job_notify_enabled', '0')
+
+    const mk = async (title: string) => {
+      const r = await saveJobCard(SITE, actor, {
+        id: null, customerId, customerName: null, customerPhone: null,
+        customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+        priority: 'normal', ownerUserId: null, ownerName: '',
+        title, description: null, dueAt: null, source: 'manual',
+        reference: null, internalNote: null,
+      })
+      if (!r.ok) throw new Error(`bulk fixture failed: ${r.error}`)
+      return r.id
+    }
+
+    const b1 = await mk(`JCT${stamp} bulk one`)
+    const b2 = await mk(`JCT${stamp} bulk two`)
+    const b3 = await mk(`JCT${stamp} bulk three`)
+
+    // ── One change, many jobs ───────────────────────────────────────────
+    const raised = await bulkUpdateJobs(SITE, actor, [b1, b2, b3], {
+      kind: 'priority', priority: 'urgent',
+    })
+    ok('(J24) a bulk change reports what it did', raised.changed === 3, `${raised.changed}`)
+    ok('(J24) and refuses nothing it should not', raised.skipped.length === 0)
+
+    const after = await siteQuery<any>(
+      SITE, `SELECT priority FROM job_cards WHERE id IN (?,?,?)`, [b1, b2, b3])
+    ok('(J24) every one of them actually changed', after.every((r: any) => r.priority === 'urgent'))
+
+    /*
+     * The SLA promise moved with the priority.
+     *
+     * This is why bulk goes through setPriority rather than one UPDATE: a blind
+     * statement would leave every one of these jobs promising an urgent response
+     * against a deadline computed for a normal one.
+     */
+    const deadlines = await siteQuery<any>(
+      SITE, `SELECT respond_by FROM job_cards WHERE id = ?`, [b1])
+    ok(
+      '(J24) *** and its SLA promise was re-stamped, not left behind ***',
+      deadlines[0]?.respond_by !== null,
+      String(deadlines[0]?.respond_by),
+    )
+
+    // ── The refusals are the feature ────────────────────────────────────
+    await closeJob(SITE, actor, b3)
+    const mixed = await bulkUpdateJobs(SITE, actor, [b1, b3, 999999], {
+      kind: 'priority', priority: 'low',
+    })
+    ok('(J24) an open job in the same batch still changes', mixed.changed === 1, `${mixed.changed}`)
+    ok(
+      '(J24) *** a closed job is skipped BY NAME with a reason ***',
+      mixed.skipped.some((s) => s.id === b3 && s.reason.includes('closed')),
+      JSON.stringify(mixed.skipped),
+    )
+    ok(
+      '(J24) and so is one that no longer exists',
+      mixed.skipped.some((s) => s.id === 999999 && s.reason.includes('exists')),
+    )
+
+    // ── Saved views ─────────────────────────────────────────────────────
+    const viewName = `JCT${stamp} overdue`
+    const saved = await saveJobView(SITE, actor, {
+      id: null, name: viewName,
+      filters: { state: 'open', priority: 'urgent' },
+      isShared: false, isPinned: true,
+    })
+    ok('(J24) a view saves', saved.ok, saved.ok ? '' : saved.error)
+    if (!saved.ok) throw new Error('view fixture failed')
+
+    const mine = await listJobViews(SITE, actor.userId)
+    const found = mine.find((v) => v.id === saved.id)
+    ok('(J24) and comes back with its filters intact', found?.filters.priority === 'urgent')
+
+    /*
+     * The whole model in one assertion: a view holds the QUESTION.
+     *
+     * Nothing about the view changes when the jobs matching it change, which is
+     * what makes it right tomorrow without anybody maintaining it.
+     */
+    ok(
+      '(J24) *** a view stores no job ids — only the filters ***',
+      JSON.stringify(found?.filters ?? {}).indexOf(String(b1)) === -1,
+      JSON.stringify(found?.filters),
+    )
+
+    const empty = await saveJobView(SITE, actor, {
+      id: null, name: `${viewName} empty`, filters: {}, isShared: false, isPinned: false,
+    })
+    ok(
+      '(J24) a view with no filters is refused — it would just be the job list',
+      !empty.ok,
+      empty.ok ? 'ACCEPTED' : empty.error,
+    )
+
+    const dupe = await saveJobView(SITE, actor, {
+      id: null, name: viewName, filters: { state: 'open' }, isShared: false, isPinned: false,
+    })
+    ok('(J24) and the same person cannot use one name twice', !dupe.ok, dupe.ok ? 'ACCEPTED' : dupe.error)
+
+    // Rubbish in the JSON column is narrowed away rather than reaching a screen.
+    ok(
+      '(J24) *** filters are narrowed on the way out, not trusted ***',
+      JSON.stringify(cleanFilters({ state: 'open', evil: 'DROP TABLE', page: 9 })) ===
+        JSON.stringify({ state: 'open' }),
+      JSON.stringify(cleanFilters({ state: 'open', evil: 'DROP TABLE', page: 9 })),
+    )
+
+    const viewDrift = await reconcileJobViews(SITE)
+    ok(
+      '(J24) a view naming a live status is not reported as broken',
+      !viewDrift.brokenStatus.some((v) => v.id === saved.id),
+    )
+
+    ok('(J24) the view deletes', (await deleteJobView(SITE, actor, saved.id)).ok)
+
+    // Teardown.
+    for (const id of [b1, b2, b3]) {
+      await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [id])
+      await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [id])
+    }
+    await setSetting(SITE, 'job_notify_enabled', bulkNotifyWas)
+  }
+
+  /*
+   * ── (J25) Rules per stage ─────────────────────────────────────────────────
+   *
+   * Section 10.1. Four rules, and the one that matters most is the LAST: a
+   * status with no role can now close a job, which is what lets a business add
+   * a closing stage of its own without claiming one of the two reserved roles.
+   */
+  {
+    const rulesNotifyWas = await getSetting(SITE, 'job_notify_enabled').catch(() => '1')
+    await setSetting(SITE, 'job_notify_enabled', '0')
+
+    const statuses = await listJobStatuses(SITE, true)
+    const byCode = (code: string) => statuses.find((s) => s.code === code)
+
+    // ── The five stages the PRD names and 104 did not seed ───────────────
+    for (const code of ['paused', 'awaiting_customer', 'ready_invoice', 'invoiced', 'closed']) {
+      ok(`(J25) the ${code} stage exists`, byCode(code) !== undefined)
+    }
+    ok(
+      '(J25) *** and none of them claimed a role — that would break REQUIRED_ROLES ***',
+      ['paused', 'awaiting_customer', 'ready_invoice', 'invoiced', 'closed'].every(
+        (c) => byCode(c)?.role === '',
+      ),
+    )
+
+    const rJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} rules job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!rJob.ok) throw new Error('rules fixture failed')
+
+    // ── 1. A stage that asks why ─────────────────────────────────────────
+    const paused = byCode('paused')!
+    ok('(J25) Paused asks for a reason', paused.requiresReason)
+
+    const noReason = await setStatus(SITE, actor, rJob.id, paused.id)
+    ok(
+      '(J25) *** and refuses the move without one ***',
+      !noReason.ok,
+      noReason.ok ? 'ACCEPTED' : noReason.error,
+    )
+    ok(
+      '(J25) but accepts it with one',
+      (await setStatus(SITE, actor, rJob.id, paused.id, 'Waiting on a part')).ok,
+    )
+
+    // ── 2. Office-only stages ────────────────────────────────────────────
+    const invoiced = byCode('invoiced')!
+    ok('(J25) Invoiced is office-only', invoiced.audience === 'office')
+
+    const asTech = await setStatus(SITE, actor, rJob.id, invoiced.id, undefined, false)
+    ok(
+      '(J25) *** a technician cannot mark a job invoiced ***',
+      !asTech.ok,
+      asTech.ok ? 'ACCEPTED' : asTech.error,
+    )
+    ok(
+      '(J25) somebody who bills jobs can',
+      (await setStatus(SITE, actor, rJob.id, invoiced.id, undefined, true)).ok,
+    )
+
+    // ── 3. Blocking is per stage, not global ─────────────────────────────
+    /*
+     * The two closing stages want OPPOSITE answers, which is the whole reason
+     * this moved off a single site-wide setting. Refusing to cancel a job over
+     * an unticked check is how a job nobody wants stays open forever.
+     */
+    ok('(J25) Work Completed demands its checks', byCode('completed')?.blocksOnIncomplete === true)
+    ok(
+      '(J25) *** and Cancelled deliberately does NOT ***',
+      byCode('cancelled')?.blocksOnIncomplete === false,
+    )
+    ok(
+      '(J25) a stage that has not decided falls back to the site setting',
+      byCode('scheduled')?.blocksOnIncomplete === null,
+      String(byCode('scheduled')?.blocksOnIncomplete),
+    )
+
+    /*
+     * A stage that existed before 123 must behave as it did.
+     *
+     * 123 originally turned requires_reason ON for On Hold and Cancelled, and
+     * (J8) caught it immediately — a board test moves a job to On Hold with no
+     * reason, and a drag can never carry one. 124 reverted it. The rule is
+     * configurable; seeding it ON for an existing stage is a behaviour change
+     * nobody asked for.
+     */
+    ok(
+      '(J25) *** an existing stage was NOT made stricter by the migration ***',
+      byCode('on_hold')?.requiresReason === false && byCode('cancelled')?.requiresReason === false,
+      `on_hold=${byCode('on_hold')?.requiresReason} cancelled=${byCode('cancelled')?.requiresReason}`,
+    )
+
+    // ── 4. Closed WITHOUT a role ─────────────────────────────────────────
+    const closedStage = byCode('closed')!
+    ok('(J25) the Closed stage carries no role', closedStage.role === '')
+    ok('(J25) but is marked as closing', closedStage.isClosedStage)
+
+    const moved = await setStatus(SITE, actor, rJob.id, closedStage.id, undefined, true)
+    ok('(J25) a job can be moved there', moved.ok, moved.ok ? '' : moved.error)
+
+    const row = await siteQueryOne<any>(
+      SITE, `SELECT status FROM job_cards WHERE id = ?`, [rJob.id])
+    ok(
+      '(J25) *** and the job records itself CLOSED on the flag alone ***',
+      String(row?.status) === 'closed',
+      String(row?.status),
+    )
+
+    const card = await getJobCard(SITE, rJob.id)
+    ok(
+      '(J25) the job card agrees it is closed, not just the column',
+      card?.isClosed === true,
+      String(card?.isClosed),
+    )
+
+    // Teardown.
+    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [rJob.id])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [rJob.id])
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [rJob.id])
+    await setSetting(SITE, 'job_notify_enabled', rulesNotifyWas)
+  }
+
   await sweepStrays()
 
   /*
@@ -4048,6 +4800,29 @@ async function main() {
   ])
   await sweepCheck('evidence headlines', 'SELECT id FROM job_headlines WHERE code REGEXP ?', [
     EVIDENCE_HEADLINE_PATTERN,
+  ])
+  await sweepCheck('people jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    PEOPLE_JOB_PATTERN,
+  ])
+  await sweepCheck(
+    'orphaned job people',
+    'SELECT user_id FROM job_card_people WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  await sweepCheck('automation jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    AUTOMATION_JOB_PATTERN,
+  ])
+  await sweepCheck(
+    'orphaned automation runs',
+    'SELECT id FROM job_automation_runs WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  await sweepCheck('bulk jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    BULK_JOB_PATTERN,
+  ])
+  await sweepCheck('saved views', 'SELECT id FROM job_saved_views WHERE name REGEXP ?', [
+    VIEW_PATTERN,
+  ])
+  await sweepCheck('rules jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    RULES_JOB_PATTERN,
   ])
   /*
    * A party_documents row whose job is gone. The bytes were never written by this
