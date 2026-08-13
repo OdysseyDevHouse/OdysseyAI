@@ -12,6 +12,9 @@ import { jobTime } from '@/lib/site/jobTime'
 import { jobTravel } from '@/lib/site/jobTravel'
 import { jobParts, vanHoldings } from '@/lib/site/jobParts'
 import { jobStanding, tradingHours } from '@/lib/site/jobSla'
+import { jobItems, jobHeadlineIds, listHeadlines } from '@/lib/site/jobHeadlines'
+import { jobAssetFor } from '@/lib/site/jobAssets'
+import { jobSeriesFor } from '@/lib/site/jobSeries'
 import { getServiceAddress, formatAddress, mapsHref } from '@/lib/site/serviceAddresses'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -27,12 +30,14 @@ import {
   Icons,
 } from '@/components/ui'
 import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
-import { getSetting } from '@/lib/site/settings'
+import { getSetting, SETTING_DEFAULTS } from '@/lib/site/settings'
 import { storedMillis } from '@/lib/jobStatusModel'
 import JobDetail from './JobDetail'
 import JobVisits from './JobVisits'
 import JobPartsPanel from './JobPartsPanel'
 import JobSlaCard from './JobSlaCard'
+import JobChecks from './JobChecks'
+import JobAssetCard from './JobAssetCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,9 +50,17 @@ export const dynamic = 'force-dynamic'
  * the visit. Time folded into Costs, because labour time IS a cost line and two
  * tabs showing two halves of one figure is how they come to disagree.
  */
-type Tab = 'overview' | 'visits' | 'costs' | 'quotes' | 'files' | 'history'
+type Tab = 'overview' | 'checks' | 'visits' | 'costs' | 'quotes' | 'files' | 'history'
 
-const TABS: readonly Tab[] = ['overview', 'visits', 'costs', 'quotes', 'files', 'history']
+const TABS: readonly Tab[] = [
+  'overview',
+  'checks',
+  'visits',
+  'costs',
+  'quotes',
+  'files',
+  'history',
+]
 
 function toTab(value: string | undefined): Tab {
   return TABS.includes(value as Tab) ? (value as Tab) : 'overview'
@@ -65,8 +78,11 @@ function toTab(value: string | undefined): Tab {
  * each.
  *
  * Three of the proposed tabs are also not tabs at all. Customer is a link to the
- * customer. Assets belong to the customer, not the job. A visit is a screen of
- * its own, because a technician on site opens the visit rather than the job.
+ * customer. A visit is a screen of its own, because a technician on site opens the
+ * visit rather than the job. And ASSETS is a card plus a link: a job names ONE
+ * piece of equipment, so the job needs a picker and a warranty line, while the
+ * unit's own history belongs on the unit at /jobs/equipment/[id] — putting it here
+ * would mean every job card carried a list of visits it was not part of.
  *
  * ── WHAT THE SERVER DECIDES, AND WHAT THE CLIENT DOES ──────────────────────
  *
@@ -119,6 +135,12 @@ export default async function JobPage({
     holdings,
     standing,
     week,
+    items,
+    headlines,
+    jobHeadlines,
+    jobAsset,
+    fromSeries,
+    signatureStatement,
   ] = await Promise.all([
       listJobStatuses(siteId, false),
       can(capabilities, 'jobs.invoice') ? billableLines(siteId, jobId) : Promise.resolve([]),
@@ -139,6 +161,17 @@ export default async function JobPage({
       // Tolerant: a site without 113 must still be able to open a job card.
       jobStanding(siteId, jobId).catch(() => null),
       tradingHours(siteId).catch(() => null),
+      // All three tolerant: a site without migration 114 must still open a job.
+      jobItems(siteId, jobId).catch(() => []),
+      listHeadlines(siteId, false).catch(() => []),
+      jobHeadlineIds(siteId, jobId).catch(() => []),
+      // Tolerant: a site without migration 115 must still open a job card.
+      jobAssetFor(siteId, jobId).catch(() => null),
+      // Likewise 118.
+      jobSeriesFor(siteId, jobId).catch(() => null),
+      // Likewise 119. A site without it shows the pad with the default wording
+      // rather than refusing to open the job.
+      getSetting(siteId, 'job_signature_statement').catch(() => null),
     ])
 
   const overdue = !job.isClosed && job.dueAt !== null && storedMillis(job.dueAt) < Date.now()
@@ -173,6 +206,17 @@ export default async function JobPage({
         {/* The warnings sit ABOVE the tab bar, not inside a tab: a cancelled job
             or an undecided cost is true of the whole record, and hiding it behind
             a tab means somebody works a job for ten minutes before finding out. */}
+        {/* Where the job came from, above the tabs: it is true of the whole
+            record, and it answers "who asked for this" before anybody wonders. */}
+        {fromSeries !== null && (
+          <Callout tone="neutral" title="Raised by a schedule">
+            <TextLink href="/jobs/recurring">{fromSeries.name}</TextLink> —{' '}
+            {fromSeries.frequencyLabel.toLowerCase()}
+            {fromSeries.forDate ? `, due ${fromSeries.forDate}` : ''}. Nothing from the previous
+            occurrence carries over: this job started empty apart from its checks.
+          </Callout>
+        )}
+
         {job.status === 'cancelled' && (
           <Callout tone="danger" title="This job was cancelled">
             {job.cancelReason ?? 'No reason was recorded.'}
@@ -195,6 +239,16 @@ export default async function JobPage({
         <LinkTabs
           items={[
             { value: 'overview', label: 'Overview', icon: <Icons.Wrench size={15} />, href: `/jobs/${job.id}` },
+            {
+              value: 'checks',
+              label: 'Checks',
+              icon: <Icons.Check size={15} />,
+              // Outstanding REQUIRED items, not the total: the count on a tab is
+              // there to pull somebody towards work they have to do, and "12" on a
+              // finished checklist pulls them towards nothing.
+              count: items.filter((i) => i.isRequired && i.completedAt === null).length || undefined,
+              href: `/jobs/${job.id}?tab=checks`,
+            },
             {
               value: 'visits',
               label: 'Visits',
@@ -245,6 +299,18 @@ export default async function JobPage({
           />
         )}
 
+        {/* What the visit is about, above where it happens: a technician wants to
+            know which unit before they know which gate. */}
+        {tab === 'overview' && (
+          <JobAssetCard
+            jobId={job.id}
+            customerId={job.customerId}
+            asset={jobAsset}
+            canEdit={can(capabilities, 'jobs.edit')}
+            jobClosed={job.isClosed}
+          />
+        )}
+
         {tab === 'overview' && address && (
           <Card>
             <CardHeader
@@ -277,7 +343,25 @@ export default async function JobPage({
           </Card>
         )}
 
-        {tab === 'visits' ? (
+        {tab === 'checks' ? (
+          <JobChecks
+            jobId={job.id}
+            jobClosed={job.isClosed}
+            items={items}
+            headlines={headlines.map((h) => ({
+              id: h.id,
+              name: h.name,
+              itemCount: h.items.length,
+            }))}
+            selectedHeadlineIds={jobHeadlines}
+            canEdit={can(capabilities, 'jobs.edit')}
+            // getSetting already falls back to the registered default; this covers
+            // only the catch above, where the settings row could not be read at all.
+            signatureStatement={
+              signatureStatement?.trim() || SETTING_DEFAULTS.job_signature_statement
+            }
+          />
+        ) : tab === 'visits' ? (
           <JobVisits
             jobId={job.id}
             jobClosed={job.isClosed}

@@ -81,6 +81,15 @@ const PUBLIC_PREFIXES = [
   // while the terminals charged the new ones. Two answers to what a thing costs
   // is the worst of the failure modes on this list.
   '/api/pricing/schedules/tick',
+  // Recurring jobs' heartbeat. Same reasoning and the same protection as the
+  // ticks above: JOB_SERIES_CRON_SECRET, compared in constant time, refusing
+  // every request when it is not set.
+  //
+  // Its failure mode behind a cookie gate is the quietest on this list — a
+  // quarterly service simply never appears, and nobody finds out until the
+  // customer rings to ask why nobody came. There is no error, no missing
+  // invoice, no wrong price: just work that was never raised.
+  '/api/jobs/series/tick',
   // The landing page for an emailed "pay this invoice" link. The payer is a
   // customer, not a user of the back office, and will never have a session.
   //

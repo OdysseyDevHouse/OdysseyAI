@@ -840,3 +840,245 @@ export function JobStrandedStatusTable({ rows }: { rows: StrandedStatusRow[] }) 
   ]
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.statusId} />
 }
+
+/* ── JOB TASKS AND CHECKS ───────────────────────────────────────────────────
+ *
+ * Two shapes. A completed item with no answer, and a stored failure flag that
+ * disagrees with the response beside it — both impossible through the app, so both
+ * mean somebody edited the database or an older build wrote the row.
+ */
+
+type ItemDriftRow = {
+  itemId: number
+  jobId: number
+  name: string
+  detail: string
+}
+
+export function JobItemDriftTable({ rows }: { rows: ItemDriftRow[] }) {
+  const columns: Column<ItemDriftRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}?tab=checks`}>#{r.jobId}</TextLink>,
+    },
+    {
+      key: 'name',
+      header: 'Task or check',
+      sortable: true,
+      sortValue: (r) => r.name,
+      cell: (r) => <span className="text-ink-2">{r.name}</span>,
+    },
+    {
+      key: 'detail',
+      header: 'What is wrong',
+      cell: (r) => <Badge tone="danger">{r.detail}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.itemId} />
+}
+
+type UnclassifiedJobRow = { jobId: number; documentNumber: string | null }
+
+/**
+ * Open jobs with no kind of work, while the setting demands one.
+ *
+ * Only reported when `job_headline_required` is on — otherwise a job without a
+ * headline is a perfectly normal job and listing it would be noise.
+ */
+export function JobNoHeadlineTable({ rows }: { rows: UnclassifiedJobRow[] }) {
+  const columns: Column<UnclassifiedJobRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? String(r.jobId),
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}?tab=checks`}>{r.documentNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+/* ── CUSTOMER EQUIPMENT ─────────────────────────────────────────────────────
+ *
+ * Three shapes, all of which mean somebody or something bypassed the module:
+ * status out of step with is_active, a unit at a site belonging to a different
+ * customer, and a job whose equipment belongs to somebody else.
+ */
+
+type AssetDriftRow = {
+  assetId: number
+  documentNumber: string | null
+  detail: string
+}
+
+export function AssetDriftTable({ rows }: { rows: AssetDriftRow[] }) {
+  const columns: Column<AssetDriftRow>[] = [
+    {
+      key: 'asset',
+      header: 'Equipment',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? String(r.assetId),
+      cell: (r) => (
+        <TextLink href={`/jobs/equipment/${r.assetId}`}>
+          {r.documentNumber ?? `#${r.assetId}`}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'detail',
+      header: 'What is wrong',
+      cell: (r) => <Badge tone="danger">{r.detail}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.assetId} />
+}
+
+type AssetJobDriftRow = {
+  jobId: number
+  documentNumber: string | null
+  assetId: number
+}
+
+export function AssetJobDriftTable({ rows }: { rows: AssetJobDriftRow[] }) {
+  const columns: Column<AssetJobDriftRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.documentNumber ?? String(r.jobId),
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}`}>{r.documentNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'asset',
+      header: 'Equipment',
+      cell: (r) => (
+        <TextLink href={`/jobs/equipment/${r.assetId}`}>#{r.assetId}</TextLink>
+      ),
+    },
+    {
+      key: 'detail',
+      header: 'What is wrong',
+      cell: () => <Badge tone="danger">belongs to another customer</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+type RetiredWorkedRow = {
+  assetId: number
+  documentNumber: string | null
+  description: string
+  jobCount: number
+}
+
+/**
+ * Retired equipment still named by an open job.
+ *
+ * Informational, not a bug: naming a retired unit is ALLOWED, because somebody has
+ * to be able to log the job that scrapped it. Listed so a job left open against a
+ * dead unit does not sit there unnoticed.
+ */
+export function AssetRetiredWorkedTable({ rows }: { rows: RetiredWorkedRow[] }) {
+  const columns: Column<RetiredWorkedRow>[] = [
+    {
+      key: 'asset',
+      header: 'Retired equipment',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => (
+        <TextLink href={`/jobs/equipment/${r.assetId}`}>
+          {r.description}
+          {r.documentNumber ? ` · ${r.documentNumber}` : ''}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'jobs',
+      header: 'Open jobs',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.jobCount,
+      cell: (r) => <Badge tone="warning">{r.jobCount}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.assetId} />
+}
+
+/* ── RECURRING JOBS ─────────────────────────────────────────────────────────
+ *
+ * The serious one is a STRANDED CLAIM: a period claimed but never raised. The
+ * unique key means the next tick will not retry it, so that period of work is
+ * silently lost — the only drift in this module with no symptom anywhere else.
+ */
+
+type SeriesRunDriftRow = {
+  runId: number
+  seriesId: number
+  seriesName: string
+  forDate: string
+  detail: string
+}
+
+export function SeriesRunDriftTable({ rows }: { rows: SeriesRunDriftRow[] }) {
+  const columns: Column<SeriesRunDriftRow>[] = [
+    {
+      key: 'series',
+      header: 'Schedule',
+      sortable: true,
+      sortValue: (r) => r.seriesName,
+      cell: (r) => <TextLink href="/jobs/recurring">{r.seriesName}</TextLink>,
+    },
+    {
+      key: 'due',
+      header: 'Period',
+      sortable: true,
+      sortValue: (r) => r.forDate,
+      cell: (r) => <span className="text-ink-2">{r.forDate}</span>,
+    },
+    {
+      key: 'detail',
+      header: 'What is wrong',
+      cell: (r) => <Badge tone="danger">{r.detail}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.runId} />
+}
+
+type CursorAheadRow = {
+  seriesId: number
+  seriesName: string
+  cursor: string
+  newestClaim: string | null
+}
+
+export function SeriesCursorTable({ rows }: { rows: CursorAheadRow[] }) {
+  const columns: Column<CursorAheadRow>[] = [
+    {
+      key: 'series',
+      header: 'Schedule',
+      sortable: true,
+      sortValue: (r) => r.seriesName,
+      cell: (r) => <TextLink href="/jobs/recurring">{r.seriesName}</TextLink>,
+    },
+    {
+      key: 'cursor',
+      header: 'Cursor says',
+      cell: (r) => <span className="text-ink-2">{r.cursor}</span>,
+    },
+    {
+      key: 'claim',
+      header: 'Newest actually raised',
+      cell: (r) => (
+        <Badge tone="danger">{r.newestClaim ?? 'nothing ever raised'}</Badge>
+      ),
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.seriesId} />
+}

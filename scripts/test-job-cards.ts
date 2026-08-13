@@ -51,6 +51,33 @@
  *        Cost fields are gated per FIELD, so a report degrades for a technician
  *        rather than refusing to open; a job line dates from its job; and three
  *        built-ins ship rather than fifteen.
+ *  (J16) A worklist with no screen is not a feature — travelNeedingVerification()
+ *        shipped with no caller, so a claim of 88km against a 42km estimate
+ *        appeared nowhere. Asserts it stays rendered, and behind the DECISION
+ *        capability rather than the edit one.
+ *  (J17) The suite leaves NOTHING behind, asserted per table rather than by
+ *        checking job_cards alone — which passed while four orphaned activity rows
+ *        sat behind it. Litter from one suite is how another suite fails.
+ *  (J18) A kind of work brings its tasks and checks with it. Two kinds sharing an
+ *        item produce ONE (matched past case and spacing) and a later REQUIRED
+ *        duplicate promotes the survivor; a required item unanswered blocks closing
+ *        and the refusal NAMES it; a check that records a value cannot be ticked off
+ *        empty; and dropping a kind of work keeps anything signed off or added by
+ *        hand, because neither is the system's to delete.
+ *  (J19) Customer equipment is what we look after for somebody else — not
+ *        fixed_assets, which we own and depreciate, and not product_serials, which
+ *        we bought or sold. A generated serial_key means spacing and capitals
+ *        cannot hide a duplicate; a duplicate WARNS rather than refusing, because
+ *        plenty of equipment has no legible plate; a job cannot name another
+ *        customer's unit; closing a job books the next service from the KIND; and
+ *        is_active and status move together, because verifySequence reads status.
+ *  (J20) Recurring work is contracts.ts with a job instead of an invoice, so the
+ *        two things it borrows are the two things tested: the CLAIM — two ticks at
+ *        once raise ONE job between them — and the CATCH-UP, where a missed
+ *        quarter raises three jobs each dated for its OWN period rather than the
+ *        run date. Lead time shifts the window, not the date; the 24-period cap is
+ *        reported rather than silently applied; auto_create off stops the tick but
+ *        not a person; and deleting a schedule keeps every job it raised.
  *
  * (J2) is the one that catches real bugs. A margin built on the lines' intended
  * prices rather than the invoice will agree with itself and disagree with the
@@ -148,6 +175,43 @@ import {
   setMainLocation,
 } from '../src/lib/site/stockLocations'
 import { reconcileStock } from '../src/lib/site/stockMovements'
+import {
+  saveHeadline,
+  deleteHeadline,
+  listHeadlines,
+  applyHeadlines,
+  jobItems,
+  recordItem,
+  captureEvidence,
+  addJobItem,
+  deleteJobItem,
+  reconcileJobHeadlines,
+} from '../src/lib/site/jobHeadlines'
+import {
+  saveAssetType,
+  saveAsset,
+  getAsset,
+  listAssets,
+  findDuplicateAssets,
+  setJobAsset,
+  jobAssetFor,
+  assetHistory,
+  retireAsset,
+  reviveAsset,
+  deleteAsset,
+  reconcileAssets,
+  validateAsset,
+} from '../src/lib/site/jobAssets'
+import {
+  saveJobSeries,
+  getJobSeries,
+  deleteJobSeries,
+  generateDueJobs,
+  seriesRuns,
+  reconcileJobSeries,
+  duePeriods,
+  validateSeries,
+} from '../src/lib/site/jobSeries'
 import { runBuilderSpec } from '../src/lib/reportBuilder/run'
 import { TEMPLATES } from '../src/lib/reportBuilder/templates'
 import { getSource, fieldsFor } from '../src/lib/reportBuilder/catalog'
@@ -185,6 +249,13 @@ import {
   parseClock,
   slaState,
   tradingWeekIsUsable,
+  isFailedResponse,
+  itemBlocker,
+  responseIsEvidence,
+  mergeHeadlineItems,
+  validateHeadline,
+  validateResponse,
+  type ResponseType,
 } from '../src/lib/jobStatusModel'
 
 const SITE = 1
@@ -207,6 +278,24 @@ const BOARD_PATTERN = 'JCT %'
 /** (J13) fixtures: JCP thermostat / JCS compressor, JCV bakkie / JCR store room. */
 const PART_PATTERN = '^JC[PS][0-9]{6}$'
 const VAN_PATTERN = '^JC[VR][0-9]{6}$'
+/** (J18) fixtures: JCT<stamp>S for the service kind, JCT<stamp>R for the repair. */
+const HEADLINE_PATTERN = '^JCT[0-9]{6}[SR]$'
+/** (J19) fixtures: equipment described AS<stamp>..., its kind coded AS<stamp>A. */
+const ASSET_PATTERN = '^AS[0-9]{6} '
+const ASSET_TYPE_PATTERN = '^AS[0-9]{6}[A-Z]$'
+/** (J20) fixtures: every schedule this suite creates is named "JCT recurring". */
+const SERIES_PATTERN = '^JCT recurring'
+/**
+ * (J21) evidence fixtures: a headline coded JCE<stamp>H, its job titled
+ * "JCE<stamp> evidence job", and the party_documents rows the capture created.
+ *
+ * The attachments matter most. An orphaned party_documents row pointing at a
+ * stored_name that was never written is exactly the drift the reconciliation
+ * screen now reports, and leaving one behind would have the NEXT run open with a
+ * failure it did not cause.
+ */
+const EVIDENCE_HEADLINE_PATTERN = '^JCE[0-9]{6}H$'
+const EVIDENCE_JOB_PATTERN = '^JCE[0-9]{6} '
 
 /**
  * Deletes only this suite's fixtures.
@@ -218,7 +307,96 @@ const VAN_PATTERN = '^JC[VR][0-9]{6}$'
  */
 async function sweepStrays() {
   /*
-   * (J13) fixtures first: a crashed run leaves stock on a bakkie, and a leftover
+   * (J20) schedules. The runs CASCADE from the series and job_cards.series_id is
+   * SET NULL, so deleting the series is enough — but the JOBS it raised are matched
+   * by title, and a leftover schedule is a reconcileJobSeries drift row that would
+   * be blamed on whichever suite ran next.
+   */
+  await siteExecute(SITE, `DELETE FROM job_series WHERE name REGEXP ?`, [SERIES_PATTERN])
+
+  /*
+   * (J21) evidence. The attachments go first: job_card_items.attachment_id is
+   * ON DELETE SET NULL, so removing the documents cannot fail on a reference, and
+   * the items themselves CASCADE from the job below.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE FROM party_documents
+      WHERE entity = 'job_card'
+        AND entity_id IN (SELECT id FROM job_cards WHERE title REGEXP ?)`,
+    [EVIDENCE_JOB_PATTERN],
+  )
+  await siteExecute(
+    SITE,
+    `DELETE FROM job_card_headlines
+      WHERE job_card_id IN (SELECT id FROM job_cards WHERE title REGEXP ?)`,
+    [EVIDENCE_JOB_PATTERN],
+  )
+  await siteExecute(
+    SITE,
+    `DELETE FROM job_card_items
+      WHERE job_card_id IN (SELECT id FROM job_cards WHERE title REGEXP ?)`,
+    [EVIDENCE_JOB_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [EVIDENCE_JOB_PATTERN])
+  await siteExecute(
+    SITE,
+    `DELETE FROM job_headline_items
+      WHERE headline_id IN (SELECT id FROM job_headlines WHERE code REGEXP ?)`,
+    [EVIDENCE_HEADLINE_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM job_headlines WHERE code REGEXP ?`, [EVIDENCE_HEADLINE_PATTERN])
+
+  /*
+   * Any job_card attachment whose job is gone.
+   *
+   * Broader than the patterns above on purpose. party_documents carries a LOOSE
+   * (entity, entity_id) pair with no foreign key, so deleting a job never cascades
+   * to its files — which means every crashed run of this suite, and of (J18) since
+   * it started capturing signatures, leaves rows nothing else will ever collect.
+   * Scoped to jobs that no longer exist, so it cannot touch a live document.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE FROM party_documents
+      WHERE entity = 'job_card' AND entity_id NOT IN (SELECT id FROM job_cards)`,
+  )
+
+  /*
+   * (J19) equipment. The job FK is RESTRICT, so the reference has to be cleared
+   * before the asset can go — and a leftover asset row is a reconcileAssets drift
+   * row that would then be blamed on whichever suite ran next.
+   */
+  await siteExecute(
+    SITE,
+    `UPDATE job_cards SET asset_id = NULL
+      WHERE asset_id IN (SELECT id FROM customer_assets WHERE description REGEXP ?)`,
+    [ASSET_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM customer_assets WHERE description REGEXP ?`, [ASSET_PATTERN])
+  await siteExecute(SITE, `DELETE FROM asset_types WHERE code REGEXP ?`, [ASSET_TYPE_PATTERN])
+
+  /*
+   * (J18) items and headlines. Items first — job_card_items CASCADEs from the job,
+   * but a headline is RESTRICTed by job_card_headlines, so the links have to go
+   * before the templates or the delete fails silently and leaves a stray.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE i FROM job_card_items i JOIN job_cards j ON j.id = i.job_card_id
+      WHERE j.title LIKE ?`,
+    [TITLE_PATTERN],
+  )
+  await siteExecute(
+    SITE,
+    `DELETE h FROM job_card_headlines h JOIN job_cards j ON j.id = h.job_card_id
+      WHERE j.title LIKE ?`,
+    [TITLE_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM job_headlines WHERE code REGEXP ?`, [HEADLINE_PATTERN])
+
+  /*
+   * (J13) fixtures next: a crashed run leaves stock on a bakkie, and a leftover
    * pile on a leftover location is a reconcileStock() drift row that would then
    * be blamed on whichever suite ran next. Movements before piles before
    * products; transfer lines before transfers.
@@ -273,9 +451,22 @@ async function sweepStrays() {
     STATUS_PATTERN,
   ])
   await siteExecute(SITE, `DELETE FROM customers WHERE code REGEXP ?`, [CUSTOMER_PATTERN])
-  await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND user_name = ?`, [
-    actor.userName,
-  ])
+  /*
+   * Activity, by ANY actor this module's scripts have used — not just this suite's.
+   *
+   * A one-name sweep left rows behind from the demo scripts that drove the browser
+   * verification, and an orphaned activity row is precisely the shape of litter
+   * that makes somebody else's suite fail: REF55846921 does it to three of them.
+   * Also catches a row whose job has already gone, whatever wrote it.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE FROM activity_log
+      WHERE entity = 'job_card'
+        AND (user_name IN (?, 'SLA Probe', 'SLA Demo', 'Parts Demo')
+             OR entity_id NOT IN (SELECT id FROM job_cards))`,
+    [actor.userName],
+  )
 }
 
 /**
@@ -2845,14 +3036,1036 @@ async function main() {
       drift.stateMismatch.length === 0,
       JSON.stringify(drift.stateMismatch.slice(0, 3)),
     )
+
+    /*
+     * (J16) A WORKLIST WITH NO SCREEN IS NOT A FEATURE.
+     *
+     * travelNeedingVerification() and its dedicated index shipped in phase 6 with
+     * NO caller — a claim of 88km against a 42km estimate sat in the database and
+     * appeared nowhere, so the approval half of the travel workflow did not exist.
+     * An audit found it; this asserts it stays found, because the same thing can
+     * happen to any read that outlives the screen it was written for.
+     */
+    const readers = await import('node:fs').then((fs) =>
+      fs
+        .readdirSync('src/app/(app)/jobs/sla')
+        .map((f) => fs.readFileSync(`src/app/(app)/jobs/sla/${f}`, 'utf8'))
+        .join(''),
+    )
+    ok(
+      '(J16) *** the travel approval worklist is actually rendered somewhere ***',
+      readers.includes('travelNeedingVerification'),
+    )
+    // And it is behind the decision capability, not merely the edit one: the person
+    // who drove must not be the person who signs it off.
+    ok(
+      '(J16) and verifying is gated on the billing decision, not on edit',
+      readers.includes("'jobs.bill_decide'"),
+    )
+  }
+
+  // ── 24. (J18) Headlines, tasks and checks ─────────────────────────────
+  //
+  // The pure logic first — merging is where this phase could be silently wrong,
+  // because a duplicate that slips through produces two identical checks on one
+  // job and nobody notices until a technician ticks the same box twice.
+  {
+    const item = (name: string, isRequired = false) => ({ name, isRequired })
+
+    const merged = mergeHeadlineItems([
+      { headlineName: 'Service', items: [item('Check gas pressure'), item('Replace filter')] },
+      { headlineName: 'Repair', items: [item('  check GAS pressure  ', true), item('Test run')] },
+    ])
+    ok(
+      '(J18) *** two kinds of work sharing an item produce ONE, matched past case and spacing ***',
+      merged.items.length === 3,
+      String(merged.items.length),
+    )
+    ok(
+      '(J18) and the caller is told which was combined, so the screen can say so',
+      merged.merged.length === 1 && merged.merged[0].from.length === 2,
+      JSON.stringify(merged.merged),
+    )
+    /*
+     * The subtle one. If EITHER kind of work insists on an item, the job insists.
+     * Keeping the optional copy would silently drop a requirement somebody
+     * configured, and the job would then close with the check unanswered.
+     */
+    ok(
+      '(J18) *** a later REQUIRED duplicate promotes the survivor ***',
+      merged.items.find((i) => i.name.trim().toLowerCase() === 'check gas pressure')?.isRequired ===
+        true,
+    )
+
+    // Failure detection: only an explicit no or fail. An EMPTY answer is
+    // unanswered, and treating it as failing would put every untouched job on the
+    // exception report.
+    ok('(J18) no is a failure', isFailedResponse('yesno', 'no'))
+    ok('(J18) so is a padded, capitalised Fail', isFailedResponse('passfail', ' Fail '))
+    ok('(J18) yes is not', !isFailedResponse('yesno', 'yes'))
+    ok('(J18) *** an unanswered check is NOT a failure ***', !isFailedResponse('yesno', null))
+    ok('(J18) and a number cannot fail — no threshold exists to judge it', !isFailedResponse('number', '0'))
+
+    ok('(J18) a non-numeric measurement is refused', validateResponse('measure', 'quite high') !== null)
+    ok('(J18) a numeric one passes', validateResponse('measure', '12.4') === null)
+    ok('(J18) an answer outside the options is refused', validateResponse('yesno', 'maybe') !== null)
+    ok('(J18) a blank answer is not an error — required-ness is what forces one', validateResponse('number', '') === null)
+
+    const base = { code: 'J18CODE', name: 'J18', suggestedMinutes: 60 }
+    const draft = (
+      name: string,
+      responseType: ResponseType = 'none',
+      unit: string | null = null,
+      evidenceRequired = false,
+    ) => ({
+      kind: 'check' as const, name, hint: null, responseType, unit,
+      workPhase: 'during' as const, isRequired: false, evidenceRequired,
+    })
+    ok('(J18) a headline duplicating its OWN item is refused', validateHeadline({ ...base, items: [draft('A'), draft(' a ')] }) !== null)
+    ok('(J18) a lower-case code is refused', validateHeadline({ ...base, code: 'lower', items: [] }) !== null)
+    ok('(J18) a measurement with no unit is refused', validateHeadline({ ...base, items: [draft('P', 'measure')] }) !== null)
+    ok('(J18) and a unit on something that is not a measurement', validateHeadline({ ...base, items: [draft('P', 'yesno', 'bar')] }) !== null)
+
+    // ── Evidence (119) ──────────────────────────────────────────────────
+    ok('(J18) a photo may require a file', validateHeadline({ ...base, items: [draft('Pic', 'photo', null, true)] }) === null)
+    ok('(J18) a signature may too', validateHeadline({ ...base, items: [draft('Sig', 'signature', null, true)] }) === null)
+    ok(
+      '(J18) *** a yes/no CANNOT require a file — it could never be satisfied ***',
+      validateHeadline({ ...base, items: [draft('Q', 'yesno', null, true)] }) !== null,
+    )
+    ok('(J18) photo and signature are the evidence types', responseIsEvidence('photo') && responseIsEvidence('signature'))
+    ok('(J18) and nothing else is', !responseIsEvidence('text') && !responseIsEvidence('yesno') && !responseIsEvidence('none'))
+
+    // ── Against the database ────────────────────────────────────────────
+    const hlTag = `JCT${stamp}`
+
+    const serv = await saveHeadline(SITE, actor, {
+      id: null, code: `${hlTag}S`, name: 'JCT annual service', description: null,
+      defaultPriority: 'high', defaultBoardId: null, suggestedMinutes: 120,
+      requiredSkills: 'Gas licence', sortOrder: 0, isActive: true,
+      items: [
+        { id: null, kind: 'check', name: 'JCT isolate power', hint: null, responseType: 'yesno', unit: null, workPhase: 'before', isRequired: true, evidenceRequired: false },
+        { id: null, kind: 'check', name: 'JCT gas pressure', hint: null, responseType: 'measure', unit: 'bar', workPhase: 'during', isRequired: false, evidenceRequired: false },
+        { id: null, kind: 'task', name: 'JCT replace filter', hint: null, responseType: 'none', unit: null, workPhase: 'during', isRequired: false, evidenceRequired: false },
+      ],
+      parts: [],
+    })
+    ok('(J18) a kind of work saves with its items', serv.ok, serv.ok ? '' : serv.error)
+    if (!serv.ok) throw new Error('headline fixture failed')
+
+    const rep = await saveHeadline(SITE, actor, {
+      id: null, code: `${hlTag}R`, name: 'JCT repair', description: null,
+      defaultPriority: null, defaultBoardId: null, suggestedMinutes: 60,
+      requiredSkills: null, sortOrder: 1, isActive: true,
+      items: [
+        { id: null, kind: 'check', name: '  jct GAS pressure  ', hint: null, responseType: 'measure', unit: 'bar', workPhase: 'during', isRequired: true, evidenceRequired: false },
+        // Required AND evidence-required: the fixture the 119 checks below use.
+        { id: null, kind: 'check', name: 'JCT customer signature', hint: null, responseType: 'signature', unit: null, workPhase: 'after', isRequired: true, evidenceRequired: true },
+      ],
+      parts: [],
+    })
+    if (!rep.ok) throw new Error('second headline fixture failed')
+
+    const clash = await saveHeadline(SITE, actor, {
+      id: null, code: `${hlTag}S`, name: 'Clash', description: null,
+      defaultPriority: null, defaultBoardId: null, suggestedMinutes: null,
+      requiredSkills: null, sortOrder: 0, isActive: true, items: [], parts: [],
+    })
+    ok('(J18) a duplicate code is refused', !clash.ok, clash.ok ? '' : clash.error)
+
+    const hlJob = await saveJobCard(SITE, actor, {
+      id: null, customerId: customer.id, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: 'JCT aircon service run', description: null, dueAt: null, source: 'phone',
+      reference: null, internalNote: null,
+    })
+    if (!hlJob.ok) throw new Error('headline job fixture failed')
+    const hJob = hlJob.id
+
+    const applied = await applyHeadlines(SITE, actor, hJob, [serv.id, rep.id])
+    ok('(J18) both kinds of work apply', applied.ok, applied.ok ? '' : applied.error)
+    ok(
+      '(J18) *** 3 + 2 items become 4 on the job, the shared one merged ***',
+      applied.ok && applied.added === 4,
+      applied.ok ? String(applied.added) : '',
+    )
+    ok('(J18) and the merge is reported back', applied.ok && applied.merged.length === 1)
+
+    let jItems = await jobItems(SITE, hJob)
+    ok('(J18) the job carries four', jItems.length === 4, String(jItems.length))
+    /*
+     * Ordered by PHASE, not by insertion. A safety check buried between two
+     * readings is a safety check somebody skips.
+     */
+    ok(
+      '(J18) ordered before / during / after, which is the order they are done in',
+      jItems[0].workPhase === 'before' && jItems[jItems.length - 1].workPhase === 'after',
+      jItems.map((i) => i.workPhase).join(','),
+    )
+    const gasItem = jItems.find((i) => i.name.toLowerCase() === 'jct gas pressure')
+    ok('(J18) the merged item is required, promoted by the second kind', gasItem?.isRequired === true)
+
+    // The headline sets the priority, but only while the job is at its default.
+    const afterApply = await siteQueryOne<any>(SITE, `SELECT priority FROM job_cards WHERE id=?`, [hJob])
+    ok('(J18) a kind of work sets the priority', String(afterApply?.priority) === 'high', String(afterApply?.priority))
+
+    // ── The close guard, which is what makes "required" mean anything ────
+    const blocked = await closeJob(SITE, actor, hJob)
+    ok(
+      '(J18) *** a job with unanswered REQUIRED checks cannot be closed ***',
+      !blocked.ok,
+      blocked.ok ? '' : blocked.error,
+    )
+    ok(
+      '(J18) and the refusal NAMES them rather than counting them',
+      !blocked.ok && blocked.error.includes('JCT isolate power'),
+      blocked.ok ? '' : blocked.error,
+    )
+
+    const wrongType = await recordItem(SITE, actor, gasItem!.id, { response: 'quite high', note: null, complete: true })
+    ok('(J18) a measurement refuses a non-number', !wrongType.ok, wrongType.ok ? '' : wrongType.error)
+
+    /*
+     * A check that captures a value cannot be completed without one, or
+     * "completed" would only mean somebody pressed a button — which is the
+     * box-ticking a checklist exists to prevent.
+     */
+    const noAnswer = await recordItem(SITE, actor, gasItem!.id, { response: null, note: null, complete: true })
+    ok('(J18) *** and cannot be ticked off with nothing recorded ***', !noAnswer.ok, noAnswer.ok ? '' : noAnswer.error)
+
+    for (const it of jItems.filter((i) => i.isRequired)) {
+      // Since 119 a signature is satisfied by a FILE, not by typing a name — so it
+      // is captured rather than answered. (J21) exercises that path properly; here
+      // it is only being cleared so the close can be tested.
+      if (it.evidenceRequired) {
+        const cap = await captureEvidence(
+          SITE, actor, it.id,
+          { storedName: `${hlTag}-${it.id}.png`, filename: 'signed.png', mimeType: 'image/png', sizeBytes: 512 },
+          'A Nkosi',
+        )
+        ok(`(J18) capturing ${it.name} works`, cap.ok, cap.ok ? '' : cap.error)
+        continue
+      }
+      const answer = it.responseType === 'measure' ? '12.4'
+        : it.responseType === 'yesno' ? 'yes'
+        : null
+      const done = await recordItem(SITE, actor, it.id, { response: answer, note: null, complete: true })
+      ok(`(J18) answering ${it.name} works`, done.ok, done.ok ? '' : done.error)
+    }
+
+    const nowCloses = await closeJob(SITE, actor, hJob)
+    ok('(J18) once answered, the job closes', nowCloses.ok, nowCloses.ok ? '' : nowCloses.error)
+
+    // Reopen to exercise the rest.
+    const backOpen = await statusForRole(SITE, 'in_progress')
+    if (backOpen) await setStatus(SITE, actor, hJob, backOpen.id)
+
+    // A failing answer, and the stored flag that makes the exception list one read.
+    const isolate = (await jobItems(SITE, hJob)).find((i) => i.name === 'JCT isolate power')!
+    await recordItem(SITE, actor, isolate.id, { response: 'no', note: 'breaker seized', complete: true })
+    ok(
+      '(J18) an answer of no flags the check as failed',
+      (await jobItems(SITE, hJob)).find((i) => i.id === isolate.id)?.isFailed === true,
+    )
+
+    // ── What survives a reclassification ────────────────────────────────
+    const adhoc = await addJobItem(SITE, actor, hJob, {
+      kind: 'task', name: 'JCT fetch the long ladder', responseType: 'none',
+      unit: null, workPhase: 'before', isRequired: false,
+    })
+    ok('(J18) a one-off task can be added by hand', adhoc.ok, adhoc.ok ? '' : adhoc.error)
+
+    await applyHeadlines(SITE, actor, hJob, [serv.id])
+    jItems = await jobItems(SITE, hJob)
+    /*
+     * Dropping a kind of work clears only its UNTOUCHED items. A signed-off check
+     * is evidence, and a hand-added task belongs to whoever wrote it — neither is
+     * the system's to delete because a category changed.
+     */
+    ok(
+      '(J18) *** a hand-added task survives dropping a kind of work ***',
+      jItems.some((i) => i.name === 'JCT fetch the long ladder'),
+    )
+    ok(
+      '(J18) *** and so does a check that was already signed off ***',
+      jItems.some((i) => i.name === 'JCT customer signature'),
+    )
+
+    const signed = jItems.find((i) => i.name === 'JCT customer signature')
+    if (signed) {
+      const delSigned = await deleteJobItem(SITE, actor, signed.id)
+      ok('(J18) a signed-off item cannot be deleted', !delSigned.ok, delSigned.ok ? '' : delSigned.error)
+    }
+
+    const delUsed = await deleteHeadline(SITE, actor, serv.id)
+    ok(
+      '(J18) a kind of work a job has used cannot be deleted — that history names what was done',
+      !delUsed.ok,
+      delUsed.ok ? '' : delUsed.error,
+    )
+
+    // ── Drift ───────────────────────────────────────────────────────────
+    const itemDrift = await reconcileJobHeadlines(SITE)
+    ok(
+      '(J18) a correctly recorded job reports no item drift',
+      itemDrift.completedWithoutAnswer.length === 0 && itemDrift.failedFlagWrong.length === 0,
+      JSON.stringify({
+        noAnswer: itemDrift.completedWithoutAnswer.length,
+        flags: itemDrift.failedFlagWrong.length,
+      }),
+    )
+
+    /*
+     * Break it the only way the app cannot: flip the stored failure flag away from
+     * the answer beside it. If those diverge, every report of which checks failed
+     * is wrong, and only this check can see it.
+     */
+    await siteExecute(SITE, `UPDATE job_card_items SET is_failed = 0 WHERE id = ?`, [isolate.id])
+    const brokenFlag = await reconcileJobHeadlines(SITE)
+    ok(
+      '(J18) *** a failure flag that disagrees with its answer is CAUGHT ***',
+      brokenFlag.failedFlagWrong.some((r) => r.itemId === isolate.id),
+    )
+    await siteExecute(SITE, `UPDATE job_card_items SET is_failed = 1 WHERE id = ?`, [isolate.id])
+
+    await siteExecute(SITE, `UPDATE job_card_items SET response = NULL WHERE id = ?`, [gasItem!.id])
+    const brokenAnswer = await reconcileJobHeadlines(SITE)
+    ok(
+      '(J18) a check signed off with nothing recorded is CAUGHT',
+      brokenAnswer.completedWithoutAnswer.some((r) => r.itemId === gasItem!.id),
+    )
+
+    // Teardown, in FK order.
+    // The attachments first. This block's signature check is satisfied by capturing a
+    // file since 119, so it now creates party_documents rows that the job's own
+    // delete cannot cascade — the entity pair is loose and carries no FK.
+    await siteExecute(SITE, `DELETE FROM party_documents WHERE entity = 'job_card' AND entity_id = ?`, [hJob])
+    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [hJob])
+    await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id = ?`, [hJob])
+    await siteExecute(SITE, `DELETE FROM job_card_lines WHERE job_card_id = ?`, [hJob])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [hJob])
+    await siteExecute(SITE, `DELETE FROM job_headlines WHERE code LIKE ?`, [`${hlTag}%`])
+  }
+
+  // ── 25. (J19) Customer equipment ──────────────────────────────────────
+  //
+  // The thing the work is done on. Three tables look alike and are not:
+  // fixed_assets is what WE own and depreciate, product_serials is a unit we
+  // bought or sold, and customer_assets is what we look after for somebody else.
+  {
+    const asTag = `AS${stamp}`
+
+    const type = await saveAssetType(SITE, actor, {
+      id: null, code: `${asTag}A`, name: 'JCT split aircon', serviceMonths: 6,
+      identifierLabel: 'Unit serial', sortOrder: 0, isActive: true,
+    })
+    ok('(J19) a kind of equipment saves', type.ok, type.ok ? '' : type.error)
+    if (!type.ok) throw new Error('asset type fixture failed')
+
+    const dupType = await saveAssetType(SITE, actor, {
+      id: null, code: `${asTag}A`, name: 'Clash', serviceMonths: null,
+      identifierLabel: 'Serial', sortOrder: 0, isActive: true,
+    })
+    ok('(J19) a duplicate kind code is refused', !dupType.ok, dupType.ok ? '' : dupType.error)
+
+    // ── Pure validation ─────────────────────────────────────────────────
+    const draft = {
+      id: null, assetTypeId: type.id, customerId: customer.id, serviceAddressId: null,
+      description: `${asTag} rooftop unit`, make: 'Samsung', model: 'AR12',
+      serialText: ' ab-12 cd ', productId: null, serialId: null,
+      installedOn: '2024-03-01', purchasedOn: '2024-02-01', purchaseReference: 'INV991',
+      warrantyUntil: '2027-03-01', nextServiceOn: null, conditionNote: null, note: null,
+    }
+    ok('(J19) equipment with no description is refused', validateAsset({ ...draft, description: '  ' }) !== null)
+    /*
+     * Installed before purchased catches a fat-fingered year, which is worth
+     * catching because it makes a warranty look expired by a decade and nobody
+     * questions a date.
+     */
+    ok('(J19) installed before purchased is refused', validateAsset({ ...draft, installedOn: '2020-01-01' }) !== null)
+    ok('(J19) an impossible date is refused', validateAsset({ ...draft, warrantyUntil: '2027-13-45' }) !== null)
+    ok(
+      '(J19) a site without a customer is refused — an address belongs to somebody',
+      validateAsset({ ...draft, customerId: null, serviceAddressId: 1 }) !== null,
+    )
+    ok('(J19) a valid one passes', validateAsset(draft) === null)
+
+    // ── The record, and its number ──────────────────────────────────────
+    const asset = await saveAsset(SITE, actor, draft)
+    ok('(J19) equipment is recorded', asset.ok, asset.ok ? '' : asset.error)
+    if (!asset.ok) throw new Error('asset fixture failed')
+    ok('(J19) and gets an AST number', (asset.documentNumber ?? '').startsWith('AST'), String(asset.documentNumber))
+
+    const loaded = await getAsset(SITE, asset.id)
+    ok(
+      '(J19) the identifier label comes from the KIND, so a trade can call it a VIN',
+      loaded?.identifierLabel === 'Unit serial',
+      String(loaded?.identifierLabel),
+    )
+    ok('(J19) the serial is stored exactly as typed', loaded?.serialText === 'ab-12 cd', String(loaded?.serialText))
+
+    /*
+     * THE GENERATED COLUMN. serial_key is UPPER(REPLACE(REPLACE(...))) STORED, so
+     * spacing and capitals cannot produce a duplicate the check misses.
+     * Normalising in code would mean every caller had to remember to.
+     */
+    const matches = await findDuplicateAssets(SITE, 'AB12CD', customer.id)
+    ok(
+      '(J19) *** a differently spelled serial still matches — the key is generated ***',
+      matches.some((m) => m.id === asset.id),
+      JSON.stringify(matches.map((m) => m.documentNumber)),
+    )
+
+    // WARNS rather than refuses: §18.3 says plenty of equipment has no legible
+    // plate, so a hard block would refuse real second units.
+    const second = await saveAsset(SITE, actor, {
+      ...draft, description: `${asTag} second unit same plate`, serialText: 'AB 12 CD',
+    })
+    ok('(J19) *** a duplicate serial WARNS rather than refusing ***', second.ok)
+    ok(
+      '(J19) and the matches come back so the screen can show them',
+      second.ok && second.duplicates.length > 0,
+      second.ok ? String(second.duplicates.length) : '',
+    )
+
+    const elsewhere = await findDuplicateAssets(SITE, 'AB12CD', null)
+    ok(
+      '(J19) the same plate under a DIFFERENT owner is not a duplicate',
+      !elsewhere.some((m) => m.id === asset.id),
+    )
+
+    const searched = await listAssets(SITE, { search: 'ab 12-cd' })
+    ok(
+      '(J19) search finds it past the spacing too — otherwise it sends somebody to create a duplicate',
+      searched.some((a) => a.id === asset.id),
+    )
+
+    // ── A job on the equipment ──────────────────────────────────────────
+    const aJob = await saveJobCard(SITE, actor, {
+      id: null, customerId: customer.id, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `${asTag} service the rooftop unit`, description: null, dueAt: null,
+      source: 'phone', reference: null, internalNote: null,
+    })
+    if (!aJob.ok) throw new Error('asset job fixture failed')
+
+    const setIt = await setJobAsset(SITE, actor, aJob.id, asset.id)
+    ok('(J19) a job can name the equipment', setIt.ok, setIt.ok ? '' : setIt.error)
+
+    /*
+     * The mistake a picker makes easy: two customers own the same model and the
+     * list is alphabetical. The consequence is a warranty claim on the wrong
+     * account and a history on the wrong unit.
+     */
+    const foreign = await createCustomer(SITE, actor, {
+      code: `JCT${stamp}X`, name: 'JCT somebody else',
+    })
+    if (foreign.ok) {
+      const theirAsset = await saveAsset(SITE, actor, {
+        ...draft, customerId: foreign.id, description: `${asTag} their unit`, serialText: null,
+      })
+      if (theirAsset.ok) {
+        const wrongOwner = await setJobAsset(SITE, actor, aJob.id, theirAsset.id)
+        ok(
+          '(J19) *** a job cannot name equipment belonging to a different customer ***',
+          !wrongOwner.ok,
+          wrongOwner.ok ? '' : wrongOwner.error,
+        )
+        await siteExecute(SITE, `DELETE FROM customer_assets WHERE id = ?`, [theirAsset.id])
+      }
+      await siteExecute(SITE, `DELETE FROM customers WHERE id = ?`, [foreign.id])
+    }
+
+    const summary = await jobAssetFor(SITE, aJob.id)
+    ok('(J19) the job card reads back its equipment', summary?.id === asset.id)
+    ok('(J19) with the label the kind decided', summary?.identifierLabel === 'Unit serial')
+
+    const delUsed = await deleteAsset(SITE, actor, asset.id)
+    ok(
+      '(J19) equipment a job has named cannot be deleted — that work is its history',
+      !delUsed.ok,
+      delUsed.ok ? '' : delUsed.error,
+    )
+
+    // ── Closing rolls the service dates ─────────────────────────────────
+    const beforeClose = await getAsset(SITE, asset.id)
+    ok('(J19) nothing has been serviced yet', beforeClose?.lastServiceOn === null)
+
+    const closedIt = await closeJob(SITE, actor, aJob.id)
+    ok('(J19) the job closes', closedIt.ok, closedIt.ok ? '' : closedIt.error)
+
+    const afterClose = await getAsset(SITE, asset.id)
+    ok(
+      '(J19) *** closing a job records the service and books the next one ***',
+      afterClose?.lastServiceOn !== null && afterClose?.nextServiceOn !== null,
+      JSON.stringify({ last: afterClose?.lastServiceOn, next: afterClose?.nextServiceOn }),
+    )
+    // Six months from the kind, not a guess.
+    const expectedNext = new Date()
+    expectedNext.setUTCMonth(expectedNext.getUTCMonth() + 6)
+    ok(
+      '(J19) and the interval came from the KIND of equipment',
+      afterClose?.nextServiceOn === expectedNext.toISOString().slice(0, 10),
+      `${afterClose?.nextServiceOn} vs ${expectedNext.toISOString().slice(0, 10)}`,
+    )
+
+    const history = await assetHistory(SITE, asset.id)
+    ok(
+      '(J19) the history is a QUERY over the jobs, with no second table to drift',
+      history.some((h) => h.jobId === aJob.id),
+    )
+
+    // A closed job cannot have its equipment changed.
+    const afterClosed = await setJobAsset(SITE, actor, aJob.id, null)
+    ok('(J19) a closed job will not change its equipment', !afterClosed.ok, afterClosed.ok ? '' : afterClosed.error)
+
+    // ── Retire and revive: the only writers of the status pair ───────────
+    const noWhy = await retireAsset(SITE, actor, asset.id, '  ')
+    ok('(J19) retiring without a reason is refused', !noWhy.ok, noWhy.ok ? '' : noWhy.error)
+
+    ok('(J19) it retires with one', (await retireAsset(SITE, actor, asset.id, 'Scrapped')).ok)
+    const retiredRow = await siteQueryOne<any>(
+      SITE, `SELECT is_active, status FROM customer_assets WHERE id = ?`, [asset.id])
+    ok(
+      '(J19) *** is_active and status move TOGETHER — verifySequence reads status ***',
+      Number(retiredRow?.is_active) === 0 && String(retiredRow?.status) === 'cancelled',
+      JSON.stringify(retiredRow),
+    )
+    ok('(J19) retiring twice is refused', !(await retireAsset(SITE, actor, asset.id, 'again')).ok)
+    ok('(J19) it comes back', (await reviveAsset(SITE, actor, asset.id)).ok)
+    const revivedRow = await siteQueryOne<any>(
+      SITE, `SELECT is_active, status FROM customer_assets WHERE id = ?`, [asset.id])
+    ok(
+      '(J19) and both columns come back together',
+      Number(revivedRow?.is_active) === 1 && String(revivedRow?.status) === 'active',
+      JSON.stringify(revivedRow),
+    )
+
+    /*
+     * THE REGRESSION GUARD. verifySequence has TWO hard-coded expectations of an
+     * OWN_TABLE_TYPES table: a `status` column carrying 'cancelled', and the number
+     * column being called `document_number`. Migrations 116 and 117 exist because
+     * the first attempt satisfied only the first. Without both, every AST number
+     * ever issued reports as missing.
+     */
+    const seq = await verifySequence(SITE, 'customer_asset')
+    /*
+     * BASELINE-RELATIVE, not `missing === 0`.
+     *
+     * This suite shares a live dev database, and every earlier run allocated AST
+     * numbers and then deleted its fixtures — so a gap is the expected state, the
+     * same as the JC sequence. What this guard is actually for is proving the query
+     * RUNS: verifySequence hard-codes both `status = 'cancelled'` and
+     * `document_number`, and an unregistered or wrongly-named table makes it throw
+     * rather than return a wrong number. `issued > 0` with a first and last number
+     * is what proves the registration works.
+     */
+    ok(
+      '(J19) *** the AST sequence is registered and reconciles — the OWN_TABLE_TYPES guard ***',
+      seq.issued > 0 && seq.firstNumber !== null && seq.live + seq.missing === seq.issued,
+      JSON.stringify(seq),
+    )
+    ok(
+      '(J19) and the equipment created here is counted as live, not missing',
+      seq.live >= 2,
+      JSON.stringify({ live: seq.live, missing: seq.missing }),
+    )
+
+    // ── Drift ───────────────────────────────────────────────────────────
+    const cleanAssets = await reconcileAssets(SITE)
+    ok(
+      '(J19) correctly recorded equipment reports no drift',
+      cleanAssets.statusMismatch.length === 0 &&
+        cleanAssets.addressMismatch.length === 0 &&
+        cleanAssets.jobCustomerMismatch.length === 0,
+      JSON.stringify({
+        status: cleanAssets.statusMismatch.length,
+        address: cleanAssets.addressMismatch.length,
+        jobCust: cleanAssets.jobCustomerMismatch.length,
+      }),
+    )
+
+    await siteExecute(SITE, `UPDATE customer_assets SET status = 'cancelled' WHERE id = ?`, [asset.id])
+    const brokenPair = await reconcileAssets(SITE)
+    ok(
+      '(J19) *** a status out of step with is_active is CAUGHT ***',
+      brokenPair.statusMismatch.some((r) => r.assetId === asset.id),
+    )
+    await siteExecute(SITE, `UPDATE customer_assets SET status = 'active' WHERE id = ?`, [asset.id])
+
+    // Teardown, in FK order: the job references the asset.
+    await siteExecute(SITE, `UPDATE job_cards SET asset_id = NULL WHERE asset_id IN (SELECT id FROM customer_assets WHERE description LIKE ?)`, [`${asTag}%`])
+    await siteExecute(SITE, `DELETE FROM job_card_lines WHERE job_card_id = ?`, [aJob.id])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [aJob.id])
+    await siteExecute(SITE, `DELETE FROM customer_assets WHERE description LIKE ?`, [`${asTag}%`])
+    await siteExecute(SITE, `DELETE FROM asset_types WHERE code LIKE ?`, [`${asTag}%`])
+  }
+
+  // ── 26. (J20) Recurring jobs ──────────────────────────────────────────
+  //
+  // This is contracts.ts with a job instead of an invoice, and the two things it
+  // borrows are the two things worth testing: the CLAIM that makes a double-raise
+  // impossible, and the CATCH-UP that makes a missed month recoverable.
+  {
+    // ── The catch-up arithmetic, with no database ────────────────────────
+    const monthly = {
+      frequency: 'monthly' as const, dayOfMonth: 1, dayOfWeek: null,
+      startsOn: '2026-01-01', endsOn: null, lastGeneratedFor: null,
+    }
+    const caught = duePeriods(monthly, '2026-04-15')
+    ok(
+      '(J20) *** a series ticked in April, starting January, owes FOUR periods ***',
+      caught.periods.length === 4 && caught.periods[0] === '2026-01-01',
+      JSON.stringify(caught.periods),
+    )
+    ok(
+      '(J20) and from a March cursor it owes only April',
+      duePeriods({ ...monthly, lastGeneratedFor: '2026-03-01' }, '2026-04-15').periods.length === 1,
+    )
+
+    /*
+     * The cap is REPORTED, never silently applied. Past two years outstanding,
+     * something is wrong that raising it all would make worse — and a truncated
+     * catch-up that read as a complete one is how somebody trusts a wrong figure.
+     */
+    const overdue = duePeriods({ ...monthly, startsOn: '2018-01-01' }, '2026-04-15')
+    ok(
+      '(J20) *** six years outstanding is capped at 24 and SAYS so ***',
+      overdue.capped === true && overdue.periods.length === 24,
+      JSON.stringify({ capped: overdue.capped, count: overdue.periods.length }),
+    )
+
+    /*
+     * Lead time shifts the WINDOW, not the date. Shifting the date instead would
+     * quietly move every due date forward, and a service due on the 1st would
+     * start being recorded as due on the 18th.
+     */
+    const early = duePeriods({ ...monthly, lastGeneratedFor: '2026-03-01' }, '2026-03-20', 14)
+    ok(
+      '(J20) *** 14 days of lead raises April early, still dated the 1st ***',
+      early.periods.length === 1 && early.periods[0] === '2026-04-01',
+      JSON.stringify(early.periods),
+    )
+    ok(
+      '(J20) and without lead time nothing is due yet on the 20th',
+      duePeriods({ ...monthly, lastGeneratedFor: '2026-03-01' }, '2026-03-20', 0).periods.length === 0,
+    )
+    ok(
+      '(J20) an end date stops it',
+      duePeriods({ ...monthly, endsOn: '2026-02-15' }, '2026-06-01').periods.length === 2,
+    )
+
+    // ── Validation ──────────────────────────────────────────────────────
+    const draft = {
+      id: null, name: 'JCT recurring', customerId: customer.id, serviceAddressId: null,
+      assetId: null, title: 'JCT quarterly service', description: null,
+      priority: 'normal' as const, ownerUserId: null, ownerName: null, locationId: null,
+      frequency: 'monthly' as const, dayOfMonth: 1, dayOfWeek: null,
+      startsOn: '2026-05-01', endsOn: null, leadDays: 0, isActive: true,
+      autoCreate: true, note: null, headlineIds: [],
+    }
+    /*
+     * A schedule with nobody to serve raises work for nobody — unlike a job card,
+     * which allows a walk-in, because a walk-in is by definition not recurring.
+     */
+    ok('(J20) a schedule with no customer is refused', validateSeries({ ...draft, customerId: null }) !== null)
+    ok('(J20) an end before the start is refused', validateSeries({ ...draft, endsOn: '2025-01-01' }) !== null)
+    ok('(J20) weekly with no weekday is refused', validateSeries({ ...draft, frequency: 'weekly', dayOfWeek: null }) !== null)
+    ok('(J20) day 45 of the month is refused', validateSeries({ ...draft, dayOfMonth: 45 }) !== null)
+    ok('(J20) 120 days of lead is refused', validateSeries({ ...draft, leadDays: 120 }) !== null)
+    ok('(J20) a valid one passes', validateSeries(draft) === null)
+
+    // ── Against the database ────────────────────────────────────────────
+    const series = await saveJobSeries(SITE, actor, draft)
+    ok('(J20) a schedule saves', series.ok, series.ok ? '' : series.error)
+    if (!series.ok) throw new Error('series fixture failed')
+
+    const loaded = await getJobSeries(SITE, series.id)
+    ok('(J20) it computes its own next due date rather than storing one', loaded?.nextDueOn === '2026-05-01', String(loaded?.nextDueOn))
+
+    const firstTick = await generateDueJobs(SITE, actor, '2026-07-15')
+    ok(
+      '(J20) *** one tick raises the three months it missed ***',
+      firstTick.created.filter((c) => c.seriesId === series.id).length === 3,
+      JSON.stringify(firstTick.created.map((c) => c.forDate)),
+    )
+
+    /*
+     * THE GUARANTEE. uq_series_period on (series_id, for_date) means the claim is
+     * taken before the job is built, so a second tick fails on the insert having
+     * written nothing.
+     */
+    const secondTick = await generateDueJobs(SITE, actor, '2026-07-15')
+    ok(
+      '(J20) *** the same tick again raises NOTHING — the claim held ***',
+      secondTick.created.filter((c) => c.seriesId === series.id).length === 0,
+      String(secondTick.created.length),
+    )
+
+    const [raceA, raceB] = await Promise.all([
+      generateDueJobs(SITE, actor, '2026-08-15', series.id),
+      generateDueJobs(SITE, actor, '2026-08-15', series.id),
+    ])
+    const raced =
+      raceA.created.filter((c) => c.seriesId === series.id).length +
+      raceB.created.filter((c) => c.seriesId === series.id).length
+    ok(
+      '(J20) *** two ticks running at once raise ONE job between them ***',
+      raced === 1,
+      `${raceA.created.length} + ${raceB.created.length}`,
+    )
+
+    /*
+     * Each job is dated for ITS period, not for the day the run happened. A job
+     * raised in July for May must start its SLA clock in May, or every catch-up
+     * job arrives already breached.
+     */
+    const raisedJobs = await siteQuery<any>(
+      SITE,
+      `SELECT document_number, DATE(reported_at) AS rep FROM job_cards
+        WHERE series_id = ? ORDER BY reported_at`,
+      [series.id],
+    )
+    ok(
+      '(J20) *** each job is dated for its own period, not the run date ***',
+      raisedJobs.length === 4 && raisedJobs[0].rep === '2026-05-01' && raisedJobs[3].rep === '2026-08-01',
+      JSON.stringify(raisedJobs.map((j: any) => `${j.document_number}@${j.rep}`)),
+    )
+
+    const runs = await seriesRuns(SITE, series.id)
+    ok('(J20) every claim recorded the job it produced', runs.length === 4 && runs.every((r) => r.jobId !== null))
+
+    const cursor = await getJobSeries(SITE, series.id)
+    ok('(J20) the cursor moved to the newest period', cursor?.lastGeneratedFor === '2026-08-01', String(cursor?.lastGeneratedFor))
+
+    /*
+     * auto_create OFF stops the tick. Defaults off, exactly as contracts.auto_send
+     * does: a schedule that raised three months of catch-up the moment it was
+     * saved is a schedule nobody trusts again.
+     */
+    await saveJobSeries(SITE, actor, { ...draft, id: series.id, autoCreate: false })
+    const paused = await generateDueJobs(SITE, actor, '2026-12-31')
+    ok(
+      '(J20) *** with the switch off, the tick raises nothing ***',
+      paused.created.filter((c) => c.seriesId === series.id).length === 0,
+    )
+    // But a person pressing the button overrides it — that IS the decision.
+    const manual = await generateDueJobs(SITE, actor, '2026-09-15', series.id)
+    ok(
+      '(J20) but a manual run overrides the switch',
+      manual.created.filter((c) => c.seriesId === series.id).length === 1,
+      String(manual.created.length),
+    )
+
+    // ── Drift ───────────────────────────────────────────────────────────
+    const cleanSeries = await reconcileJobSeries(SITE)
+    ok(
+      '(J20) a correctly generated schedule reports no drift',
+      cleanSeries.strandedClaims.filter((r) => r.seriesId === series.id).length === 0 &&
+        cleanSeries.cursorAhead.filter((r) => r.seriesId === series.id).length === 0,
+    )
+
+    /*
+     * A STRANDED CLAIM is the worst thing in this module: the key that stops a
+     * double-raise also stops a retry, so a claimed-but-never-raised period is
+     * work silently lost with no symptom anywhere else.
+     */
+    await siteExecute(
+      SITE,
+      `UPDATE job_series_runs SET job_card_id = NULL WHERE series_id = ? ORDER BY id LIMIT 1`,
+      [series.id],
+    )
+    const stranded = await reconcileJobSeries(SITE)
+    ok(
+      '(J20) *** a period claimed but never raised is CAUGHT — nothing else would see it ***',
+      stranded.strandedClaims.some((r) => r.seriesId === series.id),
+    )
+
+    // A cursor ahead of the newest claim skips periods for good.
+    await siteExecute(SITE, `DELETE FROM job_series_runs WHERE series_id = ?`, [series.id])
+    const cursorAhead = await reconcileJobSeries(SITE)
+    ok(
+      '(J20) and a cursor ahead of what was actually raised is CAUGHT too',
+      cursorAhead.cursorAhead.some((r) => r.seriesId === series.id),
+    )
+
+    /*
+     * Deleting a schedule KEEPS the work. fk_jcard_series is SET NULL: a schedule
+     * is a plan, the jobs are the record of what happened.
+     */
+    const before = (
+      await siteQuery<any>(SITE, `SELECT id FROM job_cards WHERE series_id = ?`, [series.id])
+    ).length
+    ok('(J20) the schedule deletes', (await deleteJobSeries(SITE, actor, series.id)).ok)
+    const survivors = await siteQuery<any>(
+      SITE,
+      `SELECT id, series_id FROM job_cards WHERE title LIKE 'JCT quarterly service'`,
+    )
+    ok(
+      '(J20) *** deleting a schedule keeps every job it raised, link cleared ***',
+      survivors.length === before && survivors.every((s: any) => s.series_id === null),
+      `${before} before, ${survivors.length} after`,
+    )
+
+    // Teardown.
+    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id IN (SELECT id FROM job_cards WHERE title = 'JCT quarterly service')`)
+    await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id IN (SELECT id FROM job_cards WHERE title = 'JCT quarterly service')`)
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE title = 'JCT quarterly service'`)
+  }
+
+  /*
+   * ── (J21) Evidence: the artefact IS the answer ────────────────────────────
+   *
+   * 114 shipped photo and signature response types that stored TEXT — a
+   * technician typing that they had taken a photo. 119 made the file the answer.
+   *
+   * The checks that matter are the ones about DELETING the file afterwards. The
+   * happy path is easy; the failure that loses a business a dispute is a job that
+   * still reads "signed off" once the attachment is gone.
+   */
+  {
+    const evTag = `JCE${stamp}`
+
+    // The suite's OWN customer, not a borrowed live one: a fixture that reaches into
+    // real data is a fixture that leaves litter somebody else has to find.
+    const head = await saveHeadline(SITE, actor, {
+      id: null, code: `${evTag}H`, name: `${evTag} sign-off`, description: null,
+      defaultPriority: null, defaultBoardId: null, suggestedMinutes: 30,
+      requiredSkills: null, sortOrder: 90, isActive: true,
+      items: [
+        { id: null, kind: 'check', name: `${evTag} photo of the flue`, hint: null, responseType: 'photo', unit: null, workPhase: 'after', isRequired: true, evidenceRequired: true },
+        { id: null, kind: 'check', name: `${evTag} customer signs`, hint: null, responseType: 'signature', unit: null, workPhase: 'after', isRequired: true, evidenceRequired: true },
+        { id: null, kind: 'check', name: `${evTag} pressure`, hint: null, responseType: 'measure', unit: 'bar', workPhase: 'during', isRequired: false, evidenceRequired: false },
+      ],
+      parts: [],
+    })
+    ok('(J21) a headline with evidence checks saves', head.ok, head.ok ? '' : head.error)
+    if (!head.ok) throw new Error('evidence headline fixture failed')
+
+    const saved = (await listHeadlines(SITE, false)).find((h) => h.id === head.id)
+    ok(
+      '(J21) the flag is stored per item, not inferred',
+      saved?.items.filter((i) => i.evidenceRequired).length === 2,
+      `${saved?.items.filter((i) => i.evidenceRequired).length} of ${saved?.items.length}`,
+    )
+
+    const jobRes = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null,
+      statusId: null, priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `${evTag} evidence job`, description: null, dueAt: null, source: 'manual',
+      reference: null, internalNote: null,
+    })
+    if (!jobRes.ok) throw new Error('evidence job fixture failed')
+    const evJobId = jobRes.id
+
+    await applyHeadlines(SITE, actor, evJobId, [head.id])
+    const fresh = await jobItems(SITE, evJobId)
+    const photo = fresh.find((i) => i.responseType === 'photo')!
+    const sig = fresh.find((i) => i.responseType === 'signature')!
+
+    ok('(J21) the job copied the flag from the template', photo.evidenceRequired && sig.evidenceRequired)
+    ok('(J21) and nothing is attached yet', photo.attachmentId === null && sig.attachmentId === null)
+
+    // ── The rule ──────────────────────────────────────────────────────────
+    const typed = await recordItem(SITE, actor, photo.id, {
+      response: 'I took one, honest', note: null, complete: true,
+    })
+    ok(
+      '(J21) *** typing a reference does NOT complete a photo check ***',
+      !typed.ok,
+      typed.ok ? 'IT WAS ACCEPTED' : typed.error,
+    )
+
+    const stillOpen = (await jobItems(SITE, evJobId)).find((i) => i.id === photo.id)!
+    ok('(J21) so it is still outstanding', stillOpen.completedAt === null)
+
+    // A required evidence item with no file blocks the close, which is the whole
+    // point of the flag.
+    const earlyClose = await closeJob(SITE, actor, evJobId)
+    ok(
+      '(J21) *** and the job cannot be closed over it ***',
+      !earlyClose.ok,
+      earlyClose.ok ? 'IT CLOSED' : earlyClose.error,
+    )
+
+    // ── Capture ───────────────────────────────────────────────────────────
+    const cap = await captureEvidence(
+      SITE, actor, photo.id,
+      { storedName: `${evTag}-photo.png`, filename: 'flue.png', mimeType: 'image/png', sizeBytes: 2048 },
+      'north side',
+    )
+    ok('(J21) attaching a file completes it', cap.ok, cap.ok ? '' : cap.error)
+
+    const done = (await jobItems(SITE, evJobId)).find((i) => i.id === photo.id)!
+    ok('(J21) the item now names its file', done.attachmentId !== null && done.attachmentName === 'flue.png')
+    ok('(J21) completed, by the person who captured it', done.completedAt !== null && done.completedByName === actor.userName)
+    ok('(J21) and the caption is the response, not the answer', done.response === 'north side')
+
+    const wrongType = await captureEvidence(
+      SITE, actor, fresh.find((i) => i.responseType === 'measure')!.id,
+      { storedName: `${evTag}-x.png`, filename: 'x.png', mimeType: 'image/png', sizeBytes: 10 },
+      null,
+    )
+    ok(
+      '(J21) a measurement refuses a photo — the types are not interchangeable',
+      !wrongType.ok,
+      wrongType.ok ? 'ACCEPTED' : wrongType.error,
+    )
+
+    // ── Deleting the file is the interesting case ──────────────────────────
+    await siteExecute(SITE, `DELETE FROM party_documents WHERE id = ?`, [cap.attachmentId])
+    const orphaned = (await jobItems(SITE, evJobId)).find((i) => i.id === photo.id)!
+    ok(
+      '(J21) *** deleting the file un-answers the item via ON DELETE SET NULL ***',
+      orphaned.attachmentId === null,
+    )
+    ok(
+      '(J21) but the tick is still standing — which is why the guard re-checks',
+      orphaned.completedAt !== null,
+    )
+
+    const drift = await reconcileJobHeadlines(SITE)
+    ok(
+      '(J21) *** reconcile CATCHES a sign-off with no file behind it ***',
+      drift.completedWithoutEvidence.some((r) => r.itemId === photo.id),
+      `${drift.completedWithoutEvidence.length} reported`,
+    )
+    ok(
+      '(J21) and it is NOT double-reported as an unanswered check',
+      !drift.completedWithoutAnswer.some((r) => r.itemId === photo.id),
+    )
+
+    const closeAgain = await closeJob(SITE, actor, evJobId)
+    ok(
+      '(J21) *** the job STILL cannot close: a tick with no file is outstanding ***',
+      !closeAgain.ok,
+      closeAgain.ok ? 'IT CLOSED WITH NO EVIDENCE' : closeAgain.error,
+    )
+
+    // ── Reclassification must not orphan a photograph ─────────────────────
+    const recap = await captureEvidence(
+      SITE, actor, photo.id,
+      { storedName: `${evTag}-photo2.png`, filename: 'flue-again.png', mimeType: 'image/png', sizeBytes: 3072 },
+      null,
+    )
+    ok('(J21) it can be re-captured', recap.ok)
+
+    await applyHeadlines(SITE, actor, evJobId, [])
+    const afterClear = await jobItems(SITE, evJobId)
+    ok(
+      '(J21) *** clearing the headlines KEEPS the item holding a photo ***',
+      afterClear.some((i) => i.id === photo.id && i.attachmentId !== null),
+      `${afterClear.length} items left`,
+    )
+    ok(
+      '(J21) while the untouched measurement was cleared as normal',
+      !afterClear.some((i) => i.responseType === 'measure'),
+    )
+
+    // Teardown.
+    await siteExecute(SITE, `DELETE FROM party_documents WHERE entity = 'job_card' AND entity_id = ?`, [evJobId])
+    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [evJobId])
+    await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id = ?`, [evJobId])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [evJobId])
+    await siteExecute(SITE, `DELETE FROM job_headline_items WHERE headline_id = ?`, [head.id])
+    await siteExecute(SITE, `DELETE FROM job_headlines WHERE id = ?`, [head.id])
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [evJobId])
   }
 
   await sweepStrays()
 
-  const leftovers = await siteQuery<any>(SITE, 'SELECT id FROM job_cards WHERE title LIKE ?', [
-    TITLE_PATTERN,
+  /*
+   * (J17) EVERY table this suite touches, not just job_cards.
+   *
+   * The old check looked at job_cards alone and passed while four orphaned
+   * activity_log rows sat behind it. That is not a cosmetic problem: litter from
+   * one suite is what makes ANOTHER suite fail, and it is genuinely hard to
+   * diagnose from the far side — supplier REF55846921, left by the refers suite,
+   * currently fails test:purchasing, test:opening-balances and test:payment-runs,
+   * none of which have anything to do with refers.
+   *
+   * So each fixture pattern is asserted empty by name, and the failure says which.
+   */
+  const litter: [string, string, unknown[]][] = []
+  const sweepCheck = async (label: string, sql: string, params: unknown[] = []) => {
+    const rows = await siteQuery<any>(SITE, sql, params)
+    if (rows.length > 0) litter.push([label, sql, rows])
+  }
+
+  await sweepCheck('job cards', 'SELECT id FROM job_cards WHERE title LIKE ?', [TITLE_PATTERN])
+  await sweepCheck('customers', 'SELECT id FROM customers WHERE code REGEXP ?', [CUSTOMER_PATTERN])
+  await sweepCheck('service addresses', 'SELECT id FROM service_addresses WHERE name LIKE ?', [
+    ADDRESS_PATTERN,
   ])
-  ok('the suite cleaned up after itself', leftovers.length === 0, `${leftovers.length} left`)
+  await sweepCheck('statuses', 'SELECT id FROM job_statuses WHERE name LIKE ?', [STATUS_PATTERN])
+  await sweepCheck('boards', 'SELECT id FROM job_boards WHERE name LIKE ?', [BOARD_PATTERN])
+  await sweepCheck('products', 'SELECT id FROM products WHERE code REGEXP ?', [PART_PATTERN])
+  await sweepCheck('locations', 'SELECT id FROM stock_locations WHERE code REGEXP ?', [VAN_PATTERN])
+  // The ones a pattern cannot catch: rows whose parent has already gone.
+  await sweepCheck(
+    'orphaned job lines',
+    'SELECT l.id FROM job_card_lines l LEFT JOIN job_cards j ON j.id = l.job_card_id WHERE j.id IS NULL',
+  )
+  await sweepCheck(
+    'orphaned activity',
+    `SELECT id FROM activity_log WHERE entity = 'job_card' AND entity_id NOT IN (SELECT id FROM job_cards)`,
+  )
+  await sweepCheck(
+    'orphaned time entries',
+    'SELECT id FROM staff_time_entries WHERE job_card_id IS NOT NULL AND job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  await sweepCheck('headlines', 'SELECT id FROM job_headlines WHERE code REGEXP ?', [
+    HEADLINE_PATTERN,
+  ])
+  await sweepCheck(
+    'orphaned job items',
+    'SELECT id FROM job_card_items WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  await sweepCheck(
+    'orphaned headline links',
+    'SELECT job_card_id FROM job_card_headlines WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  await sweepCheck('equipment', 'SELECT id FROM customer_assets WHERE description REGEXP ?', [
+    ASSET_PATTERN,
+  ])
+  await sweepCheck('kinds of equipment', 'SELECT id FROM asset_types WHERE code REGEXP ?', [
+    ASSET_TYPE_PATTERN,
+  ])
+  await sweepCheck('schedules', 'SELECT id FROM job_series WHERE name REGEXP ?', [SERIES_PATTERN])
+  await sweepCheck(
+    'orphaned series runs',
+    'SELECT id FROM job_series_runs WHERE series_id NOT IN (SELECT id FROM job_series)',
+  )
+  await sweepCheck(
+    'jobs left pointing at a gone schedule',
+    'SELECT id FROM job_cards WHERE series_id IS NOT NULL AND series_id NOT IN (SELECT id FROM job_series)',
+  )
+  await sweepCheck('evidence jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    EVIDENCE_JOB_PATTERN,
+  ])
+  await sweepCheck('evidence headlines', 'SELECT id FROM job_headlines WHERE code REGEXP ?', [
+    EVIDENCE_HEADLINE_PATTERN,
+  ])
+  /*
+   * A party_documents row whose job is gone. The bytes were never written by this
+   * suite (captureEvidence takes the metadata, not a File), so a leftover row is a
+   * document pointing at nothing — and it would surface on somebody else's Files
+   * tab, not ours.
+   */
+  await sweepCheck(
+    'orphaned job attachments',
+    `SELECT id FROM party_documents
+      WHERE entity = 'job_card' AND entity_id NOT IN (SELECT id FROM job_cards)`,
+  )
+
+  ok(
+    '(J17) *** the suite leaves NOTHING behind — litter is how another suite fails ***',
+    litter.length === 0,
+    litter.map(([label, , rows]) => `${label}: ${rows.length}`).join(', '),
+  )
 }
 
 main()

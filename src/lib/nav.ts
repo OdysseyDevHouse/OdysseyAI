@@ -109,7 +109,7 @@ export const NAV: NavSection[] = [
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
          filter on this screen now, and /sales redirects here. */
-      { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax invoice sale history', description: 'Every invoice and credit note, from draft to finalised' },
+      { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history', description: 'Every invoice and credit note, from draft to finalised' },
       { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view', description: 'What customers have ordered but not yet taken' },
       { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view', description: 'Prices offered, and what became of them' },
       { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view', description: 'Goods put aside and paid off over time' },
@@ -316,6 +316,24 @@ export const NAV: NavSection[] = [
         capability: 'jobs.view',
         keywords: 'calendar diary schedule appointments visits technician dispatch day roster',
         description: 'Who is going where today, and what has no slot yet',
+      },
+      {
+        label: 'Recurring work',
+        href: '/jobs/recurring',
+        icon: CalendarClock,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'recurring repeat schedule series maintenance contract periodic quarterly annual service plan',
+        description: 'Schedules that raise a job when it falls due',
+      },
+      {
+        label: 'Equipment',
+        href: '/jobs/equipment',
+        icon: Wrench,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'asset assets equipment machine unit serial warranty service history plant customer owned',
+        description: 'What we look after for customers, and what is due a service',
       },
       {
         label: 'Service targets',
@@ -629,6 +647,9 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
      board, and the board's own name is already the page heading. Without an
      entry the fallback labelled every board "Edit". */
   '/jobs/board': { new: 'Board', edit: 'Board' },
+  /* Not "Edit equipment": the same screen serves a unit in daily use and one
+     scrapped two years ago, and "Edit" over a retired asset reads wrongly. */
+  '/jobs/equipment': { new: 'Add equipment', edit: 'Equipment' },
   /* /sales itself redirects to the register now, but /sales/[id] is still where
      an issued document lives. It is never "edited" — the screen is a record of
      what went out — so the crumb names the thing rather than the action. */

@@ -932,6 +932,98 @@ appear in the catalogue, `job-cost-absorbed` renders 7 rows with a correct total
 footer, and the dashboard shows "1 job with nobody on it" sorted into the warning
 band.
 
+### The suite was not in the aggregate chain
+
+`test:job-cards` existed and passed, and `npm test` **never ran it** — it was never
+appended to the 43-suite chain in `package.json`. 390 checks that only ran when
+somebody invoked them by name. Now suite 44 of 44.
+
+Running the whole chain then surfaced four **pre-existing** blockers, none of them
+job-related, all recorded here because `&&` chaining means the first one stops
+everything after it:
+
+| Suite | Why |
+|---|---|
+| `test:navigation` (3) | `/sales` and `/sales/invoicing` — fail identically against `HEAD`'s `nav.ts`, verified by swapping it in |
+| `test:purchasing`, `test:opening-balances`, `test:payment-runs` (1 each) | all the same `reconcileSupplierBalances` drift: supplier `REF55846921` "Refer Test Wholesalers" carries a stored R5 796 with no transactions — litter from the refers suite |
+| `test:storefront` (2) | needs a department flagged "show in online store"; a data prerequisite, not a code fault |
+
+`test:navigation` is third in the chain, so **nothing after it had been running**.
+
+### All of them are now fixed, and `npm test` is green end to end
+
+**2 516 assertions, 0 failures**, 44 suites, exit 0. None of the fixes touched
+product code except one duplicated search keyword.
+
+**One root cause behind three suites.** `REF55846921` was not the stray fixture it
+looked like. The refers suite deletes **three named GRV ids**, and a fourth
+(GRV003258) was not among them — so it survived, held the supplier alive through its
+FK, and made the suite's own `DELETE FROM suppliers` **fail silently**, leaving a
+balance of R5 796 behind a document worth R276. The document was a husk: no lines,
+no movements, no ledger rows. Cleared it, and the sweep now deletes **by
+supplier_id** rather than by a remembered list — plus asserts the supplier is
+actually gone, because a silent failed delete is what turned one row into three
+unrelated suites failing.
+
+**Two suites were failing on their own fixtures.** Both `test-storefront.ts` and
+`test-customer-accounts.ts` published "the first department with no parent", which on
+this database was an import fixture holding **zero products**. `publishMode:
+'departments'` counts products in published departments rather than the flags
+themselves, so `saveOnlineSettings` correctly refused to open an empty shop. Both now
+pick a top-level department that has stock. `test-customer-accounts.ts` additionally
+ordered the cheapest of five published products without checking stock, and got a
+truthful "has just sold out" — it now filters on `inStock` over a wider sample.
+
+**Two nav assertions were stale.** `/sales/invoicing` had `invoice` twice in its
+keywords. And `/sales` is a redirect kept for bookmarks and `revalidatePath` calls,
+so it is correctly absent from the menu — one check demanded it be linked, another
+demanded it appear in a capability-filtered index. Allowlisted, and the second
+assertion retargeted at `/sales/invoicing`, the screen `sales.view` actually grants.
+
+A caution for next time: my first pass at reading the chain grepped for `FAIL` and
+reported all-green, while `test:customer-accounts` was **throwing** rather than
+printing. Check the exit code and the tail, not a pattern.
+
+### And this suite was leaving litter of its own
+
+Having diagnosed three suites failing on somebody else's leftovers, the obvious next
+question was whether this one does the same. It did: four orphaned `activity_log`
+rows, because `sweepStrays()` deleted by one actor name while the later phases had
+used three others.
+
+The old cleanliness check looked at `job_cards` alone and passed straight over them.
+`(J17)` now asserts **every** table the suite touches is empty by name — including
+the three orphan shapes no fixture pattern can catch (a line, an activity row or a
+time entry whose job has already gone) — and names which one failed. Verified
+independently afterwards: clean.
+
+This is not housekeeping. Litter from one suite is how another suite fails, and it
+is close to undiagnosable from the far side: nothing about
+`reconcileSupplierBalances` failing in `test:payment-runs` points at the refers
+suite.
+
+### An audit found a half-built feature
+
+With all nine phases done I audited the module against the database rather than
+against my own notes — migrations applied, tables present, every `reconcile*()`
+run, the JC sequence verified. Two things came out of it.
+
+**`travelNeedingVerification()` had no caller.** Written in phase 6 with its own
+index `ix_jtravel_verify` and its own tests, and referenced from nowhere. A real
+claim — 88 km against a 42.4 km estimate — was sitting in the database appearing on
+no screen, so the approval half of the travel workflow did not exist. It is now a
+third tab on `/jobs/sla` ("Travel to check"), because the question is the same
+shape as the SLA lists: work sitting still until somebody senior looks at it. Gated
+on `jobs.bill_decide`, not `jobs.edit` — the person who drove must not sign it off.
+
+`(J16)` now asserts the worklist has a reader, because the same thing can happen to
+any read that outlives the screen it was written for.
+
+**The one-engine rule was stated too loosely,** here and in my own summaries. See
+the corrected wording under Risks: `nextDocumentNumber` IS used, in two places, and
+that is correct. The three functions that must never appear are `recordMovement`,
+`postTransaction` and `mirrorSale` — verified by grep.
+
 ### One thing to note
 
 While adding these sources I ran a line-based `sed -i` on `catalog.ts` while a
@@ -944,6 +1036,499 @@ column, `daysOverdue` against the due date, `customerPhone`, hourly buckets, the
 price/profit fields — and the two `source` enum values I had missed
 (`walk_in`, `internal`), whose absence would have offered filters that could never
 match. **Never run `sed -i` against a shared file.**
+
+---
+
+## Phases 10+ — the gap against the PRD
+
+Phases 1–9 built the **transactional spine**: a job can be logged, quoted,
+scheduled, worked, stocked, measured against an SLA, billed and reported on. What
+they did not build is the **configurability layer** that makes it a product rather
+than one shop's workflow. Measured against the PRD, in rough order of how much
+each unblocks:
+
+| PRD | Missing | Note |
+|---|---|---|
+| §8 | ~~Job headlines~~ | **shipped, phase 10** |
+| §23 | ~~Tasks and checklists~~ | **shipped, phase 10** |
+| §24 | ~~Custom forms~~ | **shipped as checklist templates, phases 10 + 13.** All eight response types, and since 13 a photo holds a photo and a signature holds a signature. What remains undone is the *builder* — conditional logic and per-response versioning — which is a different product, not a missing half of this one. |
+| §18 | ~~Customer assets + service history~~ | **shipped, phase 11** |
+| §13 | Followers | Assignment exists; subscribing without editing does not |
+| §16 | Teams, job-level multi-assignee | Only per-appointment assignees today |
+| §15 | ~~Recurring jobs~~ | **shipped, phase 12** |
+| §12 | Workflow automation | Not even the six hard-coded rules I proposed as the substitute |
+| §4.2, §4.3 | Customer portal, public forms | The `source` enum reserves `portal`/`public_form`, so a job can *claim* an origin with no way to arrive that way |
+| §36 | Notifications | Nothing, not even the email-only subset promised |
+| §37.2 | Kanban grouping, saved views, bulk actions | Drag-to-status works; the rest does not |
+| §60 | Week / technician-lane calendar | Only a day view |
+| §27 | Receipt OCR | Deferred by agreement |
+| §33 | Deposits on a job | |
+| §41 | Offline mobile | Deferred by agreement |
+| — | ICS calendar feed | Promised as the two-way-sync substitute (~150 lines); not built |
+| — | Custom fields, feedback/rating, sign-off, ticket module, intake requests | From the PRD's own "AI can make a call" list |
+
+## What phase 10 shipped
+
+`sql/site/114_job_headlines.sql` — five tables, three settings, no changes to
+anything that already existed.
+
+### A headline is not a category
+
+`job_cards.title` says what *this* job is. A headline says what jobs of its kind
+always require: the checks a service needs, the filter it consumes, the two hours
+it takes, the board it belongs on. A dropdown that only labels the job is a report
+filter; **a headline that attaches the work** is the difference between configuring
+a business once and every technician retyping the same checklist.
+
+Many per job, per §8 — replacing a compressor and surveying the site can be one
+visit — so `job_card_headlines` is a join table, not a column.
+
+### One item table for tasks AND checks
+
+§23 calls them different things. Structurally they are one thing: an ordered list of
+named items, each done or not, each optionally required. The **only** difference is
+that a check captures a value, so `response_type = 'none'` *is* a task, and `kind`
+survives purely as a label because Task and Check are the words the trade uses.
+
+Two tables would have been two copies of the ordering rule, two of the blocking
+rule, two near-identical screens, and a permanent question about which one a new
+requirement belongs in.
+
+### The items are copied onto the job, not referenced
+
+`job_card_items` holds its own name and response type. Editing *"Check gas
+pressure"* to *"Check refrigerant pressure"* next March must not rewrite what
+somebody signed off last week — the same argument the job lines make for
+snapshotting `product_code`.
+
+The cost, stated plainly: **fixing a template typo does not fix the jobs already
+carrying it.** That is the right trade. A completed check records what a person
+confirmed, and a record that changes underneath its author is not a record.
+
+### Merging, and what survives a reclassification
+
+Two headlines that both require an item produce **one**, matched on the trimmed
+lower-cased name, and the caller is told which merged so the screen can say so. A
+later duplicate that is **required promotes the survivor** — if either headline
+insists, the job insists; silently keeping the optional copy would drop a
+requirement somebody configured.
+
+Deselecting a headline clears only its **untouched** items. Anything completed
+stays (deleting a signed-off check destroys evidence) and so does anything a
+technician added by hand — `headline_item_id IS NULL` is what protects it.
+
+### The required flag now blocks closing
+
+Wired into `setStatus`, beside the undecided-cost guard, and it **names the items**:
+*"Still to do before this job can be closed: Isolate power, Gas pressure, Customer
+signature."* A count sends somebody hunting; a list tells them what to do.
+
+Switchable via `job_items_block_close`, and **tolerant of a site without migration
+114** — a missing feature must never stop a job being closed.
+
+Two smaller refusals worth naming: a check that captures a value **cannot be
+completed without one** (otherwise "completed" just means somebody pressed a
+button, which is the box-ticking a checklist exists to prevent), and a
+**signed-off item cannot be deleted** — untick it first if it was recorded in error.
+
+### Deliberately not built here
+
+- **Forms** (§24) — the builder with conditional logic and per-response versioning
+  rivals phase 1 on its own.
+- **A skills register.** `required_skills` is free text: a normalised register with
+  per-user certifications and expiry dates is its own project, and the table without
+  the register would be a foreign key to nothing.
+- **Thresholds on measurements.** Whether 12 bar is acceptable is engineering
+  judgement this system does not have, so only yes/no and pass/fail can fail.
+- **Auto-adding standard parts.** Off by default: offering them is safe, adding a
+  billable line because somebody picked a dropdown is how a customer gets charged
+  for a filter nobody fitted.
+
+### Screens
+
+**Setup** — a *Kinds of work* card on the existing `/setup/job-workflow`, between
+the boards and the promises, because a headline decides a job's priority and board
+so it reads before the things that measure it. The item editor is a **flat list
+with the phase as a field**: grouping is a reading concern, and three drop zones
+would make moving an item between phases a drag rather than a dropdown. Arrows
+reorder rather than DnD — a checklist is edited rarely and read constantly, and
+arrows work on a phone with no hydration gate. The board earns its DnD because
+dragging a job between columns *is* the gesture.
+
+**Job card** — a *Checks* tab, grouped Before / While / Before leaving, because
+that is the order the work is done in and a safety check buried between two
+readings is one somebody skips. The tab count is **outstanding required items, not
+the total**: a count on a tab exists to pull somebody towards work they must do,
+and "12" on a finished checklist pulls them towards nothing.
+
+One field per response type rather than a generic box — a yes/no gets two buttons
+(one tap that both answers and completes), a measurement gets a number field with
+its unit beside it, a signature gets a name box. The model already knows which, so
+the screen asks it rather than carrying a second copy of the mapping. A text input
+for everything is how a reading of 12 gets typed as "twleve" on a phone in a plant
+room.
+
+`reconcileJobHeadlines()` is on `/setup/reconciliation`: two red checks (a check
+signed off with nothing recorded; a failure flag disagreeing with its answer — both
+impossible through the app) and one informational (open jobs with no kind of work,
+listed only when the setting demands one).
+
+### Verified
+
+**432 checks** in `test:job-cards`, adding 42 under `(J18)`, and `(J17)` extended to
+assert the three new tables leave nothing behind. Full chain green: **2 558
+assertions, 0 failures, exit 0**.
+
+Migration applied and idempotent; all five tables, three settings and every index
+confirmed. The pure model tested standalone: merge across case and whitespace,
+required-promotion, and failure detection — where the load-bearing case is that an
+**empty answer is unanswered, not failing**, since treating them alike would put
+every untouched job on the exception report.
+
+Driven end to end through the real functions and then in a browser: two kinds of
+work on one job produced 4 items from 3+2 with the shared one merged and promoted;
+priority taken from the headline; close refused **by name** then allowed once
+answered; a failing check flagged with its note; a hand-added task and a signed-off
+check both surviving a reclassification; a used headline refusing deletion.
+Unticking a failed check cleared the answer **and** the flag together, so no stale
+failure survives. `tsc` clean · `check-ui-kit` clean · `next build` green · smoke
+crawl **152 passed, 0 failed**.
+
+## What phase 11 shipped
+
+Three migrations — **115** the tables, **116** a `status` column, **117** a rename.
+Two of those three were corrections, and the reason is worth recording.
+
+### Three tables that look alike and are not
+
+| | |
+|---|---|
+| `fixed_assets` (046) | what the BUSINESS owns and depreciates |
+| `product_serials` (021) | a unit WE bought or sold |
+| `customer_assets` (115) | what we look after for somebody else |
+
+Decision 7 was right, and now verified rather than assumed: `fixed_assets` carries
+`depreciation_method` and `residual_value` with `depreciation_runs` beside it. A
+customer air conditioner in that table would put customer equipment on our balance
+sheet.
+
+`product_id` and `serial_id` are **nullable**, set only when we sold the unit — a
+plumber servicing a geyser fitted by somebody else in 2011 still needs a record of
+it, and requiring `serial_id` would mean a fake serial that then counts toward
+serial invariant S1. `customer_id` is nullable too, per §52 Q8: a unit can be in
+the workshop before anybody claims it.
+
+### The duplicate check is a generated column
+
+```sql
+serial_key VARCHAR(64) GENERATED ALWAYS AS
+  (UPPER(REPLACE(REPLACE(COALESCE(serial_text,''),' ',''),'-',''))) STORED
+```
+
+Verified end to end: `" ab-12 cd "` and `"AB12CD"` collapse to one key, and search
+finds the unit by `"ab 12-cd"`. Normalising in code would mean every caller had to
+remember to, and one that forgot would create the duplicate the check exists to
+prevent. Scoped **to the customer** — two customers can each own a unit whose plate
+reads 001 — and it **warns rather than blocks** by default, because §18.3 is
+explicit that plenty of equipment has no legible serial.
+
+### Two migrations I should not have needed
+
+`verifySequence()` has **two** hard-coded expectations of any table in
+`OWN_TABLE_TYPES`, and my notes recorded only one. 116 added the `status` column the
+note described; then 117 had to rename `asset_code` to `document_number`, because
+the same function also counts `WHERE document_number IS NOT NULL`.
+
+The memory is updated: **read the SELECT inside `verifySequence`** rather than
+trusting the note or the surrounding code. It is one query and it names every
+column it needs. `AST000001` now reconciles — 2 issued, 2 live, **0 missing**.
+
+### One asset per job, and history is a query
+
+`job_cards.asset_id` is a single column where headlines are a join table. A job is a
+visit to fix a thing; servicing eight units is eight jobs or one job with eight
+lines, both already expressible. A join table would make every cost, check and
+warranty question need to say *which* asset — and a join table can be added later
+without moving what is already recorded.
+
+`assetHistory()` is `SELECT ... FROM job_cards WHERE asset_id = ?`. A history table
+would be a second copy of the job list, and the two would drift the first time a
+job was cancelled.
+
+### Closing a job rolls the service dates
+
+Wired into `setStatus`, **after the commit and on its own connection**: it must see
+the job as closed, and a failed service date must not roll back the closure. A date
+is a convenience; the status change is the record.
+
+Verified that it fires on **close** and not on **cancel** — a cancelled job serviced
+nothing, and both dates stayed null. A type with no interval leaves
+`next_service_on` alone, because on-demand equipment has no next service and
+inventing one fills the due list with work nobody asked for.
+
+### Verified
+
+Migrations applied and idempotent; the generated column, sequence and settings
+confirmed. Driven end to end: AST number issued and reconciling, identifier label
+taken from the type (§75 asks for a customisable asset field label), duplicate
+warning across spellings, delete refused once a job exists, `status`/`is_active`
+moving together with the drift check catching a hand-edit, and `test:job-cards`
+still passing its 432 checks with `test:sequences` green.
+
+### Screens
+
+`/jobs/equipment` — the list, under **/jobs and not /customers**: the customer screen
+is where you look a unit up when you have the customer in front of you, but the
+question this list answers is *what is due a service*, which is a dispatcher's
+question asked across every customer at once and whose answer turns into jobs. One
+tile, because there is one question; a strip of five equipment counts would be four
+numbers nobody acts on.
+
+`/jobs/equipment/[id]` — the unit and its history. `/new` and `/edit` share one form
+where the **identifier field is relabelled by the kind** (§75 asks for a
+customisable asset field label): a technician typing into a box marked the wrong
+thing hesitates, and then types it into the notes where nothing can search it.
+
+On the job card, *What it is about* sits **above the address** — a technician wants
+to know which unit before which gate — carrying the serial and the warranty badge,
+because whether it is under warranty is the question they have first.
+
+Kinds of equipment went onto the existing `/setup/job-workflow` after kinds of work.
+`reconcileAssets()` is on `/setup/reconciliation`: three red checks and one
+informational (an open job on retired equipment, which is **allowed** — somebody has
+to be able to log the job that scrapped it).
+
+### Verified
+
+**469 checks** in `test:job-cards`, adding 37 under `(J19)`, and `(J17)` extended so
+the two new tables cannot leak. Full chain green: **2 595 assertions, 0 failures,
+exit 0**. `tsc` clean · `check-ui-kit` clean · `next build` green · smoke crawl
+**156 passed, 0 failed**.
+
+Two things the browser found that the tests could not:
+
+- The activity date rendered as **"hu Aug 13 2026"** — `String(driverDate)` is a
+  locale string and my `.slice(0,16)` cut it mid-word. Fixed to the
+  `toLocaleString('en-ZA', …)` the job history already uses.
+- `/jobs/equipment/[id]` and `/edit` were **SKIPPED** by the smoke crawl for want of
+  an id source, so neither was actually checked. Registered one that picks the unit
+  with the most history, so the crawl renders the history table rather than its empty
+  state.
+
+One assertion of mine was wrong rather than the code: I asserted the AST sequence had
+`missing === 0`, and it reported 4. The counter was at 7 with zero assets — my own
+probe runs had allocated numbers and deleted their rows, exactly as the JC sequence
+does. Rewritten baseline-relative, so it proves what matters: the sequence is
+registered, the query **runs**, and `live + missing === issued`.
+
+## What phase 12 shipped
+
+`sql/site/118_recurring_jobs.sql` — three tables plus a column on `job_cards`.
+
+### This is `061_contracts.sql` with a job instead of an invoice
+
+Copied deliberately, down to the column names, because that module already solved
+recurrence twice over:
+
+**Claim-then-create.** A period is inserted into `job_series_runs` under a unique key
+on `(series_id, for_date)` **before** the job is built. A second tick racing the
+first fails on that insert having written nothing. Verified: tick two created 0, and
+a concurrent pair produced exactly **1 + 0**.
+
+**Catch-up.** `duePeriods()` walks from the cursor to today and returns every period
+it passed. A series left un-ticked for three months raises three jobs — verified, and
+**each job is dated for its own period**, not the run date, so an SLA clock starts
+when the work was due.
+
+What is genuinely shared is `nextOccurrence()` from `expenseModel`: pure date
+arithmetic already used by expenses and contracts, and the one place "the 31st in
+February" is decided. `test:contracts` still passes, so reusing it disturbed nothing.
+
+### Four frequencies, not six
+
+You chose to reuse the shared `FREQUENCIES` as-is. §15 also asks for daily and custom
+intervals; adding either would have put them in the **expense and contract pickers
+too**, offering a daily recurring invoice nobody asked for. Every real maintenance
+pattern is weekly, monthly, quarterly or annual — a daily recurring job is a roster.
+
+### Three decisions worth naming
+
+**Lead time shifts the window, not the date.** A series with 14 days of lead raises
+April's job on 20 March, and the job still says 1 April. Shifting the date instead
+would quietly move every due date forward.
+
+**`auto_create` defaults OFF**, exactly as `contracts.auto_send` does: a schedule
+that started raising three months of catch-up the moment somebody saved it is a
+schedule nobody trusts again. A manual "raise it now" overrides the switch, because
+somebody pressing a button *is* the decision the switch guards.
+
+**Deleting a schedule keeps the work.** `fk_jcard_series` is SET NULL — a schedule is
+a plan, the jobs are the record. Verified: 5 jobs survived with `series_id` null.
+
+### What an occurrence does not inherit
+
+Per §19: `raiseOne()` **builds** a fresh job rather than cloning the previous one, so
+no checklist answers, time entries, costs, comments or files carry forward. A service
+sheet arriving pre-signed by last quarter's technician is worse than none. The
+headlines it *does* carry then attach their own fresh checks.
+
+`reconcileJobSeries()` reports three shapes, the serious one being a **stranded
+claim** — a period claimed but never produced, which the unique key means will never
+be retried. That is the only drift here that silently loses work.
+
+### The screens
+
+`/jobs/recurring` is one screen, not a section: a list with an editor modal and a
+runs-history modal. A schedule is set up rarely and read occasionally, so it earns a
+route and not a hub.
+
+Three tiles: **Schedules**, **Owing a job now**, **Switched off**. The middle one is
+the only figure that means anything operationally — it counts periods `duePeriods()`
+would return right now, so a non-zero number means work the business intends to do
+has not been raised.
+
+**The screen explains its own paused schedules.** `auto_create` defaults off, so the
+first thing a new user sees is a schedule that is not doing anything. Rather than
+leave that looking broken, a switched-off schedule carries a **"Not raising"** badge
+and a callout names them and says why the default is off. A feature whose safe default
+looks like a bug gets switched on carelessly.
+
+**The cron banner is the point of the whole screen.** If `JOB_SERIES_CRON_SECRET` is
+unset while schedules are switched on, the screen says *nothing is calling the daily
+run*. That state is otherwise completely silent: every schedule reads as healthy and
+no job is ever raised. Verified both ways — banner present with no secret, absent with
+one.
+
+`/api/jobs/series/tick` follows `contracts/tick`: secret compared in constant time,
+**503 when no secret is configured** rather than running wide open, and each site in
+its own try/catch so one broken site cannot stop the sweep. That last part earned
+itself immediately — the first live tick raised `JC000431` on site 1 while site 2
+failed on a missing table, and the sweep completed and reported it. Site 2 was six
+migrations behind; that is how I found out.
+
+It also needed `'/api/jobs/series/tick'` in `PUBLIC_EXACT` in `src/proxy.ts`. Without
+it the route 307s to the login page and a cron job records a perfectly successful
+fetch of an HTML page, forever. Verified: **401 without a secret, not 307.**
+
+On the job card, a **"Raised by a schedule"** callout names the series, the frequency
+and the period, and states plainly that nothing carried over from the previous
+occurrence — the §19 guarantee, written where the technician wondering about it is
+looking.
+
+`reconcileJobSeries()` joins `/setup/reconciliation` as two tables: stranded claims
+and cursor drift.
+
+### Verified
+
+`(J20)` is 27 checks; the suite is **496** and `sweepStrays()` covers the new
+fixtures. The full chain: **44 suites, exit 0, zero failures** — checked by reading
+the tail and counting suite banners, not by grepping for `FAIL`, which does not catch
+a suite that throws.
+
+Smoke crawl **157 passed, 0 failed** — up from 156, with `/jobs/recurring` passing
+rather than silently skipped for want of an id source, which is how two equipment
+routes went unchecked in phase 11.
+
+Demo schedules and their jobs removed from both sites afterwards; `reconcileJobSeries()`
+and `reconcileAssets()` both report zero drift on site 1 and site 2.
+
+---
+
+## What phase 13 shipped
+
+`sql/site/119_job_evidence.sql` — two columns and a foreign key. No new tables.
+
+### The gap was narrower than "build a form builder"
+
+§24 asks for custom forms. That was argued out in favour of checklist templates,
+and phase 11 built them — with all eight response types, work phases and required
+items. So §24 was substantially done, except for one thing.
+
+A `photo` item asked the technician to type a **"Reference"**. A `signature` item
+asked them to type a **"Name"**. Both recorded that a photograph or a signature
+had happened, without holding either. For a gas certificate or a customer
+sign-off that is not evidence of anything — the artefact IS the record, and a
+dispute turns on having it.
+
+### Why no new table
+
+`party_documents` already holds files against a loose `(entity, entity_id)` pair
+with an opaque generated `stored_name`, and `job_card` was already a registered
+attachment target. A `job_evidence` table would have been a second copy of an
+upload pipeline hardened once — including the rule in `uploads.ts` that the
+user's filename never touches the filesystem.
+
+**The link points from the item, not the document.** `party_documents` has no FK
+on `entity_id` and cannot have one; the pair is loose so it can serve customers,
+suppliers, GRVs and jobs. `job_card_items.attachment_id` gets a real foreign key
+in the direction that works, `ON DELETE SET NULL` — deleting the file un-answers
+the item rather than leaving it pointing at bytes that are gone.
+
+### Deleting the file is the case that matters
+
+The happy path is easy. The failure that costs a business a dispute is a job that
+still reads *signed off* once the attachment is gone, so that state is handled
+three times over:
+
+- `outstandingRequiredTx` re-checks `attachment_id`, not just `completed_at` —
+  **the job cannot close** over a tick with no file behind it
+- `reconcileJobHeadlines` reports it as `completedWithoutEvidence`, the serious
+  drift shape: every other one is a figure disagreeing with itself, this is a
+  job that looks finished with nothing to show
+- the check itself shows a **"File missing"** badge and un-strikes its name, with
+  the capture control back — fixable where somebody is standing
+
+`applyHeadlines` also gained `attachment_id IS NULL` in its clear-untouched
+delete. Without it, reclassifying a job would have deleted the item and orphaned
+the photograph — the one piece of evidence that cannot be re-taken after the
+technician has driven away.
+
+### The signature pad
+
+`SignaturePad` is new in the kit and on the style guide. Pointer events, so
+finger, stylus and mouse all draw through one set of handlers; `touch-none`,
+without which the browser claims the gesture for scrolling and a signature comes
+out as disconnected dots; the backing store scaled by `devicePixelRatio` so it is
+not a blurry enlargement on a phone.
+
+**It composites onto opaque white before saving.** The pad draws in the theme's
+ink colour, so a signature captured in dark mode is near-white strokes on
+transparency — invisible the moment it is opened in a viewer that assumes a white
+page, which is every PDF and every printed job sheet. Verified by capturing one
+in dark mode and opening the stored PNG: dark ink, white ground.
+
+Accept is disabled until there is ink. A blank white PNG stored as a customer
+signature is worse than no signature, because in a list it looks like one.
+
+`evidence_required` is a stored flag rather than derived from `response_type`,
+for one reason: items answered under the old rules were backfilled to 0 and stay
+complete. **A job closed correctly under the rules of the day must not reopen
+because the rules improved.**
+
+### Verified
+
+`(J21)` is 25 checks; the suite is **521**, up from 496. The chain: **45 suites,
+exit 0, zero failures** — read from the log and counted, not grepped for `FAIL`.
+
+Driven live: signed the pad over CDP, and the capture produced an 11.4 KB PNG on
+disk with a `party_documents` row naming the question it answers. The download
+link returns **200 with `?entity=job_card&entityId=...` and 404 without it** —
+the route resolves `(id, entity, entity_id)` precisely so a guessed id cannot
+walk into somebody else's paperwork, and the first version of my link omitted the
+pair and 404'd.
+
+One gap found only by looking: a completed item renders no controls, so the
+signature was captured and then **invisible on the screen that captured it**. A
+"View signature" link now stays on the finished row, including after the job
+closes — which is exactly when somebody comes looking.
+
+Smoke crawl **155 passed, 0 failed**. Demo data removed from both sites;
+`reconcileJobHeadlines` reports zero drift on each.
+
+**Not done:** `job_signature_statement` and `job_signature_width` have defensible
+defaults but no settings screen — neither does `job_items_block_close` or
+`job_headline_required` from phase 11, so the whole group wants one panel rather
+than a field bolted on here.
 
 ---
 
@@ -971,10 +1556,21 @@ Not "later" — **blocked on infrastructure that does not exist**.
 ## Risks to hold onto
 
 1. **A second posting engine.** The costing model tempts a `postJobToInvoice()`
-   that writes documents, movements and a number itself. Then VAT is computed in
-   two places and **the divergence is silent** — `reconcileStock()` only checks
-   quantities. Nothing in the module imports `recordMovement`,
-   `nextDocumentNumber`, `postTransaction` or `mirrorSale`.
+   that writes documents, movements and a ledger entry itself. Then VAT is
+   computed in two places and **the divergence is silent** — `reconcileStock()`
+   only checks quantities.
+
+   The rule, stated precisely, because a loose version of it invites the wrong
+   correction: **nothing in the job module imports `recordMovement`,
+   `postTransaction` or `mirrorSale`.** Verified — `grep` finds only the comments
+   naming the rule.
+
+   `nextDocumentNumber` is **not** on that list and is used twice, in
+   `jobCards.ts` (a `JC` number) and `jobQuotes.ts` (a `QUO` number). That is
+   correct: allocating a number is not posting, `quotes.ts` does exactly the same,
+   and a module that could not number its own documents would have to ask another
+   one to, which is worse. The thing that must never happen is a job WRITING a
+   movement, a transaction or a GL mirror.
 2. **`reservedQtyFor` is on the till's hot path.** It deliberately keeps online
    holds out of its UNION so an unmigrated site cannot stop the shop selling.
    Phase 7 **did not add a job source** — see above — precisely because the

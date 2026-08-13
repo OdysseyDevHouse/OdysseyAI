@@ -86,8 +86,29 @@ async function main() {
   )
 
   /* ── Open it ──────────────────────────────────────────────────────────── */
+  /*
+   * A top-level department that actually HAS sellable products.
+   *
+   * "The first one with no parent" was picking whichever department happened to sort
+   * first, and on 2026-08-13 that was `Imp 76738812` — an import-test fixture with
+   * ZERO products. saveOnlineSettings then refused to open the shop, correctly:
+   * publishMode 'departments' counts products in published departments, not the
+   * flags themselves, so an empty published department is still an empty shop. The
+   * suite failed on its own fixture while the guard was right.
+   */
   const departments = await listDepartmentVisibility(SITE)
-  const parent = departments.find((d) => d.parentId === null)
+  const stocked = await siteQuery<any>(
+    SITE,
+    `SELECT p.department_id AS id, COUNT(*) AS n
+       FROM products p
+      WHERE p.is_archived = 0 AND p.department_id IS NOT NULL
+      GROUP BY p.department_id
+      ORDER BY n DESC`,
+  )
+  const stockedIds = new Set(stocked.map((r: any) => Number(r.id)))
+  const parent =
+    departments.find((d) => d.parentId === null && stockedIds.has(d.id)) ??
+    departments.find((d) => d.parentId === null)
   if (!parent) throw new Error('Need a department to publish.')
   await setDepartmentVisibility(SITE, parent.id, true)
 

@@ -559,6 +559,16 @@ const OWN_TABLE_TYPES: Record<string, string> = {
   // A job card is not a sales document — it RAISES them. Its numbers live in
   // its own table, and without this entry every JC ever issued reports missing.
   job_card: 'job_cards',
+  /*
+   * A customer asset is a record we number, not a document we post. 116 gave it a
+   * `status` column purely so it could be registered here — this function
+   * hard-codes `status = 'cancelled'` to separate voided numbers from live ones,
+   * and a table without that column cannot be checked at all.
+   *
+   * Without this entry every AST number ever issued reports as missing. That
+   * omission has bitten twice before, on stock takes and again on job cards.
+   */
+  customer_asset: 'customer_assets',
 }
 
 export async function verifySequence(

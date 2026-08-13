@@ -82,6 +82,11 @@ export type ActivityEntity =
      records a cost that somebody else later decides not to charge for. Both
      halves of that need a name against them. */
   | 'job_card'
+  /* A piece of customer equipment. Worth auditing separately from the jobs done
+     on it, because the questions differ: the job log answers what was done, this
+     answers who changed the warranty date, who moved it to another site, and who
+     retired it. A warranty expiry quietly edited is a dispute waiting to happen. */
+  | 'customer_asset'
 
 export type ActivityEvent = {
   id: number

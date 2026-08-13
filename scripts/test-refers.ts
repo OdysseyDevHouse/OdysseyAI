@@ -333,18 +333,40 @@ async function main() {
   await siteExecute(SITE, `UPDATE sales_documents SET reverses_id = NULL WHERE id IN (${docIds.map(() => '?').join(',')})`, docIds)
   await siteExecute(SITE, `DELETE FROM sales_documents WHERE id IN (${docIds.map(() => '?').join(',')})`, docIds)
 
-  // The GRVs and the supplier they were bought from. Left behind, the ledger
-  // rows make reconcileSupplierBalances fail in an unrelated suite.
-  const grvIds = [
-    sGrv.ok ? sGrv.documentId : 0,
-    nGrv.ok ? nGrv.documentId : 0,
-    baseGrv.ok ? baseGrv.documentId : 0,
-  ]
-  await siteExecute(SITE, `DELETE FROM purchase_document_lines WHERE document_id IN (${grvIds.map(() => '?').join(',')})`, grvIds)
-  await siteExecute(SITE, `DELETE FROM purchase_documents WHERE id IN (${grvIds.map(() => '?').join(',')})`, grvIds)
+  /*
+   * The GRVs and the supplier they were bought from. Left behind, the ledger rows
+   * make reconcileSupplierBalances fail in an unrelated suite.
+   *
+   * BY SUPPLIER, not by a list of ids. A named list only removes the documents the
+   * author remembered: on 2026-08-12 a fourth GRV (GRV003258) escaped it, held this
+   * supplier alive through its FK, and made the DELETE below **fail silently** —
+   * leaving a balance of R5 796 behind a document worth R276. That one row then
+   * failed test:purchasing, test:opening-balances and test:payment-runs, none of
+   * which have anything to do with refers.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE l FROM purchase_document_lines l
+       JOIN purchase_documents d ON d.id = l.document_id
+      WHERE d.supplier_id = ?`,
+    [sup.id],
+  )
+  await siteExecute(SITE, 'DELETE FROM purchase_documents WHERE supplier_id = ?', [sup.id])
   await siteExecute(SITE, 'DELETE FROM supplier_transactions WHERE supplier_id = ?', [sup.id])
   await siteExecute(SITE, 'DELETE FROM product_suppliers WHERE supplier_id = ?', [sup.id])
   await siteExecute(SITE, 'DELETE FROM suppliers WHERE id = ?', [sup.id])
+
+  /*
+   * And SAY SO if the supplier survived. A silent failed delete is what turned one
+   * stranded row into three unrelated suites failing for a fortnight; a suite that
+   * cannot clean up after itself must fail rather than leave the mess for the next.
+   */
+  const supLeft = await siteQueryOne<any>(SITE, 'SELECT id FROM suppliers WHERE id = ?', [sup.id])
+  ok(
+    '*** the suite removed its own supplier — a survivor breaks other suites ***',
+    supLeft === null || supLeft === undefined,
+    supLeft ? 'still there, something references it' : '',
+  )
 
   console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAILURE(S)`)
   process.exit(fails === 0 ? 0 : 1)

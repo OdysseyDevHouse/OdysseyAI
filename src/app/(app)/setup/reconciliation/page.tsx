@@ -11,6 +11,9 @@ import { reconcileAging } from '@/lib/site/aging'
 import { reconcileJobParts } from '@/lib/site/jobParts'
 import { reconcileJobSla } from '@/lib/site/jobSla'
 import { reconcileJobCards } from '@/lib/site/jobCards'
+import { reconcileJobHeadlines } from '@/lib/site/jobHeadlines'
+import { reconcileAssets } from '@/lib/site/jobAssets'
+import { reconcileJobSeries } from '@/lib/site/jobSeries'
 import { listSequences, verifySequence } from '@/lib/site/sequences'
 import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
@@ -33,6 +36,13 @@ import {
   JobLineDriftTable,
   JobStateDriftTable,
   JobStrandedStatusTable,
+  JobItemDriftTable,
+  JobNoHeadlineTable,
+  AssetDriftTable,
+  AssetJobDriftTable,
+  AssetRetiredWorkedTable,
+  SeriesRunDriftTable,
+  SeriesCursorTable,
 } from './DriftTables'
 
 export const dynamic = 'force-dynamic'
@@ -89,6 +99,9 @@ export default async function ReconciliationPage() {
     jobParts,
     jobSla,
     jobCards,
+    jobItems,
+    assets,
+    jobSeries,
     sequences,
   ] = await Promise.all([
     reconcileStock(siteId),
@@ -109,6 +122,12 @@ export default async function ReconciliationPage() {
     // Tolerant for the same reason: 113 may not have run on this site yet.
     reconcileJobSla(siteId).catch(() => null),
     reconcileJobCards(siteId).catch(() => null),
+    // Tolerant for the same reason: 114 may not have run on this site yet.
+    reconcileJobHeadlines(siteId).catch(() => null),
+    // Tolerant for the same reason: 115 may not have run on this site yet.
+    reconcileAssets(siteId).catch(() => null),
+    // Tolerant for the same reason: 118 may not have run on this site yet.
+    reconcileJobSeries(siteId).catch(() => null),
     listSequences(siteId),
   ])
 
@@ -178,6 +197,62 @@ export default async function ReconciliationPage() {
       jobCards.stateMismatch.length
     : 0
 
+  /*
+   * Both item checks are bugs. recordItem refuses to complete a value-capturing
+   * check without an answer, and is_failed is derived by the same pure function
+   * the reconcile re-runs — so a mismatch means the flag and the response have
+   * diverged, and the exception report is lying about which checks failed.
+   *
+   * missingHeadline is NOT counted: the reconcile only fills it when the setting
+   * demands a headline, and even then an unclassified job is a configuration
+   * gap rather than a wrong figure.
+   */
+  const itemDrift = jobItems
+    ? jobItems.completedWithoutAnswer.length +
+      jobItems.completedWithoutEvidence.length +
+      jobItems.failedFlagWrong.length
+    : 0
+
+  /*
+   * Three of the four equipment checks are bugs.
+   *
+   * `status` and `is_active` are written together by retireAsset/reviveAsset and
+   * nowhere else, so a divergence means something bypassed them — and
+   * verifySequence would then be counting a retired asset number as live. A unit at
+   * a site belonging to a different customer sends a technician to the wrong
+   * address. A job whose equipment belongs to somebody else puts a warranty claim
+   * on the wrong account, and setJobAsset refuses exactly that.
+   *
+   * `retiredButWorked` is NOT one: naming retired equipment is allowed, because
+   * somebody has to be able to log the job that scrapped it. Reported so an open
+   * job against a dead unit does not sit there unnoticed.
+   */
+  const assetDrift = assets
+    ? assets.statusMismatch.length +
+      assets.addressMismatch.length +
+      assets.jobCustomerMismatch.length
+    : 0
+
+  /*
+   * All three recurring-job checks are real, and the first two are the same class
+   * of problem: a period that will never be raised.
+   *
+   * A STRANDED CLAIM is the worst thing in this module. The unique key on
+   * (series_id, for_date) is what stops a double-raise, and it also means a period
+   * claimed but never produced can never be retried — so that visit is silently
+   * lost. There is no error, no missing invoice, no wrong figure: just work nobody
+   * did, which surfaces when a customer rings to ask why nobody came.
+   *
+   * A CURSOR AHEAD of the newest claim is the same loss by a different route:
+   * last_generated_for is what duePeriods walks from, so a cursor past what was
+   * actually raised skips those periods for good.
+   */
+  const seriesDrift = jobSeries
+    ? jobSeries.strandedClaims.length +
+      jobSeries.failedRuns.length +
+      jobSeries.cursorAhead.length
+    : 0
+
   const ledgersClean =
     stock.length === 0 &&
     stockTakes.length === 0 &&
@@ -190,7 +265,10 @@ export default async function ReconciliationPage() {
     aging.ok &&
     partsDrift === 0 &&
     slaDrift === 0 &&
-    jobDrift === 0
+    jobDrift === 0 &&
+    itemDrift === 0 &&
+    assetDrift === 0 &&
+    seriesDrift === 0
   const clean = ledgersClean && missingNumbers.length === 0
 
   return (
@@ -452,6 +530,199 @@ export default async function ReconciliationPage() {
               description="A job in one of these is invisible on every board — board membership is derived from the stage, so a stage no board lists has nowhere to draw its jobs. Add them to a board under Job workflow."
             />
             <JobStrandedStatusTable rows={jobCards.statusesOffEveryBoard} />
+          </Card>
+        )}
+
+        {jobItems !== null &&
+          (itemDrift === 0 ? (
+            <Callout tone="success" title="Job tasks and checks">
+              Every completed check carries the answer it asked for, and every failure flag agrees
+              with the answer beside it.
+            </Callout>
+          ) : (
+            <>
+              {jobItems.completedWithoutAnswer.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Signed off with nothing recorded"
+                    description="A check that captures a reading, cannot be completed without one — recordItem refuses it. A row here means the value was written directly to the database, so what the technician actually measured is not known."
+                  />
+                  <JobItemDriftTable
+                    rows={jobItems.completedWithoutAnswer.map((r) => ({
+                      itemId: r.itemId,
+                      jobId: r.jobId,
+                      name: r.name,
+                      detail: `expects ${r.responseType}`,
+                    }))}
+                  />
+                </Card>
+              )}
+
+              {jobItems.completedWithoutEvidence.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Signed off with no photo or signature"
+                    description="The serious one. A check that needs a file cannot be ticked without one, so a row here means the attachment was deleted afterwards — the foreign key nulls the link and leaves the tick standing. The job looks signed off and there is nothing to show. These items read as outstanding again, so the job cannot be closed over them."
+                  />
+                  <JobItemDriftTable
+                    rows={jobItems.completedWithoutEvidence.map((r) => ({
+                      itemId: r.itemId,
+                      jobId: r.jobId,
+                      name: r.name,
+                      detail: `${r.responseType} missing`,
+                    }))}
+                  />
+                </Card>
+              )}
+
+              {jobItems.failedFlagWrong.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Failure flag disagrees with the answer"
+                    description="is_failed is derived from the response when it is written, and stored so the exception list is one indexed read. If the two diverge, every report of which checks failed is wrong."
+                  />
+                  <JobItemDriftTable
+                    rows={jobItems.failedFlagWrong.map((r) => ({
+                      itemId: r.itemId,
+                      jobId: r.jobId,
+                      name: r.name,
+                      detail: `answered ${r.response ?? 'nothing'}, flagged ${r.isFailed ? 'failed' : 'passed'}`,
+                    }))}
+                  />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {/* Configuration, not drift — and only listed at all when the setting
+            demands a headline. */}
+        {jobItems !== null && jobItems.missingHeadline.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Open jobs with no kind of work"
+              description="This site requires every job to name a kind of work, and these do not — so they bring none of the tasks and checks that kind would attach. Set one on each, or switch the requirement off under Job workflow."
+            />
+            <JobNoHeadlineTable rows={jobItems.missingHeadline} />
+          </Card>
+        )}
+
+        {jobSeries !== null &&
+          (seriesDrift === 0 ? (
+            <Callout tone="success" title="Recurring work">
+              Every period a schedule claimed produced a job, and no cursor has run ahead of what
+              was actually raised.
+            </Callout>
+          ) : (
+            <>
+              {jobSeries.strandedClaims.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Periods claimed but never raised"
+                    description="The run died between claiming the period and building the job. The unique key that stops a double-raise also stops a retry, so this visit will never be raised — the only drift here with no symptom anywhere else. Raise the job by hand, or clear the claim to let the next run try again."
+                  />
+                  <SeriesRunDriftTable
+                    rows={jobSeries.strandedClaims.map((r) => ({
+                      runId: r.runId,
+                      seriesId: r.seriesId,
+                      seriesName: r.seriesName,
+                      forDate: r.forDate,
+                      detail: 'claimed, no job',
+                    }))}
+                  />
+                </Card>
+              )}
+
+              {jobSeries.failedRuns.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Periods that failed to raise"
+                    description="The attempt recorded why. The claim is deliberately kept so the same period is not tried on a loop — fix the cause, then clear the claim to let it run."
+                  />
+                  <SeriesRunDriftTable
+                    rows={jobSeries.failedRuns.map((r) => ({
+                      runId: r.runId,
+                      seriesId: r.seriesId,
+                      seriesName: r.seriesName,
+                      forDate: r.forDate,
+                      detail: r.error ?? 'failed',
+                    }))}
+                  />
+                </Card>
+              )}
+
+              {jobSeries.cursorAhead.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Schedule cursor ahead of what it raised"
+                    description="last_generated_for is what the catch-up walks from, so a cursor past the newest period actually raised skips everything between them — permanently. Only the generator should ever move it."
+                  />
+                  <SeriesCursorTable rows={jobSeries.cursorAhead} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {assets !== null &&
+          (assetDrift === 0 ? (
+            <Callout tone="success" title="Customer equipment">
+              Every unit agrees with its own retired flag, sits at a site its customer owns, and is
+              named only by that customer&apos;s jobs.
+            </Callout>
+          ) : (
+            <>
+              {assets.statusMismatch.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Retired flag out of step"
+                    description="status and is_active are written together by retiring or reviving and nowhere else. While they disagree, verifySequence counts a retired asset number as live — or the reverse — so the numbering check is lying."
+                  />
+                  <AssetDriftTable
+                    rows={assets.statusMismatch.map((r) => ({
+                      assetId: r.assetId,
+                      documentNumber: r.documentNumber,
+                      detail: `${r.isActive ? 'in use' : 'retired'}, but status says ${r.status}`,
+                    }))}
+                  />
+                </Card>
+              )}
+
+              {assets.addressMismatch.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="At a site belonging to somebody else"
+                    description="A site belongs to a customer, so a unit pointing at one that belongs to a different customer means the customer was changed without clearing the site. A technician would be sent to the wrong address."
+                  />
+                  <AssetDriftTable
+                    rows={assets.addressMismatch.map((r) => ({
+                      assetId: r.assetId,
+                      documentNumber: r.documentNumber,
+                      detail: r.description,
+                    }))}
+                  />
+                </Card>
+              )}
+
+              {assets.jobCustomerMismatch.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Job naming another customer's equipment"
+                    description="setJobAsset refuses this, so a row here got in another way. It puts a warranty claim against the wrong account and the service history on the wrong unit."
+                  />
+                  <AssetJobDriftTable rows={assets.jobCustomerMismatch} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {/* Informational: naming retired equipment is ALLOWED, because somebody
+            has to log the job that scrapped it. */}
+        {assets !== null && assets.retiredButWorked.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Open jobs on retired equipment"
+              description="Not a fault — the job that scrapped a unit has to be able to name it. Listed so a job left open against a dead unit does not sit there unnoticed."
+            />
+            <AssetRetiredWorkedTable rows={assets.retiredButWorked} />
           </Card>
         )}
 

@@ -15,7 +15,9 @@ import {
   EmptyState,
   Icons,
 } from '@/components/ui'
+import { travelNeedingVerification } from '@/lib/site/jobTravel'
 import SlaWorklist from './SlaWorklist'
+import TravelToCheck from './TravelToCheck'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,9 +42,19 @@ export const dynamic = 'force-dynamic'
  * free. A third tab would be the same rows filtered, and a row that appears in
  * two tabs is a row somebody works twice.
  */
-type Tab = 'respond' | 'resolve'
+/*
+ * A THIRD tab for travel, which is not an SLA at all.
+ *
+ * It is here because the question is the same shape: work sitting still until
+ * somebody senior looks at it. travelNeedingVerification() and its dedicated index
+ * ix_jtravel_verify were built in phase 6 and had NO reader — a claim of 88km
+ * against a 42km estimate sat in the database with no screen showing it, so the
+ * approval workflow was half-built. A third tab here beats a fourth nav row for a
+ * list that is usually empty.
+ */
+type Tab = 'respond' | 'resolve' | 'travel'
 
-const TABS: readonly Tab[] = ['respond', 'resolve']
+const TABS: readonly Tab[] = ['respond', 'resolve', 'travel']
 
 function toTab(value: string | undefined): Tab {
   return TABS.includes(value as Tab) ? (value as Tab) : 'respond'
@@ -57,11 +69,14 @@ export default async function SlaPage({
   const { tab: rawTab } = await searchParams
   const tab = toTab(rawTab)
 
-  const [rows, counts, week, untargeted] = await Promise.all([
-    slaWorklist(siteId, tab, 100),
+  const [rows, counts, week, untargeted, travel] = await Promise.all([
+    // The travel tab has no SLA rows, so the worklist query is skipped entirely
+    // rather than run and discarded.
+    tab === 'travel' ? Promise.resolve([]) : slaWorklist(siteId, tab, 100),
     slaCounts(siteId),
     tradingHours(siteId),
     untargetedJobCount(siteId),
+    travelNeedingVerification(siteId, 100).catch(() => []),
   ])
 
   const hoursPerDay = (week.closesAt - week.opensAt) / 60
@@ -104,11 +119,13 @@ export default async function SlaPage({
 
         {/* Above the tabs: true of the whole screen, and the reason a number here
             might look lower than somebody expects. */}
-        {untargeted > 0 && (
+        {/* Only on the two SLA tabs: the travel list has nothing to do with
+            targets, so the caveat would be answering a question nobody asked. */}
+        {untargeted > 0 && tab !== 'travel' && (
           <Callout tone="neutral" title="Some open jobs are not measured">
             {untargeted === 1 ? 'One open job carries' : `${untargeted} open jobs carry`} no target,
             because they were logged before the promises were set up — nothing was promised for them,
-            so they are absent from both lists below.{' '}
+            so they are absent from the list below.{' '}
             <TextLink href="/setup/job-workflow">Review the targets</TextLink>.
           </Callout>
         )}
@@ -128,12 +145,51 @@ export default async function SlaPage({
               icon: <Icons.CalendarClock size={15} />,
               href: '/jobs/sla?tab=resolve',
             },
+            {
+              value: 'travel',
+              label: 'Travel to check',
+              icon: <Icons.Truck size={15} />,
+              count: travel.length || undefined,
+              href: '/jobs/sla?tab=travel',
+            },
           ]}
           value={tab}
           aria-label="Service target lists"
         />
 
-        {rows.length === 0 ? (
+        {tab === 'travel' ? (
+          travel.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={<Icons.Check size={22} />}
+                title="No travel claim needs checking"
+                hint="A trip only appears here when the distance claimed is further past the estimate than the tolerance allows. Everything else is accepted as recorded."
+              />
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader
+                title="Claimed further than expected"
+                description="The estimate is straight-line distance times a road factor, not a measured route — so a claim over it is a question, not an accusation. Verifying records what was accepted; nobody has looked at these yet."
+              />
+              <TravelToCheck
+                rows={travel.map((t) => ({
+                  travelId: t.id,
+                  jobId: t.jobCardId,
+                  userName: t.userName,
+                  travelledOn: t.travelledOn,
+                  fromLabel: t.fromLabel,
+                  toLabel: t.toLabel,
+                  expectedKm: t.expectedKm,
+                  recordedKm: t.recordedKm,
+                  isReturn: t.isReturn,
+                  chargeableKm: t.chargeableKm,
+                }))}
+                canVerify={can(capabilities, 'jobs.bill_decide')}
+              />
+            </Card>
+          )
+        ) : rows.length === 0 ? (
           <Card>
             <EmptyState
               icon={<Icons.Check size={22} />}

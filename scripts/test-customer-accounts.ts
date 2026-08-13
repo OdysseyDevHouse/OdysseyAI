@@ -197,8 +197,27 @@ async function main() {
 
   /* ── Ordering on account ──────────────────────────────────────────────── */
   console.log('\n— Ordering on account —')
+  /*
+   * A top-level department that actually HAS sellable products — the same fix
+   * test-storefront.ts needed, and for the same reason.
+   *
+   * "The first one with no parent" picked whichever sorted first, which on
+   * 2026-08-13 was an import-test fixture holding ZERO products. publishMode
+   * 'departments' counts products in published departments rather than the flags
+   * themselves, so saveOnlineSettings correctly refused to open an empty shop and
+   * this suite died on its own fixture with "The shop did not open."
+   */
   const departments = await listDepartmentVisibility(SITE)
-  const parent = departments.find((d) => d.parentId === null)
+  const stocked = await siteQuery<any>(
+    SITE,
+    `SELECT department_id AS id, COUNT(*) AS n FROM products
+      WHERE is_archived = 0 AND department_id IS NOT NULL
+      GROUP BY department_id ORDER BY n DESC`,
+  )
+  const stockedIds = new Set(stocked.map((r: any) => Number(r.id)))
+  const parent =
+    departments.find((d) => d.parentId === null && stockedIds.has(d.id)) ??
+    departments.find((d) => d.parentId === null)
   if (!parent) throw new Error('Need a department to publish.')
   await setDepartmentVisibility(SITE, parent.id, true)
 
@@ -215,9 +234,19 @@ async function main() {
 
   const context = await storefrontContext(SITE)
   if (!context) throw new Error('The shop did not open.')
-  const catalogue = await publishedProducts(context, { limit: 5 })
+  /*
+   * The cheapest IN-STOCK product, from a wide enough sample to find one.
+   *
+   * `limit: 5` then cheapest-of-those picked whatever happened to sort first and
+   * ignored stock entirely, so the order was refused with "has just sold out" — an
+   * accurate message about a fixture, not a bug. placePublicOrder checks
+   * availability, so the test has to as well.
+   */
+  const catalogue = await publishedProducts(context, { limit: 50 })
   if (catalogue.length === 0) throw new Error('Nothing published to order.')
-  const cheap = [...catalogue].sort((a, b) => a.priceIncl - b.priceIncl)[0]
+  const sellable = catalogue.filter((p) => p.inStock)
+  if (sellable.length === 0) throw new Error('Nothing published is in stock to order.')
+  const cheap = [...sellable].sort((a, b) => a.priceIncl - b.priceIncl)[0]
 
   const shopper = { contactName: TAG, contactPhone: '0820000000', contactEmail: '' }
   const onAccount = await placePublicOrder(SITE, {

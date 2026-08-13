@@ -25,8 +25,54 @@ import {
   type PolicyInput,
   type SlaActionResult,
 } from '@/lib/site/jobSla'
+import {
+  saveHeadline,
+  deleteHeadline,
+  applyHeadlines,
+  recordItem,
+  captureEvidence,
+  addJobItem,
+  deleteJobItem,
+  type HeadlineInput,
+  type HeadlineResult,
+  type ItemResult,
+  type ApplyResult,
+} from '@/lib/site/jobHeadlines'
+import {
+  saveAsset,
+  retireAsset,
+  reviveAsset,
+  deleteAsset,
+  saveAssetType,
+  deleteAssetType,
+  setJobAsset,
+  listAssets,
+  type AssetInput,
+  type AssetTypeInput,
+  type AssetResult,
+  type AssetActionResult,
+  type SaveAssetResult,
+} from '@/lib/site/jobAssets'
+import {
+  saveJobSeries,
+  deleteJobSeries,
+  generateDueJobs,
+  seriesRuns,
+  type SeriesInput,
+  type SeriesResult,
+  type SeriesActionResult,
+  type SeriesRun,
+} from '@/lib/site/jobSeries'
 import { setSetting } from '@/lib/site/settings'
-import { formatClock, isDayMask, parseClock } from '@/lib/jobStatusModel'
+import { storeUpload, deleteStoredFile } from '@/lib/uploads'
+import {
+  formatClock,
+  isDayMask,
+  parseClock,
+  type ItemKind,
+  type ResponseType,
+  type WorkPhase,
+} from '@/lib/jobStatusModel'
 import {
   saveJobBoard,
   deleteJobBoard,
@@ -575,6 +621,9 @@ export async function verifyTravelAction(
   const result = await verifyTravel(ctx.siteId, ctx.actor, travelId, verifiedKm, note)
   if (!result.ok) return result
   revalidateJobs(jobId)
+  // The approval worklist is the other place this trip is listed, and verifying is
+  // exactly what takes it off there.
+  revalidatePath('/jobs/sla')
   return result
 }
 
@@ -636,6 +685,344 @@ export async function vansAction(): Promise<{ id: number; code: string; name: st
   const ctx = await actorForOrThrow('jobs.view')
   const vans = await listVans(ctx.siteId)
   return vans.map((v) => ({ id: v.id, code: v.code, name: v.name }))
+}
+
+/* ── Recurring work ───────────────────────────────────────────────────────── */
+
+function revalidateSeries() {
+  revalidatePath('/jobs/recurring')
+  revalidatePath('/jobs')
+}
+
+/**
+ * Setting up a schedule is `jobs.edit` — the same right that logs a job by hand.
+ *
+ * Deleting one is `jobs.setup`, though. Not because it destroys work — it does
+ * not, the jobs survive with their link cleared — but because switching a
+ * customer's maintenance schedule off is a commercial decision rather than a
+ * day's dispatching.
+ */
+export async function saveSeriesAction(input: SeriesInput): Promise<SeriesResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveJobSeries(ctx.siteId, ctx.actor, input)
+  if (!result.ok) return result
+  revalidateSeries()
+  return result
+}
+
+export async function deleteSeriesAction(id: number): Promise<SeriesActionResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteJobSeries(ctx.siteId, ctx.actor, id)
+  if (!result.ok) return result
+  revalidateSeries()
+  return result
+}
+
+/**
+ * Raise whatever this schedule owes, now.
+ *
+ * The same generator the cron calls, against the same claim table — so it cannot
+ * double-raise, and what it produces is exactly what the nightly run would have.
+ * It overrides the auto switch because somebody pressing a button IS the decision
+ * that switch guards.
+ */
+export async function raiseSeriesNowAction(
+  seriesId: number,
+): Promise<
+  | { ok: true; created: { jobId: number; documentNumber: string | null; forDate: string }[]; skipped: { reason: string }[] }
+  | { ok: false; error: string }
+> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await generateDueJobs(ctx.siteId, ctx.actor, undefined, seriesId)
+  revalidateSeries()
+  return {
+    ok: true,
+    created: result.created.map((c) => ({
+      jobId: c.jobId,
+      documentNumber: c.documentNumber,
+      forDate: c.forDate,
+    })),
+    skipped: result.skipped.map((s) => ({ reason: s.reason })),
+  }
+}
+
+/** What a schedule has raised. Fetched on demand — see RecurringClient. */
+export async function seriesRunsAction(seriesId: number): Promise<SeriesRun[]> {
+  const ctx = await actorForOrThrow('jobs.view')
+  return seriesRuns(ctx.siteId, seriesId)
+}
+
+/* ── Customer equipment ───────────────────────────────────────────────────── */
+
+function revalidateAssets(assetId?: number) {
+  revalidatePath('/jobs/equipment')
+  if (assetId) revalidatePath(`/jobs/equipment/${assetId}`)
+}
+
+/**
+ * Recording equipment is `jobs.edit` — the same right that logs a job.
+ *
+ * Not `jobs.setup`: a technician who finds an undocumented unit on site should be
+ * able to record it there and then, and making that an administrator's job means
+ * it gets written on the back of a hand instead. The KINDS of equipment are setup,
+ * because those are a business decision.
+ */
+export async function saveAssetAction(input: AssetInput): Promise<SaveAssetResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveAsset(ctx.siteId, ctx.actor, input)
+  if (!result.ok) return result
+  revalidateAssets(result.id)
+  return result
+}
+
+export async function retireAssetAction(
+  id: number,
+  reason: string,
+): Promise<AssetActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await retireAsset(ctx.siteId, ctx.actor, id, reason)
+  if (!result.ok) return result
+  revalidateAssets(id)
+  return result
+}
+
+export async function reviveAssetAction(id: number): Promise<AssetActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await reviveAsset(ctx.siteId, ctx.actor, id)
+  if (!result.ok) return result
+  revalidateAssets(id)
+  return result
+}
+
+export async function deleteAssetAction(id: number): Promise<AssetActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteAsset(ctx.siteId, ctx.actor, id)
+  if (!result.ok) return result
+  revalidateAssets()
+  return result
+}
+
+/** Kinds of equipment are a business decision, so this one is setup. */
+export async function saveAssetTypeAction(input: AssetTypeInput): Promise<AssetResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveAssetType(ctx.siteId, ctx.actor, input)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  revalidateAssets()
+  return result
+}
+
+export async function deleteAssetTypeAction(id: number): Promise<AssetActionResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteAssetType(ctx.siteId, ctx.actor, id)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  return result
+}
+
+/**
+ * Which piece of equipment a job is about.
+ *
+ * Its own action rather than a field on saveJobCard, because the job form does not
+ * carry it: an asset is chosen on the job card once the customer is known, and
+ * threading it through the create form would mean picking equipment before
+ * choosing whose it is.
+ */
+export async function setJobAssetAction(
+  jobId: number,
+  assetId: number | null,
+): Promise<AssetActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await setJobAsset(ctx.siteId, ctx.actor, jobId, assetId)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  if (assetId) revalidateAssets(assetId)
+  return result
+}
+
+/**
+ * The equipment a job may name: this customer's, plus anything unclaimed.
+ *
+ * Unclaimed units are included because naming one on a job is often HOW it gets
+ * claimed — a technician records a unit found in the workshop, then attaches it to
+ * the job that brought it in. `setJobAsset` allows exactly that combination.
+ *
+ * Two queries rather than one, because listAssets filters to a single customer by
+ * design and widening it to "or unclaimed" would put a job-specific rule inside a
+ * general list function that four other callers use.
+ */
+export async function customerAssetsAction(customerId: number | null): Promise<
+  { id: number; label: string }[]
+> {
+  const ctx = await actorForOrThrow('jobs.view')
+
+  const [theirs, unclaimed] = await Promise.all([
+    customerId === null
+      ? Promise.resolve([])
+      : listAssets(ctx.siteId, { customerId, limit: 200 }),
+    listAssets(ctx.siteId, { unclaimedOnly: true, limit: 100 }),
+  ])
+
+  return [...theirs, ...unclaimed].map((a) => ({
+    id: a.id,
+    label:
+      [a.description, a.serialText, a.serviceAddressName].filter(Boolean).join(' · ') +
+      (a.customerId === null ? ' — unclaimed' : ''),
+  }))
+}
+
+/* ── Headlines, tasks and checks ──────────────────────────────────────────── */
+
+/**
+ * Configuring what kinds of work exist is setup; recording a check is the work.
+ *
+ * So these two are `jobs.setup` and everything below is `jobs.edit`. A technician
+ * must be able to tick off a task without being able to rewrite the template every
+ * other technician follows.
+ */
+export async function saveHeadlineAction(input: HeadlineInput): Promise<HeadlineResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveHeadline(ctx.siteId, ctx.actor, input)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs')
+  return result
+}
+
+export async function deleteHeadlineAction(id: number): Promise<ItemResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteHeadline(ctx.siteId, ctx.actor, id)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  return result
+}
+
+/** Which kinds of work a job is, which copies their tasks and checks onto it. */
+export async function applyHeadlinesAction(
+  jobId: number,
+  headlineIds: number[],
+): Promise<ApplyResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await applyHeadlines(ctx.siteId, ctx.actor, jobId, headlineIds)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
+}
+
+export async function recordItemAction(
+  jobId: number,
+  itemId: number,
+  input: { response: string | null; note: string | null; complete: boolean },
+): Promise<ItemResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await recordItem(ctx.siteId, ctx.actor, itemId, input)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
+}
+
+export async function addJobItemAction(
+  jobId: number,
+  input: {
+    kind: ItemKind
+    name: string
+    responseType: ResponseType
+    unit: string | null
+    workPhase: WorkPhase
+    isRequired: boolean
+  },
+): Promise<ItemResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await addJobItem(ctx.siteId, ctx.actor, jobId, input)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
+}
+
+/**
+ * Attach a captured photo or signature to a check.
+ *
+ * Takes FormData because a File cannot cross a server-action boundary any other
+ * way. The two cleanup paths are the point: storeUpload has already written
+ * bytes to disk by the time captureEvidence runs, and its contract says the
+ * caller unlinks them if the insert does not land. Both a returned refusal and a
+ * thrown error leave the same orphan, so both are handled — the pattern
+ * attachmentActions.ts established.
+ */
+export async function captureEvidenceAction(
+  jobId: number,
+  itemId: number,
+  form: FormData,
+): Promise<ItemResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const file = form.get('file')
+  if (!(file instanceof File)) return { ok: false, error: 'No file was received.' }
+
+  const caption = form.get('caption')
+  const stored = await storeUpload(file)
+  if (!stored.ok) return { ok: false, error: stored.error }
+
+  try {
+    const result = await captureEvidence(
+      ctx.siteId,
+      ctx.actor,
+      itemId,
+      stored.file,
+      typeof caption === 'string' && caption.trim() ? caption.trim() : null,
+    )
+    if (!result.ok) {
+      await deleteStoredFile(stored.file.storedName)
+      return result
+    }
+  } catch (error) {
+    await deleteStoredFile(stored.file.storedName)
+    throw error
+  }
+
+  revalidateJobs(jobId)
+  return { ok: true }
+}
+
+export async function deleteJobItemAction(jobId: number, itemId: number): Promise<ItemResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await deleteJobItem(ctx.siteId, ctx.actor, itemId)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
 }
 
 /* ── SLA ──────────────────────────────────────────────────────────────────── */

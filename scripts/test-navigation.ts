@@ -284,7 +284,11 @@ const setupOnly = buildPageIndex(navFor((c) => c === 'sales.view'))
 const reachable = new Set(setupOnly.map((h) => h.href))
 check('a setting is not indexed without its hub', reachable.has('/setup/users'), false)
 check('nor is another section’s screen', reachable.has('/customers'), false)
-check('but the granted one is', reachable.has('/sales'), true)
+/* /sales/invoicing, not /sales: the latter is a redirect with no menu entry, so it
+   is correctly absent from the index and asserting it is present tested nothing but
+   the assertion's own staleness. The invoice register is the screen sales.view
+   actually grants. */
+check('but the granted one is', reachable.has('/sales/invoicing'), true)
 
 function allNavItems(): string[] {
   return NAV.flatMap((s) => (s.items ?? []).map((i) => i.href))
@@ -424,6 +428,7 @@ const UNLINKED: Record<string, string> = {
   '/transfers/inbound': 'reached from the transfer list',
   '/adjustments/new': 'reached from the adjustment list',
   '/jobs/new': 'reached from the job list',
+  '/jobs/equipment/new': 'reached from the equipment list',
   '/stock-takes/new': 'reached from the stock take list',
   '/manufacturing/new': 'reached from the manufacturing list',
   '/expenses/new': 'reached from the expense list',
@@ -439,6 +444,11 @@ const UNLINKED: Record<string, string> = {
   '/reports/ask': 'the reports hub leads with it',
   '/reports/schedules': 'the reports hub leads with it',
   '/commission/rules': 'configuration reached from the commission periods screen',
+  /* Not a screen at all — a redirect to /sales/invoicing, kept because /sales is
+     on printed references, bookmarks, the quick-key runner and a dozen
+     revalidatePath('/sales') calls. Giving it a menu entry would put a second
+     door on one room; deleting it would 404 all of the above. */
+  '/sales': 'redirects to the invoice register, kept for bookmarks and revalidate calls',
 }
 
 console.log('\nEvery page is reachable')

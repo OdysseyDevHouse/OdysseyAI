@@ -2,11 +2,15 @@ import { requireCapability } from '@/lib/auth'
 import { listJobStatuses, missingRoles } from '@/lib/site/jobStatuses'
 import { listJobBoards, statusesOffEveryBoard, boardStatusIds } from '@/lib/site/jobBoards'
 import { listSlaPolicies, untargetedJobCount } from '@/lib/site/jobSla'
+import { listHeadlines } from '@/lib/site/jobHeadlines'
+import { listAssetTypes } from '@/lib/site/jobAssets'
 import { getSettings } from '@/lib/site/settings'
 import { PageHeader, PageBody, Callout, TextLink } from '@/components/ui'
 import { ROLE_LABEL } from '@/lib/jobStatusModel'
 import WorkflowClient from './WorkflowClient'
 import SlaPanel from './SlaPanel'
+import HeadlinesPanel from './HeadlinesPanel'
+import AssetTypesPanel from './AssetTypesPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +35,17 @@ export const dynamic = 'force-dynamic'
 export default async function JobWorkflowPage() {
   const { siteId } = await requireCapability('jobs.setup')
 
-  const [statuses, boards, missing, offBoard, policies, settings, untargeted] = await Promise.all([
+  const [
+    statuses,
+    boards,
+    missing,
+    offBoard,
+    policies,
+    settings,
+    untargeted,
+    headlines,
+    assetTypes,
+  ] = await Promise.all([
     listJobStatuses(siteId, true),
     listJobBoards(siteId, true),
     missingRoles(siteId),
@@ -48,6 +62,10 @@ export default async function JobWorkflowPage() {
      * able to configure its statuses.
      */
     untargetedJobCount(siteId).catch(() => 0),
+    // Tolerant: a site without migration 114 still gets its statuses and boards.
+    listHeadlines(siteId, true).catch(() => []),
+    // Likewise 115.
+    listAssetTypes(siteId, true).catch(() => []),
   ])
 
   // Which statuses each board draws, so the editor opens with them ticked.
@@ -88,6 +106,18 @@ export default async function JobWorkflowPage() {
           columnsByBoard={columnsByBoard}
           offBoardIds={offBoard.map((s) => s.statusId)}
         />
+
+        {/* What KIND of work this business does, above the promises: a headline
+            decides a job's priority and board, so it reads before the things that
+            measure it. */}
+        <HeadlinesPanel
+          headlines={headlines}
+          boards={boards.filter((b) => b.isActive).map((b) => ({ id: b.id, name: b.name }))}
+        />
+
+        {/* Kinds of EQUIPMENT, after kinds of WORK: both are what a business does,
+            and a service interval is the thing that turns equipment into work. */}
+        <AssetTypesPanel types={assetTypes} />
 
         {/* The promises, on the same screen as the stages rather than a route of
             their own: both answer "how does this business run a job", and four

@@ -952,3 +952,311 @@ export function describeDayMask(mask: string): string {
   }
   return open.map((d) => DAY_MASK_LABELS[d]).join(', ')
 }
+
+/* ── HEADLINES, TASKS AND CHECKS ───────────────────────────────────────────
+ *
+ * A headline is what KIND of job this is, and it brings its work with it. The
+ * migration header sets out why one item table serves both tasks and checks; this
+ * file holds the part that has to run in the browser, because the setup screen and
+ * the technician list are both client components.
+ */
+
+/**
+ * What completing an item records.
+ *
+ * 'none' is a plain task — ticked or not. Everything else captures a value, which
+ * is the only structural difference between a task and a check.
+ */
+export const RESPONSE_TYPES = [
+  'none',
+  'yesno',
+  'passfail',
+  'number',
+  'measure',
+  'text',
+  'photo',
+  'signature',
+] as const
+export type ResponseType = (typeof RESPONSE_TYPES)[number]
+
+export const RESPONSE_TYPE_LABEL: Record<ResponseType, string> = {
+  none: 'Just tick it',
+  yesno: 'Yes or no',
+  passfail: 'Pass or fail',
+  number: 'A number',
+  measure: 'A measurement',
+  text: 'Some text',
+  photo: 'A photograph',
+  signature: 'A signature',
+}
+
+/** The two words the trade uses. Structurally identical — see the migration. */
+export const ITEM_KINDS = ['task', 'check'] as const
+export type ItemKind = (typeof ITEM_KINDS)[number]
+
+export const ITEM_KIND_LABEL: Record<ItemKind, string> = {
+  task: 'Task',
+  check: 'Check',
+}
+
+export const WORK_PHASES = ['before', 'during', 'after'] as const
+export type WorkPhase = (typeof WORK_PHASES)[number]
+
+export const WORK_PHASE_LABEL: Record<WorkPhase, string> = {
+  before: 'Before work starts',
+  during: 'While working',
+  after: 'Before leaving',
+}
+
+/** Does this response type carry a unit? Only a measurement does. */
+export function responseHasUnit(type: ResponseType): boolean {
+  return type === 'measure'
+}
+
+/**
+ * Can this response type fail?
+ *
+ * Only the two with a bad answer. A measurement of 12 is not a failure — whether
+ * 12 is acceptable is engineering judgement this system does not have, and
+ * inventing a threshold field would be guessing at every trade at once.
+ */
+export function responseCanFail(type: ResponseType): boolean {
+  return type === 'yesno' || type === 'passfail'
+}
+
+/**
+ * Is a recorded response a failure?
+ *
+ * Deliberately narrow: only an explicit no or fail. An EMPTY response is not a
+ * failure, it is unanswered — and treating the two the same would put every
+ * untouched job on the exception report.
+ */
+export function isFailedResponse(type: ResponseType, response: string | null): boolean {
+  if (!responseCanFail(type)) return false
+  if (response === null) return false
+  const value = response.trim().toLowerCase()
+  return value === 'no' || value === 'fail'
+}
+
+/** The answers a picker should offer, or null when the response is free-form. */
+export function responseOptions(type: ResponseType): readonly string[] | null {
+  if (type === 'yesno') return ['yes', 'no']
+  if (type === 'passfail') return ['pass', 'fail']
+  return null
+}
+
+/**
+ * Is an item finished?
+ *
+ * `completedAt` is the authority, not the presence of a response. A task has no
+ * response and still gets done; a check answered "no" is complete AND failing.
+ * Reading completeness off the response would make a failed check look
+ * outstanding, which is the one thing an exception report must not do.
+ */
+export function isItemComplete(item: {
+  completedAt: string | Date | null
+}): boolean {
+  return item.completedAt !== null && item.completedAt !== undefined
+}
+
+/**
+ * Whether a response satisfies its own type.
+ *
+ * Returns a refusal string or null, so the screen and the action refuse the same
+ * things for the same reasons.
+ */
+export function validateResponse(
+  type: ResponseType,
+  response: string | null,
+): string | null {
+  // A task takes no response, and an unanswered item is a normal state rather
+  // than an error — the required-item check is what enforces answering.
+  if (type === 'none' || response === null || response.trim() === '') return null
+
+  const value = response.trim()
+  if (value.length > 500) return 'That answer is too long.'
+
+  if (type === 'number' || type === 'measure') {
+    if (!Number.isFinite(Number(value))) return 'That has to be a number.'
+  }
+
+  const options = responseOptions(type)
+  if (options && !options.includes(value.toLowerCase())) {
+    return `Answer with ${options.join(' or ')}.`
+  }
+  return null
+}
+
+/**
+ * Does this response type produce a FILE rather than a sentence?
+ *
+ * The two where the artefact is the answer. A photo of a corroded flue and a
+ * customer signature are evidence; every other type is a technician telling us
+ * something, which we take on trust because we sent them.
+ */
+export function responseIsEvidence(type: ResponseType): boolean {
+  return type === 'photo' || type === 'signature'
+}
+
+/**
+ * Can this item be completed?
+ *
+ * The single place the evidence rule lives, so the pad, the action and the close
+ * guard cannot drift apart on what "done" means.
+ *
+ * Until 119 a photo item was satisfied by typing a reference, which recorded
+ * that somebody claimed to have taken a photo. For a gas certificate or a
+ * customer sign-off that is not evidence of anything — the file IS the record,
+ * and a dispute turns on having it.
+ *
+ * `evidenceRequired` is read off the item and not derived from `responseType`
+ * here, deliberately. Items answered before 119 were backfilled to 0 and stay
+ * complete: a job closed correctly under the rules of the day must not reopen
+ * because the rules improved.
+ */
+export function itemBlocker(item: {
+  responseType: ResponseType
+  evidenceRequired: boolean
+  attachmentId: number | null
+  response: string | null
+}): string | null {
+  if (item.evidenceRequired && item.attachmentId === null) {
+    return item.responseType === 'signature'
+      ? 'This needs a signature. Ask the customer to sign on the pad.'
+      : 'This needs a photo attached.'
+  }
+  // A non-evidence item still has to be answered if its type takes an answer.
+  if (
+    item.responseType !== 'none' &&
+    !responseIsEvidence(item.responseType) &&
+    (item.response === null || item.response.trim() === '')
+  ) {
+    return 'This needs an answer.'
+  }
+  return null
+}
+
+export type HeadlineItemDraft = {
+  kind: ItemKind
+  name: string
+  hint: string | null
+  responseType: ResponseType
+  unit: string | null
+  workPhase: WorkPhase
+  isRequired: boolean
+  evidenceRequired: boolean
+}
+
+/**
+ * Pure validation for a headline and its items.
+ *
+ * The load-bearing rule is the duplicate-name check. Section 8 requires that
+ * selecting two headlines which share an item does not produce it twice, and the
+ * cheapest place to prevent half of that problem is refusing a headline that
+ * duplicates itself.
+ */
+export function validateHeadline(input: {
+  code: string
+  name: string
+  suggestedMinutes: number | null
+  items: readonly HeadlineItemDraft[]
+}): string | null {
+  const code = input.code.trim()
+  if (!code) return 'Give the headline a short code.'
+  if (!/^[A-Z0-9_-]{1,40}$/.test(code)) {
+    return 'A code may only use capital letters, numbers, hyphens and underscores.'
+  }
+  if (!input.name.trim()) return 'Give the headline a name.'
+  if (input.name.trim().length > 120) return 'That name is too long.'
+
+  if (input.suggestedMinutes !== null) {
+    if (!Number.isFinite(input.suggestedMinutes) || input.suggestedMinutes <= 0) {
+      return 'A suggested duration must be more than zero minutes, or left blank.'
+    }
+    // Ten working days. Past this it is a project, not an appointment length.
+    if (input.suggestedMinutes > 4800) return 'That duration is longer than ten working days.'
+  }
+
+  const seen = new Set<string>()
+  for (const item of input.items) {
+    if (!item.name.trim()) return 'Every task and check needs a name.'
+    if (item.name.trim().length > 190) return `That name is too long: ${item.name.slice(0, 40)}…`
+
+    const key = item.name.trim().toLowerCase()
+    if (seen.has(key)) return `This headline lists "${item.name.trim()}" twice.`
+    seen.add(key)
+
+    if (responseHasUnit(item.responseType) && !item.unit?.trim()) {
+      return `"${item.name.trim()}" is a measurement, so it needs a unit.`
+    }
+    if (!responseHasUnit(item.responseType) && item.unit?.trim()) {
+      return `"${item.name.trim()}" is not a measurement, so it cannot carry a unit.`
+    }
+
+    // Refused rather than silently ignored. A yes/no item flagged "must attach a
+    // file" has no way to satisfy itself, so the job could never be closed and
+    // the reason would not be on any screen.
+    if (item.evidenceRequired && !responseIsEvidence(item.responseType)) {
+      return `"${item.name.trim()}" cannot require a file — only a photo or a signature can.`
+    }
+  }
+  return null
+}
+
+/**
+ * Merge the items several headlines bring, dropping duplicates.
+ *
+ * Section 8 again: two headlines that both require "Check gas pressure" must
+ * produce ONE item, and the user should be told it was merged rather than left to
+ * wonder. Matched on the trimmed lower-cased name — the same rule the
+ * single-headline check above uses, so the two cannot disagree.
+ *
+ * The FIRST occurrence wins, and a later duplicate that is REQUIRED promotes the
+ * survivor: if either headline insists on it, the job insists on it. Silently
+ * keeping the optional copy would drop a requirement somebody configured.
+ */
+export function mergeHeadlineItems<T extends { name: string; isRequired: boolean }>(
+  groups: readonly { headlineName: string; items: readonly T[] }[],
+): { items: T[]; merged: { name: string; from: string[] }[] } {
+  const byKey = new Map<string, { item: T; from: string[] }>()
+
+  for (const group of groups) {
+    for (const item of group.items) {
+      const key = item.name.trim().toLowerCase()
+      const existing = byKey.get(key)
+      if (existing) {
+        existing.from.push(group.headlineName)
+        if (item.isRequired) existing.item = { ...existing.item, isRequired: true }
+      } else {
+        byKey.set(key, { item, from: [group.headlineName] })
+      }
+    }
+  }
+
+  const items: T[] = []
+  const merged: { name: string; from: string[] }[] = []
+  for (const entry of byKey.values()) {
+    items.push(entry.item)
+    if (entry.from.length > 1) {
+      merged.push({ name: entry.item.name.trim(), from: entry.from })
+    }
+  }
+  return { items, merged }
+}
+
+/** "3 of 8 done, 1 failing" — the progress line a job card header carries. */
+export function describeItemProgress(items: readonly {
+  completedAt: string | Date | null
+  isFailed: boolean
+  isRequired: boolean
+}[]): string {
+  if (items.length === 0) return 'Nothing to do'
+  const done = items.filter(isItemComplete).length
+  const failed = items.filter((i) => i.isFailed).length
+  const outstanding = items.filter((i) => i.isRequired && !isItemComplete(i)).length
+
+  const parts = [`${done} of ${items.length} done`]
+  if (failed > 0) parts.push(`${failed} failing`)
+  if (outstanding > 0) parts.push(`${outstanding} still required`)
+  return parts.join(', ')
+}

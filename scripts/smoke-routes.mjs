@@ -114,6 +114,13 @@ const DYNAMIC = {
     'SELECT j.id FROM job_cards j' +
     ' ORDER BY (SELECT COUNT(*) FROM job_card_lines l WHERE l.job_card_id = j.id) DESC, j.id DESC' +
     ' LIMIT 1',
+  /* The unit with the most history, so the crawl renders the service-history table
+     rather than its empty state. /jobs/equipment/[id]/edit inherits this id, being
+     the longer route. */
+  '/jobs/equipment/[id]':
+    'SELECT a.id FROM customer_assets a' +
+    ' ORDER BY (SELECT COUNT(*) FROM job_cards j WHERE j.asset_id = a.id) DESC, a.id DESC' +
+    ' LIMIT 1',
   // The board is addressed by SLUG, not id — the column is named `id` here only
   // because resolveRoute reads that one key off the row.
   '/jobs/board/[slug]': 'SELECT slug AS id FROM job_boards WHERE is_active = 1 ORDER BY sort_order LIMIT 1',

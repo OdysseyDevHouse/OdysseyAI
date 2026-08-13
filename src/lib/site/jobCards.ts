@@ -6,6 +6,10 @@ import { nextDocumentNumber } from './sequences'
 import { statusForRole, listJobStatuses } from './jobStatuses'
 // One-directional: jobSla reads settings and holidays, never jobCards.
 import { applyDeadlinesTx } from './jobSla'
+// Likewise jobHeadlines — it reads settings and its own tables, never jobCards.
+import { itemsBlockClose, outstandingRequiredTx } from './jobHeadlines'
+// And jobAssets, which reads its own tables plus job_cards but never imports back.
+import { recordServiceOnClose } from './jobAssets'
 import { logActivity, logActivityTx, diffFields, type Actor } from './activityLog'
 import {
   BILLABLE_STATES,
@@ -877,6 +881,30 @@ export async function setStatus(
           error: `${pending} ${pending === 1 ? 'line is' : 'lines are'} still awaiting a billing decision. Decide who pays for ${pending === 1 ? 'it' : 'them'} before closing the job.`,
         }
       }
+
+      /*
+       * And required tasks or checks that nobody has answered.
+       *
+       * This is what makes the required flag mean something — a marking that did
+       * not block anything would teach people it was decorative. The names are
+       * listed rather than counted, because "3 items outstanding" sends somebody
+       * hunting through a list while "Gas leak test, Customer signature" tells
+       * them what to go and do.
+       *
+       * Switchable, and TOLERANT of a site without migration 114: a missing
+       * feature must never stop a job being closed.
+       */
+      if (await itemsBlockClose(siteId)) {
+        const outstanding = await outstandingRequiredTx(tx, jobId)
+        if (outstanding.length > 0) {
+          const listed = outstanding.slice(0, 3).join(', ')
+          const more = outstanding.length > 3 ? ` and ${outstanding.length - 3} more` : ''
+          return {
+            ok: false as const,
+            error: `Still to do before this job can be closed: ${listed}${more}.`,
+          }
+        }
+      }
     }
 
     // started_at is stamped once, the first time work begins, and never moved:
@@ -910,7 +938,22 @@ export async function setStatus(
       changes: { status: { from: String(job.status_name), to: String(status.name) } },
     })
 
-    return { ok: true as const }
+    // Carried out of the transaction so the follow-up work below knows what to do
+    // without re-reading the row it just wrote.
+    return { ok: true as const, closed: recordState === 'closed' }
+  }).then(async (result) => {
+    /*
+     * Rolling an asset's service dates forward happens AFTER the commit, on its own
+     * connection, deliberately: it must see the job as closed, and a failure must
+     * not roll back the closure. A service date is a convenience; the status change
+     * is the record.
+     *
+     * recordServiceOnClose is itself tolerant of a site without migration 115.
+     */
+    if (result.ok && 'closed' in result && result.closed) {
+      await recordServiceOnClose(siteId, jobId).catch(() => {})
+    }
+    return result
   })
 }
 

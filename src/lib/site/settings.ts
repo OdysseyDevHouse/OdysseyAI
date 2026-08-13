@@ -358,6 +358,85 @@ export const SETTING_DEFAULTS = {
    * off deliberately.
    */
   job_sla_skip_holidays: '1',
+
+  /* ── Headlines, tasks and checks ─────────────────────────────────────────── */
+
+  /**
+   * Must every job name at least one headline?
+   *
+   * OFF by default, deliberately: turning it on before any headline exists would
+   * make creating a job impossible, and migration 114 seeds none.
+   */
+  job_headline_required: '0',
+
+  /**
+   * Does an unanswered REQUIRED task or check stop a job being closed?
+   *
+   * On by default. The whole reason to mark an item required is that the business
+   * will not sign the job off without it, and a required flag that does nothing
+   * teaches people the marking is decorative.
+   */
+  job_items_block_close: '1',
+
+  /**
+   * Do a headline's standard parts become job lines automatically?
+   *
+   * OFF. Offering them is safe; adding a billable line because somebody picked a
+   * dropdown is how a customer gets charged for a filter nobody fitted.
+   */
+  job_headline_autoparts: '0',
+
+  /* ── Customer equipment ─────────────────────────────────────────────────── */
+
+  /**
+   * What happens when a serial matches equipment already on file for the same
+   * customer: 'warn' or 'block'.
+   *
+   * WARN by default. Section 18.3 of the PRD is explicit that plenty of equipment
+   * has no legible serial, and a hard block would stop somebody recording a real
+   * second unit whose plate happens to read the same.
+   */
+  asset_duplicate_action: 'warn',
+
+  /**
+   * Roll an asset's next service date forward when a job closes against it.
+   *
+   * On by default: a service interval nobody acts on is decoration, and this is
+   * the one thing that turns it into a worklist.
+   */
+  asset_auto_next_service: '1',
+
+  /* ── Recurring jobs ─────────────────────────────────────────────────────── */
+
+  /**
+   * How many missed periods one tick will raise before giving up and saying so.
+   *
+   * 24, matching the contracts cap. Past two years of outstanding periods
+   * something is wrong that raising them all would make worse rather than better,
+   * and the truncation is REPORTED rather than silently applied.
+   */
+  job_series_catchup_cap: '24',
+
+  /* ── Evidence on checks ─────────────────────────────────────────────────── */
+
+  /**
+   * Pixel width of a captured signature PNG. Height follows the pad aspect.
+   *
+   * 600 is legible on a printed job sheet without storing a megabyte per
+   * signature — and a signature is stored per job, so the cost is per visit.
+   */
+  job_signature_width: '600',
+
+  /**
+   * What the customer is agreeing to, shown above the pad.
+   *
+   * A setting rather than a string in the component because it is a declaration
+   * the business makes, and the wording is the sort of thing an insurer or an
+   * industry body dictates. A mark on a screen with nothing stating what it
+   * means is not worth capturing.
+   */
+  job_signature_statement:
+    'I confirm the work described on this job card has been completed to my satisfaction.',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS

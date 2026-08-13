@@ -41,6 +41,7 @@ import {
   MenuSeparator,
   Modal,
   PinPad,
+  SignaturePad,
   NumberInput,
   PageBody,
   PageHeader,
@@ -138,6 +139,7 @@ export default function StyleGuidePage() {
         <SelectionSection />
         <ModalSection />
         <PinPadSection />
+        <SignaturePadSection />
         <ComboboxSection />
         <FilterBarSection />
         <DateRangeSection />
@@ -1397,6 +1399,52 @@ function PinPadSection() {
         <p className="text-xs text-muted">
           {entered ? `Accepted ${entered.length} digits.` : 'Try 1234 to see the error state.'}
         </p>
+      </div>
+    </Card>
+  )
+}
+
+function SignaturePadSection() {
+  const [captured, setCaptured] = useState<{ url: string; bytes: number } | null>(null)
+
+  return (
+    <Card>
+      <CardHeader
+        title="SignaturePad"
+        description="<SignaturePad /> — a customer signs with a finger and it comes back as a PNG. Used for sign-off checks on a job card"
+      />
+      <div className="space-y-4 px-5 py-5">
+        <Spec name="<SignaturePad>" note="pointer events, so finger, stylus and mouse all draw" />
+        <div className="max-w-xl">
+          <SignaturePad
+            statement="I confirm the work described on this job card has been completed to my satisfaction."
+            onCapture={(png) => {
+              // Shown back as a data URL purely so the guide can prove what was
+              // produced. The real caller uploads the blob.
+              const reader = new FileReader()
+              reader.onload = () =>
+                setCaptured({ url: String(reader.result), bytes: png.size })
+              reader.readAsDataURL(png)
+            }}
+          />
+        </div>
+        {captured ? (
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted">
+              Captured {(captured.bytes / 1024).toFixed(1)} KB of PNG. Note the white
+              ground — the pad draws in the theme ink colour, so a signature taken in
+              dark mode would otherwise be invisible on a printed job sheet.
+            </p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={captured.url}
+              alt="Captured signature"
+              className="max-w-xs rounded-card border border-border"
+            />
+          </div>
+        ) : (
+          <p className="text-xs text-muted">Sign above, then press Accept.</p>
+        )}
       </div>
     </Card>
   )
