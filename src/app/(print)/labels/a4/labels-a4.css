@@ -1,0 +1,13 @@
+/*
+ * The A4 label sheet.
+ *
+ * This SEGMENT css loads after the (print) group's print.css, so its @page
+ * wins by cascade order — the group defaults to 80mm for slips, and a label
+ * sheet is the one page in the group that is a sheet.
+ */
+@media print {
+  @page {
+    size: A4;
+    margin: 8mm;
+  }
+}

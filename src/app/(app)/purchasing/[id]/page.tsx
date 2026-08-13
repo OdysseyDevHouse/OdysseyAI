@@ -9,6 +9,7 @@ import { formatMoney, formatQty } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
+  ButtonLink,
   Callout,
   Card,
   CardHeader,
@@ -92,14 +93,27 @@ export default async function PurchaseDocumentPage({
         backHref="/purchasing"
         backLabel="Purchasing"
         action={
-          <PurchaseActions
-            documentId={doc.id}
-            documentNumber={doc.documentNumber}
-            status={doc.status}
-            docType={doc.docType}
-            voidable={voidable}
-            returnable={returnable}
-          />
+          <>
+            {/* Labels for what just arrived — the moment shelf edges go stale. */}
+            {doc.docType === 'grv' && doc.status === 'finalised' && (
+              <ButtonLink
+                href={`/labels/a4?source=grv&id=${doc.id}`}
+                variant="secondary"
+                target="_blank"
+              >
+                <Icons.Printer size={15} />
+                Shelf labels
+              </ButtonLink>
+            )}
+            <PurchaseActions
+              documentId={doc.id}
+              documentNumber={doc.documentNumber}
+              status={doc.status}
+              docType={doc.docType}
+              voidable={voidable}
+              returnable={returnable}
+            />
+          </>
         }
       />
 

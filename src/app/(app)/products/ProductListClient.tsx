@@ -120,6 +120,17 @@ export default function ProductListClient({
   return (
     <>
       <BulkActionBar count={count} onClear={() => setSelected(new Set())}>
+        {/* Shelf labels for the picked products — a print run, not a change,
+            so it opens the sheet rather than a form. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={pending || count === 0}
+          onClick={() => window.open(`/labels/a4?ids=${[...selected].join(',')}`, '_blank')}
+        >
+          <Icons.Printer size={15} />
+          Print labels
+        </Button>
         <Button variant="ghost" size="sm" onClick={() => setStage({ view: 'options' })} disabled={pending}>
           <Icons.SlidersHorizontal size={15} />
           Bulk options

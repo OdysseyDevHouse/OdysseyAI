@@ -3,7 +3,7 @@ import { requireCapability } from '@/lib/auth'
 import { getSchedule, staleLines } from '@/lib/site/priceSchedules'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
-import { PageHeader, PageBody } from '@/components/ui'
+import { PageHeader, PageBody, ButtonLink, Icons } from '@/components/ui'
 import ScheduleEditor from './ScheduleEditor'
 
 /**
@@ -37,6 +37,20 @@ export default async function SchedulePage({ params }: { params: Promise<{ id: s
       <PageHeader
         title={schedule.name}
         subtitle="New prices that take effect on their own, at a date and time you choose"
+        action={
+          /* Labels for THIS change — printed at five, showing the six o'clock
+             price, because labelItems reads the schedule's own lines. */
+          schedule.status === 'armed' || schedule.status === 'applied' ? (
+            <ButtonLink
+              href={`/labels/a4?source=schedule&id=${schedule.id}`}
+              variant="secondary"
+              target="_blank"
+            >
+              <Icons.Printer size={15} />
+              Print labels
+            </ButtonLink>
+          ) : undefined
+        }
       />
       <PageBody>
         <ScheduleEditor
