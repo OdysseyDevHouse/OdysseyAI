@@ -828,6 +828,80 @@ export async function mirrorSupplierPayment(
   })
 }
 
+export type CashupMirror = {
+  shiftId: number
+  /** The trading date the count belongs to, YYYY-MM-DD. */
+  closedDate: string
+  terminalCode?: string | null
+  /** Drawer-cash tenders only — a card "variance" is a bank-settlement matter. */
+  tenderVariances: { tenderTypeId: number; variance: number }[]
+}
+
+/**
+ * The drawer variance at cash-up.
+ *
+ *   DEBIT/CREDIT tender account      cash ends at counted reality
+ *   CREDIT/DEBIT cash over and short the expense that explains it
+ *
+ * A short drawer: the sale mirror already debited the tender account for what
+ * was RUNG UP, but less than that is actually in the drawer. Crediting the
+ * tender account by the shortfall and debiting 6910 makes the ledger tell the
+ * truth twice over — cash at what was counted, and the loss on the income
+ * statement where a manager will see it.
+ *
+ * Only drawer-cash tenders reach this builder; pass the filtered rows, not the
+ * whole count. All-zero variances skip entirely — an empty journal burns a
+ * number and proves nothing (the mirrorStockTake rule).
+ */
+export async function mirrorCashup(
+  siteId: number,
+  actor: Actor,
+  input: CashupMirror,
+): Promise<MirrorResult> {
+  const label = `Cash-up shift #${input.shiftId}`
+  return attempt(siteId, actor, label, async () => {
+    // The caller skips a clean drawer entirely — see closeShift(). This throw
+    // is the backstop for a caller that did not: an all-zero journal would burn
+    // a batch number to record that nothing happened (the mirrorStockTake rule).
+    const nonZero = input.tenderVariances.filter((t) => Math.abs(round(t.variance, 2)) >= 0.005)
+    if (nonZero.length === 0) throw new Error('The cash-up has no variance to post.')
+
+    const overShortAccount = await mapped(siteId, 'cash_over_short')
+    if (!overShortAccount) throw new Error('The cash over/short account is not mapped.')
+
+    const lines: JournalLineInput[] = []
+    let total = 0
+    for (const t of nonZero) {
+      const tenderAccount = await mapped(siteId, 'tender', t.tenderTypeId)
+      if (!tenderAccount) throw new Error('A tender is not mapped to a ledger account.')
+      const amount = round(t.variance, 2)
+      total = round(total + amount, 2)
+      lines.push({
+        accountId: tenderAccount,
+        amount,
+        description: amount < 0 ? 'Drawer short' : 'Drawer over',
+      })
+    }
+    lines.push({
+      accountId: overShortAccount,
+      amount: round(-total, 2),
+      description: total < 0 ? 'Cash short' : 'Cash over',
+    })
+
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.closedDate,
+        description: input.terminalCode ? `Cash-up — ${input.terminalCode}` : 'Cash-up',
+        reference: null,
+        source: 'cashup',
+        sourceDocId: input.shiftId,
+        lines,
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
 /* ── Debtor adjustments ──────────────────────────────────────────────────── */
 
 export type InterestMirror = {

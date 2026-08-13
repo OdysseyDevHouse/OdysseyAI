@@ -517,6 +517,28 @@ export async function closeShift(
     )
   })
 
+  /*
+   * Mirror the drawer variance to the ledger — drawer-cash tenders only. A
+   * card row's "variance" is a bank-settlement question, not missing cash.
+   * Fail-soft like every mirror: a drawer count must never be refused because
+   * a mapping is missing. A clean drawer skips entirely rather than logging a
+   * fake mirror_failed for the normal case.
+   */
+  const cashVariances = rows
+    .filter((r) => r.countsAsDrawerCash && Math.abs(r.variance) >= 0.005)
+    .map((r) => ({ tenderTypeId: r.tenderTypeId, variance: r.variance }))
+  if (cashVariances.length > 0) {
+    const now = new Date()
+    const closedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const { mirrorCashup } = await import('./glPosting')
+    await mirrorCashup(siteId, actor, {
+      shiftId,
+      closedDate,
+      terminalCode: position.shift.terminalCode,
+      tenderVariances: cashVariances,
+    })
+  }
+
   return { ok: true, variance, withinTolerance }
 }
 

@@ -19,6 +19,8 @@ import {
   vatByRate, exceptionReport,
 } from '../src/lib/site/salesReports'
 import { setSetting } from '../src/lib/site/settings'
+import { batchForSource } from '../src/lib/site/journals'
+import { resolveAccount } from '../src/lib/site/chartOfAccounts'
 import { toNum, round } from '../src/lib/decimals'
 import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 
@@ -85,6 +87,25 @@ async function main() {
         AND (SELECT COUNT(*) FROM sales_documents d WHERE d.terminal_id = terminals.id) = 0`,
   )
   for (const o of orphans) {
+    // A crashed run may have closed a short shift, which now posts a cashup
+    // journal (133). Give those back before the shifts go, then repair the
+    // touched balances below.
+    const strayBatches = await siteQuery<any>(SITE,
+      `SELECT id FROM journal_batches WHERE source = 'cashup'
+         AND source_doc_id IN (SELECT id FROM shifts WHERE terminal_id = ?)`, [o.id]).catch(() => [])
+    for (const b of strayBatches) {
+      await siteExecute(SITE, 'DELETE FROM journal_lines WHERE batch_id = ?', [b.id]).catch(() => null)
+      await siteExecute(SITE, 'DELETE FROM journal_batches WHERE id = ?', [b.id]).catch(() => null)
+    }
+    if (strayBatches.length > 0) {
+      await siteExecute(SITE,
+        `UPDATE gl_accounts a
+            SET a.balance = COALESCE((
+                  SELECT SUM(l.amount) FROM journal_lines l
+                    JOIN journal_batches b ON b.id = l.batch_id
+                   WHERE l.account_id = a.id AND b.status = 'posted'
+                ), 0)`).catch(() => null)
+    }
     await siteExecute(SITE, 'DELETE FROM shifts WHERE terminal_id = ?', [o.id]).catch(() => null)
     await siteExecute(SITE, 'DELETE FROM document_sequences WHERE terminal_id = ?', [o.id]).catch(
       () => null,
@@ -195,6 +216,22 @@ async function main() {
   ok('  counts frozen per tender', counts.length === 2, JSON.stringify(counts.map((c) => `${c.tenderCode}:${c.variance}`)))
   ok('  card reconciled exactly', counts.find((c) => c.tenderCode === 'CARD')?.variance === 0)
 
+  // ── The ledger heard about it (133): a short drawer posts DR 6910 / CR the
+  // tender account, so GL cash ends at counted reality and the loss shows on
+  // the income statement instead of accumulating as invisible drift.
+  const cashupBatch = await batchForSource(SITE, 'cashup', shiftId)
+  ok('*** cash-up variance reached the ledger ***', !!cashupBatch)
+  if (cashupBatch) {
+    const jLines = await siteQuery<any>(SITE,
+      'SELECT account_id, amount FROM journal_lines WHERE batch_id = ?', [cashupBatch.id])
+    const jSum = jLines.reduce((s: number, l: any) => round(s + toNum(l.amount), 2), 0)
+    ok('  cash-up journal balances', Math.abs(jSum) < 0.005, String(jSum))
+    const overShortId = await resolveAccount(SITE, 'cash_over_short')
+    const osLine = jLines.find((l: any) => Number(l.account_id) === overShortId)
+    ok('  6910 debited by the shortfall', !!osLine && toNum(osLine.amount) === 120,
+      osLine ? String(toNum(osLine.amount)) : 'no 6910 line')
+  }
+
   ok('closing twice refused', !(await closeShift(SITE, actor, shiftId, [])).ok)
   const reopened = await openShift(SITE, actor, terminalId, 500)
   ok('a new shift can open once closed', reopened.ok)
@@ -246,6 +283,26 @@ async function main() {
   for (const d of docs) {
     await siteExecute(SITE, 'DELETE FROM stock_movements WHERE source_doc_id = ?', [d.id])
     await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [d.id])
+  }
+  // The cash-up mirrors posted real journals; give the ledger back too, then
+  // recompute the touched balances from the lines that survive (the
+  // test-general-ledger cleanup pattern — deleting lines alone leaves
+  // gl_accounts.balance lying).
+  const cashupBatches = await siteQuery<any>(SITE,
+    `SELECT id FROM journal_batches WHERE source = 'cashup'
+       AND source_doc_id IN (SELECT id FROM shifts WHERE terminal_id = ?)`, [terminalId])
+  for (const b of cashupBatches) {
+    await siteExecute(SITE, 'DELETE FROM journal_lines WHERE batch_id = ?', [b.id])
+    await siteExecute(SITE, 'DELETE FROM journal_batches WHERE id = ?', [b.id])
+  }
+  if (cashupBatches.length > 0) {
+    await siteExecute(SITE,
+      `UPDATE gl_accounts a
+          SET a.balance = COALESCE((
+                SELECT SUM(l.amount) FROM journal_lines l
+                  JOIN journal_batches b ON b.id = l.batch_id
+                 WHERE l.account_id = a.id AND b.status = 'posted'
+              ), 0)`)
   }
   await siteExecute(SITE, 'DELETE FROM shifts WHERE terminal_id = ?', [terminalId])
   await siteExecute(SITE, 'DELETE FROM terminals WHERE id = ?', [terminalId])

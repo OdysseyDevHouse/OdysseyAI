@@ -227,6 +227,25 @@ async function main() {
       await siteExecute(SITE, 'DELETE FROM stock_movements WHERE source_doc_id = ?', [d.id])
       await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [d.id])
     }
+    // Closed short shifts now post a cashup journal (133) — give those back
+    // and repair the touched balances, or every run leaves orphan batches.
+    const cashupBatches = await siteQuery<any>(SITE,
+      `SELECT id FROM journal_batches WHERE source = 'cashup'
+         AND source_doc_id IN (SELECT id FROM shifts WHERE user_id IN (?,?) OR terminal_id IN (?,?))`,
+      [ANN.userId, BOB.userId, till1, till2]).catch(() => [])
+    for (const b of cashupBatches) {
+      await siteExecute(SITE, 'DELETE FROM journal_lines WHERE batch_id = ?', [b.id]).catch(() => null)
+      await siteExecute(SITE, 'DELETE FROM journal_batches WHERE id = ?', [b.id]).catch(() => null)
+    }
+    if (cashupBatches.length > 0) {
+      await siteExecute(SITE,
+        `UPDATE gl_accounts a
+            SET a.balance = COALESCE((
+                  SELECT SUM(l.amount) FROM journal_lines l
+                    JOIN journal_batches b ON b.id = l.batch_id
+                   WHERE l.account_id = a.id AND b.status = 'posted'
+                ), 0)`).catch(() => null)
+    }
     await siteExecute(SITE, 'DELETE FROM shifts WHERE user_id IN (?,?) OR terminal_id IN (?,?)', [ANN.userId, BOB.userId, till1, till2])
     await siteExecute(SITE, 'DELETE FROM terminals WHERE id IN (?,?)', [till1, till2])
     await siteExecute(SITE, 'DELETE FROM stock_movements WHERE product_id = ?', [productId])
