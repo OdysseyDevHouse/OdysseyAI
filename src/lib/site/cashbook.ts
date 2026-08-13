@@ -45,6 +45,9 @@ export type BankTransaction = {
   reconciliationId: number | null
   source: string
   sourceDocId: number | null
+  /** Where the contra side posts — a gl_mappings coordinate. NULL = unfiled. */
+  categoryKey: string | null
+  categoryRefId: number | null
   importKey: string | null
   userName: string
   createdAt: Date
@@ -70,6 +73,8 @@ function mapTxn(r: Row): BankTransaction {
     reconciliationId: r.reconciliation_id === null ? null : Number(r.reconciliation_id),
     source: String(r.source),
     sourceDocId: r.source_doc_id === null ? null : Number(r.source_doc_id),
+    categoryKey: (r.category_key as string | null) ?? null,
+    categoryRefId: r.category_ref_id === null || r.category_ref_id === undefined ? null : Number(r.category_ref_id),
     importKey: (r.import_key as string | null) ?? null,
     userName: String(r.user_name ?? ''),
     createdAt: r.created_at as Date,
@@ -78,7 +83,8 @@ function mapTxn(r: Row): BankTransaction {
 
 const SELECT_TXN = `
   SELECT id, bank_account_id, txn_date, amount_signed, description, reference,
-         status, reconciliation_id, source, source_doc_id, import_key, user_name, created_at
+         status, reconciliation_id, source, source_doc_id, category_key, category_ref_id,
+         import_key, user_name, created_at
     FROM bank_transactions
 `
 
@@ -189,9 +195,25 @@ export type CaptureInput = {
   reference?: string | null
   source?: string
   sourceDocId?: number | null
+  /**
+   * Where the contra side of the journal posts — a gl_mappings coordinate
+   * ('expense_category' + ref, 'interest_received', 'owner_drawings', …).
+   * Omitted = uncategorised: the row stands, no journal is attempted, and the
+   * reconciliation screen shows the gap until someone files it.
+   */
+  categoryKey?: string | null
+  categoryRefId?: number | null
   importKey?: string | null
   importBatchId?: number | null
 }
+
+/**
+ * Sources whose GL journals are posted by their OWN module — a receipt by
+ * recordCustomerReceipt, an expense by expenses.ts, a payment run by
+ * paymentRuns.ts, a transfer by recordTransfer. Mirroring those here again
+ * would double every one of them in the ledger.
+ */
+const MIRRORED_ELSEWHERE = new Set(['receipt', 'expense', 'payment_run', 'transfer'])
 
 export type CaptureResult = { ok: true; id: number } | { ok: false; error: string }
 
@@ -234,11 +256,264 @@ export async function captureTransaction(
   const amount = round(input.amount, 2)
   const txnDate = input.txnDate ?? today()
 
-  return siteTransaction(siteId, async (tx) => {
+  const captured = await siteTransaction(siteId, async (tx) => {
     const id = await insertTxn(tx, { ...input, amount, txnDate }, actor)
     await bumpBankBalance(tx, input.bankAccountId, amount)
     return { ok: true as const, id }
   })
+
+  /*
+   * The ledger hears about it AFTER the money is safely recorded — the mirror
+   * is fail-soft (045's rule: a missing mapping is a reporting gap to chase,
+   * not a reason to refuse a bank charge). Sources mirrored by their own
+   * module are skipped, and an uncategorised row has no contra to post to.
+   */
+  const source = input.source ?? 'manual'
+  if (captured.ok && input.categoryKey && !MIRRORED_ELSEWHERE.has(source)) {
+    const { mirrorBankTransaction } = await import('./glPosting')
+    await mirrorBankTransaction(siteId, actor, {
+      transactionId: captured.id,
+      date: txnDate,
+      bankAccountId: input.bankAccountId,
+      amountSigned: amount,
+      categoryKey: input.categoryKey,
+      categoryRefId: input.categoryRefId ?? null,
+      reference: input.reference ?? input.description ?? null,
+    })
+  }
+
+  return captured
+}
+
+/**
+ * Files an existing row against a category, and posts the journal it was
+ * missing. The path an imported statement line takes: it arrives with no
+ * category, and a person (or a rule) files it later.
+ *
+ * Refiling is refused once a journal exists — moving a posted amount between
+ * accounts is a journal correction, and pretending otherwise would leave the
+ * first journal standing with nothing pointing at it.
+ */
+export async function categoriseTransaction(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  categoryKey: string,
+  categoryRefId?: number | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const txn = await getTransaction(siteId, id)
+  if (!txn) return { ok: false, error: 'That transaction no longer exists.' }
+  if (txn.status === 'void') return { ok: false, error: 'A void line cannot be categorised.' }
+  if (MIRRORED_ELSEWHERE.has(txn.source)) {
+    return { ok: false, error: 'That line is posted by its own module and needs no category.' }
+  }
+
+  const { batchForSource } = await import('./journals')
+  const existing = await batchForSource(siteId, 'bank_txn', id)
+  if (existing) {
+    return {
+      ok: false,
+      error: 'That line already reached the ledger. Reverse its journal before refiling it.',
+    }
+  }
+
+  await siteExecute(
+    siteId,
+    'UPDATE bank_transactions SET category_key = ?, category_ref_id = ? WHERE id = ?',
+    [categoryKey, categoryRefId ?? null, id],
+  )
+  await logActivity(siteId, actor, {
+    entity: 'bank',
+    entityId: txn.bankAccountId,
+    action: 'categorise',
+    detail: `Filed ${txn.amountSigned.toFixed(2)} of ${txn.txnDate} as ${categoryKey}`,
+  })
+
+  const { mirrorBankTransaction } = await import('./glPosting')
+  await mirrorBankTransaction(siteId, actor, {
+    transactionId: id,
+    date: txn.txnDate,
+    bankAccountId: txn.bankAccountId,
+    amountSigned: txn.amountSigned,
+    categoryKey,
+    categoryRefId: categoryRefId ?? null,
+    reference: txn.reference ?? txn.description ?? null,
+  })
+
+  return { ok: true }
+}
+
+export type TransferInput = {
+  fromAccountId: number
+  toAccountId: number
+  /** Positive magnitude. */
+  amount: number
+  txnDate?: string
+  reference?: string | null
+}
+
+/**
+ * Moves money between two own accounts.
+ *
+ * Two bank rows — each account's statement must show its own side — but ONE
+ * journal: DR destination, CR source. A journal per leg would double the
+ * movement in the ledger. The legs cross-point via source_doc_id so either
+ * side can find its twin, which is also why voiding one leg alone is refused
+ * (see voidTransfer).
+ */
+export async function recordTransfer(
+  siteId: number,
+  actor: Actor,
+  input: TransferInput,
+): Promise<{ ok: true; fromTxnId: number; toTxnId: number } | { ok: false; error: string }> {
+  const amount = round(input.amount, 2)
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: 'Enter an amount.' }
+  if (input.fromAccountId === input.toAccountId) {
+    return { ok: false, error: 'Pick two different accounts.' }
+  }
+
+  const [from, to] = await Promise.all([
+    siteQueryOne<Row>(siteId, 'SELECT id, name, status FROM bank_accounts WHERE id = ? LIMIT 1', [input.fromAccountId]),
+    siteQueryOne<Row>(siteId, 'SELECT id, name, status FROM bank_accounts WHERE id = ? LIMIT 1', [input.toAccountId]),
+  ])
+  if (!from || !to) return { ok: false, error: 'That account no longer exists.' }
+  if (String(from.status) === 'closed' || String(to.status) === 'closed') {
+    return { ok: false, error: 'One of those accounts is closed.' }
+  }
+
+  const txnDate = input.txnDate ?? today()
+  const description = `Transfer ${from.name} → ${to.name}`
+
+  const legs = await siteTransaction(siteId, async (tx) => {
+    const fromTxnId = await insertTxn(
+      tx,
+      {
+        bankAccountId: input.fromAccountId,
+        amount: -amount,
+        txnDate,
+        description,
+        reference: input.reference ?? null,
+        source: 'transfer',
+      },
+      actor,
+    )
+    const toTxnId = await insertTxn(
+      tx,
+      {
+        bankAccountId: input.toAccountId,
+        amount,
+        txnDate,
+        description,
+        reference: input.reference ?? null,
+        source: 'transfer',
+        sourceDocId: fromTxnId,
+      },
+      actor,
+    )
+    await tx.execute('UPDATE bank_transactions SET source_doc_id = ? WHERE id = ?', [
+      toTxnId,
+      fromTxnId,
+    ] as never)
+    await bumpBankBalance(tx, input.fromAccountId, -amount)
+    await bumpBankBalance(tx, input.toAccountId, amount)
+    await logActivityTx(tx, actor, {
+      entity: 'bank',
+      entityId: input.fromAccountId,
+      action: 'transfer',
+      detail: `${amount.toFixed(2)} from ${from.name} to ${to.name}`,
+    })
+    return { fromTxnId, toTxnId }
+  })
+
+  /*
+   * Skip the journal QUIETLY when both accounts resolve to one ledger account
+   * (a fresh site, everything on 1000): the GL genuinely does not move, and
+   * logging mirror_failed for every such transfer would bury real gaps. An
+   * unmapped account still goes through the mirror so its failure is visible.
+   */
+  const { resolveAccount } = await import('./chartOfAccounts')
+  const [fromGl, toGl] = await Promise.all([
+    resolveAccount(siteId, 'bank_account', input.fromAccountId),
+    resolveAccount(siteId, 'bank_account', input.toAccountId),
+  ])
+  if (!(fromGl && toGl && fromGl === toGl)) {
+    const { mirrorBankTransfer } = await import('./glPosting')
+    await mirrorBankTransfer(siteId, actor, {
+      transferId: legs.fromTxnId,
+      date: txnDate,
+      fromAccountId: input.fromAccountId,
+      toAccountId: input.toAccountId,
+      amount,
+      reference: input.reference ?? null,
+    })
+  }
+
+  return { ok: true, ...legs }
+}
+
+/**
+ * Voids both legs of a transfer with one reversing journal. A transfer is one
+ * movement wearing two rows — voiding a single leg would leave one account
+ * claiming money the other never gave back.
+ */
+export async function voidTransfer(
+  siteId: number,
+  actor: Actor,
+  legId: number,
+  reason: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!reason?.trim()) return { ok: false, error: 'Give a reason.' }
+
+  const leg = await getTransaction(siteId, legId)
+  if (!leg) return { ok: false, error: 'That transaction no longer exists.' }
+  if (leg.source !== 'transfer') return { ok: false, error: 'That line is not a transfer.' }
+  if (leg.status === 'void') return { ok: false, error: 'That transfer is already void.' }
+  const twin = leg.sourceDocId ? await getTransaction(siteId, leg.sourceDocId) : null
+  if (!twin) return { ok: false, error: 'The other side of that transfer is missing.' }
+
+  for (const side of [leg, twin]) {
+    if (side.status === 'reconciled') {
+      return {
+        ok: false,
+        error: 'Part of that transfer is in a completed reconciliation. Reopen it first.',
+      }
+    }
+  }
+
+  await siteTransaction(siteId, async (tx) => {
+    for (const side of [leg, twin]) {
+      await tx.execute(
+        "UPDATE bank_transactions SET status = 'void', description = CONCAT(COALESCE(description,''), ' · VOID: ', ?) WHERE id = ?",
+        [reason.trim().slice(0, 120), side.id] as never,
+      )
+      await bumpBankBalance(tx, side.bankAccountId, -side.amountSigned)
+    }
+    await logActivityTx(tx, actor, {
+      entity: 'bank',
+      entityId: leg.bankAccountId,
+      action: 'void',
+      detail: `Voided transfer of ${Math.abs(leg.amountSigned).toFixed(2)} — ${reason.trim()}`,
+    })
+  })
+
+  // One reversing journal for the one journal the transfer posted.
+  const { batchForSource } = await import('./journals')
+  const fromLegId = leg.amountSigned < 0 ? leg.id : twin.id
+  const posted = await batchForSource(siteId, 'bank_transfer', fromLegId)
+  if (posted) {
+    const { mirrorBankTransfer } = await import('./glPosting')
+    await mirrorBankTransfer(siteId, actor, {
+      transferId: fromLegId,
+      date: today(),
+      fromAccountId: leg.amountSigned < 0 ? leg.bankAccountId : twin.bankAccountId,
+      toAccountId: leg.amountSigned < 0 ? twin.bankAccountId : leg.bankAccountId,
+      amount: Math.abs(leg.amountSigned),
+      reference: leg.reference,
+      isReversal: true,
+    })
+  }
+
+  return { ok: true }
 }
 
 /**
@@ -257,8 +532,9 @@ async function insertTxn(
   const [res] = await tx.execute(
     `INSERT INTO bank_transactions
        (bank_account_id, txn_date, amount_signed, description, reference,
-        source, source_doc_id, import_key, import_batch_id, user_id, user_name)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        source, source_doc_id, category_key, category_ref_id,
+        import_key, import_batch_id, user_id, user_name)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       input.bankAccountId,
       input.txnDate,
@@ -267,6 +543,8 @@ async function insertTxn(
       input.reference?.trim().slice(0, 120) || null,
       input.source ?? 'manual',
       input.sourceDocId ?? null,
+      input.categoryKey ?? null,
+      input.categoryRefId ?? null,
       input.importKey ?? null,
       input.importBatchId ?? null,
       actor.userId,
@@ -314,6 +592,9 @@ export async function voidTransaction(
       error: 'That line is part of a completed reconciliation. Reopen the reconciliation first.',
     }
   }
+  if (txn.source === 'transfer') {
+    return { ok: false, error: 'That line is one side of a transfer — void the transfer instead.' }
+  }
 
   const linked = await linkedAmount(siteId, id)
   if (linked > 0) {
@@ -333,6 +614,27 @@ export async function voidTransaction(
       detail: `Voided ${txn.amountSigned.toFixed(2)} of ${txn.txnDate} — ${reason.trim()}`,
     })
   })
+
+  /*
+   * If the capture reached the ledger, the void must too — the opposite
+   * journal, because journals.reverse() refuses non-manual sources by design.
+   * journals stay append-only; the bank row alone shows the strike-through.
+   */
+  const { batchForSource } = await import('./journals')
+  const posted = await batchForSource(siteId, 'bank_txn', id)
+  if (posted && txn.categoryKey) {
+    const { mirrorBankTransaction } = await import('./glPosting')
+    await mirrorBankTransaction(siteId, actor, {
+      transactionId: id,
+      date: today(),
+      bankAccountId: txn.bankAccountId,
+      amountSigned: txn.amountSigned,
+      categoryKey: txn.categoryKey,
+      categoryRefId: txn.categoryRefId,
+      reference: txn.reference ?? txn.description ?? null,
+      isReversal: true,
+    })
+  }
 
   return { ok: true }
 }

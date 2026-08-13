@@ -15,7 +15,7 @@
  *
  *   npm run test:cashbook
  */
-import { siteExecute, siteQueryOne } from '../src/lib/siteDb'
+import { siteExecute, siteQueryOne, siteQuery } from '../src/lib/siteDb'
 import { createCustomer } from '../src/lib/site/customers'
 import { postTransaction } from '../src/lib/site/customerLedger'
 import {
@@ -23,10 +23,13 @@ import {
   reconcileBankBalances, defaultAccount, totalCash,
 } from '../src/lib/site/bankAccounts'
 import {
-  captureTransaction, listTransactions, voidTransaction, linkTransaction,
+  captureTransaction, categoriseTransaction, recordTransfer, voidTransfer,
+  listTransactions, voidTransaction, linkTransaction,
   unlinkTransaction, linksFor, suggestMatches, autoMatch, recordCustomerReceipt,
   previewReconciliation, completeReconciliation, reopenReconciliation, getTransaction,
 } from '../src/lib/site/cashbook'
+import { batchForSource } from '../src/lib/site/journals'
+import { setMapping, getAccountByCode } from '../src/lib/site/chartOfAccounts'
 import {
   parseBankCsv, parseBankOfx, parseStatement, parseAmount, parseDate,
   detectDateFormat, splitCsvLine, importStatement, undoImport, importKeyFor,
@@ -373,12 +376,104 @@ async function main() {
       (await reconcileBankBalances(SITE)).length === 0,
       JSON.stringify(await reconcileBankBalances(SITE)))
 
+  console.log('\n── The ledger hears about it (130) ─────────────────────────\n')
+
+  // A categorised capture posts DR/CR bank vs its category; an uncategorised
+  // one posts nothing until it is filed; a void posts the opposite journal.
+  const filed = await captureTransaction(SITE, actor, {
+    bankAccountId: accountId, amount: 150, txnDate: daysAgo(4),
+    description: 'Interest earned', categoryKey: 'interest_received',
+  })
+  ok('categorised capture accepted', filed.ok)
+  if (filed.ok) {
+    const batch = await batchForSource(SITE, 'bank_txn', filed.id)
+    ok('*** a categorised capture reaches the ledger ***', !!batch)
+    if (batch) {
+      const jl = await siteQuery<any>(SITE,
+        'SELECT amount FROM journal_lines WHERE batch_id = ?', [batch.id])
+      const sum = jl.reduce((s: number, l: any) => round(s + toNum(l.amount), 2), 0)
+      ok('  and its journal balances', Math.abs(sum) < 0.005, String(sum))
+    }
+    ok('  voiding it', (await voidTransaction(SITE, actor, filed.id, 'Test void')).ok)
+    ok('*** the void posts the opposite journal ***',
+      !!(await batchForSource(SITE, 'bank_txn_void', filed.id)))
+  }
+
+  const unfiled = await captureTransaction(SITE, actor, {
+    bankAccountId: accountId, amount: -20, txnDate: daysAgo(4), description: 'Mystery fee',
+  })
+  ok('uncategorised capture accepted', unfiled.ok)
+  if (unfiled.ok) {
+    ok('*** an uncategorised capture posts NO journal ***',
+      (await batchForSource(SITE, 'bank_txn', unfiled.id)) === null)
+    ok('  filing it later works',
+      (await categoriseTransaction(SITE, actor, unfiled.id, 'owner_drawings')).ok)
+    ok('*** filing posts the journal it was missing ***',
+      !!(await batchForSource(SITE, 'bank_txn', unfiled.id)))
+    ok('  refiling a posted line is refused',
+      !(await categoriseTransaction(SITE, actor, unfiled.id, 'other_income')).ok)
+  }
+
+  // A transfer: two legs, ONE journal — provable only when the two accounts
+  // map to different ledger accounts, so the second one is pointed at 1400.
+  const second = await createAccount(SITE, actor, { code: `TS2${stamp}`, name: 'Transfer target' })
+  ok('second account created', second.ok)
+  if (second.ok) {
+    const depositsAccount = await getAccountByCode(SITE, '1400')
+    if (depositsAccount) {
+      await setMapping(SITE, actor, 'bank_account', second.id, depositsAccount.id)
+    }
+    const moved = await recordTransfer(SITE, actor, {
+      fromAccountId: accountId, toAccountId: second.id, amount: 300,
+    })
+    ok('*** a transfer records both legs ***', moved.ok, moved.ok ? '' : moved.error)
+    if (moved.ok) {
+      const [a, b] = await Promise.all([getAccount(SITE, accountId), getAccount(SITE, second.id)])
+      ok('  both balances moved', (b?.balance ?? 0) === 300 && a !== null)
+      const tb = await batchForSource(SITE, 'bank_transfer', moved.fromTxnId)
+      ok('*** one journal for the pair ***', !!tb)
+      ok('  voiding one leg alone is refused',
+        !(await voidTransaction(SITE, actor, moved.fromTxnId, 'nope')).ok)
+      ok('  voiding the transfer takes both legs',
+        (await voidTransfer(SITE, actor, moved.fromTxnId, 'Test void')).ok)
+      ok('*** and reverses the journal ***',
+        !!(await batchForSource(SITE, 'bank_transfer_void', moved.fromTxnId)))
+      const after = await getAccount(SITE, second.id)
+      ok('  target balance back to zero', (after?.balance ?? -1) === 0, String(after?.balance))
+    }
+    // The second account's rows, mapping and the account itself go back too.
+    await siteExecute(SITE, 'DELETE FROM bank_transactions WHERE bank_account_id = ?', [second.id])
+    await siteExecute(SITE, "DELETE FROM gl_mappings WHERE mapping_key = 'bank_account' AND ref_id = ?", [second.id])
+    await siteExecute(SITE, 'DELETE FROM bank_accounts WHERE id = ?', [second.id])
+  }
+
   await cleanup(accountId, cust.id)
   finish()
 }
 
 /** Links before transactions before accounts — the FKs are RESTRICT. */
 async function cleanup(accountId: number, customerId: number) {
+  // The journals this suite's captures posted go first — they point at the
+  // bank rows via source_doc_id — then balances are recomputed from what
+  // survives (the test-general-ledger cleanup pattern).
+  const glBatches = await siteQuery<any>(SITE,
+    `SELECT id FROM journal_batches
+      WHERE source IN ('bank_txn','bank_txn_void','bank_transfer','bank_transfer_void')
+        AND source_doc_id IN (SELECT id FROM bank_transactions WHERE bank_account_id = ?)`,
+    [accountId])
+  for (const b of glBatches) {
+    await siteExecute(SITE, 'DELETE FROM journal_lines WHERE batch_id = ?', [b.id])
+    await siteExecute(SITE, 'DELETE FROM journal_batches WHERE id = ?', [b.id])
+  }
+  if (glBatches.length > 0) {
+    await siteExecute(SITE,
+      `UPDATE gl_accounts a
+          SET a.balance = COALESCE((
+                SELECT SUM(l.amount) FROM journal_lines l
+                  JOIN journal_batches b ON b.id = l.batch_id
+                 WHERE l.account_id = a.id AND b.status = 'posted'
+              ), 0)`)
+  }
   await siteExecute(SITE, 'DELETE FROM cashbook_links WHERE bank_txn_id IN (SELECT id FROM bank_transactions WHERE bank_account_id = ?)', [accountId])
   await siteExecute(SITE, 'DELETE FROM bank_reconciliations WHERE bank_account_id = ?', [accountId])
   await siteExecute(SITE, 'DELETE FROM bank_transactions WHERE bank_account_id = ?', [accountId])

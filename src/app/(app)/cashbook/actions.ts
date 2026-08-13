@@ -4,6 +4,9 @@ import { revalidatePath } from 'next/cache'
 import { requireActor, requireSiteId, actorFor } from '@/lib/auth'
 import {
   captureTransaction,
+  categoriseTransaction,
+  recordTransfer,
+  voidTransfer,
   voidTransaction,
   linkTransaction,
   unlinkTransaction,
@@ -43,6 +46,8 @@ export async function captureAction(input: {
   txnDate?: string
   description?: string
   reference?: string
+  categoryKey?: string | null
+  categoryRefId?: number | null
 }): Promise<ActionResult> {
   const ctx = await actorFor('cashbook.edit')
   if ('ok' in ctx) return ctx
@@ -52,7 +57,70 @@ export async function captureAction(input: {
   if (!result.ok) return result
 
   revalidateAccount(input.bankAccountId)
-  return { ok: true, message: 'Movement captured.' }
+  return {
+    ok: true,
+    message: input.categoryKey
+      ? 'Movement captured and posted to the ledger.'
+      : 'Movement captured. File it against a category so the ledger hears about it.',
+  }
+}
+
+export async function categoriseAction(input: {
+  bankAccountId: number
+  transactionId: number
+  categoryKey: string
+  categoryRefId?: number | null
+}): Promise<ActionResult> {
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await categoriseTransaction(
+    siteId,
+    actor,
+    input.transactionId,
+    input.categoryKey,
+    input.categoryRefId ?? null,
+  )
+  if (!result.ok) return result
+
+  revalidateAccount(input.bankAccountId)
+  return { ok: true, message: 'Filed and posted to the ledger.' }
+}
+
+export async function transferAction(input: {
+  fromAccountId: number
+  toAccountId: number
+  amount: number
+  txnDate?: string
+  reference?: string
+}): Promise<ActionResult> {
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await recordTransfer(siteId, actor, input)
+  if (!result.ok) return result
+
+  revalidateAccount(input.fromAccountId)
+  revalidateAccount(input.toAccountId)
+  return { ok: true, message: 'Transfer recorded on both accounts.' }
+}
+
+export async function voidTransferAction(
+  bankAccountId: number,
+  transactionId: number,
+  reason: string,
+): Promise<ActionResult> {
+  const ctx = await actorFor('cashbook.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await voidTransfer(siteId, actor, transactionId, reason)
+  if (!result.ok) return result
+
+  revalidateAccount(bankAccountId)
+  return { ok: true, message: 'Both sides of the transfer voided.' }
 }
 
 export async function voidAction(

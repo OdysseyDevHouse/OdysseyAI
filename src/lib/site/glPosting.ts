@@ -777,6 +777,122 @@ export async function mirrorReceipt(
   })
 }
 
+export type BankTransactionMirror = {
+  transactionId: number
+  date: string
+  bankAccountId: number
+  /** Signed as the bank row is: positive into the account, negative out. */
+  amountSigned: number
+  /** The contra side — a gl_mappings coordinate carried on the bank row. */
+  categoryKey: string
+  categoryRefId?: number | null
+  reference?: string | null
+  isReversal?: boolean
+}
+
+/**
+ * A categorised cashbook capture — the movements with no sub-ledger side at
+ * all: bank charges, interest received, an owner's drawing, capital in.
+ *
+ *   money IN:   DEBIT bank, CREDIT category (income/capital)
+ *   money OUT:  CREDIT bank, DEBIT category (expense/drawings)
+ *
+ * One signed amount expresses both: the bank line carries amountSigned, the
+ * category line its negation. No VAT split — a VAT-bearing cost belongs in
+ * Expenses, which handles claimable VAT; the capture form says so.
+ */
+export async function mirrorBankTransaction(
+  siteId: number,
+  actor: Actor,
+  input: BankTransactionMirror,
+): Promise<MirrorResult> {
+  const sign = input.isReversal ? -1 : 1
+  const label = `${input.isReversal ? 'Void of bank' : 'Bank'} movement #${input.transactionId}`
+
+  return attempt(siteId, actor, label, async () => {
+    const [bankAccount, categoryAccount] = await Promise.all([
+      mapped(siteId, 'bank_account', input.bankAccountId),
+      mapped(siteId, input.categoryKey, input.categoryRefId ?? null),
+    ])
+    if (!bankAccount) throw new Error('The bank account is not mapped.')
+    if (!categoryAccount) throw new Error(`'${input.categoryKey}' is not mapped to a ledger account.`)
+
+    const amount = round(sign * input.amountSigned, 2)
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.date,
+        description: label,
+        reference: input.reference,
+        source: input.isReversal ? 'bank_txn_void' : 'bank_txn',
+        sourceDocId: input.transactionId,
+        lines: [
+          { accountId: bankAccount, amount, description: amount >= 0 ? 'Money in' : 'Money out' },
+          { accountId: categoryAccount, amount: round(-amount, 2), description: 'Filed as' },
+        ],
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
+export type BankTransferMirror = {
+  /** The outgoing leg's bank_transactions id — the journal's anchor. */
+  transferId: number
+  date: string
+  fromAccountId: number
+  toAccountId: number
+  /** Positive magnitude. */
+  amount: number
+  reference?: string | null
+  isReversal?: boolean
+}
+
+/**
+ * A transfer between two own accounts: DR destination, CR source. ONE journal
+ * for the pair of bank rows — one per leg would double the movement.
+ *
+ * Both accounts mapped to the same ledger account (a fresh site, everything on
+ * 1000) nets to zero; posting that would burn a batch number to say nothing
+ * moved, so it is refused into the fail-soft path instead — the GL genuinely
+ * did not move, and ledgerHealth stays quiet because the subledger's two legs
+ * also cancel.
+ */
+export async function mirrorBankTransfer(
+  siteId: number,
+  actor: Actor,
+  input: BankTransferMirror,
+): Promise<MirrorResult> {
+  const sign = input.isReversal ? -1 : 1
+  const label = `${input.isReversal ? 'Void of transfer' : 'Transfer'} #${input.transferId}`
+
+  return attempt(siteId, actor, label, async () => {
+    const [fromAccount, toAccount] = await Promise.all([
+      mapped(siteId, 'bank_account', input.fromAccountId),
+      mapped(siteId, 'bank_account', input.toAccountId),
+    ])
+    if (!fromAccount || !toAccount) throw new Error('A bank account is not mapped.')
+    if (fromAccount === toAccount) {
+      throw new Error('Both sides map to one ledger account — nothing to post.')
+    }
+
+    const amount = round(sign * input.amount, 2)
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.date,
+        description: label,
+        reference: input.reference,
+        source: input.isReversal ? 'bank_transfer_void' : 'bank_transfer',
+        sourceDocId: input.transferId,
+        lines: [
+          { accountId: toAccount, amount, description: 'Transferred in' },
+          { accountId: fromAccount, amount: round(-amount, 2), description: 'Transferred out' },
+        ],
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
 export type SupplierPaymentMirror = {
   transactionId: number
   date: string

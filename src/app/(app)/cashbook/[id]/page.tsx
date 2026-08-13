@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
-import { getAccount } from '@/lib/site/bankAccounts'
+import { getAccount, listAccounts } from '@/lib/site/bankAccounts'
 import { listTransactions, listReconciliations, previewReconciliation } from '@/lib/site/cashbook'
+import { listCategories } from '@/lib/site/expenseCategories'
 import { listImportBatches } from '@/lib/site/bankImport'
 import { formatMoney } from '@/lib/decimals'
 import { today } from '@/lib/site/ledger'
@@ -47,13 +48,38 @@ export default async function BankAccountPage({
   const account = await getAccount(siteId, accountId)
   if (!account) notFound()
 
-  const [unmatched, recent, reconciliations, imports, preview] = await Promise.all([
-    listTransactions(siteId, accountId, { status: 'unreconciled', unmatchedOnly: true, limit: 200 }),
-    listTransactions(siteId, accountId, { limit: 100 }),
-    listReconciliations(siteId, accountId, 10),
-    listImportBatches(siteId, accountId, 5),
-    previewReconciliation(siteId, accountId, today(), account.balance),
-  ])
+  const [unmatched, recent, reconciliations, imports, preview, expenseCategories, allAccounts] =
+    await Promise.all([
+      listTransactions(siteId, accountId, { status: 'unreconciled', unmatchedOnly: true, limit: 200 }),
+      listTransactions(siteId, accountId, { limit: 100 }),
+      listReconciliations(siteId, accountId, 10),
+      listImportBatches(siteId, accountId, 5),
+      previewReconciliation(siteId, accountId, today(), account.balance),
+      listCategories(siteId),
+      listAccounts(siteId),
+    ])
+
+  /*
+   * Where the other side of a capture can post — the gl_mappings coordinates
+   * the mirror resolves. Expense categories carry their id as the ref; the
+   * fixed entries are the movements a shop actually captures here: charges go
+   * through their category, the rest are the 130 seeds.
+   */
+  const categories = [
+    ...expenseCategories.map((c) => ({
+      key: 'expense_category',
+      refId: c.id,
+      label: `${c.name} (expense)`,
+    })),
+    { key: 'interest_received', refId: null, label: 'Interest received' },
+    { key: 'other_income', refId: null, label: 'Other income' },
+    { key: 'owner_drawings', refId: null, label: 'Owner drawings' },
+    { key: 'capital_introduced', refId: null, label: 'Capital introduced' },
+  ]
+
+  const otherAccounts = allAccounts
+    .filter((a) => a.id !== accountId)
+    .map((a) => ({ id: a.id, name: a.name }))
 
   const unmatchedTotal = unmatched.reduce((sum, t) => sum + (t.unlinkedAmount ?? 0), 0)
 
@@ -134,8 +160,11 @@ export default async function BankAccountPage({
             description: t.description,
             reference: t.reference,
             source: t.source,
+            categoryKey: t.categoryKey,
           }))}
           initialUnreconciledTotal={preview.unreconciledTotal}
+          categories={categories}
+          otherAccounts={otherAccounts}
         />
 
         <Card>

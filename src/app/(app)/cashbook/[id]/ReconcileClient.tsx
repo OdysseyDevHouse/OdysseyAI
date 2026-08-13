@@ -17,6 +17,7 @@ import {
   Modal,
   MiniStat,
   SegmentedControl,
+  Select,
   EmptyState,
   useToast,
   TABLE,
@@ -33,7 +34,10 @@ import {
   autoMatchAction,
   completeReconciliationAction,
   captureAction,
+  categoriseAction,
+  transferAction,
   voidAction,
+  voidTransferAction,
 } from '../actions'
 
 /**
@@ -59,6 +63,19 @@ type UnmatchedLine = {
   description: string | null
   reference: string | null
   source: string
+  categoryKey: string | null
+}
+
+/**
+ * A place the contra side of a movement can post — a gl_mappings coordinate
+ * with a human name. Encoded as `key:refId` for the Select's string value.
+ */
+export type CashCategory = { key: string; refId: number | null; label: string }
+
+const encodeCategory = (c: CashCategory) => (c.refId === null ? c.key : `${c.key}:${c.refId}`)
+const decodeCategory = (v: string): { key: string; refId: number | null } => {
+  const [key, ref] = v.split(':')
+  return { key, refId: ref ? Number(ref) : null }
 }
 
 type Suggestion = {
@@ -83,12 +100,16 @@ export function ReconcileClient({
   bookBalance,
   unmatched,
   initialUnreconciledTotal,
+  categories,
+  otherAccounts,
 }: {
   accountId: number
   accountName: string
   bookBalance: number
   unmatched: UnmatchedLine[]
   initialUnreconciledTotal: number
+  categories: CashCategory[]
+  otherAccounts: { id: number; name: string }[]
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -106,6 +127,9 @@ export function ReconcileClient({
   const [notes, setNotes] = useState('')
   const [voidingLine, setVoidingLine] = useState<UnmatchedLine | null>(null)
   const [voidReason, setVoidReason] = useState('')
+  const [filingLine, setFilingLine] = useState<UnmatchedLine | null>(null)
+  const [fileCategory, setFileCategory] = useState('')
+  const [transferOpen, setTransferOpen] = useState(false)
 
   // The live difference. Recomputed here rather than fetched so it responds as
   // the statement balance is typed — that immediacy is what makes the screen
@@ -160,6 +184,12 @@ export function ReconcileClient({
                 <Icons.Check size={15} />
                 Match what is obvious
               </Button>
+              {otherAccounts.length > 0 && (
+                <Button variant="secondary" size="sm" onClick={() => setTransferOpen(true)}>
+                  <Icons.ArrowLeftRight size={15} />
+                  Transfer
+                </Button>
+              )}
               <Button variant="secondary" size="sm" onClick={() => setCaptureOpen(true)}>
                 <Icons.Plus size={15} />
                 Capture
@@ -265,6 +295,22 @@ export function ReconcileClient({
                                 <Icons.Search size={15} />
                               )}
                             </Button>
+                            {!line.categoryKey &&
+                              (line.source === 'manual' || line.source === 'import') && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  iconOnly
+                                  aria-label="File to the ledger"
+                                  disabled={pending}
+                                  onClick={() => {
+                                    setFileCategory('')
+                                    setFilingLine(line)
+                                  }}
+                                >
+                                  <Icons.Tag size={15} />
+                                </Button>
+                              )}
                             <Button
                               variant="danger-ghost"
                               size="sm"
@@ -382,10 +428,76 @@ export function ReconcileClient({
         open={captureOpen}
         onClose={() => setCaptureOpen(false)}
         accountId={accountId}
+        categories={categories}
         pending={pending}
         onSubmit={(input) => {
           run(() => captureAction(input))
           setCaptureOpen(false)
+        }}
+      />
+
+      <Modal
+        open={filingLine !== null}
+        onClose={() => setFilingLine(null)}
+        title="File to the ledger"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted">
+            {filingLine
+              ? `Where does ${formatMoney(filingLine.amountSigned)} of ${filingLine.txnDate} belong?
+                 Filing it posts the journal this line has been missing.`
+              : ''}
+          </p>
+          <Field
+            label="Category"
+            hint="A cost that carries VAT to claim belongs in Expenses, not here."
+          >
+            <Select value={fileCategory} onChange={(e) => setFileCategory(e.target.value)}>
+              <option value="">Choose…</option>
+              {categories.map((c) => (
+                <option key={encodeCategory(c)} value={encodeCategory(c)}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setFilingLine(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={pending || !fileCategory}
+              onClick={() => {
+                const line = filingLine
+                if (!line || !fileCategory) return
+                const decoded = decodeCategory(fileCategory)
+                run(() =>
+                  categoriseAction({
+                    bankAccountId: accountId,
+                    transactionId: line.id,
+                    categoryKey: decoded.key,
+                    categoryRefId: decoded.refId,
+                  }),
+                )
+                setFilingLine(null)
+              }}
+            >
+              File it
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <TransferModal
+        open={transferOpen}
+        onClose={() => setTransferOpen(false)}
+        accountId={accountId}
+        accountName={accountName}
+        otherAccounts={otherAccounts}
+        pending={pending}
+        onSubmit={(input) => {
+          run(() => transferAction(input))
+          setTransferOpen(false)
         }}
       />
 
@@ -418,7 +530,13 @@ export function ReconcileClient({
               onClick={() => {
                 const line = voidingLine
                 if (!line) return
-                run(() => voidAction(accountId, line.id, voidReason.trim()))
+                // A transfer is one movement wearing two rows; its void takes
+                // both sides and reverses the one journal behind them.
+                run(() =>
+                  line.source === 'transfer'
+                    ? voidTransferAction(accountId, line.id, voidReason.trim())
+                    : voidAction(accountId, line.id, voidReason.trim()),
+                )
                 setVoidingLine(null)
               }}
             >
@@ -511,12 +629,14 @@ function CaptureModal({
   open,
   onClose,
   accountId,
+  categories,
   pending,
   onSubmit,
 }: {
   open: boolean
   onClose: () => void
   accountId: number
+  categories: CashCategory[]
   pending: boolean
   onSubmit: (input: {
     bankAccountId: number
@@ -524,6 +644,8 @@ function CaptureModal({
     txnDate: string
     description: string
     reference: string
+    categoryKey?: string | null
+    categoryRefId?: number | null
   }) => void
 }) {
   const [amount, setAmount] = useState<number>(0)
@@ -531,6 +653,7 @@ function CaptureModal({
   const [date, setDate] = useState(todayIso())
   const [description, setDescription] = useState('')
   const [reference, setReference] = useState('')
+  const [category, setCategory] = useState('')
 
   return (
     <Modal open={open} onClose={onClose} title="Capture a movement">
@@ -577,23 +700,141 @@ function CaptureModal({
           <Input value={reference} onChange={(e) => setReference(e.target.value)} />
         </Field>
 
+        <Field
+          label="Category"
+          hint="Where the other side posts in the ledger. A cost with VAT to claim belongs in Expenses instead. Leave unfiled to decide later."
+        >
+          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="">Not filed yet</option>
+            {categories.map((c) => (
+              <option key={encodeCategory(c)} value={encodeCategory(c)}>
+                {c.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button
             disabled={pending || amount <= 0 || !description.trim()}
-            onClick={() =>
+            onClick={() => {
+              const decoded = category ? decodeCategory(category) : null
               onSubmit({
                 bankAccountId: accountId,
                 amount: direction === 'out' ? -amount : amount,
                 txnDate: date,
                 description: description.trim(),
                 reference: reference.trim(),
+                categoryKey: decoded?.key ?? null,
+                categoryRefId: decoded?.refId ?? null,
+              })
+            }}
+          >
+            Capture
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/** Moving money between two own accounts: two bank rows, one journal. */
+function TransferModal({
+  open,
+  onClose,
+  accountId,
+  accountName,
+  otherAccounts,
+  pending,
+  onSubmit,
+}: {
+  open: boolean
+  onClose: () => void
+  accountId: number
+  accountName: string
+  otherAccounts: { id: number; name: string }[]
+  pending: boolean
+  onSubmit: (input: {
+    fromAccountId: number
+    toAccountId: number
+    amount: number
+    txnDate: string
+    reference: string
+  }) => void
+}) {
+  const [direction, setDirection] = useState<'to' | 'from'>('to')
+  const [otherId, setOtherId] = useState(String(otherAccounts[0]?.id ?? ''))
+  const [amount, setAmount] = useState<number>(0)
+  const [date, setDate] = useState(todayIso())
+  const [reference, setReference] = useState('')
+
+  return (
+    <Modal open={open} onClose={onClose} title="Transfer between accounts">
+      <div className="space-y-4">
+        <p className="text-sm text-muted">
+          Both accounts get their own line — each statement must show its side — and the
+          ledger hears about it once.
+        </p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Direction">
+            <SegmentedControl
+              aria-label="Direction"
+              options={[
+                { value: 'to', label: `Out of ${accountName}` },
+                { value: 'from', label: `Into ${accountName}` },
+              ]}
+              value={direction}
+              onChange={setDirection}
+            />
+          </Field>
+          <Field label={direction === 'to' ? 'To account' : 'From account'}>
+            <Select value={otherId} onChange={(e) => setOtherId(e.target.value)}>
+              {otherAccounts.map((a) => (
+                <option key={a.id} value={String(a.id)}>
+                  {a.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Amount">
+            <CurrencyInput
+              value={amount}
+              onChange={(e) => setAmount(Number(String(e.target.value).replace(',', '.')) || 0)}
+            />
+          </Field>
+          <Field label="Date">
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+        </div>
+
+        <Field label="Reference" hint="Optional">
+          <Input value={reference} onChange={(e) => setReference(e.target.value)} />
+        </Field>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            disabled={pending || amount <= 0 || !otherId}
+            onClick={() =>
+              onSubmit({
+                fromAccountId: direction === 'to' ? accountId : Number(otherId),
+                toAccountId: direction === 'to' ? Number(otherId) : accountId,
+                amount,
+                txnDate: date,
+                reference: reference.trim(),
               })
             }
           >
-            Capture
+            Transfer
           </Button>
         </div>
       </div>
