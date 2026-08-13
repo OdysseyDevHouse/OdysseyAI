@@ -160,6 +160,7 @@ export default function CustomerForm({
   groups,
   reps,
   categories,
+  structures = [],
   suggestedCode = null,
   rowActions,
 }: {
@@ -167,6 +168,8 @@ export default function CustomerForm({
   groups: CustomerGroup[]
   reps: SalesRep[]
   categories: string[]
+  /** Price structures for the pricing override. Empty hides the card. */
+  structures?: { id: number; name: string }[]
   /**
    * Pre-filled code for a new customer, or null when auto-numbering is off.
    * A suggestion only — the user may type over it, and the real code is
@@ -419,6 +422,49 @@ export default function CustomerForm({
             </div>
           </CardBody>
         </Card>
+
+        {structures.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Pricing"
+              description="What this account pays. Terms of trade, so it sits with the credit terms."
+            />
+            <CardBody>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Price structure"
+                  hint={
+                    group?.priceStructureId
+                      ? 'Leave on the default to follow the group.'
+                      : 'Leave on the default to follow the site.'
+                  }
+                >
+                  <Select name="priceStructureId" defaultValue={String(customer?.priceStructureId ?? '')}>
+                    <option value="">
+                      {group?.priceStructureId ? 'Group / site default' : 'Site default'}
+                    </option>
+                    {structures.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field
+                  label="Standing discount (%)"
+                  className="max-w-40"
+                  hint="The default line discount wherever this account is attached — capped per product at its own ceiling."
+                >
+                  <NumberInput
+                    name="discountPct"
+                    step="0.1"
+                    defaultValue={customer?.discountPct ?? ''}
+                  />
+                </Field>
+              </div>
+            </CardBody>
+          </Card>
+        )}
 
         <Card>
           <CardHeader title="Contact" />

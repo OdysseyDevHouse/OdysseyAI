@@ -148,7 +148,7 @@ export default function PosShell({
   operatorUserId,
   terminals,
   departments,
-  priceStructureId,
+  priceStructureId: siteDefaultStructureId,
   tenders,
   voidReasons,
   returnReasons,
@@ -231,6 +231,18 @@ export default function PosShell({
   tipsTablesOnly: boolean
 }) {
   const [state, dispatch] = useSaleState()
+
+  /*
+   * The EFFECTIVE price structure (135): the attached account's own — already
+   * resolved customer → group server-side on the TillCustomer — else the site
+   * default the page shipped. Named to shadow the old prop so every lookup
+   * below (scan, search, browse, recall, finalise) prices through the account
+   * with no further changes. Lines rung BEFORE the account was attached keep
+   * their prices — attach first is the till discipline, and the server
+   * re-checks pricing at finalise either way.
+   */
+  const priceStructureId = state.customer?.priceStructureId ?? siteDefaultStructureId
+
   const [pending, startTransition] = useTransition()
   const [results, setResults] = useState<TillProduct[]>([])
   const [searching, setSearching] = useState(false)

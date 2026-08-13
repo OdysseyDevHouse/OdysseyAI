@@ -284,7 +284,35 @@ export async function storefrontContext(siteId: number): Promise<StorefrontConte
     // signals by returning null.
     if (!storeName) return null
 
-    return { siteId, settings, storeName }
+    /*
+     * ── A SIGNED-IN ACCOUNT SEES ITS OWN PRICES (135) ────────────────────
+     *
+     * The resolved structure (customer → group → store setting) overlays the
+     * store's default, so every catalogue query downstream — browsing, the
+     * basket, the checkout quote — prices through the account's structure
+     * with no call-site change. Every path that RAISES money re-resolves
+     * server-side (onlineOrders does its own lookup), so this overlay only
+     * ever changes what is shown, never what is charged.
+     *
+     * Guarded, not assumed: outside a request (the basket-reminder cron, the
+     * sitemap) there is no cookie jar, getCustomerSession throws, and the
+     * catch keeps the store default — which is also the anonymous shopper's
+     * path.
+     */
+    let priceStructureId = settings.priceStructureId
+    try {
+      const { getCustomerSession } = await import('../customerSession')
+      const session = await getCustomerSession(siteId)
+      if (session) {
+        const { getTillCustomer } = await import('./tillCustomers')
+        const account = await getTillCustomer(siteId, session.customerId)
+        if (account?.priceStructureId) priceStructureId = account.priceStructureId
+      }
+    } catch {
+      // No request scope, or the session store is unreachable — store default.
+    }
+
+    return { siteId, settings: { ...settings, priceStructureId }, storeName }
   } catch {
     // An unreachable database must not leak a stack trace to the public.
     return null

@@ -89,11 +89,25 @@ export function basketKey(productId: number | null, index: number): string {
  * like a cashier had overridden it — which the line modal would flag and the
  * price guard would refuse.
  */
+/**
+ * An account's standing discount, capped at the product's own ceiling — the
+ * cap that keeps a back-office setting from tripping checkPricing's refusal
+ * at the till. Zero ceiling means "no ceiling set", the products.ts rule.
+ */
+export function accountDiscountFor(product: TillProduct, defaultDiscountPct: number): number {
+  const wanted = round(Math.max(defaultDiscountPct, 0), 3)
+  if (wanted === 0) return 0
+  const ceiling = product.maxDiscountPct > 0 ? product.maxDiscountPct : 100
+  return Math.min(wanted, ceiling)
+}
+
 export function lineFromProduct(
   product: TillProduct,
   qty: number,
   index: number,
   resolvedIncl: number = product.priceIncl,
+  /** The attached account's standing discount. See accountDiscountFor. */
+  defaultDiscountPct = 0,
 ): BasketLine {
   return {
     key: basketKey(product.id, index),
@@ -105,7 +119,7 @@ export function lineFromProduct(
     qty,
     // A scanned price wins: a variable-weight barcode carries the money in it.
     unitPriceIncl: product.scannedPrice ?? resolvedIncl,
-    discountPct: 0,
+    discountPct: accountDiscountFor(product, defaultDiscountPct),
     vatRatePct: product.vatRatePct,
     unitCostExcl: product.costExcl,
     maxDiscountPct: product.maxDiscountPct,
@@ -167,11 +181,21 @@ export function addToBasket(
   qty = 1,
   /** The price after any scheduled change that is due. See `lineFromProduct`. */
   resolvedIncl: number = product.priceIncl,
+  /** The attached account's standing discount. See accountDiscountFor. */
+  defaultDiscountPct = 0,
 ): BasketLine[] {
+  const applied = accountDiscountFor(product, defaultDiscountPct)
   const mergeable = lines.findIndex(
     (l) =>
       l.productId === product.id &&
-      l.discountPct === 0 &&
+      /*
+       * A discounted line never merges with a NEW unit — unless the discount
+       * is exactly the account's standing one the new unit would get anyway.
+       * The original rule protects a per-line decision from leaking onto
+       * fresh stock; a standing account discount is not per-line, so merging
+       * identical ones is the behaviour a cashier expects.
+       */
+      l.discountPct === applied &&
       l.shelfPriceIncl !== null &&
       l.unitPriceIncl === l.shelfPriceIncl &&
       // Stated rather than left to the price test above. A folded answer moves
@@ -190,7 +214,7 @@ export function addToBasket(
     return next
   }
 
-  return [...lines, lineFromProduct(product, qty, lines.length, resolvedIncl)]
+  return [...lines, lineFromProduct(product, qty, lines.length, resolvedIncl, defaultDiscountPct)]
 }
 
 /** Replaces fields on one line. Unknown keys are ignored, not created. */

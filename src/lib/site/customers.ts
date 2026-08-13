@@ -56,6 +56,10 @@ export type Customer = {
   paymentTermsDays: number
   creditLimit: number
   balance: number
+  /** This account's own structure. Null = the group's, else the site default. */
+  priceStructureId: number | null
+  /** Standing discount applied as the default line discount. Null = none. */
+  discountPct: number | null
   /** Annual nominal rate. Zero means the group's default applies, if it has one. */
   interestRatePct: number
   /** Explicit opt-in, separate from the rate — see interestRules.ts on the NCA. */
@@ -119,6 +123,12 @@ function mapCustomer(r: Row): Customer {
     paymentTermsDays: Number(r.payment_terms_days),
     creditLimit,
     balance,
+    priceStructureId:
+      r.price_structure_id === null || r.price_structure_id === undefined
+        ? null
+        : Number(r.price_structure_id),
+    discountPct:
+      r.discount_pct === null || r.discount_pct === undefined ? null : toNum(r.discount_pct),
     interestRatePct: toNum(r.interest_rate_pct),
     interestEnabled: Boolean(r.interest_enabled),
     interestGraceDays: Number(r.interest_grace_days ?? 0),
@@ -145,7 +155,7 @@ const SELECT_CUSTOMER = `
          c.contact_name, c.email, c.phone, c.address_line1, c.address_line2,
          c.city, c.postal_code, c.vat_number, c.loyalty_number,
          c.group_id, c.rep_id, c.category, c.payment_terms_days,
-         c.credit_limit, c.balance,
+         c.credit_limit, c.balance, c.price_structure_id, c.discount_pct,
          c.interest_rate_pct, c.interest_enabled, c.interest_grace_days,
          c.statement_cycle, c.statement_anchor_day, c.statement_anchor_date,
          c.notes, c.created_at, c.updated_at,
@@ -312,6 +322,10 @@ export type CustomerInput = {
   category?: string | null
   paymentTermsDays?: number
   creditLimit?: number
+  /** This account's own structure. Null falls back to group, then site. */
+  priceStructureId?: number | null
+  /** Standing discount, capped per product at application time. Null = none. */
+  discountPct?: number | null
   /** Annual nominal rate. Zero means fall back to the group's default. */
   interestRatePct?: number
   /** Explicit opt-in — see the NCA note in interestRules.ts. */
@@ -336,6 +350,11 @@ export function validateCustomer(input: CustomerInput): string | null {
     return 'That email address does not look valid.'
   }
   if ((input.creditLimit ?? 0) < 0) return 'Credit limit cannot be negative.'
+  if (input.discountPct !== null && input.discountPct !== undefined) {
+    if (input.discountPct < 0 || input.discountPct > 100) {
+      return 'A standing discount must be between 0 and 100 percent.'
+    }
+  }
   if ((input.interestRatePct ?? 0) < 0) return 'An interest rate cannot be negative.'
   // Not the NCA ceiling — that depends on the repo rate and the agreement type,
   // neither of which this system knows. A sanity bound only, to catch 1550 typed
@@ -377,6 +396,10 @@ function writableColumns(input: CustomerInput): unknown[] {
     input.category?.trim() || null,
     input.paymentTermsDays ?? 30,
     (input.creditLimit ?? 0).toFixed(4),
+    input.priceStructureId ?? null,
+    input.discountPct === null || input.discountPct === undefined
+      ? null
+      : input.discountPct.toFixed(3),
     (input.interestRatePct ?? 0).toFixed(4),
     input.interestEnabled ?? false,
     input.interestGraceDays ?? 0,
@@ -395,6 +418,7 @@ function writableColumns(input: CustomerInput): unknown[] {
 const COLUMN_LIST = `code, name, status, status_reason, account_type, contact_name, email, phone,
                      address_line1, address_line2, city, postal_code, vat_number, loyalty_number,
                      group_id, rep_id, category, payment_terms_days, credit_limit,
+                     price_structure_id, discount_pct,
                      interest_rate_pct, interest_enabled, interest_grace_days,
                      statement_cycle, statement_anchor_day, statement_anchor_date, notes`
 

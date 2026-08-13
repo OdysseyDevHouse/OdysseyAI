@@ -177,6 +177,9 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
         action.product,
         action.qty ?? 1,
         action.resolvedIncl ?? action.product.priceIncl,
+        // The attached account's standing discount rides every add — capped
+        // per product inside the basket rules. A walk-in adds at zero.
+        state.customer?.discountPct ?? 0,
       )
       return {
         ...state,
@@ -216,6 +219,7 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
         action.qty,
         state.lines.length,
         action.resolvedIncl ?? action.product.priceIncl,
+        state.customer?.discountPct ?? 0,
       )
       return {
         ...state,

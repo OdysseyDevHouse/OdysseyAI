@@ -36,6 +36,7 @@ import { listVouchers, getCardProgress } from '@/lib/site/loyaltyCards'
 import { listWallet } from '@/lib/site/loyaltyWallet'
 import ContactsPanel from '@/components/party/ContactsPanel'
 import { listCustomerAddresses } from '@/lib/site/customerAddresses'
+import { listPriceStructures } from '@/lib/site/lookups'
 import { AddressesPanel } from './AddressesPanel'
 import DocumentsPanel from '@/components/party/DocumentsPanel'
 import CommentsPanel from '@/components/party/CommentsPanel'
@@ -172,6 +173,7 @@ export default async function CustomerPage({
     comments,
     credit,
     addresses,
+    structures,
   ] = await Promise.all([
     getCustomer(siteId, customerId),
     listCustomerGroups(siteId),
@@ -188,6 +190,7 @@ export default async function CustomerPage({
     listComments(siteId, 'customer', customerId),
     accountCredit(siteId, customerId),
     listCustomerAddresses(siteId, customerId, { includeInactive: true }),
+    listPriceStructures(siteId),
   ])
 
   // Loyalty is loaded separately and defensively: a site that has never run the
@@ -364,6 +367,7 @@ export default async function CustomerPage({
             groups={groups}
             reps={reps}
             categories={categories}
+            structures={structures.map((s) => ({ id: s.id, name: s.name }))}
             rowActions={
               /* Its own form, rendered outside the edit form — HTML forms cannot
                  nest, and Save reaches its own via form={FORM_ID}. */

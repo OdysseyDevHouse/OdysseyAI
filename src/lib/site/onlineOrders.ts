@@ -5,6 +5,7 @@ import { round, toNum } from '../decimals'
 import { saveDraft, type LineInput } from './salesDocuments'
 import { getSetting } from './settings'
 import { accountCanCover, customerAccount } from './customerAuth'
+import { getTillCustomer } from './tillCustomers'
 import { notifyStatusReached } from './orderNotify'
 import { getOnlineSettings, listOrderStatuses, type OrderStatus } from './onlineStore'
 import { releaseHolds } from './stockHolds'
@@ -429,7 +430,18 @@ export async function acceptOrder(
   const productIds = order.lines
     .map((l) => l.productId)
     .filter((id): id is number => id !== null)
-  const pricing = await currentPricing(siteId, productIds, settings.priceStructureId)
+
+  /*
+   * An identified account resolves its OWN structure — customer, else group,
+   * else the store's setting (135). The raised sale then carries the price the
+   * account actually pays, and the reprice report shows any drift honestly.
+   */
+  let structureId = settings.priceStructureId
+  if (order.customerId) {
+    const tillCustomer = await getTillCustomer(siteId, order.customerId).catch(() => null)
+    if (tillCustomer?.priceStructureId) structureId = tillCustomer.priceStructureId
+  }
+  const pricing = await currentPricing(siteId, productIds, structureId)
 
   const repriced: Repricing[] = []
   const saleLines: LineInput[] = []

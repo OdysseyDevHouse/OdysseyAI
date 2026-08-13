@@ -70,6 +70,11 @@ function readInput(form: FormData): CustomerInput {
     statementAnchorDay: num(form, 'statementAnchorDay', 0),
     statementAnchorDate: text(form, 'statementAnchorDate'),
     creditLimit: num(form, 'creditLimit', 0),
+    priceStructureId: optionalId(form, 'priceStructureId'),
+    // Blank means NO standing discount — distinct from an explicit 0.
+    discountPct: String(form.get('discountPct') ?? '').trim()
+      ? num(form, 'discountPct', 0)
+      : null,
     // A Switch posts nothing when off, so absence means false.
     interestEnabled: form.get('interestEnabled') !== null,
     interestRatePct: num(form, 'interestRatePct', 0),

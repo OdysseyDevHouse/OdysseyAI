@@ -35,6 +35,15 @@ export type TillCustomer = {
   phone: string | null
   /** Null when the account may be sold to on credit. */
   creditBlockedReason: string | null
+  /**
+   * ALREADY RESOLVED: the customer's own structure, else the group's, else
+   * null meaning "use the site default". Resolved here, once, because every
+   * attach flow (POS, invoicing, quotes, jobs) receives a TillCustomer — a
+   * second resolver somewhere else is the one that drifts.
+   */
+  priceStructureId: number | null
+  /** The account's standing discount, as the default line discount. 0 = none. */
+  discountPct: number
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -58,6 +67,13 @@ function mapCustomer(r: Row): TillCustomer {
     vatNumber: (r.vat_number as string | null) ?? null,
     phone: (r.phone as string | null) ?? null,
     creditBlockedReason: creditBlockedReason(account),
+    priceStructureId:
+      r.price_structure_id !== null && r.price_structure_id !== undefined
+        ? Number(r.price_structure_id)
+        : r.group_price_structure_id !== null && r.group_price_structure_id !== undefined
+          ? Number(r.group_price_structure_id)
+          : null,
+    discountPct: toNum(r.discount_pct),
   }
 }
 
@@ -67,9 +83,12 @@ function mapCustomer(r: Row): TillCustomer {
 export { headroomRefusal, creditBlockedReason, availableCredit }
 
 const SELECT_CUSTOMER = `
-  SELECT id, code, name, status, account_type, credit_limit, balance,
-         payment_terms_days, vat_number, phone
-    FROM customers
+  SELECT c.id, c.code, c.name, c.status, c.account_type, c.credit_limit, c.balance,
+         c.payment_terms_days, c.vat_number, c.phone,
+         c.price_structure_id, c.discount_pct,
+         cg.price_structure_id AS group_price_structure_id
+    FROM customers c
+    LEFT JOIN customer_groups cg ON cg.id = c.group_id
 `
 
 /**
@@ -94,12 +113,12 @@ export async function searchCustomersForTill(
   const rows = await siteQuery<Row>(
     siteId,
     `${SELECT_CUSTOMER}
-      WHERE status <> 'closed'
-        AND (code LIKE ? OR name LIKE ? OR phone LIKE ? OR loyalty_number = ?)
+      WHERE c.status <> 'closed'
+        AND (c.code LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR c.loyalty_number = ?)
       ORDER BY
         -- An exact code or loyalty match is what was meant; put it first.
-        CASE WHEN code = ? OR loyalty_number = ? THEN 0 ELSE 1 END,
-        name ASC
+        CASE WHEN c.code = ? OR c.loyalty_number = ? THEN 0 ELSE 1 END,
+        c.name ASC
       LIMIT ${capped}`,
     [like, like, like, needle, needle, needle],
   )
@@ -128,8 +147,8 @@ export async function listCustomersForPicker(
   const rows = await siteQuery<Row>(
     siteId,
     `${SELECT_CUSTOMER}
-      WHERE status <> 'closed'
-      ORDER BY name ASC
+      WHERE c.status <> 'closed'
+      ORDER BY c.name ASC
       LIMIT ${capped}`,
   )
 
@@ -140,7 +159,7 @@ export async function getTillCustomer(
   siteId: number,
   customerId: number,
 ): Promise<TillCustomer | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_CUSTOMER} WHERE id = ? LIMIT 1`, [
+  const row = await siteQueryOne<Row>(siteId, `${SELECT_CUSTOMER} WHERE c.id = ? LIMIT 1`, [
     customerId,
   ])
   return row ? mapCustomer(row) : null

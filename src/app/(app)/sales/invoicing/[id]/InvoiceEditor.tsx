@@ -244,11 +244,27 @@ export default function InvoiceEditor({
 
     let cancelled = false
     getInvoiceCustomerAction(customerId).then((fresh) => {
-      if (!cancelled) setCustomer(fresh)
+      if (cancelled) return
+      setCustomer(fresh)
+      /*
+       * The account's OWN structure (customer → group, resolved server-side)
+       * takes over when one is set and the document may still change. The
+       * dropdown stays as the manual override — this only moves the default
+       * when a different account is attached. Lines already on the document
+       * keep their prices: checkPricing re-reads the structure at save, so a
+       * price that no longer matches is refused there with the reason, which
+       * beats silently rewriting figures under the person's cursor.
+       */
+      if (fresh?.priceStructureId && editable && fresh.priceStructureId !== priceStructureId) {
+        setPriceStructureId(fresh.priceStructureId)
+        toast.info(`Pricing follows ${fresh.name}'s structure for new lines.`)
+      }
     })
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- priceStructureId
+    // is read for the comparison only; reacting to it would loop the adopt.
   }, [customerId, customer?.id])
 
   /* ── Totals ──────────────────────────────────────────────────────────── */
@@ -331,7 +347,16 @@ export default function InvoiceEditor({
         salesRepUserId: current[current.length - 1]?.salesRepUserId ?? defaultRepUserId,
         qty: 1,
         unitPriceIncl: found.priceIncl,
-        discountPct: 0,
+        /*
+         * The account's standing discount is the DEFAULT, capped at the
+         * product's own ceiling: checkPricing refuses a line above
+         * max_discount_pct for anyone without the override right, and a
+         * back-office setting must never brick the capture. Still editable —
+         * a default, not a mandate.
+         */
+        discountPct: customer
+          ? Math.min(customer.discountPct, found.maxDiscountPct > 0 ? found.maxDiscountPct : 100)
+          : 0,
         vatRatePct: found.vatRatePct,
         unitCostExcl: found.costExcl,
       },
