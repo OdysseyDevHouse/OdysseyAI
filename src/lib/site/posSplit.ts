@@ -223,6 +223,93 @@ export async function splitTableBill(
   })
 }
 
+/**
+ * Moves a WHOLE tab to another table.
+ *
+ * Not a split: the document keeps its identity — id, lines, customer, price
+ * structure, covers — and only the table's pointer moves. Splitting everything
+ * via `splitTableBill` would cancel the source document and mint a new one,
+ * which is wrong for a party that simply moved: their bill's history should
+ * read as one bill that changed tables, not a bill that died and a stranger
+ * that appeared.
+ *
+ * Lives here rather than in posTables.ts because the both-tables-locked
+ * pattern and the occupancy rules are already stated above, and two copies of
+ * a deadlock-ordering argument is one copy too many.
+ */
+export async function transferTableBill(
+  siteId: number,
+  actor: Actor,
+  input: { fromTableId: number; toTableId: number },
+): Promise<{ ok: true; documentId: number } | { ok: false; error: string }> {
+  if (input.fromTableId === input.toTableId) {
+    return { ok: false, error: 'Choose a different table to move the bill to.' }
+  }
+
+  return siteTransaction(siteId, async (tx) => {
+    // Both tables locked, LOWEST ID FIRST — same reasoning as the split above.
+    const [first, second] =
+      input.fromTableId < input.toTableId
+        ? [input.fromTableId, input.toTableId]
+        : [input.toTableId, input.fromTableId]
+
+    const [lockRows] = await tx.query(
+      `SELECT t.id, t.code, t.is_active, t.document_id,
+              (SELECT d.status FROM sales_documents d WHERE d.id = t.document_id) AS doc_status
+         FROM pos_tables t WHERE t.id IN (?, ?) ORDER BY t.id FOR UPDATE`,
+      [first, second],
+    )
+    const locked = lockRows as Row[]
+    const from = locked.find((r) => Number(r.id) === input.fromTableId)
+    const to = locked.find((r) => Number(r.id) === input.toTableId)
+    if (!from || !to) return { ok: false, error: 'That table no longer exists.' }
+    if (Number(to.is_active) !== 1) {
+      return { ok: false, error: `${String(to.code)} is closed off.` }
+    }
+
+    const sourceDocId = from.document_id === null ? null : Number(from.document_id)
+    if (sourceDocId === null || from.doc_status !== 'saved') {
+      return { ok: false, error: 'That table has no open bill to move.' }
+    }
+
+    /* Free by STATUS, not by pointer — a table settled an hour ago keeps its
+       pointer until something clears it. Merging is not offered, exactly as
+       with a split: two parties' food on one bill cannot be told apart later. */
+    const destDocId = to.document_id === null ? null : Number(to.document_id)
+    if (destDocId !== null && to.doc_status === 'saved') {
+      return {
+        ok: false,
+        error: `${String(to.code)} already has a bill. Move it to a free table.`,
+      }
+    }
+
+    /* bill_asked_at cleared on BOTH sides: the party that moved has not asked
+       at the new table, and the table they left has nobody waiting to pay. */
+    await tx.execute(
+      `UPDATE pos_tables SET document_id = NULL, bill_asked_at = NULL WHERE id = ?`,
+      [input.fromTableId] as never,
+    )
+    await tx.execute(
+      `UPDATE pos_tables SET document_id = ?, bill_asked_at = NULL WHERE id = ?`,
+      [sourceDocId, input.toTableId] as never,
+    )
+
+    // A tab that walks across the floor leaves a trail.
+    await tx.execute(
+      `INSERT INTO document_audit (document_id, action, detail, user_id, user_name)
+       VALUES (?, 'transferred', ?, ?, ?)`,
+      [
+        sourceDocId,
+        `${String(from.code)} → ${String(to.code)}`,
+        actor.userId,
+        actor.userName.slice(0, 120),
+      ] as never,
+    )
+
+    return { ok: true as const, documentId: sourceDocId }
+  })
+}
+
 /* ── Writing the two halves ──────────────────────────────────────────────── */
 
 /**

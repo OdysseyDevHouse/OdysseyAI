@@ -86,11 +86,13 @@ import {
   tablePaidAction,
   billForSplitAction,
   splitTableAction,
+  transferTableAction,
 } from './tableActions'
 import type { PosTable } from '@/lib/site/posTables'
 import type { VisitType } from '@/lib/site/visitTypes'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import { SplitBillModal, type SplitLine } from './SplitBillModal'
+import TransferTableModal from './TransferTableModal'
 import { WeighModal } from './WeighModal'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { TileSizeModal } from './TileSizeModal'
@@ -1478,6 +1480,84 @@ export default function PosShell({
     })
   }
 
+  /**
+   * Prints the pro-forma bill for the open tab.
+   *
+   * The tab is opened SYNCHRONOUSLY (a browser only allows window.open while it
+   * can attribute the call to the tap — same trick the store builder uses), then
+   * the current basket is pushed to the server so the paper matches the screen,
+   * then the blank tab navigates to the print route. Asking for the bill also
+   * marks the table amber on the floor — that is what "bill asked" is for.
+   */
+  function printBill() {
+    const documentId = state.documentId
+    if (!documentId) return
+    if (!till.online) {
+      toast.error('Printing a bill needs the connection — the tab lives on the server.')
+      return
+    }
+    const tab = window.open('', '_blank')
+    startTransition(async () => {
+      try {
+        if (table && state.lines.length > 0) {
+          const saved = await updateTableBillAction(documentId, {
+            customerName: table.code,
+            terminalId: terminal?.id ?? null,
+            terminalCode: terminal?.code ?? null,
+            priceStructureId,
+            lines: salePayloadLines(state.lines, lineSpecials),
+          })
+          if (!saved.ok) {
+            tab?.close()
+            toast.error(saved.error)
+            return
+          }
+          setTables(saved.tables)
+        }
+        if (table) {
+          const asked = await askForBillAction(table.id)
+          if (asked.ok) setTables(asked.tables)
+        }
+        if (tab) tab.location.href = `/sales/${documentId}/bill`
+      } catch {
+        tab?.close()
+        toast.error('The bill could not be prepared. Try again.')
+      }
+    })
+  }
+
+  /** The gate's move mode is armed — the next table tap picks the tab to move. */
+  const [armedForTransfer, setArmedForTransfer] = useState(false)
+  /** The table whose whole tab is moving. Null when the picker is closed. */
+  const [transferring, setTransferring] = useState<PosTable | null>(null)
+
+  /** Arms the destination picker for a seated table. Disarms the mode either way. */
+  function openTransfer(fromTable: PosTable) {
+    setArmedForTransfer(false)
+    if (fromTable.documentId === null || fromTable.state === 'free') {
+      toast.error('That table has no open bill to move.')
+      return
+    }
+    setTransferring(fromTable)
+  }
+
+  /** Moves the whole tab — the document keeps its identity, only the table changes. */
+  function confirmTransfer(toTableId: number) {
+    const from = transferring
+    if (!from) return
+    startTransition(async () => {
+      const result = await transferTableAction({ fromTableId: from.id, toTableId })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setTables(result.tables)
+      setTransferring(null)
+      const to = result.tables.find((t) => t.id === toTableId)
+      toast.success(`${from.code} moved to ${to?.code ?? 'the other table'}.`)
+    })
+  }
+
   /* Re-read after anything that could have changed the floor, and on a slow tick so a
      waiter sees another waiter's table go from open to bill-asked without reloading. A
      restaurant floor is a SHARED screen; a retail till is not, which is why nothing
@@ -1810,6 +1890,9 @@ export default function PosShell({
           splitting={armedForSplit}
           onToggleSplitting={setArmedForSplit}
           onSplitTable={openSplit}
+          transferring={armedForTransfer}
+          onToggleTransferring={setArmedForTransfer}
+          onTransferTable={openTransfer}
           onPickTab={resumeTab}
           onPickTable={resumeTable}
         />
@@ -1847,6 +1930,9 @@ export default function PosShell({
           onPark={park}
           onShowSaved={() => setShowingSaved(true)}
           savedCount={savedTally}
+          /* Only a parked tab has a document to print — a counter basket lives
+             in this component until it is paid, and has no bill to show. */
+          onBill={hospitality && state.documentId ? printBill : undefined}
           busy={pending}
         />
 
@@ -2006,6 +2092,17 @@ export default function PosShell({
         tables={tables}
         busy={pending}
         onConfirm={confirmSplit}
+      />
+
+      {/* Moving a whole tab. The document keeps its identity — only the table's
+          pointer moves, in one server transaction. See posSplit.ts. */}
+      <TransferTableModal
+        open={transferring !== null}
+        onClose={() => setTransferring(null)}
+        fromTable={transferring}
+        tables={tables}
+        busy={pending}
+        onPick={confirmTransfer}
       />
 
       {/* Paying a customer back. Its own pad rather than the tender pad with a flag —

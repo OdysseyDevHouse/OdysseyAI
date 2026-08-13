@@ -148,6 +148,9 @@ export function TableGate({
   splitting = false,
   onToggleSplitting,
   onSplitTable,
+  transferring = false,
+  onToggleTransferring,
+  onTransferTable,
   onPickTab,
   onPickTable,
 }: {
@@ -172,6 +175,11 @@ export function TableGate({
   onToggleSplitting?: (next: boolean) => void
   /** Opens the split screen for a seated table. Floor view only — see the button. */
   onSplitTable?: (table: PosTable) => void
+  /** Armed: the next FLOOR-PLAN tap picks the tab to MOVE instead of resuming. */
+  transferring?: boolean
+  onToggleTransferring?: (next: boolean) => void
+  /** Opens the destination picker for a seated table's whole tab. Floor view only. */
+  onTransferTable?: (table: PosTable) => void
   /** Resume an open tab. */
   onPickTab: (tab: OpenTab) => void
   /** Seat or resume a table from the drawn floor plan. */
@@ -387,19 +395,40 @@ export function TableGate({
           on. Offering the mode over the tab list would arm a gesture that could
           only ever fail on the second tap, in front of a customer.
         */}
-        {onSplitTable && effectiveView === 'floor' && (
-          <div className="px-6 pb-3">
-            <Button
-              variant={splitting ? 'warning' : 'ghost'}
-              size="touch"
-              disabled={busy}
-              onClick={() => onToggleSplitting?.(!splitting)}
-            >
-              {/* ArrowLeftRight, not scissors: a split MOVES lines between two bills
-                  rather than cutting one, and the arrow says which. */}
-              <Icons.ArrowLeftRight size={18} />
-              {splitting ? 'Tap the bill to split — or tap here to stop' : 'Split a bill'}
-            </Button>
+        {(onSplitTable || onTransferTable) && effectiveView === 'floor' && (
+          <div className="flex flex-wrap gap-2 px-6 pb-3">
+            {onSplitTable && (
+              <Button
+                variant={splitting ? 'warning' : 'ghost'}
+                size="touch"
+                disabled={busy}
+                onClick={() => {
+                  // The two armed modes are exclusive — a tap can only mean one thing.
+                  if (!splitting) onToggleTransferring?.(false)
+                  onToggleSplitting?.(!splitting)
+                }}
+              >
+                {/* ArrowLeftRight, not scissors: a split MOVES lines between two bills
+                    rather than cutting one, and the arrow says which. */}
+                <Icons.ArrowLeftRight size={18} />
+                {splitting ? 'Tap the bill to split — or tap here to stop' : 'Split a bill'}
+              </Button>
+            )}
+            {onTransferTable && (
+              <Button
+                variant={transferring ? 'warning' : 'ghost'}
+                size="touch"
+                disabled={busy}
+                onClick={() => {
+                  if (!transferring) onToggleSplitting?.(false)
+                  onToggleTransferring?.(!transferring)
+                }}
+              >
+                {/* The whole tab walks — the party moved, their bill follows. */}
+                <Icons.LayoutGrid size={18} />
+                {transferring ? 'Tap the table to move — or tap here to stop' : 'Move a table'}
+              </Button>
+            )}
           </div>
         )}
 
@@ -437,8 +466,10 @@ export function TableGate({
                       features={features.filter((f) => f.roomId === room.id)}
                       busy={busy}
                       splitting={splitting}
+                      transferring={transferring}
                       onPick={onPickTable}
                       onSplit={onSplitTable}
+                      onTransfer={onTransferTable}
                     />
                   </div>
                 )
@@ -537,16 +568,20 @@ function FloorView({
   features,
   busy,
   splitting,
+  transferring,
   onPick,
   onSplit,
+  onTransfer,
 }: {
   room: FloorRoom
   tables: readonly PosTable[]
   features: readonly FloorFeature[]
   busy: boolean
   splitting: boolean
+  transferring: boolean
   onPick: (table: PosTable) => void
   onSplit?: (table: PosTable) => void
+  onTransfer?: (table: PosTable) => void
 }) {
   return (
     <div
@@ -603,7 +638,11 @@ function FloorView({
               ? table.documentId !== null && table.state !== 'free'
                 ? onSplit?.(table)
                 : undefined
-              : onPick(table)
+              : transferring
+                ? table.documentId !== null && table.state !== 'free'
+                  ? onTransfer?.(table)
+                  : undefined
+                : onPick(table)
           }
           className={`absolute flex flex-col items-center justify-center border-2 text-center transition active:scale-[0.97] ${
             table.shape === 'round' ? 'rounded-full' : 'rounded-card'

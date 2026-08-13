@@ -43,6 +43,7 @@ export function SalePane({
   onPark,
   onShowSaved,
   savedCount,
+  onBill,
   showParkKeys = true,
   busy,
 }: {
@@ -67,6 +68,12 @@ export function SalePane({
   onShowSaved: () => void
   /** How many baskets are parked, for the badge. */
   savedCount: number
+  /**
+   * Prints the pro-forma bill for the open tab. Hospitality only, and only
+   * once the tab has a parked document — undefined hides the button, which is
+   * every retail till and every basket not yet on a table.
+   */
+  onBill?: () => void
   /**
    * Whether to offer Save / Saved at all.
    *
@@ -99,14 +106,26 @@ export function SalePane({
         readable at a glance from arm's length rather than inferred from a switch position.
       */}
       <div className="border-b border-border p-3 pb-2">
-        <SegmentedControl
-          value={returning ? 'return' : 'sale'}
-          onChange={(next) => onToggleReturning(next === 'return')}
-          options={[
-            { value: 'sale', label: 'Sale' },
-            { value: 'return', label: 'Return' },
-          ]}
-        />
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <SegmentedControl
+              value={returning ? 'return' : 'sale'}
+              onChange={(next) => onToggleReturning(next === 'return')}
+              options={[
+                { value: 'sale', label: 'Sale' },
+                { value: 'return', label: 'Return' },
+              ]}
+            />
+          </div>
+          {/* The pro-forma bill — the slip a waiter drops on the table before
+              payment. Only rendered when the shell says this basket IS a tab. */}
+          {onBill && !returning && (
+            <Button variant="secondary" disabled={busy} onClick={onBill}>
+              <Icons.Printer size={15} />
+              Bill
+            </Button>
+          )}
+        </div>
         {/* Said only in return mode, and it says the thing a cashier needs to know rather
             than the thing the code is doing: no receipt is checked, so the credit is at
             today's shelf price. That is inherent to a till return, not a defect — but a

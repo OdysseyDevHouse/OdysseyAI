@@ -9,7 +9,7 @@ import {
   freeTableForDocument,
   type PosTable,
 } from '@/lib/site/posTables'
-import { splitTableBill, billLinesForSplit } from '@/lib/site/posSplit'
+import { splitTableBill, transferTableBill, billLinesForSplit } from '@/lib/site/posSplit'
 import { saveDraft, saveForLaterDocument, getDocument } from '@/lib/site/salesDocuments'
 import type { LineInput } from '@/lib/site/salesDocuments'
 
@@ -203,6 +203,25 @@ export async function splitTableAction(input: {
   const { siteId, actor } = ctx
 
   const result = await splitTableBill(siteId, actor, input)
+  if (!result.ok) return result
+  return { ok: true, tables: await listTables(siteId) }
+}
+
+/**
+ * Moves a whole tab to another table.
+ *
+ * Same right as splitting, for the same reason: it moves lines' address, not
+ * money. The party moved; their bill follows them.
+ */
+export async function transferTableAction(input: {
+  fromTableId: number
+  toTableId: number
+}): Promise<TablesResult> {
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await transferTableBill(siteId, actor, input)
   if (!result.ok) return result
   return { ok: true, tables: await listTables(siteId) }
 }

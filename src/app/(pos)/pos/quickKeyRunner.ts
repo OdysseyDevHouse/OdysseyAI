@@ -223,6 +223,17 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
 
   'add-tip': ({ handlers }) =>
     handlers.say('Tips are declared on the payment screen — tap Pay, then add the tip against the payment method.', 'info'),
+
+  /* Like split-table above: the gesture starts from the floor, where both tables
+     are visible — a key on the till cannot know which pair the waiter means. */
+  'table-transfer': ({ handlers }) =>
+    handlers.say('Tap “Move a table” on the floor, then pick the table that is moving.', 'info'),
+
+  /* The bill button lives beside the basket, where the tab it prints is open. */
+  'bill-print': ({ handlers, online }) =>
+    online
+      ? handlers.say('Open the table, then tap Bill beside the basket to print it.', 'info')
+      : handlers.say('Printing a bill needs the connection — the tab lives on the server.', 'info'),
 }
 
 /**
@@ -270,8 +281,6 @@ const HOSPITALITY_MESSAGE =
 const HOSPITALITY_UNBUILT: Record<string, string> = {
   'send-to-kitchen':
     'Sending to the kitchen is not set up on this system yet — it needs a kitchen printer or a kitchen screen.',
-  'bill-print': 'Printing a bill before it is paid is not built yet.',
-  'table-transfer': 'Moving a bill between tables is not built yet.',
 }
 
 /**
