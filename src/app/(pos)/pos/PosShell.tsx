@@ -91,6 +91,7 @@ import type { PosTable } from '@/lib/site/posTables'
 import type { VisitType } from '@/lib/site/visitTypes'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import { SplitBillModal, type SplitLine } from './SplitBillModal'
+import { WeighModal } from './WeighModal'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { TileSizeModal } from './TileSizeModal'
 import { TileSizeContext, useTileSize } from '@/lib/posOffline/useTileSize'
@@ -261,6 +262,8 @@ export default function PosShell({
    */
   const [savedTally, setSavedTally] = useState(savedCount)
   const [editing, setEditing] = useState<BasketLine | null>(null)
+  /** A scale item waiting for its weight — see the guard in add(). */
+  const [weighing, setWeighing] = useState<TillProduct | null>(null)
 
   /**
    * The product being asked about, if any. Null closes the dialog.
@@ -571,6 +574,19 @@ export default function PosShell({
         toast.error(blocked)
         return
       }
+    }
+
+    /*
+     * A scale item with no weight yet gets weighed BEFORE anything else. A
+     * scale barcode arrives with the weight embedded (scannedQty) and passes
+     * straight through; a tile, a search or a typed code has none, and ringing
+     * up "1" of something sold per kilogram is a silent overcharge. Checked
+     * here because every way of adding a product converges on add() — the path
+     * a narrower check would miss is the scanner, most of a shop's volume.
+     */
+    if (product.scaleItem && product.scannedQty == null) {
+      setWeighing(product)
+      return
     }
 
     /*
@@ -2096,6 +2112,20 @@ export default function PosShell({
       {/* Only mounted while a product is being asked about, so its state starts
           fresh each time — a modal kept alive would carry the last burger's
           answers onto the next one. */}
+      {weighing && (
+        <WeighModal
+          product={weighing}
+          onCancel={() => setWeighing(null)}
+          onConfirm={(w) => {
+            const product = weighing
+            setWeighing(null)
+            // scannedQty carries the confirmed weight back through add(), so
+            // the guard passes and the product's questions still get asked.
+            add({ ...product, scannedQty: w }, w)
+          }}
+        />
+      )}
+
       {asking && (
         <InstructionsModal
           product={asking.product}

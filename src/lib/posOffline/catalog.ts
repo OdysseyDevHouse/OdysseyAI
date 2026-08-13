@@ -3,6 +3,7 @@
 import { posDb, kvGet, kvPut, KV } from './db'
 import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
+import { parseVariableBarcode } from '../barcodes'
 import type { TillProduct } from '../site/tillSearch'
 import type { PendingSchedule } from '../priceSchedules'
 /* Type-only, and therefore erased at compile time — `instructions.ts` is
@@ -290,16 +291,44 @@ export function catalogAgeHours(meta: CatalogMeta | null): number | null {
  *
  * Barcode first, then code — the same order the server's `scanAction` uses, because
  * a scanner sends a barcode and that path must feel instant.
+ *
+ * Then the SCALE-BARCODE fallback, mirroring resolveScan(): prefix + PLU +
+ * embedded value + check digit, read with the same parseVariableBarcode the
+ * server uses (extracted from tillSearch for exactly this call) and the same
+ * settings the catalog feed ships. This was the missing half of that
+ * extraction — without it a weighed item scanned offline simply beeped, and
+ * in a grocer that is most of the shop.
  */
 export async function findByCode(siteId: number, code: string): Promise<TillProduct | null> {
   const term = code.trim()
   if (!term) return null
   const db = posDb(siteId)
-  return (
+  const exact =
     (await db.products.where('barcode').equals(term).first()) ??
     (await db.products.where('code').equals(term).first()) ??
     null
-  )
+  if (exact) return exact
+
+  const settings = await storedSettings(siteId)
+  const variable = parseVariableBarcode(term, {
+    prefix: String(settings.barcode_variable_prefix ?? ''),
+    pluLength: Number(settings.barcode_plu_length),
+    divisor: Number(settings.barcode_value_divisor),
+  })
+  if (!variable) return null
+
+  const byPlu =
+    (await db.products.where('code').equals(variable.plu).first()) ??
+    (await db.products.where('barcode').equals(variable.plu).first()) ??
+    null
+  if (!byPlu) return null
+
+  // The embedded value is a weight or money, never both — resolveScan's rule,
+  // decided by the product's variableType. A stored row from before the field
+  // shipped treats it as weight, the scale-label default.
+  return byPlu.variableType === 'price'
+    ? { ...byPlu, scannedPrice: variable.value }
+    : { ...byPlu, scannedQty: variable.value }
 }
 
 /**

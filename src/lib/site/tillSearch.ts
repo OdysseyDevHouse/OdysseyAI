@@ -6,6 +6,7 @@ import { getSettings } from './settings'
 import { duePricesFor } from './priceSchedules'
 import { parseVariableBarcode } from '../barcodes'
 import type { ProductTypeId } from '../productTypes'
+import { toVariableType, type VariableTypeId } from '../productProperties'
 
 /**
  * Finding a product at the till.
@@ -38,6 +39,19 @@ export type TillProduct = {
   availableQty: number
   askPriceAtSale: boolean
   allowFractions: boolean
+  /**
+   * Sold by weight. A scan of a scale barcode arrives with the weight embedded
+   * (scannedQty); any other way of adding it must PROMPT for one — the promise
+   * the product-properties switch has made since 006.
+   */
+  scaleItem: boolean
+  /**
+   * What a variable barcode embeds for THIS product: a weight or money. This
+   * is where "the caller decides" actually happens — resolveScan reads it and
+   * sets scannedQty OR scannedPrice, never both (both at once multiplied:
+   * qty × unit price = value², a silent overcharge squared).
+   */
+  variableType: VariableTypeId
   maxDiscountPct: number
   /**
    * The swatch a manager chose for this product, as a `tile-*` token — null when
@@ -75,6 +89,8 @@ function mapProduct(r: Row): TillProduct {
     availableQty: round(stockOnHand - reservedQty, 3),
     askPriceAtSale: !!r.ask_price_at_sale,
     allowFractions: !!r.allow_fractions,
+    scaleItem: !!r.scale_item,
+    variableType: toVariableType(r.variable_type),
     maxDiscountPct: toNum(r.max_discount_pct),
     /* Empty string normalised to null: a cleared colour picker writes '' rather than
        NULL, and the two mean the same thing to everything downstream. */
@@ -91,7 +107,8 @@ function mapProduct(r: Row): TillProduct {
 function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
-           p.ask_price_at_sale, p.allow_fractions, p.max_discount_pct, p.image_color,
+           p.ask_price_at_sale, p.allow_fractions, p.scale_item, p.variable_type,
+           p.max_discount_pct, p.image_color,
            -- Stock the counter can actually hand over: the MAIN pile, not the
            -- site total. Goods in a back warehouse are owned but not sellable
            -- here until someone carries them across, and a till that offered
@@ -323,10 +340,16 @@ export async function resolveScan(
 
   const product = mapProduct(byPlu)
 
-  // A weight barcode carries a quantity; a value barcode carries money. Which
-  // one this is depends on the product, so both are returned and the caller
-  // decides — `variableType` on the product says which it expects.
-  return { ...product, scannedQty: variable.value, scannedPrice: variable.value }
+  /*
+   * A weight barcode carries a quantity; a value barcode carries money. The
+   * product's variableType says which — decided HERE, not "by the caller":
+   * this used to return both, no caller ever chose, and the basket applied
+   * value as the quantity AND the unit price, charging value² for anything
+   * scanned off a scale label.
+   */
+  return product.variableType === 'price'
+    ? { ...product, scannedPrice: variable.value }
+    : { ...product, scannedQty: variable.value }
 }
 
 /* parseVariableBarcode moved to @/lib/barcodes so the OFFLINE till can call it —

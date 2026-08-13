@@ -210,6 +210,19 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       ? handlers.say('Tap Pay — points show as a payment method on the payment screen.', 'info')
       : handlers.say('Attach the customer first, then their points show up under Pay.', 'info')
   },
+
+  /*
+   * Both of these SHIPPED after the unbuilt list was written, and sat in it
+   * telling cashiers a working feature did not exist — the same trap the
+   * voucher key fell into above. Like the voucher key, they cannot act on
+   * their own (a split needs a saved table, a tip belongs to a payment), so
+   * they say where the built thing lives.
+   */
+  'split-table': ({ handlers }) =>
+    handlers.say('Save the table, then tap “Split a bill” on the floor and pick it.', 'info'),
+
+  'add-tip': ({ handlers }) =>
+    handlers.say('Tips are declared on the payment screen — tap Pay, then add the tip against the payment method.', 'info'),
 }
 
 /**
@@ -245,8 +258,10 @@ const HOSPITALITY_MESSAGE =
  * The hospitality keys that have no behaviour YET, even with tables on.
  *
  * Separate from NOT_WIRED because the reason differs: those are things this app does
- * elsewhere, while these are genuinely unbuilt. Split bills and tips in particular are
- * substantial features, deliberately deferred — see the plan.
+ * elsewhere, while these are genuinely unbuilt. Split bills and tips USED to be here
+ * and shipped without their entries being removed — a cashier pressing them was told
+ * a working feature did not exist. They now live in RUN, pointing at where each one
+ * is. Remove an entry here the moment its feature lands, or it lies.
  *
  * Send-to-kitchen is here by a decision rather than an omission: whether "send" means a
  * physical ESC-POS ticket or a mark-and-display stamp is a question about the shop's
@@ -257,8 +272,6 @@ const HOSPITALITY_UNBUILT: Record<string, string> = {
     'Sending to the kitchen is not set up on this system yet — it needs a kitchen printer or a kitchen screen.',
   'bill-print': 'Printing a bill before it is paid is not built yet.',
   'table-transfer': 'Moving a bill between tables is not built yet.',
-  'split-table': 'Splitting a bill is not built yet.',
-  'add-tip': 'Adding a tip is not built yet.',
 }
 
 /**
