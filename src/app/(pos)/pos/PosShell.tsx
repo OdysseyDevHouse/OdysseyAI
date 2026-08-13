@@ -1708,9 +1708,10 @@ export default function PosShell({
   return (
     <TileSizeContext.Provider value={tileSize.size}>
       <TillStatusBar
-        /* The bar names the SCREEN under it. On the gate that is the floor, and
-           there is no basket to count — so no item pill either. */
-        screenTitle={choosingTable ? 'Tables' : 'Current Sale'}
+        /* The bar names the SCREEN under it — except on the gate, where the card
+           below already says "Tables" and the slot carries the brand instead.
+           No basket there either, so no item pill. */
+        screenTitle={choosingTable ? null : 'Current Sale'}
         operatorName={operatorName}
         terminalLabel={
           terminal

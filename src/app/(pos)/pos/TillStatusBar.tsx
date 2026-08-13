@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 import { Icons } from '@/components/ui'
 
 /**
@@ -31,11 +32,13 @@ export function TillStatusBar({
   onExit,
 }: {
   /**
-   * What the screen under this bar IS — "Tables" on the gate, "Current Sale" on
-   * the till. One hardcoded title meant the gate opened under a heading about a
-   * sale that did not exist yet.
+   * What the screen under this bar IS — "Current Sale" on the till, or null on
+   * the gate, which shows the brand instead. One hardcoded title meant the gate
+   * opened under a heading about a sale that did not exist yet; a heading
+   * repeating "Tables" was the gate's own card title said twice, so the slot
+   * carries the logo there — the one screen with room to say whose till this is.
    */
-  screenTitle: string
+  screenTitle: string | null
   operatorName: string
   /** The till's code and number, or null when this machine has claimed none. */
   terminalLabel: string | null
@@ -110,8 +113,27 @@ export function TillStatusBar({
           than the shop's: the cashier knows which shop they are standing in, and
           the one thing the top-left of a till should answer is "what am I looking
           at". The count rides beside it as a pill because it changes constantly
-          and a number that moves inside a heading makes the heading twitch. */}
-      <h1 className="text-[20px] font-extrabold leading-none text-ink">{screenTitle}</h1>
+          and a number that moves inside a heading makes the heading twitch.
+
+          On the GATE there is no sale to name, and the card below already says
+          "Tables" — so the slot carries the brand instead. */}
+      {screenTitle === null ? (
+        <span className="flex items-center gap-2.5">
+          {/* Decorative beside the wordmark text, so no alt of its own. */}
+          <Image
+            src="/logo-icon.png"
+            alt=""
+            aria-hidden
+            width={318}
+            height={278}
+            unoptimized
+            className="h-8 w-auto object-contain"
+          />
+          <h1 className="text-[20px] font-extrabold leading-none text-ink">Odyssey POS</h1>
+        </span>
+      ) : (
+        <h1 className="text-[20px] font-extrabold leading-none text-ink">{screenTitle}</h1>
+      )}
       {itemCount !== null && (
         <span className="rounded-control bg-surface-2 px-2.5 py-1.5 text-[12.5px] font-semibold leading-none text-muted">
           {itemCount === 0 ? '0 items' : `${itemCount} item${itemCount === 1 ? '' : 's'}`}
