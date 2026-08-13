@@ -449,6 +449,7 @@ export const SUBPAGE_LABELS = {
   // ── Accounting ────────────────────────────────────────────────────────
   '/accounting/income-statement': 'Profit and loss',
   '/accounting/balance-sheet': 'Balance sheet',
+  '/accounting/cash-flow': 'Cash flow',
   '/accounting/trial-balance': 'Trial balance',
   '/accounting/vat': 'VAT return',
   '/accounting/journals': 'Journals',

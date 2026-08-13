@@ -31,6 +31,7 @@ import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { postTransaction } from '../src/lib/site/customerLedger'
 import { createAccount as createBankAccount } from '../src/lib/site/bankAccounts'
+import { cashFlowStatement } from '../src/lib/site/cashFlowStatement'
 import { recordCustomerReceipt } from '../src/lib/site/cashbook'
 import { saveDraft, finalise } from '../src/lib/site/expenses'
 import { listCategories } from '../src/lib/site/expenseCategories'
@@ -346,6 +347,21 @@ async function main() {
   ok('  the unclosed result appears in equity', bs.currentYearResult !== 0,
       String(bs.currentYearResult))
   ok('  liabilities display positive', bs.liabilitiesTotal >= 0, String(bs.liabilitiesTotal))
+
+  const cf = await cashFlowStatement(SITE, { from: daysAgo(30), to: daysAgo(0) })
+  ok('*** THE CASH FLOW STATEMENT RECONCILES ***', cf.balanced,
+      `movement ${cf.netCashMovement}, explained ${round(cf.operatingTotal + cf.investing.total + cf.financing.total + cf.other.total, 2)}, unexplained ${cf.unexplained}`)
+  ok('  closing minus opening is the movement',
+      cf.netCashMovement === round(cf.closingCash - cf.openingCash, 2))
+  ok('  the net result feeds operating',
+      cf.operatingTotal === round(cf.netResult + cf.nonCashAdjustments + cf.operating.total, 2))
+  // The whole-history window: everything the ledger has ever posted must still
+  // explain the whole cash balance — the zero-sum identity, end to end.
+  const cfAll = await cashFlowStatement(SITE, { from: '2000-01-01', to: daysAgo(0) })
+  ok('*** the identity holds over the whole ledger ***', cfAll.balanced,
+      `unexplained ${cfAll.unexplained}`)
+  ok('  opening cash at the dawn of time is zero', cfAll.openingCash === 0,
+      String(cfAll.openingCash))
 
   console.log('\n── Invariants ──────────────────────────────────────────────\n')
 

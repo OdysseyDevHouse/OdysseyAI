@@ -227,6 +227,50 @@ export function subtypeRank(subtype: string | null): number {
   return index === -1 ? SUBTYPE_ORDER.length : index
 }
 
+/* ── Cash flow classification ────────────────────────────────────────────── */
+
+/**
+ * Where an account's movement lands on the cash flow statement.
+ *
+ * 'cash' is the money itself — the statement explains its movement, so cash
+ * accounts appear only as the opening and closing figures. Everything else is
+ * classified by SUBTYPE, because that is the fact the chart already carries:
+ * working capital is the current stuff, investing is fixed assets, financing
+ * is long-term debt and equity.
+ *
+ * An unrecognised subtype lands in 'other' — shown as its own group, never
+ * silently dropped, because a statement that quietly omits an account is a
+ * statement that no longer reconciles and cannot say why.
+ */
+export type CashFlowSection = 'cash' | 'operating' | 'investing' | 'financing' | 'other'
+
+export const CASH_FLOW_SECTION_BY_SUBTYPE: Record<string, CashFlowSection> = {
+  current_asset: 'operating',
+  current_liability: 'operating',
+  fixed_asset: 'investing',
+  long_term_liability: 'financing',
+  equity: 'financing',
+}
+
+export const CASH_FLOW_SECTION_LABELS: Record<Exclude<CashFlowSection, 'cash'>, string> = {
+  operating: 'Operating activities',
+  investing: 'Investing activities',
+  financing: 'Financing activities',
+  other: 'Other movements',
+}
+
+export function cashFlowSection(
+  type: AccountType,
+  subtype: string | null,
+  controlType: string | null,
+): CashFlowSection {
+  if (controlType === 'bank') return 'cash'
+  // Income and expenses never reach here on the statement itself — they are
+  // the net-result input — but classifying them keeps the function total.
+  if (type === 'income' || type === 'expense') return 'operating'
+  return (subtype && CASH_FLOW_SECTION_BY_SUBTYPE[subtype]) || 'other'
+}
+
 /* ── Control accounts ────────────────────────────────────────────────────── */
 
 export const CONTROL_TYPES = [

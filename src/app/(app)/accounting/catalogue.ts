@@ -56,6 +56,14 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         capability: 'reports.financial',
       },
       {
+        href: '/accounting/cash-flow',
+        description: 'The profit was made — this shows where the money went.',
+        keywords: 'cash flow statement operating investing financing movements liquidity',
+        icon: 'Coins',
+        tone: 'indigo',
+        capability: 'reports.financial',
+      },
+      {
         href: '/accounting/trial-balance',
         description: 'Every account and its balance — the check that the books add up.',
         keywords: 'tb ledger balances debits credits',
