@@ -1344,6 +1344,111 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: 'supplierName', dir: 'asc' },
     }),
   },
+  {
+    id: 'supplier-ledger',
+    name: 'Supplier ledger',
+    description:
+      'Every invoice, payment and credit on a supplier account. The creditor twin of the customer ledger.',
+    category: 'Suppliers',
+    permission: 'suppliers.view',
+    spec: spec({
+      source: 'supplierTransactions',
+      columns: [
+        { field: 'docDate' },
+        { field: 'supplierName' },
+        { field: 'docNumber' },
+        { field: 'docType' },
+        { field: 'reference' },
+        { field: 'amountSigned' },
+        { field: 'amountOutstanding' },
+      ],
+      sort: { key: 'docDate', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'supplier-ageing',
+    name: 'What we owe, by age',
+    description:
+      'Unsettled supplier documents oldest first — what a payment run is built from.',
+    category: 'Suppliers',
+    permission: 'suppliers.view',
+    spec: spec({
+      source: 'supplierTransactions',
+      columns: [
+        { field: 'supplierName' },
+        { field: 'docNumber' },
+        { field: 'docDate' },
+        { field: 'dueDate' },
+        { field: 'daysOverdue' },
+        { field: 'amountOutstanding' },
+      ],
+      /* Settled documents are history; this report is a list of what to pay.
+         The ageing is on the total, so it filters after summarising. */
+      totalFilters: [{ key: 'amountOutstanding', op: 'gt', value: '0' }],
+      sort: { key: 'daysOverdue', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'loyalty-activity',
+    name: 'Loyalty activity',
+    description:
+      'Points earned and redeemed, and what they were earned against — what the programme costs and who uses it.',
+    category: 'Customers',
+    permission: 'customers.view',
+    spec: spec({
+      source: 'loyaltyLedger',
+      columns: [
+        { field: 'happenedAt' },
+        { field: 'customerName' },
+        { field: 'entryType' },
+        { field: 'documentNumber' },
+        { field: 'tierName' },
+        { field: 'basisAmount' },
+        { field: 'points' },
+      ],
+      sort: { key: 'happenedAt', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'loyalty-liability',
+    name: 'Loyalty liability',
+    description:
+      'What the programme owes: points on the books and money in wallets. The wallet figure is a real debt; points are worth what redemption makes them.',
+    category: 'Customers',
+    permission: 'customers.view',
+    spec: spec({
+      source: 'loyaltyMembers',
+      groupFields: ['tierName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'pointsBalance', agg: 'sum' },
+        { field: 'walletBalance', agg: 'sum' },
+      ],
+      sort: { key: 'walletBalance_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'loyalty-members',
+    name: 'Loyalty members',
+    description: 'Who is on the programme, in which tier, and when they were last seen.',
+    category: 'Customers',
+    permission: 'customers.view',
+    spec: spec({
+      source: 'loyaltyMembers',
+      limit: MAX_ROWS,
+      columns: [
+        { field: 'customerCode' },
+        { field: 'customerName' },
+        { field: 'phone' },
+        { field: 'tierName' },
+        { field: 'pointsBalance' },
+        { field: 'walletBalance' },
+        { field: 'lastActivityAt' },
+        { field: 'daysSinceActivity' },
+      ],
+      sort: { key: 'daysSinceActivity', dir: 'desc' },
+    }),
+  },
 ]
 
 const BY_ID = new Map(TEMPLATES.map((t) => [t.id, t]))
