@@ -29,6 +29,8 @@ export default async function LevelsPage() {
     minAmount: l.minAmount,
     subject: l.subject,
     body: l.body,
+    channel: l.channel,
+    smsBody: l.smsBody ?? '',
     blocksAccount: l.blocksAccount,
     requiresCall: l.requiresCall,
     isActive: l.isActive,

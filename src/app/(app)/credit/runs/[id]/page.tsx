@@ -41,6 +41,7 @@ export default async function RunReviewPage({
     customerCode: i.customerCode,
     customerName: i.customerName,
     email: i.email,
+    phone: i.phone,
     levelStep: i.levelStep,
     levelName: i.levelName,
     overdueAmount: i.overdueAmount,
@@ -48,6 +49,8 @@ export default async function RunReviewPage({
     oldestDays: i.oldestDays,
     status: i.status,
     error: i.error,
+    smsStatus: i.smsStatus,
+    smsError: i.smsError,
     sentAtDate: i.sentAt ? i.sentAt.toISOString().slice(0, 10) : null,
   }))
 

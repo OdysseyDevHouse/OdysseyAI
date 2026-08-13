@@ -30,6 +30,7 @@ export type ReviewItem = {
   customerCode: string
   customerName: string
   email: string | null
+  phone: string | null
   levelStep: number
   levelName: string
   overdueAmount: number
@@ -37,6 +38,8 @@ export type ReviewItem = {
   oldestDays: number
   status: 'queued' | 'sent' | 'failed' | 'skipped' | 'excluded'
   error: string | null
+  smsStatus: 'none' | 'sent' | 'failed' | 'skipped'
+  smsError: string | null
   sentAtDate: string | null
 }
 
@@ -152,7 +155,7 @@ export function RunReview({
         <Link href={`/customers/${i.customerId}`} className="block hover:text-brand">
           <span className="text-ink">{i.customerName}</span>
           <span className="mt-0.5 block text-xs text-muted">
-            {i.email ?? 'No email address'}
+            {[i.email ?? 'No email address', i.phone].filter(Boolean).join(' · ')}
           </span>
         </Link>
       ),
@@ -201,6 +204,16 @@ export function RunReview({
         <>
           <Badge tone={STATUS_TONE[i.status]}>{STATUS_LABEL[i.status]}</Badge>
           {i.error && <span className="mt-0.5 block text-xs text-muted">{i.error}</span>}
+          {/* The text leg's own outcome — `status` above stays the overall one,
+              so "Sent" with "Text failed" beneath is a legitimate row. */}
+          {i.smsStatus !== 'none' && (
+            <span
+              className={`mt-0.5 block text-xs ${i.smsStatus === 'failed' ? 'text-danger' : 'text-muted'}`}
+            >
+              Text {i.smsStatus}
+              {i.smsError ? ` — ${i.smsError}` : ''}
+            </span>
+          )}
         </>
       ),
       sortValue: (i) => i.status,
@@ -268,7 +281,7 @@ export function RunReview({
               <p className="text-sm text-muted">
                 {queued.length === 0
                   ? 'There is nothing to send in this run.'
-                  : `${queued.length} reminder${queued.length === 1 ? '' : 's'} will be emailed.`}
+                  : `${queued.length} reminder${queued.length === 1 ? '' : 's'} will go out, each by the channel its level uses.`}
               </p>
               <div className="flex gap-2">
                 <Button variant="ghost" onClick={() => setConfirmCancel(true)} disabled={pending}>
@@ -364,8 +377,8 @@ export function RunReview({
         title={`Send ${queued.length} reminder${queued.length === 1 ? '' : 's'}?`}
         message={
           willBlock > 0
-            ? `This emails ${queued.length} account${queued.length === 1 ? '' : 's'} and suspends credit on ${willBlock} of them. It cannot be undone.`
-            : `This emails ${queued.length} account${queued.length === 1 ? '' : 's'}. It cannot be undone.`
+            ? `This writes to ${queued.length} account${queued.length === 1 ? '' : 's'} and suspends credit on ${willBlock} of them. It cannot be undone.`
+            : `This writes to ${queued.length} account${queued.length === 1 ? '' : 's'}. It cannot be undone.`
         }
         confirmLabel="Send them"
         tone={willBlock > 0 ? 'danger' : 'primary'}

@@ -16,12 +16,14 @@ import {
   Input,
   NumberInput,
   CurrencyInput,
+  Select,
   Textarea,
   Checkbox,
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { TEMPLATE_TOKENS } from '@/lib/creditModel'
+import { SMS_MAX_LENGTH } from '@/lib/sms/types'
 import { saveLevelAction, deleteLevelAction } from '../actions'
 
 export type LevelRow = {
@@ -32,6 +34,8 @@ export type LevelRow = {
   minAmount: number
   subject: string
   body: string
+  channel: 'email' | 'sms' | 'both'
+  smsBody: string
   blocksAccount: boolean
   requiresCall: boolean
   isActive: boolean
@@ -44,6 +48,8 @@ const BLANK: Omit<LevelRow, 'id'> = {
   minAmount: 50,
   subject: '',
   body: '',
+  channel: 'email',
+  smsBody: '',
   blocksAccount: false,
   requiresCall: false,
   isActive: true,
@@ -81,6 +87,8 @@ export function LevelsClient({ levels }: { levels: LevelRow[] }) {
       minAmount: next.minAmount,
       subject: next.subject,
       body: next.body,
+      channel: next.channel,
+      smsBody: next.smsBody,
       blocksAccount: next.blocksAccount,
       requiresCall: next.requiresCall,
       isActive: next.isActive,
@@ -166,6 +174,11 @@ export function LevelsClient({ levels }: { levels: LevelRow[] }) {
                           {level.step}. {level.name}
                         </span>
                         {!level.isActive && <Badge tone="default">Off</Badge>}
+                        {level.channel !== 'email' && (
+                          <Badge tone="brand">
+                            {level.channel === 'sms' ? 'Texts' : 'Emails + texts'}
+                          </Badge>
+                        )}
                         {level.blocksAccount && <Badge tone="danger">Suspends credit</Badge>}
                         {level.requiresCall && <Badge tone="warning">Phone call</Badge>}
                       </div>
@@ -250,24 +263,69 @@ export function LevelsClient({ levels }: { levels: LevelRow[] }) {
         </div>
 
         <div className="mt-4 space-y-4">
-          <Field label="Subject">
-            <Input
-              value={form.subject}
-              onChange={(e) => setForm({ ...form, subject: e.target.value })}
-              placeholder="Your account with {company} — {overdue} outstanding"
-            />
+          <Field
+            label="How it goes out"
+            hint="Texting needs an SMS provider under Setup → Text messages. Without one, the text leg is recorded as skipped."
+          >
+            <Select
+              value={form.channel}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  channel:
+                    e.target.value === 'sms' || e.target.value === 'both'
+                      ? e.target.value
+                      : 'email',
+                })
+              }
+            >
+              <option value="email">Email only</option>
+              <option value="sms">Text message only</option>
+              <option value="both">Email and text message</option>
+            </Select>
           </Field>
 
-          <Field
-            label="Message"
-            hint="An unknown placeholder is left as written rather than blanked, so a typo is obvious instead of silently leaving a hole in the sentence."
-          >
-            <Textarea
-              value={form.body}
-              onChange={(e) => setForm({ ...form, body: e.target.value })}
-              rows={10}
-            />
-          </Field>
+          {form.channel !== 'sms' && (
+            <>
+              <Field label="Subject">
+                <Input
+                  value={form.subject}
+                  onChange={(e) => setForm({ ...form, subject: e.target.value })}
+                  placeholder="Your account with {company} — {overdue} outstanding"
+                />
+              </Field>
+
+              <Field
+                label="Message"
+                hint="An unknown placeholder is left as written rather than blanked, so a typo is obvious instead of silently leaving a hole in the sentence."
+              >
+                <Textarea
+                  value={form.body}
+                  onChange={(e) => setForm({ ...form, body: e.target.value })}
+                  rows={10}
+                />
+              </Field>
+            </>
+          )}
+
+          {form.channel !== 'email' && (
+            <Field
+              label="Text message"
+              hint={`${form.smsBody.length}/${SMS_MAX_LENGTH} characters${form.smsBody.length > 160 ? ' — two messages per send' : ''}. Same placeholders as the email, but {lines} does not fit in a text.`}
+              error={
+                form.smsBody.length > SMS_MAX_LENGTH
+                  ? `Over the ${SMS_MAX_LENGTH}-character cap — it would be cut off.`
+                  : undefined
+              }
+            >
+              <Textarea
+                value={form.smsBody}
+                onChange={(e) => setForm({ ...form, smsBody: e.target.value })}
+                rows={3}
+                placeholder="Hi {customer}, {overdue} is overdue at {company}. Please call us to settle."
+              />
+            </Field>
+          )}
 
           <div className="rounded-card bg-surface-2 p-3">
             <p className="text-xs text-muted">Placeholders</p>

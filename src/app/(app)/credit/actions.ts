@@ -148,6 +148,8 @@ export async function saveLevelAction(
     minAmount: number
     subject: string
     body: string
+    channel: 'email' | 'sms' | 'both'
+    smsBody: string
     blocksAccount: boolean
     requiresCall: boolean
     isActive: boolean
@@ -156,7 +158,11 @@ export async function saveLevelAction(
   const ctx = await actorFor('customers.credit')
   if ('ok' in ctx) return ctx
 
-  const result = await saveLevel(ctx.siteId, ctx.actor, id, input)
+  const result = await saveLevel(ctx.siteId, ctx.actor, id, {
+    ...input,
+    channel: ['email', 'sms', 'both'].includes(input.channel) ? input.channel : 'email',
+    smsBody: input.smsBody.trim() || null,
+  })
   if (!result.ok) return result
 
   revalidatePath('/credit/levels')
