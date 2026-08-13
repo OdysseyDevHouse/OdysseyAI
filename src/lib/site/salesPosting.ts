@@ -104,6 +104,16 @@ export type FinaliseInput = {
    */
   voucherCodes?: string[]
   /**
+   * A discount code already applied to the lines (140).
+   *
+   * The MONEY is on the lines — per-line discount_incl written at save — so
+   * nothing here changes a figure. This SPENDS the code inside the sale's
+   * transaction (the same lost-update guard the storefront uses: the last use
+   * of a single-use code cannot be given to two tills at once) and stamps the
+   * document with the why.
+   */
+  discountCode?: { codeId: number; code: string; amountIncl: number } | null
+  /**
    * A number this sale was ALREADY printed under, for a sale rung up offline.
    *
    * Normally undefined and the number is allocated here, last, under the
@@ -807,6 +817,28 @@ export async function finaliseDocument(
             voucherFunded = round(voucherFunded + voucher.rewardValue, 2)
           }
         }
+      }
+
+      /*
+       * Spend the discount code, AFTER the number is issued so the use row can
+       * never precede its document, and INSIDE the transaction so the throw
+       * rolls the whole sale back — the customer keeps their basket and the
+       * cashier reads why. Same guard as the storefront's checkout.
+       */
+      if (input.discountCode) {
+        const { redeemCode } = await import('./discountCodes')
+        const spent = await redeemCode(tx, {
+          codeId: input.discountCode.codeId,
+          documentId: document.id,
+          customerId: customerId ?? null,
+          contactEmail: '',
+          amountIncl: input.discountCode.amountIncl,
+        })
+        if (!spent) throw new Error('That code has been fully used.')
+        await tx.execute(
+          `UPDATE sales_documents SET discount_code_id = ?, discount_code = ? WHERE id = ?`,
+          [input.discountCode.codeId, input.discountCode.code.slice(0, 40), document.id] as never,
+        )
       }
 
       await tx.execute(

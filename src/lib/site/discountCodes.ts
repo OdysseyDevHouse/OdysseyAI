@@ -276,12 +276,19 @@ export async function redeemCode(
   tx: PoolConnection,
   input: {
     codeId: number
-    orderId: number
+    /** The online order it was spent on — or null for a till sale. */
+    orderId?: number | null
+    /** The sales document it was spent on — the till's kind of evidence (140). */
+    documentId?: number | null
     customerId: number | null
     contactEmail: string
     amountIncl: number
   },
 ): Promise<boolean> {
+  if (!input.orderId && !input.documentId) {
+    // A use with nothing to point at is not evidence of anything.
+    return false
+  }
   const [rows] = await tx.query<never>(
     'SELECT id, max_uses, uses_count FROM discount_codes WHERE id = ? FOR UPDATE',
     [input.codeId] as never,
@@ -299,11 +306,12 @@ export async function redeemCode(
   )
   await tx.execute(
     `INSERT INTO discount_code_uses
-       (code_id, order_id, customer_id, contact_email, amount_incl)
-     VALUES (?,?,?,?,?)`,
+       (code_id, order_id, document_id, customer_id, contact_email, amount_incl)
+     VALUES (?,?,?,?,?,?)`,
     [
       input.codeId,
-      input.orderId,
+      input.orderId ?? null,
+      input.documentId ?? null,
       input.customerId,
       input.contactEmail.trim().toLowerCase().slice(0, 190),
       input.amountIncl.toFixed(4),

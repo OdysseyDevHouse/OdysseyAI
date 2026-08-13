@@ -85,6 +85,7 @@ import {
 import DocDiscountModal from './DocDiscountModal'
 import ReceiptReturnModal, { type ReceiptReturnPick } from './ReceiptReturnModal'
 import { tillCreditNoteAction, tillExchangeAction } from './returnActions'
+import { validateTillCodeAction } from './discountCodeActions'
 import { formatMoney, round } from '@/lib/decimals'
 import { serviceChargeFor, planTips, type ServiceTier } from '@/lib/tipMath'
 import { RefundPad } from './RefundPad'
@@ -499,10 +500,34 @@ export default function PosShell({
    */
   const [docDiscount, setDocDiscount] = useState<DocDiscount>(null)
   const [discountingDoc, setDiscountingDoc] = useState(false)
-  const effectiveDocDiscount = state.returning ? null : docDiscount
+
+  /**
+   * A promo code on the sale. EXCLUSIVE with the manual doc discount — one
+   * `docDiscount` slot, and the code wins while it is applied. Its reduction
+   * rides the same apportionment, masked to the lines the code covers.
+   */
+  const [appliedCode, setAppliedCode] = useState<{
+    codeId: number
+    code: string
+    discountIncl: number
+    eligibleKeys: string[] | null
+  } | null>(null)
+  const [codeBusy, setCodeBusy] = useState(false)
+
+  const effectiveDocDiscount: DocDiscount = state.returning
+    ? null
+    : appliedCode
+      ? { kind: 'amount', value: appliedCode.discountIncl }
+      : docDiscount
   const docShares = useMemo(
-    () => docDiscountShares(state.lines, lineSpecials, effectiveDocDiscount),
-    [state.lines, lineSpecials, effectiveDocDiscount],
+    () =>
+      docDiscountShares(
+        state.lines,
+        lineSpecials,
+        effectiveDocDiscount,
+        appliedCode?.eligibleKeys ? new Set(appliedCode.eligibleKeys) : undefined,
+      ),
+    [state.lines, lineSpecials, effectiveDocDiscount, appliedCode],
   )
 
   /* An emptied basket takes its discount with it — CLEAR, SET_RETURNING and a
@@ -510,8 +535,55 @@ export default function PosShell({
      the last customer's discount. */
   useEffect(() => {
     if (state.lines.length === 0 && docDiscount) setDocDiscount(null)
+    if (state.lines.length === 0 && appliedCode) setAppliedCode(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lines.length])
+
+  /* A CODE was priced against a specific basket — any line change invalidates
+     the eligibility and the minimum, so it drops with a word rather than
+     riding stale. One round trip to re-apply is cheaper than a wrong price. */
+  const basketSignature = useMemo(
+    () => state.lines.map((l) => `${l.key}:${l.qty}:${l.unitPriceIncl}`).join('|'),
+    [state.lines],
+  )
+  useEffect(() => {
+    if (!appliedCode || state.lines.length === 0) return
+    setAppliedCode(null)
+    toast.info(`Basket changed — enter ${appliedCode.code} again to re-check it.`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basketSignature])
+
+  /** Validates a typed code against THIS basket and applies it. */
+  function applyCode(raw: string) {
+    setCodeBusy(true)
+    void validateTillCodeAction(raw, {
+      lines: state.lines.map((line, index) => ({
+        key: line.key,
+        productId: line.productId,
+        qty: line.qty,
+        unitPriceIncl: line.unitPriceIncl,
+        onSpecial: lineSpecials[index] != null,
+        departmentId: line.departmentId,
+      })),
+      customerId: state.customer?.id ?? null,
+    })
+      .then((result) => {
+        if (!result.ok) {
+          toast.error(result.error)
+          return
+        }
+        setDocDiscount(null) // the code takes the slot
+        setAppliedCode({
+          codeId: result.codeId,
+          code: result.code,
+          discountIncl: result.discountIncl,
+          eligibleKeys: result.eligibleKeys,
+        })
+        setDiscountingDoc(false)
+        toast.success(`${result.code} — ${result.reason}`)
+      })
+      .finally(() => setCodeBusy(false))
+  }
 
   const totals = useMemo(
     () => totalsFor(state.lines, lineSpecials, docShares),
@@ -938,7 +1010,12 @@ export default function PosShell({
             terminalId: terminal?.id ?? null,
             terminalCode: terminal?.code ?? null,
             priceStructureId,
-            lines: salePayloadLines(state.lines, lineSpecials, docShares),
+            lines: salePayloadLines(
+              state.lines,
+              lineSpecials,
+              docShares,
+              appliedCode?.codeId ?? null,
+            ),
           },
           paid,
           voucherCodes,
@@ -951,6 +1028,15 @@ export default function PosShell({
           },
           // A supervisor's approval, if one was given for this basket.
           spendOverrideToken(),
+          /* The promo code, spent transactionally at finalise — the lines
+             above already carry its money as discountIncl. */
+          appliedCode
+            ? {
+                codeId: appliedCode.codeId,
+                code: appliedCode.code,
+                amountIncl: appliedCode.discountIncl,
+              }
+            : null,
         )
       } catch {
         await finaliseLocally(paid, tipInfo)
@@ -2528,7 +2614,15 @@ export default function PosShell({
         lineSpecials={lineSpecials}
         current={docDiscount}
         canOverrideDiscount={canOverrideDiscount}
-        onApply={setDocDiscount}
+        online={till.online}
+        appliedCode={appliedCode}
+        codeBusy={codeBusy}
+        onCode={applyCode}
+        onClearCode={() => setAppliedCode(null)}
+        onApply={(discount) => {
+          setAppliedCode(null) // the manual discount takes the slot back
+          setDocDiscount(discount)
+        }}
         onSupervisor={({ discount, actionLabel, amount }) => {
           setDiscountingDoc(false)
           setOverride({

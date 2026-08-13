@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Button,
   Callout,
+  Field,
   Icons,
+  Input,
   Modal,
   NumPad,
   NumPadDisplay,
@@ -38,6 +40,11 @@ export default function DocDiscountModal({
   lineSpecials,
   current,
   canOverrideDiscount,
+  online = true,
+  appliedCode = null,
+  codeBusy = false,
+  onCode,
+  onClearCode,
   onApply,
   onSupervisor,
   onClose,
@@ -48,22 +55,33 @@ export default function DocDiscountModal({
   /** The discount already on the sale, so reopening shows it. */
   current: DocDiscount
   canOverrideDiscount: boolean
+  /** Codes need the server — the tab says so when the line is down. */
+  online?: boolean
+  /** A promo code already on the sale. Exclusive with the manual discount. */
+  appliedCode?: { code: string; discountIncl: number } | null
+  codeBusy?: boolean
+  /** Validates and applies a typed code. Absent hides the Code tab. */
+  onCode?: (raw: string) => void
+  onClearCode?: () => void
   onApply: (discount: DocDiscount) => void
   /** Chain to the override pad; the shell applies on approval. */
   onSupervisor: (request: { discount: DocDiscount; actionLabel: string; amount: number }) => void
   onClose: () => void
 }) {
-  const [kind, setKind] = useState<'percent' | 'amount'>('percent')
+  const [kind, setKind] = useState<'percent' | 'amount' | 'code'>('percent')
   const [entry, setEntry] = useState('')
+  const [codeEntry, setCodeEntry] = useState('')
 
   useEffect(() => {
     if (!open) return
-    setKind(current?.kind ?? 'percent')
+    setKind(appliedCode ? 'code' : (current?.kind ?? 'percent'))
     setEntry(current ? String(current.value) : '')
-  }, [open, current])
+    setCodeEntry('')
+  }, [open, current, appliedCode])
 
   const value = numPadValue(entry)
-  const proposed: DocDiscount = value > 0 ? { kind, value } : null
+  const proposed: DocDiscount =
+    kind !== 'code' && value > 0 ? { kind, value } : null
 
   const preview = useMemo(() => {
     const before = totalsFor(lines, lineSpecials).doc.totalIncl
@@ -92,7 +110,7 @@ export default function DocDiscountModal({
   const needsSupervisor = proposed !== null && preview.breaches !== null && !canOverrideDiscount
 
   function apply() {
-    if (!proposed) return
+    if (!proposed || kind === 'code') return
     const label =
       kind === 'percent'
         ? `${formatQty(value)}% off the whole sale`
@@ -144,19 +162,66 @@ export default function DocDiscountModal({
       <div className="flex flex-col gap-3">
         <SegmentedControl
           value={kind}
-          onChange={(v) => setKind(v === 'amount' ? 'amount' : 'percent')}
+          onChange={(v) => setKind(v === 'amount' ? 'amount' : v === 'code' ? 'code' : 'percent')}
           options={[
             { value: 'percent', label: 'Percent' },
             { value: 'amount', label: 'Rand' },
+            ...(onCode ? [{ value: 'code', label: 'Code' }] : []),
           ]}
         />
 
-        <NumPadDisplay
-          label={kind === 'percent' ? 'Percent off the sale' : 'Rand off the sale'}
-          value={entry}
-          tone={needsSupervisor ? 'danger' : 'default'}
-        />
-        <NumPad value={entry} onChange={setEntry} />
+        {kind === 'code' ? (
+          /* ── A promo code ──────────────────────────────────────────────
+             One code per sale (the ledger's unique key says so); applying a
+             second replaces the first. Validated server-side and SPENT
+             transactionally at Pay, so the last use of a single-use code
+             cannot go to two tills. */
+          !online ? (
+            <Callout tone="brand" title="Codes need the connection">
+              A manager can give the discount instead — the Percent and Rand tabs work
+              offline.
+            </Callout>
+          ) : appliedCode ? (
+            <div className="flex items-center justify-between rounded-card border border-success/50 bg-success-soft px-4 py-2.5">
+              <span className="text-sm font-semibold text-success-ink">
+                {appliedCode.code} — {formatMoney(appliedCode.discountIncl)} off
+              </span>
+              <Button variant="danger-ghost" size="sm" onClick={onClearCode}>
+                Remove
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <Field label="Promo code" hint="Scan it or type it — codes are letters and numbers.">
+                <Input
+                  value={codeEntry}
+                  onChange={(e) => setCodeEntry(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && codeEntry.trim()) onCode?.(codeEntry)
+                  }}
+                  placeholder="SAVE20"
+                  autoFocus
+                />
+              </Field>
+              <Button
+                variant="primary"
+                disabled={codeBusy || !codeEntry.trim()}
+                onClick={() => onCode?.(codeEntry)}
+              >
+                {codeBusy ? 'Checking…' : 'Apply the code'}
+              </Button>
+            </div>
+          )
+        ) : (
+          <>
+            <NumPadDisplay
+              label={kind === 'percent' ? 'Percent off the sale' : 'Rand off the sale'}
+              value={entry}
+              tone={needsSupervisor ? 'danger' : 'default'}
+            />
+            <NumPad value={entry} onChange={setEntry} />
+          </>
+        )}
 
         {proposed && preview.saving > 0 && (
           <div className="rounded-card border border-border bg-surface-2 px-4 py-2.5 text-sm">

@@ -365,6 +365,8 @@ export async function finaliseSaleAction(
   tips: { declaredTips?: Record<number, number>; serviceCharge?: number } = {},
   /** A supervisor's authorisation for a price/discount beyond the operator's rights. */
   overrideToken?: string,
+  /** A discount code the till validated — the lines already carry its money. */
+  discountCode: { codeId: number; code: string; amountIncl: number } | null = null,
 ): Promise<FinaliseSaleResult> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
@@ -400,6 +402,7 @@ export async function finaliseSaleAction(
     voucherCodes,
     declaredTips: tips.declaredTips,
     serviceCharge: tips.serviceCharge,
+    discountCode,
   })
   if (!posted.ok) return { ok: false, error: posted.error }
 
