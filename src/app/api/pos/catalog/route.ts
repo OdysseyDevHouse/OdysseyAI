@@ -57,7 +57,8 @@ export const dynamic = 'force-dynamic'
  * number and this route decides whether a delta is safe; bump only one and every
  * till in the shop full-loads on every poll, forever, with no error to show for it.
  */
-const CATALOG_SCHEMA = 4
+// 5 added the alias barcodes (143) — TillProduct.barcodes rides the feed.
+const CATALOG_SCHEMA = 5
 
 /**
  * Ceiling on one response.

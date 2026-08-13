@@ -21,6 +21,11 @@ export type TillProduct = {
   id: number
   code: string
   barcode: string | null
+  /**
+   * Additional barcodes this product answers to (143). Empty for most. The
+   * offline till indexes these so an alias scans with the server gone.
+   */
+  barcodes: string[]
   description: string
   productType: ProductTypeId
   departmentId: number | null
@@ -78,6 +83,7 @@ function mapProduct(r: Row): TillProduct {
     id: Number(r.id),
     code: String(r.code),
     barcode: (r.barcode as string | null) ?? null,
+    barcodes: r.extra_barcodes ? String(r.extra_barcodes).split('\n').filter(Boolean) : [],
     description: String(r.description),
     productType: String(r.product_type) as ProductTypeId,
     departmentId: r.department_id === null ? null : Number(r.department_id),
@@ -109,6 +115,10 @@ function selectProduct(costBasis: string): string {
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
            p.ask_price_at_sale, p.allow_fractions, p.scale_item, p.variable_type,
            p.max_discount_pct, p.image_color,
+           -- The alias barcodes (143). A correlated subquery, NOT a join — a
+           -- join would multiply the row per alias and break every other figure.
+           (SELECT GROUP_CONCAT(pb.barcode SEPARATOR '\n')
+              FROM product_barcodes pb WHERE pb.product_id = p.id) AS extra_barcodes,
            -- Stock the counter can actually hand over: the MAIN pile, not the
            -- site total. Goods in a back warehouse are owned but not sellable
            -- here until someone carries them across, and a till that offered
@@ -182,13 +192,16 @@ export async function searchForTill(
         -- the shopkeeper's to toggle, and switching it on must not be able to
         -- make an unsellable row sellable.
         AND p.has_variants = 0
-        AND (p.barcode = ? OR p.code LIKE ? OR p.description LIKE ?)
+        AND (p.barcode = ? OR p.code LIKE ? OR p.description LIKE ?
+             OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
       ORDER BY
-        -- An exact barcode or code match is what was meant; put it first.
-        CASE WHEN p.barcode = ? OR p.code = ? THEN 0 ELSE 1 END,
+        -- An exact barcode, alias or code match is what was meant; put it first.
+        CASE WHEN p.barcode = ? OR p.code = ?
+               OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id)
+             THEN 0 ELSE 1 END,
         p.description ASC
       LIMIT ${capped}`,
-    [priceStructureId ?? 0, needle, like, like, needle, needle],
+    [priceStructureId ?? 0, needle, like, like, needle, needle, needle, needle],
   )
 
   return rows.map(mapProduct)
@@ -260,8 +273,12 @@ export async function browseForTill(
      fuzzy. Under two characters is treated as no term at all rather than as a
      wildcard — "a" would match most of the file and read as broken. */
   const needle = (options.term ?? '').trim()
-  const filter = needle.length >= 2 ? 'AND (p.barcode = ? OR p.code LIKE ? OR p.description LIKE ?)' : ''
-  if (filter) params.push(needle, `%${needle}%`, `%${needle}%`)
+  const filter =
+    needle.length >= 2
+      ? `AND (p.barcode = ? OR p.code LIKE ? OR p.description LIKE ?
+              OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))`
+      : ''
+  if (filter) params.push(needle, `%${needle}%`, `%${needle}%`, needle)
 
   // Exact matches first, but only when something was typed — with no term every
   // row scores the same and the CASE is wasted work over 40,000 rows.
@@ -315,8 +332,10 @@ export async function resolveScan(
     siteId,
     `${selectProduct(settings.cost_basis)}
       WHERE p.is_archived = 0 AND p.has_variants = 0
-        AND (p.barcode = ? OR p.code = ?) LIMIT 1`,
-    [priceStructureId ?? 0, code, code],
+        AND (p.barcode = ? OR p.code = ?
+             OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
+      LIMIT 1`,
+    [priceStructureId ?? 0, code, code, code],
   )
   if (exact) return mapProduct(exact)
 
@@ -333,8 +352,10 @@ export async function resolveScan(
     siteId,
     `${selectProduct(settings.cost_basis)}
       WHERE p.is_archived = 0 AND p.has_variants = 0
-        AND (p.code = ? OR p.barcode = ?) LIMIT 1`,
-    [priceStructureId ?? 0, variable.plu, variable.plu],
+        AND (p.code = ? OR p.barcode = ?
+             OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
+      LIMIT 1`,
+    [priceStructureId ?? 0, variable.plu, variable.plu, variable.plu],
   )
   if (!byPlu) return null
 

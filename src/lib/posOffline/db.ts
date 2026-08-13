@@ -141,6 +141,24 @@ export class PosDatabase extends Dexie {
       returns: 'returnUid, status, takenAt',
       kv: 'key',
     })
+
+    /*
+     * Version 4 — alias barcodes (143).
+     *
+     * `*barcodes` is a multiEntry index over the product's extra-barcode array,
+     * so an alias scans offline exactly as the primary does. No `upgrade()`:
+     * old rows simply lack the field (the resolver treats missing as empty),
+     * and the catalog schema bump to 5 forces a full reload that repopulates
+     * everything anyway. `outbox` and `returns` untouched — the version-2
+     * invariant stands: a pending row is real money.
+     */
+    this.version(4).stores({
+      products: 'id, code, barcode, *barcodes, departmentId',
+      outbox: 'saleUid, status, takenAt',
+      parked: 'uid, parkedAt',
+      returns: 'returnUid, status, takenAt',
+      kv: 'key',
+    })
   }
 }
 

@@ -49,8 +49,11 @@ import type { TillInstructionGroup } from '../site/instructions'
  * Bump only one of the two and this till asks for a delta the route will not
  * give it — so it full-loads on every poll, forever, with nothing on screen to
  * say why.
+ *
+ * 5 added the alias barcodes (143) — TillProduct.barcodes rides the feed and
+ * the Dexie multiEntry index makes an alias scan work offline.
  */
-const SCHEMA = 4
+const SCHEMA = 5
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -306,6 +309,8 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
   const exact =
     (await db.products.where('barcode').equals(term).first()) ??
     (await db.products.where('code').equals(term).first()) ??
+    // The alias barcodes (143) — the multiEntry index version 4 added.
+    (await db.products.where('barcodes').equals(term).first().catch(() => undefined)) ??
     null
   if (exact) return exact
 
@@ -320,6 +325,7 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
   const byPlu =
     (await db.products.where('code').equals(variable.plu).first()) ??
     (await db.products.where('barcode').equals(variable.plu).first()) ??
+    (await db.products.where('barcodes').equals(variable.plu).first().catch(() => undefined)) ??
     null
   if (!byPlu) return null
 

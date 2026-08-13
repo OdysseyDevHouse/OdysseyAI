@@ -42,6 +42,8 @@ import { PROBLEM, VALUE, type ApplyContext, type ExistingMode, type ImportField,
 
 export type ProductDraft = Partial<ProductInput> & {
   departmentPath?: string
+  /** Alias barcodes, |- or ;-separated as typed in the file (143). */
+  extraBarcodes?: string
   /** priceStructureId → VAT-inclusive selling price. */
   prices?: Record<number, number>
   /** locationId → { minStock, maxStock }, either of which may be absent. */
@@ -89,6 +91,15 @@ export const productSpec: ImportSpec<ProductDraft> = {
       hint: 'Not required to be unique — several products may share one.',
       example: '5449000000996',
       max: 48,
+      blankClears: true,
+    }),
+    text<ProductDraft>({
+      key: 'extraBarcodes',
+      label: 'Extra barcodes',
+      aliases: ['Extra Barcodes', 'Additional Barcodes', 'Other Barcodes'],
+      hint: 'Several, separated by | or ;. The Barcode column stays the main one.',
+      example: '6001234567890|6009876543210',
+      max: 2000,
       blankClears: true,
     }),
     text<ProductDraft>({
@@ -358,6 +369,18 @@ export const productSpec: ImportSpec<ProductDraft> = {
       if (!result.ok) warnings.push({ step: 'Supplier link', reason: result.error })
     }
 
+    // ── D. The alias barcodes (143) ───────────────────────────────────
+    // Replace-set, ONLY when the file carried the column — same rule as the
+    // supplier link. A refused alias is a warning; the product was written.
+    if (fileSpeaksTo(ctx.mapped, 'extraBarcodes')) {
+      const { setProductBarcodes } = await import('../../site/productBarcodes')
+      const list = (draft.extraBarcodes ?? '').split(/[|;]/).map((b) => b.trim()).filter(Boolean)
+      const result = await setProductBarcodes(ctx.siteId, productId, list)
+      for (const warning of result.warnings) {
+        warnings.push({ step: 'Extra barcodes', reason: warning })
+      }
+    }
+
     return {
       ...base,
       status: existingId !== null ? 'updated' : 'created',
@@ -463,9 +486,10 @@ function productInput(draft: ProductDraft, departmentId: number | undefined): Pr
   const {
     departmentPath: _path, levels: _levels,
     supplierCode: _sc, supplierCost: _scost, supplierPackSize: _sps,
+    extraBarcodes: _xb,
     ...rest
   } = draft
-  void _path; void _levels; void _sc; void _scost; void _sps
+  void _path; void _levels; void _sc; void _scost; void _sps; void _xb
 
   return {
     ...rest,

@@ -36,6 +36,7 @@ function fakeProduct(overrides: Partial<TillProduct> = {}): TillProduct {
     id: 1,
     code: 'X',
     barcode: null,
+    barcodes: [],
     description: 'Test product',
     productType: 'normal',
     departmentId: null,

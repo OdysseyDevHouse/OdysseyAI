@@ -20,6 +20,8 @@ import { referChain, isOnReferLadder } from '@/lib/site/referRange'
 import ProductForm, { SaveProductButton } from '../ProductForm'
 import ProductImages from '../ProductImages'
 import VariantsPanel from '../VariantsPanel'
+import BarcodesPanel from '../BarcodesPanel'
+import { listProductBarcodes } from '@/lib/site/productBarcodes'
 import ProductActions from './ProductActions'
 
 export const dynamic = 'force-dynamic'
@@ -81,7 +83,7 @@ export default async function EditProductPage({
   // The setup each product type needs. Only fetched for the type that uses it —
   // a normal product has no ingredient list to read — and each is tolerant of
   // its table not existing yet, so an unmigrated store still edits products.
-  const [recipeLines, referChainRows, serials, productSuppliers, images, autoCode] = await Promise.all([
+  const [recipeLines, referChainRows, serials, productSuppliers, extraBarcodes, images, autoCode] = await Promise.all([
     product.productType === 'recipe'
       ? listRecipe(siteId, product.id).catch(() => [])
       : Promise.resolve([]),
@@ -104,6 +106,8 @@ export default async function EditProductPage({
           .catch(() => [])
       : Promise.resolve([]),
     listProductSuppliers(siteId, product.id).catch(() => []),
+    // Tolerant of 143 not having run.
+    listProductBarcodes(siteId, product.id).catch(() => []),
     // Tolerant like its neighbours: an unmigrated store still edits products,
     // it simply has no gallery yet.
     listImages(siteId, product.id).catch(() => []),
@@ -232,6 +236,9 @@ export default async function EditProductPage({
               {/* Images upload immediately and individually, so they are not
                   part of the product's save at all. */}
               <ProductImages productId={product.id} initial={images} />
+
+              {/* The alias barcodes (143). Self-saving, like its siblings. */}
+              <BarcodesPanel productId={product.id} initial={extraBarcodes} />
             </>
           }
         />
