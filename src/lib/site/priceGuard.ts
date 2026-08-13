@@ -59,6 +59,16 @@ export type PriceCheckLine = {
   unitPriceIncl: number
   discountPct?: number
   /**
+   * An absolute discount — a document-level discount apportioned onto the line,
+   * or one keyed directly. Checked as its EFFECTIVE percentage of the gross so
+   * the cap means the same thing however the discount was expressed. Before
+   * this field, a payload carrying discountIncl bypassed max_discount_pct
+   * entirely — the guard read only the percentage.
+   */
+  discountIncl?: number
+  /** Needed to turn discountIncl into a percentage. Ignored otherwise. */
+  qty?: number
+  /**
    * The answers chosen on this line.
    *
    * Only the id and the count are READ — a caller may hand over the whole
@@ -173,7 +183,13 @@ export async function checkPricing(
 
     if (!mayOverrideDiscount) {
       const cap = toNum(product.max_discount_pct)
-      const asked = line.discountPct ?? 0
+      // An absolute discount is judged as the percentage it amounts to, so the
+      // cap cannot be dodged by expressing the same reduction in rands.
+      const gross = round((line.qty ?? 1) * line.unitPriceIncl, 2)
+      const asked =
+        line.discountIncl !== undefined && gross > 0
+          ? round((line.discountIncl / gross) * 100, 3)
+          : (line.discountPct ?? 0)
       // A zero cap means "no discount allowed on this product", which is a
       // real setting rather than an unset one — 037 gave the column meaning.
       if (asked > cap + TOLERANCE) {

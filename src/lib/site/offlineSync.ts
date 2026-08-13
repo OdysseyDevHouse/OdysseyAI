@@ -350,6 +350,8 @@ export async function postOfflineSale(
       description: l.description,
       unitPriceIncl: l.unitPriceIncl,
       discountPct: l.discountPct,
+      discountIncl: l.discountIncl,
+      qty: l.qty,
     })),
   )
   if (priceRefusal) reasons.push(`Priced beyond what ${actorName} may override: ${priceRefusal}`)
@@ -669,6 +671,8 @@ function linesFor(sale: OfflineSale): LineInput[] {
     qty: line.qty,
     unitPriceIncl: line.unitPriceIncl,
     discountPct: line.discountPct,
+    // Absent on old queued sales — undefined keeps the percentage in charge.
+    discountIncl: line.discountIncl,
     vatRatePct: line.vatRatePct,
     unitCostExcl: line.unitCostExcl,
     specialId: line.specialId ?? null,

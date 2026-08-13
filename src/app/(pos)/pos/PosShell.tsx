@@ -74,7 +74,15 @@ import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
 import { useSaleState } from './useSaleState'
-import { specialsFor, totalsFor, salePayloadLines, returnPayloadLines } from './saleSelectors'
+import {
+  specialsFor,
+  totalsFor,
+  salePayloadLines,
+  returnPayloadLines,
+  docDiscountShares,
+  type DocDiscount,
+} from './saleSelectors'
+import DocDiscountModal from './DocDiscountModal'
 import { serviceChargeFor, planTips, type ServiceTier } from '@/lib/tipMath'
 import { RefundPad } from './RefundPad'
 import { TableGate } from './TableGate'
@@ -477,7 +485,35 @@ export default function PosShell({
     () => specialsFor(state.lines, state.returning ? [] : specials, new Date(clock)),
     [state.lines, specials, clock, state.returning],
   )
-  const totals = useMemo(() => totalsFor(state.lines, lineSpecials), [state.lines, lineSpecials])
+
+  /**
+   * A discount on the whole sale, spread onto the lines (rule 3).
+   *
+   * Plain state BESIDE the reducer rather than in it — the reducer is a shared
+   * file another session may be editing, and the discount's lifecycle is simple:
+   * it dies whenever the basket does. FORCED NULL in return mode — a return
+   * credits what was paid, and the price already carries any discount.
+   */
+  const [docDiscount, setDocDiscount] = useState<DocDiscount>(null)
+  const [discountingDoc, setDiscountingDoc] = useState(false)
+  const effectiveDocDiscount = state.returning ? null : docDiscount
+  const docShares = useMemo(
+    () => docDiscountShares(state.lines, lineSpecials, effectiveDocDiscount),
+    [state.lines, lineSpecials, effectiveDocDiscount],
+  )
+
+  /* An emptied basket takes its discount with it — CLEAR, SET_RETURNING and a
+     settled sale all land here, so a recalled or fresh basket cannot inherit
+     the last customer's discount. */
+  useEffect(() => {
+    if (state.lines.length === 0 && docDiscount) setDocDiscount(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.lines.length])
+
+  const totals = useMemo(
+    () => totalsFor(state.lines, lineSpecials, docShares),
+    [state.lines, lineSpecials, docShares],
+  )
 
   /**
    * The service charge a bill of this size would earn, ignoring whether a table is
@@ -732,7 +768,7 @@ export default function PosShell({
         phone: state.customer?.phone ?? null,
       },
       priceStructureId,
-      lines: salePayloadLines(state.lines, lineSpecials),
+      lines: salePayloadLines(state.lines, lineSpecials, docShares),
       tenders: paid.map((p) => ({
         tenderTypeId: p.tenderTypeId,
         tenderCode: tenders.find((t) => t.id === p.tenderTypeId)?.code ?? '',
@@ -844,7 +880,7 @@ export default function PosShell({
             terminalId: terminal?.id ?? null,
             terminalCode: terminal?.code ?? null,
             priceStructureId,
-            lines: salePayloadLines(state.lines, lineSpecials),
+            lines: salePayloadLines(state.lines, lineSpecials, docShares),
           },
           paid,
           voucherCodes,
@@ -1072,7 +1108,7 @@ export default function PosShell({
         customerVatNo: state.customer?.vatNumber ?? null,
         customerPhone: state.customer?.phone ?? null,
         priceStructureId,
-        lines: salePayloadLines(state.lines, lineSpecials),
+        lines: salePayloadLines(state.lines, lineSpecials, docShares),
         totalIncl: totals.doc.totalIncl,
       })
     } catch {
@@ -1125,7 +1161,7 @@ export default function PosShell({
           terminalId: terminal?.id ?? null,
           terminalCode: terminal?.code ?? null,
           priceStructureId,
-          lines: salePayloadLines(state.lines, lineSpecials),
+          lines: salePayloadLines(state.lines, lineSpecials, docShares),
         },
         /* PEEKED, not spent: the same approval must still cover the finalise —
            the token verifies statelessly, so parking does not use it up. */
@@ -1281,6 +1317,7 @@ export default function PosShell({
       setTabVisitTypeId(tab.visitTypeId)
       setTable(null)
       setChoosingTable(false)
+      setDocDiscount(null) // a recalled basket must not inherit the last one's discount
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -1301,6 +1338,7 @@ export default function PosShell({
       setShowingSaved(false)
       return
     }
+    setDocDiscount(null) // a recalled basket must not inherit the last one's discount
     dispatch({
       type: 'LOAD',
       documentId: null,
@@ -1329,6 +1367,7 @@ export default function PosShell({
         return
       }
       setSavedTally((n) => Math.max(0, n - 1))
+      setDocDiscount(null) // a recalled basket must not inherit the last one's discount
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -1519,7 +1558,7 @@ export default function PosShell({
             terminalId: terminal?.id ?? null,
             terminalCode: terminal?.code ?? null,
             priceStructureId,
-            lines: salePayloadLines(state.lines, lineSpecials),
+            lines: salePayloadLines(state.lines, lineSpecials, docShares),
           })
           if (!saved.ok) {
             tab?.close()
@@ -1673,7 +1712,7 @@ export default function PosShell({
    * is about making it survivable, not about making it visible.
    */
   const [tableSaving, setTableSaving] = useState(false)
-  const tableLines = salePayloadLines(state.lines, lineSpecials)
+  const tableLines = salePayloadLines(state.lines, lineSpecials, docShares)
 
   useEffect(() => {
     if (!table) return
@@ -1755,6 +1794,7 @@ export default function PosShell({
       }
       setTable(picked)
       setChoosingTable(false)
+      setDocDiscount(null) // a recalled basket must not inherit the last one's discount
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -1837,6 +1877,7 @@ export default function PosShell({
         },
         showOutbox: () => setShowingOutbox(true),
         showShift: () => setManagingShift(true),
+        docDiscount: () => setDiscountingDoc(true),
         startReturn: () => dispatch({ type: 'SET_RETURNING', returning: true }),
         navigate: (href: string) => router.push(href),
         say: (message: string, tone: 'info' | 'error') =>
@@ -2008,6 +2049,7 @@ export default function PosShell({
           /* Only a parked tab has a document to print — a counter basket lives
              in this component until it is paid, and has no bill to show. */
           onBill={hospitality && state.documentId ? printBill : undefined}
+          onDocDiscount={() => setDiscountingDoc(true)}
           busy={pending}
         />
 
@@ -2331,6 +2373,42 @@ export default function PosShell({
             },
           })
         }}
+      />
+
+      {/* A discount on the whole sale — spread onto the lines, previewed, and
+          routed through the supervisor pad when it breaches a line's ceiling. */}
+      <DocDiscountModal
+        open={discountingDoc}
+        lines={state.lines}
+        lineSpecials={lineSpecials}
+        current={docDiscount}
+        canOverrideDiscount={canOverrideDiscount}
+        onApply={setDocDiscount}
+        onSupervisor={({ discount, actionLabel, amount }) => {
+          setDiscountingDoc(false)
+          setOverride({
+            capability: 'sales.discount_override',
+            actionLabel,
+            amount,
+            documentId: state.documentId,
+            onAuthorised: (auth) => {
+              if (auth.token) {
+                overrideTokenRef.current = auth.token
+              } else {
+                offlineOverridesRef.current.push({
+                  capability: 'sales.discount_override',
+                  userId: auth.userId,
+                  name: auth.name,
+                  action: actionLabel,
+                  amount,
+                })
+              }
+              setDocDiscount(discount)
+              toast.success(`Approved by ${auth.name}.`)
+            },
+          })
+        }}
+        onClose={() => setDiscountingDoc(false)}
       />
 
       {/* The supervisor pad — one pad for every refusal that a manager's PIN

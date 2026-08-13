@@ -44,6 +44,7 @@ export function SalePane({
   onShowSaved,
   savedCount,
   onBill,
+  onDocDiscount,
   showParkKeys = true,
   busy,
 }: {
@@ -74,6 +75,8 @@ export function SalePane({
    * every retail till and every basket not yet on a table.
    */
   onBill?: () => void
+  /** Opens the whole-sale discount dialog. Undefined leaves the row inert. */
+  onDocDiscount?: () => void
   /**
    * Whether to offer Save / Saved at all.
    *
@@ -201,9 +204,34 @@ export function SalePane({
           {/* Always shown, even at zero. A discount row that appears only when a
               discount exists means the row a cashier is checking for is missing
               exactly when they want to confirm there is no discount. */}
-          <Row label="Sale discount">
-            {totals.doc.discountTotal > 0 ? `−${formatMoney(totals.doc.discountTotal)}` : formatMoney(0)}
-          </Row>
+          {/* Tappable when the till offers a whole-sale discount: the row IS
+              where a cashier looks for the discount, so it is also where they
+              set one. A plain row (retail permissions unchanged) when not. */}
+          {onDocDiscount && !returning ? (
+            <button
+              type="button"
+              data-kit-ok /* a full-width row-button matching the Row skin — a kit Button would break the box's rhythm */
+              onClick={onDocDiscount}
+              disabled={empty || busy}
+              className="flex w-full items-center justify-between px-3.5 py-2 text-left hover:bg-surface-2 disabled:pointer-events-none"
+            >
+              <span className="flex items-center gap-1.5 text-muted">
+                Sale discount
+                <Icons.ChevronRight size={13} />
+              </span>
+              <span className="numeric text-ink-2">
+                {totals.doc.discountTotal > 0
+                  ? `−${formatMoney(totals.doc.discountTotal)}`
+                  : formatMoney(0)}
+              </span>
+            </button>
+          ) : (
+            <Row label="Sale discount">
+              {totals.doc.discountTotal > 0
+                ? `−${formatMoney(totals.doc.discountTotal)}`
+                : formatMoney(0)}
+            </Row>
+          )}
           <Row label="VAT included" divided>
             {formatMoney(totals.doc.vatTotal)}
           </Row>

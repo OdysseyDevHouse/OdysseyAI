@@ -22,6 +22,13 @@ export type OfflineSaleLine = {
   unitPriceIncl: number
   /** The EFFECTIVE discount — what the slip showed, after the special comparison. */
   discountPct: number
+  /**
+   * An absolute discount on the line — a document-level discount's apportioned
+   * share. OPTIONAL like `instructions`: old queued sales have no such field
+   * and must still post. When present it wins over the percentage, exactly as
+   * documentMath's lineTotals treats the pair.
+   */
+  discountIncl?: number
   /** Which special caused it, so a promotion's cost can be reported on. */
   specialId: number | null
   vatRatePct: number

@@ -54,6 +54,8 @@ export type QuickKeyHandlers = {
   showOutbox: () => void
   /** Opens the shift modal — float, payouts, and the blind cash-up count. */
   showShift: () => void
+  /** Opens the whole-sale discount dialog. */
+  docDiscount: () => void
   /**
    * Switches the pane into return mode. CLEARS the basket — see SET_RETURNING.
    *
@@ -119,10 +121,15 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
    * operator's override rights, and already reads the product's own discount ceiling. A
    * second route to the same change is a second place for those three rules to drift.
    */
-  'global-discount': ({ handlers, hasSelection }) =>
+  /* With a line selected it discounts THAT line (the editor already holds the
+     rules); with none it discounts the whole sale — which is what the key's
+     name has promised all along. */
+  'global-discount': ({ handlers, hasSelection, hasLines }) =>
     hasSelection
       ? handlers.editLine()
-      : handlers.say('Tap the line you want to discount first.', 'info'),
+      : hasLines
+        ? handlers.docDiscount()
+        : handlers.say('Ring something up first.', 'info'),
 
   'price-change': ({ handlers, hasSelection }) =>
     hasSelection

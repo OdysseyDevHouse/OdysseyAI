@@ -1,4 +1,5 @@
-import { lineTotals, documentTotals } from '@/lib/documentMath'
+import { lineTotals, documentTotals, apportionDiscount } from '@/lib/documentMath'
+import { round } from '@/lib/decimals'
 import { computeSpecials, effectiveDiscountPct, type Special } from '@/lib/specialsEngine'
 import type { BasketLine } from '@/lib/basket'
 import type { Department } from './types'
@@ -42,26 +43,99 @@ export function specialsFor(lines: BasketLine[], specials: Special[], now: Date)
 export type SaleTotals = ReturnType<typeof totalsFor>
 
 /**
+ * A whole-sale discount, before it is spread onto the lines.
+ *
+ * Null is "none". A percent applies to the basket's NET (after line discounts
+ * and specials — a doc discount on top of a promotion is explicit stacking the
+ * cashier can see in the preview, never a silent compound inside one line);
+ * an amount is clamped to the net so a R100 discount on a R60 basket credits
+ * nothing.
+ */
+export type DocDiscount = { kind: 'percent' | 'amount'; value: number } | null
+
+/**
+ * Each line's share of a document-level discount, index-aligned.
+ *
+ * documentMath rule 3 does the spreading: pro-rata by net value, remainder to
+ * the largest line, so the shares sum to EXACTLY the discount asked for.
+ * `eligibleKeys` narrows it (a discount code scoped to a department) — an
+ * ineligible line's share is zero, and the amount spreads over the rest.
+ */
+export function docDiscountShares(
+  lines: BasketLine[],
+  lineSpecials: ReturnType<typeof specialsFor>,
+  docDiscount: DocDiscount,
+  eligibleKeys?: ReadonlySet<string>,
+): number[] {
+  if (!docDiscount || docDiscount.value <= 0 || lines.length === 0) {
+    return lines.map(() => 0)
+  }
+
+  const netTotals = lines.map((line, index) =>
+    lineTotals({
+      qty: line.qty,
+      unitPriceIncl: line.unitPriceIncl,
+      discountPct: effectiveDiscountPct(line.discountPct, lineSpecials[index]),
+      vatRatePct: line.vatRatePct,
+    }).lineTotalIncl,
+  )
+
+  const eligible = lines.map(
+    (line, index) =>
+      (eligibleKeys === undefined || eligibleKeys.has(line.key)) && netTotals[index] > 0,
+  )
+  const eligibleNet = round(
+    netTotals.reduce((sum, value, index) => (eligible[index] ? sum + value : sum), 0),
+    2,
+  )
+  if (eligibleNet <= 0) return lines.map(() => 0)
+
+  const amount =
+    docDiscount.kind === 'percent'
+      ? round((eligibleNet * docDiscount.value) / 100, 2)
+      : Math.min(round(docDiscount.value, 2), eligibleNet)
+  if (amount <= 0) return lines.map(() => 0)
+
+  // Apportion over the eligible subset, then map back to full-basket indices.
+  const subset = netTotals.filter((_, index) => eligible[index])
+  const shares = apportionDiscount(subset, amount)
+  let cursor = 0
+  return lines.map((_, index) => (eligible[index] ? shares[cursor++] : 0))
+}
+
+/**
  * The figures on screen.
  *
  * A special and a cashier's own discount do NOT stack — the better of the two
  * applies. Compounding them is how a staff discount during a promotion quietly
  * sells below cost, and `effectiveDiscountPct` is the one place that decision
  * lives.
+ *
+ * `docShares` (a document-level discount already apportioned by
+ * `docDiscountShares`) folds each line's share into an absolute `discountIncl`
+ * — line discount plus share — which `lineTotals` prefers over the percentage.
+ * Absent, behaviour is byte-identical to before the parameter existed.
  */
 export function totalsFor(
   lines: BasketLine[],
   lineSpecials: ReturnType<typeof specialsFor>,
+  docShares?: number[],
 ) {
-  const perLine = lines.map((line, index) => ({
-    ...lineTotals({
-      qty: line.qty,
-      unitPriceIncl: line.unitPriceIncl,
-      discountPct: effectiveDiscountPct(line.discountPct, lineSpecials[index]),
+  const perLine = lines.map((line, index) => {
+    const pct = effectiveDiscountPct(line.discountPct, lineSpecials[index])
+    const share = docShares?.[index] ?? 0
+    const ownDiscount = round(round(line.qty * line.unitPriceIncl, 2) * (pct / 100), 2)
+    return {
+      ...lineTotals({
+        qty: line.qty,
+        unitPriceIncl: line.unitPriceIncl,
+        discountPct: pct,
+        ...(share > 0 ? { discountIncl: round(ownDiscount + share, 2) } : {}),
+        vatRatePct: line.vatRatePct,
+      }),
       vatRatePct: line.vatRatePct,
-    }),
-    vatRatePct: line.vatRatePct,
-  }))
+    }
+  })
   return { perLine, doc: documentTotals(perLine) }
 }
 
@@ -77,25 +151,39 @@ export function totalsFor(
 export function salePayloadLines(
   lines: BasketLine[],
   lineSpecials: ReturnType<typeof specialsFor>,
+  /** A doc-level discount's per-line shares — same array totalsFor was given. */
+  docShares?: number[],
+  /** Stamped on the ELIGIBLE lines when a discount code paid for the shares. */
+  discountCodeId?: number | null,
 ) {
-  return lines.map((line, index) => ({
-    productId: line.productId,
-    productCode: line.productCode,
-    description: line.description,
-    productType: line.productType,
-    departmentId: line.departmentId,
-    qty: line.qty,
-    unitPriceIncl: line.unitPriceIncl,
-    discountPct: effectiveDiscountPct(line.discountPct, lineSpecials[index]),
-    specialId: lineSpecials[index]?.specialId ?? null,
-    vatRatePct: line.vatRatePct,
-    unitCostExcl: line.unitCostExcl,
-    /* The answers, and the note. This whitelist is the ONLY thing that reaches
-       the server from a basket line, online and offline alike — a field left out
-       here is one that vanishes silently at finalise. */
-    instructions: line.instructions,
-    note: line.note,
-  }))
+  return lines.map((line, index) => {
+    const pct = effectiveDiscountPct(line.discountPct, lineSpecials[index])
+    const share = docShares?.[index] ?? 0
+    const ownDiscount = round(round(line.qty * line.unitPriceIncl, 2) * (pct / 100), 2)
+    return {
+      productId: line.productId,
+      productCode: line.productCode,
+      description: line.description,
+      productType: line.productType,
+      departmentId: line.departmentId,
+      qty: line.qty,
+      unitPriceIncl: line.unitPriceIncl,
+      discountPct: pct,
+      /* The absolute discount wins server-side when present — same rule as
+         lineTotals. Emitted only when a share exists, so a sale with no doc
+         discount is byte-identical to before this parameter existed. */
+      ...(share > 0 ? { discountIncl: round(ownDiscount + share, 2) } : {}),
+      ...(share > 0 && discountCodeId ? { discountCodeId } : {}),
+      specialId: lineSpecials[index]?.specialId ?? null,
+      vatRatePct: line.vatRatePct,
+      unitCostExcl: line.unitCostExcl,
+      /* The answers, and the note. This whitelist is the ONLY thing that reaches
+         the server from a basket line, online and offline alike — a field left out
+         here is one that vanishes silently at finalise. */
+      instructions: line.instructions,
+      note: line.note,
+    }
+  })
 }
 
 /**
