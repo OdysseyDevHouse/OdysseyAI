@@ -4,6 +4,9 @@ import { requireSiteUser } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { creditNotesFor, creditableLines } from '@/lib/site/salesReversal'
 import { listSalesReasons } from '@/lib/site/salesReasons'
+import { getCustomer } from '@/lib/site/customers'
+import { lastEmailed } from '@/lib/site/invoiceEmail'
+import { isConfigured as mailIsConfigured } from '@/lib/mail'
 import { siteQuery } from '@/lib/siteDb'
 import { can } from '@/lib/site/permissions'
 import { formatMoney, formatQty, toNum } from '@/lib/decimals'
@@ -45,15 +48,25 @@ export default async function SalesDocumentPage({
   const document = await getDocument(site.id, documentId)
   if (!document) notFound()
 
-  const [credits, remaining, voidReasons, returnReasons] = await Promise.all([
-    creditNotesFor(site.id, documentId),
-    document.docType === 'invoice' && document.status === 'finalised'
-      ? creditableLines(site.id, documentId)
-      : Promise.resolve(null),
+  const emailable =
+    document.status === 'finalised' &&
+    (document.docType === 'invoice' || document.docType === 'credit_sale')
+  const mailReady = mailIsConfigured()
+
+  const [credits, remaining, voidReasons, returnReasons, emailCustomer, lastSend] =
+    await Promise.all([
+      creditNotesFor(site.id, documentId),
+      document.docType === 'invoice' && document.status === 'finalised'
+        ? creditableLines(site.id, documentId)
+        : Promise.resolve(null),
     // Active only: these are the lists somebody picks FROM. Retired reasons stay
     // readable on the documents that used them.
     listSalesReasons(site.id, 'void'),
     listSalesReasons(site.id, 'return'),
+    emailable && document.customerId
+      ? getCustomer(site.id, document.customerId)
+      : Promise.resolve(null),
+    emailable ? lastEmailed(site.id, documentId) : Promise.resolve(null),
   ])
 
   const tenders = await siteQuery<Record<string, unknown>>(
@@ -119,6 +132,12 @@ export default async function SalesDocumentPage({
               returnReasons={returnReasons}
               voidBlockedReason={voidBlockedReason}
               creditBlockedReason={creditBlockedReason}
+              emailable={emailable}
+              mailConfigured={mailReady}
+              emailDefaultTo={emailCustomer?.email ?? ''}
+              lastEmailedNote={
+                lastSend ? `${lastSend.detail ?? ''} · ${lastSend.userName}` : null
+              }
             />
           </>
         }

@@ -5,11 +5,13 @@ import { formatMoney } from '../decimals'
 import { send, isConfigured } from '../mail'
 import { renderInvoicePdf } from '../invoices/pdf'
 import { buildInvoice, type IssuingSite } from '../invoices/build'
-import { createCallbackToken } from '../callbackToken'
-import { createIntent, getGateway } from './payments'
 import { getDocument } from './salesDocuments'
 import { getCustomer } from './customers'
 import { logActivity, type Actor } from './activityLog'
+/* The render-and-send machinery grew up here and moved to invoiceEmail.ts when
+   on-demand emailing needed the same nine tenths. Imported back, so the two
+   flows cannot drift. */
+import { mintPaymentLink, invoicePlainBody as plainBody, invoiceHtmlBody as htmlBody } from './invoiceEmail'
 
 /**
  * Emailing a contract invoice to the customer.
@@ -248,102 +250,11 @@ async function record(
   return { ok: false, error: error ?? 'The invoice was not sent.', skipped: status === 'skipped' }
 }
 
-/**
- * A pay-online URL for one invoice.
- *
- * Reuses the storefront's machinery exactly — an intent recording what we
- * expect, plus a signed callback token binding site and reference together. The
- * only difference is `purpose`, which tells the ITN handler to settle a debtor
- * invoice rather than a shop order.
- *
- * Returns null when the gateway is not usable, so the invoice still goes out
- * with no link rather than not going out at all.
- */
-async function mintPaymentLink(
-  siteId: number,
-  documentId: number,
-  amountIncl: number,
-  origin: string,
-): Promise<string | null> {
-  const gateway = await getGateway(siteId)
-  if (!gateway?.isActive || !gateway.credentialsUsable) return null
-  if (amountIncl <= 0) return null
-
-  const intent = await createIntent(siteId, {
-    targetId: documentId,
-    amountIncl,
-    purpose: 'debtor_invoice',
-  })
-  const token = await createCallbackToken(siteId, intent.reference)
-
-  // The landing page, not the gateway itself: PayFast wants a signed POST, and
-  // a link in an email can only ever be a GET. The page builds the form and
-  // submits it.
-  return `${origin.replace(/\/$/, '')}/pay/${token}`
-}
-
 function monthName(iso: string): string {
   const date = new Date(`${iso}T00:00:00`)
   if (Number.isNaN(date.getTime())) return iso
   return date.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
 }
 
-function plainBody(
-  siteName: string,
-  customerName: string,
-  number: string,
-  document: { documentDate: string; dueDate: string | null; totalIncl: number },
-  paymentUrl: string | null,
-): string {
-  return [
-    `Good day${customerName ? ` ${customerName}` : ''},`,
-    '',
-    `Please find attached invoice ${number} for ${formatMoney(document.totalIncl)}.`,
-    '',
-    `Invoice date: ${document.documentDate}`,
-    ...(document.dueDate ? [`Due date: ${document.dueDate}`] : []),
-    `Amount due: ${formatMoney(document.totalIncl)}`,
-    ...(paymentUrl ? ['', 'Pay this invoice online:', paymentUrl] : []),
-    '',
-    `Please quote ${number} with your payment.`,
-    '',
-    'Kind regards,',
-    siteName,
-  ].join('\n')
-}
-
-function htmlBody(
-  siteName: string,
-  customerName: string,
-  number: string,
-  document: { documentDate: string; dueDate: string | null; totalIncl: number },
-  paymentUrl: string | null,
-): string {
-  // Inline styles and a table layout, because email clients support almost
-  // nothing else. Deliberately plain — a statement of fact with a button, not a
-  // marketing template.
-  return `<div style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#16191d;line-height:1.5">
-  <p>Good day${customerName ? ` ${escapeHtml(customerName)}` : ''},</p>
-  <p>Please find attached invoice <strong>${escapeHtml(number)}</strong> for <strong>${formatMoney(document.totalIncl)}</strong>.</p>
-  <table cellpadding="0" cellspacing="0" style="font-size:14px;margin:16px 0">
-    <tr><td style="padding:2px 16px 2px 0;color:#667085">Invoice date</td><td>${escapeHtml(document.documentDate)}</td></tr>
-    ${document.dueDate ? `<tr><td style="padding:2px 16px 2px 0;color:#667085">Due date</td><td>${escapeHtml(document.dueDate)}</td></tr>` : ''}
-    <tr><td style="padding:2px 16px 2px 0;color:#667085">Amount due</td><td><strong>${formatMoney(document.totalIncl)}</strong></td></tr>
-  </table>
-  ${
-    paymentUrl
-      ? `<p style="margin:20px 0"><a href="${escapeHtml(paymentUrl)}" style="background:#16191d;color:#ffffff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Pay this invoice online</a></p>`
-      : ''
-  }
-  <p style="color:#667085;font-size:13px">Please quote ${escapeHtml(number)} with your payment.</p>
-  <p>Kind regards,<br>${escapeHtml(siteName)}</p>
-</div>`
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
+/* plainBody / htmlBody / escapeHtml moved to invoiceEmail.ts — see the import
+   note at the top. One body, two senders. */

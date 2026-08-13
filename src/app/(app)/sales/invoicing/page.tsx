@@ -21,6 +21,7 @@ import {
 import { STATUS_LABELS } from '../status'
 import NewInvoiceButton from './NewInvoiceButton'
 import InvoicingTable, { type InvoiceTableRow } from './InvoicingTable'
+import { isConfigured as mailIsConfigured } from '@/lib/mail'
 
 export const dynamic = 'force-dynamic'
 
@@ -254,6 +255,7 @@ export default async function InvoicingPage({
         <Card>
           <InvoicingTable
             rows={rows}
+            mailConfigured={mailIsConfigured()}
             empty={
               params.q
                 ? {

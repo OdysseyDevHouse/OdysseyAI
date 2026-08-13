@@ -12,6 +12,7 @@ import {
   type PickableReason,
 } from '@/components/ui'
 import { voidSaleAction, recordPrintAction, creditWholeSaleAction } from '../actions'
+import { EmailInvoiceDialog } from '../EmailInvoiceDialog'
 
 /**
  * Cancel, credit and print, on a posted document.
@@ -31,6 +32,10 @@ export default function DocumentActions({
   returnReasons,
   voidBlockedReason,
   creditBlockedReason,
+  emailable,
+  mailConfigured,
+  emailDefaultTo,
+  lastEmailedNote,
 }: {
   documentId: number
   documentNumber: string | null
@@ -51,8 +56,17 @@ export default function DocumentActions({
    */
   voidBlockedReason?: string | null
   creditBlockedReason?: string | null
+  /** Finalised invoice or credit note — the only things emailed from here. */
+  emailable?: boolean
+  /** False shows the button disabled with the reason, never a dead dialog. */
+  mailConfigured?: boolean
+  /** The customer's address, empty when the account has none. */
+  emailDefaultTo?: string
+  /** The last 'emailed' audit entry, for informed resends. */
+  lastEmailedNote?: string | null
 }) {
   const [voiding, setVoiding] = useState(false)
+  const [emailing, setEmailing] = useState(false)
   const [crediting, setCrediting] = useState(false)
   const [voidReasonId, setVoidReasonId] = useState<number | null>(null)
   const [voidNote, setVoidNote] = useState('')
@@ -124,6 +138,19 @@ export default function DocumentActions({
           Print
         </Button>
       )}
+
+      {emailable &&
+        (mailConfigured ? (
+          <Button variant="ghost" onClick={() => setEmailing(true)} disabled={pending}>
+            <Icons.Mail size={15} />
+            Email
+          </Button>
+        ) : (
+          <Button variant="ghost" disabled title="Email is not set up on this system.">
+            <Icons.Mail size={15} />
+            Email
+          </Button>
+        ))}
 
       {/*
         Shown disabled with the reason rather than hidden. A button that simply
@@ -237,6 +264,15 @@ export default function DocumentActions({
             />
           </div>
         }
+      />
+
+      <EmailInvoiceDialog
+        open={emailing}
+        onClose={() => setEmailing(false)}
+        documentId={documentId}
+        documentNumber={documentNumber}
+        defaultTo={emailDefaultTo ?? ''}
+        lastEmailedNote={lastEmailedNote ?? null}
       />
     </div>
   )

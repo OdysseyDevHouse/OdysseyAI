@@ -24,6 +24,9 @@ import {
   getTillCustomer,
   type TillCustomer,
 } from '@/lib/site/tillCustomers'
+import { headers } from 'next/headers'
+import { isEmail } from '@/lib/site/customerLookups'
+import { emailInvoiceDocument, issuingSiteFor } from '@/lib/site/invoiceEmail'
 
 /**
  * Till actions.
@@ -489,4 +492,49 @@ export async function loadSaleAction(documentId: number) {
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
   return getDocument(siteId, documentId)
+}
+
+/**
+ * Emails a finalised invoice or credit note to an address the user confirmed.
+ *
+ * Resends are allowed on purpose — the audit trail records every one, and the
+ * dialog shows the last, so a second copy is an informed act. The document is
+ * never touched: same number, same ledger entry, PDF re-rendered from stored
+ * figures.
+ */
+export async function emailInvoiceAction(
+  documentId: number,
+  input: { to: string; message?: string },
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  if (!isEmail(input.to.trim())) {
+    return { ok: false, error: 'That does not look like an email address.' }
+  }
+
+  const site = await issuingSiteFor(siteId)
+  if (!site) return { ok: false, error: 'This site’s details could not be read.' }
+
+  const result = await emailInvoiceDocument(siteId, site, actor, documentId, {
+    to: input.to,
+    message: input.message ?? null,
+    origin: await emailOrigin(),
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath(`/sales/${documentId}`)
+  return { ok: true, message: `Emailed to ${result.to}.` }
+}
+
+/** The origin an emailed pay-link should point at — same rule as contracts. */
+async function emailOrigin(): Promise<string> {
+  const head = await headers()
+  const explicit = process.env.PUBLIC_ORIGIN?.trim()
+  if (explicit) return explicit.replace(/\/$/, '')
+
+  const host = head.get('x-forwarded-host') ?? head.get('host') ?? 'localhost:4100'
+  const proto = head.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https')
+  return `${proto}://${host}`
 }

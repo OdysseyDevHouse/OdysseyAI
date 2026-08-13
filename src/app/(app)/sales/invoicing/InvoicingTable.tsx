@@ -1,11 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { SalesDocStatus } from '@/lib/site/salesDocuments'
 import { formatMoney } from '@/lib/decimals'
 import { Badge, Icons, DataTable, Menu, MenuItem, type Column } from '@/components/ui'
 import { STATUS_LABELS, STATUS_TONE } from '../status'
+import { EmailInvoiceDialog } from '../EmailInvoiceDialog'
 
 /**
  * The invoice register — the whole life of an invoice, not one slice of it.
@@ -122,38 +123,64 @@ const COLUMNS: readonly Column<InvoiceTableRow>[] = [
 export default function InvoicingTable({
   rows,
   empty,
+  mailConfigured = false,
 }: {
   rows: InvoiceTableRow[]
   empty: { title: string; hint?: string; icon?: ReactNode; action?: ReactNode }
+  /** Gates the row's Email entry — a dead dialog teaches nothing. */
+  mailConfigured?: boolean
 }) {
-  return (
-    <DataTable
-      columns={COLUMNS}
-      rows={rows}
-      getRowKey={(doc) => doc.id}
-      actions={(doc) => (
-        <Menu
-          iconOnly
-          size="sm"
-          variant="bare"
-          triggerLabel={`Actions for ${labelFor(doc)}`}
-          label={<Icons.MoreVertical size={16} />}
-        >
-          {/* Same split as the row's own link: unfinished work opens in the
-              editor, everything else as the issued record.
+  const [emailingDoc, setEmailingDoc] = useState<InvoiceTableRow | null>(null)
 
-              Printing is deliberately NOT here. It is a client action on the
-              record screen that also increments the document's print count —
-              a link from this row would either 404 or print without recording
-              it, and a menu that silently does neither is worse than one
-              entry. */}
-          <MenuItem href={hrefFor(doc)}>
-            <Icons.Eye size={15} />
-            {isOpen(doc) ? 'Continue capturing' : 'View document'}
-          </MenuItem>
-        </Menu>
+  return (
+    <>
+      <DataTable
+        columns={COLUMNS}
+        rows={rows}
+        getRowKey={(doc) => doc.id}
+        actions={(doc) => (
+          <Menu
+            iconOnly
+            size="sm"
+            variant="bare"
+            triggerLabel={`Actions for ${labelFor(doc)}`}
+            label={<Icons.MoreVertical size={16} />}
+          >
+            {/* Same split as the row's own link: unfinished work opens in the
+                editor, everything else as the issued record.
+
+                Printing is deliberately NOT here. It is a client action on the
+                record screen that also increments the document's print count —
+                a link from this row would either 404 or print without recording
+                it, and a menu that silently does neither is worse than one
+                entry. */}
+            <MenuItem href={hrefFor(doc)}>
+              <Icons.Eye size={15} />
+              {isOpen(doc) ? 'Continue capturing' : 'View document'}
+            </MenuItem>
+            {mailConfigured && doc.status === 'finalised' && (
+              <MenuItem onClick={() => setEmailingDoc(doc)}>
+                <Icons.Mail size={15} />
+                Email it
+              </MenuItem>
+            )}
+          </Menu>
+        )}
+        empty={empty}
+      />
+
+      {emailingDoc && (
+        <EmailInvoiceDialog
+          open
+          onClose={() => setEmailingDoc(null)}
+          documentId={emailingDoc.id}
+          documentNumber={emailingDoc.documentNumber}
+          /* The register row carries no address — the dialog's To starts empty
+             and the record screen remains the place that pre-fills it. */
+          defaultTo=""
+          lastEmailedNote={null}
+        />
       )}
-      empty={empty}
-    />
+    </>
   )
 }

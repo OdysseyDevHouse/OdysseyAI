@@ -13,10 +13,9 @@ import {
   type ContractInput,
 } from '@/lib/site/contracts'
 import { emailContractInvoice } from '@/lib/site/contractSend'
+import { issuingSiteFor } from '@/lib/site/invoiceEmail'
 import { siteExecute } from '@/lib/siteDb'
-import { queryOne } from '@/lib/db'
 import { formatMoney } from '@/lib/decimals'
-import type { IssuingSite } from '@/lib/invoices/build'
 
 /**
  * Contract actions.
@@ -208,39 +207,9 @@ export async function sendContractInvoiceAction(
   return { ok: true, message: `Emailed to ${result.to}.` }
 }
 
-/** Everything the invoice letterhead needs, from the control database. */
-async function issuingSite(siteId: number): Promise<IssuingSite | null> {
-  const row = await queryOne<{
-    company_name: string
-    trading_name: string | null
-    vat_number: string | null
-    registration_number: string | null
-    address1: string | null
-    address2: string | null
-    address3: string | null
-    postal_code: string | null
-    phone: string | null
-    email: string | null
-  }>(
-    `SELECT company_name, trading_name, vat_number, registration_number,
-            address1, address2, address3, postal_code, phone, email
-       FROM cp2_sites WHERE id = ? LIMIT 1`,
-    [siteId],
-  )
-  if (!row) return null
-
-  return {
-    displayName: row.trading_name?.trim() || row.company_name,
-    vatNumber: row.vat_number,
-    registrationNumber: row.registration_number,
-    address1: row.address1,
-    address2: row.address2,
-    address3: row.address3,
-    postalCode: row.postal_code,
-    phone: row.phone,
-    email: row.email,
-  }
-}
+/* issuingSite moved to invoiceEmail.ts as issuingSiteFor — one letterhead
+   query for every sender, rather than copies that drift. */
+const issuingSite = issuingSiteFor
 
 /** The origin an emailed pay-link should point at. */
 async function publicOrigin(): Promise<string> {
