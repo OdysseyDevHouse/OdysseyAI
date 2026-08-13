@@ -35,6 +35,8 @@ import { getLoyaltySettings, getMember, listLedger as listLoyaltyLedger } from '
 import { listVouchers, getCardProgress } from '@/lib/site/loyaltyCards'
 import { listWallet } from '@/lib/site/loyaltyWallet'
 import ContactsPanel from '@/components/party/ContactsPanel'
+import { listCustomerAddresses } from '@/lib/site/customerAddresses'
+import { AddressesPanel } from './AddressesPanel'
 import DocumentsPanel from '@/components/party/DocumentsPanel'
 import CommentsPanel from '@/components/party/CommentsPanel'
 import { deleteCustomerAction } from '../actions'
@@ -44,6 +46,7 @@ export const dynamic = 'force-dynamic'
 type Tab =
   | 'details'
   | 'contacts'
+  | 'addresses'
   | 'documents'
   | 'comments'
   | 'transactions'
@@ -55,6 +58,7 @@ type Tab =
 const TABS: readonly Tab[] = [
   'details',
   'contacts',
+  'addresses',
   'documents',
   'comments',
   'transactions',
@@ -167,6 +171,7 @@ export default async function CustomerPage({
     documents,
     comments,
     credit,
+    addresses,
   ] = await Promise.all([
     getCustomer(siteId, customerId),
     listCustomerGroups(siteId),
@@ -182,6 +187,7 @@ export default async function CustomerPage({
     listDocuments(siteId, 'customer', customerId),
     listComments(siteId, 'customer', customerId),
     accountCredit(siteId, customerId),
+    listCustomerAddresses(siteId, customerId, { includeInactive: true }),
   ])
 
   // Loyalty is loaded separately and defensively: a site that has never run the
@@ -268,6 +274,15 @@ export default async function CustomerPage({
               href: `/customers/${customerId}?tab=contacts`,
             },
             {
+              /* Contacts are people, addresses are places — the 031 rule, so
+                 the two stay separate tabs and nobody merges them later. */
+              value: 'addresses',
+              label: 'Addresses',
+              icon: <Icons.MapPin size={15} />,
+              count: addresses.length,
+              href: `/customers/${customerId}?tab=addresses`,
+            },
+            {
               value: 'documents',
               label: 'Documents',
               icon: <Icons.Paperclip size={15} />,
@@ -326,6 +341,15 @@ export default async function CustomerPage({
           <Card>
             <ContactsPanel party="customer" partyId={customerId} contacts={contacts} />
           </Card>
+        ) : active === 'addresses' ? (
+          <AddressesPanel
+            customerId={customerId}
+            primaryBilling={[customer.addressLine1, customer.addressLine2, customer.city, customer.postalCode]
+              .map((p) => p?.trim())
+              .filter(Boolean)
+              .join(', ')}
+            addresses={addresses}
+          />
         ) : active === 'documents' ? (
           <Card>
             <DocumentsPanel party="customer" partyId={customerId} documents={documents} />

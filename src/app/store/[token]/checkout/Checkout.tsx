@@ -72,6 +72,8 @@ export default function Checkout({
     email: string
     availableCredit: number
     accountOpen: boolean
+    /** The address book's default delivery address, for the prefill. */
+    delivery: { line1: string; suburb: string; postcode: string; notes: string } | null
   } | null
 }) {
   const cart = useCart()
@@ -92,10 +94,10 @@ export default function Checkout({
   const [name, setName] = useState(account?.name ?? '')
   const [phone, setPhone] = useState(account?.phone ?? '')
   const [email, setEmail] = useState(account?.email ?? '')
-  const [line1, setLine1] = useState('')
-  const [suburb, setSuburb] = useState('')
-  const [postcode, setPostcode] = useState('')
-  const [deliveryNotes, setDeliveryNotes] = useState('')
+  const [line1, setLine1] = useState(account?.delivery?.line1 ?? '')
+  const [suburb, setSuburb] = useState(account?.delivery?.suburb ?? '')
+  const [postcode, setPostcode] = useState(account?.delivery?.postcode ?? '')
+  const [deliveryNotes, setDeliveryNotes] = useState(account?.delivery?.notes ?? '')
   const [customerNote, setCustomerNote] = useState('')
   const [error, setError] = useState('')
   const [payOnAccount, setPayOnAccount] = useState(false)

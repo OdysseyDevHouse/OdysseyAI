@@ -49,6 +49,7 @@
     "test:invoice-email": "tsx --conditions=react-server --env-file=.env scripts/test-invoice-email.ts",
     "test:budgets": "tsx --conditions=react-server --env-file=.env scripts/test-budgets.ts",
     "test:recurring-journals": "tsx --conditions=react-server --env-file=.env scripts/test-recurring-journals.ts",
+    "test:customer-addresses": "tsx --conditions=react-server --env-file=.env scripts/test-customer-addresses.ts",
     "test:accounting": "tsx --conditions=react-server --env-file=.env scripts/test-accounting.ts",
     "test:period-locks": "tsx --conditions=react-server --env-file=.env scripts/test-period-locks.ts",
     "test:expenses": "tsx --conditions=react-server --env-file=.env scripts/test-expenses.ts",

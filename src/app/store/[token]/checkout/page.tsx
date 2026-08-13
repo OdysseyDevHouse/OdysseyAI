@@ -3,6 +3,8 @@ import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext } from '@/lib/site/storefront'
 import { customerAccount } from '@/lib/site/customerAuth'
 import { getCustomerSession } from '@/lib/customerSession'
+import { defaultAddressFor } from '@/lib/site/customerAddresses'
+import { getCustomer } from '@/lib/site/customers'
 import TrackEvent from '../TrackEvent'
 import Checkout from './Checkout'
 
@@ -31,6 +33,34 @@ export default async function CheckoutPage({
   const session = settings.allowAccount ? await getCustomerSession(siteId) : null
   const account = session ? await customerAccount(siteId, session.customerId) : null
 
+  /*
+   * The delivery prefill: the address book's default delivery address, falling
+   * back to the account's own billing columns. Prefill ONLY — what is typed at
+   * checkout goes on this order and never back onto the customer record.
+   */
+  let delivery: { line1: string; suburb: string; postcode: string; notes: string } | null = null
+  if (session) {
+    const book = await defaultAddressFor(siteId, session.customerId, 'delivery').catch(() => null)
+    if (book) {
+      delivery = {
+        line1: book.line1 ?? '',
+        suburb: book.line2 ?? book.city ?? '',
+        postcode: book.postalCode ?? '',
+        notes: book.notes ?? '',
+      }
+    } else {
+      const customer = await getCustomer(siteId, session.customerId).catch(() => null)
+      if (customer?.addressLine1) {
+        delivery = {
+          line1: customer.addressLine1,
+          suburb: customer.addressLine2 ?? customer.city ?? '',
+          postcode: customer.postalCode ?? '',
+          notes: '',
+        }
+      }
+    }
+  }
+
   return (
     <>
       {/* Reaching checkout is a funnel stage in its own right: the gap between
@@ -54,6 +84,7 @@ export default async function CheckoutPage({
             email: account.email,
             availableCredit: account.availableCredit,
             accountOpen: account.accountOpen,
+            delivery,
           }
         }
       />

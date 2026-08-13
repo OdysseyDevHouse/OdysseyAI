@@ -92,6 +92,9 @@ export {
   Tags,
   Store,
   Building2,
+  // A place on a map: an address, a delivery point. Distinct from Building2,
+  // which is an organisation, and from Truck, which is the goods moving.
+  MapPin,
   Users,
   Truck,
   // Work to be done on something: a job card, a repair, a service call. Distinct

@@ -16,6 +16,11 @@ import {
   type BulkResult,
   type CustomerInput,
 } from '@/lib/site/customers'
+import {
+  saveCustomerAddress,
+  deleteCustomerAddress,
+  type CustomerAddressInput,
+} from '@/lib/site/customerAddresses'
 
 export type CustomerFormState = { error: string | null }
 
@@ -126,4 +131,39 @@ export async function bulkUpdateCustomersAction(
   const result = await bulkUpdateCustomers(siteId, actor, ids, change)
   revalidatePath('/customers')
   return result
+}
+
+/* ── The address book (132) ──────────────────────────────────────────────── */
+
+export type AddressActionResult = { ok: true; message: string } | { ok: false; error: string }
+
+export async function saveCustomerAddressAction(
+  customerId: number,
+  input: CustomerAddressInput,
+  id?: number,
+): Promise<AddressActionResult> {
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await saveCustomerAddress(siteId, actor, customerId, input, id)
+  if (!result.ok) return result
+
+  revalidatePath(`/customers/${customerId}`)
+  return { ok: true, message: id ? 'Address saved.' : 'Address added.' }
+}
+
+export async function deleteCustomerAddressAction(
+  customerId: number,
+  id: number,
+): Promise<AddressActionResult> {
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await deleteCustomerAddress(siteId, actor, customerId, id)
+  if (!result.ok) return result
+
+  revalidatePath(`/customers/${customerId}`)
+  return { ok: true, message: 'Address removed.' }
 }
