@@ -454,6 +454,9 @@ export const SUBPAGE_LABELS = {
   '/accounting/trial-balance': 'Trial balance',
   '/accounting/vat': 'VAT return',
   '/accounting/journals': 'Journals',
+  // Below Journals rather than beside them: the breadcrumb reads
+  // "Accounting › Journals › Recurring", which is where they belong.
+  '/accounting/journals/recurring': 'Recurring journals',
   '/accounting/accounts': 'Chart of accounts',
   '/accounting/assets': 'Fixed assets',
   // Below Fixed assets rather than beside it: the breadcrumb reads

@@ -8,6 +8,7 @@ import {
   PageHeader,
   PageBody,
   Button,
+  ButtonLink,
   Card,
   CardHeader,
   Field,
@@ -33,6 +34,7 @@ const SOURCES = [
   { value: 'manual', label: 'Manual', source: 'manual', icon: <Icons.Pencil size={15} /> },
   { value: 'sale', label: 'Sales', source: 'sale', icon: <Icons.Receipt size={15} /> },
   { value: 'grv', label: 'Purchases', source: 'grv', icon: <Icons.Truck size={15} /> },
+  { value: 'recurring', label: 'Recurring', source: 'recurring', icon: <Icons.Repeat size={15} /> },
 ] as const
 
 /**
@@ -73,6 +75,7 @@ export default async function JournalsPage({
     description: b.description,
     isReversal: b.reversesId !== null,
     source: b.source,
+    status: b.status,
     totalDebit: b.totalDebit,
   }))
 
@@ -83,14 +86,20 @@ export default async function JournalsPage({
         icon={<Icons.ClipboardList size={18} />}
         subtitle={`${from} to ${to}`}
         action={
-          <JournalClient
-            accounts={accounts.map((a) => ({
-              id: a.id,
-              accountCode: a.accountCode,
-              name: a.name,
-              accountTypeLabel: a.accountTypeLabel,
-            }))}
-          />
+          <div className="flex items-center gap-2">
+            <ButtonLink variant="secondary" href="/accounting/journals/recurring">
+              <Icons.Repeat size={15} />
+              Recurring
+            </ButtonLink>
+            <JournalClient
+              accounts={accounts.map((a) => ({
+                id: a.id,
+                accountCode: a.accountCode,
+                name: a.name,
+                accountTypeLabel: a.accountTypeLabel,
+              }))}
+            />
+          </div>
         }
       />
 

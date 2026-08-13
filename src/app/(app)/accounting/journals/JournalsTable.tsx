@@ -19,6 +19,7 @@ export type BatchRow = {
   description: string
   isReversal: boolean
   source: string
+  status: 'draft' | 'posted' | 'void'
   totalDebit: number
 }
 
@@ -52,6 +53,13 @@ export function JournalsTable({ rows }: { rows: BatchRow[] }) {
           {b.isReversal && (
             <Badge tone="default" className="ml-2">
               Reversal
+            </Badge>
+          )}
+          {/* A draft has moved nothing — the badge is what tells a reader the
+              amount beside it is not yet in any statement. */}
+          {b.status === 'draft' && (
+            <Badge tone="warning" className="ml-2">
+              Draft
             </Badge>
           )}
         </>

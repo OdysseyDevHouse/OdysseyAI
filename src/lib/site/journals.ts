@@ -423,6 +423,211 @@ export async function reverse(
   }
 }
 
+/* ── Drafts ──────────────────────────────────────────────────────────────── */
+
+/*
+ * A DRAFT is a journal written down but not yet posted: no number, no balance
+ * movement, invisible to every statement (they all filter status = 'posted').
+ * The status has existed since 045; recurring journals are what finally write
+ * it. These three functions live HERE so "nothing else writes a balance"
+ * stays auditable by reading one file.
+ */
+
+export type DraftInput = {
+  journalDate: string
+  description: string
+  reference?: string | null
+  source?: string
+  sourceDocId?: number | null
+  lines: JournalLineInput[]
+}
+
+/**
+ * Writes a draft batch. Balance-checked at write time — an unbalanced draft
+ * would be a trap armed for whoever presses Post — but accounts are only
+ * re-verified at posting, because a draft may outlive an account's active
+ * flag and the POST is the moment that matters.
+ */
+export async function insertDraft(
+  siteId: number,
+  actor: Actor,
+  input: DraftInput,
+): Promise<PostResult> {
+  const refusal = refuseJournal({
+    journalDate: input.journalDate,
+    description: input.description,
+    lines: input.lines,
+  })
+  if (refusal) return { ok: false, error: refusal }
+
+  const totals = journalTotals(input.lines)
+  const accountIds = [...new Set(input.lines.map((l) => l.accountId))]
+  const accounts = await siteQuery<Row>(
+    siteId,
+    `SELECT id, account_code, name FROM gl_accounts WHERE id IN (${accountIds.map(() => '?').join(',')})`,
+    accountIds,
+  )
+  const byId = new Map(accounts.map((a) => [Number(a.id), a]))
+  if (byId.size !== accountIds.length) {
+    return { ok: false, error: 'A line points at an account that no longer exists.' }
+  }
+
+  const id = await siteTransaction(siteId, async (tx) => {
+    const [res] = await tx.execute(
+      `INSERT INTO journal_batches
+         (journal_number, journal_date, status, source, source_doc_id, description, reference,
+          total_debit, total_credit, user_id, user_name, posted_at)
+       VALUES (NULL,?,'draft',?,?,?,?,?,?,?,?,NULL)`,
+      [
+        input.journalDate,
+        input.source ?? 'manual',
+        input.sourceDocId ?? null,
+        input.description.slice(0, 255),
+        input.reference?.trim() || null,
+        totals.totalDebit.toFixed(4),
+        totals.totalCredit.toFixed(4),
+        actor.userId,
+        actor.userName.slice(0, 120),
+      ] as never,
+    )
+    const batchId = (res as { insertId: number }).insertId
+
+    for (let i = 0; i < input.lines.length; i++) {
+      const line = input.lines[i]
+      const account = byId.get(line.accountId)
+      await tx.execute(
+        `INSERT INTO journal_lines
+           (batch_id, line_number, account_id, account_code, account_name, amount,
+            description, department_id, customer_id, supplier_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [
+          batchId,
+          i + 1,
+          line.accountId,
+          account ? String(account.account_code) : null,
+          account ? String(account.name) : null,
+          round(line.amount, 2).toFixed(4),
+          line.description?.trim().slice(0, 190) || null,
+          line.departmentId ?? null,
+          line.customerId ?? null,
+          line.supplierId ?? null,
+        ] as never,
+      )
+      // NO balance movement — that is the entire difference from postTx.
+    }
+    return batchId
+  })
+
+  return { ok: true, id, journalNumber: '' }
+}
+
+/**
+ * Posts a draft: the account checks run NOW, the number is claimed NOW, and
+ * the balances move NOW — everything postTx does, against lines already
+ * stored. Posted on the draft's own journal_date: a March accrual generated
+ * in March and posted in April is still a March entry, which is the point.
+ */
+export async function postDraft(
+  siteId: number,
+  actor: Actor,
+  batchId: number,
+): Promise<PostResult> {
+  const batch = await getBatch(siteId, batchId)
+  if (!batch) return { ok: false, error: 'That journal no longer exists.' }
+  if (batch.status !== 'draft') return { ok: false, error: 'Only a draft can be posted this way.' }
+
+  const locked = await guardPosting(siteId, batch.journalDate, 'ledger')
+  if (locked) return { ok: false, error: locked }
+
+  try {
+    const result = await siteTransaction(siteId, async (tx) => {
+      // Re-check the accounts as postTx would: a draft may be older than an
+      // account's deactivation.
+      const accountIds = [...new Set(batch.lines.map((l) => l.accountId))]
+      const [accounts] = await tx.query(
+        `SELECT id, name, is_postable, is_active FROM gl_accounts WHERE id IN (${accountIds.map(() => '?').join(',')})`,
+        accountIds as never,
+      )
+      const byId = new Map((accounts as Row[]).map((a) => [Number(a.id), a]))
+      for (const id of accountIds) {
+        const account = byId.get(id)
+        if (!account) throw new Error('A line points at an account that no longer exists.')
+        if (!account.is_active) throw new Error(`${account.name} is not an active account.`)
+        if (!account.is_postable && batch.source === 'manual') {
+          throw new Error(`${account.name} is a control account maintained by its subledger.`)
+        }
+      }
+
+      const totals = journalTotals(batch.lines)
+      if (!totals.balanced) throw new Error('That draft does not balance.')
+
+      const journalNumber = await nextDocumentNumber(tx, 'journal')
+      const [res] = await tx.execute(
+        `UPDATE journal_batches
+            SET status = 'posted', journal_number = ?, posted_at = NOW(),
+                user_id = ?, user_name = ?
+          WHERE id = ? AND status = 'draft'`,
+        [journalNumber, actor.userId, actor.userName.slice(0, 120), batchId] as never,
+      )
+      if ((res as { affectedRows: number }).affectedRows === 0) {
+        // Two people posting the same draft: the second one lands here.
+        throw new Error('That draft has already been posted.')
+      }
+
+      for (const line of batch.lines) {
+        await tx.execute('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [
+          round(line.amount, 2).toFixed(4),
+          line.accountId,
+        ] as never)
+      }
+
+      await logActivityTx(tx, actor, {
+        entity: 'gl',
+        entityId: batchId,
+        action: 'journal_post',
+        detail: `${journalNumber} · ${batch.description} (from draft)`,
+      })
+
+      return { id: batchId, journalNumber }
+    })
+
+    return { ok: true, id: result.id, journalNumber: result.journalNumber }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'That draft could not be posted.',
+    }
+  }
+}
+
+/**
+ * Discards a draft. A DELETE, honestly: a draft moved nothing and carries no
+ * number, so keeping a tombstone would put rows on the journal list that mean
+ * "nothing happened here" — the opposite of what a ledger row is for.
+ */
+export async function discardDraft(
+  siteId: number,
+  actor: Actor,
+  batchId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const batch = await getBatch(siteId, batchId)
+  if (!batch) return { ok: false, error: 'That journal no longer exists.' }
+  if (batch.status !== 'draft') return { ok: false, error: 'Only a draft can be discarded.' }
+
+  await siteTransaction(siteId, async (tx) => {
+    await tx.execute('DELETE FROM journal_lines WHERE batch_id = ?', [batchId] as never)
+    await tx.execute('DELETE FROM journal_batches WHERE id = ?', [batchId] as never)
+    await logActivityTx(tx, actor, {
+      entity: 'gl',
+      entityId: batchId,
+      action: 'journal_discard',
+      detail: `Draft "${batch.description}" (${batch.journalDate}) discarded`,
+    })
+  })
+
+  return { ok: true }
+}
+
 /* ── Account enquiry ─────────────────────────────────────────────────────── */
 
 export type LedgerEntry = {

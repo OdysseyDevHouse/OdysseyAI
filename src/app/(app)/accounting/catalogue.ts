@@ -208,6 +208,14 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         capability: 'reports.financial',
       },
       {
+        href: '/accounting/journals/recurring',
+        description: 'The entries that repeat — accruals and releases, drafted each period.',
+        keywords: 'recurring journal accrual monthly repeat schedule template',
+        icon: 'Repeat',
+        tone: 'indigo',
+        capability: 'reports.financial',
+      },
+      {
         href: '/accounting/assets',
         description: 'What the business owns and uses — vehicles, fittings, equipment.',
         keywords: 'fixed assets register equipment vehicles capital',

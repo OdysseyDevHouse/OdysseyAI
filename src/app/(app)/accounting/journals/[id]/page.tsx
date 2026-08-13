@@ -19,6 +19,7 @@ import {
   TABLE_TOTAL_ROW,
 } from '@/components/ui'
 import { ReverseButton } from './ReverseButton'
+import { DraftActions } from './DraftActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -66,6 +67,7 @@ export default async function JournalDetailPage({
             {batch.status === 'posted' && batch.source === 'manual' && (
               <ReverseButton id={batch.id} journalNumber={batch.journalNumber} />
             )}
+            {batch.status === 'draft' && <DraftActions batchId={batch.id} />}
           </div>
         }
       />
