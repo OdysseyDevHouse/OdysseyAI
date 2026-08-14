@@ -179,6 +179,11 @@ export type CustomerListOptions = {
   withBalanceOnly?: boolean
   /** Only accounts past their credit limit. */
   overLimitOnly?: boolean
+  /**
+   * Only rows changed on or after this instant — the /api/v1 sync cursor.
+   * updated_at is ON UPDATE CURRENT_TIMESTAMP, so every save moves it.
+   */
+  updatedSince?: Date
   sort?: CustomerSort
   direction?: 'asc' | 'desc'
   limit?: number
@@ -217,6 +222,10 @@ function buildWhere(opts: CustomerListOptions): { sql: string; params: unknown[]
   if (opts.category?.trim()) {
     where.push('c.category = ?')
     params.push(opts.category.trim())
+  }
+  if (opts.updatedSince) {
+    where.push('c.updated_at >= ?')
+    params.push(opts.updatedSince)
   }
   if (opts.withBalanceOnly) where.push('c.balance <> 0')
   // Mirrors the derived overLimit exactly. Kept as SQL rather than filtering in
@@ -442,7 +451,7 @@ export async function createCustomer(
   )
   if (clash) return { ok: false, error: `Customer code "${code}" is already in use.` }
 
-  return siteTransaction(siteId, async (tx) => {
+  const result = await siteTransaction(siteId, async (tx) => {
     const placeholders = COLUMN_LIST.split(',').length
     const [res] = await tx.execute(
       `INSERT INTO customers (${COLUMN_LIST})
@@ -460,6 +469,17 @@ export async function createCustomer(
 
     return { ok: true as const, id }
   })
+
+  // Post-commit tail: the row exists, tell whoever subscribed. Never throws.
+  if (result.ok) {
+    const { enqueueEvent } = await import('./webhooks')
+    await enqueueEvent(siteId, 'customer.created', {
+      customerId: result.id,
+      code,
+      name: input.name.trim(),
+    })
+  }
+  return result
 }
 
 export async function updateCustomer(

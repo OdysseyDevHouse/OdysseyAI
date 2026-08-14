@@ -35,6 +35,10 @@ export const API_SCOPES = [
   'customers:read',
   'sales:read',
   'stock:read',
+  'suppliers:read',
+  'purchases:read',
+  'gl:read',
+  'gift-cards:read',
   'reports:run',
 ] as const
 export type ApiScope = (typeof API_SCOPES)[number]
@@ -44,16 +48,30 @@ export function isApiScope(value: string): value is ApiScope {
 }
 
 /**
- * What each scope lets the report engine (and field stripping) see. NEVER
- * products.cost or reports.financial: a key is standing access with no person
- * behind it, and the engine already hides cost and margin columns from
- * callers without those — exactly the junior-user treatment a key deserves.
+ * What each scope lets the report engine (and field stripping) see.
+ *
+ * The retail scopes NEVER grant products.cost or reports.financial: a key is
+ * standing access with no person behind it, and the engine already hides cost
+ * and margin columns from callers without those — exactly the junior-user
+ * treatment a key deserves.
+ *
+ * The two exceptions are scopes whose entire subject matter IS cost data,
+ * granted by their own names so the mint screen says exactly what is being
+ * handed over: purchases:read (supplier invoices carry cost prices — that is
+ * what a purchase document is) and gl:read (the journal export an accounting
+ * sync exists for; it carries reports.financial, so a key holding it plus
+ * reports:run can also run financial reports — deliberate, that is the same
+ * data by another door). reports:run ALONE still sees neither.
  */
 const SCOPE_CAPABILITIES: Record<ApiScope, Capability[]> = {
   'products:read': ['products.view'],
   'customers:read': ['customers.view'],
   'sales:read': ['sales.view'],
   'stock:read': ['stock.view'],
+  'suppliers:read': ['suppliers.view'],
+  'purchases:read': ['purchasing.view'],
+  'gl:read': ['reports.financial'],
+  'gift-cards:read': ['giftcards.view'],
   'reports:run': ['reports.view'],
 }
 
@@ -76,6 +94,9 @@ export type ApiKeySummary = {
   createdAt: Date | null
   lastUsedAt: Date | null
   revokedAt: Date | null
+  expiresAt: Date | null
+  /** Computed in the database, where NOW() and expires_at share a clock. */
+  expired: boolean
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -90,13 +111,16 @@ function mapKey(r: Row): ApiKeySummary {
     createdAt: (r.created_at as Date | null) ?? null,
     lastUsedAt: (r.last_used_at as Date | null) ?? null,
     revokedAt: (r.revoked_at as Date | null) ?? null,
+    expiresAt: (r.expires_at as Date | null) ?? null,
+    expired: Number(r.expired ?? 0) === 1,
   }
 }
 
 export async function listApiKeys(siteId: number): Promise<ApiKeySummary[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT id, name, key_prefix, scopes, created_by, created_at, last_used_at, revoked_at
+    `SELECT id, name, key_prefix, scopes, created_by, created_at, last_used_at, revoked_at, expires_at,
+            (expires_at IS NOT NULL AND expires_at <= NOW()) AS expired
        FROM api_keys ORDER BY id DESC`,
   )
   return rows.map(mapKey)
@@ -105,12 +129,18 @@ export async function listApiKeys(siteId: number): Promise<ApiKeySummary[]> {
 export async function createApiKey(
   siteId: number,
   actor: { userName: string },
-  input: { name: string; scopes: ApiScope[] },
+  input: { name: string; scopes: ApiScope[]; expiresInDays?: number | null },
 ): Promise<{ ok: true; id: number; rawKey: string } | { ok: false; error: string }> {
   const name = input.name.trim()
   if (!name) return { ok: false, error: 'Give the key a name — the integration it belongs to.' }
   const scopes = [...new Set(input.scopes)].filter(isApiScope)
   if (scopes.length === 0) return { ok: false, error: 'Pick at least one scope.' }
+  // Optional self-destruct: 1 day to 5 years out; null/absent means standing.
+  const expiresInDays =
+    input.expiresInDays == null ? null : Math.round(Number(input.expiresInDays))
+  if (expiresInDays !== null && (!Number.isFinite(expiresInDays) || expiresInDays < 1 || expiresInDays > 1826)) {
+    return { ok: false, error: 'Expiry must be between 1 day and 5 years.' }
+  }
 
   // Retry on the (astronomically unlikely) prefix collision rather than
   // failing a legitimate creation on cosmic bad luck.
@@ -121,9 +151,16 @@ export async function createApiKey(
     try {
       const result = await siteExecute(
         siteId,
-        `INSERT INTO api_keys (name, key_prefix, token_hash, scopes, created_by)
-         VALUES (?,?,?,?,?)`,
-        [name.slice(0, 80), prefix, sha256hex(rawKey), scopes.join(','), actor.userName.slice(0, 120)],
+        `INSERT INTO api_keys (name, key_prefix, token_hash, scopes, created_by, expires_at)
+         VALUES (?,?,?,?,?, ${expiresInDays === null ? 'NULL' : 'DATE_ADD(NOW(), INTERVAL ? DAY)'})`,
+        [
+          name.slice(0, 80),
+          prefix,
+          sha256hex(rawKey),
+          scopes.join(','),
+          actor.userName.slice(0, 120),
+          ...(expiresInDays === null ? [] : [expiresInDays]),
+        ],
       )
       return { ok: true, id: Number(result.insertId), rawKey }
     } catch (error) {
@@ -172,7 +209,9 @@ export async function verifyApiKey(
 
     const row = await siteQueryOne<Row>(
       siteId,
-      'SELECT id, name, token_hash, scopes, revoked_at FROM api_keys WHERE key_prefix = ? LIMIT 1',
+      `SELECT id, name, token_hash, scopes, revoked_at,
+              (expires_at IS NOT NULL AND expires_at <= NOW()) AS expired
+         FROM api_keys WHERE key_prefix = ? LIMIT 1`,
       [prefix],
     )
     if (!row) return refused
@@ -181,6 +220,9 @@ export async function verifyApiKey(
     const presented = Buffer.from(sha256hex(rawKey), 'utf8')
     if (stored.length !== presented.length || !timingSafeEqual(stored, presented)) return refused
     if (row.revoked_at !== null) return refused
+    // Expiry compared in the database, so app-server clock drift cannot
+    // resurrect a key; the refusal is the same uniform 401 as everything else.
+    if (Number(row.expired) === 1) return refused
 
     return {
       ok: true,

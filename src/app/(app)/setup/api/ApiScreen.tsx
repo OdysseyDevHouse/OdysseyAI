@@ -11,6 +11,7 @@ import {
   Modal,
   Field,
   Input,
+  Select,
   Checkbox,
   Tabs,
   useToast,
@@ -24,6 +25,7 @@ import {
   rotateEndpointSecretAction,
   deleteEndpointAction,
   redeliverAction,
+  sendTestPingAction,
 } from './actions'
 
 /**
@@ -42,6 +44,8 @@ type KeyRow = {
   createdAt: string
   lastUsedAt: string | null
   revoked: boolean
+  expiresAt: string | null
+  expired: boolean
 }
 
 type EndpointRow = {
@@ -51,6 +55,13 @@ type EndpointRow = {
   isActive: boolean
   lastSuccessAt: string | null
   lastFailureAt: string | null
+}
+
+type ReferenceRow = {
+  method: string
+  path: string
+  scope: string
+  summary: string
 }
 
 type DeliveryRow = {
@@ -69,24 +80,34 @@ const SCOPES = [
   { key: 'customers:read', label: 'Read customers' },
   { key: 'sales:read', label: 'Read sales documents' },
   { key: 'stock:read', label: 'Read stock levels' },
+  { key: 'suppliers:read', label: 'Read suppliers' },
+  { key: 'purchases:read', label: 'Read purchase documents (includes cost prices)' },
+  { key: 'gl:read', label: 'Read journals & GL (financial data)' },
+  { key: 'gift-cards:read', label: 'Look up gift-card balances' },
   { key: 'reports:run', label: 'Run reports' },
 ]
 
 const EVENTS = [
   { key: 'order.placed', label: 'Online order placed' },
   { key: 'order.paid', label: 'Online order paid' },
+  { key: 'order.status_changed', label: 'Online order status changed' },
   { key: 'sale.finalised', label: 'Sale finalised' },
   { key: 'sale.voided', label: 'Sale voided' },
+  { key: 'customer.created', label: 'Customer created' },
+  { key: 'grv.received', label: 'Goods received' },
+  { key: 'stock.low', label: 'Stock low (digest cadence)' },
 ]
 
 export default function ApiScreen({
   keys,
   endpoints,
   deliveries,
+  reference,
 }: {
   keys: KeyRow[]
   endpoints: EndpointRow[]
   deliveries: DeliveryRow[]
+  reference: ReferenceRow[]
 }) {
   const toast = useToast()
   const [tab, setTab] = useState('keys')
@@ -95,18 +116,24 @@ export default function ApiScreen({
   const [keyOpen, setKeyOpen] = useState(false)
   const [keyName, setKeyName] = useState('')
   const [keyScopes, setKeyScopes] = useState<Set<string>>(new Set())
+  const [keyExpiry, setKeyExpiry] = useState('')
   const [busy, setBusy] = useState(false)
   /** The once-only reveal — a key or a webhook secret, straight from a mint. */
   const [reveal, setReveal] = useState<{ title: string; value: string } | null>(null)
 
   const mintKey = async () => {
     setBusy(true)
-    const result = await createApiKeyAction({ name: keyName, scopes: [...keyScopes] })
+    const result = await createApiKeyAction({
+      name: keyName,
+      scopes: [...keyScopes],
+      expiresInDays: keyExpiry ? Number(keyExpiry) : null,
+    })
     setBusy(false)
     if (!result.ok) return toast.error(result.error)
     setKeyOpen(false)
     setKeyName('')
     setKeyScopes(new Set())
+    setKeyExpiry('')
     setReveal({ title: 'Your new API key', value: result.rawKey })
   }
 
@@ -142,11 +169,19 @@ export default function ApiScreen({
     },
     { key: 'created', header: 'Created', cell: (r) => `${r.createdAt} by ${r.createdBy}`, sortValue: (r) => r.createdAt },
     { key: 'used', header: 'Last used', cell: (r) => r.lastUsedAt ?? '—', sortValue: (r) => r.lastUsedAt ?? '' },
+    { key: 'expires', header: 'Expires', cell: (r) => r.expiresAt ?? 'Never', sortValue: (r) => r.expiresAt ?? '' },
     {
       key: 'status',
       header: 'Status',
-      cell: (r) => (r.revoked ? <Badge tone="danger">Revoked</Badge> : <Badge tone="success">Active</Badge>),
-      sortValue: (r) => (r.revoked ? 1 : 0),
+      cell: (r) =>
+        r.revoked ? (
+          <Badge tone="danger">Revoked</Badge>
+        ) : r.expired ? (
+          <Badge tone="warning">Expired</Badge>
+        ) : (
+          <Badge tone="success">Active</Badge>
+        ),
+      sortValue: (r) => (r.revoked ? 2 : r.expired ? 1 : 0),
     },
   ]
 
@@ -204,6 +239,17 @@ export default function ApiScreen({
     },
   ]
 
+  const referenceColumns: Column<ReferenceRow>[] = [
+    {
+      key: 'method',
+      header: 'Method',
+      cell: (r) => <Badge tone={r.method === 'GET' ? 'neutral' : 'brand'}>{r.method}</Badge>,
+    },
+    { key: 'path', header: 'Path', cell: (r) => <span className="font-mono text-sm text-ink">/api/v1{r.path}</span> },
+    { key: 'scope', header: 'Scope', cell: (r) => <Badge tone="neutral">{r.scope}</Badge> },
+    { key: 'summary', header: 'What it answers', cell: (r) => <span className="text-muted">{r.summary}</span> },
+  ]
+
   return (
     <>
       <Tabs
@@ -211,6 +257,7 @@ export default function ApiScreen({
           { value: 'keys', label: `API keys (${keys.length})` },
           { value: 'webhooks', label: `Webhooks (${endpoints.length})` },
           { value: 'deliveries', label: 'Delivery log' },
+          { value: 'reference', label: 'Reference' },
         ]}
         value={tab}
         onChange={setTab}
@@ -251,6 +298,7 @@ export default function ApiScreen({
       )}
 
       {tab === 'webhooks' && (
+        <div className="space-y-4">
         <Card>
           <CardHeader
             title="Webhook endpoints"
@@ -263,6 +311,17 @@ export default function ApiScreen({
             getRowKey={(r) => r.id}
             actions={(r) => (
               <div className="flex justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => {
+                    const result = await sendTestPingAction(r.id)
+                    if (!result.ok) toast.error(result.error)
+                    else toast.success(`Ping delivered — the receiver answered HTTP ${result.statusCode}.`)
+                  }}
+                >
+                  Send ping
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -302,13 +361,31 @@ export default function ApiScreen({
             }}
           />
         </Card>
+
+        <Card>
+          <CardHeader
+            title="Verifying signatures"
+            description="Your receiver must recompute the HMAC over the raw body before trusting a payload — and refuse a stale timestamp, which is what stops a captured delivery being replayed later."
+          />
+          <CardBody>
+            <pre className="overflow-x-auto rounded-control border border-border bg-surface-2 p-3 font-mono text-sm leading-relaxed text-ink">
+{`// Node receiver — req must expose the RAW body string, not re-serialised JSON
+const [tPart, v1Part] = req.headers['x-odyssey-signature'].split(',')
+const t = Number(tPart.slice(2))
+const expected = crypto.createHmac('sha256', SECRET).update(\`\${t}.\${rawBody}\`).digest('hex')
+if (v1Part.slice(3) !== expected) return res.status(401).end()          // wrong secret or tampered body
+if (Math.abs(Date.now() / 1000 - t) > 300) return res.status(401).end() // stale t — replay guard`}
+            </pre>
+          </CardBody>
+        </Card>
+        </div>
       )}
 
       {tab === 'deliveries' && (
         <Card>
           <CardHeader
             title="Delivery log"
-            description="The most recent 50 deliveries across every endpoint. Redeliver resends the exact original payload with a fresh signature."
+            description="The most recent 50 deliveries across every endpoint. Redeliver resends the exact original payload with a fresh signature. Delivered and dead rows clear after 30 days."
           />
           <DataTable
             columns={deliveryColumns}
@@ -337,11 +414,47 @@ export default function ApiScreen({
         </Card>
       )}
 
+      {tab === 'reference' && (
+        <Card>
+          <CardHeader
+            title="Endpoint reference"
+            description={
+              'Every call authenticates per request: Authorization: Bearer odk_… ' +
+              'List responses share the envelope { items, total, limit, offset }. ' +
+              'The machine-readable spec lives at /api/v1/openapi.json — no key needed.'
+            }
+            action={
+              <Button variant="secondary" onClick={() => window.open('/api/v1/openapi.json', '_blank')}>
+                Open openapi.json
+              </Button>
+            }
+          />
+          <DataTable
+            columns={referenceColumns}
+            rows={reference}
+            getRowKey={(r) => `${r.method} ${r.path}`}
+            empty={{ title: 'No endpoints', hint: 'The reference is built from the route registry.' }}
+          />
+        </Card>
+      )}
+
       {/* New key */}
       <Modal open={keyOpen} onClose={() => setKeyOpen(false)} title="New API key">
         <div className="space-y-4">
           <Field label="Name" hint="The integration this key belongs to — that is how you will recognise it later.">
             <Input value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="e.g. Accounting sync" />
+          </Field>
+          <Field
+            label="Expires"
+            hint="A key with an end date dies on its own — no one has to remember to revoke it."
+          >
+            <Select value={keyExpiry} onChange={(e) => setKeyExpiry(e.target.value)}>
+              <option value="">Never</option>
+              <option value="30">In 30 days</option>
+              <option value="90">In 90 days</option>
+              <option value="180">In 180 days</option>
+              <option value="365">In 1 year</option>
+            </Select>
           </Field>
           <Field label="Scopes">
             <div className="space-y-2">

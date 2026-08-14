@@ -6,9 +6,12 @@ import { deliverDue } from '@/lib/site/webhooks'
 /**
  * The webhook delivery heartbeat — call this every minute or five.
  *
- * Producers only ENQUEUE (a local insert riding the event's own commit); this
- * tick is what actually sends, with retries on the backoff ladder. Delivery
- * lag therefore equals the tick interval — stated plainly rather than hidden.
+ * Producers ENQUEUE (a local insert riding the event's own commit) and then
+ * kick an un-awaited deliverNow() — the due-now fast path, so a healthy
+ * endpoint hears about an event within seconds. This tick is the retry
+ * safety net: it sends whatever the fast path missed (a dead process, a
+ * failed first attempt walking the backoff ladder), so worst-case lag equals
+ * the tick interval — stated plainly rather than hidden.
  *
  * ── IT NEEDS A PUBLIC_PREFIXES ENTRY ─────────────────────────────────────
  *

@@ -16,6 +16,7 @@ import {
   deleteEndpoint,
   rotateEndpointSecret,
   redeliver,
+  sendTestPing,
   isWebhookEvent,
   type WebhookEvent,
 } from '@/lib/site/webhooks'
@@ -25,11 +26,13 @@ import {
 export async function createApiKeyAction(input: {
   name: string
   scopes: string[]
+  expiresInDays?: number | null
 }): Promise<{ ok: true; rawKey: string } | { ok: false; error: string }> {
   const { siteId, actor } = await requireCapability('setup.api')
   const result = await createApiKey(siteId, actor, {
     name: input.name,
     scopes: input.scopes.filter(isApiScope) as ApiScope[],
+    expiresInDays: input.expiresInDays ?? null,
   })
   if (!result.ok) return result
   await logActivity(siteId, actor, {
@@ -126,6 +129,15 @@ export async function deleteEndpointAction(id: number): Promise<void> {
     detail: `Webhook endpoint ${id} deleted`,
   })
   revalidatePath('/setup/api')
+}
+
+export async function sendTestPingAction(
+  endpointId: number,
+): Promise<{ ok: true; statusCode: number } | { ok: false; error: string }> {
+  const { siteId } = await requireCapability('setup.api')
+  const result = await sendTestPing(siteId, Number(endpointId))
+  revalidatePath('/setup/api')
+  return result
 }
 
 export async function redeliverAction(

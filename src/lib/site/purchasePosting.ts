@@ -1173,6 +1173,17 @@ export async function receiveGoods(
       href: `/purchasing/${posted.documentId}`,
     })
 
+    // The outbound mirror of the bell — thin ids-and-totals payload; a
+    // subscriber fetches the lines back through /api/v1 with a key.
+    const { enqueueEvent } = await import('./webhooks')
+    await enqueueEvent(siteId, 'grv.received', {
+      documentId: posted.documentId,
+      documentNumber: posted.documentNumber,
+      supplierId: input.supplierId,
+      totalExcl: subtotalExcl,
+      vatTotal,
+    })
+
     return {
       ok: true,
       documentId: posted.documentId,

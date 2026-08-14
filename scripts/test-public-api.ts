@@ -17,6 +17,8 @@ import {
   type ApiScope,
 } from '../src/lib/site/apiKeys'
 import { takeToken, type Bucket } from '../src/lib/rateLimit'
+import { listProducts } from '../src/lib/site/products'
+import { listCustomers, CUSTOMER_STATUSES } from '../src/lib/site/customers'
 import { resolveReport } from '../src/lib/reportBuilder/resolve'
 import { runBuilderSpec } from '../src/lib/reportBuilder/run'
 
@@ -70,6 +72,52 @@ async function main() {
   ok('*** revocation sticks ***', revoked.ok && !(await verifyApiKey(minted.rawKey)).ok)
   ok('  and revoking twice reports so', !(await revokeApiKey(SITE, minted.id)).ok)
 
+  /* ── 1b. Expiry ────────────────────────────────────────────────────────── */
+
+  const dated = await createApiKey(SITE, actor, {
+    name: `${TAG} expiring key`, scopes: ['products:read'], expiresInDays: 30,
+  })
+  ok('*** a key mints with an expiry date ***', dated.ok, dated.ok ? '' : dated.error)
+  if (dated.ok) {
+    const row = await listApiKeys(SITE).then((ks) => ks.find((k) => k.id === dated.id))
+    ok('  the list carries expiresAt, not yet expired',
+      row?.expiresAt !== null && row?.expired === false)
+    ok('  and it verifies while still in date', (await verifyApiKey(dated.rawKey)).ok)
+
+    // Age it past its date and the same uniform refusal applies.
+    await siteExecute(SITE,
+      'UPDATE api_keys SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = ?', [dated.id])
+    const lapsed = await verifyApiKey(dated.rawKey)
+    ok('*** an expired key is refused with the uniform 401 ***',
+      !lapsed.ok && (lapsed as any).error === 'Invalid API key.')
+    ok('  and the list reports it expired',
+      (await listApiKeys(SITE)).find((k) => k.id === dated.id)?.expired === true)
+  }
+  ok('  a nonsense expiry is refused at mint',
+    !(await createApiKey(SITE, actor, { name: `${TAG} bad`, scopes: ['products:read'], expiresInDays: 0 })).ok)
+
+  /* ── 1c. Sync cursors ──────────────────────────────────────────────────── */
+
+  const epoch = new Date('1000-01-02T00:00:00Z')
+  const future = new Date('9999-01-01T00:00:00Z')
+  const allProducts = await listProducts(SITE, { collapseVariants: false, includeArchived: true, limit: 1 })
+  const sinceEpoch = await listProducts(SITE, {
+    collapseVariants: false, includeArchived: true, updatedSince: epoch, limit: 1 })
+  ok('*** updatedSince at the epoch returns the whole catalogue ***',
+    allProducts.total > 0 && sinceEpoch.total === allProducts.total,
+    `${sinceEpoch.total}/${allProducts.total}`)
+  ok('  and a future cursor returns an empty delta',
+    (await listProducts(SITE, {
+      collapseVariants: false, includeArchived: true, updatedSince: future, limit: 1 })).total === 0)
+
+  const allCustomers = await listCustomers(SITE, { statuses: CUSTOMER_STATUSES, limit: 1 })
+  const custEpoch = await listCustomers(SITE, {
+    statuses: CUSTOMER_STATUSES, updatedSince: epoch, limit: 1 })
+  ok('*** the customer cursor behaves the same ***',
+    allCustomers.total > 0 && custEpoch.total === allCustomers.total &&
+      (await listCustomers(SITE, { statuses: CUSTOMER_STATUSES, updatedSince: future, limit: 1 })).total === 0,
+    `${custEpoch.total}/${allCustomers.total}`)
+
   /* ── 2. Scope → capability projection ──────────────────────────────────── */
 
   const canReports = capabilityFnFor(new Set<ApiScope>(['reports:run']))
@@ -79,6 +127,17 @@ async function main() {
   const canProducts = capabilityFnFor(new Set<ApiScope>(['products:read']))
   ok('  products:read grants products.view and nothing else',
     canProducts('products.view') && !canProducts('customers.view'))
+
+  const canPurchasing = capabilityFnFor(new Set<ApiScope>(['suppliers:read', 'purchases:read']))
+  ok('  the purchasing scopes grant their views',
+    canPurchasing('suppliers.view') && canPurchasing('purchasing.view') &&
+      !canPurchasing('reports.financial'))
+  const canGl = capabilityFnFor(new Set<ApiScope>(['gl:read']))
+  ok('*** gl:read grants reports.financial by its own name ***',
+    canGl('reports.financial') && !canGl('products.cost'))
+  ok('  gift-cards:read grants giftcards.view alone',
+    capabilityFnFor(new Set<ApiScope>(['gift-cards:read']))('giftcards.view') &&
+      !capabilityFnFor(new Set<ApiScope>(['gift-cards:read']))('sales.view'))
 
   /* ── 3. The rate limiter (pure) ────────────────────────────────────────── */
 

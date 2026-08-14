@@ -1,6 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { listApiKeys } from '@/lib/site/apiKeys'
 import { listEndpoints, listDeliveries } from '@/lib/site/webhooks'
+import { API_ENDPOINTS } from '@/app/api/v1/_lib/openapi'
 import { PageHeader, PageBody } from '@/components/ui'
 import ApiScreen from './ApiScreen'
 
@@ -38,6 +39,8 @@ export default async function ApiSetupPage() {
             createdAt: k.createdAt ? k.createdAt.toISOString().slice(0, 10) : '',
             lastUsedAt: k.lastUsedAt ? k.lastUsedAt.toISOString().slice(0, 16).replace('T', ' ') : null,
             revoked: k.revokedAt !== null,
+            expiresAt: k.expiresAt ? k.expiresAt.toISOString().slice(0, 10) : null,
+            expired: k.expired,
           }))}
           endpoints={endpoints.map((e) => ({
             id: e.id,
@@ -60,6 +63,12 @@ export default async function ApiSetupPage() {
             lastStatusCode: d.lastStatusCode,
             lastError: d.lastError,
             createdAt: d.createdAt ? d.createdAt.toISOString().slice(0, 16).replace('T', ' ') : '',
+          }))}
+          reference={API_ENDPOINTS.map((e) => ({
+            method: e.method.toUpperCase(),
+            path: e.path,
+            scope: e.scope,
+            summary: e.summary,
           }))}
         />
       </PageBody>

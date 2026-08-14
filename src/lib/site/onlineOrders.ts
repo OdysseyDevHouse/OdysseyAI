@@ -660,6 +660,17 @@ export async function moveOrderStatus(
    */
   await notifyStatusReached(siteId, orderId, target)
 
+  // The courier-integration hook: "picked" or "dispatched" is the moment an
+  // outside system wants to act. Post-commit, never throws.
+  const { enqueueEvent } = await import('./webhooks')
+  await enqueueEvent(siteId, 'order.status_changed', {
+    orderId,
+    orderNumber: order.orderNumber,
+    statusId: target.id,
+    status: target.name,
+    statusRole: target.role || null,
+  })
+
   return { ok: true }
 }
 
@@ -721,6 +732,18 @@ export async function cancelOrder(
      * order it just turned down.
      */
     await releaseHolds(siteId, orderId, 'cancelled', tx)
+  })
+
+  // Cancellation is a status change too — a courier already dispatched wants
+  // to know at least as much as it wanted the dispatch.
+  const { enqueueEvent } = await import('./webhooks')
+  await enqueueEvent(siteId, 'order.status_changed', {
+    orderId,
+    orderNumber: order.orderNumber,
+    statusId: cancelled.id,
+    status: cancelled.name,
+    statusRole: 'cancelled',
+    reason: trimmed.slice(0, 190),
   })
 
   return { ok: true }

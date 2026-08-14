@@ -1556,7 +1556,9 @@ export async function placePublicOrder(
   }
 
   try {
-    return await siteTransaction(siteId, async (tx) => {
+    // Filled inside the transaction, kicked only after it commits.
+    let webhookDeliveryIds: number[] = []
+    const placed = await siteTransaction(siteId, async (tx) => {
       const orderNumber = await nextOrderNumber(siteId)
 
       const [result] = await tx.query<import('mysql2').ResultSetHeader>(
@@ -1670,10 +1672,10 @@ export async function placePublicOrder(
       }
 
       // The webhook row rides the SAME transaction: it exists exactly when
-      // the order does, and a rollback takes both. Delivery happens later,
-      // from the tick — never inline from a shopper's checkout request.
+      // the order does, and a rollback takes both. Delivery is kicked only
+      // AFTER the commit — never inline from a shopper's checkout request.
       const { enqueueEventTx } = await import('./webhooks')
-      await enqueueEventTx(siteId, tx, 'order.placed', {
+      webhookDeliveryIds = await enqueueEventTx(siteId, tx, 'order.placed', {
         orderId,
         orderNumber,
         totalIncl: total,
@@ -1683,6 +1685,14 @@ export async function placePublicOrder(
 
       return { ok: true as const, orderId, orderNumber, total, onAccount, giftCard, voucherCredit }
     })
+
+    // Post-commit, un-awaited: the due-now fast path. If it dies, the tick
+    // sends the rows a minute later.
+    if (webhookDeliveryIds.length > 0) {
+      const { deliverNow } = await import('./webhooks')
+      void deliverNow(siteId, webhookDeliveryIds)
+    }
+    return placed
   } catch (error) {
     /*
      * The code ran out between validation and the lock. Thrown rather than

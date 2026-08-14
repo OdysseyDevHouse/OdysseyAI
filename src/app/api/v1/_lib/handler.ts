@@ -114,3 +114,15 @@ export function pageParams(req: NextRequest, maxLimit = 200): { limit: number; o
   const offset = Math.max(Number(q.get('offset')) || 0, 0)
   return { limit, offset }
 }
+
+/**
+ * The ?updatedSince= sync cursor: an ISO 8601 instant, or absent. Returns
+ * 'invalid' (for a 400) rather than silently ignoring a malformed cursor —
+ * a sync that thinks it is polling a delta must never get the full set.
+ */
+export function sinceParam(req: NextRequest, name = 'updatedSince'): Date | null | 'invalid' {
+  const raw = req.nextUrl.searchParams.get(name)
+  if (!raw) return null
+  const parsed = new Date(raw)
+  return Number.isNaN(parsed.getTime()) ? 'invalid' : parsed
+}

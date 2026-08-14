@@ -100,6 +100,22 @@ export async function sendLowStockDigest(siteId: number): Promise<LowStockTickRe
     href: '/purchasing/suggest',
   })
 
+  // The outbound mirror, riding the SAME claim — so it fires at the digest
+  // cadence and can never spam an endpoint per-sale. Capped payload; the full
+  // picture is /api/v1/products?updatedSince= away.
+  const { enqueueEvent } = await import('./webhooks')
+  await enqueueEvent(siteId, 'stock.low', {
+    count: digest.lines.length,
+    products: digest.lines.slice(0, 100).map((l) => ({
+      productId: l.productId,
+      code: l.code,
+      stockOnHand: l.stockOnHand,
+      minStock: l.minStock,
+      onOrder: l.onOrder,
+      suggested: l.suggested,
+    })),
+  })
+
   try {
     const outcome = await send({ to: email, subject: digest.subject, text: digest.text, html: digest.html })
     if (!outcome.ok) {

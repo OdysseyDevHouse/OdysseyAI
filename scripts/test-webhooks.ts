@@ -14,9 +14,11 @@ import {
   setEndpointActive,
   deleteEndpoint,
   enqueueEvent,
+  sendTestPing,
   signPayload,
   backoffMinutes,
   deliverDue,
+  deliverNow,
   listDeliveries,
   redeliver,
 } from '../src/lib/site/webhooks'
@@ -67,6 +69,12 @@ async function repairBalances() {
 async function main() {
   await sweepStrays()
   const stamp = Date.now().toString().slice(-8)
+
+  // Producers kick the due-now fast path with the real global fetch,
+  // un-awaited. Point it at an instant refusal so those stray attempts settle
+  // in microseconds instead of DNS-timeout seconds — the bookkeeping below is
+  // exercised explicitly through injected fakes, never through this.
+  globalThis.fetch = (async () => new Response('', { status: 503 })) as typeof fetch
 
   /* ── 1. Pure pieces ────────────────────────────────────────────────────── */
 
@@ -146,6 +154,25 @@ async function main() {
       return new Response('', { status })
     }) as typeof fetch
 
+  // The due-now fast path already had a crack at these rows (and failed — the
+  // patched global fetch refuses). Its updates are un-awaited, so first WAIT
+  // for every attempt to stamp its outcome (attempts > 0), THEN reset the rows
+  // due — otherwise a late failure re-parks a row between the reset and the
+  // tick below.
+  for (let i = 0; i < 50; i++) {
+    const inflight = await siteQueryOne<any>(SITE,
+      `SELECT COUNT(*) AS n FROM webhook_deliveries d
+         JOIN webhook_endpoints e ON e.id = d.endpoint_id
+        WHERE e.url LIKE 'https://zwh-test.example.com%'
+          AND d.status = 'pending' AND d.attempts = 0`)
+    if (Number(inflight?.n) === 0) break
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  await siteExecute(SITE,
+    `UPDATE webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id
+        SET d.next_attempt_at = NOW(), d.attempts = 0, d.status = 'pending', d.last_error = NULL
+      WHERE e.url LIKE 'https://zwh-test.example.com%'`)
+
   const first = await deliverDue(SITE, { fetchImpl: fakeFetch(200) })
   ok('*** a 200 delivers everything due ***', first.attempted >= 2 && first.failed === 0,
     JSON.stringify(first))
@@ -208,6 +235,60 @@ async function main() {
     threw = true
   }
   ok('*** enqueueEvent with no subscribers is a quiet no-op ***', !threw)
+
+  /* ── 6b. The test ping ─────────────────────────────────────────────────── */
+
+  const beforePing = calls.length
+  const ping = await sendTestPing(SITE, epOrders.id, { fetchImpl: fakeFetch(200) })
+  ok('*** a test ping delivers inline and reports the status ***',
+    ping.ok && ping.statusCode === 200, JSON.stringify(ping))
+  const pingCall = calls[calls.length - 1]
+  ok('  it went out signed exactly like a real event',
+    calls.length === beforePing + 1 && pingCall.headers['x-odyssey-event'] === 'ping' &&
+      /^t=\d+,v1=[0-9a-f]{64}$/.test(pingCall.headers['x-odyssey-signature']) &&
+      String(pingCall.body).includes('"event":"ping"'))
+  ok('  and it lands in the delivery log delivered',
+    !!(await siteQueryOne<any>(SITE,
+      `SELECT id FROM webhook_deliveries WHERE endpoint_id = ? AND event = 'ping' AND status = 'delivered'`,
+      [epOrders.id])))
+  const pingFail = await sendTestPing(SITE, epOrders.id, { fetchImpl: fakeFetch(500) })
+  ok('  a failing ping reports the HTTP status and joins the retry ladder',
+    !pingFail.ok && !pingFail.ok && String((pingFail as any).error).includes('500'))
+  const pausedPing = await sendTestPing(SITE, epSales.id, { fetchImpl: fakeFetch(200) })
+  ok('  a paused endpoint refuses the ping outright', !pausedPing.ok)
+
+  /* ── 6c. The due-now fast path ─────────────────────────────────────────── */
+
+  await siteExecute(SITE,
+    `INSERT INTO webhook_deliveries (endpoint_id, event, payload, next_attempt_at)
+     VALUES (?, 'order.placed', '{"fastPath":true}', NOW())`, [epOrders.id])
+  const fastId = Number((await siteQueryOne<any>(SITE, 'SELECT LAST_INSERT_ID() AS id'))?.id)
+  await deliverNow(SITE, [fastId], { fetchImpl: fakeFetch(200) })
+  ok('*** deliverNow delivers a fresh row without waiting for the tick ***',
+    String((await siteQueryOne<any>(SITE,
+      'SELECT status FROM webhook_deliveries WHERE id = ?', [fastId]))?.status) === 'delivered')
+  const callsBefore = calls.length
+  await deliverNow(SITE, [fastId], { fetchImpl: fakeFetch(200) })
+  ok('  a settled row cannot be claimed twice', calls.length === callsBefore)
+
+  /* ── 7. Retention: settled rows age out, the queue never does ──────────── */
+
+  await siteExecute(SITE,
+    `INSERT INTO webhook_deliveries (endpoint_id, event, payload, status, next_attempt_at, created_at, delivered_at)
+     VALUES (?, 'order.placed', '{}', 'delivered', NOW(), DATE_SUB(NOW(), INTERVAL 40 DAY), DATE_SUB(NOW(), INTERVAL 40 DAY))`,
+    [epOrders.id])
+  const oldDelivered = Number((await siteQueryOne<any>(SITE, 'SELECT LAST_INSERT_ID() AS id'))?.id)
+  await siteExecute(SITE,
+    `INSERT INTO webhook_deliveries (endpoint_id, event, payload, status, next_attempt_at, created_at)
+     VALUES (?, 'order.placed', '{}', 'pending', DATE_ADD(NOW(), INTERVAL 1 DAY), DATE_SUB(NOW(), INTERVAL 40 DAY))`,
+    [epOrders.id])
+  const oldPending = Number((await siteQueryOne<any>(SITE, 'SELECT LAST_INSERT_ID() AS id'))?.id)
+
+  await deliverDue(SITE, { fetchImpl: fakeFetch(200) })
+  ok('*** the tick prunes settled rows older than 30 days ***',
+    !(await siteQueryOne<any>(SITE, 'SELECT id FROM webhook_deliveries WHERE id = ?', [oldDelivered])))
+  ok('  but an old PENDING row is still the queue, not litter',
+    !!(await siteQueryOne<any>(SITE, 'SELECT id FROM webhook_deliveries WHERE id = ?', [oldPending])))
 
   /* ── Clean up ──────────────────────────────────────────────────────────── */
 

@@ -6,13 +6,16 @@ import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 /**
  * Outbound webhooks — events this store pushes to other systems.
  *
- * ── ENQUEUE-THEN-DELIVER, NEVER SEND INLINE ──────────────────────────────
+ * ── ENQUEUE-THEN-DELIVER; THE FAST PATH NEVER BLOCKS ─────────────────────
  *
- * A producer writes a delivery ROW (cheap, local, reliable) and the tick
- * route sends it later with retries. Sending inline from finaliseDocument
- * would put a stranger's slow server inside the hottest path in the app.
- * enqueueEvent NEVER throws — the GL-mirror doctrine: a missed webhook is a
- * delivery gap, not a reason to fail a sale that already committed.
+ * A producer writes a delivery ROW (cheap, local, reliable). The row is the
+ * durable truth: the un-awaited deliverNow() fast path then attempts it
+ * immediately so latency is near-zero, and the tick route remains the retry
+ * safety net that sends anything the fast path missed. AWAITING a send from
+ * finaliseDocument stays forbidden — it would put a stranger's slow server
+ * inside the hottest path in the app. enqueueEvent NEVER throws — the
+ * GL-mirror doctrine: a missed webhook is a delivery gap, not a reason to
+ * fail a sale that already committed.
  *
  * ── SIGNATURES ───────────────────────────────────────────────────────────
  *
@@ -30,8 +33,14 @@ import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 export const WEBHOOK_EVENTS = [
   'order.placed',
   'order.paid',
+  'order.status_changed',
   'sale.finalised',
   'sale.voided',
+  'customer.created',
+  'grv.received',
+  // Rides the low-stock digest's claim, so it fires at the digest cadence
+  // (default daily) and can never spam an endpoint per-sale.
+  'stock.low',
 ] as const
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
 
@@ -169,6 +178,30 @@ export function backoffMinutes(attempt: number): number {
 
 const MAX_ATTEMPTS = 5
 
+/** How long settled (delivered/dead) rows stay before the lazy prune. */
+const DELIVERY_RETENTION_DAYS = 30
+
+/**
+ * Lazy retention, the notifications pattern: every delivery tick sweeps a
+ * bounded slice of settled rows, so a table whose every row carries a frozen
+ * payload cannot grow without bound and no extra cron is needed. Pending rows
+ * are never touched — they are still the queue. NEVER throws: a failed prune
+ * must not fail the deliveries riding the same tick.
+ */
+async function pruneSettledDeliveries(siteId: number): Promise<void> {
+  try {
+    await siteExecute(
+      siteId,
+      `DELETE FROM webhook_deliveries
+        WHERE status IN ('delivered','dead')
+          AND created_at < DATE_SUB(NOW(), INTERVAL ${DELIVERY_RETENTION_DAYS} DAY)
+        LIMIT 200`,
+    )
+  } catch (error) {
+    console.error('webhook delivery prune failed (skipped):', error)
+  }
+}
+
 /* ── Enqueue ──────────────────────────────────────────────────────────────── */
 
 async function subscribedEndpoints(siteId: number, event: WebhookEvent): Promise<Row[]> {
@@ -178,7 +211,13 @@ async function subscribedEndpoints(siteId: number, event: WebhookEvent): Promise
   ).then((rows) => rows.filter((r) => String(r.events).split(',').includes(event)))
 }
 
-/** Fans one event out to every subscribed endpoint. NEVER throws. */
+/**
+ * Fans one event out to every subscribed endpoint. NEVER throws.
+ *
+ * The rows are the durable truth; after they exist, a fire-and-forget
+ * deliverNow() cuts latency from "tick interval" to near-zero without ever
+ * blocking the caller — the due-now fast path, with the tick as safety net.
+ */
 export async function enqueueEvent(
   siteId: number,
   event: WebhookEvent,
@@ -188,14 +227,17 @@ export async function enqueueEvent(
     const endpoints = await subscribedEndpoints(siteId, event)
     if (endpoints.length === 0) return
     const body = JSON.stringify({ event, occurredAt: new Date().toISOString(), ...payload })
+    const ids: number[] = []
     for (const endpoint of endpoints) {
-      await siteExecute(
+      const inserted = await siteExecute(
         siteId,
         `INSERT INTO webhook_deliveries (endpoint_id, event, payload, next_attempt_at)
          VALUES (?,?,?,NOW())`,
         [Number(endpoint.id), event, body],
       )
+      ids.push(Number(inserted.insertId))
     }
+    void deliverNow(siteId, ids)
   } catch (error) {
     console.error('enqueueEvent failed (webhook dropped):', error)
   }
@@ -206,28 +248,154 @@ export async function enqueueEvent(
  * (an online order): the delivery row exists exactly when the order does.
  * This one MAY throw; it runs inside the caller's tx, where a throw is the
  * rollback both of them want.
+ *
+ * Returns the delivery ids so the caller can hand them to deliverNow() AFTER
+ * its commit — never before: a delivery attempted for a row that rolls back
+ * announces an order that does not exist.
  */
 export async function enqueueEventTx(
   siteId: number,
   tx: PoolConnection,
   event: WebhookEvent,
   payload: Record<string, unknown>,
-): Promise<void> {
+): Promise<number[]> {
   const endpoints = await subscribedEndpoints(siteId, event)
-  if (endpoints.length === 0) return
+  if (endpoints.length === 0) return []
   const body = JSON.stringify({ event, occurredAt: new Date().toISOString(), ...payload })
+  const ids: number[] = []
   for (const endpoint of endpoints) {
-    await tx.execute(
+    const [res] = await tx.execute(
       `INSERT INTO webhook_deliveries (endpoint_id, event, payload, next_attempt_at)
        VALUES (?,?,?,NOW())`,
       [Number(endpoint.id), event, body] as never,
     )
+    ids.push(Number((res as { insertId: number }).insertId))
+  }
+  return ids
+}
+
+/**
+ * The due-now fast path: attempt these freshly-enqueued rows immediately,
+ * best-effort. Each row is CLAIMED first — an atomic shove of next_attempt_at
+ * one minute out — so the minute-cadence tick will not race it, and if this
+ * process dies mid-flight the tick inherits the row a minute later. NEVER
+ * throws; producers call it un-awaited.
+ */
+export async function deliverNow(
+  siteId: number,
+  deliveryIds: number[],
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<void> {
+  const doFetch = opts.fetchImpl ?? fetch
+  for (const id of deliveryIds) {
+    try {
+      const claimed = await siteExecute(
+        siteId,
+        `UPDATE webhook_deliveries
+            SET next_attempt_at = DATE_ADD(NOW(), INTERVAL 1 MINUTE)
+          WHERE id = ? AND status = 'pending' AND next_attempt_at <= NOW()`,
+        [id],
+      )
+      if (claimed.affectedRows === 0) continue
+
+      const row = await siteQueryOne<Row>(
+        siteId,
+        `SELECT d.id, d.endpoint_id, d.event, d.payload, d.attempts,
+                e.url, e.secret, e.is_active
+           FROM webhook_deliveries d
+           JOIN webhook_endpoints e ON e.id = d.endpoint_id
+          WHERE d.id = ? AND d.status = 'pending'`,
+        [id],
+      )
+      if (!row || !row.is_active) continue
+      await attemptOne(siteId, row, doFetch)
+    } catch (error) {
+      // The row is still pending with the tick due to inherit it — a failed
+      // fast path costs latency, never a delivery.
+      console.error('deliverNow failed (tick will retry):', error)
+    }
   }
 }
 
 /* ── Delivery ─────────────────────────────────────────────────────────────── */
 
 export type DeliverOutcome = { attempted: number; delivered: number; failed: number }
+
+type AttemptResult = { delivered: boolean; statusCode: number | null; error: string | null }
+
+/**
+ * One attempt at one delivery row (joined with its endpoint), with all the
+ * bookkeeping: success stamps the row delivered, failure walks the backoff
+ * ladder and ends dead. The single sender behind the tick, the test-ping
+ * button and the due-now fast path — so every route out signs and records
+ * identically.
+ */
+async function attemptOne(siteId: number, row: Row, doFetch: typeof fetch): Promise<AttemptResult> {
+  const deliveryId = Number(row.id)
+  const attempts = Number(row.attempts) + 1
+
+  const body = String(row.payload)
+  const signature = signPayload(String(row.secret), body, Math.floor(Date.now() / 1000))
+
+  let statusCode: number | null = null
+  let errorText: string | null = null
+  try {
+    const response = await doFetch(String(row.url), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-odyssey-event': String(row.event),
+        'x-odyssey-delivery': String(deliveryId),
+        'x-odyssey-signature': signature,
+      },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    })
+    statusCode = response.status
+    if (response.ok) {
+      // `status = 'pending'` guard on both outcome writes: the fast path and
+      // the tick can, in a razor-thin race, both attempt one row — delivery
+      // is at-least-once by contract, but the LOG must keep the first settled
+      // outcome rather than let the loser overwrite it.
+      await siteExecute(
+        siteId,
+        `UPDATE webhook_deliveries
+            SET status = 'delivered', attempts = ?, last_status_code = ?, last_error = NULL,
+                delivered_at = NOW()
+          WHERE id = ? AND status = 'pending'`,
+        [attempts, statusCode, deliveryId],
+      )
+      await siteExecute(siteId, 'UPDATE webhook_endpoints SET last_success_at = NOW() WHERE id = ?', [
+        Number(row.endpoint_id),
+      ])
+      return { delivered: true, statusCode, error: null }
+    }
+    errorText = `HTTP ${statusCode}`
+  } catch (error) {
+    errorText = error instanceof Error ? error.message : 'Request failed'
+  }
+
+  const dead = attempts >= MAX_ATTEMPTS
+  await siteExecute(
+    siteId,
+    `UPDATE webhook_deliveries
+        SET status = ?, attempts = ?, last_status_code = ?, last_error = ?,
+            next_attempt_at = DATE_ADD(NOW(), INTERVAL ? MINUTE)
+      WHERE id = ? AND status = 'pending'`,
+    [
+      dead ? 'dead' : 'pending',
+      attempts,
+      statusCode,
+      (errorText ?? 'failed').slice(0, 300),
+      backoffMinutes(attempts),
+      deliveryId,
+    ],
+  )
+  await siteExecute(siteId, 'UPDATE webhook_endpoints SET last_failure_at = NOW() WHERE id = ?', [
+    Number(row.endpoint_id),
+  ])
+  return { delivered: false, statusCode, error: errorText }
+}
 
 /**
  * Sends every due pending delivery for one site. Driven by the tick route;
@@ -239,6 +407,8 @@ export async function deliverDue(
 ): Promise<DeliverOutcome> {
   const doFetch = opts.fetchImpl ?? fetch
   const batch = Math.min(Math.max(opts.batch ?? 50, 1), 200)
+
+  await pruneSettledDeliveries(siteId)
 
   const due = await siteQuery<Row>(
     siteId,
@@ -255,84 +425,79 @@ export async function deliverDue(
   let failed = 0
 
   for (const row of due) {
-    const deliveryId = Number(row.id)
-    const attempts = Number(row.attempts) + 1
-
     // An endpoint switched off with work still queued: park the rows as dead
     // rather than hammering a URL the shop said to stop calling.
     if (!row.is_active) {
       await siteExecute(
         siteId,
         `UPDATE webhook_deliveries SET status = 'dead', last_error = 'Endpoint deactivated' WHERE id = ?`,
-        [deliveryId],
+        [Number(row.id)],
       )
       failed++
       continue
     }
 
-    const body = String(row.payload)
-    const signature = signPayload(String(row.secret), body, Math.floor(Date.now() / 1000))
-
-    let statusCode: number | null = null
-    let errorText: string | null = null
-    try {
-      const response = await doFetch(String(row.url), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-odyssey-event': String(row.event),
-          'x-odyssey-delivery': String(deliveryId),
-          'x-odyssey-signature': signature,
-        },
-        body,
-        signal: AbortSignal.timeout(10_000),
-      })
-      statusCode = response.status
-      if (response.ok) {
-        await siteExecute(
-          siteId,
-          `UPDATE webhook_deliveries
-              SET status = 'delivered', attempts = ?, last_status_code = ?, last_error = NULL,
-                  delivered_at = NOW()
-            WHERE id = ?`,
-          [attempts, statusCode, deliveryId],
-        )
-        await siteExecute(
-          siteId,
-          'UPDATE webhook_endpoints SET last_success_at = NOW() WHERE id = ?',
-          [Number(row.endpoint_id)],
-        )
-        delivered++
-        continue
-      }
-      errorText = `HTTP ${statusCode}`
-    } catch (error) {
-      errorText = error instanceof Error ? error.message : 'Request failed'
-    }
-
-    const dead = attempts >= MAX_ATTEMPTS
-    await siteExecute(
-      siteId,
-      `UPDATE webhook_deliveries
-          SET status = ?, attempts = ?, last_status_code = ?, last_error = ?,
-              next_attempt_at = DATE_ADD(NOW(), INTERVAL ? MINUTE)
-        WHERE id = ?`,
-      [
-        dead ? 'dead' : 'pending',
-        attempts,
-        statusCode,
-        (errorText ?? 'failed').slice(0, 300),
-        backoffMinutes(attempts),
-        deliveryId,
-      ],
-    )
-    await siteExecute(siteId, 'UPDATE webhook_endpoints SET last_failure_at = NOW() WHERE id = ?', [
-      Number(row.endpoint_id),
-    ])
-    failed++
+    const result = await attemptOne(siteId, row, doFetch)
+    if (result.delivered) delivered++
+    else failed++
   }
 
   return { attempted: due.length, delivered, failed }
+}
+
+/**
+ * Fires a signed `ping` event at one endpoint, right now, and reports what
+ * came back — so an integrator can prove their receiver and signature check
+ * without waiting for a real sale. The ping is a real delivery row sent by
+ * the same code path as every event: same headers, same signature scheme,
+ * and it lands in the delivery log like anything else. If the inline attempt
+ * fails, the ordinary retry ladder picks it up.
+ */
+export async function sendTestPing(
+  siteId: number,
+  endpointId: number,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<{ ok: true; statusCode: number } | { ok: false; error: string }> {
+  const endpoint = await siteQueryOne<Row>(
+    siteId,
+    'SELECT id, url, secret, is_active FROM webhook_endpoints WHERE id = ? LIMIT 1',
+    [endpointId],
+  )
+  if (!endpoint) return { ok: false, error: 'Endpoint not found.' }
+  if (!endpoint.is_active) return { ok: false, error: 'This endpoint is paused — resume it first.' }
+
+  const body = JSON.stringify({
+    event: 'ping',
+    occurredAt: new Date().toISOString(),
+    note: 'Test ping. Verify the X-Odyssey-Signature header exactly as you would for a real event.',
+  })
+  const inserted = await siteExecute(
+    siteId,
+    `INSERT INTO webhook_deliveries (endpoint_id, event, payload, next_attempt_at)
+     VALUES (?,?,?,NOW())`,
+    [endpointId, 'ping', body],
+  )
+
+  const result = await attemptOne(
+    siteId,
+    {
+      id: inserted.insertId,
+      endpoint_id: endpointId,
+      event: 'ping',
+      payload: body,
+      attempts: 0,
+      url: endpoint.url,
+      secret: endpoint.secret,
+    } as Row,
+    opts.fetchImpl ?? fetch,
+  )
+  if (result.delivered) return { ok: true, statusCode: result.statusCode ?? 200 }
+  return {
+    ok: false,
+    error: result.statusCode
+      ? `The receiver answered HTTP ${result.statusCode}. It will retry on the backoff ladder.`
+      : `${result.error ?? 'The request failed'}. It will retry on the backoff ladder.`,
+  }
 }
 
 /* ── The log ──────────────────────────────────────────────────────────────── */

@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { withApiKey, pageParams, sinceParam, type ApiContext } from '../_lib/handler'
-import { publicCustomer } from '../_lib/shapes'
-import { listCustomers, CUSTOMER_STATUSES } from '@/lib/site/customers'
+import { publicSupplier } from '../_lib/shapes'
+import { listSuppliers, SUPPLIER_STATUSES } from '@/lib/site/suppliers'
 
 export const dynamic = 'force-dynamic'
 
-export const GET = withApiKey('customers:read', async (req: NextRequest, ctx: ApiContext) => {
+export const GET = withApiKey('suppliers:read', async (req: NextRequest, ctx: ApiContext) => {
   const { limit, offset } = pageParams(req)
   const updatedSince = sinceParam(req)
   if (updatedSince === 'invalid') {
@@ -14,14 +14,13 @@ export const GET = withApiKey('customers:read', async (req: NextRequest, ctx: Ap
       { status: 400 },
     )
   }
-  const { items, total } = await listCustomers(ctx.siteId, {
+  const { items, total } = await listSuppliers(ctx.siteId, {
     search: req.nextUrl.searchParams.get('search') ?? undefined,
     // A delta poll must see every status: "this account closed" is exactly
-    // the change a sync polls to learn. Full pulls keep the default book view
-    // (everything except closed).
-    ...(updatedSince !== null ? { statuses: CUSTOMER_STATUSES, updatedSince } : {}),
+    // the change a sync polls to learn.
+    ...(updatedSince !== null ? { statuses: SUPPLIER_STATUSES, updatedSince } : {}),
     limit,
     offset,
   })
-  return NextResponse.json({ items: items.map(publicCustomer), total, limit, offset })
+  return NextResponse.json({ items: items.map(publicSupplier), total, limit, offset })
 })

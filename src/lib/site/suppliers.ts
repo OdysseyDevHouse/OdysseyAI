@@ -120,6 +120,11 @@ export type SupplierListOptions = {
   statuses?: readonly SupplierStatus[]
   category?: string
   withBalanceOnly?: boolean
+  /**
+   * Only rows changed on or after this instant — the /api/v1 sync cursor.
+   * updated_at is ON UPDATE CURRENT_TIMESTAMP, so every save moves it.
+   */
+  updatedSince?: Date
   sort?: SupplierSort
   direction?: 'asc' | 'desc'
   limit?: number
@@ -150,6 +155,10 @@ function buildWhere(opts: SupplierListOptions): { sql: string; params: unknown[]
     params.push(opts.category.trim())
   }
   if (opts.withBalanceOnly) where.push('s.balance <> 0')
+  if (opts.updatedSince) {
+    where.push('s.updated_at >= ?')
+    params.push(opts.updatedSince)
+  }
 
   return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', params }
 }

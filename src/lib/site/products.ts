@@ -418,6 +418,13 @@ export type ProductListOptions = {
   includeArchived?: boolean
   belowMinimum?: boolean
   /**
+   * Only rows saved on or after this instant — the /api/v1 sync cursor, so an
+   * accounting sync polls a cheap delta instead of re-pulling the catalogue.
+   * Compared against last_edit_date (creation stamps it too; created_at is
+   * the fallback for legacy rows that predate the stamp).
+   */
+  updatedSince?: Date
+  /**
    * List only the variants of this parent, instead of the catalogue.
    *
    * The click-through from a collapsed group. Set, the other filters still
@@ -528,6 +535,11 @@ export async function listProducts(
    * "well stocked", it is a shop about to run out.
    */
   if (opts.belowMinimum) where.push(BELOW_MINIMUM_SQL)
+
+  if (opts.updatedSince) {
+    where.push('COALESCE(p.last_edit_date, p.created_at) >= ?')
+    params.push(opts.updatedSince)
+  }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500)

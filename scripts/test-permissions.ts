@@ -191,6 +191,10 @@ async function main() {
     }
     // The public API authenticates with API keys, not sessions: every route
     // under /api/v1 must run through withApiKey, so one cannot ship open.
+    // One deliberate exception: the OpenAPI spec is documentation — it
+    // describes the API without exposing any store's data, and an integrator
+    // needs it BEFORE they have a key.
+    if (r === 'src/app/api/v1/openapi.json/route.ts') continue
     if (r.startsWith('src/app/api/v1/')) {
       const src = await readFile(path.join(ROOT, r), 'utf8')
       if (!/withApiKey\(/.test(src)) unguardedRoutes.push(r)
