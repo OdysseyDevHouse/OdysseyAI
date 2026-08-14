@@ -53,6 +53,7 @@
     "test:customer-pricing": "tsx --conditions=react-server --env-file=.env scripts/test-customer-pricing.ts",
     "test:accounting": "tsx --conditions=react-server --env-file=.env scripts/test-accounting.ts",
     "test:group-reporting": "tsx --conditions=react-server --env-file=.env scripts/test-group-reporting.ts",
+    "test:notifications": "tsx --conditions=react-server --env-file=.env scripts/test-notifications.ts",
     "test:period-locks": "tsx --conditions=react-server --env-file=.env scripts/test-period-locks.ts",
     "test:expenses": "tsx --conditions=react-server --env-file=.env scripts/test-expenses.ts",
     "test:general-ledger": "tsx --conditions=react-server --env-file=.env scripts/test-general-ledger.ts",

@@ -8,6 +8,7 @@ import { Button, ButtonLink, MenuItem } from '@/components/ui'
 import { breadcrumbFor } from '@/lib/nav'
 import StoreSwitcher, { type SwitcherSite } from './StoreSwitcher'
 import ThemeToggle from './ThemeToggle'
+import NotificationBell from './NotificationBell'
 
 /** Initials for the avatar: "Tiaan Smith" -> "TI". */
 function initials(name: string, email: string): string {
@@ -67,6 +68,7 @@ export default function TopBar({
   userName,
   userEmail,
   roleName,
+  unreadNotifications = 0,
 }: {
   sites: SwitcherSite[]
   currentSiteId: number
@@ -74,6 +76,8 @@ export default function TopBar({
   userEmail: string
   /** Null when nobody has given this person a role yet. */
   roleName?: string | null
+  /** Server-computed at render; the bell keeps itself fresh from there. */
+  unreadNotifications?: number
 }) {
   const pathname = usePathname()
   const trail = breadcrumbFor(pathname)
@@ -141,7 +145,7 @@ export default function TopBar({
             the same screens — the problem src/lib/nav.ts records solving when
             the menu stopped naming all fourteen. */}
         <IconButton label="Settings" icon={Settings} href="/setup" internal />
-        <IconButton label="Notifications" icon={Bell} />
+        <NotificationBell initialCount={unreadNotifications} />
 
         <div ref={menuRef} className="relative">
           {/* Deliberately not <Button>: an avatar is a circular identity badge

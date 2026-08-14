@@ -1161,6 +1161,18 @@ export async function receiveGoods(
     // Update the order's fulfilment state once its lines have moved.
     if (input.orderId) await refreshOrderFulfilment(siteId, input.orderId)
 
+    // The bell. This sits inside the try whose catch would report a COMMITTED
+    // receipt as failed, which is exactly why notify() swallows its own
+    // errors rather than throwing.
+    const { notify } = await import('./notifications')
+    await notify(siteId, {
+      event: 'grv_received',
+      audience: 'purchasing.view',
+      title: `${posted.documentNumber} received`,
+      body: `Goods received — R${round(subtotalExcl + vatTotal, 2).toFixed(2)}, by ${actor.userName}`,
+      href: `/purchasing/${posted.documentId}`,
+    })
+
     return {
       ok: true,
       documentId: posted.documentId,

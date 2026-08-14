@@ -54,11 +54,30 @@ const OPEN_PAGES = new Set([
      row via requireSession, never anybody else's. A capability here would let
      an owner forbid people from protecting their own login — backwards. */
   'src/app/(app)/security/page.tsx',
+  /* Session-only like /security: the feed is personal, and which rows appear
+     is decided inside the lib from the visitor's OWN CapabilitySet — a page
+     capability would only duplicate that decision, wrongly. */
+  'src/app/(app)/notifications/page.tsx',
 ])
 
 /** Action files that guard with requireSession alone, each for the same
     documented own-account reason as its page above. */
-const OPEN_ACTIONS = new Set(['src/app/(app)/security/actions.ts'])
+const OPEN_ACTIONS = new Set([
+  'src/app/(app)/security/actions.ts',
+  'src/app/(app)/notifications/actions.ts',
+])
+
+/**
+ * API routes guarded by the SESSION alone — requireSiteUser, no single
+ * capability — each because what the caller may see is decided per row inside
+ * the lib from their own CapabilitySet. Distinct from OPEN_ROUTES below:
+ * these still demand a signed-in site user.
+ */
+const SESSION_ROUTES = new Set([
+  // The bell: personal feed; visibility filtered per capability in
+  // src/lib/site/notifications.ts, mutations touch only the visitor's rows.
+  'src/app/api/notifications/route.ts',
+])
 
 /**
  * API routes that are deliberately unauthenticated, each for a documented
@@ -161,6 +180,13 @@ async function main() {
 
   for (const r of routes) {
     if (OPEN_ROUTES.has(r)) continue
+    // Session-guarded personal routes: verify the session check is present
+    // rather than skipping blind, so the entry cannot outlive the guard.
+    if (SESSION_ROUTES.has(r)) {
+      const src = await readFile(path.join(ROOT, r), 'utf8')
+      if (!/requireSiteUser|requireSession/.test(src)) unguardedRoutes.push(r)
+      continue
+    }
     const src = await readFile(path.join(ROOT, r), 'utf8')
     if (!GUARD.test(src)) unguardedRoutes.push(r)
   }

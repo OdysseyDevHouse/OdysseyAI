@@ -352,6 +352,20 @@ export async function placeOrderAction(
    */
   await recordPurchase(siteId, result.total)
 
+  // The bell in the back office. After the order committed, before any branch
+  // below, so every success path — gift card, on-account, pay-online,
+  // gateway-down — announces exactly once. notify() swallows its own errors.
+  {
+    const { notify } = await import('@/lib/site/notifications')
+    await notify(siteId, {
+      event: 'online_order_placed',
+      audience: 'online.view',
+      title: `New online order ${result.orderNumber}`,
+      body: `${input.contactName} — R${result.total.toFixed(2)}`,
+      href: '/online-store/orders',
+    })
+  }
+
   /*
    * A gift-covered order skips the gateway entirely: the card IS the payment.
    * Invoicing runs now, in this same request. If it fails (the card drained

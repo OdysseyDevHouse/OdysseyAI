@@ -453,6 +453,8 @@ const UNLINKED: Record<string, string> = {
      top bar, beside sign-out — personal settings, not a site screen, so the
      sidebar rightly never lists it. */
   '/security': 'reached from the user menu in the top bar',
+  /* The full feed behind the bell, same top-bar-only posture as /security. */
+  '/notifications': 'reached from the bell in the top bar',
 }
 
 console.log('\nEvery page is reachable')

@@ -1549,6 +1549,21 @@ export async function voidDocument(
     console.error('[gift-cards] restore failed for document', document.id, error)
   }
 
+  // The bell — voids are the till event a supervisor wants to hear about.
+  // Same side of the commit, and notify() swallows its own errors.
+  try {
+    const { notify } = await import('./notifications')
+    await notify(siteId, {
+      event: 'sale_voided',
+      audience: 'sales.void',
+      title: `${document.documentNumber} voided`,
+      body: `${reason.slice(0, 120)} — R${document.totalIncl.toFixed(2)}, by ${actor.userName}`,
+      href: `/sales/${document.id}`,
+    })
+  } catch (error) {
+    console.error('notify failed for void of document', document.id, error)
+  }
+
   return { ok: true }
 }
 

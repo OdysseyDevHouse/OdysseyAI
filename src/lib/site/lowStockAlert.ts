@@ -86,6 +86,20 @@ export async function sendLowStockDigest(siteId: number): Promise<LowStockTickRe
 
   if (!digest) return { sent: false, lines: 0, skipped: 'nothing_low' }
 
+  // The bell, beside the email — cadence already governed by the last_sent
+  // claim above, so this can never fire more often than the digest itself.
+  // Honest limitation: a shop with no digest email set (or no SMTP) returns
+  // before this line and gets no in-app alert either; decoupling that needs a
+  // second claim stamp, deliberately not taken on here.
+  const { notify } = await import('./notifications')
+  await notify(siteId, {
+    event: 'low_stock',
+    audience: 'purchasing.view',
+    title: digest.subject,
+    body: 'Open Purchasing and raise the suggested orders.',
+    href: '/purchasing/suggest',
+  })
+
   try {
     const outcome = await send({ to: email, subject: digest.subject, text: digest.text, html: digest.html })
     if (!outcome.ok) {

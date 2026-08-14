@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSession, requireSiteUser } from '@/lib/auth'
 import { listSitesForUser } from '@/lib/sites'
+import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
 import { ToastProvider } from '@/components/ui'
@@ -19,6 +20,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const sites = await listSitesForUser(session.userId)
 
+  // The bell's starting figure. One indexed COUNT; the client keeps itself
+  // fresh from there, and a failure here must not take down every page.
+  const unread = await unreadCount(site.id, user.id, capabilities).catch(() => 0)
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar granted={[...capabilities.granted]} isOwner={capabilities.isOwner} />
@@ -35,6 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           userName={user.name}
           userEmail={session.email}
           roleName={user.roleName}
+          unreadNotifications={unread}
         />
         <main className="flex-1 overflow-y-auto bg-canvas">
           {/* Toasts are the standard outcome message for any action, so the
