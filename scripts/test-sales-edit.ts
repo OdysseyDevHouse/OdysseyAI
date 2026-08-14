@@ -214,7 +214,10 @@ async function main() {
   await setSetting(SITE, 'vat_period_locked_to', today)
   const locked = await canEditFinalised(SITE, OWNER, lockTarget)
   ok('*** a LOCKED VAT period refuses the correction ***', !locked.ok)
-  ok('  naming the lock', !locked.ok && locked.refusal.reason.includes('locked'),
+  // guardPosting's unified wording says "that period is closed"; the older
+  // helper said "locked". Either way the reason must name the closure.
+  ok('  naming the lock',
+    !locked.ok && /locked|closed/.test(locked.refusal.reason),
     !locked.ok ? locked.refusal.reason : '')
   await setSetting(SITE, 'vat_period_locked_to', '')
   ok('  and unlocking allows it again', (await canEditFinalised(SITE, OWNER, lockTarget)).ok)
