@@ -42,6 +42,8 @@ import { invoiceJob, type InvoiceLineInput, type InvoiceJobResult } from '@/lib/
 import {
   markResponded,
   savePolicy,
+  createPolicy,
+  deletePolicy,
   type PolicyInput,
   type SlaActionResult,
 } from '@/lib/site/jobSla'
@@ -1498,6 +1500,34 @@ export async function savePolicyAction(
   if ('ok' in ctx) return ctx
 
   const result = await savePolicy(ctx.siteId, ctx.actor, id, input)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/sla')
+  return result
+}
+
+/**
+ * A promise made to ONE customer (164, §17.5).
+ *
+ * `jobs.setup`, the same right editing the business promises needs: deciding
+ * what is promised is a configuration act whichever customer it is about.
+ */
+export async function createPolicyAction(input: PolicyInput): Promise<SlaActionResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await createPolicy(ctx.siteId, ctx.actor, input)
+  if (!result.ok) return result
+  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/sla')
+  return result
+}
+
+export async function deletePolicyAction(id: number): Promise<SlaActionResult> {
+  const ctx = await actorFor('jobs.setup')
+  if ('ok' in ctx) return ctx
+
+  const result = await deletePolicy(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
   revalidatePath('/setup/job-workflow')
   revalidatePath('/jobs/sla')

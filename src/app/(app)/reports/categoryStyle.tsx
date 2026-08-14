@@ -22,6 +22,7 @@ export const CATEGORY_TONE: Record<string, CategoryTone> = {
   Suppliers: 'rose',
   Money: 'emerald',
   Operations: 'amber',
+  'Multi-store': 'orange',
   Saved: 'violet',
 }
 
@@ -44,6 +45,7 @@ const CATEGORY_DESCRIPTION: Record<string, string> = {
   Suppliers: 'What was bought in, from whom, and what it cost.',
   Money: 'Takings, expenses and what the day added up to.',
   Operations: 'How the shop ran — shifts, tills and who did what.',
+  'Multi-store': 'Every linked store together, and what they came to.',
   Saved: 'Reports this shop built or had generated.',
 }
 
@@ -65,6 +67,8 @@ export function categoryIcon(category: string, size = 18): ReactNode {
       return <Icons.Coins size={size} strokeWidth={1.7} />
     case 'Operations':
       return <Icons.Settings size={size} strokeWidth={1.7} />
+    case 'Multi-store':
+      return <Icons.Store size={size} strokeWidth={1.7} />
     case 'Saved':
       return <Icons.Star size={size} strokeWidth={1.7} />
     default:

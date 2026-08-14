@@ -5,8 +5,14 @@ import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
 import { ToastProvider } from '@/components/ui'
+import DesktopLicenceGate from './DesktopLicenceGate'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  /* Read once, on the server. `APP_MODE` is baked in by `build:desktop`, so this
+     is a fact about which build is running rather than a claim from the client
+     — which is the difference between a check and a suggestion. */
+  const isDesktop = process.env.APP_MODE === 'desktop'
+
   const session = await requireSession()
 
   // Enforced here rather than only at login, so typing a URL can't skip it.
@@ -45,7 +51,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <main className="flex-1 overflow-y-auto bg-canvas">
           {/* Toasts are the standard outcome message for any action, so the
               provider sits above every page rather than per-screen. */}
-          <ToastProvider>{children}</ToastProvider>
+          <ToastProvider>
+            {/*
+              ── THE DESKTOP APP IS LICENSED AS A WHOLE ─────────────────────
+              On the packaged build, an unlicensed installation gets no back
+              office either — the machine IS the thing that was sold. On the web
+              build this wrapper is not rendered at all, so a browser reaches the
+              back office exactly as before and only /pos is licensed.
+
+              `APP_MODE` is read on the SERVER, from the environment the build
+              was made with (see `build:desktop`). That matters: a client
+              claiming to be desktop would be claiming its way into a check, and
+              one claiming to be a browser could otherwise skip it.
+            */}
+            {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+          </ToastProvider>
         </main>
       </div>
     </div>

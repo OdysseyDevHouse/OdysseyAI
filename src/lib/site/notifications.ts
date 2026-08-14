@@ -26,6 +26,8 @@ export type NotificationEvent =
   | 'job_part_requested'
   /** The part somebody asked for has arrived. Addressed to them by name. */
   | 'job_part_received'
+  /** A promise was missed and nobody has replied yet (164). To one manager. */
+  | 'sla_escalation'
 
 export type NotificationInput = {
   event: NotificationEvent

@@ -772,3 +772,31 @@ export function toCustomerStatus(value: unknown): CustomerStatus | null {
   const raw = String(value ?? '')
   return (CUSTOMER_STATUSES as readonly string[]).includes(raw) ? (raw as CustomerStatus) : null
 }
+
+/**
+ * Every tradeable customer as a pickable option — id and a label that
+ * identifies one uniquely.
+ *
+ * ── WHY NOT listCustomers ──────────────────────────────────────────────────
+ *
+ * That one is paged and capped, which is right for a screen and wrong for a
+ * picker: a site over the cap would silently be unable to name some of its
+ * customers, with nothing on screen saying so. The same reasoning as
+ * supplierOptions in 162 — and the same live evidence, since this site has more
+ * suppliers than the cap allows.
+ *
+ * `on_hold` is included alongside `active` on purpose. A customer whose account
+ * is on hold still has an agreement and still logs jobs; excluding them would
+ * silently drop the promise for exactly the accounts somebody is arguing with.
+ */
+export async function customerOptions(
+  siteId: number,
+): Promise<{ id: number; name: string }[]> {
+  const rows = await siteQuery<RowDataPacket & { id: number; code: string; name: string }>(
+    siteId,
+    `SELECT id, code, name FROM customers
+      WHERE status IN ('active','on_hold')
+      ORDER BY name, code`,
+  )
+  return rows.map((r) => ({ id: Number(r.id), name: `${String(r.name)} (${String(r.code)})` }))
+}

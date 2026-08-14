@@ -6,8 +6,10 @@ import { sendLowStockDigest } from '@/lib/site/lowStockAlert'
 /**
  * The alerts heartbeat — call this every hour or so.
  *
- * One job rides it today: the low-stock digest. Its own secret rather than
- * the basket one, so a shop can rotate either without breaking the other.
+ * TWO jobs ride it: the low-stock digest, and SLA escalation (164). One secret
+ * rather than the basket one, so a shop can rotate either without breaking the
+ * other — and one route rather than three, because both jobs want the same
+ * hourly cadence and the same per-site try/catch.
  *
  * ── IT NEEDS A PUBLIC_PREFIXES ENTRY ─────────────────────────────────────
  *
@@ -54,6 +56,8 @@ async function handle(request: NextRequest) {
   const results: Record<string, unknown>[] = []
   let sent = 0
 
+  let escalated = 0
+
   for (const siteId of siteIds) {
     try {
       const result = await sendLowStockDigest(siteId)
@@ -67,9 +71,42 @@ async function handle(request: NextRequest) {
         error: e instanceof Error ? e.message : 'The digest failed for this site.',
       })
     }
+
+    /*
+     * SLA escalation (164) — a SECOND job on this tick rather than a third
+     * route and a third secret.
+     *
+     * Its own try/catch, deliberately: a site whose escalation sweep throws
+     * must not stop the low-stock digest for every site after it, and the two
+     * jobs share nothing but the heartbeat.
+     *
+     * Safe to call often for the same reason the digest is: escalateOverdue
+     * claims a row per (job, kind) BEFORE notifying, so frequency changes how
+     * quickly somebody hears, never how many times.
+     */
+    try {
+      const { escalateOverdue } = await import('@/lib/site/jobSla')
+      const sla = await escalateOverdue(siteId)
+      if (sla.escalated > 0) {
+        escalated += sla.escalated
+        results.push({ siteId, escalated: sla.escalated })
+      }
+    } catch (e) {
+      results.push({
+        siteId,
+        error: e instanceof Error ? e.message : 'SLA escalation failed for this site.',
+      })
+    }
   }
 
-  return NextResponse.json({ ok: true, at: new Date().toISOString(), sites: siteIds.length, sent, results })
+  return NextResponse.json({
+    ok: true,
+    at: new Date().toISOString(),
+    sites: siteIds.length,
+    sent,
+    escalated,
+    results,
+  })
 }
 
 function authorised(request: NextRequest, secret: string): boolean {

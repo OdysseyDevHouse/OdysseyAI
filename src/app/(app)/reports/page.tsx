@@ -47,6 +47,45 @@ export default async function ReportsPage() {
     })
   }
 
+  /*
+   * Cross-store reports, for a shop with linked stores.
+   *
+   * Dedicated PAGES for the same reason stock intelligence is: each reads every
+   * linked store's own database and merges the results, which the engine — one
+   * spec against one site — cannot express. They were a "Group" section in the
+   * sidebar, which cost every single-store shop a permanent two-row menu group
+   * to name a word shops do not use for themselves. Here they cost nothing, and
+   * are found where somebody looks for a figure spanning their stores.
+   *
+   * Listed whether or not this site is linked: the pages themselves show an
+   * empty state pointing at Setup → Linked stores, which is the honest answer
+   * and avoids a control-database read on every load of this hub.
+   */
+  if (allow('dashboard.view')) {
+    templates.push({
+      id: 'multi-store',
+      name: 'Multi-store overview',
+      description: 'Today, this month, gross profit and stock on hand for every linked store.',
+      category: 'Multi-store',
+      source: 'sales',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+  }
+  if (allow('reports.financial')) {
+    templates.push({
+      id: 'multi-store-income-statement',
+      name: 'Multi-store profit and loss',
+      description: 'One profit and loss across every linked store, a column each, by account code.',
+      category: 'Multi-store',
+      source: 'expenseLines',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+  }
+
   return (
     <>
       <PageHeader

@@ -283,6 +283,9 @@ import {
   deadlinesFor,
   jobStanding,
   listSlaPolicies,
+  createPolicy,
+  deletePolicy,
+  escalateOverdue,
   markResponded,
   reconcileJobSla,
   slaCounts,
@@ -402,6 +405,9 @@ const EXPENSE_CATEGORY_PATTERN = '^JCT[0-9]{6} subcontract$'
 const MULTI_ASSET_JOB_PATTERN = '^JCT[0-9]{6} multi asset job$'
 /* (J32). Its own pattern, like every fixture above it. */
 const PART_REQUEST_JOB_PATTERN = '^JCT[0-9]{6} parts request job$'
+/* (J33). Its own pattern, like every fixture above it. */
+const BREACHED_JOB_PATTERN = '^JCT[0-9]{6} breached job$'
+const SLA_POLICY_PATTERN = '^JCT[0-9]{6} promise$'
 
 /**
  * Deletes only this suite's fixtures.
@@ -551,6 +557,17 @@ async function sweepStrays() {
   await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [
     PART_REQUEST_JOB_PATTERN,
   ])
+  /*
+   * (J33) The breached job, its escalation claim and the per-customer policy.
+   * The claim CASCADEs from the job, but the policy is RESTRICTed by any job
+   * still pointing at it, so the job goes first. Notifications carry no FK at
+   * all and are swept by event.
+   */
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [BREACHED_JOB_PATTERN])
+  await siteExecute(SITE, `DELETE FROM job_sla_policies WHERE name REGEXP ?`, [
+    SLA_POLICY_PATTERN,
+  ])
+  await siteExecute(SITE, `DELETE FROM notifications WHERE event = 'sla_escalation'`)
   await siteExecute(SITE, `DELETE FROM customer_assets WHERE description REGEXP ?`, [ASSET_PATTERN])
   await siteExecute(SITE, `DELETE FROM asset_types WHERE code REGEXP ?`, [ASSET_TYPE_PATTERN])
 
@@ -6029,6 +6046,154 @@ async function main() {
     )
   }
 
+  // ── 38. (J33) A promise made to ONE customer, and escalation ──────────────
+  //
+  // The whole risk of 164 is the NULLABLE UNIQUE KEY. (customer_id, priority)
+  // with a NULL customer cannot dedupe, because NULL <> NULL — so the key
+  // silently permits a second business default and INSERT IGNORE against it
+  // does nothing. 113's seed comment says the gl_mappings trap did NOT apply
+  // while priority was the whole key; adding customer_id made it apply.
+  {
+    const escWas = await getSetting(SITE, 'job_sla_escalation_enabled')
+    try {
+      const base = {
+        name: `JCT${stamp} promise`,
+        respondMinutes: 60,
+        resolveMinutes: null,
+        isActive: true,
+        note: null,
+      }
+
+      const made = await createPolicy(SITE, actor, {
+        ...base, priority: 'high' as const, customerId,
+        escalateAfterMinutes: 30, escalateToUserId: actor.userId,
+      })
+      ok('(J33) a customer gets their own promise', made.ok, made.ok ? '' : made.error)
+
+      /*
+       * *** THE TRAP. *** Both of these are refused by an explicit read, not by
+       * the unique key — which cannot see the NULL case at all.
+       */
+      const dupDefault = await createPolicy(SITE, actor, {
+        ...base, priority: 'high' as const, customerId: null,
+      })
+      ok(
+        '(J33) *** a SECOND business default is refused — the nullable key cannot dedupe it ***',
+        !dupDefault.ok,
+        dupDefault.ok ? 'ACCEPTED' : dupDefault.error,
+      )
+      const dupCustomer = await createPolicy(SITE, actor, {
+        ...base, priority: 'high' as const, customerId,
+      })
+      ok(
+        '(J33) and a second promise to the same customer at the same priority',
+        !dupCustomer.ok,
+        dupCustomer.ok ? 'ACCEPTED' : dupCustomer.error,
+      )
+
+      const policies = await listSlaPolicies(SITE)
+      const mine = policies.find((p) => p.customerId === customerId && p.priority === 'high')
+      const fallback = policies.find((p) => p.customerId === null && p.priority === 'high')
+      ok(
+        '(J33) it reads back against the customer, with their name',
+        mine !== undefined && (mine.customerName ?? '').length > 0,
+        mine?.customerName ?? 'null',
+      )
+
+      /*
+       * SELECTION — the point of the whole phase. Three answers from one query.
+       */
+      const forThem = await deadlinesFor(SITE, 'high', '2026-08-14 09:00:00', undefined, customerId)
+      const forOther = await deadlinesFor(SITE, 'high', '2026-08-14 09:00:00', undefined, 999999)
+      const forNobody = await deadlinesFor(SITE, 'high', '2026-08-14 09:00:00')
+      ok(
+        '(J33) *** the customer is measured against THEIR promise ***',
+        forThem.policyId === mine?.id,
+        `${forThem.policyId} vs ${mine?.id}`,
+      )
+      ok(
+        '(J33) *** and everybody else against the business default ***',
+        forOther.policyId === fallback?.id && forNobody.policyId === fallback?.id,
+        `other ${forOther.policyId}, none ${forNobody.policyId}, default ${fallback?.id}`,
+      )
+
+      ok(
+        '(J33) a business default cannot be deleted — every job with no policy needs it',
+        !(await deletePolicy(SITE, actor, fallback!.id)).ok,
+      )
+
+      // ── Escalation ────────────────────────────────────────────────────────
+      await setSetting(SITE, 'job_sla_escalation_enabled', '0')
+      ok(
+        '(J33) escalation is OFF by default — it fills somebody elses bell',
+        (await escalateOverdue(SITE)).skipped === 'off',
+      )
+
+      /*
+       * A job breached days ago, measured against the policy created above.
+       * Reported in the past and never answered, which is what escalation is
+       * for; respond_by is stamped so the row looks like any other breached job.
+       */
+      const st = await siteQuery<{ id: number }>(
+        SITE, `SELECT id FROM job_statuses WHERE is_active = 1 LIMIT 1`,
+      )
+      const breached = await siteExecute(
+        SITE,
+        `INSERT INTO job_cards (customer_id, status_id, status, title, reported_at, priority,
+           source, sla_policy_id, respond_by)
+         VALUES (?,?,'open',?, DATE_SUB(NOW(), INTERVAL 5 DAY), 'high','manual',?,
+           DATE_SUB(NOW(), INTERVAL 4 DAY))`,
+        [customerId, Number(st[0]!.id), `JCT${stamp} breached job`, mine!.id],
+      )
+      const breachedId = Number(breached.insertId)
+
+      await setSetting(SITE, 'job_sla_escalation_enabled', '1')
+      const pass1 = await escalateOverdue(SITE)
+      const pass2 = await escalateOverdue(SITE)
+      ok(
+        '(J33) a missed promise escalates',
+        pass1.escalated >= 1,
+        `pass1 ${pass1.escalated}`,
+      )
+      ok(
+        '(J33) *** and running the tick again escalates NOTHING — the claim precedes the bell ***',
+        pass2.escalated === 0,
+        `pass2 ${pass2.escalated}`,
+      )
+      ok(
+        '(J33) it is addressed to the named manager, not to an audience',
+        (
+          await siteQuery<{ user_id: number | null }>(
+            SITE,
+            `SELECT user_id FROM notifications WHERE event = 'sla_escalation' LIMIT 1`,
+          )
+        )[0]?.user_id === actor.userId,
+      )
+
+      /*
+       * Breach itself is still DERIVED — 113 argues a stored flag is wrong the
+       * minute after it is written. What this table stores is that somebody was
+       * TOLD, which does not go stale.
+       */
+      const stored = await siteQuery<{ n: number }>(
+        SITE,
+        `SELECT COUNT(*) AS n FROM job_cards WHERE id = ? AND respond_by < NOW()`,
+        [breachedId],
+      )
+      ok(
+        '(J33) the breach is still read off the deadline, never stored as a flag',
+        Number(stored[0]?.n ?? 0) === 1,
+      )
+
+      await siteExecute(SITE, `DELETE FROM job_sla_escalations`)
+      await siteExecute(SITE, `DELETE FROM notifications WHERE event = 'sla_escalation'`)
+      await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [breachedId])
+      await deletePolicy(SITE, actor, mine!.id)
+    } finally {
+      await setSetting(SITE, 'job_sla_escalation_enabled', escWas ?? '0')
+    }
+  }
+
   await sweepStrays()
 
   /*
@@ -6165,6 +6330,25 @@ async function main() {
     `SELECT id FROM notifications
       WHERE event IN ('job_part_requested','job_part_received') AND title LIKE ?`,
     [`%${stamp}%`],
+  )
+  await sweepCheck('breached jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    BREACHED_JOB_PATTERN,
+  ])
+  await sweepCheck('per-customer SLA policies', 'SELECT id FROM job_sla_policies WHERE name REGEXP ?', [
+    SLA_POLICY_PATTERN,
+  ])
+  /*
+   * A claim whose job has gone. Nothing removes these when the job is deleted
+   * outside a CASCADE path, and a leaked claim would stop a REAL escalation
+   * later — the worst kind of litter, because it fails silently and elsewhere.
+   */
+  await sweepCheck(
+    'orphaned escalation claims',
+    'SELECT id FROM job_sla_escalations WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  await sweepCheck(
+    'escalation notifications',
+    `SELECT id FROM notifications WHERE event = 'sla_escalation'`,
   )
   await sweepCheck('crews', 'SELECT id FROM job_teams WHERE name REGEXP ?', [CREW_PATTERN])
   await sweepCheck(

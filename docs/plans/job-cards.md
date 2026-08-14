@@ -2857,6 +2857,90 @@ somebody ends up on the wrong queue.
 
 ---
 
+## What phase 37 shipped
+
+**Per-customer SLA and escalation (§17.5).** `164_customer_sla.sql` adds a
+nullable `customer_id` to `job_sla_policies`, swaps the unique key from
+`(priority)` to `(customer_id, priority)`, adds `escalate_after_minutes` /
+`escalate_to_user_id`, and creates `job_sla_escalations` as a claim table.
+
+Selection is one query: this customer's policy for this priority, else the
+business default. `deadlinesFor` takes an optional trailing `customerId`, so
+every existing call keeps meaning exactly what it meant.
+
+### The trap this phase is mostly about
+
+113's own seed comment says, of its `INSERT IGNORE`:
+
+> "The gl_mappings trap does not apply here: priority is NOT NULL, so the unique
+> key actually dedupes."
+
+**Adding `customer_id` made it apply.** In MySQL two rows of `(NULL, 'urgent')`
+do not collide, because NULL is not equal to NULL — so
+`uq_sla_customer_priority` cannot stop a second business default, and
+`INSERT IGNORE` against it does nothing at all. That is the 083 `gl_mappings`
+case exactly.
+
+So `createPolicy` checks with an explicit read spelled `IS NULL` (never
+`= NULL`, which matches nothing and lets every duplicate through), and the
+migration seeds with `NOT EXISTS`. The key is still worth having: it dedupes
+every per-customer row, which is the case a picker can actually produce twice.
+
+**The old index had to be dropped**, and as a standalone `DROP INDEX IF EXISTS
+… ON …` matching 092 — the `ALTER TABLE … DROP INDEX IF EXISTS` spelling is the
+one to distrust, on the same evidence as the `ADD FOREIGN KEY` guard. Verified
+by `SHOW INDEX` on both sites afterwards, because a silently-skipped drop would
+have left the old constraint refusing every per-customer row.
+
+### Escalation
+
+Rides `/api/alerts/tick` as a **second job**, with its own try/catch so a site
+whose sweep throws cannot stop the low-stock digest for every site after it —
+rather than a third route and a third secret.
+
+`job_sla_escalations` has `UNIQUE (job_card_id, kind)` with **both columns NOT
+NULL**, so unlike the policy key this one really does dedupe. The row is
+INSERTed before `notify()` is called, so a job breached on Monday escalates once
+rather than every five minutes until somebody closes it. `INSERT IGNORE` is
+correct *here*, precisely because there is no nullable column in the key — the
+same test 113 applied, and the one 164 fails.
+
+**Breach stays derived.** 113 argues a stored flag is wrong the minute after it
+is written, and nothing here stores one: this table records that somebody was
+*told*, which is a different fact and does not go stale.
+
+Measured from **reported**, not from the breach — so a business wanting warning
+*before* the deadline sets a figure below `respond_minutes`. Measuring from the
+breach would make that inexpressible.
+
+### Verified
+
+Typecheck and `check-ui-kit` clean; `test:job-cards` (12 new J33 assertions),
+`test:navigation` and `test:invoicing` all pass. Migration applied to sites 1
+and 2, both confirmed carrying the new columns, the swapped index and the claim
+table.
+
+Driven in Chrome: the four defaults read "Everybody", a new per-customer row
+appeared showing the customer, a 2h response and "after 1h" escalation, with a
+delete button only on that row. A live probe proved the whole cycle — the second
+business default refused, the second per-customer policy refused, the customer
+measured against theirs and everybody else against the default, the default
+undeletable, and escalation firing once (`pass1 1`, `pass2 0`) addressed to a
+named user. Site 1 verified back to exactly four business defaults by query.
+
+**Not run: the smoke crawl.** Its login step broke mid-phase —
+*"Could not find the login fields — has the form changed?"* — because another
+session is editing the sign-in page, `auth.ts` and `session.ts`. The screenshot
+driver signed in successfully earlier in this same phase, and nothing here
+touches auth. My three routes were checked directly instead and each returns 307
+to login, which is the guard working.
+
+**Deliberately out of scope**, per the plan: entitlement and coverage, which
+overlap the contracts module and belong in a drawdown there rather than in an
+SLA policy.
+
+---
+
 ## Deferred, and what each is blocked on
 
 Not "later" — **blocked on infrastructure that does not exist**.

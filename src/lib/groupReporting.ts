@@ -148,27 +148,96 @@ export async function perSite<T>(
 
 /* ── Group dashboard ──────────────────────────────────────────────────────── */
 
+/** One period's trading, the same shape whether it is this month or last. */
+export type PeriodTrading = {
+  turnoverIncl: number
+  turnoverExcl: number
+  grossProfit: number
+  saleCount: number
+}
+
 export type GroupDashboardRow = {
   today: { turnoverIncl: number; saleCount: number }
-  month: { turnoverIncl: number; turnoverExcl: number; grossProfit: number; saleCount: number }
+  month: PeriodTrading
+  /**
+   * The SAME span one period earlier, so every figure can be shown as a change
+   * rather than a bare number. A month-to-date total compares against the same
+   * number of days of the previous month — not the whole of it, which would
+   * report every store as down until the last day of the month.
+   */
+  previous: PeriodTrading
   stockValue: number
+  /** Drawer variance over the month: counted minus expected, summed. */
+  cashVariance: number
+  /** What the month's voids, refunds and discounts came to — the leak figures. */
+  exceptions: { voidValue: number; voidCount: number; discountValue: number }
 }
 
 type Row = RowDataPacket & Record<string, unknown>
 
+/** Turnover, cost and count for one date span — the shape both periods share. */
+async function tradingFor(siteId: number, from: string, to: string): Promise<PeriodTrading> {
+  const [lines, docs] = await Promise.all([
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT COALESCE(SUM(l.line_total_incl), 0) AS incl,
+              COALESCE(SUM(l.line_total_excl), 0) AS excl,
+              COALESCE(SUM(l.unit_cost_excl * l.qty), 0) AS cost
+         FROM sales_document_lines l
+         JOIN sales_documents d ON d.id = l.document_id
+        WHERE d.status = 'finalised'
+          AND d.doc_type IN ('invoice','credit_sale')
+          AND d.document_date BETWEEN ? AND ?`,
+      [from, to],
+    ),
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT COUNT(*) AS n FROM sales_documents
+        WHERE status = 'finalised' AND doc_type = 'invoice'
+          AND document_date BETWEEN ? AND ?`,
+      [from, to],
+    ),
+  ])
+
+  const excl = toNum(lines?.excl)
+  return {
+    turnoverIncl: toNum(lines?.incl),
+    turnoverExcl: excl,
+    grossProfit: round(excl - toNum(lines?.cost), 2),
+    saleCount: Number(docs?.n ?? 0),
+  }
+}
+
 /**
- * The trading picture per store: today, the month so far, and stock at cost.
+ * The trading picture per store: today, the month so far, the same span a
+ * period earlier, stock at cost, and the month's leak figures.
  *
  * The sale queries mirror salesDashboard's kpisFor exactly — finalised
  * invoices and credit sales by document_date — so this screen and each
  * store's own dashboard can never disagree about what counts as a sale.
+ *
+ * The comparison period is passed in rather than derived here: only the caller
+ * knows which month it is looking at, and a helper guessing "30 days back"
+ * would silently mis-compare a 28-day February against a 31-day January.
+ *
+ * Cash variance and the exception figures are read fail-soft INSIDE the fan-out
+ * (see safeQueryOne): schema drifts between sites, and a store missing the
+ * shift tables must still contribute its sales rather than failing the row.
  */
 export async function groupDashboard(
   sites: GroupSite[],
-  range: { todayIso: string; monthFrom: string; monthTo: string },
+  range: {
+    todayIso: string
+    monthFrom: string
+    monthTo: string
+    prevFrom: string
+    prevTo: string
+  },
 ): Promise<SiteResult<GroupDashboardRow>[]> {
   return perSite(sites, async (siteId) => {
-    const [monthLines, monthDocs, todayDocs, stock] = await Promise.all([
+    const [month, previous, todayDocs, stock, variance, exceptions] = await Promise.all([
+      tradingFor(siteId, range.monthFrom, range.monthTo),
+      tradingFor(siteId, range.prevFrom, range.prevTo),
       siteQueryOne<Row>(
         siteId,
         `SELECT COALESCE(SUM(l.line_total_incl), 0) AS incl,

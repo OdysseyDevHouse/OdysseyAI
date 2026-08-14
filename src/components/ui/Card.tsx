@@ -22,12 +22,21 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 }
 
 export function CardHeader({
+  icon,
   title,
   description,
   action,
   className = '',
   tone = 'brand',
 }: {
+  /**
+   * A glyph in a tinted tile, left of the title.
+   *
+   * Same 36px disc `SettingRow` draws, so a card whose header carries one sits
+   * in the same column as the rows beneath it rather than half a tile off. Use
+   * an icon from '@/components/ui/icons'; omit it and the header is unchanged.
+   */
+  icon?: ReactNode
   title: ReactNode
   /** One line saying what this block is for — muted, sentence case. */
   description?: ReactNode
@@ -55,12 +64,19 @@ export function CardHeader({
         .filter(Boolean)
         .join(' ')}
     >
-      <div className="min-w-0">
-        {/* Ink, not brand. The rule down the card's edge is what marks the
-            heading; colouring the words as well said the same thing twice, and
-            a blue title reads as a link. */}
-        <h2 className="text-sm font-semibold text-ink">{title}</h2>
-        {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+      <div className="flex min-w-0 items-start gap-3">
+        {icon && (
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+            {icon}
+          </span>
+        )}
+        <div className="min-w-0">
+          {/* Ink, not brand. The rule down the card's edge is what marks the
+              heading; colouring the words as well said the same thing twice, and
+              a blue title reads as a link. */}
+          <h2 className="text-sm font-semibold text-ink">{title}</h2>
+          {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+        </div>
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

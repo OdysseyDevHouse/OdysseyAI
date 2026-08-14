@@ -112,32 +112,42 @@ export default function LicencesPanel({
   return (
     <Card>
       <CardHeader
+        icon={<Icons.ShieldCheck size={16} />}
         title="Till licences"
         description="What this shop is licensed for, and which machine uses each one."
       />
 
       {/* WHICH MACHINE AM I? The number support asks for, and the thing the
           buttons below are about — "use this machine" is meaningless if you
-          cannot tell which machine you are on. */}
-      <div className="border-b border-border px-4 py-3">
-        <span className="block text-xs font-semibold uppercase tracking-wide text-muted">
-          This machine
+          cannot tell which machine you are on.
+
+          TINTED, unlike the licence rows below it. This is a statement about the
+          browser you are sitting at rather than one of the shop's licences, and
+          the band is what stops it reading as a third row in that list. */}
+      <div className="flex items-center gap-3 border-b border-border bg-brand-soft/40 px-4 py-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+          <Icons.Terminal size={16} />
         </span>
-        {/* NOTHING until the browser has been asked.
-            The id lives in localStorage, so the server renders null and the
-            client renders a UUID — printing a placeholder in the meantime makes
-            the two markups differ, which is a hydration mismatch and takes the
-            whole page down with it. (It did exactly that.) An empty line for one
-            frame is invisible; a broken page is not. */}
-        <div className="mt-1 flex min-h-[1.25rem] flex-wrap items-baseline gap-x-2 gap-y-1">
-          {me.ready && (
-            <>
-              <code className="select-all break-all text-[13px] text-ink">
-                {me.id ?? 'No device number — storage is blocked in this browser'}
-              </code>
-              {me.label && <span className="text-[13px] text-muted">· {me.label}</span>}
-            </>
-          )}
+        <div className="min-w-0">
+          <span className="block text-xs font-semibold uppercase tracking-wide text-muted">
+            This machine
+          </span>
+          {/* NOTHING until the browser has been asked.
+              The id lives in localStorage, so the server renders null and the
+              client renders a UUID — printing a placeholder in the meantime makes
+              the two markups differ, which is a hydration mismatch and takes the
+              whole page down with it. (It did exactly that.) An empty line for one
+              frame is invisible; a broken page is not. */}
+          <div className="mt-0.5 flex min-h-[1.25rem] flex-wrap items-baseline gap-x-2 gap-y-1">
+            {me.ready && (
+              <>
+                <code className="select-all break-all text-[13px] text-ink">
+                  {me.id ?? 'No device number — storage is blocked in this browser'}
+                </code>
+                {me.label && <span className="text-[13px] text-muted">· {me.label}</span>}
+              </>
+            )}
+          </div>
         </div>
       </div>
 

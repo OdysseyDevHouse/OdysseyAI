@@ -6,6 +6,7 @@ import { listHeadlines } from '@/lib/site/jobHeadlines'
 import { listAssetTypes } from '@/lib/site/jobAssets'
 import { listJobTeams } from '@/lib/site/jobTeams'
 import { listUsers } from '@/lib/site/users'
+import { customerOptions } from '@/lib/site/customers'
 import { createPortalToken } from '@/lib/publicPortalToken'
 import { getSettings } from '@/lib/site/settings'
 import { PageHeader, PageBody, Callout, TextLink } from '@/components/ui'
@@ -54,6 +55,7 @@ export default async function JobWorkflowPage() {
     teams,
     siteUsers,
     portalToken,
+    slaCustomers,
   ] = await Promise.all([
     listJobStatuses(siteId, true),
     listJobBoards(siteId, true),
@@ -105,6 +107,9 @@ export default async function JobWorkflowPage() {
     // The portal sign-in link (§4.3). Deterministic, so what somebody put on
     // their website keeps working; null if SESSION_SECRET is missing.
     createPortalToken(siteId).catch(() => null),
+    // Customers who can be given a promise of their own (164). See
+    // customerOptions for why it is not the paged list helper.
+    customerOptions(siteId).catch(() => []),
   ])
 
   const portalUrl = portalToken ? `${process.env.APP_URL ?? ''}/portal/${portalToken}` : null
@@ -118,6 +123,18 @@ export default async function JobWorkflowPage() {
   )
 
   const stranded = offBoard.filter((s) => s.jobCount > 0)
+
+  /*
+   * Who a crew or an escalation can name (164).
+   *
+   * Back-office and active only: an escalation goes to somebody who can act on
+   * it, and a POS-only account has no bell to read it in. Derived once here
+   * because both panels want the same list, and two copies of the filter is how
+   * they come to disagree.
+   */
+  const backOfficeUsers = siteUsers
+    .filter((u) => u.isActive && u.userType === 'back_office')
+    .map((u) => ({ id: u.id, name: u.name }))
 
   return (
     <>
@@ -164,9 +181,7 @@ export default async function JobWorkflowPage() {
             people picker on a job, so it reads after the work it will be put on. */}
         <TeamsPanel
           teams={teams}
-          users={siteUsers
-            .filter((u) => u.isActive && u.userType === 'back_office')
-            .map((u) => ({ id: u.id, name: u.name }))}
+          users={backOfficeUsers}
         />
 
         {/* The promises, on the same screen as the stages rather than a route of
@@ -174,6 +189,8 @@ export default async function JobWorkflowPage() {
             settings plus four rows do not earn a sidebar entry. */}
         <SlaPanel
           policies={policies}
+          customers={slaCustomers}
+          users={backOfficeUsers}
           tradingDays={settings.job_sla_trading_days}
           opensAt={settings.job_sla_opens_at}
           closesAt={settings.job_sla_closes_at}

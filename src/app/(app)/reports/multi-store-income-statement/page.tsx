@@ -39,8 +39,14 @@ export const dynamic = 'force-dynamic'
  *
  * A SIMPLE consolidation, and the footer says so: each store's own statement
  * is summed as-is; sales between linked stores are not eliminated.
+ *
+ * The route is a SIBLING of /reports/multi-store, not a child of it. The two
+ * are peers — one report each — and `breadcrumbFor` builds a middle crumb from
+ * any named screen that is a proper prefix, so nesting the URL would render
+ * "Reports › Multi-store overview › Multi-store profit and loss" and claim this
+ * lives inside the overview.
  */
-export default async function GroupIncomeStatementPage({
+export default async function MultiStoreIncomeStatementPage({
   searchParams,
 }: {
   searchParams: Promise<{ from?: string; to?: string; period?: string }>
@@ -55,13 +61,13 @@ export default async function GroupIncomeStatementPage({
   if (!scope || scope.sites.length === 0) {
     return (
       <>
-        <PageHeader title="Group profit and loss" subtitle="One statement across every linked store" />
+        <PageHeader title="Multi-store profit and loss" subtitle="One statement across every linked store" />
         <PageBody>
           <Card>
             <CardBody>
               <EmptyState
-                title="This store is not linked to a group"
-                hint="Link stores into a group to consolidate their statements. Grouping lives under Setup."
+                title="This store is not linked to any others"
+                hint="Link stores together to consolidate their statements. Linking lives under Setup."
                 action={<ButtonLink href="/setup/linked-stores" variant="secondary">Open linked stores</ButtonLink>}
               />
             </CardBody>
@@ -84,7 +90,7 @@ export default async function GroupIncomeStatementPage({
     from: /^\d{4}-\d{2}-\d{2}$/.test(params.from ?? '') ? params.from! : chosen.from,
     to: /^\d{4}-\d{2}-\d{2}$/.test(params.to ?? '') ? params.to! : chosen.to,
   }
-  const href = hrefBuilder('/group/income-statement', params)
+  const href = hrefBuilder('/reports/multi-store-income-statement', params)
 
   const statement = await consolidatedIncomeStatement(scope.sites, range)
   const hasActivity = statement.revenueTotal !== 0 || statement.expenseTotal !== 0
@@ -92,7 +98,7 @@ export default async function GroupIncomeStatementPage({
 
   return (
     <>
-      <PageHeader title="Group profit and loss" subtitle={`${scope.group.name} — ${range.from} to ${range.to}`} />
+      <PageHeader title="Multi-store profit and loss" subtitle={`${scope.group.name} — ${range.from} to ${range.to}`} />
       <PageBody>
         <LinkTabs
           items={Object.entries(presets).map(([key, p]) => ({

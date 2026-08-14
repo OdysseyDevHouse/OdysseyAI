@@ -665,6 +665,18 @@ function SectionTitleSection() {
             &lt;CardHeader title description action&gt;.
           </CardBody>
         </Card>
+        <Card>
+          <CardHeader
+            icon={<Icons.Terminal size={16} />}
+            title="Till licences"
+            description="With an icon — the same 36px brand-soft tile SettingRow draws."
+          />
+          <CardBody className="text-sm text-muted">
+            &lt;CardHeader icon&gt; — use it when the card&apos;s rows carry icons too, so the
+            heading sits in the same column as the tiles beneath it rather than half a tile
+            off. Omit it and the header is unchanged.
+          </CardBody>
+        </Card>
         <SettingGroup
           title="Scale properties"
           description="A group of switches and inputs, each one a SettingRow."

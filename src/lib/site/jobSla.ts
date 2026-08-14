@@ -88,6 +88,18 @@ export type SlaPolicy = {
   resolveMinutes: number | null
   isActive: boolean
   note: string | null
+  /** Whose promise this is (164). NULL is the business default. */
+  customerId: number | null
+  customerName: string | null
+  /**
+   * Business minutes from the REPORTED time after which somebody is told.
+   *
+   * Not measured from the breach: a business that wants warning BEFORE the
+   * deadline sets this below respondMinutes, and measuring from the breach
+   * would make that inexpressible.
+   */
+  escalateAfterMinutes: number | null
+  escalateToUserId: number | null
 }
 
 const mapPolicy = (r: Row): SlaPolicy => ({
@@ -98,18 +110,53 @@ const mapPolicy = (r: Row): SlaPolicy => ({
   resolveMinutes: r.resolve_minutes === null ? null : Number(r.resolve_minutes),
   isActive: Number(r.is_active) === 1,
   note: r.note === null ? null : String(r.note),
+  // All four undefined on a site without 164, which reads as the business
+  // default with no escalation — exactly what those rows meant before.
+  customerId:
+    r.customer_id === null || r.customer_id === undefined ? null : Number(r.customer_id),
+  customerName:
+    r.customer_name === null || r.customer_name === undefined ? null : String(r.customer_name),
+  escalateAfterMinutes:
+    r.escalate_after_minutes === null || r.escalate_after_minutes === undefined
+      ? null
+      : Number(r.escalate_after_minutes),
+  escalateToUserId:
+    r.escalate_to_user_id === null || r.escalate_to_user_id === undefined
+      ? null
+      : Number(r.escalate_to_user_id),
 })
 
 export async function listSlaPolicies(
   siteId: number,
   includeInactive = true,
 ): Promise<SlaPolicy[]> {
+  /*
+   * Business defaults FIRST, then each customer's overrides (164). A screen
+   * that mixed them would make "which is the default" a question somebody has
+   * to work out from a column.
+   *
+   * Tolerant of a site without 164 — the catch falls back to the query this
+   * function has always run.
+   */
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT id, priority, name, respond_minutes, resolve_minutes, is_active, note
-       FROM job_sla_policies
-      ${includeInactive ? '' : 'WHERE is_active = 1'}
-      ORDER BY FIELD(priority, 'urgent','high','normal','low')`,
+    `SELECT p.id, p.priority, p.name, p.respond_minutes, p.resolve_minutes, p.is_active, p.note,
+            p.customer_id, p.escalate_after_minutes, p.escalate_to_user_id,
+            c.name AS customer_name
+       FROM job_sla_policies p
+       LEFT JOIN customers c ON c.id = p.customer_id
+      ${includeInactive ? '' : 'WHERE p.is_active = 1'}
+      ORDER BY CASE WHEN p.customer_id IS NULL THEN 0 ELSE 1 END,
+               c.name,
+               FIELD(p.priority, 'urgent','high','normal','low')`,
+  ).catch(() =>
+    siteQuery<Row>(
+      siteId,
+      `SELECT id, priority, name, respond_minutes, resolve_minutes, is_active, note
+         FROM job_sla_policies
+        ${includeInactive ? '' : 'WHERE is_active = 1'}
+        ORDER BY FIELD(priority, 'urgent','high','normal','low')`,
+    ),
   )
   return rows.map(mapPolicy)
 }
@@ -166,16 +213,49 @@ export async function deadlinesFor(
   priority: JobPriority,
   reportedAt: string | Date,
   hours?: TradingHours,
+  /**
+   * Whose promise to use (164). Omitted or null means the business default,
+   * which is what every call meant before per-customer policies existed.
+   */
+  customerId?: number | null,
 ): Promise<{
   policyId: number | null
   respondBy: string | null
   resolveBy: string | null
 }> {
+  /*
+   * This customer's policy for this priority, else the business default.
+   *
+   * ONE query with an ORDER BY rather than two reads, because two reads is two
+   * chances to answer differently — and this runs on every job save.
+   *
+   * `customer_id = ?` sorts before `customer_id IS NULL` because the CASE puts
+   * the specific match first. NULL-safe comparison is deliberately NOT used:
+   * `<=>` would make a NULL customerId match the default row, which is right,
+   * but it would ALSO match nothing else, and the explicit CASE says what is
+   * happening to the next reader.
+   *
+   * Tolerant of a site without 164: customer_id does not exist there, so the
+   * whole query fails and the catch falls back to the priority-only read that
+   * has always worked.
+   */
   const policy = await siteQueryOne<Row>(
     siteId,
-    `SELECT id, priority, name, respond_minutes, resolve_minutes, is_active, note
-       FROM job_sla_policies WHERE priority = ? AND is_active = 1 LIMIT 1`,
-    [priority],
+    `SELECT id, priority, name, respond_minutes, resolve_minutes, is_active, note,
+            customer_id, escalate_after_minutes, escalate_to_user_id
+       FROM job_sla_policies
+      WHERE priority = ? AND is_active = 1
+        AND (customer_id = ? OR customer_id IS NULL)
+      ORDER BY CASE WHEN customer_id IS NULL THEN 1 ELSE 0 END
+      LIMIT 1`,
+    [priority, customerId ?? null],
+  ).catch(() =>
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT id, priority, name, respond_minutes, resolve_minutes, is_active, note
+         FROM job_sla_policies WHERE priority = ? AND is_active = 1 LIMIT 1`,
+      [priority],
+    ),
   )
   if (!policy) return { policyId: null, respondBy: null, resolveBy: null }
 
@@ -213,7 +293,30 @@ export async function applyDeadlinesTx(
   priority: JobPriority,
   reportedAt: string | Date,
 ): Promise<void> {
-  const { policyId, respondBy, resolveBy } = await deadlinesFor(siteId, priority, reportedAt)
+  /*
+   * The customer is read HERE rather than passed in (164).
+   *
+   * Both callers already hold the job id and would have to thread the customer
+   * through; reading it off the row the transaction is about to stamp means a
+   * job whose customer changed cannot be measured against the old customer's
+   * promise. Read on the tx, because that is the row this transaction holds.
+   */
+  let customerId: number | null = null
+  try {
+    const [rows] = await tx.query<Row[]>(`SELECT customer_id FROM job_cards WHERE id = ?`, [jobId])
+    const value = rows[0]?.customer_id
+    customerId = value === null || value === undefined ? null : Number(value)
+  } catch {
+    customerId = null
+  }
+
+  const { policyId, respondBy, resolveBy } = await deadlinesFor(
+    siteId,
+    priority,
+    reportedAt,
+    undefined,
+    customerId,
+  )
   await tx.execute(
     `UPDATE job_cards SET sla_policy_id = ?, respond_by = ?, resolve_by = ? WHERE id = ?`,
     [policyId, respondBy, resolveBy, jobId],
@@ -515,6 +618,10 @@ export type PolicyInput = {
   resolveMinutes: number | null
   isActive: boolean
   note: string | null
+  /** Whose promise (164). NULL is the business default. */
+  customerId?: number | null
+  escalateAfterMinutes?: number | null
+  escalateToUserId?: number | null
 }
 
 /**
@@ -566,6 +673,11 @@ export async function savePolicy(
   )
   if (!existing) return { ok: false, error: 'That policy no longer exists.' }
 
+  /*
+   * Escalation columns are written through a tolerant second statement rather
+   * than widening the UPDATE above: a site without 164 must still be able to
+   * edit the four promises it already has.
+   */
   await siteExecute(
     siteId,
     `UPDATE job_sla_policies
@@ -580,6 +692,120 @@ export async function savePolicy(
       id,
     ],
   )
+
+  if (input.escalateAfterMinutes !== undefined || input.escalateToUserId !== undefined) {
+    await siteExecute(
+      siteId,
+      `UPDATE job_sla_policies
+          SET escalate_after_minutes = ?, escalate_to_user_id = ?
+        WHERE id = ?`,
+      [input.escalateAfterMinutes ?? null, input.escalateToUserId ?? null, id],
+    ).catch(() => undefined)
+  }
+  return { ok: true }
+}
+
+/**
+ * A promise made to ONE customer (164, §17.5).
+ *
+ * ── WHY THIS CANNOT USE INSERT IGNORE ──────────────────────────────────────
+ *
+ * uq_sla_customer_priority is (customer_id, priority) and customer_id is
+ * nullable. In MySQL two rows of (NULL, 'urgent') do NOT collide, because NULL
+ * is not equal to NULL — so the unique key cannot stop a second business
+ * default and INSERT IGNORE against it does nothing at all. That is the 083
+ * gl_mappings trap, and 113's seed comment says in as many words that it did
+ * not apply while priority was the whole key. Adding customer_id made it apply.
+ *
+ * So the duplicate check is an explicit read, expressed with IS NULL rather
+ * than `= NULL`, which would match nothing and let every duplicate through.
+ */
+export async function createPolicy(
+  siteId: number,
+  actor: Actor,
+  input: PolicyInput,
+): Promise<SlaActionResult> {
+  const refusal = validatePolicy(input)
+  if (refusal) return { ok: false, error: refusal }
+
+  const customerId = input.customerId ?? null
+
+  const clash = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id FROM job_sla_policies
+      WHERE priority = ?
+        AND ${customerId === null ? 'customer_id IS NULL' : 'customer_id = ?'}
+      LIMIT 1`,
+    customerId === null ? [input.priority] : [input.priority, customerId],
+  ).catch(() => null)
+
+  if (clash) {
+    return {
+      ok: false,
+      error:
+        customerId === null
+          ? 'There is already a business-wide promise for that priority. Edit it instead.'
+          : 'That customer already has a promise for that priority. Edit it instead.',
+    }
+  }
+
+  await siteExecute(
+    siteId,
+    `INSERT INTO job_sla_policies
+       (customer_id, priority, name, respond_minutes, resolve_minutes, is_active, note,
+        escalate_after_minutes, escalate_to_user_id)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+    [
+      customerId,
+      input.priority,
+      input.name.trim(),
+      input.respondMinutes,
+      input.resolveMinutes,
+      input.isActive ? 1 : 0,
+      input.note?.trim() || null,
+      input.escalateAfterMinutes ?? null,
+      input.escalateToUserId ?? null,
+    ],
+  )
+
+  /*
+   * NOT logged to activity_log, following savePolicy above: that table is keyed
+   * on an entity and an entity id, and a policy is neither a job card nor a
+   * customer. Inventing `entityId: 0` would put a row on the timeline of
+   * nothing. The actor is still taken so the action layer's guard reads the
+   * same as every sibling.
+   */
+  void actor
+  return { ok: true }
+}
+
+/**
+ * Remove a per-customer promise. The business defaults are NOT deletable —
+ * 113 seeds exactly four and every job with no customer policy depends on one
+ * being there.
+ */
+export async function deletePolicy(
+  siteId: number,
+  actor: Actor,
+  id: number,
+): Promise<SlaActionResult> {
+  const policy = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id, name, customer_id FROM job_sla_policies WHERE id = ?`,
+    [id],
+  ).catch(() => null)
+  if (!policy) return { ok: false, error: 'That policy no longer exists.' }
+
+  if (policy.customer_id === null || policy.customer_id === undefined) {
+    return {
+      ok: false,
+      error: 'A business-wide promise cannot be deleted. Switch it off instead.',
+    }
+  }
+
+  await siteExecute(siteId, `DELETE FROM job_sla_policies WHERE id = ?`, [id])
+  // Not logged, for the reason given in createPolicy.
+  void actor
   return { ok: true }
 }
 
@@ -735,4 +961,128 @@ export async function responseStats(
     metCount: met,
     averageMinutes: rows.length === 0 ? null : Math.round((total / rows.length) * 10) / 10,
   }
+}
+
+/* ── Escalation (164, §17.5) ──────────────────────────────────────────────── */
+
+export type EscalationResult = {
+  /** How many jobs were escalated on this pass. */
+  escalated: number
+  skipped?: 'off' | 'no_policies'
+}
+
+/**
+ * Tell somebody a promise has been missed.
+ *
+ * ── THE CLAIM COMES BEFORE THE BELL ────────────────────────────────────────
+ *
+ * `job_sla_escalations` has UNIQUE (job_card_id, kind) and the row is INSERTed
+ * BEFORE notify() is called. Both columns are NOT NULL, so unlike the policy
+ * key this one really does dedupe — and a job breached on Monday is escalated
+ * once rather than every five minutes until somebody closes it.
+ *
+ * INSERT IGNORE is correct HERE, precisely because there is no nullable column
+ * in the key. That is the same test 113 applied to its own seed, and the same
+ * one 164 fails.
+ *
+ * ── BREACH STAYS DERIVED ───────────────────────────────────────────────────
+ *
+ * 113's header argues that a stored breach flag is wrong the minute after it is
+ * written, and nothing here stores one. This table records that somebody was
+ * TOLD, which is a different fact and does not go stale: the telling happened.
+ *
+ * ── WHY IT IS THE BELL AND NOT EMAIL ───────────────────────────────────────
+ *
+ * notify() has an audience and a userId, never throws, and an escalation is an
+ * internal nudge rather than correspondence. Email would also mean a second
+ * delivery path to keep working; the bell is already on every screen.
+ */
+export async function escalateOverdue(siteId: number): Promise<EscalationResult> {
+  // getSettings, plural — the one this module already uses.
+  const s = await getSettings(siteId, ['job_sla_escalation_enabled']).catch(() => ({}) as Record<string, string>)
+  if (String(s.job_sla_escalation_enabled ?? '0') === '0') return { escalated: 0, skipped: 'off' }
+
+  /*
+   * Only policies that actually name somebody and a delay. A policy with an
+   * escalate_to_user_id and no minutes (or the reverse) is incomplete rather
+   * than instant — treating it as "escalate immediately" would surprise
+   * somebody who half-filled a form.
+   */
+  const policies = await siteQuery<Row>(
+    siteId,
+    `SELECT id, escalate_after_minutes, escalate_to_user_id
+       FROM job_sla_policies
+      WHERE is_active = 1
+        AND escalate_after_minutes IS NOT NULL
+        AND escalate_to_user_id IS NOT NULL`,
+  ).catch(() => [])
+  if (policies.length === 0) return { escalated: 0, skipped: 'no_policies' }
+
+  const week = await tradingHours(siteId)
+  const byPolicy = new Map<number, { after: number; userId: number }>()
+  for (const p of policies) {
+    byPolicy.set(Number(p.id), {
+      after: Number(p.escalate_after_minutes),
+      userId: Number(p.escalate_to_user_id),
+    })
+  }
+
+  /*
+   * OPEN jobs measured against one of those policies, that have not been
+   * responded to. A closed job cannot be escalated: the work is done, and
+   * telling a manager about it is noise about history.
+   */
+  const jobs = await siteQuery<Row>(
+    siteId,
+    `SELECT id, document_number, title, reported_at, respond_by, responded_at, sla_policy_id
+       FROM job_cards
+      WHERE status = 'open'
+        AND responded_at IS NULL
+        AND sla_policy_id IN (${[...byPolicy.keys()].map(() => '?').join(',')})
+      LIMIT 500`,
+    [...byPolicy.keys()],
+  ).catch(() => [])
+
+  const { notify } = await import('./notifications')
+  const now = Date.now()
+  let escalated = 0
+
+  for (const job of jobs) {
+    const rule = byPolicy.get(Number(job.sla_policy_id))
+    if (!rule) continue
+
+    /*
+     * Business minutes since REPORTED, not since the deadline — see the column
+     * comment in 164. A business wanting warning BEFORE the promise is due sets
+     * a figure below respond_minutes, which measuring from the breach could not
+     * express.
+     */
+    const reported = storedMillis(wallClock(job.reported_at))
+    if (!Number.isFinite(reported)) continue
+    const elapsed = businessMinutesBetween(reported, now, week)
+    if (elapsed < rule.after) continue
+
+    // THE CLAIM, stamped before the bell. affectedRows === 0 means somebody
+    // (or an earlier tick) already told them.
+    const claimed = await siteExecute(
+      siteId,
+      `INSERT IGNORE INTO job_sla_escalations (job_card_id, kind, notified_user_id)
+       VALUES (?, 'respond', ?)`,
+      [Number(job.id), rule.userId],
+    ).catch(() => ({ affectedRows: 0 }))
+    if (claimed.affectedRows === 0) continue
+
+    await notify(siteId, {
+      event: 'sla_escalation',
+      // userId wins over audience, so this reaches the named person only.
+      audience: null,
+      userId: rule.userId,
+      title: `Still no reply: ${String(job.document_number ?? `job #${Number(job.id)}`)}`,
+      body: `${String(job.title)} — no first reply after ${rule.after} business minutes.`,
+      href: `/jobs/${Number(job.id)}`,
+    })
+    escalated++
+  }
+
+  return { escalated }
 }

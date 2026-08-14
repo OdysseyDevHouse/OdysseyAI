@@ -84,6 +84,20 @@ CATALOGUE['/reports/stock-intel'] = {
   keywords: 'aging dead stock abc analysis turn sell-through slow movers',
 }
 
+/* The cross-store pair, for the same reason: dedicated pages rather than engine
+   specs, so the catalogue is the only place they can carry a line. "group" is
+   kept as a synonym — it is what this used to be called in the menu. */
+CATALOGUE['/reports/multi-store'] = {
+  description: 'Today, this month, gross profit and stock on hand for every linked store.',
+  icon: 'LayoutGrid',
+  keywords: 'multi store group consolidated branches linked stores combined all stores',
+}
+CATALOGUE['/reports/multi-store-income-statement'] = {
+  description: 'One profit and loss across every linked store, a column each, by account code.',
+  icon: 'LineChart',
+  keywords: 'multi store group consolidated p&l income statement profit branches',
+}
+
 /**
  * The searchable index for ONE user, built from the sections they can see.
  *

@@ -26,7 +26,13 @@ export interface ReportTemplate {
   id: string
   name: string
   description: string
-  category: 'Sales' | 'Stock' | 'Customers' | 'Suppliers' | 'Money' | 'Operations'
+  /*
+   * "Multi-store" carries no template of its own — its two reports are dedicated
+   * pages, listed by the hub — but it is named here because this union is what
+   * makes a category a real thing rather than a free string, and the hub's
+   * `HubItem.category` is typed from it.
+   */
+  category: 'Sales' | 'Stock' | 'Customers' | 'Suppliers' | 'Money' | 'Operations' | 'Multi-store'
   /** Capability needed to see it in the catalogue at all. */
   permission: Capability
   /** Extra capability the report's headline figures need (cost/margin). */

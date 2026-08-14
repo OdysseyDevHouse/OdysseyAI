@@ -479,6 +479,17 @@ export const SETTING_DEFAULTS = {
    */
   job_part_requests_enabled: '1',
 
+  /**
+   * Whether a missed promise tells a named manager (164, §17.5).
+   *
+   * OFF by default, unlike the part requests above. Escalation names a person
+   * and tells them somebody else is late; switching that on for every existing
+   * site the morning after a migration would be filling somebody else's bell,
+   * unasked. A policy also needs BOTH a delay and a person before anything
+   * fires, so this switch is the outer of two deliberate acts.
+   */
+  job_sla_escalation_enabled: '0',
+
   /* ── Who is on a job, and who hears about it ────────────────────────────── */
 
   /**

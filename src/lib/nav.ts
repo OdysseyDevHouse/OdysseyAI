@@ -37,7 +37,6 @@ import {
   Handshake,
   Repeat,
   Wrench,
-  Store,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -222,23 +221,19 @@ export const NAV: NavSection[] = [
     href: '/reports',
     built: true,
     capability: 'reports.view',
-    keywords: 'build a report generate with ai scheduled reports email me analytics',
+    keywords: 'build a report generate with ai scheduled reports email me analytics multi store group consolidated branches',
     description: 'Built-in reports, your own, and ones you schedule',
   },
   /*
-   * Cross-site: only meaningful for stores linked into a group. The screens
-   * themselves show an empty state pointing at Setup → Linked stores when the
-   * site is ungrouped, which keeps this section honest without a per-request
-   * control-DB read in the layout.
+   * Cross-store reporting is NOT a menu section of its own any more.
+   *
+   * It was "Group" — a permanent two-row section for the minority of shops with
+   * linked stores, naming a word they do not use for themselves. Both screens
+   * are reports covering more than one store, so they are reports: listed in the
+   * reports catalogue under "Multi-store" and named in SUBPAGE_LABELS below.
+   * The link between stores is still a GROUP in the control database; only what
+   * a user reads and types changed.
    */
-  {
-    label: 'Group',
-    icon: Store,
-    items: [
-      { label: 'Group overview', href: '/group', icon: LayoutGrid, built: true, capability: 'dashboard.view', keywords: 'multi store consolidated branches linked stores combined', description: 'Every linked store’s trading, side by side' },
-      { label: 'Group profit and loss', href: '/group/income-statement', icon: LineChart, built: true, capability: 'reports.financial', keywords: 'consolidated p&l income statement group profit all stores', description: 'One P&L across every linked store, by account code' },
-    ],
-  },
   {
     /* Staff and Commission answered the same question from opposite ends —
        what the business pays a person, and what that person brought in — so
@@ -544,6 +539,15 @@ export const SUBPAGE_LABELS = {
      that somebody looks for under settings as readily as under reports. */
   '/reports/schedules': 'Scheduled reports',
   '/reports/stock-intel': 'Stock intelligence',
+  /* Cross-store, for a shop with linked stores. Named here rather than in the
+     menu because they are reports, and the catalogue is where a report is
+     found — see the note where the Group section used to be. */
+  '/reports/multi-store': 'Multi-store overview',
+  /* A sibling route, not a child: the two are peers, and `breadcrumbFor` turns
+     any named screen that is a proper prefix into a middle crumb — so
+     /reports/multi-store/income-statement would read as though the P&L lived
+     inside the overview. */
+  '/reports/multi-store-income-statement': 'Multi-store profit and loss',
 } as const
 
 /**
@@ -685,6 +689,12 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/accounting/periods': 'period lock close month year end freeze',
   '/expenses/recurring': 'standing order repeating monthly rent subscription',
   '/reports/schedules': 'scheduled email me automatic recurring report delivery',
+  /* "group" stays a synonym: it is what the section used to be called and what
+     the setting under Setup still groups stores into, so somebody who learnt
+     the old word must still land on these. */
+  '/reports/multi-store': 'multi store group consolidated branches linked stores combined all stores side by side',
+  '/reports/multi-store-income-statement':
+    'multi store group consolidated p&l income statement profit all stores branches',
 }
 
 /**

@@ -84,6 +84,7 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
     <>
       <Card>
         <CardHeader
+          icon={<Icons.Terminal size={16} />}
           title="Tills"
           description="Every register in the store. A sale records which one rang it up."
           /* Always primary now. It used to step down to `secondary` when

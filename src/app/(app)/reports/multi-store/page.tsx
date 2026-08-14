@@ -26,14 +26,20 @@ import {
 export const dynamic = 'force-dynamic'
 
 /**
- * The group overview — every linked store's trading, side by side.
+ * The multi-store overview — every linked store's trading, side by side.
+ *
+ * Lives under /reports because that is where somebody goes looking for a figure
+ * covering more than one store; "Group" was a menu section of its own, naming a
+ * word the shops themselves do not use. The underlying link between stores is
+ * still a GROUP in the control database (`groupReporting.ts`, Setup → Linked
+ * stores) — only what a user reads and types has changed.
  *
  * A store appears only when THIS user may open it and their role there grants
  * the dashboard; anything else is listed under the table with its reason.
  * A store whose database cannot be read renders an error chip in its row —
  * one broken store must never blank the other four.
  */
-export default async function GroupOverviewPage() {
+export default async function MultiStoreOverviewPage() {
   const { site, user, capabilities } = await requireSiteUser()
   // A hidden menu entry is not a boundary — this URL is typeable.
   if (!can(capabilities, 'dashboard.view')) redirect('/not-allowed')
@@ -44,13 +50,13 @@ export default async function GroupOverviewPage() {
   if (!scope || scope.sites.length === 0) {
     return (
       <>
-        <PageHeader title="Group overview" subtitle="Every linked store, side by side" />
+        <PageHeader title="Multi-store overview" subtitle="Every linked store, side by side" />
         <PageBody>
           <Card>
             <CardBody>
               <EmptyState
-                title="This store is not linked to a group"
-                hint="Link stores into a group to see their trading side by side. Grouping lives under Setup."
+                title="This store is not linked to any others"
+                hint="Link stores together to see their trading side by side. Linking lives under Setup."
                 action={<ButtonLink href="/setup/linked-stores" variant="secondary">Open linked stores</ButtonLink>}
               />
             </CardBody>
@@ -79,7 +85,7 @@ export default async function GroupOverviewPage() {
 
   return (
     <>
-      <PageHeader title="Group overview" subtitle={scope.group.name} />
+      <PageHeader title="Multi-store overview" subtitle={scope.group.name} />
       <PageBody>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile label="Today, all stores" value={formatMoney(todayTotal)} />
