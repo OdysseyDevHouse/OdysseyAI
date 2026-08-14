@@ -50,6 +50,14 @@ const GUARD =
  */
 const OPEN_PAGES = new Set([
   'src/app/(app)/not-allowed/page.tsx',
+  /* A pure redirect to /sales/invoicing, kept because /sales is on printed
+     references and bookmarks. It reads NOTHING — no query, no siteId, no
+     document — so there is nothing here to guard; it only rewrites the query
+     string and redirects. The capability lives where the data is: the target
+     requires sales.view, so someone without it lands on not-allowed either
+     way. A check here would refuse the visitor a millisecond earlier and
+     duplicate an authority that belongs on one screen. */
+  'src/app/(app)/sales/page.tsx',
   /* Own account only: /security reads and writes the VISITOR'S cp2_user_totp
      row via requireSession, never anybody else's. A capability here would let
      an owner forbid people from protecting their own login — backwards. */
@@ -116,6 +124,27 @@ const OPEN_ROUTES = new Set([
   'src/app/api/alerts/tick/route.ts',
   // The webhook delivery heartbeat — WEBHOOK_CRON_SECRET, same reasoning.
   'src/app/api/webhooks/tick/route.ts',
+  // Two more cron heartbeats for job cards, on the reasoning above and verified
+  // the same way: each proves itself with its OWN secret compared by
+  // timingSafeEqual (JOB_AUTOMATION_CRON_SECRET, JOB_SERIES_CRON_SECRET) and
+  // returns 503 doing nothing when that variable is unset — no open fallback.
+  // Separate secrets on purpose: one shared across every tick would mean
+  // rotating it for one reason silently breaks the others.
+  'src/app/api/jobs/automations/tick/route.ts',
+  'src/app/api/jobs/series/tick/route.ts',
+  /*
+   * A technician's calendar subscription. Google, Outlook and Apple fetch it on
+   * a schedule with no browser and no cookie, so a capability check is the wrong
+   * tool — there is no session to carry one, and behind the gate the feed would
+   * silently render empty for ever.
+   *
+   * The gate is the URL: a signed token naming ONE user on ONE site, with its
+   * own audience. The query reads only that user's own appointments, so a forged
+   * or widened token cannot reach anybody else's, and the feed carries no
+   * financial data at all. An invalid token 404s — indistinguishable from a URL
+   * that never existed. Rotating SESSION_SECRET revokes every subscription.
+   */
+  'src/app/api/jobs/calendar/[token]/route.ts',
   'src/app/api/storefront/publish/route.ts',
   'src/app/store-images/[token]/[imageId]/route.ts',
   'src/app/api/store-images/[token]/[imageId]/route.ts', // public storefront asset
