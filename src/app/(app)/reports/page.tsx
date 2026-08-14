@@ -27,7 +27,25 @@ export default async function ReportsPage() {
 
   // Built-ins are filtered by capability here rather than in the client, so a
   // report someone may not run is never sent to their browser at all.
-  const templates = templatesFor(allow)
+  const templates = templatesFor(allow).map(toHubItem)
+
+  // Stock intelligence is a dedicated PAGE, not an engine template — aging
+  // peels movement history into layers, and turn/sell-through divide one
+  // query by another, neither of which a spec can say. It still belongs in
+  // this catalogue: a report nobody can find is a report that does not exist.
+  if (allow('reports.financial')) {
+    templates.push({
+      id: 'stock-intel',
+      name: 'Stock intelligence',
+      description:
+        'True stock aging from movement history, ABC classes, stock turn and sell-through.',
+      category: 'Stock',
+      source: 'products',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+  }
 
   return (
     <>
@@ -37,7 +55,7 @@ export default async function ReportsPage() {
       />
       <PageBody>
         <ReportsHub
-          templates={templates.map(toHubItem)}
+          templates={templates}
           saved={saved.map((s) => ({
             id: `saved:${s.id}`,
             name: s.name,

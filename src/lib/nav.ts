@@ -496,6 +496,7 @@ export const SUBPAGE_LABELS = {
      schedule is configuration ("email me the sales summary every Monday")
      that somebody looks for under settings as readily as under reports. */
   '/reports/schedules': 'Scheduled reports',
+  '/reports/stock-intel': 'Stock intelligence',
 } as const
 
 /**

@@ -457,6 +457,59 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    id: 'dead-stock-by-age',
+    name: 'Dead stock by age',
+    description:
+      'The money on the shelf, grouped by how long since it last sold — where the bands past 90 days are the capital quietly going stale.',
+    category: 'Stock',
+    permission: 'reports.financial',
+    financial: true,
+    spec: spec({
+      source: 'products',
+      groupFields: ['ageBand'],
+      columns: [
+        { field: '__rows' },
+        { field: 'stockOnHand', agg: 'sum' },
+        { field: 'stockValue', agg: 'sum' },
+      ],
+      filters: [
+        { field: 'isArchived', op: 'eq', value: 'No' },
+        { field: 'stockOnHand', op: 'gt', value: '0' },
+      ],
+      sort: { key: 'stockValue_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'dead-stock-detail',
+    name: 'Dead stock detail',
+    description:
+      'Every stocked product that has not sold in six months — the clearance list, with what each line is still worth.',
+    category: 'Stock',
+    permission: 'reports.financial',
+    financial: true,
+    spec: spec({
+      source: 'products',
+      limit: MAX_ROWS,
+      columns: [
+        { field: 'code' },
+        { field: 'description' },
+        { field: 'department' },
+        { field: 'stockOnHand' },
+        { field: 'stockValue' },
+        { field: 'lastSoldDate' },
+        { field: 'daysSinceSold' },
+        { field: 'ageBand' },
+      ],
+      filters: [
+        { field: 'isArchived', op: 'eq', value: 'No' },
+        { field: 'stockOnHand', op: 'gt', value: '0' },
+        // gt 180, not gte: the boundary day still belongs to the 91–180 band.
+        { field: 'daysSinceSold', op: 'gt', value: '180' },
+      ],
+      sort: { key: 'stockValue', dir: 'desc' },
+    }),
+  },
+  {
     id: 'product-price-list',
     name: 'Product price list',
     description: 'Every selling price in one list — for a shelf-edge check or a printed catalogue.',

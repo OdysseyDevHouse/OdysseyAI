@@ -1496,6 +1496,39 @@ const PRODUCTS_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.DATES,
       hint: 'Empty when the product has never been sold.',
     },
+    {
+      key: 'daysSincePurchased',
+      label: 'Days since last purchased',
+      type: 'number',
+      expr: '(CASE WHEN t.last_purchase_date IS NULL THEN NULL ELSE DATEDIFF(CURDATE(), t.last_purchase_date) END)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.DATES,
+      hint: 'Empty when the product has never been received on a GRV.',
+    },
+    {
+      /* Measured from the last SALE, not the last purchase: dead stock is
+         stock nobody is buying, and a product restocked yesterday that last
+         sold in January is exactly what this band must not hide. A product
+         never sold ages from when it was first received instead — brand-new
+         stock is not dead, it is untried — and one never sold NOR purchased
+         (a legacy import) is called what it is. Band edges match the
+         stock-intel page (stockIntel.ts AGE_BANDS) so the two never disagree. */
+      key: 'ageBand',
+      label: 'Age band',
+      type: 'text',
+      expr:
+        '(CASE ' +
+        "WHEN COALESCE(t.last_sold_date, t.last_purchase_date) IS NULL THEN 'Never moved' " +
+        "WHEN DATEDIFF(CURDATE(), COALESCE(t.last_sold_date, t.last_purchase_date)) <= 30 THEN '0–30 days' " +
+        "WHEN DATEDIFF(CURDATE(), COALESCE(t.last_sold_date, t.last_purchase_date)) <= 60 THEN '31–60 days' " +
+        "WHEN DATEDIFF(CURDATE(), COALESCE(t.last_sold_date, t.last_purchase_date)) <= 90 THEN '61–90 days' " +
+        "WHEN DATEDIFF(CURDATE(), COALESCE(t.last_sold_date, t.last_purchase_date)) <= 180 THEN '91–180 days' " +
+        "WHEN DATEDIFF(CURDATE(), COALESCE(t.last_sold_date, t.last_purchase_date)) <= 365 THEN '181–365 days' " +
+        "ELSE 'Over a year' END)",
+      group: FIELD_GROUPS.DATES,
+      hint: 'How long since the product last sold (or, never sold, since it arrived).',
+    },
   ],
 }
 
