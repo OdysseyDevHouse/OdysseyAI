@@ -223,6 +223,10 @@ export const CAPABILITY_GROUPS = [
          owner-ish READ, and the person who manages PINs is not automatically
          the person who may read everything everyone did. */
       { key: 'setup.audit', label: 'View the audit trail', hint: 'Every change anyone made, and who signed in when.' },
+      /* Its own switch for the same reason as setup.audit: an API key is
+         standing access with no person behind it, and minting one should not
+         come free with ordinary settings. */
+      { key: 'setup.api', label: 'Manage API keys and webhooks', hint: 'Mint keys that let outside programs read this store, and choose where events are sent.' },
     ],
   },
 ] as const

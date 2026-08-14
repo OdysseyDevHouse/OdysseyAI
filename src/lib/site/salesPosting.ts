@@ -1158,6 +1158,22 @@ export async function finaliseDocument(
       }
     }
 
+    // The webhook queue, post-commit and fail-soft like every mirror above —
+    // enqueueEvent swallows its own errors, and delivery happens on the tick.
+    try {
+      const { enqueueEvent } = await import('./webhooks')
+      await enqueueEvent(siteId, 'sale.finalised', {
+        documentId: document.id,
+        documentNumber: posted.documentNumber,
+        docType: document.docType,
+        documentDate: document.documentDate,
+        totalIncl: document.totalIncl,
+        customerId: document.customerId,
+      })
+    } catch (error) {
+      console.error('[webhooks] enqueue failed for', posted.documentNumber, error)
+    }
+
     return {
       ok: true,
       documentId: document.id,
@@ -1562,6 +1578,20 @@ export async function voidDocument(
     })
   } catch (error) {
     console.error('notify failed for void of document', document.id, error)
+  }
+
+  // The webhook queue, same posture.
+  try {
+    const { enqueueEvent } = await import('./webhooks')
+    await enqueueEvent(siteId, 'sale.voided', {
+      documentId: document.id,
+      documentNumber: document.documentNumber,
+      docType: document.docType,
+      totalIncl: document.totalIncl,
+      reason: reason.slice(0, 200),
+    })
+  } catch (error) {
+    console.error('[webhooks] enqueue failed for void of', document.id, error)
   }
 
   return { ok: true }

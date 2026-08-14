@@ -114,6 +114,8 @@ const OPEN_ROUTES = new Set([
   'src/app/api/store/baskets/tick/route.ts',
   // The low-stock digest heartbeat — LOW_STOCK_CRON_SECRET, same reasoning.
   'src/app/api/alerts/tick/route.ts',
+  // The webhook delivery heartbeat — WEBHOOK_CRON_SECRET, same reasoning.
+  'src/app/api/webhooks/tick/route.ts',
   'src/app/api/storefront/publish/route.ts',
   'src/app/store-images/[token]/[imageId]/route.ts',
   'src/app/api/store-images/[token]/[imageId]/route.ts', // public storefront asset
@@ -185,6 +187,13 @@ async function main() {
     if (SESSION_ROUTES.has(r)) {
       const src = await readFile(path.join(ROOT, r), 'utf8')
       if (!/requireSiteUser|requireSession/.test(src)) unguardedRoutes.push(r)
+      continue
+    }
+    // The public API authenticates with API keys, not sessions: every route
+    // under /api/v1 must run through withApiKey, so one cannot ship open.
+    if (r.startsWith('src/app/api/v1/')) {
+      const src = await readFile(path.join(ROOT, r), 'utf8')
+      if (!/withApiKey\(/.test(src)) unguardedRoutes.push(r)
       continue
     }
     const src = await readFile(path.join(ROOT, r), 'utf8')

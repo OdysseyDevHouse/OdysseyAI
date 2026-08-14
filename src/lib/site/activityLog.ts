@@ -103,6 +103,10 @@ export type ActivityEntity =
      answers who changed the warranty date, who moved it to another site, and who
      retired it. A warranty expiry quietly edited is a dispute waiting to happen. */
   | 'customer_asset'
+  /* The machine door: an API key minted or revoked, a webhook endpoint added
+     or its secret rotated. Standing access with no person behind it is
+     exactly what a trail must record the granting of. */
+  | 'setting'
 
 export type ActivityEvent = {
   id: number

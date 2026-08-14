@@ -1669,6 +1669,18 @@ export async function placePublicOrder(
         }
       }
 
+      // The webhook row rides the SAME transaction: it exists exactly when
+      // the order does, and a rollback takes both. Delivery happens later,
+      // from the tick — never inline from a shopper's checkout request.
+      const { enqueueEventTx } = await import('./webhooks')
+      await enqueueEventTx(siteId, tx, 'order.placed', {
+        orderId,
+        orderNumber,
+        totalIncl: total,
+        onAccount,
+        customerId: input.customerId ?? null,
+      })
+
       return { ok: true as const, orderId, orderNumber, total, onAccount, giftCard, voucherCredit }
     })
   } catch (error) {

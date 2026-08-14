@@ -73,6 +73,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'sky',
         capability: 'setup.audit',
       },
+      {
+        href: '/setup/api',
+        description: 'Keys that let outside programs read this store, and where events get pushed.',
+        keywords: 'integration rest developer tokens external webhooks deliveries',
+        icon: 'Terminal',
+        tone: 'violet',
+        capability: 'setup.api',
+      },
       /* Pay rules and cost sit with people rather than under Staff: both are
          configuration that decides what every figure on the staff screens comes
          to, and neither is opened in the course of a normal week. */

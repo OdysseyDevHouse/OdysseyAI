@@ -4,6 +4,7 @@ import { getTenderByCode } from './tenderTypes'
 import { acceptOrder } from './onlineOrders'
 import { finaliseDocument } from './salesPosting'
 import { getOrder } from './onlineOrders'
+import { enqueueEvent } from './webhooks'
 
 /**
  * What happens to an online order once its payment is confirmed.
@@ -115,6 +116,14 @@ export async function invoicePaidOrder(
   if (!finalised.ok) return finalised
 
   const after = await getOrder(siteId, orderId)
+  // Post-commit and fail-soft — enqueueEvent swallows its own errors.
+  await enqueueEvent(siteId, 'order.paid', {
+    orderId,
+    orderNumber: after?.orderNumber ?? null,
+    documentId: accepted.documentId,
+    documentNumber: after?.documentNumber ?? null,
+    amountPaid,
+  })
   return {
     ok: true,
     documentId: accepted.documentId,
@@ -162,6 +171,13 @@ export async function invoiceGiftCardOrder(
 
   await markOrderPayment(siteId, orderId, 'paid')
   const after = await getOrder(siteId, orderId)
+  await enqueueEvent(siteId, 'order.paid', {
+    orderId,
+    orderNumber: after?.orderNumber ?? null,
+    documentId: accepted.documentId,
+    documentNumber: after?.documentNumber ?? null,
+    amountPaid: order.totalIncl,
+  })
   return {
     ok: true,
     documentId: accepted.documentId,

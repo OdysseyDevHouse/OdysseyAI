@@ -83,6 +83,14 @@ const PUBLIC_PREFIXES = [
   // Without this entry it 307s to login and nobody is told stock ran out —
   // and the digest's success state is also silence, so watch the JSON.
   '/api/alerts/tick',
+  // The webhook delivery tick. Same shape, WEBHOOK_CRON_SECRET; without this
+  // entry every queued delivery quietly waits forever behind a login 307.
+  '/api/webhooks/tick',
+  // The public API. Its callers are programs holding an API key, never a
+  // browser with a cookie — every route re-authenticates per request via
+  // withApiKey (prefix lookup + constant-time SHA-256 compare), so this is a
+  // change of authentication scheme, not an absence of one.
+  '/api/v1/',
   // Scheduled page publishing. Same reasoning and the same protection again:
   // STOREFRONT_CRON_SECRET, compared in constant time, refusing everything when
   // it is not set. This one's failure mode is the most visible of the four —
