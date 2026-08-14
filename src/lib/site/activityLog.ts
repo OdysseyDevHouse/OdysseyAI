@@ -107,6 +107,15 @@ export type ActivityEntity =
      or its secret rotated. Standing access with no person behind it is
      exactly what a trail must record the granting of. */
   | 'setting'
+  /* A field the business defined for itself. entityId is the definition, and
+     null when one is deleted — the row it pointed at is gone by then.
+
+     Only the DEFINITION is logged, never the values. A value changing is
+     ordinary editing of a record that has its own audit trail; a field being
+     added, retired or having its type changed alters what every record of that
+     kind is asked for, and "who added a required field that now blocks every
+     save" has no other answer. */
+  | 'custom_field'
 
 export type ActivityEvent = {
   id: number

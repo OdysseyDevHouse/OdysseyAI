@@ -39,6 +39,29 @@ const PUBLIC_PREFIXES = [
   // The trailing slash matters, as it does for '/store/' above: a bare
   // '/reserve' would also make any future '/reservations…' route public.
   '/reserve/',
+  // Rating the work on a finished job. The URL carries a signed token naming one
+  // job on one site, with its own audience and a sixty-day life.
+  //
+  // Narrower than every other public route here: holding the link shows the job
+  // NUMBER and title and nothing else — no prices, no address, no history — and
+  // the only thing it can write is a star and a sentence onto a row that already
+  // exists because the business asked for it. A token for a job nobody was asked
+  // about updates nothing at all.
+  //
+  // The trailing slash matters, as it does for the routes above.
+  '/feedback/',
+  // Asking a business to do some work. The only PUBLIC WRITE endpoint in the
+  // app besides a table booking, and it is guarded the same way that one is:
+  // a honeypot answered with a fake success, a per-phone daily cap, and a switch
+  // that fails closed.
+  //
+  // What makes it affordable is that what arrives is INERT. A submission is one
+  // job_requests row — no job card, no customer, no address, no document number,
+  // nothing that any figure reads — and it becomes a job only when somebody in
+  // the business chooses a customer and accepts it.
+  //
+  // The trailing slash matters, as it does for the routes above.
+  '/request/',
   '/api/payments/payfast/',
   // A technician's calendar subscription. Google, Outlook and Apple all fetch it
   // on a schedule with no browser and no cookie, so behind the gate they would

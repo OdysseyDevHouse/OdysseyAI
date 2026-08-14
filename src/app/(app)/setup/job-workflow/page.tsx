@@ -74,6 +74,14 @@ export default async function JobWorkflowPage() {
       'job_auto_visit_reminder',
       'job_auto_visit_hours',
       'job_auto_invoice',
+      // Feedback (§ rating). Both read here so the panel can show the wording.
+      'job_feedback_enabled',
+      'job_feedback_intro',
+      // Public intake (§4.2).
+      'job_intake_enabled',
+      'job_intake_blurb',
+      'job_intake_max_per_phone',
+      'job_intake_show_headlines',
     ]),
     /*
      * Tolerant: a nicety on a setup screen. A site mid-migration must still be
@@ -174,6 +182,12 @@ export default async function JobWorkflowPage() {
           autoVisitReminder={settings.job_auto_visit_reminder === '1'}
           autoVisitHours={Number(settings.job_auto_visit_hours) || 16}
           autoInvoice={settings.job_auto_invoice === '1'}
+          feedbackEnabled={settings.job_feedback_enabled === '1'}
+          feedbackIntro={settings.job_feedback_intro}
+          intakeEnabled={settings.job_intake_enabled === '1'}
+          intakeBlurb={settings.job_intake_blurb}
+          intakeMaxPerPhone={Number(settings.job_intake_max_per_phone) || 0}
+          intakeShowHeadlines={settings.job_intake_show_headlines === '1'}
           /*
            * Both read on the SERVER. isConfigured() reads process.env, which a
            * client component cannot see — and a panel that cannot tell whether

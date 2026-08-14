@@ -156,6 +156,16 @@ import {
 } from '@/lib/site/jobParts'
 import { listVans } from '@/lib/site/stockLocations'
 import type { BillingState } from '@/lib/jobStatusModel'
+import { setValues } from '@/lib/site/customFields'
+import { markSeen } from '@/lib/site/jobFeedback'
+import {
+  acceptRequest,
+  rejectRequest,
+  reopenRequest,
+  type AcceptResult as AcceptRequestResult,
+  type RequestActionResult,
+} from '@/lib/site/jobIntake'
+import type { CustomFieldEntity } from '@/lib/customFieldModel'
 
 /**
  * The job card's server actions.
@@ -1401,6 +1411,12 @@ export async function saveJobSettingsAction(input: {
   autoVisitReminder: boolean
   autoVisitHours: number
   autoInvoice: boolean
+  feedbackEnabled: boolean
+  feedbackIntro: string
+  intakeEnabled: boolean
+  intakeBlurb: string
+  intakeMaxPerPhone: number
+  intakeShowHeadlines: boolean
 }): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
   const ctx = await actorFor('jobs.setup')
   if ('ok' in ctx) return ctx
@@ -1432,8 +1448,30 @@ export async function saveJobSettingsAction(input: {
     return { ok: false, error: 'Remind between 1 and 168 hours before a visit.' }
   }
 
-  // All eleven or none, on the trading-hours precedent: a half-saved group would
-  // behave in a way nobody chose.
+  // The intro is the first line of an email going to real customers, so an empty
+  // one is refused rather than sent as a blank line above a bare link.
+  const intro = input.feedbackIntro.trim()
+  if (input.feedbackEnabled && !intro) {
+    return { ok: false, error: 'The rating email needs an opening line.' }
+  }
+
+  /*
+   * The cap is clamped rather than refused, on the reservations precedent.
+   *
+   * A nonsense value must not leave a PUBLIC form unprotected while somebody
+   * works out why the save failed, so an unreadable number becomes the default
+   * of three rather than zero.
+   */
+  const cap = Number.isFinite(Number(input.intakeMaxPerPhone))
+    ? Math.max(0, Math.min(100, Math.trunc(Number(input.intakeMaxPerPhone))))
+    : 3
+  const intakeBlurb = input.intakeBlurb.trim()
+  if (input.intakeEnabled && !intakeBlurb) {
+    return { ok: false, error: 'The public form needs a line saying what it is for.' }
+  }
+
+  // All of them or none, on the trading-hours precedent: a half-saved group
+  // would behave in a way nobody chose.
   for (const [key, value] of [
     ['job_items_block_close', input.itemsBlockClose ? '1' : '0'],
     ['job_headline_required', input.headlineRequired ? '1' : '0'],
@@ -1445,6 +1483,14 @@ export async function saveJobSettingsAction(input: {
     ['job_auto_visit_reminder', input.autoVisitReminder ? '1' : '0'],
     ['job_auto_visit_hours', String(hours)],
     ['job_auto_invoice', input.autoInvoice ? '1' : '0'],
+    ['job_feedback_enabled', input.feedbackEnabled ? '1' : '0'],
+    // Saved even when switched off, so turning it back on keeps the wording
+    // somebody wrote rather than resetting to the seeded sentence.
+    ['job_feedback_intro', intro || 'Thank you for your business. How did we do?'],
+    ['job_intake_enabled', input.intakeEnabled ? '1' : '0'],
+    ['job_intake_blurb', intakeBlurb || 'Tell us what you need and we will come back to you.'],
+    ['job_intake_max_per_phone', String(cap)],
+    ['job_intake_show_headlines', input.intakeShowHeadlines ? '1' : '0'],
   ] as const) {
     const saved = await setSetting(ctx.siteId, key, value)
     if (!saved.ok) return saved
@@ -1463,5 +1509,111 @@ export async function reorderStatusesAction(ids: number[]): Promise<StatusSaveRe
   if (!result.ok) return result
   revalidatePath('/setup/job-workflow')
   revalidatePath('/jobs')
+  return result
+}
+
+/**
+ * The custom fields on a job.
+ *
+ * Guarded on jobs.edit rather than setup.edit, and the distinction matters: a
+ * technician who may edit a job may FILL IN its extra fields, but defining what
+ * those fields are is a setup decision they have no business making.
+ */
+export async function setCustomValuesAction(
+  entity: CustomFieldEntity,
+  entityId: number,
+  values: { fieldId: number; value: string | null }[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error }
+
+  // The entity is a parameter of the shared panel, so it arrives from the
+  // client. Pinned to 'job' here — this action guards jobs.edit, and letting it
+  // write a CUSTOMER field would be a permission bypass wearing a prop.
+  if (entity !== 'job') return { ok: false, error: 'That is not a job field.' }
+
+  const result = await setValues(ctx.siteId, ctx.actor, 'job', entityId, values)
+  if (result.ok) revalidatePath(`/jobs/${entityId}`)
+  return result
+}
+
+/**
+ * The custom fields on a piece of equipment.
+ *
+ * A separate action from the job one rather than a shared one taking the entity,
+ * because the capability differs per entity and a single action would have to
+ * branch on a value the client supplied. Three short actions with three fixed
+ * entities cannot be talked into writing the wrong set.
+ */
+export async function setAssetCustomValuesAction(
+  entity: CustomFieldEntity,
+  entityId: number,
+  values: { fieldId: number; value: string | null }[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error }
+  if (entity !== 'equipment') return { ok: false, error: 'That is not an equipment field.' }
+
+  const result = await setValues(ctx.siteId, ctx.actor, 'equipment', entityId, values)
+  if (result.ok) revalidatePath(`/jobs/equipment/${entityId}`)
+  return result
+}
+
+/** Somebody in the business has read the customer's rating. */
+export async function markFeedbackSeenAction(
+  jobId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('jobs.view')
+  if ('ok' in ctx) return { ok: false, error: ctx.error }
+
+  const result = await markSeen(ctx.siteId, ctx.actor, jobId)
+  if (result.ok) revalidateJobPath(jobId)
+  return result
+}
+
+/* ── Public job requests (§4.2) ────────────────────────────────────────────── */
+
+/**
+ * Turn a request into a job.
+ *
+ * jobs.edit, because that is what it does: it creates a job. Deliberately NOT a
+ * new capability — somebody who may log a job by hand may log one somebody
+ * phoned in, and the request queue is the same act with the typing already done.
+ */
+export async function acceptRequestAction(
+  requestId: number,
+  customerId: number,
+  overrides: { title?: string; description?: string | null } = {},
+): Promise<AcceptRequestResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error }
+
+  const result = await acceptRequest(ctx.siteId, ctx.actor, requestId, customerId, overrides)
+  if (result.ok) {
+    revalidatePath('/jobs/requests')
+    revalidateJobs(result.jobId)
+  }
+  return result
+}
+
+export async function rejectRequestAction(
+  requestId: number,
+  status: 'rejected' | 'spam',
+  reason: string | null,
+): Promise<RequestActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error }
+
+  const result = await rejectRequest(ctx.siteId, ctx.actor, requestId, status, reason)
+  if (result.ok) revalidatePath('/jobs/requests')
+  return result
+}
+
+export async function reopenRequestAction(requestId: number): Promise<RequestActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error }
+
+  const result = await reopenRequest(ctx.siteId, ctx.actor, requestId)
+  if (result.ok) revalidatePath('/jobs/requests')
   return result
 }

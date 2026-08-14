@@ -18,6 +18,9 @@ import {
 } from '@/components/ui'
 import { TABLE, TABLE_HEAD_ROW, TABLE_TD, TABLE_TH } from '@/components/ui/styles'
 import EquipmentActions from './EquipmentActions'
+import CustomFieldsPanel from '@/components/CustomFieldsPanel'
+import { valuesFor } from '@/lib/site/customFields'
+import { setAssetCustomValuesAction } from '../../actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,9 +50,12 @@ export default async function EquipmentDetailPage({
   const asset = await getAsset(siteId, assetId)
   if (!asset) notFound()
 
-  const [history, activity] = await Promise.all([
+  const [history, activity, customValues] = await Promise.all([
     assetHistory(siteId, assetId),
     listActivity(siteId, 'customer_asset', assetId, 40),
+    // Custom fields (§24). Tolerant of a site without 127; the panel renders
+    // nothing when no equipment fields are defined.
+    valuesFor(siteId, 'equipment', assetId),
   ])
 
   const today = new Date().toISOString().slice(0, 10)
@@ -183,6 +189,17 @@ export default async function EquipmentDetailPage({
             )}
           </CardBody>
         </Card>
+
+        {/* What this business records about a unit that the app does not ask
+            for. Between what it IS and what was DONE to it, because that is
+            what it is: more of the first. */}
+        <CustomFieldsPanel
+          entity="equipment"
+          entityId={asset.id}
+          fields={customValues}
+          canEdit={canEdit}
+          onSave={setAssetCustomValuesAction}
+        />
 
         <Card>
           <CardHeader

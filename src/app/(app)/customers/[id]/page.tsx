@@ -40,7 +40,9 @@ import { listPriceStructures } from '@/lib/site/lookups'
 import { AddressesPanel } from './AddressesPanel'
 import DocumentsPanel from '@/components/party/DocumentsPanel'
 import CommentsPanel from '@/components/party/CommentsPanel'
-import { deleteCustomerAction } from '../actions'
+import { deleteCustomerAction, setCustomerCustomValuesAction } from '../actions'
+import CustomFieldsPanel from '@/components/CustomFieldsPanel'
+import { valuesFor } from '@/lib/site/customFields'
 
 export const dynamic = 'force-dynamic'
 
@@ -174,6 +176,7 @@ export default async function CustomerPage({
     credit,
     addresses,
     structures,
+    customValues,
   ] = await Promise.all([
     getCustomer(siteId, customerId),
     listCustomerGroups(siteId),
@@ -191,6 +194,9 @@ export default async function CustomerPage({
     accountCredit(siteId, customerId),
     listCustomerAddresses(siteId, customerId, { includeInactive: true }),
     listPriceStructures(siteId),
+    // Custom fields (§24). Tolerant of a site without 127, and the panel renders
+    // nothing at all when no customer fields are defined.
+    valuesFor(siteId, 'customer', customerId),
   ])
 
   // Loyalty is loaded separately and defensively: a site that has never run the
@@ -362,6 +368,7 @@ export default async function CustomerPage({
             <CommentsPanel party="customer" partyId={customerId} comments={comments} />
           </Card>
         ) : active === 'details' ? (
+          <>
           <CustomerForm
             customer={customer}
             groups={groups}
@@ -380,6 +387,17 @@ export default async function CustomerPage({
               </form>
             }
           />
+          {/* Under the built-in details, not among them: these are fields this
+              business added, and mixing them into the form would suggest the app
+              asks for them. Renders nothing when none are defined. */}
+          <CustomFieldsPanel
+            entity="customer"
+            entityId={customerId}
+            fields={customValues}
+            canEdit={can(capabilities, 'customers.edit')}
+            onSave={setCustomerCustomValuesAction}
+          />
+          </>
         ) : active === 'credit' && credit ? (
           <CreditTab
             canManage={can(capabilities, 'customers.credit')}

@@ -529,6 +529,65 @@ export const SETTING_DEFAULTS = {
 
   /** The line at the bottom of every till slip — returns policy, a thank-you. */
   receipt_footer_text: '',
+
+  /**
+   * Ask the customer to rate the work when a job closes.
+   *
+   * OFF, and for a stronger reason than the automations above: switching this on
+   * emails every customer whose job closes, from this business's own address.
+   * That is a decision about how a company talks to its customers, and a default
+   * must never make it on their behalf.
+   */
+  job_feedback_enabled: '0',
+
+  /** The opening line of that email. Editable, because voice differs. */
+  job_feedback_intro: 'Thank you for your business. How did we do?',
+
+  /**
+   * Accept job requests from a public URL.
+   *
+   * OFF, and this is the most consequential switch in the module: it opens a
+   * write endpoint to anybody with the link. What makes that safe is that a
+   * request is INERT — it becomes a job only when a person accepts it — but the
+   * default must still be off.
+   */
+  job_intake_enabled: '0',
+
+  /** What the form says above the fields. */
+  job_intake_blurb: 'Tell us what you need and we will come back to you.',
+
+  /** How many requests one phone number may send in a day. 0 means no cap. */
+  job_intake_max_per_phone: '3',
+
+  /** Whether the form offers the kinds of work this business does. */
+  job_intake_show_headlines: '1',
+
+  /**
+   * The customer portal.
+   *
+   * OFF, and the most consequential switch in the module: it shows a customer
+   * their own commercial history — jobs, quotes, invoices — over the internet.
+   * Nothing about it should ever be on by default.
+   */
+  portal_enabled: '0',
+
+  /** A customer may write on their own job. Their words are always visible. */
+  portal_allow_comments: '1',
+
+  /** A customer may attach a photo to their own job. */
+  portal_allow_uploads: '1',
+
+  /**
+   * A customer may accept a quote themselves.
+   *
+   * OFF, unlike the other two, because it is the only one that is legally
+   * meaningful: it settles what was agreed and for how much. The other two add
+   * words and pictures.
+   */
+  portal_allow_quote_accept: '0',
+
+  /** How many files a customer may put on one job. A ceiling, not a target. */
+  portal_max_uploads_per_job: '10',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS

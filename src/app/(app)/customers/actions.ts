@@ -6,6 +6,8 @@ import { toStatementCycle } from '@/lib/statementCycles'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
+import { setValues } from '@/lib/site/customFields'
+import type { CustomFieldEntity } from '@/lib/customFieldModel'
 import {
   createCustomer,
   updateCustomer,
@@ -171,4 +173,26 @@ export async function deleteCustomerAddressAction(
 
   revalidatePath(`/customers/${customerId}`)
   return { ok: true, message: 'Address removed.' }
+}
+
+/**
+ * The custom fields on a customer.
+ *
+ * Guarded on customers.edit — the field DEFINITIONS are a setup decision, but
+ * filling one in is editing the customer, which is what this capability means.
+ */
+export async function setCustomerCustomValuesAction(
+  entity: CustomFieldEntity,
+  entityId: number,
+  values: { fieldId: number; value: string | null }[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('customers.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error }
+  // Pinned, as on the job: the shared panel passes the entity from the client,
+  // so trusting it here would let a customers.edit holder write job fields.
+  if (entity !== 'customer') return { ok: false, error: 'That is not a customer field.' }
+
+  const result = await setValues(ctx.siteId, ctx.actor, 'customer', entityId, values)
+  if (result.ok) revalidatePath(`/customers/${entityId}`)
+  return result
 }
