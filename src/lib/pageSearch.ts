@@ -115,7 +115,7 @@ CATALOGUE['/reports/multi-store-stock'] = {
 CATALOGUE['/reports/multi-store-transfers'] = {
   description: 'What moved between stores, what is on the road, and what is counted twice.',
   icon: 'Truck',
-  keywords: 'store transfers in transit reconciliation counted twice unsettled stale multi store group',
+  keywords: 'store transfers in transit counted twice unsettled stale multi store group',
 }
 
 /**

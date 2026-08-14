@@ -749,8 +749,12 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
     'like for like lfl same store sales comp growth year on year multi store group branches',
   '/reports/multi-store-stock':
     'stock on hand across stores rebalance transfer surplus shortage overstock understock multi store group branches',
+  /* No "reconciliation" here, deliberately: that word belongs to Setup →
+     Reconciliation, and every substring of a keyword matches — "reconcil" would
+     then return two sections and stop pointing anywhere in particular. This
+     screen is found by what it holds, not by the check it performs. */
   '/reports/multi-store-transfers':
-    'store transfers in transit reconciliation counted twice unsettled stale goods on the road multi store group',
+    'store transfers in transit counted twice unsettled stale goods on the road between branches multi store group',
 }
 
 /**
