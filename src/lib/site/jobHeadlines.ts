@@ -233,12 +233,23 @@ export type HeadlineResult = { ok: true; id: number } | { ok: false; error: stri
 export type ItemResult = { ok: true } | { ok: false; error: string }
 
 /**
- * Create or replace a headline and its items.
+ * Create or update a headline and its items.
  *
- * The items are REPLACED wholesale rather than diffed: a template is a short
- * ordered list a person edits as a whole, and diffing would need stable ids
- * through a drag-reorder for no gain. The copies already on job cards are
- * untouched by design — see the header.
+ * ── THE ITEMS ARE MATCHED BY ID, NOT DELETED AND RE-INSERTED ───────────────
+ *
+ * This used to replace them wholesale, on the grounds that a template is a short
+ * list somebody edits as a whole and diffing bought nothing. That was wrong, and
+ * the cost was invisible: every re-insert allocated fresh ids, and
+ * `job_card_items.headline_item_id` is ON DELETE SET NULL — so EVERY prior job's
+ * link back to the template item it came from was silently nulled on every save.
+ *
+ * 114_job_headlines.sql keeps that column for one stated purpose: reporting on
+ * which kind of work generates the most unfinished tasks. A single typo
+ * correction destroyed it, and nothing anywhere said so.
+ *
+ * So: an item that arrives with an id is UPDATED, one without is inserted, and
+ * only ids the user actually removed are deleted. The copies already on job
+ * cards keep their own snapshot either way — that part was always right.
  */
 export async function saveHeadline(
   siteId: number,
@@ -307,11 +318,65 @@ export async function saveHeadline(
           id,
         ],
       )
-      await tx.execute(`DELETE FROM job_headline_items WHERE headline_id = ?`, [id])
+      /*
+       * The items somebody actually REMOVED, and only those.
+       *
+       * Everything the form still carries an id for survives with that id, so
+       * the jobs pointing at it keep pointing at it. Parts have no such
+       * back-reference — nothing copies a part id onto a job — so they stay a
+       * wholesale replace.
+       */
+      const keptIds = input.items
+        .map((i) => i.id)
+        .filter((v): v is number => typeof v === 'number' && v > 0)
+
+      if (keptIds.length > 0) {
+        await tx.execute(
+          `DELETE FROM job_headline_items
+            WHERE headline_id = ? AND id NOT IN (${keptIds.map(() => '?').join(',')})`,
+          [id, ...keptIds],
+        )
+      } else {
+        await tx.execute(`DELETE FROM job_headline_items WHERE headline_id = ?`, [id])
+      }
       await tx.execute(`DELETE FROM job_headline_parts WHERE headline_id = ?`, [id])
     }
 
     for (const [index, item] of input.items.entries()) {
+      // Forced to 0 for anything that cannot hold a file. validateHeadline
+      // already refuses the combination, so this is belt-and-braces against a
+      // caller that skipped validation — the flag must never be 1 on an item
+      // with no way to satisfy it, or the job becomes uncloseable.
+      const evidence = responseIsEvidence(item.responseType) && item.evidenceRequired ? 1 : 0
+
+      if (typeof item.id === 'number' && item.id > 0) {
+        /*
+         * UPDATE, and the `headline_id = ?` in the WHERE is not decoration: the
+         * id arrives from a form, and without it somebody could edit an item
+         * belonging to a different headline by changing a number.
+         */
+        await tx.execute(
+          `UPDATE job_headline_items
+              SET kind = ?, name = ?, hint = ?, response_type = ?, unit = ?,
+                  work_phase = ?, is_required = ?, evidence_required = ?, sort_order = ?
+            WHERE id = ? AND headline_id = ?`,
+          [
+            item.kind,
+            item.name.trim(),
+            text(item.hint),
+            item.responseType,
+            text(item.unit),
+            item.workPhase,
+            item.isRequired ? 1 : 0,
+            evidence,
+            index,
+            item.id,
+            id,
+          ],
+        )
+        continue
+      }
+
       await tx.execute(
         `INSERT INTO job_headline_items
            (headline_id, kind, name, hint, response_type, unit, work_phase, is_required,
@@ -326,11 +391,7 @@ export async function saveHeadline(
           text(item.unit),
           item.workPhase,
           item.isRequired ? 1 : 0,
-          // Forced to 0 for anything that cannot hold a file. validateHeadline
-          // already refuses the combination, so this is belt-and-braces against a
-          // caller that skipped validation — the flag must never be 1 on an item
-          // with no way to satisfy it, or the job becomes uncloseable.
-          responseIsEvidence(item.responseType) && item.evidenceRequired ? 1 : 0,
+          evidence,
           index,
         ],
       )

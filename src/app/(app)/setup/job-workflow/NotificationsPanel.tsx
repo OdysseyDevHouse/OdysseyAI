@@ -55,6 +55,11 @@ export default function NotificationsPanel({
   intakeBlurb: initialIntakeBlurb,
   intakeMaxPerPhone: initialIntakeCap,
   intakeShowHeadlines: initialIntakeHeadlines,
+  portalEnabled: initialPortal,
+  portalAllowComments: initialPortalComments,
+  portalAllowUploads: initialPortalUploads,
+  portalAllowQuoteAccept: initialPortalQuotes,
+  portalUrl,
   mailConfigured,
   cronConfigured,
 }: {
@@ -74,6 +79,12 @@ export default function NotificationsPanel({
   intakeBlurb: string
   intakeMaxPerPhone: number
   intakeShowHeadlines: boolean
+  portalEnabled: boolean
+  portalAllowComments: boolean
+  portalAllowUploads: boolean
+  portalAllowQuoteAccept: boolean
+  /** The link a customer signs in at. Null if the token could not be minted. */
+  portalUrl: string | null
   /** SMTP is set up. Without it every switch below is decoration. */
   mailConfigured: boolean
   /** JOB_AUTOMATION_CRON_SECRET is set, so something can call the daily run. */
@@ -99,6 +110,10 @@ export default function NotificationsPanel({
   const [intakeBlurb, setIntakeBlurb] = useState(initialIntakeBlurb)
   const [intakeCap, setIntakeCap] = useState(String(initialIntakeCap))
   const [intakeHeadlines, setIntakeHeadlines] = useState(initialIntakeHeadlines)
+  const [portal, setPortal] = useState(initialPortal)
+  const [portalComments, setPortalComments] = useState(initialPortalComments)
+  const [portalUploads, setPortalUploads] = useState(initialPortalUploads)
+  const [portalQuotes, setPortalQuotes] = useState(initialPortalQuotes)
 
   function toggleEvent(key: string, on: boolean) {
     setEvents((prev) => (on ? [...new Set([...prev, key])] : prev.filter((e) => e !== key)))
@@ -123,6 +138,10 @@ export default function NotificationsPanel({
         intakeBlurb,
         intakeMaxPerPhone: Number(intakeCap),
         intakeShowHeadlines: intakeHeadlines,
+        portalEnabled: portal,
+        portalAllowComments: portalComments,
+        portalAllowUploads: portalUploads,
+        portalAllowQuoteAccept: portalQuotes,
       })
       if (result.ok) {
         toast.success(result.message)
@@ -369,6 +388,64 @@ export default function NotificationsPanel({
                   onChange={setIntakeHeadlines}
                   label="Offer the kinds of work you do"
                   hint="Puts your kinds of work in a dropdown on the form. Off keeps what you offer private."
+                />
+              </>
+            )}
+          </div>
+
+          {/* ── The portal ─────────────────────────────────────────────────
+              Last, and its own group, because it is the only thing here that
+              shows a customer their own commercial history rather than sending
+              them a message about one job. */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">
+              The customer portal
+            </p>
+
+            <Switch
+              checked={portal}
+              onChange={setPortal}
+              label="Let customers sign in and see their own jobs"
+              hint="They sign in with a link sent to the email address you have for them — there is no password."
+            />
+
+            {portal && (
+              <>
+                <Callout tone="warning" title="What a customer can see">
+                  Their own jobs and what stage each is at, booked visits, issued quotes and
+                  finalised invoices. <strong>Never</strong> your costs, your margins, which
+                  technician is assigned, your staff notes, hours worked, or anything belonging
+                  to another customer.
+                </Callout>
+
+                {portalUrl && (
+                  <Field
+                    label="The link to put on your website"
+                    hint="It does not change. Signing in still needs a link emailed to an address you already hold."
+                  >
+                    <Input value={portalUrl} readOnly onFocus={(e) => e.target.select()} />
+                  </Field>
+                )}
+
+                <Switch
+                  checked={portalComments}
+                  onChange={setPortalComments}
+                  label="They may write on their own job"
+                  hint="Their message appears on the job for your staff. Your own notes stay private unless you share one."
+                />
+
+                <Switch
+                  checked={portalUploads}
+                  onChange={setPortalUploads}
+                  label="They may send a photo"
+                  hint="Pictures and PDFs only, capped per job. A photo of the fault before anybody drives out."
+                />
+
+                <Switch
+                  checked={portalQuotes}
+                  onChange={setPortalQuotes}
+                  label="They may accept a quote themselves"
+                  hint="Off by default. This one is legally meaningful — it records who accepted, when, and that it came from the portal."
                 />
               </>
             )}

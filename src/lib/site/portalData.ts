@@ -431,3 +431,137 @@ export async function ownsQuote(
     return null
   }
 }
+
+/**
+ * A link to pay one invoice, for a customer who owns it.
+ *
+ * ── IT REUSES /pay, IT DOES NOT REBUILD IT ─────────────────────────────────
+ *
+ * The portal mints a payment INTENT and hands off to the flow that already
+ * exists. Everything downstream — the gateway form, the callback, the receipt,
+ * the settlement onto the customer account — is untouched, which is the whole
+ * point: a second payment path is a second place for money to go wrong.
+ *
+ * ── OWNERSHIP IS CHECKED BEFORE AN INTENT EXISTS ───────────────────────────
+ *
+ * The SELECT names the customer, so an invoice belonging to somebody else never
+ * reaches createIntent. An intent is a claim on money; minting one for a
+ * stranger's invoice would put a real payment against a real account.
+ */
+export async function payLinkFor(
+  siteId: number,
+  customerId: number,
+  documentId: number,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const invoice = await siteQueryOne<Row>(
+    siteId,
+    `SELECT d.id, d.total_incl, COALESCE(t.amount_outstanding, 0) AS outstanding
+       FROM sales_documents d
+       LEFT JOIN customer_transactions t
+              ON t.source = 'sale' AND t.source_doc_id = d.id
+      WHERE d.id = ? AND d.customer_id = ?
+        AND d.doc_type = 'invoice' AND d.status = 'finalised'`,
+    [documentId, customerId],
+  ).catch(() => null)
+  if (!invoice) return { ok: false, error: 'That invoice could not be found.' }
+
+  const outstanding = Number(invoice.outstanding ?? 0)
+  if (outstanding <= 0) return { ok: false, error: 'That invoice is already settled.' }
+
+  try {
+    const { createIntent } = await import('./payments')
+    const { createCallbackToken } = await import('../callbackToken')
+    const intent = await createIntent(siteId, {
+      targetId: documentId,
+      amountIncl: outstanding,
+      // The purpose 038_payments.sql already anticipated for exactly this.
+      purpose: 'debtor_invoice',
+    })
+    const token = await createCallbackToken(siteId, intent.reference)
+    return { ok: true, url: `/pay/${token}` }
+  } catch {
+    return { ok: false, error: 'Paying online is not available at the moment.' }
+  }
+}
+
+/**
+ * A customer attaches a photo to their own job.
+ *
+ * ── IT IS NARROWER THAN THE APP-WIDE ALLOWLIST ─────────────────────────────
+ *
+ * storeUpload accepts PDF, images, Office documents, text, email and ZIP —
+ * right for a staff member attaching a supplier invoice, too wide for a form
+ * anybody on the internet can reach. A public path takes PICTURES and PDFs,
+ * which is what "here is a photo of the leak" needs and nothing more.
+ *
+ * The count cap is per job and configurable; the size cap is storeUpload's own
+ * 10MB, which it re-checks after buffering because File.size is a claim.
+ */
+const PORTAL_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.pdf'])
+
+export async function portalUpload(
+  siteId: number,
+  customerId: number,
+  customerName: string,
+  jobId: number,
+  file: File,
+): Promise<PortalResult> {
+  const settings = await portalSettings(siteId)
+  if (!settings.isEnabled || !settings.allowUploads) {
+    return { ok: false, error: 'Sending files is not switched on.' }
+  }
+
+  // Ownership before anything touches the disk.
+  if (!(await ownsJob(siteId, customerId, jobId))) {
+    return { ok: false, error: 'That job could not be found.' }
+  }
+
+  const already = await customerUploadCount(siteId, jobId)
+  if (settings.maxUploadsPerJob > 0 && already >= settings.maxUploadsPerJob) {
+    return {
+      ok: false,
+      error: `You have already sent ${already} files for this job. Please phone the business.`,
+    }
+  }
+
+  const name = (file?.name ?? '').toLowerCase()
+  const ext = name.slice(name.lastIndexOf('.'))
+  if (!PORTAL_EXTENSIONS.has(ext)) {
+    return { ok: false, error: 'Please send a photo or a PDF.' }
+  }
+
+  const { storeUpload } = await import('../uploads')
+  const stored = await storeUpload(file)
+  if (!stored.ok) return { ok: false, error: stored.error }
+
+  try {
+    await siteExecute(
+      siteId,
+      `INSERT INTO party_documents
+         (entity, entity_id, filename, stored_name, mime_type, size_bytes,
+          uploaded_by, uploaded_name, is_customer, is_visible)
+       VALUES ('job_card', ?, ?, ?, ?, ?, NULL, ?, 1, 1)`,
+      [
+        jobId,
+        stored.file.filename,
+        stored.file.storedName,
+        stored.file.mimeType,
+        stored.file.sizeBytes,
+        customerName,
+      ],
+    )
+    await logActivity(
+      siteId,
+      { userId: 0, userName: customerName },
+      {
+        entity: 'job_card',
+        entityId: jobId,
+        action: 'customer_uploaded',
+        detail: `The customer sent ${stored.file.filename}`,
+      },
+    ).catch(() => {})
+    return { ok: true }
+  } catch {
+    return { ok: false, error: 'That could not be saved.' }
+  }
+}

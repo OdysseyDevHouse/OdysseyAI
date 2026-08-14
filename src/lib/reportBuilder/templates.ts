@@ -1286,6 +1286,167 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
 
+  /* ── The rest of the PRD's Phase-1 job reports ────────────────────────────
+   *
+   * Seven specs, no new code. That is the point of the phase that made jobTime,
+   * jobTravel and jobVisits catalog sources: what was twelve reports needing a
+   * developer became a list of column choices, and anything else a business
+   * wants is now a screen they build themselves.
+   */
+  {
+    id: 'jobs-open-by-stage',
+    name: 'Where the work is',
+    description:
+      'Every open job by the stage it has reached, oldest first. The one to read at a stand-up: a stage that is filling up is a bottleneck.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCards',
+      groupFields: ['statusName'],
+      /*
+       * Deliberately NOT daysOverdue here.
+       *
+       * That field is DATEDIFF(now, due_at) with no clamp, so a job that is not
+       * due yet is a NEGATIVE number — and MAX() over a stage where nothing is
+       * late shows an empty or misleading figure rather than the "nothing is
+       * overdue" it means. The oldest job in a stage answers the same question
+       * honestly, and "Jobs past their date" reports lateness properly.
+       */
+      columns: [
+        { field: '__rows' },
+        { field: 'daysOpen', agg: 'avg' },
+        { field: 'daysOpen', agg: 'max' },
+      ],
+      sort: { key: '__rows', dir: 'desc' },
+      chartType: 'bar',
+    }),
+  },
+  {
+    id: 'jobs-overdue',
+    name: 'Jobs past their date',
+    description:
+      'Anything promised for a day that has been and gone, worst first. Every row is a customer who was told something that did not happen.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCards',
+      // A closed job cannot be late any more — closedLate reports that separately.
+      filters: [{ field: 'daysOverdue', op: 'gt', value: '0' }],
+      columns: [
+        { field: 'documentNumber' },
+        { field: 'customerName' },
+        { field: 'title' },
+        { field: 'statusName' },
+        { field: 'ownerName' },
+        { field: 'dueAt' },
+        { field: 'daysOverdue' },
+      ],
+      sort: { key: 'daysOverdue', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'jobs-by-customer',
+    name: 'Work by customer',
+    description:
+      'How many jobs each customer has had and what they absorbed. The top of this list is who the business actually works for.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCards',
+      groupFields: ['customerName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'totalCost', agg: 'sum' },
+        { field: 'daysOpen', agg: 'avg' },
+      ],
+      sort: { key: '__rows', dir: 'desc' },
+      chartType: 'bar',
+    }),
+  },
+  {
+    id: 'jobs-sla-breaches',
+    name: 'Promises that were missed',
+    description:
+      'Jobs answered or finished later than the service target said. Grouped by promise, so a target nobody ever meets shows up as the target rather than as the team.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCards',
+      filters: [{ field: 'respondedLate', op: 'eq', value: 'Yes' }],
+      columns: [
+        { field: 'documentNumber' },
+        { field: 'customerName' },
+        { field: 'slaPolicy' },
+        { field: 'respondBy' },
+        { field: 'respondedAt' },
+        { field: 'respondedByName' },
+      ],
+      sort: { key: 'respondBy', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'job-work-not-decided',
+    name: 'Costs nobody has decided about',
+    description:
+      'Lines still marked pending — work done that nobody has said is billable or absorbed. The commonest way a job leaks money, because it leaks quietly.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCardLines',
+      filters: [{ field: 'billingState', op: 'eq', value: 'pending' }],
+      columns: [
+        { field: 'jobNumber' },
+        { field: 'customerName' },
+        { field: 'description' },
+        { field: 'qty' },
+        { field: 'lineCost' },
+      ],
+      sort: { key: 'lineCost', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'job-write-offs',
+    name: 'What was written off',
+    description:
+      'Work done and deliberately not charged, by customer. A customer who appears here repeatedly is being subsidised, which is a decision worth making on purpose.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCardLines',
+      filters: [{ field: 'billingState', op: 'eq', value: 'written_off' }],
+      groupFields: ['customerName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'lineCost', agg: 'sum' },
+      ],
+      sort: { key: 'lineCost_sum', dir: 'desc' },
+      chartType: 'bar',
+    }),
+  },
+  {
+    id: 'job-billable-not-invoiced',
+    name: 'Billable work not yet invoiced',
+    description:
+      'Lines the business intends to charge for that no invoice has taken. Straightforwardly money it has earned and not asked for.',
+    category: 'Operations',
+    permission: 'jobs.view',
+    spec: spec({
+      source: 'jobCardLines',
+      filters: [
+        { field: 'billingState', op: 'eq', value: 'quoted' },
+        { field: 'invoicedQty', op: 'eq', value: '0' },
+      ],
+      columns: [
+        { field: 'jobNumber' },
+        { field: 'customerName' },
+        { field: 'description' },
+        { field: 'qty' },
+        { field: 'intendedPriceIncl' },
+      ],
+      sort: { key: 'intendedPriceIncl', dir: 'desc' },
+    }),
+  },
+
   /* ── Operations ──────────────────────────────────────────────────────────── */
   {
     id: 'cashup-history',

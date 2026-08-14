@@ -3083,12 +3083,16 @@ async function main() {
     const JOB_SOURCES = ['jobCards', 'jobCardLines', 'jobTime', 'jobTravel', 'jobVisits']
     const jobTemplates = TEMPLATES.filter((t) => JOB_SOURCES.includes(t.spec.source))
     /*
-     * Eight, not fifteen, and still deliberately short of the PRD's list — its
-     * own advice is "avoid building too many specialised reports initially".
-     * The number is asserted so that adding one is a decision somebody makes on
-     * purpose rather than a drift nobody notices.
+     * Fifteen — the PRD's Phase-1 list, completed.
+     *
+     * It shipped as eight in phase 22 on the PRD's own advice to "avoid building
+     * too many specialised reports initially", with the remaining seven added
+     * deliberately once the three catalog sources made them expressible as specs
+     * rather than code. The number stays asserted for the original reason: adding
+     * one should be a decision somebody makes on purpose rather than a drift
+     * nobody notices.
      */
-    ok('(J15) eight job built-ins ship, not fifteen', jobTemplates.length === 8, String(jobTemplates.length))
+    ok('(J15) all fifteen job built-ins ship', jobTemplates.length === 15, String(jobTemplates.length))
 
     for (const template of jobTemplates) {
       ok(`(J15) ${template.id} is gated on jobs.view`, template.permission === 'jobs.view')

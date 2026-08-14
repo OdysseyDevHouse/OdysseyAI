@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { activeSiteIds } from '@/lib/sites'
 import { runAutomations } from '@/lib/site/jobAutomations'
+import { purgeOldLinks } from '@/lib/site/portalAuth'
 
 /**
  * The heartbeat for the three time-based job automations.
@@ -71,6 +72,15 @@ async function handle(request: NextRequest) {
 
   for (const siteId of siteIds) {
     try {
+      /*
+       * Housekeeping first, and deliberately swallowed.
+       *
+       * Spent and lapsed sign-in links are already dead — this only stops the
+       * table growing for ever — so a failure here must never be the reason the
+       * escalations and reminders below do not run.
+       */
+      await purgeOldLinks(siteId).catch(() => 0)
+
       const outcomes = await runAutomations(siteId)
       const acted = outcomes.filter((o) => o.claimed > 0 || o.failed > 0)
       outcomes.forEach((o) => {

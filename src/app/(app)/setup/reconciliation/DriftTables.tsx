@@ -1501,3 +1501,32 @@ export function OrphanRequestTable({ rows }: { rows: OrphanRequestRow[] }) {
   ]
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.id} />
 }
+
+/* ── The customer portal (130) ────────────────────────────────────────────── */
+
+type ReusedLinkRow = { id: number; customerId: number }
+
+export function ReusedLinkTable({ rows }: { rows: ReusedLinkRow[] }) {
+  const columns: Column<ReusedLinkRow>[] = [
+    {
+      key: 'link',
+      header: 'Sign-in link',
+      sortable: true,
+      sortValue: (r) => r.id,
+      cell: (r) => <span className="text-ink-2">#{r.id}</span>,
+    },
+    {
+      key: 'customer',
+      header: 'Customer',
+      cell: (r) => <TextLink href={`/customers/${r.customerId}`}>#{r.customerId}</TextLink>,
+    },
+    {
+      key: 'why',
+      header: 'What is wrong',
+      // The unique key makes this impossible, which is why a row here is
+      // serious rather than untidy: the constraint is gone.
+      cell: () => <Badge tone="danger">Two rows share one token</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.id} />
+}
