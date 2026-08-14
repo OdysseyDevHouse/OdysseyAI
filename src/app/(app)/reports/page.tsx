@@ -112,6 +112,20 @@ export default async function ReportsPage() {
       broken: false,
     })
   }
+  /* Stock, not reports: it is the movement of goods between shops, and the
+     person who chases a transfer is the one who runs the stockroom. */
+  if (allow('stock.view')) {
+    templates.push({
+      id: 'multi-store-transfers',
+      name: 'Store transfers',
+      description: 'What moved between stores, what is on the road, and what is counted twice.',
+      category: 'Multi-store',
+      source: 'stockMovements',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+  }
   if (allow('reports.financial')) {
     templates.push({
       id: 'multi-store-income-statement',

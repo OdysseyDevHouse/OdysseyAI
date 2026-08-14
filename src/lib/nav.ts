@@ -593,6 +593,7 @@ export const SUBPAGE_LABELS = {
   '/reports/multi-store-sales': 'Sales by store',
   '/reports/multi-store-like-for-like': 'Like-for-like sales',
   '/reports/multi-store-stock': 'Stock across stores',
+  '/reports/multi-store-transfers': 'Store transfers',
 } as const
 
 /**
@@ -748,6 +749,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
     'like for like lfl same store sales comp growth year on year multi store group branches',
   '/reports/multi-store-stock':
     'stock on hand across stores rebalance transfer surplus shortage overstock understock multi store group branches',
+  '/reports/multi-store-transfers':
+    'store transfers in transit reconciliation counted twice unsettled stale goods on the road multi store group',
 }
 
 /**

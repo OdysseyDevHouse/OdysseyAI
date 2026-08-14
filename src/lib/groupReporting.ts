@@ -7,6 +7,7 @@ import { capabilitiesForRole, can, type Capability } from './site/permissions'
 import { siteQuery, siteQueryOne } from './siteDb'
 import { incomeStatement, type IncomeStatement, type DateRange } from './site/financialStatements'
 import { subtypeRank } from './glModel'
+import { reconcileStoreTransfers, type StoreTransferDrift } from './site/storeTransfers'
 import { addDays, daysBetweenDates } from './site/interestRules'
 import { round, toNum } from './decimals'
 
@@ -748,6 +749,131 @@ export function rebalanceSuggestions(stock: GroupStock): RebalanceSuggestion[] {
   // Biggest moves first: a suggestion to shift 200 units matters more than one
   // to shift 2, and a list nobody reads to the end should lead with the former.
   return out.sort((a, b) => b.qty - a.qty)
+}
+
+/* ── Store transfers, across the group ────────────────────────────────────── */
+
+export type GroupTransferDrift = StoreTransferDrift & {
+  /** The store holding the problem — the one whose books are wrong. */
+  siteId: number
+  siteName: string
+}
+
+export type TransferFlowLeg = {
+  fromSiteId: number
+  fromName: string
+  toSiteId: number
+  toName: string
+  transfers: number
+  units: number
+}
+
+export type GroupTransfers = {
+  /** Every drift across the group, unsettled first — those are counted twice. */
+  drift: GroupTransferDrift[]
+  /** Who sends what to whom over the period. */
+  flow: TransferFlowLeg[]
+  /** Dispatched and not yet received, right now, by sender. */
+  inTransit: { siteId: number; name: string; transfers: number; units: number }[]
+  failures: { siteId: number; name: string; error: string }[]
+}
+
+/**
+ * Store transfers seen from above — drift, flow, and what is on the road.
+ *
+ * `reconcileStoreTransfers` already answers this per store, and answers it well:
+ * it opens the PEER's database to ask whether the far end has already taken
+ * goods this store still holds. What it cannot do is show the group. Finding a
+ * transfer counted twice today means opening each store in turn and knowing to
+ * look, which is a check nobody runs.
+ *
+ * `unsettled` drift is the one that matters: the receiver has the goods and the
+ * sender still holds them, so the group's stock figure is overstated until
+ * settleDispatch runs. `stale` is a late lorry — worth seeing, not an error, and
+ * the two are never merged into one alarm.
+ */
+export async function groupTransfers(
+  sites: GroupSite[],
+  range: DateRange,
+  staleAfterDays = 7,
+): Promise<GroupTransfers> {
+  const results = await perSite(sites, async (siteId) => {
+    const [drift, flow, transit] = await Promise.all([
+      reconcileStoreTransfers(siteId, staleAfterDays),
+      /* Outbound only. Every inter-store transfer exists as two documents, one
+         per database, so counting both directions would report every movement
+         twice — once as the sender's 'out' and again as the receiver's 'in'. */
+      siteQuery<Row>(
+        siteId,
+        `SELECT t.peer_site_id AS peer_id,
+                MIN(t.peer_site_name) AS peer_name,
+                COUNT(*) AS transfers,
+                COALESCE(SUM((SELECT SUM(l.qty) FROM stock_transfer_lines l
+                               WHERE l.transfer_id = t.id)), 0) AS units
+           FROM stock_transfers t
+          WHERE t.direction = 'out'
+            AND t.status IN ('in_transit','received')
+            AND t.document_date BETWEEN ? AND ?
+            AND t.peer_site_id IS NOT NULL
+          GROUP BY t.peer_site_id`,
+        [range.from, range.to],
+      ),
+      siteQueryOne<Row>(
+        siteId,
+        `SELECT COUNT(*) AS transfers,
+                COALESCE(SUM((SELECT SUM(l.qty) FROM stock_transfer_lines l
+                               WHERE l.transfer_id = t.id)), 0) AS units
+           FROM stock_transfers t
+          WHERE t.direction = 'out' AND t.status = 'in_transit'`,
+      ),
+    ])
+    return { drift, flow, transit }
+  })
+
+  const failures = results
+    .filter((r): r is typeof r & { ok: false } => !r.ok)
+    .map((r) => ({ siteId: r.siteId, name: r.name, error: r.error }))
+
+  const drift: GroupTransferDrift[] = []
+  const flow: TransferFlowLeg[] = []
+  const inTransit: GroupTransfers['inTransit'] = []
+  const nameOf = new Map(sites.map((s) => [s.siteId, s.name]))
+
+  for (const r of results) {
+    if (!r.ok) continue
+    for (const d of r.data.drift) drift.push({ ...d, siteId: r.siteId, siteName: r.name })
+
+    for (const row of r.data.flow) {
+      const peerId = Number(row.peer_id)
+      flow.push({
+        fromSiteId: r.siteId,
+        fromName: r.name,
+        toSiteId: peerId,
+        // The peer's CURRENT name where the group knows it, falling back to the
+        // snapshot on the row — a store renamed since the transfer should read
+        // by its name today, not the one frozen into a document last year.
+        toName: nameOf.get(peerId) ?? String(row.peer_name ?? `Site ${peerId}`),
+        transfers: Number(row.transfers ?? 0),
+        units: toNum(row.units),
+      })
+    }
+
+    const units = toNum(r.data.transit?.units)
+    const count = Number(r.data.transit?.transfers ?? 0)
+    if (count > 0) inTransit.push({ siteId: r.siteId, name: r.name, transfers: count, units })
+  }
+
+  // Unsettled first: those are goods on two sets of books at once, and a late
+  // lorry must never outrank them.
+  drift.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'unsettled' ? -1 : 1
+    return (b.totalQty ?? 0) - (a.totalQty ?? 0)
+  })
+
+  flow.sort((a, b) => b.units - a.units)
+  inTransit.sort((a, b) => b.units - a.units)
+
+  return { drift, flow, inTransit, failures }
 }
 
 /* ── Like-for-like ────────────────────────────────────────────────────────── */

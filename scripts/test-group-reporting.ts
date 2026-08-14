@@ -23,6 +23,7 @@ import {
   yearAgoWindow,
   productScopeFor,
   rebalanceSuggestions,
+  groupTransfers,
   type GroupDashboardRow,
   type SiteResult,
 } from '../src/lib/groupReporting'
@@ -430,6 +431,41 @@ async function main() {
     rebalanceSuggestions(
       synthStock([[{ onHand: 0, minStock: 4 }, { onHand: 8.6, minStock: 5 }]], ['A-1']),
     ).every((s) => Number.isInteger(s.qty)))
+
+  /* ── 11. Store transfers, across the group ───────────────────────────── */
+
+  const xfer = await groupTransfers(both, { from: '2020-01-01', to: '2030-12-31' })
+
+  ok('*** group transfers reads every store without throwing ***',
+    Array.isArray(xfer.drift) && Array.isArray(xfer.flow) && xfer.failures.length === 0,
+    `${xfer.drift.length} drift, ${xfer.flow.length} legs`)
+
+  /* Every inter-store transfer is TWO documents, one per database. Counting
+     both directions would report each movement twice, so only the sender's
+     'out' leg is counted — no leg may therefore duplicate its mirror. */
+  const mirrored = xfer.flow.some((a) =>
+    xfer.flow.some((b) => a.fromSiteId === b.toSiteId && a.toSiteId === b.fromSiteId && a.units === b.units),
+  )
+  ok('  a movement is counted once, from the sender — never twice',
+    !mirrored || xfer.flow.length === 0,
+    xfer.flow.map((f) => `${f.fromName}->${f.toName}:${f.units}`).join(' ') || '(no flow)')
+
+  ok('  internal (within-store) transfers are excluded',
+    xfer.flow.every((f) => f.fromSiteId !== f.toSiteId))
+
+  /* Unsettled means the goods are on two sets of books at once; stale is a late
+     lorry. If both are present the dangerous one must lead, because a page that
+     sorts a delayed truck above a double-count buries the only real error. */
+  const firstStale = xfer.drift.findIndex((d) => d.kind === 'stale')
+  const lastUnsettled = xfer.drift.map((d) => d.kind).lastIndexOf('unsettled')
+  ok('*** unsettled drift always outranks a late lorry ***',
+    firstStale === -1 || lastUnsettled === -1 || lastUnsettled < firstStale,
+    xfer.drift.map((d) => d.kind).join(',') || '(no drift)')
+
+  const xferGhost = await groupTransfers(withGhost, { from: '2020-01-01', to: '2030-12-31' })
+  ok('*** an unreachable store is a failure, not a crash ***',
+    xferGhost.failures.some((f) => f.siteId === 999),
+    xferGhost.failures.map((f) => f.name).join(', '))
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)

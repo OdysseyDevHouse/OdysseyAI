@@ -112,6 +112,11 @@ CATALOGUE['/reports/multi-store-stock'] = {
   icon: 'Boxes',
   keywords: 'stock on hand rebalance transfer surplus shortage overstock understock multi store group',
 }
+CATALOGUE['/reports/multi-store-transfers'] = {
+  description: 'What moved between stores, what is on the road, and what is counted twice.',
+  icon: 'Truck',
+  keywords: 'store transfers in transit reconciliation counted twice unsettled stale multi store group',
+}
 
 /**
  * The searchable index for ONE user, built from the sections they can see.
