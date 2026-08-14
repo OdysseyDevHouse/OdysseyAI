@@ -26,6 +26,9 @@ import { SUBPAGE_LABELS, type SubpageHref } from '@/lib/nav'
  */
 export type HubIconName =
   | 'Wrench'
+  /* The ticket board's setup tile (165). Beside Wrench because the two tiles
+     answer the same question for two different teams. */
+  | 'Ticket'
   | 'Users'
   | 'KeyRound'
   | 'Store'

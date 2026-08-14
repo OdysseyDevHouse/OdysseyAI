@@ -2,7 +2,25 @@ import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { logActivity, type Actor } from './activityLog'
-import type { PartyKind } from './partyContacts'
+/**
+ * What a comment or a document can be ABOUT.
+ *
+ * ── WHY THIS IS NOT `PartyKind` ────────────────────────────────────────────
+ *
+ * It used to be. `PartyKind` is `'customer' | 'supplier'` and means "which book
+ * a CONTACT belongs to" — it selects a table and a foreign key column, which is
+ * a real job this type does not have.
+ *
+ * Comments never branch on it: `party_comments.entity` is a free-text
+ * VARCHAR(40), and nothing here looks a table up from it. So borrowing
+ * `PartyKind` was a convenience that had already become a lie — job cards have
+ * been passing `'job_card'` through these helpers since 104, with a cast to
+ * keep the compiler quiet.
+ *
+ * Naming it honestly costs one type and buys back the compiler: adding
+ * `'ticket'` (165) is now a declaration rather than another cast.
+ */
+export type CommentEntity = 'customer' | 'supplier' | 'job_card' | 'ticket'
 
 /**
  * Dated remarks by named people about an account.
@@ -24,7 +42,7 @@ import type { PartyKind } from './partyContacts'
 
 export type PartyComment = {
   id: number
-  entity: PartyKind
+  entity: CommentEntity
   entityId: number
   body: string
   isPinned: boolean
@@ -44,7 +62,7 @@ type Row = RowDataPacket & Record<string, unknown>
 function mapComment(r: Row): PartyComment {
   return {
     id: Number(r.id),
-    entity: String(r.entity) as PartyKind,
+    entity: String(r.entity) as CommentEntity,
     entityId: Number(r.entity_id),
     body: String(r.body),
     isPinned: !!r.is_pinned,
@@ -77,7 +95,7 @@ const SELECT_COMMENT = `
  */
 export async function listComments(
   siteId: number,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   limit = 200,
 ): Promise<PartyComment[]> {
@@ -106,7 +124,7 @@ function validateBody(body: string): string | null {
 export async function createComment(
   siteId: number,
   actor: Actor,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   body: string,
   isPinned = false,
@@ -144,7 +162,7 @@ export async function createComment(
 export async function updateComment(
   siteId: number,
   actor: Actor,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   id: number,
   body: string,
@@ -171,7 +189,7 @@ export async function updateComment(
 export async function setCommentPinned(
   siteId: number,
   actor: Actor,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   id: number,
   pinned: boolean,
@@ -197,7 +215,7 @@ export async function setCommentPinned(
 export async function deleteComment(
   siteId: number,
   actor: Actor,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   id: number,
 ): Promise<DeleteResult> {
@@ -228,7 +246,7 @@ export async function deleteComment(
  */
 export async function removeCommentsFor(
   tx: PoolConnection,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
 ): Promise<void> {
   await tx.execute('DELETE FROM party_comments WHERE entity = ? AND entity_id = ?', [

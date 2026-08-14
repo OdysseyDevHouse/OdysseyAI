@@ -194,6 +194,10 @@ export {
   ArchiveRestore,
   Play,
   Pause,
+  // The third of the transport trio, for a ticket lane that ENDS the clock
+  // rather than pausing it (165). Square and not Stop: lucide has no Stop, and
+  // a filled square is the universal stop mark on any recorder ever made.
+  Square,
   KeyRound,
   LogIn,
   Moon,

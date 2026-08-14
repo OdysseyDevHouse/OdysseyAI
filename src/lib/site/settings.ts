@@ -490,6 +490,29 @@ export const SETTING_DEFAULTS = {
    */
   job_sla_escalation_enabled: '0',
 
+  /* ── Tickets (165) ───────────────────────────────────────────────────────── */
+
+  /**
+   * How many tickets one person may have running at once. 0 means no cap.
+   *
+   * ── WHY THIS IS A SETTING AND JOB TIME IS AN INDEX ────────────────────────
+   *
+   * `jobTime.ts` enforces one-open-timer in the DATABASE, through a generated
+   * column, and its header explains why that can never be relaxed: once two
+   * overlapping rows exist, no migration can restore the constraint without
+   * choosing which of somebody's hours to delete — and the failure it prevents
+   * is an hour billed twice.
+   *
+   * Ticket time is never billed. So the failure that justified an unrelaxable
+   * index does not exist here, and a configurable cap is safe — which is
+   * fortunate, because no index can express "at most N" anyway.
+   *
+   * Defaults to 0, because a cap that switched itself on at some arbitrary
+   * number the morning after a migration would start refusing work nobody asked
+   * it to refuse.
+   */
+  ticket_max_running_per_user: '0',
+
   /* ── Who is on a job, and who hears about it ────────────────────────────── */
 
   /**

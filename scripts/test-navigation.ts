@@ -429,6 +429,7 @@ const UNLINKED: Record<string, string> = {
   '/adjustments/new': 'reached from the adjustment list',
   '/jobs/new': 'reached from the job list',
   '/jobs/equipment/new': 'reached from the equipment list',
+  '/tickets/new': 'reached from the ticket board and list',
   '/stock-takes/new': 'reached from the stock take list',
   '/manufacturing/new': 'reached from the manufacturing list',
   '/expenses/new': 'reached from the expense list',

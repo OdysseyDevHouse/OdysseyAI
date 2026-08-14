@@ -82,6 +82,20 @@ export type ActivityEntity =
      records a cost that somebody else later decides not to charge for. Both
      halves of that need a name against them. */
   | 'job_card'
+  /* A support ticket (165). Separate from job_card because it is a separate
+     module: a ticket has no money on it, and the questions its trail answers
+     are different ones — who picked this up, who had it while the clock ran,
+     and who moved it to done.
+
+     The MOVE is the interesting row, because on a ticket a move is also the
+     timing act: dragging a card into a running lane opens a time segment. So
+     "who started the clock" and "who moved it" are the same question, and this
+     is where it is answered. */
+  | 'ticket'
+  /* A lane on the ticket board: created, renamed, or given one of the exclusive
+     flags. Worth auditing because moving the start flag from one lane to
+     another silently changes what every future drag does to the clock. */
+  | 'ticket_status'
   /* A supervisor authorising one refused action at the till — a discount over
      the cap, a void, a return. The MANAGER is the actor: "who authorised" is
      the question this row answers, and the cashier, the action, the amount and

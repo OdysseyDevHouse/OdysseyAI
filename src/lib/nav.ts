@@ -36,6 +36,7 @@ import {
   CalendarRange,
   Handshake,
   Repeat,
+  Ticket,
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
@@ -397,6 +398,44 @@ export const NAV: NavSection[] = [
       },
     ],
   },
+  /*
+   * Tickets: its own top-level section, not a child of Job cards (165).
+   *
+   * A support desk and a field team are usually different people. Somebody
+   * answering the phone all day wants this section open and never opens Job
+   * cards; a technician is the reverse. Nesting it would put a daily screen two
+   * clicks deep for the people who live in it.
+   *
+   * The two sections are next to each other because a ticket often becomes a
+   * job, and that is the one path between them.
+   */
+  {
+    label: 'Tickets',
+    icon: Ticket,
+    keywords: 'support helpdesk service desk enquiry issue incident request customer query',
+    items: [
+      {
+        /* FIRST, because the board is what a support desk leaves open all day.
+           The list is what they visit when looking for one thing. */
+        label: 'Board',
+        href: '/tickets/board',
+        icon: LayoutGrid,
+        built: true,
+        capability: 'tickets.view',
+        keywords: 'kanban lanes columns drag swimlane queue',
+        description: 'What the desk is working on, and whose clock is running',
+      },
+      {
+        label: 'All tickets',
+        href: '/tickets',
+        icon: ListOrdered,
+        built: true,
+        capability: 'tickets.view',
+        keywords: 'list search history closed resolved find',
+        description: 'Every ticket, open and closed, with what each one took',
+      },
+    ],
+  },
 ]
 
 /**
@@ -465,6 +504,9 @@ export const SUBPAGE_LABELS = {
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
      boards that show them, and somebody looking for either should find it. */
   '/setup/job-workflow': 'Job workflow',
+  /* "Tickets", matching the section it configures. The lanes and the running
+     limit are one screen because both answer "how does this desk work". */
+  '/setup/tickets': 'Tickets',
   '/setup/custom-fields': 'Custom fields',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
@@ -747,6 +789,10 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   /* Not "Edit equipment": the same screen serves a unit in daily use and one
      scrapped two years ago, and "Edit" over a retired asset reads wrongly. */
   '/jobs/equipment': { new: 'Add equipment', edit: 'Equipment' },
+  /* "Ticket", not "Edit": the screen is a conversation and a record of what was
+     done, and most of what happens on it — commenting, moving a lane, starting
+     the clock — is not editing anything. The fallback labelled it "Edit". */
+  '/tickets': { new: 'New ticket', edit: 'Ticket' },
   /* /sales itself redirects to the register now, but /sales/[id] is still where
      an issued document lives. It is never "edited" — the screen is a record of
      what went out — so the crumb names the thing rather than the action. */

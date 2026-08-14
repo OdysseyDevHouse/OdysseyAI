@@ -2941,6 +2941,138 @@ SLA policy.
 
 ---
 
+## What phase 38 shipped — the ticket module (§3)
+
+The last item of the programme, and the only one that is a **second product**
+rather than a gap in the first. `165_tickets.sql` and `166_ticket_sequence_fix.sql`;
+`src/lib/ticketModel.ts` and `src/lib/site/tickets.ts`; `/tickets`, `/tickets/board`,
+`/tickets/[id]`, `/tickets/new`, `/setup/tickets`; its own top-level nav section
+and its own capability group.
+
+### The lane owns the clock
+
+This is what makes a ticket board different from a job board, and it came from
+the system it replaces rather than from the PRD.
+
+A job card times work with a **manual** timer somebody taps
+([jobTime.ts:235](src/lib/site/jobTime.ts#L235)). That works on site, where a
+technician is already holding the phone. On a support desk it would not survive
+a week, because nobody remembers. So here each lane carries a clock action —
+`start`, `pause`, `end`, or nothing — and **moving the card is the timing act**.
+
+`moveTicket` is the only function that changes a status, and it opens or closes
+the time segment **in the same transaction**. A ticket in "On Hold" with a
+running clock is drift nothing on screen can explain, and it is exactly what a
+two-step version produces the first time the second step fails.
+
+**One enum, not three booleans**, for the reason `job_statuses.role` is one:
+three flags would permit `start` and `end` on the same lane, a shape no screen
+can render and no arithmetic can resolve.
+
+### Four decisions, and what each one bought
+
+| Question | Answer | Consequence |
+|---|---|---|
+| Overnight | **Business hours** | Reuses `businessMinutesBetween` and `tradingHours()`. Fri 15:00 → Mon 10:00 reads as **2 hours, not 67** — asserted. |
+| Whose time | **The assignee** | A dispatcher dragging twenty cards does not appear to have done twenty tickets. |
+| Billable | **Never** | Keeps one costing engine — and makes the cap safe, below. |
+| Concurrency | **A per-user cap** | New setting, `0` = no cap, default `0`. |
+
+The business-hours answer is the one that matters most on screen: the work clock
+and the SLA clock now agree, because they are the same clock.
+
+### The cap is safe *because* tickets are not billed
+
+`jobTime.ts:27` puts an unrelaxable database constraint on job timers and says
+why: "once two overlapping rows exist, no migration can restore the constraint
+without choosing which of somebody's hours to delete — and the failure it
+prevents is an hour billed twice."
+
+Ticket time is never billed, so that failure does not exist here. Which is
+fortunate, because **no index can express "at most N"** — so the cap is a check
+inside the move transaction, with the person's open rows locked `FOR UPDATE`,
+copying `startJobTimer`'s lock-then-insert.
+
+It **names what is already running** rather than saying "limit reached": *"Tiaan
+Smith already has 1 ticket running: TK000004. Stop one first."* And
+`reconcileTickets` reports anybody over the cap, because lowering the setting
+cannot stop a clock that is already going.
+
+### Three things the codebase already had
+
+Checked against the schema rather than assumed, and all three were **better than
+the plan expected**:
+
+- `party_comments.entity`, `party_documents.entity` and `activity_log.entity`
+  are all free-text `VARCHAR`. Sharing comments, files and activity needed **no
+  migration at all**, where the plan budgeted three.
+- `JobBoard` already solved both drag traps — `pointerWithin` over
+  `closestCorners` (so a released drag can cancel), and the mount gate that
+  keeps DndContext out of the first paint. Copied verbatim.
+- `PartyKind` was **already lying**: declared `'customer' | 'supplier'`, but job
+  cards have passed `'job_card'` through those helpers since 104 with a cast.
+  Comments never branch on it, so it became `CommentEntity` — and adding
+  `'ticket'` is now a declaration rather than another cast.
+
+### Two bugs found, and where
+
+**In the migration, by re-reading how job cards number themselves.** 165 seeded
+the TK sequence *per terminal*. Wrong twice: a site with no terminals (site 2 —
+a back office, and there are more of those than not) got **no sequence at all**,
+and a site with two tills got two counters both starting at 1. Job cards seed
+**one row at terminal 0**, meaning the whole site. 166 corrects it — a new file,
+because a migration is recorded by filename and editing 165 would change nothing
+on a site that had run it.
+
+**In the browser, which is the only place it was visible.** The board filtered
+to open tickets, copying the job board. Dragging a card into "Resolved" sets the
+state to closed — so **the card vanished at the moment of the drop**. The lane
+existed to be dragged to, and arriving there made the ticket disappear, which
+reads as a failed drop rather than a completed one. Now the board shows every
+open ticket plus anything closed in the last fortnight.
+
+### Verified
+
+Typecheck clean, `check-ui-kit` clean, **production build passes including
+type-check** — the first time this session, now that the other session's
+`TerminalsClient.tsx` edit has landed. `test:tickets` (33 new assertions across
+T1–T9), `test:job-cards`, `test:sequences`, `test:navigation` and
+`test:permissions` all pass. Migrations applied to sites 1 and 2, both confirmed
+carrying five tables, six lanes, one site-wide TK sequence and the widened
+escalation key.
+
+`test:sequences` is the one that matters here: `tickets` carries
+`document_number`, `id` and a `status` whose void value is `'cancelled'`, which
+is `verifySequence`'s contract. Without it every TK ever issued would report as
+missing — an omission that has bitten four times before (stock takes, job cards,
+customer assets, laybys).
+
+Driven in Chrome: the board with lanes, counts, clock icons and a running
+indicator; the detail screen with its two columns, Comments/Activity tabs and
+the time ledger; the setup screen with the lane flags and the running limit.
+Site 1 verified back to its prior state by query.
+
+**Two assertions I had to correct, both mine rather than the module's.**
+`missing === 0` can never hold in a suite that deletes its own fixtures — a
+deleted ticket *is* a missing number, and the fix would have been to stop
+cleaning up. And the reconcile check ran mid-suite, reporting the suite's own
+half-finished fixtures; it now runs after the sweep, and a deliberately broken
+ticket proves the bucket fires.
+
+**The smoke crawl could not run**: the dev server on :4100 stopped responding
+(`curl` returns `000` on every route). Not the login form, which is what the
+error message suggests, and not this work — the production build compiles every
+ticket route. Worth re-running once the server is back.
+
+### The recorded price
+
+Every future feature now has to ask **"does this apply to tickets too"** —
+statuses, boards, reports, the portal, notifications, custom fields. That is the
+cost of §3 asking for a separate module rather than a job-card variant, and it
+is why this phase was last.
+
+---
+
 ## Deferred, and what each is blocked on
 
 Not "later" — **blocked on infrastructure that does not exist**.

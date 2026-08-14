@@ -155,6 +155,7 @@
     "test:contract-model": "tsx scripts/test-contract-model.ts",
     "test:contracts": "tsx --conditions=react-server --env-file=.env scripts/test-contracts.ts",
     "test:job-cards": "tsx --conditions=react-server --env-file=.env scripts/test-job-cards.ts",
+    "test:tickets": "tsx --conditions=react-server --env-file=.env scripts/test-tickets.ts",
     "test:master-codes": "tsx --conditions=react-server --env-file=.env scripts/test-master-codes.ts",
     "test:instructions": "tsx --conditions=react-server --env-file=.env scripts/test-instructions.ts",
     "test:tip-math": "tsx scripts/test-tip-math.ts",

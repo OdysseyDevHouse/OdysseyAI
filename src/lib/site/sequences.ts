@@ -574,6 +574,15 @@ const OWN_TABLE_TYPES: Record<string, string> = {
   // laybys.layby_number to document_number to satisfy this function's column
   // contract; the status enum already carries 'cancelled'.
   layby: 'laybys',
+  /*
+   * Tickets (165). Registered WITH the table, not after it — this omission has
+   * now bitten four times (stock takes, job cards, customer assets, laybys) and
+   * each time it was found long after the numbers had been issued.
+   *
+   * 165 gives tickets a `status` column carrying 'cancelled' for exactly this
+   * function's contract, the same way 116 did for customer_assets.
+   */
+  ticket: 'tickets',
 }
 
 export async function verifySequence(

@@ -19,6 +19,8 @@ import type { LucideIcon } from './icons'
  */
 export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
   Wrench: Icons.Wrench,
+  // The ticket board's setup tile (165), beside job workflow's wrench.
+  Ticket: Icons.Ticket,
   Users: Icons.Users,
   KeyRound: Icons.KeyRound,
   Store: Icons.Store,

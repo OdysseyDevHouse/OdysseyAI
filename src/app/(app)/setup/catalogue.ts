@@ -285,6 +285,18 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'jobs.setup',
       },
       {
+        /* Beside job workflow, because the two are the same kind of decision
+           for two different teams. Its own tile rather than a panel there:
+           `tickets.setup` is a separate capability, so somebody who configures
+           the support desk may well not configure the field one. */
+        href: '/setup/tickets',
+        description: 'The lanes on the ticket board, and what each one does to the clock.',
+        keywords: 'ticket support helpdesk lanes columns kanban clock timer running limit',
+        icon: 'Ticket',
+        tone: 'amber',
+        capability: 'tickets.setup',
+      },
+      {
         href: '/setup/linked-stores',
         description: 'Branches that share products, customers or loyalty with this one.',
         keywords: 'multi store group branches sharing',

@@ -2,7 +2,7 @@ import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { logActivity, type Actor } from './activityLog'
-import type { PartyKind } from './partyContacts'
+import type { CommentEntity } from './partyComments'
 
 /**
  * Files attached to a customer or supplier — the signed credit application,
@@ -19,7 +19,7 @@ import type { PartyKind } from './partyContacts'
 
 export type PartyDocument = {
   id: number
-  entity: PartyKind
+  entity: CommentEntity
   entityId: number
   filename: string
   storedName: string
@@ -50,7 +50,7 @@ type Row = RowDataPacket & Record<string, unknown>
 function mapDocument(r: Row): PartyDocument {
   return {
     id: Number(r.id),
-    entity: String(r.entity) as PartyKind,
+    entity: String(r.entity) as CommentEntity,
     entityId: Number(r.entity_id),
     filename: String(r.filename),
     storedName: String(r.stored_name),
@@ -72,7 +72,7 @@ const SELECT_DOCUMENT = `
 /** One account's documents, newest first. */
 export async function listDocuments(
   siteId: number,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
 ): Promise<PartyDocument[]> {
   const rows = await siteQuery<Row>(
@@ -94,7 +94,7 @@ export async function listDocuments(
  */
 export async function getDocument(
   siteId: number,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   id: number,
 ): Promise<PartyDocument | null> {
@@ -116,7 +116,7 @@ export async function getDocument(
 export async function createDocument(
   siteId: number,
   actor: Actor,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   input: DocumentInput,
 ): Promise<SaveResult> {
@@ -153,7 +153,7 @@ export async function createDocument(
 export async function updateDocument(
   siteId: number,
   actor: Actor,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   id: number,
   patch: { filename?: string; description?: string | null },
@@ -191,7 +191,7 @@ export async function updateDocument(
 export async function deleteDocument(
   siteId: number,
   actor: Actor,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
   id: number,
 ): Promise<DeleteResult> {
@@ -220,7 +220,7 @@ export async function deleteDocument(
  */
 export async function removeDocumentsFor(
   tx: PoolConnection,
-  entity: PartyKind,
+  entity: CommentEntity,
   entityId: number,
 ): Promise<string[]> {
   const [rows] = await tx.execute(

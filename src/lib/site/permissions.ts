@@ -212,6 +212,34 @@ export const CAPABILITY_GROUPS = [
       { key: 'jobs.setup', label: 'Configure the workflow', hint: 'Statuses, boards and the job settings.' },
     ],
   },
+  /*
+   * Tickets are their own group, not four more rows under Job cards (165).
+   *
+   * A support desk and a field team are usually different people: somebody who
+   * answers the phone all day needs every ticket right and no job cards at all,
+   * and the reverse is just as common. Folding these into `jobs` would make
+   * that impossible to express — a role could not have one without the other.
+   *
+   * Deliberately SHORTER than the jobs group. There is no `tickets.cost`,
+   * `tickets.invoice` or `tickets.bill_decide`, because a ticket carries no
+   * money. Adding them later would be the first sign this module had started
+   * turning into a second job card.
+   */
+  {
+    key: 'tickets',
+    label: 'Tickets',
+    capabilities: [
+      { key: 'tickets.view', label: 'See tickets', hint: 'Open the ticket board and read a ticket.' },
+      { key: 'tickets.edit', label: 'Create and change tickets', hint: 'Log a ticket, comment on it, and move it between lanes.' },
+      /* Separate from edit, matching jobs.assign: moving a ticket between lanes
+         is the day job, and deciding whose queue it lands in is not. It also
+         decides whose TIME a running clock is credited to, which makes it more
+         consequential here than on a job card. */
+      { key: 'tickets.assign', label: 'Assign tickets', hint: 'Decide who is responsible — and whose time the clock counts.' },
+      { key: 'tickets.close', label: 'Close and reopen tickets', hint: 'Mark a ticket done, or put a closed one back into play.' },
+      { key: 'tickets.setup', label: 'Configure the ticket board', hint: 'Lanes, what each one does to the clock, and the ticket settings.' },
+    ],
+  },
   {
     key: 'setup',
     label: 'Setup',
