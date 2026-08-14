@@ -2,6 +2,7 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import {
+  catalogueFacets,
   publishedDepartments,
   publishedProducts,
   resolveSectionContent,
@@ -19,6 +20,7 @@ import { Icons } from '@/components/ui'
 import HomeSections, { type SectionContent } from '../../HomeSections'
 import PreviewBar from '../../PreviewBar'
 import CategoryBrowser from './CategoryBrowser'
+import FacetBar, { priceBands } from './FacetBar'
 
 /**
  * One department.
@@ -113,10 +115,17 @@ export default async function DepartmentPage({
   searchParams,
 }: {
   params: Promise<{ token: string; departmentId: string }>
-  searchParams: Promise<{ q?: string; preview?: string }>
+  searchParams: Promise<{
+    q?: string
+    preview?: string
+    brand?: string
+    min?: string
+    max?: string
+    band?: string
+  }>
 }) {
   const { token, departmentId } = await params
-  const { q, preview: previewToken } = await searchParams
+  const { q, preview: previewToken, brand, min, max, band } = await searchParams
   const found = await resolve(token, departmentId)
 
   /*
@@ -144,12 +153,23 @@ export default async function DepartmentPage({
   const { context, department } = found
   // The grid/list choice lives on the THEME, with the rest of the shop's
   // appearance — it is a look, not a rule about what may be sold.
-  const [products, layout, found2] = await Promise.all([
-    publishedProducts(context, { departmentId: department.id, limit: MAX_PRODUCTS }),
+  const activeBrand = brand?.trim() ?? ''
+  const minPriceIncl = Number(min) > 0 ? Number(min) : undefined
+  const maxPriceIncl = Number(max) > 0 ? Number(max) : undefined
+
+  const [products, layout, found2, facets] = await Promise.all([
+    publishedProducts(context, {
+      departmentId: department.id,
+      limit: MAX_PRODUCTS,
+      brand: activeBrand || undefined,
+      minPriceIncl,
+      maxPriceIncl,
+    }),
     getPublishedLayout(context.siteId),
     // Its own page, or the nearest ancestor's that offered itself. A department
     // with neither still gets null and renders exactly as it always has.
     departmentPageFor(context.siteId, department.id),
+    catalogueFacets(context, department.id).catch(() => null),
   ])
   const page = found2?.page ?? null
 
@@ -216,6 +236,17 @@ export default async function DepartmentPage({
       </nav>
 
       <h1 className="mt-2 text-xl font-semibold text-ink">{department.name}</h1>
+
+      {facets && (
+        <FacetBar
+          basePath={`/store/${token}/c/${department.id}`}
+          q={q ?? ''}
+          brands={facets.brands}
+          activeBrand={activeBrand}
+          bands={priceBands(facets.minPrice, facets.maxPrice)}
+          activeBand={Number.isInteger(Number(band)) && Number(band) >= 0 ? Number(band) : -1}
+        />
+      )}
 
       {content.length > 0 && (
         <div className="mt-4">

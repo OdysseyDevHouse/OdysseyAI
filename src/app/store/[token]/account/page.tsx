@@ -83,6 +83,15 @@ export default async function AccountPage({
             </p>
           )}
 
+          <div className="flex flex-wrap gap-4 border-t border-border pt-3 text-sm">
+            <Link href={`/store/${token}/account/statement`} className="text-brand hover:underline">
+              Statement &amp; invoices
+            </Link>
+            <Link href={`/store/${token}/account/addresses`} className="text-brand hover:underline">
+              Delivery addresses
+            </Link>
+          </div>
+
           <div className="border-t border-border pt-3">
             <ChangePasswordForm token={token} required={session.mustChange} />
           </div>

@@ -336,6 +336,10 @@ export type CatalogueOptions = {
    * picked" and must return nothing, where undefined means "no restriction".
    */
   ids?: number[]
+  /** Facets (Phase 10): brand by NAME, and a VAT-inclusive price band. */
+  brand?: string
+  minPriceIncl?: number
+  maxPriceIncl?: number
 }
 
 export async function publishedProducts(
@@ -379,6 +383,21 @@ export async function publishedProducts(
     params.push(term, term)
   }
 
+  // The facets, applied BEFORE the 120 cap so a filtered page is honest
+  // rather than a client-side sieve over whatever the cap happened to admit.
+  if (options.brand?.trim()) {
+    where.push('br.name = ?')
+    params.push(options.brand.trim())
+  }
+  if (options.minPriceIncl !== undefined && Number.isFinite(options.minPriceIncl)) {
+    where.push('pp.selling_price_incl >= ?')
+    params.push(options.minPriceIncl)
+  }
+  if (options.maxPriceIncl !== undefined && Number.isFinite(options.maxPriceIncl)) {
+    where.push('pp.selling_price_incl <= ?')
+    params.push(options.maxPriceIncl)
+  }
+
   const limit = Math.min(Math.max(options.limit ?? 60, 1), 120)
   const offset = Math.max(options.offset ?? 0, 0)
 
@@ -393,6 +412,50 @@ export async function publishedProducts(
   )
 
   return withSpecials(context.siteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+}
+
+/**
+ * What a department's facet bar has to offer: which brands, and the price
+ * span. One GROUP BY over the same publish + sellable rules the listing
+ * itself uses, so a facet can never promise products the grid will not show.
+ */
+export async function catalogueFacets(
+  context: StorefrontContext,
+  departmentId: number,
+): Promise<{ brands: { name: string; count: number }[]; minPrice: number; maxPrice: number }> {
+  const where = [SELLABLE, publishFilter(context.settings.publishMode)]
+  const params: unknown[] = [context.settings.priceStructureId]
+
+  where.push(`p.department_id IN (
+    WITH RECURSIVE branch AS (
+      SELECT id FROM departments WHERE id = ?
+      UNION ALL
+      SELECT d.id FROM departments d JOIN branch b ON d.parent_id = b.id
+    )
+    SELECT id FROM branch
+  )`)
+  params.push(departmentId)
+
+  const rows = await siteQuery<Row>(
+    context.siteId,
+    `SELECT br.name AS brand, COUNT(*) AS n,
+            MIN(pp.selling_price_incl) AS min_price, MAX(pp.selling_price_incl) AS max_price
+     ${PRODUCT_JOINS}
+      WHERE ${where.join(' AND ')}
+      GROUP BY br.name`,
+    params,
+  )
+
+  let minPrice = Number.POSITIVE_INFINITY
+  let maxPrice = 0
+  const brands: { name: string; count: number }[] = []
+  for (const r of rows) {
+    minPrice = Math.min(minPrice, toNum(r.min_price))
+    maxPrice = Math.max(maxPrice, toNum(r.max_price))
+    if (r.brand) brands.push({ name: String(r.brand), count: Number(r.n) })
+  }
+  brands.sort((a, b) => b.count - a.count)
+  return { brands, minPrice: Number.isFinite(minPrice) ? minPrice : 0, maxPrice }
 }
 
 /**
@@ -1155,6 +1218,19 @@ export type PublicOrderInput = {
    * and the code's own rules — never from anything the browser computed.
    */
   discountCode?: string
+  /**
+   * A gift card covering the WHOLE order (147). A request like the others:
+   * the card is read and judged here, partial cover is refused online, and
+   * the actual spend happens inside finaliseDocument when the caller
+   * invoices the order against the GIFT_CARD tender.
+   */
+  giftCardCode?: string
+  /**
+   * A loyalty value voucher (052). Stored on the order for the payment
+   * callback to hand to finaliseDocument; ownership is enforced HERE because
+   * the shared engine deliberately leaves it to the staff-mediated till.
+   */
+  voucherCode?: string
 }
 
 export type PlaceOrderResult =
@@ -1165,6 +1241,10 @@ export type PlaceOrderResult =
       total: number
       /** What the server DECIDED, which may differ from what was asked. */
       onAccount: boolean
+      /** True when a gift card covers the whole order — no gateway needed. */
+      giftCard: boolean
+      /** Rand of the total a voucher will settle at invoicing. */
+      voucherCredit: number
     }
   | { ok: false; error: string }
 
@@ -1395,6 +1475,80 @@ export async function placePublicOrder(
     onAccount = true
   }
 
+  /*
+   * ── A gift card, judged now, spent at invoicing ─────────────────────────
+   *
+   * Full cover only, online: a partly-covered order would need the gateway
+   * AND the card to settle together, and a card debited against a payment
+   * that never completes is a dispute. The card is checked again — under the
+   * row lock — inside finaliseDocument when the order is invoiced.
+   */
+  let giftCard = false
+  if (input.giftCardCode?.trim()) {
+    if (onAccount) {
+      return { ok: false, error: 'Choose the gift card OR your account for this order, not both.' }
+    }
+    if (settings.paymentMode !== 'online') {
+      return { ok: false, error: 'Gift cards work at checkout only where this shop takes payment online — please use it at the till.' }
+    }
+    const { findGiftCard, giftCardRefusal } = await import('./giftCards')
+    const { today } = await import('./ledger')
+    const card = await findGiftCard(siteId, input.giftCardCode)
+    const refusal = giftCardRefusal(card, input.giftCardCode, today())
+    if (refusal) return { ok: false, error: refusal }
+    if (card!.balance + 0.005 < total) {
+      return {
+        ok: false,
+        error: `That card holds R${card!.balance.toFixed(2)}, which does not cover the R${total.toFixed(2)} total. Gift cards cover the whole order online — keep it for the shop, or take something off the basket.`,
+      }
+    }
+    giftCard = true
+  }
+
+  /*
+   * ── A loyalty voucher, ownership enforced HERE ──────────────────────────
+   *
+   * The shared redeem machinery deliberately does not check who a voucher
+   * belongs to — the till is staff-mediated. Online is not, so a code only
+   * counts when the SIGNED-IN shopper owns it. Stored on the order; the
+   * payment callback hands it to finaliseDocument, which nets it off what
+   * the gateway collected and spends it under the row lock.
+   */
+  let voucherCredit = 0
+  let voucherCode = ''
+  if (input.voucherCode?.trim()) {
+    if (!input.customerId) {
+      return { ok: false, error: 'Sign in to use your voucher.' }
+    }
+    if (settings.paymentMode !== 'online' || onAccount || giftCard) {
+      return { ok: false, error: 'Vouchers work online only on orders paid by card — please use it at the till.' }
+    }
+    const { findVoucher } = await import('./loyaltyCards')
+    const voucher = await findVoucher(siteId, input.voucherCode)
+    if (!voucher || voucher.customerId !== input.customerId) {
+      return { ok: false, error: 'That voucher is not on your account.' }
+    }
+    if (voucher.status !== 'issued') {
+      return { ok: false, error: 'That voucher has already been used.' }
+    }
+    // Local date, not toISOString — UTC would expire it two hours early here.
+    const { today } = await import('./ledger')
+    if (voucher.expiresOn && voucher.expiresOn < today()) {
+      return { ok: false, error: `That voucher expired on ${voucher.expiresOn}.` }
+    }
+    if (voucher.rewardType !== 'value') {
+      return { ok: false, error: 'That voucher is for a free item — please use it at the till.' }
+    }
+    if (voucher.rewardValue + 0.005 >= total) {
+      return {
+        ok: false,
+        error: 'That voucher is worth more than the rest of the order — please use it at the till so nothing goes to waste.',
+      }
+    }
+    voucherCredit = round(voucher.rewardValue, 2)
+    voucherCode = voucher.code
+  }
+
   // Where a new order lands is the store's choice, not this file's.
   const startStatus = (await listOrderStatuses(siteId)).find((s) => s.role === 'new')
   if (!startStatus) {
@@ -1411,8 +1565,8 @@ export async function placePublicOrder(
             delivery_line1, delivery_line2, delivery_suburb, delivery_postcode, delivery_notes,
             delivery_fee_incl, zone_id, total_incl, customer_note,
             customer_id, pay_on_account,
-            discount_code_id, discount_code, discount_incl)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            discount_code_id, discount_code, discount_incl, voucher_code)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           orderNumber,
           startStatus.id,
@@ -1441,6 +1595,7 @@ export async function placePublicOrder(
           discountApplied?.id ?? null,
           discountApplied?.code ?? '',
           discountIncl.toFixed(4),
+          voucherCode,
         ],
       )
 
@@ -1514,7 +1669,7 @@ export async function placePublicOrder(
         }
       }
 
-      return { ok: true as const, orderId, orderNumber, total, onAccount }
+      return { ok: true as const, orderId, orderNumber, total, onAccount, giftCard, voucherCredit }
     })
   } catch (error) {
     /*

@@ -69,6 +69,10 @@ export function SignInForm({ token, storeName }: { token: string; storeName: str
         <Button type="submit" disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </Button>
+
+        <a href={`/store/${token}/account/forgot`} className="text-sm text-brand hover:underline">
+          Forgot your password?
+        </a>
       </form>
     </Card>
   )

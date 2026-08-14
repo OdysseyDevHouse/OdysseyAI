@@ -1,4 +1,5 @@
 import 'server-only'
+import { createHash, randomBytes } from 'crypto'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
 import { hashPassword, verifyPassword } from '../password'
@@ -319,10 +320,9 @@ export type SaveResult = { ok: true } | { ok: false; error: string }
  * Give a customer online access, or reset the password of an existing login.
  *
  * Staff choose the password and pass it on, and `must_change` is set so it
- * stops working as a shared secret the moment the customer signs in. There is
- * no self-service reset because there is no email sending in this app yet —
- * offering "forgot password" that silently does nothing is worse than not
- * offering it.
+ * stops working as a shared secret the moment the customer signs in. The
+ * customer can also reset it themselves through the mailed-link flow below
+ * (150) when the shop has mail configured.
  */
 export async function setCustomerLogin(
   siteId: number,
@@ -407,4 +407,147 @@ export async function setCustomerLoginActive(
     [active ? 1 : 0, customerId],
   )
   return { ok: true }
+}
+
+/* ── Self-service password reset (150) ────────────────────────────────────── */
+
+const RESET_MINUTES = 60
+
+const sha256hex = (raw: string): string => createHash('sha256').update(raw).digest('hex')
+
+/**
+ * Mints a reset token for the login behind an email address.
+ *
+ * Null when no active login matches — and the CALLER must answer identically
+ * either way, the anti-enumeration rule at the top of this file. The raw
+ * token goes only into the email; the table holds its SHA-256, so a database
+ * read cannot impersonate the link holder.
+ */
+export async function createPasswordReset(
+  siteId: number,
+  emailRaw: string,
+): Promise<{ token: string; loginEmail: string } | null> {
+  const email = emailRaw.trim().toLowerCase()
+  if (!email || !email.includes('@')) return null
+
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT cl.id, cl.email FROM customer_logins cl
+       JOIN customers c ON c.id = cl.customer_id
+      WHERE cl.email = ? AND cl.is_active = 1 AND c.status = 'active'`,
+    [email],
+  )
+  if (!row) return null
+
+  const raw = randomBytes(24).toString('base64url')
+
+  // One live link per login: a fresh request retires the old email's link,
+  // so a mailbox thief cannot use a stale one the customer forgot about.
+  await siteExecute(siteId, 'DELETE FROM customer_password_resets WHERE login_id = ? AND used_at IS NULL', [
+    Number(row.id),
+  ])
+  await siteExecute(
+    siteId,
+    `INSERT INTO customer_password_resets (login_id, token_hash, expires_at)
+     VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ${RESET_MINUTES} MINUTE))`,
+    [Number(row.id), sha256hex(raw)],
+  )
+  return { token: raw, loginEmail: String(row.email) }
+}
+
+/** For the reset page to decide between the form and "link expired". */
+export async function passwordResetValid(siteId: number, rawToken: string): Promise<boolean> {
+  if (!rawToken?.trim()) return false
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id FROM customer_password_resets
+      WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()`,
+    [sha256hex(rawToken.trim())],
+  )
+  return row !== null
+}
+
+/**
+ * Spends a reset link. Single-use: the conditional UPDATE is the guard, so a
+ * link pasted into two tabs works in exactly one of them.
+ */
+export async function resetPasswordWithToken(
+  siteId: number,
+  rawToken: string,
+  next: string,
+): Promise<SaveResult> {
+  if (next.length < 8) return { ok: false, error: 'Use at least 8 characters.' }
+  if (next.length > 72) return { ok: false, error: 'Use 72 characters or fewer.' }
+
+  const claim = await siteExecute(
+    siteId,
+    `UPDATE customer_password_resets SET used_at = NOW()
+      WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()`,
+    [sha256hex(rawToken.trim())],
+  )
+  if (claim.affectedRows !== 1) {
+    return { ok: false, error: 'That link has expired or was already used — request another.' }
+  }
+
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT login_id FROM customer_password_resets WHERE token_hash = ?`,
+    [sha256hex(rawToken.trim())],
+  )
+  if (!row) return { ok: false, error: 'That link has expired — request another.' }
+
+  await siteExecute(
+    siteId,
+    `UPDATE customer_logins
+        SET password_hash = ?, must_change = 0, failed_attempts = 0, locked_until = NULL
+      WHERE id = ?`,
+    [await hashPassword(next), Number(row.login_id)],
+  )
+  return { ok: true }
+}
+
+/* ── The customer's own statement (Phase 10) ──────────────────────────────── */
+
+export type CustomerStatementLine = {
+  transactionId: number
+  docType: string
+  docNumber: string
+  docDate: string
+  dueDate: string | null
+  description: string
+  amountSigned: number
+  amountOutstanding: number
+  runningBalance: number
+  /** The sales document behind an invoice line, for PDF download and pay. */
+  sourceDocId: number | null
+}
+
+/**
+ * The ledger as the SHOPPER may see it: their own lines, shopper-safe fields
+ * only. A thin mapping over listLedger rather than a shared query whose
+ * customer filter is a parameter — the customerOrders doctrine, for the same
+ * reason.
+ */
+export async function customerStatement(
+  siteId: number,
+  customerId: number,
+  opts: { openOnly?: boolean; limit?: number } = {},
+): Promise<CustomerStatementLine[]> {
+  const { listLedger } = await import('./customerLedger')
+  const lines = await listLedger(siteId, customerId, {
+    openOnly: opts.openOnly ?? false,
+    limit: Math.min(Math.max(opts.limit ?? 100, 1), 500),
+  })
+  return lines.map((l) => ({
+    transactionId: l.id,
+    docType: String(l.docType),
+    docNumber: l.docNumber ?? '',
+    docDate: l.docDate,
+    dueDate: l.dueDate ?? null,
+    description: l.description ?? l.docLabel,
+    amountSigned: l.amountSigned,
+    amountOutstanding: l.amountOutstanding,
+    runningBalance: l.runningBalance ?? 0,
+    sourceDocId: l.source === 'sale' && l.sourceDocId ? l.sourceDocId : null,
+  }))
 }

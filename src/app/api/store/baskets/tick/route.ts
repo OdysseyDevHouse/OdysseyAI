@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { activeSiteIds } from '@/lib/sites'
 import { remindAbandonedBaskets } from '@/lib/site/basketReminder'
 import { sweepExpiredHolds } from '@/lib/site/stockHolds'
+import { sweepStockNotifications } from '@/lib/site/stockNotifications'
 
 /**
  * The storefront housekeeping heartbeat — call this every 15–30 minutes.
@@ -85,6 +86,17 @@ async function handle(request: NextRequest) {
        * onto a job whose real purpose is something else.
        */
       await sweepExpiredHolds(siteId).catch(() => 0)
+
+      // Back-in-stock notes ride the same heartbeat (151): rows are claimed
+      // before sending, so frequency changes nothing but latency.
+      const backInStock = await sweepStockNotifications(siteId).catch(
+        () => ({ sent: 0, failed: 0 }),
+      )
+      sent += backInStock.sent
+      failed += backInStock.failed
+      if (backInStock.sent > 0 || backInStock.failed > 0) {
+        results.push({ siteId, backInStock })
+      }
 
       const result = await remindAbandonedBaskets(siteId)
       sent += result.sent

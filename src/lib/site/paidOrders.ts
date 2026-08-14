@@ -87,6 +87,12 @@ export async function invoicePaidOrder(
     })
   }
 
+  // Read BEFORE finalising: the order carries the voucher the shopper spent
+  // at checkout (152), and finaliseDocument is where it is actually redeemed
+  // — netted off what the gateway collected, spent under the row lock, and
+  // excluded from the loyalty earn, all by the engine's own machinery.
+  const order = await getOrder(siteId, orderId)
+
   const finalised = await finaliseDocument(
     siteId,
     { userId: 0, userName: 'Online payment' },
@@ -102,16 +108,64 @@ export async function invoicePaidOrder(
           reference: paymentReference,
         },
       ],
+      voucherCodes: order?.voucherCode ? [order.voucherCode] : undefined,
     },
   )
 
   if (!finalised.ok) return finalised
 
-  const order = await getOrder(siteId, orderId)
+  const after = await getOrder(siteId, orderId)
   return {
     ok: true,
     documentId: accepted.documentId,
-    documentNumber: order?.documentNumber ?? null,
+    documentNumber: after?.documentNumber ?? null,
+  }
+}
+
+/**
+ * Invoice an order a GIFT CARD covers in full (147).
+ *
+ * The same shape as invoicePaidOrder — accept, then finalise through the
+ * ordinary engine — but tendering GIFT_CARD with the code as the reference.
+ * The engine's own pre-check and in-transaction redeem do the spend; a card
+ * drained between checkout and this call rolls the sale back and the refusal
+ * comes back here, leaving the order placed and unpaid for staff to chase.
+ */
+export async function invoiceGiftCardOrder(
+  siteId: number,
+  orderId: number,
+  code: string,
+): Promise<InvoiceResult> {
+  const tender = await getTenderByCode(siteId, 'GIFT_CARD')
+  if (!tender || !tender.isActive) {
+    return { ok: false, error: 'The gift card tender is not switched on.' }
+  }
+
+  const order = await getOrder(siteId, orderId)
+  if (!order) return { ok: false, error: 'That order no longer exists.' }
+
+  const accepted = await acceptOrder(siteId, orderId, {
+    userId: 0,
+    userName: 'Gift card payment',
+  })
+  if (!accepted.ok) return accepted
+
+  const finalised = await finaliseDocument(
+    siteId,
+    { userId: 0, userName: 'Gift card payment' },
+    {
+      documentId: accepted.documentId,
+      tenders: [{ tenderTypeId: tender.id, amount: order.totalIncl, reference: code }],
+    },
+  )
+  if (!finalised.ok) return finalised
+
+  await markOrderPayment(siteId, orderId, 'paid')
+  const after = await getOrder(siteId, orderId)
+  return {
+    ok: true,
+    documentId: accepted.documentId,
+    documentNumber: after?.documentNumber ?? null,
   }
 }
 

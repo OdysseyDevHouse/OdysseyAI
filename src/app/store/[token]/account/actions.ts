@@ -3,8 +3,11 @@
 import { revalidatePath } from 'next/cache'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext } from '@/lib/site/storefront'
+import { headers } from 'next/headers'
 import {
   changeCustomerPassword,
+  createPasswordReset,
+  resetPasswordWithToken,
   signInCustomer,
   type SaveResult,
 } from '@/lib/site/customerAuth'
@@ -97,4 +100,102 @@ export async function changePasswordAction(
   )
   revalidatePath(`/store/${token}`, 'layout')
   return { ok: true }
+}
+
+/* ── Forgot / reset password (150) ────────────────────────────────────────── */
+
+async function publicOrigin(): Promise<string> {
+  const head = await headers()
+  const explicit = process.env.PUBLIC_ORIGIN?.trim()
+  if (explicit) return explicit.replace(/\/$/, '')
+  const host = head.get('x-forwarded-host') ?? head.get('host') ?? 'localhost:4100'
+  const proto = head.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https')
+  return `${proto}://${host}`
+}
+
+/**
+ * "Forgot your password" — always answers the same way whether or not the
+ * address matched, the anti-enumeration rule. The one honest exception is a
+ * shop with no mail configured, where offering the form would be a lie.
+ */
+export async function requestPasswordResetAction(
+  token: string,
+  email: string,
+): Promise<SaveResult> {
+  const store = await storeFor(token)
+  if (!store || !store.context.settings.allowAccount) {
+    return { ok: false, error: 'This shop is not available.' }
+  }
+
+  const { isConfigured, send } = await import('@/lib/mail')
+  if (!isConfigured()) {
+    return {
+      ok: false,
+      error: 'This shop cannot send reset emails — please contact them to reset your password.',
+    }
+  }
+
+  const reset = await createPasswordReset(store.siteId, email)
+  if (reset) {
+    const link = `${await publicOrigin()}/store/${token}/account/reset/${reset.token}`
+    await send({
+      to: reset.loginEmail,
+      subject: 'Reset your password',
+      text: `Someone asked to reset the password for your account.\n\nReset it here (the link works once, for an hour):\n${link}\n\nIf this was not you, ignore this email — nothing has changed.`,
+      html: `<p>Someone asked to reset the password for your account.</p><p><a href="${link}">Reset your password</a> — the link works once, for an hour.</p><p>If this was not you, ignore this email — nothing has changed.</p>`,
+    }).catch(() => undefined)
+  }
+  // The same answer whether it matched or not.
+  return { ok: true }
+}
+
+export async function resetPasswordAction(
+  token: string,
+  resetToken: string,
+  password: string,
+): Promise<SaveResult> {
+  const store = await storeFor(token)
+  if (!store) return { ok: false, error: 'This shop is not available.' }
+  return resetPasswordWithToken(store.siteId, resetToken, password)
+}
+
+/* ── Pay an invoice (item 37) ─────────────────────────────────────────────── */
+
+/**
+ * Mints a pay link for ONE of the shopper's own open invoices. Ownership is
+ * checked against the SESSION, never the payload; settlement rides the same
+ * debtor_invoice rails as an emailed pay link.
+ */
+export async function payInvoiceAction(
+  token: string,
+  transactionId: number,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const store = await storeFor(token)
+  if (!store) return { ok: false, error: 'This shop is not available.' }
+  const session = await getCustomerSession(store.siteId)
+  if (!session) return { ok: false, error: 'Please sign in again.' }
+
+  const { getTransaction } = await import('@/lib/site/customerLedger')
+  const line = await getTransaction(store.siteId, transactionId)
+  if (!line || line.customerId !== session.customerId) {
+    return { ok: false, error: 'That invoice is not on your account.' }
+  }
+  if (line.docType !== 'invoice' || line.amountOutstanding <= 0.005) {
+    return { ok: false, error: 'There is nothing left to pay on that invoice.' }
+  }
+  if (!line.sourceDocId || line.source !== 'sale') {
+    return { ok: false, error: 'That invoice cannot be paid online — please contact the shop.' }
+  }
+
+  const { mintPaymentLink } = await import('@/lib/site/invoiceEmail')
+  const url = await mintPaymentLink(
+    store.siteId,
+    line.sourceDocId,
+    line.amountOutstanding,
+    await publicOrigin(),
+  )
+  if (!url) {
+    return { ok: false, error: 'Online payment is not available — please contact the shop.' }
+  }
+  return { ok: true, url }
 }

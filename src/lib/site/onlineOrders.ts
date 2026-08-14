@@ -90,6 +90,8 @@ export type OnlineOrder = {
   discountCodeId: number | null
   discountCode: string
   discountIncl: number
+  /** A loyalty voucher spent at checkout (152), handed to finalise at invoicing. */
+  voucherCode: string
   totalIncl: number
   requestedFor: Date | null
   customerNote: string
@@ -139,6 +141,7 @@ function mapOrder(r: Row): OnlineOrder {
     contactName: String(r.contact_name ?? ''),
     contactPhone: String(r.contact_phone ?? ''),
     contactEmail: String(r.contact_email ?? ''),
+    voucherCode: String(r.voucher_code ?? ''),
     deliveryLine1: String(r.delivery_line1 ?? ''),
     deliveryLine2: String(r.delivery_line2 ?? ''),
     deliverySuburb: String(r.delivery_suburb ?? ''),

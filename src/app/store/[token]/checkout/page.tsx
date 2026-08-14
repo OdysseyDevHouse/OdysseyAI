@@ -3,7 +3,7 @@ import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext } from '@/lib/site/storefront'
 import { customerAccount } from '@/lib/site/customerAuth'
 import { getCustomerSession } from '@/lib/customerSession'
-import { defaultAddressFor } from '@/lib/site/customerAddresses'
+import { defaultAddressFor, listCustomerAddresses } from '@/lib/site/customerAddresses'
 import { getCustomer } from '@/lib/site/customers'
 import TrackEvent from '../TrackEvent'
 import Checkout from './Checkout'
@@ -85,6 +85,18 @@ export default async function CheckoutPage({
             availableCredit: account.availableCredit,
             accountOpen: account.accountOpen,
             delivery,
+            addresses: session
+              ? (await listCustomerAddresses(siteId, session.customerId, { kind: 'delivery' }).catch(
+                  () => [],
+                )).map((a) => ({
+                  id: a.id,
+                  label: a.label,
+                  line1: a.line1 ?? '',
+                  suburb: a.line2 ?? a.city ?? '',
+                  postcode: a.postalCode ?? '',
+                  notes: a.notes ?? '',
+                }))
+              : [],
           }
         }
       />

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Badge, Button, Icons } from '@/components/ui'
+import { Badge, Button, Field, Icons, Input } from '@/components/ui'
 import type { StorefrontProduct } from '@/lib/site/storefront'
 import {
   AddControl,
@@ -261,6 +261,11 @@ export default function ProductDetail({
             </div>
           )}
 
+          {/* Sold out is not a dead end: leave an address, hear when it is
+              back (151). Only when the shop publishes stock — otherwise the
+              page never claims sold-out in the first place. */}
+          {showStock && state === 'out' && <NotifyMeForm token={token} productId={product.id} />}
+
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <div className="min-w-[9rem] flex-1">
               <AddControl product={product} showStock={showStock} />
@@ -373,6 +378,59 @@ function AxisPicker({
         })}
       </div>
     </div>
+  )
+}
+
+/** The back-in-stock request (151): an address in, one email out, later. */
+function NotifyMeForm({ token, productId }: { token: string; productId: number }) {
+  const [email, setEmail] = useState('')
+  const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle')
+  const [error, setError] = useState('')
+
+  if (state === 'done') {
+    return (
+      <p className="mt-4 flex items-center gap-1.5 rounded-control bg-success-soft px-3 py-2 text-sm text-success-ink">
+        <Icons.Check size={15} />
+        Thanks — we&apos;ll email you the moment it&apos;s back.
+      </p>
+    )
+  }
+
+  return (
+    <form
+      className="mt-4 flex items-end gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault()
+        setError('')
+        setState('busy')
+        const { notifyMeAction } = await import('./notifyActions')
+        const result = await notifyMeAction(token, productId, email)
+        if (result.ok) setState('done')
+        else {
+          setError(result.error)
+          setState('idle')
+        }
+      }}
+    >
+      <span className="min-w-0 flex-1">
+        <Field label="Email me when it's back" error={error || undefined}>
+          <Input
+            value={email}
+            type="email"
+            placeholder="you@example.com"
+            onChange={(e) => {
+              setEmail(e.target.value)
+              setError('')
+            }}
+          />
+        </Field>
+      </span>
+      <span className="mb-0.5">
+        <Button type="submit" variant="secondary" disabled={state === 'busy' || !email.trim()}>
+          {state === 'busy' ? 'Saving…' : 'Notify me'}
+        </Button>
+      </span>
+    </form>
   )
 }
 

@@ -102,6 +102,7 @@
     "test:supplier-price-import": "tsx --conditions=react-server --env-file=.env scripts/test-supplier-price-import.ts",
     "test:gift-cards": "tsx --conditions=react-server --env-file=.env scripts/test-gift-cards.ts",
     "test:batches": "tsx --conditions=react-server --env-file=.env scripts/test-batches.ts",
+    "test:online-phase10": "tsx --conditions=react-server --env-file=.env scripts/test-online-phase10.ts",
     "test:adjustments": "tsx --conditions=react-server --env-file=.env scripts/test-adjustments.ts",
     "test:report-columns": "tsx --conditions=react-server --env-file=.env scripts/test-report-columns.ts",
     "test:template-fields": "tsx --conditions=react-server scripts/test-template-fields.ts",

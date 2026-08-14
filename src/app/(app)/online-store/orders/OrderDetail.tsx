@@ -126,6 +126,17 @@ export default function OrderDetail({
                 {order.documentNumber ?? 'Draft sale'}
               </Link>
             )}
+            {/* Refunds go through an ordinary credit note against the online
+                tender (153) — this records the money owed back; paying it back
+                is a person in the PayFast dashboard, referenced on the note. */}
+            {order.documentId && order.documentNumber && (
+              <Link
+                href={`/sales/${order.documentId}/credit`}
+                className="text-sm font-medium text-brand hover:underline"
+              >
+                Refund / credit note
+              </Link>
+            )}
           </div>
 
           {order.declineReason && (

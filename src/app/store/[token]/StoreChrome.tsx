@@ -395,19 +395,20 @@ function Footer({
             after reading rather than before. The rail is for getting
             somewhere; this is for finding the small print.
           */}
-          {pages.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-              {pages.map((p) => (
-                <Link
-                  key={p.slug}
-                  href={`/store/${token}/page/${p.slug}`}
-                  className="text-brand hover:underline"
-                >
-                  {p.title}
-                </Link>
-              ))}
-            </div>
-          )}
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+            {pages.map((p) => (
+              <Link
+                key={p.slug}
+                href={`/store/${token}/page/${p.slug}`}
+                className="text-brand hover:underline"
+              >
+                {p.title}
+              </Link>
+            ))}
+            <Link href={`/store/${token}/gift-card`} className="text-brand hover:underline">
+              Gift card balance
+            </Link>
+          </div>
         </div>
 
         <div className="shrink-0">

@@ -12,11 +12,18 @@ import {
   Icons,
   Input,
   SegmentedControl,
+  Select,
   Textarea,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { useCart } from '../CartContext'
-import { placeOrderAction, previewDiscountAction, quoteDeliveryAction } from './actions'
+import {
+  placeOrderAction,
+  previewDiscountAction,
+  previewGiftCardAction,
+  previewVoucherAction,
+  quoteDeliveryAction,
+} from './actions'
 
 /**
  * Checkout.
@@ -74,6 +81,15 @@ export default function Checkout({
     accountOpen: boolean
     /** The address book's default delivery address, for the prefill. */
     delivery: { line1: string; suburb: string; postcode: string; notes: string } | null
+    /** The whole delivery address book, for the picker. Prefill only. */
+    addresses: {
+      id: number
+      label: string
+      line1: string
+      suburb: string
+      postcode: string
+      notes: string
+    }[]
   } | null
 }) {
   const cart = useCart()
@@ -123,6 +139,16 @@ export default function Checkout({
   } | null>(null)
   const [codeError, setCodeError] = useState('')
   const [checkingCode, startCheckingCode] = useTransition()
+
+  /* A gift card covering the WHOLE order (147), and a loyalty voucher (052).
+     Both previews are indicative; the server re-reads and decides. */
+  const [giftInput, setGiftInput] = useState('')
+  const [gift, setGift] = useState<{ code: string; display: string; balance: number } | null>(null)
+  const [giftError, setGiftError] = useState('')
+  const [voucherInput, setVoucherInput] = useState('')
+  const [voucher, setVoucher] = useState<{ code: string; credit: number; label: string } | null>(null)
+  const [voucherError, setVoucherError] = useState('')
+  const [checkingExtras, startCheckingExtras] = useTransition()
 
   const belowMinimum = minOrderIncl > 0 && cart.subtotal < minOrderIncl
   const discountIncl = discount?.discountIncl ?? 0
@@ -263,6 +289,8 @@ export default function Checkout({
         // Only a request, like payOnAccount: the server re-validates it and
         // decides what it is worth.
         discountCode: discount?.code ?? '',
+        giftCardCode: gift?.code ?? '',
+        voucherCode: voucher?.code ?? '',
       })
 
       if (!result.ok) {
@@ -393,6 +421,36 @@ export default function Checkout({
 
             {fulfilment === 'deliver' && (
               <div className="grid gap-3 sm:grid-cols-2">
+                {/* The address book, when there is one: picking seeds the
+                    inputs below and stays editable — what is typed goes on
+                    THIS order, never back onto the book. */}
+                {account && account.addresses.length > 0 && (
+                  <div className="sm:col-span-2">
+                    <Field label="Deliver to">
+                      <Select
+                        value=""
+                        aria-label="Pick a saved address"
+                        onChange={(e) => {
+                          const picked = account.addresses.find(
+                            (a) => a.id === Number(e.target.value),
+                          )
+                          if (!picked) return
+                          setLine1(picked.line1)
+                          setSuburb(picked.suburb)
+                          setPostcode(picked.postcode)
+                          setDeliveryNotes(picked.notes)
+                        }}
+                      >
+                        <option value="">Pick a saved address…</option>
+                        {account.addresses.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.label} — {a.line1}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                )}
                 <div className="sm:col-span-2">
                   <Field label="Street address">
                     <Input
@@ -577,6 +635,162 @@ export default function Checkout({
               )}
             </div>
 
+            {/* ── Gift card ─────────────────────────────────────────────────
+                Full cover only online — a card that cannot cover the total is
+                kept for the shop, said in the error rather than half-taken. */}
+            {payOnline && !chargingAccount && (
+              <div className="mt-3 border-t border-border pt-3">
+                {gift ? (
+                  <div className="flex items-center gap-2 rounded-control bg-success-soft px-3 py-2">
+                    <Icons.Check size={16} className="shrink-0 text-success" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium text-success">
+                        Gift card {gift.display}
+                      </span>
+                      <span className="block text-xs text-ink-2">
+                        Holds {formatMoney(gift.balance)} — it pays the whole order.
+                      </span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Remove the gift card"
+                      onClick={() => {
+                        setGift(null)
+                        setGiftInput('')
+                        setGiftError('')
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-end gap-2">
+                    <span className="min-w-0 flex-1">
+                      <Field label="Gift card">
+                        <Input
+                          value={giftInput}
+                          placeholder="XXXX-XXXX-XXXX"
+                          aria-label="Gift card number"
+                          onChange={(e) => {
+                            setGiftInput(e.target.value)
+                            setGiftError('')
+                          }}
+                        />
+                      </Field>
+                    </span>
+                    <span className="mb-0.5">
+                      <Button
+                        variant="secondary"
+                        disabled={checkingExtras || !giftInput.trim()}
+                        onClick={() => {
+                          setGiftError('')
+                          startCheckingExtras(async () => {
+                            const result = await previewGiftCardAction(token, giftInput)
+                            if (!result.ok) {
+                              setGiftError(result.error)
+                              return
+                            }
+                            if (result.balance + 0.005 < total) {
+                              setGiftError(
+                                `That card holds ${formatMoney(result.balance)} — not enough for this ${formatMoney(total)} order. Keep it for the shop.`,
+                              )
+                              return
+                            }
+                            setGift(result)
+                          })
+                        }}
+                      >
+                        {checkingExtras ? 'Checking…' : 'Apply'}
+                      </Button>
+                    </span>
+                  </div>
+                )}
+                {giftError && (
+                  <p role="alert" className="mt-2 text-sm text-danger">
+                    {giftError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ── Loyalty voucher ──────────────────────────────────────────
+                Signed-in shoppers, card-paid orders only; the gateway takes
+                the total NET of the voucher and the rest settles itself. */}
+            {payOnline && account && !chargingAccount && !gift && (
+              <div className="mt-3 border-t border-border pt-3">
+                {voucher ? (
+                  <div className="flex items-center gap-2 rounded-control bg-success-soft px-3 py-2">
+                    <Icons.Check size={16} className="shrink-0 text-success" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium text-success">
+                        Voucher applied — {formatMoney(voucher.credit)} off
+                      </span>
+                      <span className="block text-xs text-ink-2">{voucher.label}</span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Remove the voucher"
+                      onClick={() => {
+                        setVoucher(null)
+                        setVoucherInput('')
+                        setVoucherError('')
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-end gap-2">
+                    <span className="min-w-0 flex-1">
+                      <Field label="Loyalty voucher">
+                        <Input
+                          value={voucherInput}
+                          placeholder="Voucher code"
+                          aria-label="Loyalty voucher code"
+                          onChange={(e) => {
+                            setVoucherInput(e.target.value)
+                            setVoucherError('')
+                          }}
+                        />
+                      </Field>
+                    </span>
+                    <span className="mb-0.5">
+                      <Button
+                        variant="secondary"
+                        disabled={checkingExtras || !voucherInput.trim()}
+                        onClick={() => {
+                          setVoucherError('')
+                          startCheckingExtras(async () => {
+                            const result = await previewVoucherAction(token, voucherInput)
+                            if (!result.ok) {
+                              setVoucherError(result.error)
+                              return
+                            }
+                            if (result.credit + 0.005 >= total) {
+                              setVoucherError(
+                                'That voucher is worth more than the rest of the order — use it at the till so nothing goes to waste.',
+                              )
+                              return
+                            }
+                            setVoucher(result)
+                          })
+                        }}
+                      >
+                        {checkingExtras ? 'Checking…' : 'Apply'}
+                      </Button>
+                    </span>
+                  </div>
+                )}
+                {voucherError && (
+                  <p role="alert" className="mt-2 text-sm text-danger">
+                    {voucherError}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3">
               <Row label="Subtotal" value={formatMoney(cart.subtotal)} />
               {discountIncl > 0 && (
@@ -602,6 +816,17 @@ export default function Checkout({
               <span className="numeric text-lg font-semibold text-ink">{formatMoney(total)}</span>
             </div>
             <p className="mt-1 text-xs text-muted">Including VAT</p>
+            {voucher && !gift && (
+              <p className="mt-1 text-sm text-success">
+                Your voucher covers {formatMoney(voucher.credit)} — you&apos;ll pay{' '}
+                {formatMoney(Math.max(0, total - voucher.credit))} at the gateway.
+              </p>
+            )}
+            {gift && (
+              <p className="mt-1 text-sm text-success">
+                Your gift card pays the whole order — nothing to pay now.
+              </p>
+            )}
 
             {belowMinimum && (
               <p className="mt-3 text-sm text-muted">

@@ -204,6 +204,65 @@ export async function previewDiscountAction(
   }
 }
 
+export type GiftCardPreview =
+  | { ok: true; code: string; display: string; balance: number }
+  | { ok: false; error: string }
+
+/**
+ * Preview a gift card at checkout. Indicative like the discount preview —
+ * the placing path re-reads the card and decides for itself.
+ */
+export async function previewGiftCardAction(
+  token: string,
+  code: string,
+): Promise<GiftCardPreview> {
+  const siteId = await verifyPublicStoreToken(token)
+  if (siteId === null) return { ok: false, error: 'This shop is no longer available.' }
+  const context = await storefrontContext(siteId)
+  if (!context) return { ok: false, error: 'This shop is closed at the moment.' }
+
+  const { findGiftCard, giftCardRefusal, formatGiftCardCode, normaliseGiftCardCode } =
+    await import('@/lib/site/giftCards')
+  const { today } = await import('@/lib/site/ledger')
+  const card = await findGiftCard(siteId, code)
+  const refusal = giftCardRefusal(card, code, today())
+  if (refusal) return { ok: false, error: refusal }
+  return {
+    ok: true,
+    code: normaliseGiftCardCode(code),
+    display: formatGiftCardCode(normaliseGiftCardCode(code)),
+    balance: card!.balance,
+  }
+}
+
+export type VoucherPreview =
+  | { ok: true; code: string; credit: number; label: string }
+  | { ok: false; error: string }
+
+/** Preview a loyalty voucher — signed-in shoppers only, own vouchers only. */
+export async function previewVoucherAction(token: string, code: string): Promise<VoucherPreview> {
+  const siteId = await verifyPublicStoreToken(token)
+  if (siteId === null) return { ok: false, error: 'This shop is no longer available.' }
+
+  const session = await getCustomerSession(siteId)
+  if (!session) return { ok: false, error: 'Sign in to use your voucher.' }
+
+  const { findVoucher } = await import('@/lib/site/loyaltyCards')
+  const { today } = await import('@/lib/site/ledger')
+  const voucher = await findVoucher(siteId, code)
+  if (!voucher || voucher.customerId !== session.customerId) {
+    return { ok: false, error: 'That voucher is not on your account.' }
+  }
+  if (voucher.status !== 'issued') return { ok: false, error: 'That voucher has already been used.' }
+  if (voucher.expiresOn && voucher.expiresOn < today()) {
+    return { ok: false, error: `That voucher expired on ${voucher.expiresOn}.` }
+  }
+  if (voucher.rewardType !== 'value') {
+    return { ok: false, error: 'That voucher is for a free item — please use it at the till.' }
+  }
+  return { ok: true, code: voucher.code, credit: voucher.rewardValue, label: voucher.description }
+}
+
 export type PlaceResult =
   | {
       ok: true
@@ -293,6 +352,32 @@ export async function placeOrderAction(
    */
   await recordPurchase(siteId, result.total)
 
+  /*
+   * A gift-covered order skips the gateway entirely: the card IS the payment.
+   * Invoicing runs now, in this same request. If it fails (the card drained
+   * in the race window), the ORDER still stands — the established gateway-down
+   * posture — with a note so staff chase it rather than a shopper losing a
+   * basket they committed to.
+   */
+  if (result.giftCard && input.giftCardCode) {
+    const { invoiceGiftCardOrder } = await import('@/lib/site/paidOrders')
+    const invoiced = await invoiceGiftCardOrder(siteId, result.orderId, input.giftCardCode)
+    if (!invoiced.ok) {
+      const { siteExecute } = await import('@/lib/siteDb')
+      await siteExecute(
+        siteId,
+        `UPDATE online_orders SET internal_note = CONCAT(COALESCE(internal_note,''), ?) WHERE id = ?`,
+        [`\n[gift card] Payment failed after placing: ${invoiced.error}`, result.orderId],
+      ).catch(() => undefined)
+    }
+    return {
+      ok: true,
+      orderNumber: result.orderNumber,
+      total: result.total,
+      trackToken: await trackTokenFor(siteId, result.orderId),
+    }
+  }
+
   if (result.onAccount || context?.settings.paymentMode !== 'online') {
     return {
       ok: true,
@@ -318,9 +403,14 @@ export async function placeOrderAction(
     }
   }
 
+  // The gateway collects the total NET of any voucher — the voucher's slice
+  // settles at invoicing, where finaliseDocument spends it under the row
+  // lock and records it as its own tender row.
+  const amountDue = Math.round((result.total - result.voucherCredit) * 100) / 100
+
   const intent = await createIntent(siteId, {
     targetId: result.orderId,
-    amountIncl: result.total,
+    amountIncl: amountDue,
   })
   await markOrderPayment(siteId, result.orderId, 'pending')
 
@@ -333,7 +423,7 @@ export async function placeOrderAction(
     passphrase: gateway.passphrase,
     sandbox: gateway.isSandbox,
     reference: intent.reference,
-    amountIncl: result.total,
+    amountIncl: amountDue,
     itemName: `Order ${result.orderNumber}`,
     itemDescription: `${lines.length} item${lines.length === 1 ? '' : 's'} from ${context.storeName}`,
     // Neither of these proves payment — only the notify URL does.
