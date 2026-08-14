@@ -115,6 +115,37 @@ export async function clearPinAction(userId: number): Promise<Result> {
   return { ok: true, message: 'PIN cleared. They can no longer sign in at the till.' }
 }
 
+/**
+ * The 2FA lockout recovery: a colleague's authenticator is gone, and the
+ * owner clears the requirement so they can sign in with password alone and
+ * re-enrol. Audited — stripping a lock off somebody's account is exactly the
+ * kind of act the trail exists for.
+ */
+export async function clearTotpAction(userId: number): Promise<Result> {
+  const ctx = await requireUserAdmin()
+  if (!ctx) return DENIED
+
+  const target = await getUser(ctx.site.id, userId)
+  if (!target) return { ok: false, error: 'That user no longer exists.' }
+  if (!target.controlUserId) {
+    return { ok: false, error: 'That person has no back-office sign-in, so there is nothing to clear.' }
+  }
+
+  const { clearTotp } = await import('@/lib/twoFactor')
+  await clearTotp(target.controlUserId)
+
+  const { logActivity } = await import('@/lib/site/activityLog')
+  await logActivity(ctx.site.id, { userId: ctx.user.id, userName: ctx.user.name }, {
+    entity: 'user',
+    entityId: userId,
+    action: 'totp_cleared',
+    detail: `Two-factor cleared for ${target.name} — they can sign in with password alone until they re-enrol`,
+  })
+
+  revalidatePath('/setup/users')
+  return { ok: true, message: `Two-factor cleared for ${target.name}.` }
+}
+
 /** Removes this store from someone's access without deleting their account. */
 export async function revokeAccessAction(userId: number): Promise<Result> {
   const ctx = await requireUserAdmin()

@@ -203,6 +203,15 @@ export const SETTING_DEFAULTS = {
       The CPA prescribes at least three years, hence 36. */
   gift_card_validity_months: '36',
 
+  /* ── Low-stock alert digest ────────────────────────────────────────────
+     A scheduled email of everything below its minimum at the main location.
+     Empty address = the feature is off. last_sent is STATE, written by the
+     tick — kept here rather than its own table because one datetime is not
+     a schema. */
+  low_stock_alert_email: '',
+  low_stock_alert_hours: '24',
+  low_stock_alert_last_sent: '',
+
   /* ── Staff pay multipliers ─────────────────────────────────────────────
      What an hour outside ordinary time costs, as a multiple of the ordinary
      rate. The defaults are the BCEA figures and most stores will never touch
@@ -774,6 +783,14 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === 'rolling' || value === 'lifetime'
         ? null
         : "Tier basis must be 'rolling' or 'lifetime'."
+
+    case 'low_stock_alert_hours': {
+      const hours = Number(value)
+      if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
+        return 'Between 1 and 168 hours — once a week at the slowest.'
+      }
+      return null
+    }
 
     case 'loyalty_expiry_months':
     case 'loyalty_tier_window_months':

@@ -141,6 +141,18 @@ export async function reorderSuggestions(
   ]
   params.push(...STOCKED_TYPES)
 
+  // The LIMIT below applies to rows SCANNED, before the basis decides which
+  // rows actually need ordering — so on a catalogue bigger than the limit, an
+  // unfiltered scan silently drops late-alphabet products however low they
+  // are. below_minimum can say most of its condition in SQL (stock below min
+  // is a superset of stock-plus-on-order below min, and on-order only ever
+  // removes rows), so the scan only ever holds candidates. The other bases
+  // cast a wider net by definition and keep the plain scan — as does
+  // includeSufficient, whose whole point is the rows this clause drops.
+  if (opts.basis === 'below_minimum' && !opts.includeSufficient) {
+    where.push('COALESCE(pls.stock_on_hand, 0) < COALESCE(pls.min_stock, 0)')
+  }
+
   if (opts.departmentId) {
     where.push('p.department_id = ?')
     params.push(opts.departmentId)
@@ -206,7 +218,14 @@ export async function reorderSuggestions(
                  )
        LEFT JOIN suppliers s ON s.id = ps.supplier_id
       WHERE ${where.join(' AND ')}
-      ORDER BY p.description
+      -- When the LIMIT truncates, WHICH rows survive matters: a below-minimum
+      -- list must keep its worst shortages, not its earliest letters. The
+      -- other bases have no single severity to rank by and stay alphabetical.
+      ORDER BY ${
+        opts.basis === 'below_minimum'
+          ? '(COALESCE(pls.min_stock, 0) - COALESCE(pls.stock_on_hand, 0)) DESC, p.description'
+          : 'p.description'
+      }
       LIMIT ${limit}`,
     params,
   )

@@ -76,6 +76,14 @@ const CATALOGUE: Record<string, { description: string; icon: HubIconName; keywor
       ]),
   )
 
+/* The reports hub is a list of report TEMPLATES, not a screen catalogue — its
+   one dedicated page carries its line here so the search can still explain it. */
+CATALOGUE['/reports/stock-intel'] = {
+  description: 'True stock aging from movement history, ABC classes, stock turn and sell-through.',
+  icon: 'LineChart',
+  keywords: 'aging dead stock abc analysis turn sell-through slow movers',
+}
+
 /**
  * The searchable index for ONE user, built from the sections they can see.
  *

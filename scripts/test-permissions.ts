@@ -48,7 +48,17 @@ const GUARD =
  * /not-allowed is where every refused guard redirects TO — guarding it would
  * bounce a user between two pages forever.
  */
-const OPEN_PAGES = new Set(['src/app/(app)/not-allowed/page.tsx'])
+const OPEN_PAGES = new Set([
+  'src/app/(app)/not-allowed/page.tsx',
+  /* Own account only: /security reads and writes the VISITOR'S cp2_user_totp
+     row via requireSession, never anybody else's. A capability here would let
+     an owner forbid people from protecting their own login — backwards. */
+  'src/app/(app)/security/page.tsx',
+])
+
+/** Action files that guard with requireSession alone, each for the same
+    documented own-account reason as its page above. */
+const OPEN_ACTIONS = new Set(['src/app/(app)/security/actions.ts'])
 
 /**
  * API routes that are deliberately unauthenticated, each for a documented
@@ -83,6 +93,8 @@ const OPEN_ROUTES = new Set([
    */
   'src/app/api/pricing/schedules/tick/route.ts',
   'src/app/api/store/baskets/tick/route.ts',
+  // The low-stock digest heartbeat — LOW_STOCK_CRON_SECRET, same reasoning.
+  'src/app/api/alerts/tick/route.ts',
   'src/app/api/storefront/publish/route.ts',
   'src/app/store-images/[token]/[imageId]/route.ts',
   'src/app/api/store-images/[token]/[imageId]/route.ts', // public storefront asset
@@ -123,6 +135,7 @@ async function main() {
   let actionFileCount = 0
 
   for (const f of actionFiles) {
+    if (OPEN_ACTIONS.has(f)) continue
     const src = await readFile(path.join(ROOT, f), 'utf8')
     if (!src.includes("'use server'")) continue
     actionFileCount++

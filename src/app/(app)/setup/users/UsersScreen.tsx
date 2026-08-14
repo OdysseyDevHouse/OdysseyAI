@@ -20,7 +20,7 @@ import {
   type Column,
 } from '@/components/ui'
 import type { SiteUser, UserType } from '@/lib/site/users'
-import { saveUserAction, clearPinAction, revokeAccessAction } from './actions'
+import { saveUserAction, clearPinAction, clearTotpAction, revokeAccessAction } from './actions'
 
 type Role = { id: number; name: string; isOwner: boolean }
 type Rep = { id: number; name: string }
@@ -71,6 +71,15 @@ export default function UsersScreen({
   function revoke(user: SiteUser) {
     startTransition(async () => {
       const result = await revokeAccessAction(user.id)
+      if (!result.ok) return toast.error(result.error)
+      toast.success(result.message)
+      router.refresh()
+    })
+  }
+
+  function stripTotp(user: SiteUser) {
+    startTransition(async () => {
+      const result = await clearTotpAction(user.id)
       if (!result.ok) return toast.error(result.error)
       toast.success(result.message)
       router.refresh()
@@ -181,6 +190,21 @@ export default function UsersScreen({
                   onClick={() => withPin(u)}
                 >
                   <Icons.KeyRound size={15} />
+                </Button>
+              )}
+              {/* The 2FA lockout recovery: their authenticator is gone, an
+                  owner clears the requirement, they sign in and re-enrol. */}
+              {u.userType === 'back_office' && u.controlUserId !== null && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  disabled={pending}
+                  aria-label={`Clear two-factor for ${u.name}`}
+                  title="Clear two-factor (lost authenticator)"
+                  onClick={() => stripTotp(u)}
+                >
+                  <Icons.ShieldCheck size={15} />
                 </Button>
               )}
               {u.id !== currentUserId && u.isActive && (

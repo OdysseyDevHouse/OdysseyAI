@@ -64,6 +64,7 @@ export type HubIconName =
   | 'Bell'
   | 'Gem'
   | 'Stamp'
+  | 'History'
 
 /** A screen as written in a catalogue — no label, the href already implies it. */
 export type DeclaredItem<Href extends SubpageHref = SubpageHref> = {

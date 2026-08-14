@@ -65,6 +65,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'indigo',
         capability: 'setup.users',
       },
+      {
+        href: '/setup/audit',
+        description: 'Every change anyone made, and who signed in when.',
+        keywords: 'audit log history who changed sign in login security trail',
+        icon: 'History',
+        tone: 'sky',
+        capability: 'setup.audit',
+      },
       /* Pay rules and cost sit with people rather than under Staff: both are
          configuration that decides what every figure on the staff screens comes
          to, and neither is opened in the course of a normal week. */

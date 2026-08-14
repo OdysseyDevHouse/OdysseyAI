@@ -94,6 +94,10 @@ export type ActivityEntity =
      audit; this covers the management actions where a balance moves with no
      document behind it, which is exactly where a trail matters most. */
   | 'gift_card'
+  /* A back-office user account — access granted, a PIN or 2FA cleared. The
+     question this answers is "who changed who could get in", which is the
+     first question after anything goes wrong. */
+  | 'user'
   /* A piece of customer equipment. Worth auditing separately from the jobs done
      on it, because the questions differ: the job log answers what was done, this
      answers who changed the warranty date, who moved it to another site, and who
@@ -234,6 +238,92 @@ export async function listActivity(
     [entity, entityId],
   )
   return rows.map(mapEvent)
+}
+
+/* ── The global audit screen (154) ────────────────────────────────────────── */
+
+export type ActivityLogFilter = {
+  entity?: ActivityEntity
+  userId?: number
+  /** One search box: matches the action exactly OR the detail by LIKE. */
+  search?: string
+  /** 'YYYY-MM-DD', both inclusive. */
+  from?: string
+  to?: string
+  /** Keyset cursor: strictly older than this row. Never OFFSET. */
+  before?: { createdAt: string; id: number }
+  limit?: number
+}
+
+/**
+ * Everything that happened, filtered — the site-wide answer where
+ * listActivity answers for one record. Keyset-paginated because a busy site
+ * writes this table constantly and OFFSET degrades linearly into it.
+ */
+export async function listActivityLog(
+  siteId: number,
+  filter: ActivityLogFilter = {},
+): Promise<{ events: ActivityEvent[]; hasMore: boolean }> {
+  const where: string[] = []
+  const params: unknown[] = []
+
+  if (filter.entity) {
+    where.push('entity = ?')
+    params.push(filter.entity)
+  }
+  if (filter.userId) {
+    where.push('user_id = ?')
+    params.push(filter.userId)
+  }
+  if (filter.search?.trim()) {
+    const term = filter.search.trim()
+    where.push('(action = ? OR detail LIKE ?)')
+    params.push(term, `%${term}%`)
+  }
+  if (filter.from && /^\d{4}-\d{2}-\d{2}$/.test(filter.from)) {
+    where.push('created_at >= ?')
+    params.push(`${filter.from} 00:00:00`)
+  }
+  if (filter.to && /^\d{4}-\d{2}-\d{2}$/.test(filter.to)) {
+    where.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)')
+    params.push(filter.to)
+  }
+  if (filter.before) {
+    where.push('(created_at < ? OR (created_at = ? AND id < ?))')
+    params.push(filter.before.createdAt, filter.before.createdAt, filter.before.id)
+  }
+
+  const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200)
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${SELECT_ACTIVITY}
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit + 1}`,
+    params,
+  )
+  return {
+    events: rows.slice(0, limit).map(mapEvent),
+    hasMore: rows.length > limit,
+  }
+}
+
+/** Distinct actors seen in the log, for the user filter dropdown. */
+export async function listActivityActors(
+  siteId: number,
+): Promise<Array<{ userId: number | null; userName: string }>> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT user_id, user_name, MAX(created_at) AS last_seen
+       FROM activity_log
+      GROUP BY user_id, user_name
+      ORDER BY last_seen DESC
+      LIMIT 100`,
+  )
+  return rows.map((r) => ({
+    userId: r.user_id === null ? null : Number(r.user_id),
+    userName: String(r.user_name ?? ''),
+  }))
 }
 
 /**

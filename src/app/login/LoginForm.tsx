@@ -4,7 +4,7 @@ import { useActionState, useState } from 'react'
 import { useFormStatus } from 'react-dom'
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from '@/components/ui/icons'
 import styles from '../login.module.css'
-import { loginAction, type LoginState } from './actions'
+import { loginAction, totpAction, type LoginState } from './actions'
 import StorePickerDialog from './StorePickerDialog'
 
 /**
@@ -31,6 +31,11 @@ function SubmitButton() {
 export default function LoginForm({ next }: { next: string }) {
   const [state, formAction] = useActionState<LoginState, FormData>(loginAction, { error: null })
   const [showPassword, setShowPassword] = useState(false)
+
+  // The password proved out; the account wants its six digits. A separate
+  // form, same card — the code failing keeps the person HERE, because the
+  // password step is already behind them.
+  if (state.totp) return <TotpStep next={next} initialError={state.error} />
 
   return (
     <>
@@ -107,5 +112,53 @@ export default function LoginForm({ next }: { next: string }) {
           account turns out to open more than one store. */}
       <StorePickerDialog choices={state.choices ?? []} next={next} />
     </>
+  )
+}
+
+function TotpStep({ next, initialError }: { next: string; initialError: string | null }) {
+  const [state, formAction] = useActionState<LoginState, FormData>(totpAction, {
+    error: initialError,
+    totp: true,
+  })
+
+  return (
+    <form action={formAction}>
+      <input type="hidden" name="next" value={next} />
+
+      <label className={styles.label}>
+        Two-factor code
+        <span className={styles.inputWrap}>
+          <span className={styles.inputIcon}>
+            <Lock size={18} strokeWidth={1.8} />
+          </span>
+          <input
+            className={`${styles.input} ${styles.inputWithIcon}`}
+            name="code"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]*"
+            maxLength={6}
+            placeholder="123456"
+            required
+            autoFocus
+          />
+        </span>
+      </label>
+
+      {state.error && (
+        <div className={styles.error} role="alert">
+          {state.error}
+        </div>
+      )}
+
+      <SubmitButton />
+
+      <div className={styles.formRow}>
+        <a href="/" className={styles.forgotLink}>
+          Back to sign in
+        </a>
+      </div>
+    </form>
   )
 }

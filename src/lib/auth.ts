@@ -52,6 +52,9 @@ export type SignInResult =
        */
       choices: SignInChoice[]
     }
+  /** Password proved, but the account carries 2FA: the code step comes next.
+      No session exists yet — only the short-lived pending cookie. */
+  | { ok: true; needsTotp: true }
   | { ok: false; error: string }
 
 /**
@@ -77,9 +80,13 @@ export async function signIn(email: string, password: string): Promise<SignInRes
       LIMIT 1`,
     [normalised],
   )
-  if (!user) return generic
+  if (!user) {
+    await recordSignInSafe({ userId: null, email: normalised, event: 'failed' })
+    return generic
+  }
 
   if (user.locked_until && new Date(user.locked_until) > new Date()) {
+    await recordSignInSafe({ userId: user.id, email: normalised, event: 'locked' })
     return { ok: false, error: 'This account is temporarily locked. Try again shortly.' }
   }
 
@@ -98,15 +105,39 @@ export async function signIn(email: string, password: string): Promise<SignInRes
         WHERE id = ?`,
       [MAX_FAILED_ATTEMPTS, LOCK_MINUTES, user.id],
     )
+    await recordSignInSafe({ userId: user.id, email: normalised, event: 'failed' })
     return generic
   }
 
+  /*
+   * Two-factor (004): the password is right, but the session waits for the
+   * code. Nothing here resets failed_attempts or stamps last_login_at — the
+   * counters only reset in finishSignIn, or re-entering the known password
+   * would let a code-guesser reset their own lock forever.
+   */
+  const { totpStatus } = await import('./twoFactor')
+  if ((await totpStatus(user.id)).enabled) {
+    const { setPendingTotpCookie } = await import('./twoFactorToken')
+    await setPendingTotpCookie(user.id)
+    return { ok: true, needsTotp: true }
+  }
+
+  return finishSignIn(user, normalised)
+}
+
+/**
+ * The tail of a successful sign-in: counters reset, session minted, cookie
+ * set. Shared by the password path and the 2FA completion so the two can
+ * never disagree about what "signed in" writes.
+ */
+async function finishSignIn(user: UserRow, normalisedEmail: string): Promise<SignInResult> {
   await execute(
     `UPDATE cp2_users
         SET failed_attempts = 0, locked_until = NULL, last_login_at = NOW()
       WHERE id = ?`,
     [user.id],
   )
+  await recordSignInSafe({ userId: user.id, email: normalisedEmail, event: 'success' })
 
   // One site: open it. More than one: leave the session's site null so the
   // caller sends them to /select-site to choose — picking for them would hide
@@ -133,6 +164,70 @@ export async function signIn(email: string, password: string): Promise<SignInRes
       sites.length > 1
         ? sites.map((s) => ({ id: s.id, name: s.displayName, code: s.code }))
         : [],
+  }
+}
+
+/**
+ * The second half of a 2FA sign-in: the pending cookie names who, the code
+ * proves it is them. Failures count toward the SAME lockout as passwords do
+ * — a code is just another credential to guess.
+ */
+export async function completeTotpSignIn(code: string): Promise<SignInResult> {
+  const { getPendingTotpUser, clearPendingTotpCookie } = await import('./twoFactorToken')
+  const pendingUserId = await getPendingTotpUser()
+  if (!pendingUserId) {
+    return { ok: false, error: 'That took too long — sign in again.' }
+  }
+
+  const user = await queryOne<UserRow>(
+    `SELECT id, email, password_hash, full_name, status, must_change_password,
+            failed_attempts, locked_until
+       FROM cp2_users WHERE id = ? LIMIT 1`,
+    [pendingUserId],
+  )
+  if (!user || user.status !== 'active') {
+    await clearPendingTotpCookie()
+    return { ok: false, error: 'Sign in again.' }
+  }
+  if (user.locked_until && new Date(user.locked_until) > new Date()) {
+    await clearPendingTotpCookie()
+    return { ok: false, error: 'This account is temporarily locked. Try again shortly.' }
+  }
+
+  const { verifySignInCode } = await import('./twoFactor')
+  const good = await verifySignInCode(user.id, code)
+  if (!good) {
+    await execute(
+      `UPDATE cp2_users
+          SET failed_attempts = failed_attempts + 1,
+              locked_until = CASE WHEN failed_attempts + 1 >= ?
+                                  THEN DATE_ADD(NOW(), INTERVAL ? MINUTE)
+                                  ELSE locked_until END
+        WHERE id = ?`,
+      [MAX_FAILED_ATTEMPTS, LOCK_MINUTES, user.id],
+    )
+    await recordSignInSafe({ userId: user.id, email: user.email, event: 'totp_failed' })
+    return { ok: false, error: 'That code did not match. Try the next one from the app.' }
+  }
+
+  await clearPendingTotpCookie()
+  return finishSignIn(user, user.email)
+}
+
+/** The log write, never allowed to fail a sign-in. */
+async function recordSignInSafe(e: {
+  userId: number | null
+  email: string
+  event: 'success' | 'failed' | 'locked' | 'totp_failed'
+}): Promise<void> {
+  try {
+    const { recordSignIn } = await import('./signinLog')
+    const { headers } = await import('next/headers')
+    const head = await headers().catch(() => null)
+    const ip = head?.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
+    await recordSignIn({ ...e, ip })
+  } catch {
+    /* deliberately swallowed */
   }
 }
 

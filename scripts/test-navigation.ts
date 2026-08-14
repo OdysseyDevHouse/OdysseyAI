@@ -449,6 +449,10 @@ const UNLINKED: Record<string, string> = {
      revalidatePath('/sales') calls. Giving it a menu entry would put a second
      door on one room; deleting it would 404 all of the above. */
   '/sales': 'redirects to the invoice register, kept for bookmarks and revalidate calls',
+  /* Own-account security (two-factor enrolment) hangs off the user menu in the
+     top bar, beside sign-out — personal settings, not a site screen, so the
+     sidebar rightly never lists it. */
+  '/security': 'reached from the user menu in the top bar',
 }
 
 console.log('\nEvery page is reachable')

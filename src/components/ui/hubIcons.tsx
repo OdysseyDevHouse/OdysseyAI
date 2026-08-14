@@ -57,6 +57,7 @@ export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
   Bell: Icons.Bell,
   Gem: Icons.Gem,
   Stamp: Icons.Stamp,
+  History: Icons.History,
 }
 
 /** One catalogue glyph, at the weight the hubs draw them. */

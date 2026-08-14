@@ -219,6 +219,10 @@ export const CAPABILITY_GROUPS = [
       { key: 'setup.view', label: 'Open setup', hint: 'Reach the setup screens at all.' },
       { key: 'setup.edit', label: 'Change settings', hint: 'Numbering, tenders, terminals, price structures and the rest.' },
       { key: 'setup.users', label: 'Manage users and roles', hint: 'Add people, set PINs and decide what each role may do.' },
+      /* Its own switch, not folded into setup.users: the trail is an
+         owner-ish READ, and the person who manages PINs is not automatically
+         the person who may read everything everyone did. */
+      { key: 'setup.audit', label: 'View the audit trail', hint: 'Every change anyone made, and who signed in when.' },
     ],
   },
 ] as const

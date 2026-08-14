@@ -79,6 +79,10 @@ const PUBLIC_PREFIXES = [
   // failure with no symptom, because the feature's success state is also
   // silence.
   '/api/store/baskets/tick',
+  // The low-stock digest tick. Same shape, its own LOW_STOCK_CRON_SECRET.
+  // Without this entry it 307s to login and nobody is told stock ran out —
+  // and the digest's success state is also silence, so watch the JSON.
+  '/api/alerts/tick',
   // Scheduled page publishing. Same reasoning and the same protection again:
   // STOREFRONT_CRON_SECRET, compared in constant time, refusing everything when
   // it is not set. This one's failure mode is the most visible of the four —

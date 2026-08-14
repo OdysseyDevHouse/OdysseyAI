@@ -406,6 +406,7 @@ export type Crumb = { label: string; href?: string }
  */
 export const SUBPAGE_LABELS = {
   '/setup/users': 'Users',
+  '/setup/audit': 'Audit trail',
   '/setup/roles': 'Roles & permissions',
   '/setup/linked-stores': 'Linked stores',
   '/setup/locations': 'Stock locations',
@@ -594,6 +595,7 @@ export function hubFor(pathname: string): string | null {
  */
 export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/users': 'staff logins pin passwords accounts sales rep',
+  '/setup/audit': 'audit log history who changed sign in login security trail',
   '/setup/roles': 'security capabilities rights access control permissions',
   '/setup/linked-stores': 'multi store group branches sharing',
   '/setup/locations': 'warehouse storeroom bins branches',

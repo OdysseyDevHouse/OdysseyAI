@@ -1,7 +1,7 @@
 'use server'
 
 import { redirect } from 'next/navigation'
-import { signIn, type SignInChoice } from '@/lib/auth'
+import { signIn, completeTotpSignIn, type SignInChoice, type SignInResult } from '@/lib/auth'
 
 export type LoginState = {
   error: string | null
@@ -11,15 +11,16 @@ export type LoginState = {
    * at this point, with no site selected until one is picked.
    */
   choices?: SignInChoice[]
+  /**
+   * Set when the password was right but the account carries two-factor: the
+   * form swaps to the six-digit code step. No session exists yet.
+   */
+  totp?: boolean
 }
 
-export async function loginAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
-  const email = String(formData.get('email') ?? '')
-  const password = String(formData.get('password') ?? '')
-  const next = String(formData.get('next') ?? '')
-
-  const result = await signIn(email, password)
-  if (!result.ok) return { error: result.error }
+/** The post-sign-in routing, shared by the password and the code step. */
+function afterSignIn(result: SignInResult & { ok: true }, next: string): LoginState {
+  if ('needsTotp' in result) return { error: null, totp: true }
 
   // A temporary password gets them in and no further until they replace it.
   if (result.mustChangePassword) redirect('/change-password')
@@ -44,4 +45,26 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
   }
 
   redirect(isSafe ? next : '/dashboard')
+}
+
+export async function loginAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
+  const email = String(formData.get('email') ?? '')
+  const password = String(formData.get('password') ?? '')
+  const next = String(formData.get('next') ?? '')
+
+  const result = await signIn(email, password)
+  if (!result.ok) return { error: result.error }
+  return afterSignIn(result, next)
+}
+
+/** The six-digit step. Who is being verified rides the pending cookie. */
+export async function totpAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
+  const code = String(formData.get('code') ?? '')
+  const next = String(formData.get('next') ?? '')
+
+  const result = await completeTotpSignIn(code)
+  // Failures stay ON the code step — the password already proved out, and
+  // bouncing to the start for a typo would be punishment, not security.
+  if (!result.ok) return { error: result.error, totp: true }
+  return afterSignIn(result, next)
 }

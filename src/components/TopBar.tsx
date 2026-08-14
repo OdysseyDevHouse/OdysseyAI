@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight, HelpCircle as CircleHelp, Settings, Bell, LogOut } from '@/components/ui/icons'
+import { ChevronRight, HelpCircle as CircleHelp, Settings, Bell, LogOut, ShieldCheck } from '@/components/ui/icons'
 import { Button, ButtonLink, MenuItem } from '@/components/ui'
 import { breadcrumbFor } from '@/lib/nav'
 import StoreSwitcher, { type SwitcherSite } from './StoreSwitcher'
@@ -176,6 +176,15 @@ export default function TopBar({
 
               <div className="border-b border-border">
                 <ThemeToggle />
+              </div>
+
+              <div className="border-b border-border p-1">
+                <Link href="/security" onClick={() => setMenuOpen(false)}>
+                  <MenuItem>
+                    <ShieldCheck size={15} />
+                    Two-factor authentication
+                  </MenuItem>
+                </Link>
               </div>
 
               <form action="/api/auth/signout" method="post" className="p-1">
