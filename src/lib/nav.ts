@@ -37,6 +37,7 @@ import {
   Handshake,
   Repeat,
   Wrench,
+  Store,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -223,6 +224,20 @@ export const NAV: NavSection[] = [
     capability: 'reports.view',
     keywords: 'build a report generate with ai scheduled reports email me analytics',
     description: 'Built-in reports, your own, and ones you schedule',
+  },
+  /*
+   * Cross-site: only meaningful for stores linked into a group. The screens
+   * themselves show an empty state pointing at Setup → Linked stores when the
+   * site is ungrouped, which keeps this section honest without a per-request
+   * control-DB read in the layout.
+   */
+  {
+    label: 'Group',
+    icon: Store,
+    items: [
+      { label: 'Group overview', href: '/group', icon: LayoutGrid, built: true, capability: 'dashboard.view', keywords: 'multi store consolidated branches linked stores combined', description: 'Every linked store’s trading, side by side' },
+      { label: 'Group profit and loss', href: '/group/income-statement', icon: LineChart, built: true, capability: 'reports.financial', keywords: 'consolidated p&l income statement group profit all stores', description: 'One P&L across every linked store, by account code' },
+    ],
   },
   {
     /* Staff and Commission answered the same question from opposite ends —
