@@ -107,6 +107,11 @@ CATALOGUE['/reports/multi-store-like-for-like'] = {
   icon: 'LineChart',
   keywords: 'like for like lfl same store comp sales growth year on year multi store group',
 }
+CATALOGUE['/reports/multi-store-stock'] = {
+  description: 'What each store holds, and where stock should move when one is short and another has surplus.',
+  icon: 'Boxes',
+  keywords: 'stock on hand rebalance transfer surplus shortage overstock understock multi store group',
+}
 
 /**
  * The searchable index for ONE user, built from the sections they can see.

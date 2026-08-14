@@ -21,11 +21,13 @@ import {
   salesByStore,
   likeForLike,
   yearAgoWindow,
+  productScopeFor,
+  rebalanceSuggestions,
   type GroupDashboardRow,
   type SiteResult,
 } from '../src/lib/groupReporting'
 import { incomeStatement, type IncomeStatement } from '../src/lib/site/financialStatements'
-import { groupForSite } from '../src/lib/storeGroups'
+import { groupForSite, linkedStores } from '../src/lib/storeGroups'
 
 const SITE = 1
 const CONTROL_USER = 1
@@ -348,6 +350,86 @@ async function main() {
   ok('*** an unreadable store is excluded and reported as a failure ***',
     lflGhost.failures.some((f) => f.siteId === 999) &&
     lflGhost.stores.some((s) => s.siteId === 999 && s.excluded === 'unreadable'))
+
+  /* ── 9. Product scope: the linkedStores rule ─────────────────────────── */
+
+  const prodScope = await productScopeFor(SITE, CONTROL_USER, 'products.view')
+  const moneyScope = await groupScopeFor(SITE, CONTROL_USER, 'products.view')
+  ok('*** the product scope never exceeds the money scope ***',
+    prodScope !== null && moneyScope !== null &&
+    prodScope.sites.length <= moneyScope.sites.length,
+    `product ${prodScope?.sites.length} <= group ${moneyScope?.sites.length}`)
+
+  const sharing = await linkedStores(SITE)
+  ok('  and contains exactly the stores that share a product file',
+    prodScope !== null &&
+    prodScope.sites.every((s) => sharing.some((m) => m.siteId === s.siteId)),
+    `sharing: ${sharing.map((m) => m.displayName).join(', ')}`)
+
+  /* ── 10. Rebalancing, on synthetic stock ─────────────────────────────── */
+
+  const synthStock = (
+    perSite: { onHand: number | null; minStock: number }[][],
+    codes = ['A-1', 'B-2'],
+  ) => ({
+    sites: [
+      { siteId: 1, name: 'Alpha' },
+      { siteId: 2, name: 'Beta' },
+    ],
+    failures: [],
+    truncated: false,
+    lines: codes.map((code, ci) => {
+      const cells = perSite[ci].map((c) => ({
+        onHand: c.onHand,
+        minStock: c.minStock,
+        shortfall: c.onHand === null ? null : c.onHand - c.minStock,
+      }))
+      return {
+        code,
+        description: code,
+        perSite: cells,
+        totalOnHand: cells.reduce<number>((t, c) => (c.onHand === null ? t : t + c.onHand), 0),
+        shortCount: cells.filter((c) => c.minStock > 0 && c.shortfall !== null && c.shortfall < 0).length,
+        surplusCount: cells.filter((c) => c.shortfall !== null && c.shortfall > 0).length,
+      }
+    }),
+  })
+
+  // Alpha short 10, Beta holding 30 above its level of 5 → move 10.
+  const simple = rebalanceSuggestions(
+    synthStock([[{ onHand: 0, minStock: 10 }, { onHand: 35, minStock: 5 }]], ['A-1']),
+  )
+  ok('*** a short store and a surplus store produce a move ***',
+    simple.length === 1 && simple[0].qty === 10 &&
+    simple[0].fromName === 'Beta' && simple[0].toName === 'Alpha',
+    simple[0] ? `${simple[0].qty} from ${simple[0].fromName} to ${simple[0].toName}` : 'none')
+
+  /* The rule that keeps a suggestion from doing harm: a donor only offers what
+     it holds ABOVE its own reorder level, so filling one shortage can never
+     open another. Beta has 8 but needs 5, so it can only spare 3. */
+  const capped = rebalanceSuggestions(
+    synthStock([[{ onHand: 0, minStock: 10 }, { onHand: 8, minStock: 5 }]], ['A-1']),
+  )
+  ok('*** a donor never gives away stock it needs itself ***',
+    capped.length === 1 && capped[0].qty === 3,
+    capped[0] ? `offered ${capped[0].qty} of the 10 needed` : 'none')
+
+  // Beta is exactly at its level: nothing spare, so no move at all.
+  const atLevel = rebalanceSuggestions(
+    synthStock([[{ onHand: 0, minStock: 10 }, { onHand: 5, minStock: 5 }]], ['A-1']),
+  )
+  ok('  a store exactly at its reorder level offers nothing', atLevel.length === 0)
+
+  // A store that does not carry the code at all is never a donor.
+  const notCarried = rebalanceSuggestions(
+    synthStock([[{ onHand: 0, minStock: 10 }, { onHand: null, minStock: 0 }]], ['A-1']),
+  )
+  ok('*** a store that does not carry the code is never a donor ***', notCarried.length === 0)
+
+  ok('  quantities are whole units — half a case is not a transfer',
+    rebalanceSuggestions(
+      synthStock([[{ onHand: 0, minStock: 4 }, { onHand: 8.6, minStock: 5 }]], ['A-1']),
+    ).every((s) => Number.isInteger(s.qty)))
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)

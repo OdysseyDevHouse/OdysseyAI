@@ -96,6 +96,22 @@ export default async function ReportsPage() {
       broken: false,
     })
   }
+  /* Gated on products.view, not reports.*: it reads the product file rather
+     than the ledger, and it is only meaningful for stores that SHARE that file
+     — the page says so when they do not. */
+  if (allow('products.view')) {
+    templates.push({
+      id: 'multi-store-stock',
+      name: 'Stock across stores',
+      description:
+        'What each store holds, and where stock should move when one is short and another has surplus.',
+      category: 'Multi-store',
+      source: 'products',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+  }
   if (allow('reports.financial')) {
     templates.push({
       id: 'multi-store-income-statement',

@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { groupForSite, membersOfGroup, type StoreGroup } from './storeGroups'
+import { groupForSite, membersOfGroup, linkedStores, type StoreGroup } from './storeGroups'
 import { getSiteForUser } from './sites'
 import { getUserByControlId } from './site/users'
 import { capabilitiesForRole, can, type Capability } from './site/permissions'
@@ -120,6 +120,48 @@ export async function groupScopeFor(
   sites.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
 
   return { group, sites, excluded }
+}
+
+/**
+ * The stores a PRODUCT-LEVEL report may aggregate for this user.
+ *
+ * The difference from groupScopeFor is the whole reason this exists: that one
+ * uses group MEMBERSHIP, which is right for money — a store keeps its own books
+ * whether or not it shares a product file, and its revenue consolidates either
+ * way. Product identity across databases is the stock CODE, and a code only
+ * means the same thing in two stores that actually share a product file.
+ *
+ * Aggregate by code over `membersOfGroup` and you sum unrelated products that
+ * happen to collide on a code — "A-1042" is coffee beans in one shop and a
+ * brake pad in another. That produces numbers, and they are silently
+ * meaningless, which is worse than an error.
+ *
+ * So this narrows to `linkedStores()` (hasDatabase AND sharesProducts) and then
+ * applies exactly the same per-store permission check as groupScopeFor: group
+ * membership still proves nothing about the person asking.
+ */
+export async function productScopeFor(
+  currentSiteId: number,
+  controlUserId: number,
+  capability: Capability,
+): Promise<GroupScope | null> {
+  const group = await groupForSite(currentSiteId)
+  if (!group) return null
+
+  const shared = await linkedStores(currentSiteId)
+  const scope = await groupScopeFor(currentSiteId, controlUserId, capability)
+  if (!scope) return null
+
+  const sharesProducts = new Set(shared.map((m) => m.siteId))
+
+  /* A store in the group that shares nothing is not "excluded" in the sense the
+     page reports — it is simply not part of this question, and listing it as a
+     permission problem would be a lie. It is dropped from both lists. */
+  return {
+    group: scope.group,
+    sites: scope.sites.filter((s) => sharesProducts.has(s.siteId)),
+    excluded: scope.excluded.filter((e) => sharesProducts.has(e.siteId)),
+  }
 }
 
 /* ── Fail-soft per-site runner ────────────────────────────────────────────── */
@@ -444,6 +486,268 @@ function periodKey(value: unknown): string {
     return `${y}-${m}-${d}`
   }
   return String(value ?? '')
+}
+
+/* ── Stock across stores, and rebalancing ─────────────────────────────────── */
+
+export type StoreStockCell = {
+  /** Null when the store does not carry this code at all — a dash, not a zero. */
+  onHand: number | null
+  /** The store's own reorder level, summed over its locations. */
+  minStock: number
+  /** onHand - minStock, negative when short. Null when not carried. */
+  shortfall: number | null
+}
+
+export type StockLine = {
+  code: string
+  description: string
+  /** Index-aligned with `sites`. */
+  perSite: StoreStockCell[]
+  totalOnHand: number
+  /** Stores short of their reorder level, and stores with surplus above it. */
+  shortCount: number
+  surplusCount: number
+}
+
+export type GroupStock = {
+  sites: { siteId: number; name: string }[]
+  failures: { siteId: number; name: string; error: string }[]
+  lines: StockLine[]
+  /** True when the per-store cap trimmed the list — see the note on the page. */
+  truncated: boolean
+}
+
+/** One store's holding of one code. */
+type StockRow = { code: string; description: string; onHand: number; minStock: number }
+
+const STOCK_CODE_CAP = 400
+
+/**
+ * What every linked store holds, by stock code.
+ *
+ * Matched by CODE, the only thing that identifies a product across databases —
+ * ids increment independently per site and say nothing about each other. Callers
+ * MUST scope with productScopeFor, not groupScopeFor: see the note there.
+ *
+ * In-transit locations are excluded. Goods dispatched from one store and not yet
+ * received sit in the sender's transit location; counting them would show stock
+ * that is on a van as available to sell, and a rebalancing suggestion would then
+ * propose moving it again.
+ *
+ * `onlyProblems` restricts the fan-out to codes some store is short of, which is
+ * what the rebalancing screen wants — a 40,000-product file is not a report.
+ */
+export async function groupStockByCode(
+  sites: GroupSite[],
+  options: { onlyProblems?: boolean; search?: string } = {},
+): Promise<GroupStock> {
+  const search = options.search?.trim()
+
+  const results = await perSite(sites, async (siteId) => {
+    const params: unknown[] = []
+    let having = 'HAVING SUM(pls.stock_on_hand) <> 0 OR SUM(pls.min_stock) > 0'
+    if (options.onlyProblems) {
+      // Short of the reorder level at THIS store, or in the negative.
+      having = 'HAVING SUM(pls.min_stock) > 0 AND SUM(pls.stock_on_hand) < SUM(pls.min_stock)'
+    }
+    let where = 'WHERE p.is_archived = 0 AND (l.is_transit = 0 OR l.is_transit IS NULL)'
+    if (search) {
+      where += ' AND (p.code LIKE ? OR p.description LIKE ?)'
+      params.push(`%${search}%`, `%${search}%`)
+    }
+
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT p.code AS code,
+              MIN(p.description) AS description,
+              COALESCE(SUM(pls.stock_on_hand), 0) AS on_hand,
+              COALESCE(SUM(pls.min_stock), 0) AS min_stock
+         FROM products p
+         JOIN product_location_stock pls ON pls.product_id = p.id
+         LEFT JOIN stock_locations l ON l.id = pls.location_id
+         ${where}
+         GROUP BY p.code
+         ${having}
+         ORDER BY p.code
+         LIMIT ${STOCK_CODE_CAP + 1}`,
+      params,
+    )
+    return rows.map<StockRow>((r) => ({
+      code: String(r.code ?? ''),
+      description: String(r.description ?? ''),
+      onHand: toNum(r.on_hand),
+      minStock: toNum(r.min_stock),
+    }))
+  })
+
+  const ok = results.filter((r): r is SiteResult<StockRow[]> & { ok: true } => r.ok)
+  const failures = results
+    .filter((r): r is SiteResult<StockRow[]> & { ok: false } => !r.ok)
+    .map((r) => ({ siteId: r.siteId, name: r.name, error: r.error }))
+
+  const truncated = ok.some((r) => r.data.length > STOCK_CODE_CAP)
+  const byCode = new Map<string, Map<number, StockRow>>()
+  const descriptions = new Map<string, string>()
+
+  ok.forEach((store, i) => {
+    for (const row of store.data.slice(0, STOCK_CODE_CAP)) {
+      if (!row.code) continue
+      const perStore = byCode.get(row.code) ?? new Map<number, StockRow>()
+      perStore.set(i, row)
+      byCode.set(row.code, perStore)
+      // First store to name it wins, matching the account-name rule in the
+      // consolidated statement — sites are sorted primary-first.
+      if (!descriptions.has(row.code)) descriptions.set(row.code, row.description)
+    }
+  })
+
+  /* Every store's holding of a code the FAN-OUT surfaced, including stores whose
+     own query excluded it. Without this second pass a rebalancing report shows
+     only the stores that are short and never the one holding the surplus —
+     which is the entire answer it exists to give. */
+  const wantedCodes = [...byCode.keys()]
+  if (options.onlyProblems && wantedCodes.length > 0) {
+    const fill = await perSite(sites, async (siteId) => {
+      const placeholders = wantedCodes.map(() => '?').join(',')
+      const rows = await siteQuery<Row>(
+        siteId,
+        `SELECT p.code AS code,
+                MIN(p.description) AS description,
+                COALESCE(SUM(pls.stock_on_hand), 0) AS on_hand,
+                COALESCE(SUM(pls.min_stock), 0) AS min_stock
+           FROM products p
+           JOIN product_location_stock pls ON pls.product_id = p.id
+           LEFT JOIN stock_locations l ON l.id = pls.location_id
+          WHERE p.is_archived = 0
+            AND (l.is_transit = 0 OR l.is_transit IS NULL)
+            AND p.code IN (${placeholders})
+          GROUP BY p.code`,
+        wantedCodes,
+      )
+      return rows.map<StockRow>((r) => ({
+        code: String(r.code ?? ''),
+        description: String(r.description ?? ''),
+        onHand: toNum(r.on_hand),
+        minStock: toNum(r.min_stock),
+      }))
+    })
+
+    fill.forEach((store, i) => {
+      if (!store.ok) return
+      for (const row of store.data) {
+        const perStore = byCode.get(row.code)
+        if (perStore && !perStore.has(i)) perStore.set(i, row)
+      }
+    })
+  }
+
+  const lines: StockLine[] = [...byCode.entries()]
+    .map(([code, perStore]) => {
+      const perSite = ok.map((_, i): StoreStockCell => {
+        const row = perStore.get(i)
+        if (!row) return { onHand: null, minStock: 0, shortfall: null }
+        return {
+          onHand: row.onHand,
+          minStock: row.minStock,
+          shortfall: round(row.onHand - row.minStock, 3),
+        }
+      })
+      return {
+        code,
+        description: descriptions.get(code) ?? '',
+        perSite,
+        totalOnHand: round(
+          perSite.reduce<number>((t, c) => (c.onHand === null ? t : t + c.onHand), 0),
+          3,
+        ),
+        shortCount: perSite.filter((c) => c.minStock > 0 && c.shortfall !== null && c.shortfall < 0)
+          .length,
+        surplusCount: perSite.filter((c) => c.shortfall !== null && c.shortfall > 0).length,
+      }
+    })
+    .sort((a, b) => a.code.localeCompare(b.code))
+
+  return { sites: ok.map((r) => ({ siteId: r.siteId, name: r.name })), failures, lines, truncated }
+}
+
+export type RebalanceSuggestion = {
+  code: string
+  description: string
+  fromSiteId: number
+  fromName: string
+  toSiteId: number
+  toName: string
+  /** Whole units to move. Never more than the sender can spare. */
+  qty: number
+  /** What the receiver is short by, for context. */
+  shortBy: number
+  /** What the sender holds above its own reorder level. */
+  senderSpare: number
+}
+
+/**
+ * Where stock should move: one store short, another holding surplus.
+ *
+ * The most profitable multi-store report there is, because it turns dead stock
+ * at one shop into sales at another without buying anything.
+ *
+ * The rule is deliberately conservative. A sender only offers what it holds
+ * ABOVE its own reorder level, so a transfer can never create a second shortage
+ * to fix the first — the most common way an automated suggestion makes things
+ * worse. Quantities are whole units: half a case is not a transfer.
+ *
+ * Suggestions are advice, not actions. Nothing here writes anything; moving the
+ * stock is a store transfer somebody chooses to raise (site/storeTransfers.ts).
+ */
+export function rebalanceSuggestions(stock: GroupStock): RebalanceSuggestion[] {
+  const out: RebalanceSuggestion[] = []
+
+  for (const line of stock.lines) {
+    if (line.shortCount === 0 || line.surplusCount === 0) continue
+
+    // Who needs it most, and who can most afford to give — greatest need first
+    // so the scarcest stock goes where it is most useful.
+    const needs = line.perSite
+      .map((c, i) => ({ i, need: c.minStock > 0 && c.shortfall !== null ? -c.shortfall : 0 }))
+      .filter((n) => n.need > 0)
+      .sort((a, b) => b.need - a.need)
+
+    const spare = line.perSite
+      .map((c, i) => ({ i, spare: c.shortfall !== null && c.shortfall > 0 ? c.shortfall : 0 }))
+      .filter((s) => s.spare > 0)
+      .sort((a, b) => b.spare - a.spare)
+
+    for (const need of needs) {
+      let outstanding = need.need
+      for (const donor of spare) {
+        if (outstanding <= 0) break
+        if (donor.spare <= 0 || donor.i === need.i) continue
+
+        const qty = Math.floor(Math.min(outstanding, donor.spare))
+        if (qty < 1) continue
+
+        out.push({
+          code: line.code,
+          description: line.description,
+          fromSiteId: stock.sites[donor.i].siteId,
+          fromName: stock.sites[donor.i].name,
+          toSiteId: stock.sites[need.i].siteId,
+          toName: stock.sites[need.i].name,
+          qty,
+          shortBy: round(need.need, 3),
+          senderSpare: round(donor.spare, 3),
+        })
+
+        donor.spare -= qty
+        outstanding -= qty
+      }
+    }
+  }
+
+  // Biggest moves first: a suggestion to shift 200 units matters more than one
+  // to shift 2, and a list nobody reads to the end should lead with the former.
+  return out.sort((a, b) => b.qty - a.qty)
 }
 
 /* ── Like-for-like ────────────────────────────────────────────────────────── */
