@@ -421,12 +421,18 @@ if (Math.abs(Date.now() / 1000 - t) > 300) return res.status(401).end() // stale
             description={
               'Every call authenticates per request: Authorization: Bearer odk_… ' +
               'List responses share the envelope { items, total, limit, offset }. ' +
-              'The machine-readable spec lives at /api/v1/openapi.json — no key needed.'
+              'Send your integrator to /api-docs — a public page needing no login — ' +
+              'or to /api/v1/openapi.json for the machine-readable spec.'
             }
             action={
-              <Button variant="secondary" onClick={() => window.open('/api/v1/openapi.json', '_blank')}>
-                Open openapi.json
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => window.open('/api-docs', '_blank')}>
+                  Developer docs
+                </Button>
+                <Button variant="secondary" onClick={() => window.open('/api/v1/openapi.json', '_blank')}>
+                  openapi.json
+                </Button>
+              </div>
             }
           />
           <DataTable

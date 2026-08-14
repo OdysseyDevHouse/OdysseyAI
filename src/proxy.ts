@@ -13,7 +13,14 @@ import { SESSION_COOKIE } from '@/lib/session'
 // route public.
 // `/pos-unlock` is here for the reason given at POS_PATHS below: the visitor has
 // no session by definition, and the screen reads nothing.
-const PUBLIC_EXACT = ['/', '/pos-unlock']
+// '/api-docs' is the developer reference for the public API. Public by design
+// and EXACT rather than a prefix: the people who need it are integrators with
+// no back-office login, who would otherwise meet a sign-in form for a system
+// they have no account on. It is safe to publish because it describes the API
+// and reads no store — every value on it comes from exported constants in the
+// source, and the page opens no database connection. Exact, so a future
+// '/api-docs-internal' does not become public by accident.
+const PUBLIC_EXACT = ['/', '/pos-unlock', '/api-docs']
 // `/store` is the customer-facing shop and is public BY DESIGN: shoppers have
 // no account here. It is not unguarded — every route under it resolves an
 // opaque signed token to a site and then reads only what that store has
