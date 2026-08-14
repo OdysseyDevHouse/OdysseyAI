@@ -199,6 +199,10 @@ export const SETTING_DEFAULTS = {
       not demote someone on a Tuesday. */
   loyalty_tier_grace_months: '12',
 
+  /** Months a gift card stays redeemable after activation. 0 = never expires.
+      The CPA prescribes at least three years, hence 36. */
+  gift_card_validity_months: '36',
+
   /* ── Staff pay multipliers ─────────────────────────────────────────────
      What an hour outside ordinary time costs, as a multiple of the ordinary
      rate. The defaults are the BCEA figures and most stores will never touch
@@ -773,7 +777,8 @@ export function validateSetting(key: SettingKey, value: string): string | null {
 
     case 'loyalty_expiry_months':
     case 'loyalty_tier_window_months':
-    case 'loyalty_tier_grace_months': {
+    case 'loyalty_tier_grace_months':
+    case 'gift_card_validity_months': {
       const months = Number(value)
       if (!Number.isFinite(months) || months < 0) return 'That must be zero or more months.'
       // Beyond a decade the policy is indistinguishable from "never", and a

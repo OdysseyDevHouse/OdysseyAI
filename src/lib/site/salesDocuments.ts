@@ -93,6 +93,8 @@ export type SalesLine = {
    * guessed at. Null for an ordinary line, or a discount given by hand.
    */
   specialId: number | null
+  /** The gift card a `gift_card` line sold (147). Null on ordinary lines. */
+  giftCardCode: string | null
   /**
    * The answers given when the till asked this product's questions.
    *
@@ -257,6 +259,8 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
     lineVat: toNum(r.line_vat),
     unitCostExcl: toNum(r.unit_cost_excl),
     specialId: r.special_id === null || r.special_id === undefined ? null : Number(r.special_id),
+    giftCardCode:
+      r.gift_card_code === null || r.gift_card_code === undefined ? null : String(r.gift_card_code),
     instructions,
     note: String(r.line_note ?? ''),
     // Tolerant of a site that has not run 142 — toNum(undefined) reads 0,
@@ -555,6 +559,14 @@ export type LineInput = {
    */
   discountCodeId?: number | null
   /**
+   * The gift card a `gift_card` line sells, captured at ADD time (147).
+   *
+   * On the line rather than the finalise input so a parked or recalled draft
+   * keeps the code with the sale it belongs to. The posting engine activates
+   * the card inside the finalise transaction.
+   */
+  giftCardCode?: string | null
+  /**
    * The answers given when the till asked this product's questions.
    *
    * Optional because most callers have none — a quote, a credit note, an
@@ -825,8 +837,8 @@ export async function saveDraft(
             department_id, sales_rep_id, source_line_id, sales_rep_user_id,
             qty, unit_price_incl, discount_pct, discount_incl,
             vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,
-            special_id, discount_code_id, line_note)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            special_id, discount_code_id, gift_card_code, line_note)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -849,6 +861,7 @@ export async function saveDraft(
           (line.unitCostExcl ?? 0).toFixed(4),
           line.specialId ?? null,
           line.discountCodeId ?? null,
+          line.giftCardCode ?? null,
           (line.note ?? '').trim().slice(0, 190),
         ] as never,
       )

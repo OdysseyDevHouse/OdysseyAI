@@ -123,6 +123,8 @@ import { kvPut, KV } from '@/lib/posOffline/db'
 import type { Capability } from '@/lib/site/permissions'
 import type { OfflineSale } from '@/lib/posOffline/types'
 import { WeighModal } from './WeighModal'
+import { GiftCardModal, GiftCardBalanceModal } from './GiftCardModal'
+import { lookupGiftCardAction } from './giftCardActions'
 import { QuickKeyPanel } from './QuickKeyPanel'
 import { TileSizeModal } from './TileSizeModal'
 import { TileSizeContext, useTileSize } from '@/lib/posOffline/useTileSize'
@@ -310,6 +312,10 @@ export default function PosShell({
   const [editing, setEditing] = useState<BasketLine | null>(null)
   /** A scale item waiting for its weight — see the guard in add(). */
   const [weighing, setWeighing] = useState<TillProduct | null>(null)
+  /** A gift-card product waiting for its card and amount (147). */
+  const [giftSelling, setGiftSelling] = useState<TillProduct | null>(null)
+  /** The balance-enquiry prompt, behind its quick key. */
+  const [giftBalanceOpen, setGiftBalanceOpen] = useState(false)
 
   /**
    * The product being asked about, if any. Null closes the dialog.
@@ -793,6 +799,17 @@ export default function PosShell({
      */
     if (product.scaleItem && product.scannedQty == null) {
       setWeighing(product)
+      return
+    }
+
+    /*
+     * A gift card needs its card number and amount before the line exists —
+     * the WeighModal pattern, for the same reason: every add path converges
+     * here, and the one a narrower check missed would be the scanner. A line
+     * arriving with the code already on it (the modal's own confirm) passes.
+     */
+    if (product.productType === 'gift_card' && !product.giftCardCode) {
+      setGiftSelling(product)
       return
     }
 
@@ -2228,6 +2245,7 @@ export default function PosShell({
           }
         },
         startReturn: () => dispatch({ type: 'SET_RETURNING', returning: true }),
+        giftCardBalance: () => setGiftBalanceOpen(true),
         navigate: (href: string) => router.push(href),
         say: (message: string, tone: 'info' | 'error') =>
           tone === 'error' ? toast.error(message) : toast.info(message),
@@ -2562,6 +2580,20 @@ export default function PosShell({
             ? { amount: exchangeCredit.total, label: `Credit from ${exchangeCredit.invoiceNumber}` }
             : null
         }
+        /* The card lookup for the redemption step (147). Online only — the
+           balance lives on the server, and offlineBlockedTender already hides
+           the key when the line is down. */
+        onGiftCardLookup={async (code) => {
+          const result = await lookupGiftCardAction(code, 'redeem')
+          if (!result.ok) return result
+          return {
+            ok: true as const,
+            code: result.code,
+            display: result.display,
+            balance: result.balance,
+            expiresOn: result.expiresOn,
+          }
+        }}
         onFinalise={finalise}
       />
 
@@ -2841,6 +2873,27 @@ export default function PosShell({
           }}
         />
       )}
+
+      {giftSelling && (
+        <GiftCardModal
+          product={giftSelling}
+          onCancel={() => setGiftSelling(null)}
+          onConfirm={(card) => {
+            const product = giftSelling
+            setGiftSelling(null)
+            // giftCardCode + scannedPrice ride back through add() the way a
+            // confirmed weight does: the guard passes, the amount becomes the
+            // line's price, and the line never merges with another card.
+            add(
+              { ...product, giftCardCode: card.code, scannedPrice: card.amount },
+              1,
+            )
+            toast.info(`Card ${card.display} on the slip — it activates when the sale completes.`)
+          }}
+        />
+      )}
+
+      {giftBalanceOpen && <GiftCardBalanceModal onClose={() => setGiftBalanceOpen(false)} />}
 
       {asking && (
         <InstructionsModal

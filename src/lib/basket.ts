@@ -63,6 +63,8 @@ export type BasketLine = {
   instructions: ChosenOption[]
   /** A free-text note for this line — "no ice", "allergy: nuts". */
   note: string
+  /** The card a gift-card line sells (147). Absent on ordinary lines. */
+  giftCardCode?: string
 }
 
 /**
@@ -127,6 +129,7 @@ export function lineFromProduct(
     allowFractions: product.allowFractions,
     instructions: [],
     note: '',
+    ...(product.giftCardCode ? { giftCardCode: product.giftCardCode } : {}),
   }
 }
 
@@ -206,7 +209,14 @@ export function addToBasket(
       l.note === '',
   )
 
-  if (mergeable !== -1 && !product.askPriceAtSale && product.scannedPrice == null) {
+  // A gift card never merges: each line names ITS card, and two cards folded
+  // into one qty-2 line would leave one of them a code with no line behind it.
+  if (
+    mergeable !== -1 &&
+    !product.askPriceAtSale &&
+    product.scannedPrice == null &&
+    product.productType !== 'gift_card'
+  ) {
     const next = [...lines]
     // round to 3: quantities are DECIMAL(_,3) and a weighed item adds fractions,
     // so repeated addition without rounding drifts into 2.9999999999999996.

@@ -58,6 +58,8 @@ export type QuickKeyHandlers = {
   docDiscount: () => void
   /** Reprints the last slip this machine printed. */
   reprintLastSlip: () => void
+  /** Opens the gift-card balance prompt (147). */
+  giftCardBalance: () => void
   /** Prints the NEW lines of the open tab on the kitchen printer. */
   sendToKitchen: () => void
   /**
@@ -181,6 +183,11 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
 
   'price-enquiry': ({ handlers }) =>
     handlers.say('Search for the product above — the tile shows its price.', 'info'),
+
+  'gift-card-balance': ({ handlers, online }) =>
+    online
+      ? handlers.giftCardBalance()
+      : handlers.say('Gift card balances need the connection.', 'info'),
 
   'online-orders': ({ handlers, online }) =>
     online

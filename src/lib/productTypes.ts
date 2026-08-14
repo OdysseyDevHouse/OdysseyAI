@@ -20,6 +20,7 @@ export type ProductTypeId =
   | 'serial'
   | 'buyout'
   | 'calcqty'
+  | 'gift_card'
 
 export type ProductTypeOption = {
   id: ProductTypeId
@@ -83,6 +84,12 @@ export const PRODUCT_TYPES: ProductTypeOption[] = [
     name: 'Calculate QTY product',
     description:
       'The quantity sold is worked out at the till from the amount entered, rather than typed in directly.',
+  },
+  {
+    id: 'gift_card',
+    name: 'Gift card',
+    description:
+      'Sells stored value. The till asks for the card number and the amount; no stock is carried, and the sale posts to the gift card liability rather than revenue.',
   },
 ]
 

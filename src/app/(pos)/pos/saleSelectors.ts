@@ -182,6 +182,9 @@ export function salePayloadLines(
          here is one that vanishes silently at finalise. */
       instructions: line.instructions,
       note: line.note,
+      // The card a gift-card line sells (147). Whitelisted here or it would
+      // vanish silently at finalise — see the comment above.
+      ...(line.giftCardCode ? { giftCardCode: line.giftCardCode } : {}),
     }
   })
 }

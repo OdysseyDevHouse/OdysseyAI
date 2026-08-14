@@ -71,6 +71,12 @@ export type TillProduct = {
   scannedQty?: number
   /** Price parsed out of a value-embedded barcode, if the scan carried one. */
   scannedPrice?: number
+  /**
+   * The card a gift-card product is selling, set by the till's card modal on
+   * the way into add() — the scannedQty mechanism, carrying capture through
+   * the one funnel every add path shares (147).
+   */
+  giftCardCode?: string
 }
 
 type Row = RowDataPacket & Record<string, unknown>

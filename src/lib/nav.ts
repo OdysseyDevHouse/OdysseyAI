@@ -17,6 +17,7 @@ import {
   Settings,
   ShoppingBag,
   Gem,
+  Gift,
   Plus,
   FileText,
   Users,
@@ -184,6 +185,7 @@ export const NAV: NavSection[] = [
          The programme, its tiers and the punch cards decide how it WORKS and
          are set once, so they are in the setup hub. */
       { label: 'Loyalty', href: '/loyalty', icon: Gem, built: true, capability: 'loyalty.view', description: 'Members, their points and what they have earned' },
+      { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', description: 'Sell, check and manage stored-value cards' },
     ],
   },
   /*

@@ -286,6 +286,81 @@ export async function finaliseDocument(
   }
 
   /*
+   * ── GIFT CARDS (147): PREVIEWED HERE, SPENT INSIDE THE TRANSACTION ────────
+   *
+   * A gift card is a TENDER, not a voucher: the money was paid in when the
+   * card sold, so redemption rides sales_tenders at what was drawn and never
+   * nets off what is owed. The courtesy checks here refuse before anything is
+   * written; the FOR UPDATE + conditional UPDATE inside the transaction is
+   * the guard that makes two tills racing over one balance safe.
+   */
+  const giftTenders = tenders.filter((t) => t.type.integrationKey === 'gift_card')
+  const giftLines = document.lines.filter((l) => l.productType === 'gift_card')
+
+  if (giftTenders.length > 0 || giftLines.length > 0) {
+    const { findGiftCard, giftCardRefusal, normaliseGiftCardCode } = await import('./giftCards')
+    const localDate = today()
+
+    // Buying a gift card WITH a gift card is a rollover loop that resets the
+    // expiry clock and launders the trail — refused outright.
+    if (giftTenders.length > 0 && giftLines.length > 0) {
+      return { ok: false, error: 'A gift card cannot pay for another gift card.' }
+    }
+
+    const seen = new Set<string>()
+    for (const tender of giftTenders) {
+      const code = normaliseGiftCardCode(tender.input.reference ?? '')
+      if (!code) return { ok: false, error: 'Scan or type the gift card number.' }
+      if (seen.has(code)) {
+        return { ok: false, error: 'The same gift card is entered twice.' }
+      }
+      seen.add(code)
+      // A negative amount is a credit-note refund landing ON the card, which
+      // needs no balance; spending does.
+      if (tender.input.amount > 0) {
+        const card = await findGiftCard(siteId, code)
+        const refusal = giftCardRefusal(card, code, localDate)
+        if (refusal) return { ok: false, error: refusal }
+        if (card && round(tender.input.amount, 2) > round(card.balance, 2) + 0.005) {
+          return {
+            ok: false,
+            error: `The card holds ${card.balance.toFixed(2)} — not enough for ${tender.input.amount.toFixed(2)}.`,
+          }
+        }
+      }
+    }
+
+    for (const line of giftLines) {
+      const name = line.description
+      if (document.docType === 'credit_sale') {
+        return {
+          ok: false,
+          error: `${name}: a gift card cannot go on a credit note — void the original sale, or adjust the card under Gift cards.`,
+        }
+      }
+      if (round(line.qty, 3) !== 1) {
+        return { ok: false, error: `${name}: gift cards sell one per line, so each line names its card.` }
+      }
+      if (round(line.discountIncl, 2) !== 0) {
+        return { ok: false, error: `${name}: gift cards sell at face value — no discounts.` }
+      }
+      if (round(line.vatRatePct, 3) !== 0) {
+        return { ok: false, error: `${name}: give the gift card product a 0% VAT rate — VAT belongs on the goods it eventually buys.` }
+      }
+      if (!(line.lineTotalIncl > 0)) {
+        return { ok: false, error: `${name}: a gift card needs an amount above zero.` }
+      }
+      if (!line.giftCardCode) {
+        return { ok: false, error: `${name}: the line is missing its card number — remove it and ring the card up again.` }
+      }
+    }
+  }
+
+  // Read outside the transaction — settings must not widen the numbering lock.
+  const giftValidityMonths =
+    giftLines.length > 0 ? await getNumericSetting(siteId, 'gift_card_validity_months') : 0
+
+  /*
    * ── TIPS ARE PLANNED BEFORE THE TENDER CHECK, NOT AFTER ───────────────────
    *
    * `checkTenders` refuses any excess the drawer cannot give back as change. A tender that
@@ -841,6 +916,38 @@ export async function finaliseDocument(
         )
       }
 
+      /*
+       * Gift cards (147), after the number exists so every event names its
+       * sale. Both directions THROW on refusal — an unsellable card or a
+       * short balance rolls the whole sale back, stock, number and all.
+       */
+      if (giftLines.length > 0 || giftTenders.length > 0) {
+        const { activateGiftCardForSale, redeemGiftCardForSale } = await import('./giftCards')
+        for (const line of giftLines) {
+          await activateGiftCardForSale(tx, actor, {
+            code: line.giftCardCode ?? '',
+            amount: line.lineTotalIncl,
+            documentId: document.id,
+            documentNumber,
+            validityMonths: giftValidityMonths,
+            shiftId,
+            terminalId: document.terminalId ?? null,
+          })
+        }
+        for (const tender of giftTenders) {
+          // The sign carries the direction: positive spends the card, and a
+          // credit note's negative tender pays the refund back ONTO it.
+          await redeemGiftCardForSale(tx, actor, {
+            code: tender.input.reference ?? '',
+            amount: round(tender.input.amount, 2),
+            documentId: document.id,
+            documentNumber,
+            shiftId,
+            terminalId: document.terminalId ?? null,
+          })
+        }
+      }
+
       await tx.execute(
         `UPDATE sales_documents SET
            status = 'finalised', document_number = ?, finalised_at = NOW(),
@@ -922,7 +1029,15 @@ export async function finaliseDocument(
     // Revenue per department, so a departmental profit and loss is possible.
     const revenueByDepartment = new Map<number | null, number>()
     let costOfSales = 0
+    let giftCardLiability = 0
     for (const line of document.lines) {
+      // Stored value sold is not revenue — it is money held for the bearer.
+      // These lines go to the liability instead, and carry no cost: nothing
+      // left the shelf. VAT is zero by the guard above, so incl equals excl.
+      if (line.productType === 'gift_card') {
+        giftCardLiability = round(giftCardLiability + line.lineTotalIncl, 2)
+        continue
+      }
       const departmentId = line.departmentId ?? null
       revenueByDepartment.set(
         departmentId,
@@ -981,6 +1096,7 @@ export async function finaliseDocument(
       ],
       customerId,
       roundingAdjustment: roundingAdj,
+      giftCardLiability,
     })
 
     // 6. Loyalty EARNING, after the commit and fail-soft.
@@ -996,13 +1112,17 @@ export async function finaliseDocument(
     // instead is reverse the original sale's points, which happens in
     // reverseLoyaltyForDocument when the credit note names its parent.
     if (customerId && loyaltySettings?.enabled && !isCreditSale) {
-      const loyaltyLines = document.lines.map((line) => ({
-        productId: line.productId ?? null,
-        departmentId: line.departmentId ?? null,
-        qty: line.qty,
-        lineTotalIncl: line.lineTotalIncl,
-        discountIncl: line.discountIncl,
-      }))
+      // Gift-card lines earn nothing: buying stored value is moving money,
+      // not spending it. The points come later, on the goods it buys.
+      const loyaltyLines = document.lines
+        .filter((line) => line.productType !== 'gift_card')
+        .map((line) => ({
+          productId: line.productId ?? null,
+          departmentId: line.departmentId ?? null,
+          qty: line.qty,
+          lineTotalIncl: line.lineTotalIncl,
+          discountIncl: line.discountIncl,
+        }))
 
       // Points and wallet rand already belong to the customer, so the slice
       // they paid for earns nothing. Wallet spend is excluded too: the points
@@ -1400,6 +1520,32 @@ export async function voidDocument(
   // earning is: the goods are already back on the shelf, and a loyalty table
   // that is briefly unreachable must not leave the document half-voided.
   await reverseLoyaltyForDocument(siteId, actor, document.id, `Void of ${document.documentNumber}`)
+
+  // The GENERAL LEDGER, after the commit and fail-soft like the mirror at
+  // finalise. Without this every voided sale left its journal standing —
+  // revenue, VAT and tender all overstated by a sale that never happened.
+  // The reversal negates the posted batch exactly, as `sale_void`.
+  try {
+    const { mirrorSaleReversal } = await import('./glPosting')
+    await mirrorSaleReversal(siteId, actor, {
+      documentId: document.id,
+      documentNumber: document.documentNumber,
+      date: today(),
+    })
+  } catch (error) {
+    console.error('[gl] sale reversal failed for document', document.id, error)
+  }
+
+  // Gift cards, same side of the commit and same fail-soft rule: redemptions
+  // come back as balance, an activation is voided while the card is still
+  // whole — and left standing with a log entry when it is not, because
+  // clawing value out of a part-spent bearer card is a conversation.
+  try {
+    const { restoreGiftCardsForDocument } = await import('./giftCards')
+    await restoreGiftCardsForDocument(siteId, document.id)
+  } catch (error) {
+    console.error('[gift-cards] restore failed for document', document.id, error)
+  }
 
   return { ok: true }
 }

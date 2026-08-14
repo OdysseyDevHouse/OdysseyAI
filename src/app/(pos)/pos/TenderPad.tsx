@@ -78,6 +78,7 @@ export function TenderPad({
   serviceCharge: serviceChargeProp = 0,
   canRemoveServiceCharge = false,
   credit = null,
+  onGiftCardLookup,
   onFinalise,
 }: {
   open: boolean
@@ -124,6 +125,17 @@ export function TenderPad({
    * reduces what is owed rather than being a payment the cashier keys.
    */
   credit?: { amount: number; label: string } | null
+  /**
+   * Looks a gift card up for the redemption step (147). Wired by the shell to
+   * a server action — the pad itself stays database-free. Absent means the
+   * store has no gift cards and the tender key never asks.
+   */
+  onGiftCardLookup?: (
+    code: string,
+  ) => Promise<
+    | { ok: true; code: string; display: string; balance: number; expiresOn: string | null }
+    | { ok: false; error: string }
+  >
   onFinalise: (
     taken: Taken[],
     voucherCodes: string[],
@@ -154,6 +166,13 @@ export function TenderPad({
    * removal server-side with the manager's name against it.
    */
   const [serviceWaived, setServiceWaived] = useState(false)
+  /** A gift-card tender waiting for its card number (147). */
+  const [giftPrompt, setGiftPrompt] = useState<TenderType | null>(null)
+  const [giftEntry, setGiftEntry] = useState('')
+  const [giftError, setGiftError] = useState('')
+  const [giftBusy, setGiftBusy] = useState(false)
+  /** The checked card behind the ACTIVE tender — its balance caps the amount. */
+  const [giftInfo, setGiftInfo] = useState<{ balance: number; display: string } | null>(null)
 
   /* The charge as it stands. A waiver zeroes it; nothing else can. */
   const serviceCharge = serviceWaived ? 0 : round(Math.max(0, serviceChargeProp), 2)
@@ -171,6 +190,10 @@ export function TenderPad({
        money they never offered — the worst thing on this screen to leave behind. */
     setDeclared({})
     setServiceWaived(false)
+    setGiftPrompt(null)
+    setGiftEntry('')
+    setGiftError('')
+    setGiftInfo(null)
   }, [open])
 
   const amount = numPadValue(entry)
@@ -326,14 +349,47 @@ export function TenderPad({
     taken.length > 0 && check.outstanding === 0 && check.errors.length === 0 && plan.ok
 
   function pick(tender: TenderType) {
+    // A gift card asks for the CARD first (147): the balance decides what the
+    // key may take, so the amount step cannot come before the code.
+    if (tender.integrationKey === 'gift_card' && onGiftCardLookup) {
+      setGiftPrompt(tender)
+      setGiftEntry('')
+      setGiftError('')
+      return
+    }
     setActive(tender)
     setReference('')
     setEntry(String(prefillAmount(tender, owed, loyalty)))
   }
 
+  /** Check the scanned card and move to the amount step, capped at its balance. */
+  async function checkGiftCard() {
+    if (!giftPrompt || !onGiftCardLookup || !giftEntry.trim()) return
+    setGiftBusy(true)
+    const result = await onGiftCardLookup(giftEntry)
+    setGiftBusy(false)
+    if (!result.ok) {
+      setGiftError(result.error)
+      return
+    }
+    // Refuse the same card twice on one sale — the server would refuse it too,
+    // but at finalise, with the customer's bags packed.
+    if (taken.some((t) => t.reference === result.display)) {
+      setGiftError(`Card ${result.display} is already on this sale.`)
+      return
+    }
+    setActive(giftPrompt)
+    setGiftPrompt(null)
+    setGiftInfo({ balance: result.balance, display: result.display })
+    // The reference IS the card — the posting engine finds it there.
+    setReference(result.display)
+    setEntry(String(round(Math.min(result.balance, Math.max(owed, 0)), 2)))
+  }
+
   function commit() {
     if (!active || amount <= 0) return
     if (active.requiresReference && !reference.trim()) return
+    if (giftInfo && amount > giftInfo.balance + 0.005) return
     setTaken((current) => [
       ...current,
       { tenderTypeId: active.id, amount, reference: reference.trim() || null },
@@ -341,6 +397,7 @@ export function TenderPad({
     setActive(null)
     setEntry('')
     setReference('')
+    setGiftInfo(null)
   }
 
   /** Abandon the amount being entered and go back to the tender keys. */
@@ -348,6 +405,9 @@ export function TenderPad({
     setActive(null)
     setEntry('')
     setReference('')
+    setGiftPrompt(null)
+    setGiftError('')
+    setGiftInfo(null)
   }
 
   return (
@@ -378,24 +438,41 @@ export function TenderPad({
           <Button
             variant="ghost"
             size="touch"
-            onClick={active ? onBackToKeys : onClose}
+            onClick={active || giftPrompt ? onBackToKeys : onClose}
             disabled={pending}
           >
-            {active ? 'Back' : 'Cancel'}
+            {active || giftPrompt ? 'Back' : 'Cancel'}
           </Button>
-          {active ? (
+          {giftPrompt ? (
             <Button
               variant="primary"
               size="touch-lg"
               className="flex-1 justify-center"
-              disabled={pending || amount <= 0 || (active.requiresReference && !reference.trim())}
+              disabled={giftBusy || !giftEntry.trim()}
+              onClick={checkGiftCard}
+            >
+              {giftBusy ? 'Checking…' : 'Check the card'}
+            </Button>
+          ) : active ? (
+            <Button
+              variant="primary"
+              size="touch-lg"
+              className="flex-1 justify-center"
+              disabled={
+                pending ||
+                amount <= 0 ||
+                (active.requiresReference && !reference.trim()) ||
+                (giftInfo !== null && amount > giftInfo.balance + 0.005)
+              }
               onClick={commit}
             >
-              {active.requiresReference && !reference.trim()
-                ? `Enter the ${(active.referenceLabel || 'reference').toLowerCase()}`
-                : round(owed - amount, 2) > 0
-                  ? `Take ${formatMoney(amount)} — ${formatMoney(round(owed - amount, 2))} left`
-                  : `Take ${formatMoney(amount)}`}
+              {giftInfo !== null && amount > giftInfo.balance + 0.005
+                ? `Only ${formatMoney(giftInfo.balance)} on the card`
+                : active.requiresReference && !reference.trim()
+                  ? `Enter the ${(active.referenceLabel || 'reference').toLowerCase()}`
+                  : round(owed - amount, 2) > 0
+                    ? `Take ${formatMoney(amount)} — ${formatMoney(round(owed - amount, 2))} left`
+                    : `Take ${formatMoney(amount)}`}
             </Button>
           ) : (
             <Button
@@ -677,16 +754,45 @@ export function TenderPad({
           </div>
         )}
 
-        {active ? (
-          <ActiveTender
-            tender={active}
-            entry={entry}
-            reference={reference}
-            owed={owed}
-            pending={pending}
-            onEntry={setEntry}
-            onReference={setReference}
-          />
+        {giftPrompt ? (
+          /* The card step (147): the balance decides what the key may take,
+             so the code comes before the amount. */
+          <div className="flex flex-col gap-3">
+            <Field label="Gift card number" hint="Scan or type the card." error={giftError || undefined}>
+              <Input
+                autoFocus
+                value={giftEntry}
+                placeholder="XXXX-XXXX-XXXX"
+                disabled={giftBusy}
+                onChange={(e) => {
+                  setGiftEntry(e.target.value)
+                  setGiftError('')
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void checkGiftCard()
+                }}
+              />
+            </Field>
+          </div>
+        ) : active ? (
+          <>
+            {giftInfo && (
+              <p className="text-sm text-muted">
+                Card {giftInfo.display} holds{' '}
+                <span className="numeric font-semibold text-ink">{formatMoney(giftInfo.balance)}</span>
+                {' — the key takes up to that.'}
+              </p>
+            )}
+            <ActiveTender
+              tender={active}
+              entry={entry}
+              reference={reference}
+              owed={owed}
+              pending={pending}
+              onEntry={setEntry}
+              onReference={setReference}
+            />
+          </>
         ) : (
           <TenderKeys
             tenders={tenders}

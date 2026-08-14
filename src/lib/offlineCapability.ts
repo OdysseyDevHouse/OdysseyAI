@@ -59,6 +59,9 @@ export function offlineBlockedTender(tender: {
 }): string | null {
   if (tender.postsToDebtor) return 'Account sales need the network'
   if (tender.integrationKey === 'loyalty') return 'Loyalty needs the network'
+  // A gift card's balance lives only on the server, and the FOR UPDATE that
+  // stops two tills draining one card has no offline equivalent.
+  if (tender.integrationKey === 'gift_card') return 'Gift cards need the network'
   return null
 }
 
@@ -91,5 +94,8 @@ export function offlineBlockedProduct(product: { productType: string }): string 
   if (product.productType === 'recipe' || product.productType === 'refer') {
     return 'Made-up and linked items need the network'
   }
+  // Activating a card writes a balance only the server can arbitrate — a code
+  // sold on two offline tills would be two cards wearing one number.
+  if (product.productType === 'gift_card') return 'Gift cards need the network'
   return null
 }

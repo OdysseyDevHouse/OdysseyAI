@@ -89,6 +89,11 @@ export type ActivityEntity =
      authorisation, not at use — a manager who typed their PIN authorised
      something even if the sale then died, and the trail must say so. */
   | 'pos_override'
+  /* A gift card event outside a sale — generation, adjustment, void, the
+     expiry sweep. Sales-side traffic already lives on the document's own
+     audit; this covers the management actions where a balance moves with no
+     document behind it, which is exactly where a trail matters most. */
+  | 'gift_card'
   /* A piece of customer equipment. Worth auditing separately from the jobs done
      on it, because the questions differ: the job log answers what was done, this
      answers who changed the warranty date, who moved it to another site, and who

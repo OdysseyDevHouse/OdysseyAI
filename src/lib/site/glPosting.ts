@@ -1,6 +1,6 @@
 import 'server-only'
-import type { PoolConnection } from 'mysql2/promise'
-import { siteTransaction, siteQueryOne } from '../siteDb'
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
+import { siteTransaction, siteQuery, siteQueryOne } from '../siteDb'
 import { round } from '../decimals'
 import { logActivity, type Actor } from './activityLog'
 import { postTx } from './journals'
@@ -89,6 +89,13 @@ export type SaleMirror = {
   tenders: { tenderTypeId: number | null; isAccount: boolean; amount: number }[]
   customerId?: number | null
   roundingAdjustment?: number
+  /**
+   * Gift card value SOLD on this document (147). Selling stored value is not
+   * revenue — it is money held for the bearer — so these lines are excluded
+   * from revenueLines/costOfSales by the caller and credited to the liability
+   * account here instead.
+   */
+  giftCardLiability?: number
 }
 
 /**
@@ -148,6 +155,18 @@ export async function mirrorSale(
         amount: round(-sign * revenue.excl, 2),
         description: 'Revenue',
         departmentId: revenue.departmentId,
+      })
+    }
+
+    // Gift cards sold: DR tender (above), CR the liability. Redemption never
+    // reaches this block — the GIFT_CARD tender's own mapping IS the drawdown.
+    if (input.giftCardLiability && round(input.giftCardLiability, 2) !== 0) {
+      const liabilityAccount = await mapped(siteId, 'gift_card_liability')
+      if (!liabilityAccount) throw new Error('No gift card liability account is mapped.')
+      lines.push({
+        accountId: liabilityAccount,
+        amount: round(-sign * input.giftCardLiability, 2),
+        description: 'Gift cards sold',
       })
     }
 
@@ -1061,6 +1080,182 @@ export async function mirrorInterest(
             customerId: input.customerId,
           },
           { accountId: incomeAccount, amount: round(-input.amount, 2), description: 'Interest earned' },
+        ],
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
+/**
+ * The journal behind a VOIDED sale: the original entry, negated.
+ *
+ * Read from the posted batch rather than rebuilt from the document, so the
+ * reversal is exact whatever the original resolved to — a mapping changed
+ * since the sale must not make the two halves disagree. The original stays
+ * exactly as posted (never an UPDATE or DELETE, the journals rule); this
+ * writes the correction beside it as `sale_void`.
+ *
+ * A sale that never reached the ledger (a mapping gap at the time) has no
+ * batch, and that is reported rather than treated as success — a void that
+ * "reversed" nothing should say so in the activity log.
+ */
+export async function mirrorSaleReversal(
+  siteId: number,
+  actor: Actor,
+  input: { documentId: number; documentNumber: string | null; date: string },
+): Promise<MirrorResult> {
+  const label = `Void of ${input.documentNumber ?? `#${input.documentId}`}`
+  return attempt(siteId, actor, label, async () => {
+    const batch = await siteQueryOne<RowDataPacket & { id: number }>(
+      siteId,
+      `SELECT id FROM journal_batches
+        WHERE source IN ('sale','credit_note') AND source_doc_id = ? AND status = 'posted'
+        ORDER BY id DESC LIMIT 1`,
+      [input.documentId],
+    )
+    if (!batch) throw new Error('The sale has no ledger entry to reverse.')
+
+    // Refuse a double reversal: a retried void must not negate the sale twice.
+    const already = await siteQueryOne<RowDataPacket & { id: number }>(
+      siteId,
+      `SELECT id FROM journal_batches
+        WHERE source = 'sale_void' AND source_doc_id = ? AND status = 'posted' LIMIT 1`,
+      [input.documentId],
+    )
+    if (already) return { batchId: Number(already.id) }
+
+    const lines = await siteQuery<
+      RowDataPacket & {
+        account_id: number
+        amount: string
+        description: string | null
+        department_id: number | null
+        customer_id: number | null
+        supplier_id: number | null
+      }
+    >(
+      siteId,
+      `SELECT account_id, amount, description, department_id, customer_id, supplier_id
+         FROM journal_lines WHERE batch_id = ?`,
+      [Number(batch.id)],
+    )
+
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.date,
+        description: label,
+        source: 'sale_void',
+        sourceDocId: input.documentId,
+        lines: lines.map((l) => ({
+          accountId: Number(l.account_id),
+          amount: round(-Number(l.amount), 2),
+          description: l.description ?? undefined,
+          departmentId: l.department_id === null ? null : Number(l.department_id),
+          customerId: l.customer_id === null ? null : Number(l.customer_id),
+          supplierId: l.supplier_id === null ? null : Number(l.supplier_id),
+        })),
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
+export type GiftCardBreakageMirror = {
+  date: string
+  amount: number
+  cards: number
+}
+
+/**
+ * Gift card breakage — value that expired unspent.
+ *
+ *   DEBIT  gift card liability   the promise released
+ *   CREDIT breakage income       the money the shop keeps
+ *
+ * One journal per expiry sweep, called AFTER the sweep's own transaction
+ * commits: a mirror failure logs and leaves the cards expired, never the
+ * other way round.
+ */
+export async function mirrorGiftCardBreakage(
+  siteId: number,
+  actor: Actor,
+  input: GiftCardBreakageMirror,
+): Promise<MirrorResult> {
+  return attempt(siteId, actor, `Gift card breakage ${input.date}`, async () => {
+    const [liabilityAccount, incomeAccount] = await Promise.all([
+      mapped(siteId, 'gift_card_liability'),
+      mapped(siteId, 'gift_card_breakage'),
+    ])
+    if (!liabilityAccount || !incomeAccount) {
+      throw new Error('The gift card liability or breakage account is not mapped.')
+    }
+
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.date,
+        description: `Gift card breakage — ${input.cards} card${input.cards === 1 ? '' : 's'} expired`,
+        source: 'gift_card_breakage',
+        sourceDocId: null,
+        lines: [
+          {
+            accountId: liabilityAccount,
+            amount: round(input.amount, 2),
+            description: 'Expired gift card value',
+          },
+          {
+            accountId: incomeAccount,
+            amount: round(-input.amount, 2),
+            description: 'Breakage income',
+          },
+        ],
+      })
+      return { batchId: posted.id }
+    })
+  })
+}
+
+/**
+ * A hand adjustment to a card's balance — goodwill up, correction down.
+ *
+ *   up:   DEBIT breakage/goodwill (income given back), CREDIT liability
+ *   down: the reverse
+ *
+ * Posted against the breakage account because that is the miscellaneous
+ * bucket for value that moved with no sale behind it; a store that wants
+ * goodwill on its own account remaps `gift_card_breakage`.
+ */
+export async function mirrorGiftCardAdjustment(
+  siteId: number,
+  actor: Actor,
+  input: { cardId: number; amount: number; note: string; date: string },
+): Promise<MirrorResult> {
+  return attempt(siteId, actor, `Gift card adjustment #${input.cardId}`, async () => {
+    const [liabilityAccount, incomeAccount] = await Promise.all([
+      mapped(siteId, 'gift_card_liability'),
+      mapped(siteId, 'gift_card_breakage'),
+    ])
+    if (!liabilityAccount || !incomeAccount) {
+      throw new Error('The gift card liability or breakage account is not mapped.')
+    }
+
+    return siteTransaction(siteId, async (tx) => {
+      const posted = await postTx(tx, actor, {
+        journalDate: input.date,
+        description: `Gift card adjusted — ${input.note}`.slice(0, 190),
+        source: 'gift_card_adjust',
+        sourceDocId: input.cardId,
+        lines: [
+          {
+            accountId: liabilityAccount,
+            amount: round(-input.amount, 2),
+            description: 'Balance adjusted by hand',
+          },
+          {
+            accountId: incomeAccount,
+            amount: round(input.amount, 2),
+            description: input.amount > 0 ? 'Goodwill granted' : 'Value removed',
+          },
         ],
       })
       return { batchId: posted.id }

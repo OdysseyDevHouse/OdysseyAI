@@ -151,6 +151,17 @@ export const CAPABILITY_GROUPS = [
     ],
   },
   {
+    key: 'giftcards',
+    label: 'Gift cards',
+    capabilities: [
+      { key: 'giftcards.view', label: 'View gift cards', hint: 'See cards, balances and their history.' },
+      /* The loyalty.adjust separation, for the same reason: a card balance is
+         money, and the person who lists cards is rarely the one who should be
+         able to put value on one with no sale behind it. */
+      { key: 'giftcards.manage', label: 'Manage gift cards', hint: 'Generate, adjust, cancel and expire cards.' },
+    ],
+  },
+  {
     key: 'commission',
     label: 'Commission',
     capabilities: [

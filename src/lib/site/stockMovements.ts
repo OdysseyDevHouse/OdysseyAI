@@ -148,6 +148,10 @@ export function stockDirectionFor(
     case 'service':
     case 'buyout':
       return 0
+    // Stored value has no pile. Without this case the default below would
+    // silently deduct stock every time a card sold.
+    case 'gift_card':
+      return 0
     default:
       // An unknown type must not silently skip stock. Treat it as normal, which
       // is the safe assumption for anything stocked.

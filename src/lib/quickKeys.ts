@@ -126,6 +126,13 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     hint: 'Looks a price up without adding it to the sale.',
   },
   {
+    slug: 'gift-card-balance',
+    label: 'Gift card balance',
+    icon: 'Gift',
+    capability: 'sales.till',
+    hint: 'Checks what a card is holding, without a sale.',
+  },
+  {
     slug: 'customer-payment',
     label: 'Take a payment',
     icon: 'HandCoins',

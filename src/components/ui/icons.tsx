@@ -23,6 +23,8 @@ export {
   Trash2 as Trash,
   Download,
   Upload,
+  // Gift cards — the stored-value kind, on the till key and its screens.
+  Gift,
   Search,
   Funnel as Filter,
   X as Close,
