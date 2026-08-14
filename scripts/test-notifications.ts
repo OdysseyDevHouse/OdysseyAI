@@ -115,9 +115,12 @@ async function main() {
       (await unreadCount(SITE, userA, capsWith('purchasing.view'))) === 0)
 
     // A row outside B's audience stays unread for the day a role grants it.
+    // Asserted on the PROBE row, not the raw count — real producers write to
+    // this table too, and their rows are unread for a fresh fixture user.
     await markAllRead(SITE, userB, NO_CAPABILITIES)
+    const bAfterSweep = await listNotifications(SITE, userB, capsWith('purchasing.view'), { limit: 100 })
     ok('*** mark-all only touches VISIBLE rows ***',
-      (await unreadCount(SITE, userB, capsWith('purchasing.view'))) === 1,
+      bAfterSweep.some((n) => n.title === `${TAG} purchasing row` && n.readAt === null),
       'the purchasing row is still unread for B')
 
     /* ── 4. Fail-soft ──────────────────────────────────────────────────── */
