@@ -7,6 +7,7 @@ import { capabilitiesForRole, can, type Capability } from './site/permissions'
 import { siteQueryOne } from './siteDb'
 import { incomeStatement, type IncomeStatement, type DateRange } from './site/financialStatements'
 import { subtypeRank } from './glModel'
+import { addDays, daysBetweenDates } from './site/interestRules'
 import { round, toNum } from './decimals'
 
 /**
@@ -209,6 +210,27 @@ async function tradingFor(siteId: number, from: string, to: string): Promise<Per
 }
 
 /**
+ * One read that must never fail the whole row.
+ *
+ * Schema drifts between sites: a store can be behind on migrations and lack the
+ * shift tables entirely. Its SALES are still worth showing, so a missing table
+ * yields null here rather than throwing out to perSite and turning the store
+ * into an error chip. Reserved for figures that are genuinely supplementary —
+ * a store whose sales cannot be read IS an error, and still reports as one.
+ */
+async function safeQueryOne(
+  siteId: number,
+  sql: string,
+  params: unknown[] = [],
+): Promise<Row | null> {
+  try {
+    return await siteQueryOne<Row>(siteId, sql, params)
+  } catch {
+    return null
+  }
+}
+
+/**
  * The trading picture per store: today, the month so far, the same span a
  * period earlier, stock at cost, and the month's leak figures.
  *
@@ -240,25 +262,6 @@ export async function groupDashboard(
       tradingFor(siteId, range.prevFrom, range.prevTo),
       siteQueryOne<Row>(
         siteId,
-        `SELECT COALESCE(SUM(l.line_total_incl), 0) AS incl,
-                COALESCE(SUM(l.line_total_excl), 0) AS excl,
-                COALESCE(SUM(l.unit_cost_excl * l.qty), 0) AS cost
-           FROM sales_document_lines l
-           JOIN sales_documents d ON d.id = l.document_id
-          WHERE d.status = 'finalised'
-            AND d.doc_type IN ('invoice','credit_sale')
-            AND d.document_date BETWEEN ? AND ?`,
-        [range.monthFrom, range.monthTo],
-      ),
-      siteQueryOne<Row>(
-        siteId,
-        `SELECT COUNT(*) AS n FROM sales_documents
-          WHERE status = 'finalised' AND doc_type = 'invoice'
-            AND document_date BETWEEN ? AND ?`,
-        [range.monthFrom, range.monthTo],
-      ),
-      siteQueryOne<Row>(
-        siteId,
         `SELECT COUNT(*) AS n, COALESCE(SUM(total_incl), 0) AS total
            FROM sales_documents
           WHERE status = 'finalised' AND doc_type = 'invoice'
@@ -270,20 +273,235 @@ export async function groupDashboard(
         `SELECT COALESCE(SUM(stock_on_hand * average_cost), 0) AS v
            FROM products WHERE is_archived = 0`,
       ),
+      /* The variance signed off at close, not one recomputed here — the shift
+         row stores it precisely so the figure on a report is the one somebody
+         put their name to. Shifts are dated by when they OPENED. */
+      safeQueryOne(
+        siteId,
+        `SELECT COALESCE(SUM(variance), 0) AS v
+           FROM shifts
+          WHERE closed_at IS NOT NULL
+            AND DATE(opened_at) BETWEEN ? AND ?`,
+        [range.monthFrom, range.monthTo],
+      ),
+      /* Cancellations and discounts, the two leak figures a head office reads
+         together. 'cancelled' is the only value there is — 022 merged 'void'
+         into it — and the discount comes off finalised documents only, since a
+         discount on a cancelled sale never happened. */
+      safeQueryOne(
+        siteId,
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'cancelled' THEN total_incl END), 0) AS void_value,
+           COALESCE(SUM(status = 'cancelled'), 0)                               AS void_count,
+           COALESCE(SUM(CASE WHEN status = 'finalised' THEN discount_total END), 0) AS discount_value
+         FROM sales_documents
+        WHERE document_date BETWEEN ? AND ?`,
+        [range.monthFrom, range.monthTo],
+      ),
     ])
 
-    const excl = toNum(monthLines?.excl)
     return {
       today: { turnoverIncl: toNum(todayDocs?.total), saleCount: Number(todayDocs?.n ?? 0) },
-      month: {
-        turnoverIncl: toNum(monthLines?.incl),
-        turnoverExcl: excl,
-        grossProfit: round(excl - toNum(monthLines?.cost), 2),
-        saleCount: Number(monthDocs?.n ?? 0),
-      },
+      month,
+      previous,
       stockValue: round(toNum(stock?.v), 2),
+      cashVariance: round(toNum(variance?.v), 2),
+      exceptions: {
+        voidValue: round(toNum(exceptions?.void_value), 2),
+        voidCount: Number(exceptions?.void_count ?? 0),
+        discountValue: round(toNum(exceptions?.discount_value), 2),
+      },
     }
   })
+}
+
+/* ── Dashboard arithmetic ─────────────────────────────────────────────────── */
+
+/**
+ * The month to date, and the SAME NUMBER OF DAYS of the month before.
+ *
+ * The equal-length window is the whole point. Comparing 1–14 August against the
+ * whole of July reports every store in the group as catastrophically down until
+ * the last day of the month, which is worse than showing no comparison at all.
+ *
+ * Pure, and exported so a test can prove the boundaries — month lengths differ,
+ * so 14 days into March compares against 1–14 February, and the 31st of a month
+ * compares against a 30-day month's last day rather than rolling into the next.
+ */
+export function monthToDateWindows(todayIso: string): {
+  monthFrom: string
+  monthTo: string
+  prevFrom: string
+  prevTo: string
+} {
+  const monthFrom = `${todayIso.slice(0, 7)}-01`
+  const elapsed = daysBetweenDates(monthFrom, todayIso)
+
+  // The day before this month started IS the last day of the previous month,
+  // whatever its length — no month-length table needed.
+  const prevTo = addDays(monthFrom, -1)
+  const prevFrom = `${prevTo.slice(0, 7)}-01`
+
+  return {
+    monthFrom,
+    monthTo: todayIso,
+    prevFrom,
+    // Same elapsed days into the previous month, clamped so a 31st never spills
+    // past the end of a 30-day month.
+    prevTo: minDate(addDays(prevFrom, elapsed), prevTo),
+  }
+}
+
+function minDate(a: string, b: string): string {
+  return a < b ? a : b
+}
+
+/**
+ * Percentage change, or null when there is nothing to compare against.
+ *
+ * Null rather than zero or Infinity: a store that took R0 last month and R50k
+ * this month has not grown by 100%, or by any other number — the honest answer
+ * is that the comparison does not exist, and the screen says "no prior period"
+ * instead of inventing a figure.
+ */
+export function percentChange(current: number, previous: number): number | null {
+  if (previous === 0) return null
+  return round(((current - previous) / Math.abs(previous)) * 100, 1)
+}
+
+/** Gross profit as a percentage of turnover, null when nothing was sold. */
+export function marginPct(grossProfit: number, turnoverExcl: number): number | null {
+  if (turnoverExcl === 0) return null
+  return round((grossProfit / turnoverExcl) * 100, 1)
+}
+
+/**
+ * Months of stock cover at the current run rate — stock at cost divided by a
+ * month's cost of sales.
+ *
+ * Null when nothing sold: infinite cover is not a number, and a store with
+ * stock and no sales is a different problem from one with twelve months' worth.
+ */
+export function stockCoverMonths(stockValue: number, monthCostOfSales: number): number | null {
+  if (monthCostOfSales <= 0) return null
+  return round(stockValue / monthCostOfSales, 1)
+}
+
+/** What a store is being flagged for, in the order a manager would want it. */
+export type StoreExceptionKind = 'unreadable' | 'margin-drop' | 'cash-short' | 'sales-drop' | 'stock-cover'
+
+export type StoreException = {
+  siteId: number
+  name: string
+  kind: StoreExceptionKind
+  /** One line, already phrased for a person: "GP down 4.2 pts vs last month". */
+  detail: string
+}
+
+/** Thresholds for the exception strip. Named, so the screen is not full of magic numbers. */
+export const EXCEPTION_LIMITS = {
+  /** Percentage POINTS of margin lost against the prior period. */
+  marginDropPts: 2,
+  /** Rands short on the drawer over the month, ignoring direction. */
+  cashVariance: 500,
+  /** Percent decline in turnover against the prior period. */
+  salesDropPct: 10,
+  /** Months of stock on hand at the current run rate. */
+  stockCoverMonths: 6,
+} as const
+
+/**
+ * The stores that need looking at, worst first.
+ *
+ * This is what turns the screen from a table into a dashboard: a chain owner
+ * opens it to find out WHICH STORE needs them today, and a grid of figures
+ * makes them work that out for themselves every morning.
+ *
+ * A store can raise more than one flag — a store both short on cash and losing
+ * margin is exactly the one to look at first, and collapsing that to a single
+ * reason would hide half of why.
+ */
+export function storeExceptions(rows: SiteResult<GroupDashboardRow>[]): StoreException[] {
+  const out: StoreException[] = []
+
+  for (const row of rows) {
+    if (!row.ok) {
+      out.push({
+        siteId: row.siteId,
+        name: row.name,
+        kind: 'unreadable',
+        detail: 'This store could not be read',
+      })
+      continue
+    }
+
+    const d = row.data
+    const nowMargin = marginPct(d.month.grossProfit, d.month.turnoverExcl)
+    const wasMargin = marginPct(d.previous.grossProfit, d.previous.turnoverExcl)
+    if (nowMargin !== null && wasMargin !== null) {
+      const drop = round(wasMargin - nowMargin, 1)
+      if (drop >= EXCEPTION_LIMITS.marginDropPts) {
+        out.push({
+          siteId: row.siteId,
+          name: row.name,
+          kind: 'margin-drop',
+          detail: `Gross profit down ${drop} points on last month`,
+        })
+      }
+    }
+
+    if (Math.abs(d.cashVariance) >= EXCEPTION_LIMITS.cashVariance) {
+      const short = d.cashVariance < 0
+      out.push({
+        siteId: row.siteId,
+        name: row.name,
+        kind: 'cash-short',
+        detail: `Drawer ${short ? 'short' : 'over'} ${formatRands(Math.abs(d.cashVariance))} this month`,
+      })
+    }
+
+    const salesChange = percentChange(d.month.turnoverIncl, d.previous.turnoverIncl)
+    if (salesChange !== null && salesChange <= -EXCEPTION_LIMITS.salesDropPct) {
+      out.push({
+        siteId: row.siteId,
+        name: row.name,
+        kind: 'sales-drop',
+        detail: `Turnover down ${Math.abs(salesChange)}% on last month`,
+      })
+    }
+
+    // Cost of sales for the month, from the figures already read.
+    const cover = stockCoverMonths(d.stockValue, d.month.turnoverExcl - d.month.grossProfit)
+    if (cover !== null && cover >= EXCEPTION_LIMITS.stockCoverMonths) {
+      /* Past a couple of years the exact figure stops being information: "479.7
+         months" and "over 2 years" say the same thing to a manager, and only
+         one of them reads like a number somebody should act on. */
+      const phrase =
+        cover >= 24 ? 'Over 2 years of stock on hand' : `${cover} months of stock on hand`
+      out.push({
+        siteId: row.siteId,
+        name: row.name,
+        kind: 'stock-cover',
+        detail: `${phrase} at the current rate`,
+      })
+    }
+  }
+
+  // Worst first: a store nobody can read outranks a soft margin, because it
+  // means every other figure on the screen is missing that store's trade.
+  const rank: Record<StoreExceptionKind, number> = {
+    unreadable: 0,
+    'cash-short': 1,
+    'margin-drop': 2,
+    'sales-drop': 3,
+    'stock-cover': 4,
+  }
+  return out.sort((a, b) => rank[a.kind] - rank[b.kind])
+}
+
+/** Thousands-separated rands with no decimals — for a one-line exception note. */
+function formatRands(n: number): string {
+  return `R${Math.round(n).toLocaleString('en-ZA')}`
 }
 
 /* ── Consolidated income statement ────────────────────────────────────────── */

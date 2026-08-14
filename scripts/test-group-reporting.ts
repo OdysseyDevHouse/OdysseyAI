@@ -13,6 +13,13 @@ import {
   groupDashboard,
   consolidatedIncomeStatement,
   mergeIncomeStatements,
+  monthToDateWindows,
+  percentChange,
+  marginPct,
+  stockCoverMonths,
+  storeExceptions,
+  type GroupDashboardRow,
+  type SiteResult,
 } from '../src/lib/groupReporting'
 import { incomeStatement, type IncomeStatement } from '../src/lib/site/financialStatements'
 import { groupForSite } from '../src/lib/storeGroups'
@@ -145,6 +152,7 @@ async function main() {
 
   const dash = await groupDashboard(withGhost, {
     todayIso: '2026-08-14', monthFrom: '2026-08-01', monthTo: '2026-08-31',
+    prevFrom: '2026-07-01', prevTo: '2026-07-14',
   })
   ok('*** the dashboard reads every reachable store ***',
     dash.filter((r) => r.ok).length === 2 && dash.some((r) => !r.ok && r.siteId === 999),
@@ -163,6 +171,85 @@ async function main() {
   ok('*** perSite turns a throw into a per-store error ***',
     results.length === 3 && results.filter((r) => r.ok).length === 2 &&
     results.some((r) => !r.ok && r.error === 'boom'))
+
+  /* ── 6. Dashboard arithmetic, pure ───────────────────────────────────── */
+
+  // Mid-month: the comparison must be the SAME number of days, not all of July.
+  const aug = monthToDateWindows('2026-08-14')
+  ok('*** month-to-date compares against an equal span, not the whole month ***',
+    aug.monthFrom === '2026-08-01' && aug.monthTo === '2026-08-14' &&
+    aug.prevFrom === '2026-07-01' && aug.prevTo === '2026-07-14',
+    `${aug.prevFrom}..${aug.prevTo}`)
+
+  // March 30th against February, which has no 30th — the clamp.
+  const mar = monthToDateWindows('2026-03-30')
+  ok('  a day the previous month does not have clamps to its last',
+    mar.prevFrom === '2026-02-01' && mar.prevTo === '2026-02-28',
+    `${mar.prevFrom}..${mar.prevTo}`)
+
+  // January reaches back across the year boundary.
+  const jan = monthToDateWindows('2026-01-10')
+  ok('  January compares against December of the previous year',
+    jan.prevFrom === '2025-12-01' && jan.prevTo === '2025-12-10',
+    `${jan.prevFrom}..${jan.prevTo}`)
+
+  // The 1st: a one-day window against the 1st of the prior month.
+  const first = monthToDateWindows('2026-05-01')
+  ok('  the 1st compares against the 1st',
+    first.prevFrom === '2026-04-01' && first.prevTo === '2026-04-01',
+    `${first.prevFrom}..${first.prevTo}`)
+
+  ok('*** percentChange is null with no prior period, never Infinity ***',
+    percentChange(50000, 0) === null && percentChange(0, 0) === null)
+  ok('  and is a real percentage otherwise',
+    percentChange(150, 100) === 50 && percentChange(50, 100) === -50)
+
+  ok('*** marginPct is null on no turnover ***', marginPct(0, 0) === null)
+  ok('  and a percentage of the EXCLUSIVE figure otherwise',
+    marginPct(25, 100) === 25)
+
+  ok('*** stockCover is null when nothing sold — infinite cover is not a number ***',
+    stockCoverMonths(100000, 0) === null)
+  ok('  and months of cover otherwise', stockCoverMonths(300, 100) === 3)
+
+  /* The exception strip is the screen's whole point, so its thresholds are
+     asserted rather than eyeballed. */
+  const dashRow = (over: Partial<GroupDashboardRow>): SiteResult<GroupDashboardRow> => ({
+    siteId: 7, name: 'Test', ok: true,
+    data: {
+      today: { turnoverIncl: 0, saleCount: 0 },
+      month: { turnoverIncl: 100, turnoverExcl: 100, grossProfit: 30, saleCount: 1 },
+      previous: { turnoverIncl: 100, turnoverExcl: 100, grossProfit: 30, saleCount: 1 },
+      stockValue: 0, cashVariance: 0,
+      exceptions: { voidValue: 0, voidCount: 0, discountValue: 0 },
+      ...over,
+    },
+  })
+
+  ok('*** a steady store raises nothing ***', storeExceptions([dashRow({})]).length === 0)
+
+  const shortDrawer = storeExceptions([dashRow({ cashVariance: -750 })])
+  ok('*** a drawer R750 short is flagged ***',
+    shortDrawer.length === 1 && shortDrawer[0].kind === 'cash-short',
+    shortDrawer[0]?.detail)
+
+  ok('  but R100 short is not — the threshold has to mean something',
+    storeExceptions([dashRow({ cashVariance: -100 })]).length === 0)
+
+  const marginSlide = storeExceptions([
+    dashRow({ month: { turnoverIncl: 100, turnoverExcl: 100, grossProfit: 20, saleCount: 1 } }),
+  ])
+  ok('*** a 10-point margin drop is flagged ***',
+    marginSlide.some((e) => e.kind === 'margin-drop'), marginSlide[0]?.detail)
+
+  const unreadable = storeExceptions([{ siteId: 9, name: 'Dead', ok: false, error: 'no db' }])
+  ok('*** an unreadable store IS an exception, and ranks first ***',
+    unreadable.length === 1 && unreadable[0].kind === 'unreadable')
+
+  const both2 = storeExceptions([dashRow({ cashVariance: -900, month: { turnoverIncl: 100, turnoverExcl: 100, grossProfit: 10, saleCount: 1 } })])
+  ok('  a store can raise more than one flag, worst first',
+    both2.length === 2 && both2[0].kind === 'cash-short',
+    both2.map((e) => e.kind).join(' > '))
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)
