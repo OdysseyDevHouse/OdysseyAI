@@ -134,6 +134,8 @@ export type StockTake = {
   status: StockTakeStatus
   scope: StockTakeScope
   scopeRefId: number | null
+  /** The cycle-count programme that generated this sheet, if any (145). */
+  programmeId: number | null
   reference: string | null
   note: string | null
   frozenAt: Date | null
@@ -207,6 +209,8 @@ function mapTake(r: Row, lines: StockTakeLine[] = []): StockTake {
     status: String(r.status) as StockTakeStatus,
     scope: String(r.scope) as StockTakeScope,
     scopeRefId: r.scope_ref_id === null || r.scope_ref_id === undefined ? null : Number(r.scope_ref_id),
+    programmeId:
+      r.programme_id === null || r.programme_id === undefined ? null : Number(r.programme_id),
     reference: (r.reference as string | null) ?? null,
     note: (r.note as string | null) ?? null,
     frozenAt: (r.frozen_at as Date | null) ?? null,
@@ -224,7 +228,7 @@ function mapTake(r: Row, lines: StockTakeLine[] = []): StockTake {
 
 const SELECT_TAKE = `
   SELECT t.id, t.document_number, t.document_date, t.location_id, t.status,
-         t.scope, t.scope_ref_id, t.reference, t.note, t.frozen_at,
+         t.scope, t.scope_ref_id, t.programme_id, t.reference, t.note, t.frozen_at,
          t.posted_at, t.cancelled_at,
          t.cancel_reason, t.variance_qty, t.variance_value, t.user_name,
          l.code AS location_code, l.name AS location_name,
@@ -311,6 +315,8 @@ export type StockTakeInput = {
   note?: string | null
   /** For scope 'manual' — the exact products to count. */
   productIds?: readonly number[]
+  /** The cycle-count programme that generated this sheet (145). */
+  programmeId?: number | null
   /** Include products whose pile is zero. Off by default; see buildSheetLines. */
   includeZeroStock?: boolean
   /**
@@ -493,13 +499,14 @@ export async function createStockTake(
       // deleted does not burn a number out of the sequence.
       const [res] = await tx.execute(
         `INSERT INTO stock_takes
-           (document_date, location_id, status, scope, scope_ref_id, reference, note, user_id, user_name)
-         VALUES (?,?, 'draft', ?,?,?,?,?,?)`,
+           (document_date, location_id, status, scope, scope_ref_id, programme_id, reference, note, user_id, user_name)
+         VALUES (?,?, 'draft', ?,?,?,?,?,?,?)`,
         [
           docDate,
           input.locationId,
           input.scope,
           input.scopeRefId ?? null,
+          input.programmeId ?? null,
           input.reference?.trim()?.slice(0, 60) || null,
           input.note?.trim()?.slice(0, 400) || null,
           actor.userId,

@@ -24,6 +24,45 @@ function revalidateStock() {
   revalidatePath('/products')
 }
 
+export async function generateCycleCountsAction(): Promise<
+  | { ok: true; generated: number; skipped: { name: string; reason: string }[] }
+  | { ok: false; error: string }
+> {
+  const ctx = await actorFor('stock.adjust')
+  if ('ok' in ctx) return ctx
+  const { generateDueCycleCounts } = await import('@/lib/site/cycleCounts')
+  const outcome = await generateDueCycleCounts(ctx.siteId, ctx.actor)
+  revalidatePath('/stock-takes')
+  return {
+    ok: true,
+    generated: outcome.generated.length,
+    skipped: outcome.skipped.map((s) => ({ name: s.name, reason: s.reason })),
+  }
+}
+
+export async function saveCycleProgrammeAction(
+  id: number | null,
+  input: import('@/lib/site/cycleCounts').SaveProgrammeInput,
+): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+  const ctx = await actorFor('stock.adjust')
+  if ('ok' in ctx) return ctx
+  const { saveCycleProgramme } = await import('@/lib/site/cycleCounts')
+  const result = await saveCycleProgramme(ctx.siteId, ctx.actor, id, input)
+  if (result.ok) revalidatePath('/stock-takes')
+  return result
+}
+
+export async function deleteCycleProgrammeAction(
+  id: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('stock.adjust')
+  if ('ok' in ctx) return ctx
+  const { deleteCycleProgramme } = await import('@/lib/site/cycleCounts')
+  await deleteCycleProgramme(ctx.siteId, ctx.actor, id)
+  revalidatePath('/stock-takes')
+  return { ok: true }
+}
+
 export async function createStockTakeAction(input: StockTakeInput) {
   const ctx = await actorFor('stock.adjust')
   if ('ok' in ctx) return ctx

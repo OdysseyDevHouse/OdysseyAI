@@ -96,6 +96,7 @@
     "test:party-records": "tsx --conditions=react-server --env-file=.env scripts/test-party-records.ts",
     "test:transfers": "tsx --conditions=react-server --env-file=.env scripts/test-transfers.ts",
     "test:stock-takes": "tsx --conditions=react-server --env-file=.env scripts/test-stock-takes.ts",
+    "test:cycle-counts": "tsx --conditions=react-server --env-file=.env scripts/test-cycle-counts.ts",
     "test:adjustments": "tsx --conditions=react-server --env-file=.env scripts/test-adjustments.ts",
     "test:report-columns": "tsx --conditions=react-server --env-file=.env scripts/test-report-columns.ts",
     "test:template-fields": "tsx --conditions=react-server scripts/test-template-fields.ts",

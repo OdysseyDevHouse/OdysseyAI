@@ -1,8 +1,14 @@
 import { requireCapability } from '@/lib/auth'
 import { listStockTakes } from '@/lib/site/stockTakes'
+import { listCycleProgrammes } from '@/lib/site/cycleCounts'
+import { listLocations } from '@/lib/site/stockLocations'
+import { listDepartments } from '@/lib/site/departments'
+import { listBrands } from '@/lib/site/lookups'
+import { listSuppliers } from '@/lib/site/suppliers'
 import { formatQty } from '@/lib/decimals'
 import { PageHeader, PageBody, PrimaryLink, Card, StatStrip, StatTile, Icons } from '@/components/ui'
 import StockTakesTable from './StockTakesTable'
+import CycleCountsPanel from './CycleCountsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +16,14 @@ export default async function StockTakesPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('stock.adjust')
 
-  const takes = await listStockTakes(siteId, { status: 'all', limit: 200 })
+  const [takes, programmes, locations, departments, brands, suppliers] = await Promise.all([
+    listStockTakes(siteId, { status: 'all', limit: 200 }),
+    listCycleProgrammes(siteId),
+    listLocations(siteId, false, true),
+    listDepartments(siteId),
+    listBrands(siteId),
+    listSuppliers(siteId, { limit: 500 }),
+  ])
 
   const open = takes.filter((t) => t.status === 'draft' || t.status === 'counting')
   const posted = takes.filter((t) => t.status === 'posted')
@@ -46,6 +59,14 @@ export default async function StockTakesPage() {
             hint="Net value across every posted count"
           />
         </StatStrip>
+
+        <CycleCountsPanel
+          programmes={programmes}
+          locations={locations.map((l) => ({ id: l.id, name: l.name }))}
+          departments={departments.map((d) => ({ id: d.id, name: d.name }))}
+          brands={brands.map((b) => ({ id: b.id, name: b.name }))}
+          suppliers={suppliers.items.map((s) => ({ id: s.id, name: s.name }))}
+        />
 
         <Card>
           <StockTakesTable takes={takes} />
