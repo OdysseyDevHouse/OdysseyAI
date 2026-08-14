@@ -6,6 +6,7 @@ import { listHeadlines } from '@/lib/site/jobHeadlines'
 import { listAssetTypes } from '@/lib/site/jobAssets'
 import { listJobTeams } from '@/lib/site/jobTeams'
 import { listUsers } from '@/lib/site/users'
+import { createPortalToken } from '@/lib/publicPortalToken'
 import { getSettings } from '@/lib/site/settings'
 import { PageHeader, PageBody, Callout, TextLink } from '@/components/ui'
 import { ROLE_LABEL } from '@/lib/jobStatusModel'
@@ -52,6 +53,7 @@ export default async function JobWorkflowPage() {
     assetTypes,
     teams,
     siteUsers,
+    portalToken,
   ] = await Promise.all([
     listJobStatuses(siteId, true),
     listJobBoards(siteId, true),
@@ -82,6 +84,11 @@ export default async function JobWorkflowPage() {
       'job_intake_blurb',
       'job_intake_max_per_phone',
       'job_intake_show_headlines',
+      // The portal (§4.3).
+      'portal_enabled',
+      'portal_allow_comments',
+      'portal_allow_uploads',
+      'portal_allow_quote_accept',
     ]),
     /*
      * Tolerant: a nicety on a setup screen. A site mid-migration must still be
@@ -95,7 +102,12 @@ export default async function JobWorkflowPage() {
     // Likewise 126.
     listJobTeams(siteId, true).catch(() => []),
     listUsers(siteId).catch(() => []),
+    // The portal sign-in link (§4.3). Deterministic, so what somebody put on
+    // their website keeps working; null if SESSION_SECRET is missing.
+    createPortalToken(siteId).catch(() => null),
   ])
+
+  const portalUrl = portalToken ? `${process.env.APP_URL ?? ''}/portal/${portalToken}` : null
 
   // Which statuses each board draws, so the editor opens with them ticked.
   const columnsByBoard: Record<number, number[]> = {}
@@ -188,6 +200,11 @@ export default async function JobWorkflowPage() {
           intakeBlurb={settings.job_intake_blurb}
           intakeMaxPerPhone={Number(settings.job_intake_max_per_phone) || 0}
           intakeShowHeadlines={settings.job_intake_show_headlines === '1'}
+          portalEnabled={settings.portal_enabled === '1'}
+          portalAllowComments={settings.portal_allow_comments === '1'}
+          portalAllowUploads={settings.portal_allow_uploads === '1'}
+          portalAllowQuoteAccept={settings.portal_allow_quote_accept === '1'}
+          portalUrl={portalUrl}
           /*
            * Both read on the SERVER. isConfigured() reads process.env, which a
            * client component cannot see — and a panel that cannot tell whether

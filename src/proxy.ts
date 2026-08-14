@@ -69,6 +69,19 @@ const PUBLIC_PREFIXES = [
   //
   // The trailing slash matters, as it does for the routes above.
   '/request/',
+  /*
+   * The customer portal. Public in the sense that the SIGN-IN page must be
+   * reachable without a session — everything past it checks one.
+   *
+   * The guard is not this list. /portal/* reads the customer session cookie and
+   * redirects to the sign-in when there is none, and every query behind it names
+   * the customer id from that session in its WHERE. This entry only stops the
+   * staff proxy from bouncing a customer to a back-office login they can never
+   * pass, which is what it would otherwise do.
+   *
+   * The trailing slash matters, as it does for the routes above.
+   */
+  '/portal/',
   '/api/payments/payfast/',
   // A technician's calendar subscription. Google, Outlook and Apple all fetch it
   // on a schedule with no browser and no cookie, so behind the gate they would

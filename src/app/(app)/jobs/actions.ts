@@ -1417,6 +1417,10 @@ export async function saveJobSettingsAction(input: {
   intakeBlurb: string
   intakeMaxPerPhone: number
   intakeShowHeadlines: boolean
+  portalEnabled: boolean
+  portalAllowComments: boolean
+  portalAllowUploads: boolean
+  portalAllowQuoteAccept: boolean
 }): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
   const ctx = await actorFor('jobs.setup')
   if ('ok' in ctx) return ctx
@@ -1491,6 +1495,10 @@ export async function saveJobSettingsAction(input: {
     ['job_intake_blurb', intakeBlurb || 'Tell us what you need and we will come back to you.'],
     ['job_intake_max_per_phone', String(cap)],
     ['job_intake_show_headlines', input.intakeShowHeadlines ? '1' : '0'],
+    ['portal_enabled', input.portalEnabled ? '1' : '0'],
+    ['portal_allow_comments', input.portalAllowComments ? '1' : '0'],
+    ['portal_allow_uploads', input.portalAllowUploads ? '1' : '0'],
+    ['portal_allow_quote_accept', input.portalAllowQuoteAccept ? '1' : '0'],
   ] as const) {
     const saved = await setSetting(ctx.siteId, key, value)
     if (!saved.ok) return saved

@@ -1057,17 +1057,19 @@ each unblocks:
 | §16 | ~~Teams, job-level multi-assignee~~ | **shipped, phase 14.** What remains is a *named* team as a reusable entity ("the North crew"), which is a different feature from putting several people on a job. |
 | §15 | ~~Recurring jobs~~ | **shipped, phase 12** |
 | §12 | ~~Workflow automation~~ | **shipped as six named rules, phases 14 + 15.** Three notifications and three time-based automations, each separately switchable. A general *engine* remains deliberately unbuilt — see the deferred table. |
-| §4.2, §4.3 | Customer portal, public forms | The `source` enum reserves `portal`/`public_form`, so a job can *claim* an origin with no way to arrive that way |
+| §4.2, §4.3 | ~~Customer portal, public forms~~ | **both shipped, phases 28 + 29.** A public request lands in a holding area and becomes a job only when somebody accepts it with a chosen customer; the portal signs a customer in by emailed link and shows their own jobs, quotes and invoices. `source='public_form'` is finally written rather than merely reserved. |
 | §36 | ~~Notifications~~ | **email subset shipped, phases 14 + 15.** In-app notifications and SMS remain separate platform projects; the header bell is still a dead button. |
 | §37.2 | ~~Kanban grouping, saved views, bulk actions~~ | **shipped, phase 17.** All three. |
 | §60 | ~~Week / technician-lane calendar~~ | **shipped, phase 18** — read-only. Drag-to-reschedule is a phase of its own: it needs a conflict check, an audit trail and a notification. |
 | Phase-1 dashboards | **2 of 4 shipped, phases 20 + 21.** Operations and My Work. The Scheduling dashboard is largely covered by the week grid and the board; the Financial one wants the costing reports first. |
-| Phase-1 reports | **8 of 15 named, phase 22** — and the blocker is gone. `jobTime`, `jobTravel` and `jobVisits` are now catalog sources, so every remaining report can be built without a developer. |
+| Phase-1 reports | ~~**15 of 15**~~ — **eight in phase 22, the remaining seven in phase 31.** No new code for the second batch: making `jobTime`, `jobTravel` and `jobVisits` catalog sources turned twelve developer tasks into a list of column choices. |
 | §27 | Receipt OCR | Deferred by agreement |
 | §33 | ~~Deposits on a job~~ | **shipped, phase 23** — as a customer receipt through the cashbook, so the ledger and the bank account both move. No new table. |
 | §41 | Offline mobile | Deferred by agreement |
 | §14.2 | ~~ICS calendar feed~~ | **shipped, phase 24.** Read-only, signed per-technician token, nothing stored. Two-way sync stays deferred — see the deferred table for why. |
-| — | Custom fields, feedback/rating, sign-off, ticket module, intake requests | From the PRD's own "AI can make a call" list |
+| — | ~~Custom fields~~ | **shipped, phase 26** — as a module serving jobs, customers and equipment rather than a job feature |
+| — | ~~Feedback / rating~~ | **shipped, phase 27** — one star and one sentence, asked on close, off by default |
+| — | Sign-off, ticket module | Still outstanding, from the PRD's own "AI can make a call" list. The ticket module is a second product rather than a phase |
 
 ## What phase 10 shipped
 
@@ -2252,6 +2254,203 @@ Smith"), and the job's picker offers the crew with its size. Applying it put
 **two individual rows** on job 12 with the person picker correctly reporting
 "Everybody is already on this job". Site 1 restored exactly as found — crew,
 people, activity rows removed and job notifications switched back on.
+
+---
+
+## What phases 26–29 shipped
+
+Four features, five migrations (127–131), and the two that face the public are
+the reason this section is long.
+
+### 26 — Custom fields, as a module rather than a job feature
+
+`custom_field_defs` + `custom_field_values` (127), serving **jobs, customers and
+equipment**. The plan warned that a general mechanism built inside job cards ends
+up job-shaped; the defence is that `entity` is a parameter everywhere, nothing in
+the module mentions a job, and a fourth entity would need no edit to it.
+
+Three refusals carry the design:
+
+| | |
+|---|---|
+| **The type is frozen once anybody fills it in** | a date becoming a number makes every existing answer unreadable. Nothing fails at the database — the values are text — which is exactly why it is refused in code |
+| **A field holding answers cannot be deleted** | the FK cascades, so allowing it would silently destroy every answer. Retiring is offered instead |
+| **Each entity's action pins its own entity** | the panel is shared, so `entity` arrives from the client. A `customers.edit` holder must not be able to write job fields by changing a prop |
+
+Emptying a value DELETES its row rather than storing `''`, so "never answered"
+and "answered, then cleared" stay distinguishable — which a required-field check
+depends on.
+
+### 27 — Feedback: one star, one sentence
+
+`job_feedback` (128), a 60-day signed token with its own audience, a public page
+at `/feedback/[token]`, and the request fired when a job closes — **off by
+default**, because switching it on emails every customer from the business's own
+address.
+
+Asking and answering are separate events: `requestFeedback` writes a row with
+`requested_at` and no rating, so rows with no `responded_at` are people who were
+asked and said nothing. That is what makes a response RATE real rather than
+guessed. The row is claimed BEFORE the email goes, so a job closed, reopened and
+closed again asks once.
+
+The public page shows the job number and title and **nothing else** — no
+customer name, no money, no phone number, no staff name. Verified by fetching it
+and grepping for each.
+
+### 28 — Intake: a holding area, not a job
+
+`job_requests` (129). The load-bearing decision: a public submission does **not**
+become a job and does **not** become a customer. It sits in a queue until
+somebody matches it to an account and presses Accept.
+
+That is also how the rest of the app already behaves — a guest booking is a
+`reservations` row with loose contact strings, a guest order carries a nullable
+customer link, a product review has none at all, and there is exactly one
+`INSERT INTO customers` in the codebase that no public path reaches.
+
+Guarded by what reservations already proves: a **honeypot answered with a
+fabricated success** (a bot that is told it failed tries again differently), a
+**per-phone daily cap**, and a switch that fails closed. No IP blocking and no
+captcha — the repo has neither, and building a general rate limiter inside a
+job-cards feature would be a platform decision made in the wrong place.
+
+Verified through the real form: the submission produced **one row, zero jobs,
+zero customers**, and accepting it raised JC001221 with `source='public_form'`,
+the customer's own words kept, and the request marked accepted with who decided.
+
+### 29 — The portal, and what a customer may see
+
+Magic-link sign-in (130), plus **131** — two columns, `is_customer` and
+`is_visible`, on `party_comments` and `party_documents`.
+
+131 is the one to understand. Those tables were staff-only: every comment in them
+was written by somebody in the back office ABOUT a customer. Both columns default
+to **0**, so switching the portal on publishes nothing written before it existed.
+Verified: zero pre-existing comments became visible.
+
+**What a customer sees:** their jobs and stage names, booked visits, issued
+quotes, finalised invoices, shared files and messages, and custom fields marked
+public.
+
+**What is withheld, deliberately:** cost, margin, internal notes, which
+technician is assigned, hours worked, kilometres driven, draft invoices, and
+anything belonging to anybody else. `portalData.ts` names every column in every
+SELECT for this reason — a `SELECT *` would publish whatever column somebody adds
+to `job_cards` next year.
+
+Access control is one boring rule applied everywhere: **the customer id from the
+session appears in the WHERE of every statement**, so another customer's job
+returns nothing rather than something. Verified over HTTP — job 1222 returned
+**404**, identical to a job that does not exist.
+
+The link is 32 random bytes, stored **hashed**, **single use**, and 30 minutes
+long. `consumeLink` does its UPDATE first with `used_at IS NULL` in the WHERE, so
+the database decides the race and two simultaneous clicks produce one session.
+
+Paying reuses `/pay` rather than rebuilding it: the portal mints a payment intent
+with the `debtor_invoice` purpose 038 already anticipated, and hands off.
+
+### Five bugs the probes caught
+
+1. **`portalAuth` queried `customers.is_active`** — that column does not exist. Every sign-in would have thrown.
+2. **`portalData` assumed four things that were not there**: `party_comments.is_internal`, `party_documents.original_name`, a `job_appointments` table, and `sales_documents.doc_date`. An earlier claim that partyComments already split visible from internal was simply wrong — hence 131.
+3. **The enter route was a page, and a page cannot set a cookie.** Next refuses cookie writes outside an action or a route handler. Rewritten as a Route Handler, which is the one primitive that is both a GET and allowed to write.
+4. **`applyTeamToJob` counted no-op re-assignments as additions** (phase 25).
+5. **The cross-audience token test passed vacuously** — `createCalendarToken` takes positional arguments, so it was rejecting a malformed token rather than a real one.
+
+### Verified
+
+Four module probes: **29 + 29 + 44 + 36 checks, all passing.** Typecheck,
+`check-ui-kit` and `next build` clean. Migrations 127–131 applied to sites 1 and
+2, with columns confirmed present on both by `SHOW COLUMNS`.
+
+Driven live in Chrome for each: the custom-field dialog's live refusals, a real
+field saved and filled in on a job, the feedback form's five keyboard-operable
+stars and a 2-star rating landing flagged "Worth a look", the intake form's
+hidden honeypot and progressive enabling, and the portal's whole journey —
+sign-in, single use proven by a second click, job list, job detail, a message
+sent and attributed to the customer.
+
+One thing the browser showed that no assertion would: a browser **signed into the
+back office as staff** is still sent to the customer sign-in. The two session
+types are properly separate.
+
+Two pre-existing failures remain and are not from this work: `test:serials` fails
+on leaked `INS*` instruction fixtures (the documented instructions-suite leak),
+and the smoke crawl's `/sales/[id]/bill` 404s because it sampled a finalised
+invoice, which has no bill to show.
+
+---
+
+## What phases 30–31 shipped
+
+### 30 — The checklist template bug
+
+A defect found by the phase 26–29 audit and fixed here, because it was quietly
+destroying reporting that the schema was built for.
+
+`saveHeadline` replaced its items wholesale — `DELETE` then re-`INSERT` — on the
+stated grounds that a template is a short list somebody edits as a whole and
+diffing bought nothing. That reasoning was wrong, and the cost was invisible:
+every re-insert allocated fresh ids, and `job_card_items.headline_item_id` is
+`ON DELETE SET NULL`, so **every prior job's link back to its template item was
+nulled on every save**. Correcting one typo destroyed it, and nothing said so.
+
+`114_job_headlines.sql` keeps that column for one purpose — reporting on which
+kind of work generates the most unfinished tasks — so the damage landed exactly
+where nobody would look.
+
+Now an item arriving with an id is UPDATED, one without is inserted, and only ids
+the user actually removed are deleted. The client half already sent the ids; only
+the server was throwing them away. Parts stay a wholesale replace, because
+nothing copies a part id onto a job.
+
+The `UPDATE` carries `headline_id = ?` in its WHERE, and that is not decoration:
+the id arrives from a form, so without it somebody could edit an item belonging to
+another template by changing a number. Asserted.
+
+**16 checks**, including the one that matters: after an edit, the job still points
+back at the template (2 of 2 linked), while keeping its own snapshot wording.
+
+### 31 — The remaining seven reports
+
+Where the work is · Jobs past their date · Work by customer · Promises that were
+missed · Costs nobody has decided about · What was written off · Billable work
+not yet invoiced.
+
+**No new code.** Seven specs against sources that already existed — which is the
+dividend phase 22 was for.
+
+Two things the verification caught that a typecheck could not:
+
+**A blank column that looked broken.** `jobs-open-by-stage` grouped `MAX(daysOverdue)`,
+and the job version of that field is `DATEDIFF(now, due_at)` with no clamp — so a
+job not yet due is a NEGATIVE number, and a stage with nothing late rendered
+empty. Swapped for `MAX(daysOpen)`, which answers the same question honestly.
+`jobs-overdue` still uses the field, where its `> 0` filter guarantees the sign.
+
+**Three reports gated too tightly.** I put the cost-bearing ones behind
+`jobs.cost` and `jobs.invoice`. `(J15)` refused them, and it was right: every job
+template is gated on `jobs.view` and **degrades** for somebody without the cost
+right — a saved report should open with fewer columns rather than refuse. Tighter
+permissions would have defeated the mechanism the plan asked for.
+
+The `(J15)` count assertion moved from 8 to 15, which is what it exists for: it
+made adding reports a decision somebody records rather than a drift nobody sees.
+
+### Verified
+
+**16 + 15 checks** across two probes; every one of the fifteen job reports RUN
+rather than typechecked, old and new, plus their degraded form for a technician.
+Typecheck, `check-ui-kit`, build and `test:job-cards` all clean. Smoke crawl
+reports only the pre-existing `/sales/[id]/bill` sampling failure.
+
+Confirmed on screen: all seven appear in `/reports`, and `jobs-open-by-stage`
+renders 5 stages over 8 jobs with the full toolbar working for free. Three of the
+seven return no rows, and each was checked against the database — genuinely no
+overdue jobs, no late responses, no written-off lines — with the write-off report
+proven to return data by borrowing one line and putting it straight back.
 
 ---
 

@@ -22,6 +22,7 @@ import { reconcileBatches } from '@/lib/site/batches'
 import { reconcileCustomFields } from '@/lib/site/customFields'
 import { reconcileJobFeedback } from '@/lib/site/jobFeedback'
 import { reconcileJobIntake } from '@/lib/site/jobIntake'
+import { reconcilePortal } from '@/lib/site/portalAuth'
 import { listSequences, verifySequence } from '@/lib/site/sequences'
 import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
@@ -61,6 +62,7 @@ import {
   UnseenPoorTable,
   LapsedFeedbackTable,
   StaleRequestTable,
+  ReusedLinkTable,
   OrphanRequestTable,
   SeriesCursorTable,
 } from './DriftTables'
@@ -130,6 +132,7 @@ export default async function ReconciliationPage() {
     customFields,
     feedback,
     intake,
+    portal,
     sequences,
   ] = await Promise.all([
     reconcileStock(siteId),
@@ -172,6 +175,8 @@ export default async function ReconciliationPage() {
     reconcileJobFeedback(siteId).catch(() => null),
     // Likewise 129.
     reconcileJobIntake(siteId).catch(() => null),
+    // Likewise 130.
+    reconcilePortal(siteId).catch(() => null),
     listSequences(siteId),
   ])
 
@@ -915,6 +920,33 @@ export default async function ReconciliationPage() {
                 </Card>
               )}
             </>
+          ))}
+
+        {/*
+         * Only a REUSED token counts as drift.
+         *
+         * Unused links are ordinary — people ignore emails — so the count is
+         * shown as information rather than colouring the page. A shared token
+         * hash is the opposite: the unique key makes it impossible, so a row
+         * here means the constraint is gone and one link could sign two
+         * different customers in.
+         */}
+        {portal !== null &&
+          (portal.reusedLinks.length === 0 ? (
+            <Callout tone="success" title="Customer sign-in links">
+              Every link is unique to one customer.
+              {portal.unusedLinks > 0
+                ? ` ${portal.unusedLinks} asked for and not yet used — worth a look if that number never falls, because it usually means the emails are not arriving.`
+                : ''}
+            </Callout>
+          ) : (
+            <Card>
+              <CardHeader
+                title="One sign-in link, two customers"
+                description="The most serious thing this screen can report. A unique key is supposed to make this impossible, so a row here means that constraint is missing — and a link could sign the wrong person into somebody else's account."
+              />
+              <ReusedLinkTable rows={portal.reusedLinks} />
+            </Card>
           ))}
 
         {intake !== null &&
