@@ -18,6 +18,9 @@ import { reconcileJobPeople } from '@/lib/site/jobPeople'
 import { reconcileJobAutomations } from '@/lib/site/jobAutomations'
 import { reconcileJobDeposits } from '@/lib/site/jobDeposits'
 import { reconcileJobTeams } from '@/lib/site/jobTeams'
+import { reconcileCustomFields } from '@/lib/site/customFields'
+import { reconcileJobFeedback } from '@/lib/site/jobFeedback'
+import { reconcileJobIntake } from '@/lib/site/jobIntake'
 import { listSequences, verifySequence } from '@/lib/site/sequences'
 import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
@@ -52,6 +55,12 @@ import {
   OrphanDepositTable,
   GoneCrewMemberTable,
   EmptyCrewTable,
+  OrphanValueTable,
+  InvalidValueTable,
+  UnseenPoorTable,
+  LapsedFeedbackTable,
+  StaleRequestTable,
+  OrphanRequestTable,
   SeriesCursorTable,
 } from './DriftTables'
 
@@ -116,6 +125,9 @@ export default async function ReconciliationPage() {
     jobAutomations,
     jobDeposits,
     jobTeams,
+    customFields,
+    feedback,
+    intake,
     sequences,
   ] = await Promise.all([
     reconcileStock(siteId),
@@ -150,6 +162,12 @@ export default async function ReconciliationPage() {
     reconcileJobDeposits(siteId).catch(() => null),
     // Likewise 126.
     reconcileJobTeams(siteId).catch(() => null),
+    // Likewise 127.
+    reconcileCustomFields(siteId).catch(() => null),
+    // Likewise 128.
+    reconcileJobFeedback(siteId).catch(() => null),
+    // Likewise 129.
+    reconcileJobIntake(siteId).catch(() => null),
     listSequences(siteId),
   ])
 
@@ -253,6 +271,22 @@ export default async function ReconciliationPage() {
     : 0
 
   const crewDrift = jobTeams ? jobTeams.goneMembers.length + jobTeams.emptyTeams.length : 0
+
+  const fieldDrift = customFields
+    ? customFields.orphaned.length + customFields.invalid.length
+    : 0
+
+  /*
+   * Only the UNSEEN POOR ratings count as drift.
+   *
+   * A customer who never answered is not a fault — most people do not — so the
+   * lapsed list is shown for information when there is anything else to see, and
+   * never on its own. Colouring the page for it would make the section
+   * permanently red at every business that has this switched on.
+   */
+  const feedbackDrift = feedback ? feedback.unseenPoor.length : 0
+
+  const intakeDrift = intake ? intake.stale.length + intake.orphaned.length : 0
 
   /*
    * Three of the four equipment checks are bugs.
@@ -808,6 +842,93 @@ export default async function ReconciliationPage() {
                     description="Neither is an error when it is saved — a crew mid-build legitimately has nobody marked yet. What it means when it persists is that choosing this crew either adds nobody at all, or adds people with nobody named as the person to ask about them."
                   />
                   <EmptyCrewTable rows={jobTeams.emptyTeams} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {customFields !== null &&
+          (fieldDrift === 0 ? (
+            <Callout tone="success" title="Custom fields">
+              Every answer belongs to a record that still exists, and still fits the field it was
+              given for.
+            </Callout>
+          ) : (
+            <>
+              {customFields.orphaned.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="An answer whose record is gone"
+                    description="One mechanism serves jobs, customers and equipment, so no foreign key can protect these — three entities cannot have three keys on one column. Harmless until an id is reused, which is exactly why they are worth seeing."
+                  />
+                  <OrphanValueTable rows={customFields.orphaned} />
+                </Card>
+              )}
+
+              {customFields.invalid.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="An answer that no longer fits its field"
+                    description="Almost always a choice removed from a list after somebody had already picked it. Not repaired, because only a person knows what the old answer should become — and the form still offers it back so opening a record does not silently blank it."
+                  />
+                  <InvalidValueTable rows={customFields.invalid} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {intake !== null &&
+          (intakeDrift === 0 ? (
+            <Callout tone="success" title="Requests from outside">
+              Nothing is sitting in the queue unanswered, and every accepted request still has
+              its job.
+            </Callout>
+          ) : (
+            <>
+              {intake.stale.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Waiting days for somebody to look"
+                    description="Every row is a person who asked for work and has heard nothing. Not a data fault — which is exactly why nothing else would ever surface it — and the most likely thing on this screen to be costing money right now."
+                  />
+                  <StaleRequestTable rows={intake.stale} />
+                </Card>
+              )}
+
+              {intake.orphaned.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Accepted, but the job is gone"
+                    description="The link is ON DELETE SET NULL rather than CASCADE, deliberately: a request is evidence that somebody asked, and deleting the job must not erase that. What is left is a request claiming a job that no longer exists."
+                  />
+                  <OrphanRequestTable rows={intake.orphaned} />
+                </Card>
+              )}
+            </>
+          ))}
+
+        {feedback !== null &&
+          (feedbackDrift === 0 ? (
+            <Callout tone="success" title="What customers said">
+              Every rating of three or less has been read by somebody.
+            </Callout>
+          ) : (
+            <>
+              <Card>
+                <CardHeader
+                  title="A poor rating nobody has read"
+                  description="The most expensive row this app can hold. A customer took the trouble to say the work was not good enough, and so far it has gone to nobody — which is worse than never having asked."
+                />
+                <UnseenPoorTable rows={feedback.unseenPoor} />
+              </Card>
+
+              {feedback.lapsed.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Asked, never answered, link now expired"
+                    description="Not a fault — most people do not reply. Shown as a number because a response rate of nothing usually means the emails are not arriving rather than that every customer ignored them."
+                  />
+                  <LapsedFeedbackTable rows={feedback.lapsed} />
                 </Card>
               )}
             </>

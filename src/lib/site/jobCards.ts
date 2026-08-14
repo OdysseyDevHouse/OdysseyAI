@@ -13,6 +13,7 @@ import { recordServiceOnClose } from './jobAssets'
 // And jobPeople, which reads its own table plus job_cards and never imports back.
 // Everything it exposes here is fire-and-forget: see the call sites.
 import { notifyAssigned, notifyClosed, notifyStatusChanged } from './jobPeople'
+import { requestFeedback } from './jobFeedback'
 import { logActivity, logActivityTx, diffFields, type Actor } from './activityLog'
 import {
   BILLABLE_STATES,
@@ -1198,6 +1199,15 @@ export async function setStatus(
       const name = result.statusName
       if ('closed' in result && result.closed) {
         void notifyClosed(siteId, actor, jobId).catch(() => {})
+        /*
+         * And ask the customer what they thought (§ feedback).
+         *
+         * Same terms again, and one more reason on top: requestFeedback CLAIMS a
+         * row before it sends, so a job closed, reopened and closed again asks
+         * once. It reads its own switch, which is off by default, and it returns
+         * a reason rather than throwing whatever goes wrong.
+         */
+        void requestFeedback(siteId, jobId).catch(() => {})
       } else {
         void notifyStatusChanged(siteId, actor, jobId, name).catch(() => {})
       }

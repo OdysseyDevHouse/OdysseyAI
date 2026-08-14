@@ -1293,3 +1293,211 @@ export function EmptyCrewTable({ rows }: { rows: EmptyCrewRow[] }) {
   ]
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.teamId}-${r.reason}`} />
 }
+
+/* ── Custom fields (127) ───────────────────────────────────────────────────── */
+
+const CF_ENTITY_HREF: Record<string, (id: number) => string> = {
+  job: (id) => `/jobs/${id}`,
+  customer: (id) => `/customers/${id}`,
+  equipment: (id) => `/jobs/equipment/${id}`,
+}
+
+type OrphanValueRow = { fieldName: string; entity: string; entityId: number; value: string }
+
+export function OrphanValueTable({ rows }: { rows: OrphanValueRow[] }) {
+  const columns: Column<OrphanValueRow>[] = [
+    {
+      key: 'field',
+      header: 'Field',
+      sortable: true,
+      sortValue: (r) => r.fieldName,
+      cell: (r) => <TextLink href="/setup/custom-fields">{r.fieldName}</TextLink>,
+    },
+    {
+      key: 'record',
+      header: 'Was on',
+      sortable: true,
+      sortValue: (r) => `${r.entity}${r.entityId}`,
+      // Deliberately NOT a link: the record is gone, and a link to a 404 is
+      // worse than a number somebody can search the activity log for.
+      cell: (r) => <Badge tone="warning">{r.entity} #{r.entityId}</Badge>,
+    },
+    {
+      key: 'value',
+      header: 'What it said',
+      cell: (r) => <span className="text-ink-2">{r.value}</span>,
+    },
+  ]
+  return (
+    <DataTable
+      columns={columns}
+      rows={rows}
+      getRowKey={(r) => `${r.entity}-${r.entityId}-${r.fieldName}`}
+    />
+  )
+}
+
+type InvalidValueRow = OrphanValueRow & { why: string }
+
+export function InvalidValueTable({ rows }: { rows: InvalidValueRow[] }) {
+  const columns: Column<InvalidValueRow>[] = [
+    {
+      key: 'field',
+      header: 'Field',
+      sortable: true,
+      sortValue: (r) => r.fieldName,
+      cell: (r) => <TextLink href="/setup/custom-fields">{r.fieldName}</TextLink>,
+    },
+    {
+      key: 'record',
+      header: 'On',
+      sortable: true,
+      sortValue: (r) => `${r.entity}${r.entityId}`,
+      cell: (r) => (
+        <TextLink href={(CF_ENTITY_HREF[r.entity] ?? ((id: number) => `#${id}`))(r.entityId)}>
+          {r.entity} #{r.entityId}
+        </TextLink>
+      ),
+    },
+    {
+      key: 'value',
+      header: 'What it holds',
+      cell: (r) => <Badge tone="warning">{r.value}</Badge>,
+    },
+    {
+      key: 'why',
+      header: 'Why that is wrong now',
+      cell: (r) => <span className="text-muted">{r.why}</span>,
+    },
+  ]
+  return (
+    <DataTable
+      columns={columns}
+      rows={rows}
+      getRowKey={(r) => `${r.entity}-${r.entityId}-${r.fieldName}`}
+    />
+  )
+}
+
+/* ── Customer feedback (128) ──────────────────────────────────────────────── */
+
+type UnseenPoorRow = {
+  jobId: number
+  jobNumber: string | null
+  rating: number
+  comment: string | null
+}
+
+export function UnseenPoorTable({ rows }: { rows: UnseenPoorRow[] }) {
+  const columns: Column<UnseenPoorRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}`}>{r.jobNumber ?? `Job ${r.jobId}`}</TextLink>,
+    },
+    {
+      key: 'rating',
+      header: 'Rated',
+      sortable: true,
+      sortValue: (r) => r.rating,
+      // One and two are red, three amber: three out of five is lukewarm, not a
+      // complaint, and colouring it the same would teach people to ignore red.
+      cell: (r) => (
+        <Badge tone={r.rating <= 2 ? 'danger' : 'warning'}>{r.rating} out of 5</Badge>
+      ),
+    },
+    {
+      key: 'comment',
+      header: 'What they said',
+      cell: (r) => <span className="text-ink-2">{r.comment ?? 'No comment left'}</span>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+type LapsedRow = { jobId: number; jobNumber: string | null; requestedAt: string | null }
+
+export function LapsedFeedbackTable({ rows }: { rows: LapsedRow[] }) {
+  const columns: Column<LapsedRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}`}>{r.jobNumber ?? `Job ${r.jobId}`}</TextLink>,
+    },
+    {
+      key: 'asked',
+      header: 'Asked',
+      sortable: true,
+      sortValue: (r) => r.requestedAt ?? '',
+      cell: (r) => <span className="text-ink-2">{r.requestedAt ?? '—'}</span>,
+    },
+    {
+      key: 'state',
+      header: 'Outcome',
+      cell: () => <Badge tone="neutral">Never answered, link expired</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.jobId} />
+}
+
+/* ── Public job requests (129) ────────────────────────────────────────────── */
+
+type StaleRequestRow = {
+  id: number
+  reference: string | null
+  contactName: string
+  createdAt: string | null
+}
+
+export function StaleRequestTable({ rows }: { rows: StaleRequestRow[] }) {
+  const columns: Column<StaleRequestRow>[] = [
+    {
+      key: 'ref',
+      header: 'Request',
+      sortable: true,
+      sortValue: (r) => r.reference ?? '',
+      cell: (r) => <TextLink href="/jobs/requests">{r.reference ?? `#${r.id}`}</TextLink>,
+    },
+    {
+      key: 'who',
+      header: 'Who asked',
+      sortable: true,
+      sortValue: (r) => r.contactName,
+      cell: (r) => <span className="text-ink-2">{r.contactName}</span>,
+    },
+    {
+      key: 'when',
+      header: 'Waiting since',
+      sortable: true,
+      sortValue: (r) => r.createdAt ?? '',
+      cell: (r) => <Badge tone="warning">{r.createdAt ?? '—'}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.id} />
+}
+
+type OrphanRequestRow = { id: number; reference: string | null; jobCardId: number | null }
+
+export function OrphanRequestTable({ rows }: { rows: OrphanRequestRow[] }) {
+  const columns: Column<OrphanRequestRow>[] = [
+    {
+      key: 'ref',
+      header: 'Request',
+      sortable: true,
+      sortValue: (r) => r.reference ?? '',
+      cell: (r) => (
+        <TextLink href="/jobs/requests?status=accepted">{r.reference ?? `#${r.id}`}</TextLink>
+      ),
+    },
+    {
+      key: 'state',
+      header: 'Says it became',
+      cell: () => <Badge tone="warning">A job that no longer exists</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.id} />
+}

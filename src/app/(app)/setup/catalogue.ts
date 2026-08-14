@@ -421,6 +421,18 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        /* Under System rather than under Jobs, because it is not a job feature:
+           the same mechanism serves jobs, customers and equipment, and filing it
+           beside the job workflow would be the first step towards it becoming
+           job-shaped. */
+        href: '/setup/custom-fields',
+        description: 'Extra fields of your own on jobs, customers and equipment.',
+        keywords: 'custom fields extra user defined attributes metadata bespoke',
+        icon: 'Tag',
+        tone: 'violet',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/reconciliation',
         description: 'Does the system still add up? Stock, balances and document numbers.',
         keywords: 'drift integrity check invariants audit',

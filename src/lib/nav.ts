@@ -303,6 +303,19 @@ export const NAV: NavSection[] = [
         description: 'What is on your plate right now',
       },
       {
+        /* Before the job list, because a request is what comes BEFORE a job:
+           somebody outside the business asking, waiting for an answer. Leaving
+           it further down would make the queue the thing nobody opens, which is
+           the one failure mode this screen exists to prevent. */
+        label: 'Requests',
+        href: '/jobs/requests',
+        icon: Mail,
+        built: true,
+        capability: 'jobs.edit',
+        keywords: 'request requests intake enquiry enquiries public form website callout lead new work incoming',
+        description: 'Work asked for from outside, waiting to be accepted',
+      },
+      {
         label: 'Job list',
         href: '/jobs',
         icon: ListOrdered,
@@ -424,6 +437,7 @@ export const SUBPAGE_LABELS = {
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
      boards that show them, and somebody looking for either should find it. */
   '/setup/job-workflow': 'Job workflow',
+  '/setup/custom-fields': 'Custom fields',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
   '/setup/import': 'Import data',

@@ -12,6 +12,7 @@ import {
   Field,
   Input,
   Switch,
+  TextLink,
   useToast,
 } from '@/components/ui'
 import { saveJobSettingsAction } from '../../jobs/actions'
@@ -48,6 +49,12 @@ export default function NotificationsPanel({
   autoVisitReminder: initialReminder,
   autoVisitHours: initialHours,
   autoInvoice: initialInvoice,
+  feedbackEnabled: initialFeedback,
+  feedbackIntro: initialFeedbackIntro,
+  intakeEnabled: initialIntake,
+  intakeBlurb: initialIntakeBlurb,
+  intakeMaxPerPhone: initialIntakeCap,
+  intakeShowHeadlines: initialIntakeHeadlines,
   mailConfigured,
   cronConfigured,
 }: {
@@ -61,6 +68,12 @@ export default function NotificationsPanel({
   autoVisitReminder: boolean
   autoVisitHours: number
   autoInvoice: boolean
+  feedbackEnabled: boolean
+  feedbackIntro: string
+  intakeEnabled: boolean
+  intakeBlurb: string
+  intakeMaxPerPhone: number
+  intakeShowHeadlines: boolean
   /** SMTP is set up. Without it every switch below is decoration. */
   mailConfigured: boolean
   /** JOB_AUTOMATION_CRON_SECRET is set, so something can call the daily run. */
@@ -80,6 +93,12 @@ export default function NotificationsPanel({
   const [reminder, setReminder] = useState(initialReminder)
   const [hours, setHours] = useState(String(initialHours))
   const [invoice, setInvoice] = useState(initialInvoice)
+  const [feedback, setFeedback] = useState(initialFeedback)
+  const [feedbackIntro, setFeedbackIntro] = useState(initialFeedbackIntro)
+  const [intake, setIntake] = useState(initialIntake)
+  const [intakeBlurb, setIntakeBlurb] = useState(initialIntakeBlurb)
+  const [intakeCap, setIntakeCap] = useState(String(initialIntakeCap))
+  const [intakeHeadlines, setIntakeHeadlines] = useState(initialIntakeHeadlines)
 
   function toggleEvent(key: string, on: boolean) {
     setEvents((prev) => (on ? [...new Set([...prev, key])] : prev.filter((e) => e !== key)))
@@ -98,6 +117,12 @@ export default function NotificationsPanel({
         autoVisitReminder: reminder,
         autoVisitHours: Number(hours),
         autoInvoice: invoice,
+        feedbackEnabled: feedback,
+        feedbackIntro,
+        intakeEnabled: intake,
+        intakeBlurb,
+        intakeMaxPerPhone: Number(intakeCap),
+        intakeShowHeadlines: intakeHeadlines,
       })
       if (result.ok) {
         toast.success(result.message)
@@ -262,6 +287,90 @@ export default function NotificationsPanel({
                 invoicing screen. But a job closed by mistake will leave an invoice against a
                 real customer that has to be found and voided.
               </Callout>
+            )}
+
+            {/* Feedback sits with the automations because that is what it is:
+                something the system does on its own when a job closes. It is
+                last because it is the only one that emails a CUSTOMER. */}
+            <Switch
+              checked={feedback}
+              onChange={setFeedback}
+              label="Ask the customer to rate the work"
+              hint="One email when a job closes, with a link to one star rating and a comment box."
+            />
+            {feedback && (
+              <>
+                <Callout tone="warning" title="This one emails your customers">
+                  Every customer whose job closes gets an email from your address. Nobody is
+                  asked twice about the same job, and the link stops working after two months.
+                </Callout>
+                <Field
+                  label="How the email opens"
+                  hint="Your own words. The rating link follows underneath."
+                >
+                  <Input
+                    value={feedbackIntro}
+                    onChange={(e) => setFeedbackIntro(e.target.value)}
+                    maxLength={190}
+                  />
+                </Field>
+              </>
+            )}
+          </div>
+
+          {/* Its own group, because it is the only setting on this screen that
+              opens a door INWARDS. Everything above decides what the business
+              sends out; this decides who may write to it. */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">
+              Requests from outside
+            </p>
+
+            <Switch
+              checked={intake}
+              onChange={setIntake}
+              label="Let people ask for work through a public link"
+              hint="A form anybody can fill in. What arrives waits in Jobs › Requests until somebody accepts it."
+            />
+
+            {intake && (
+              <>
+                <Callout tone="warning" title="This one is open to the internet">
+                  Nothing that arrives is a job, a customer or a figure in any report until
+                  somebody in the business accepts it — that is what makes it safe. Find the link
+                  to share on{' '}
+                  <TextLink href="/jobs/requests">Jobs &rsaquo; Requests</TextLink>.
+                </Callout>
+
+                <Field label="What the form says" hint="Shown above the fields.">
+                  <Input
+                    value={intakeBlurb}
+                    onChange={(e) => setIntakeBlurb(e.target.value)}
+                    maxLength={190}
+                  />
+                </Field>
+
+                <Field
+                  label="How many one phone number may send in a day"
+                  hint="The only limit there is. Zero switches it off, which is not advised on a public form."
+                >
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    max={100}
+                    value={intakeCap}
+                    onChange={(e) => setIntakeCap(e.target.value)}
+                  />
+                </Field>
+
+                <Switch
+                  checked={intakeHeadlines}
+                  onChange={setIntakeHeadlines}
+                  label="Offer the kinds of work you do"
+                  hint="Puts your kinds of work in a dropdown on the form. Off keeps what you offer private."
+                />
+              </>
             )}
           </div>
         </div>

@@ -34,6 +34,7 @@ import { getSetting, SETTING_DEFAULTS } from '@/lib/site/settings'
 import { peopleFor } from '@/lib/site/jobPeople'
 import { depositSummary } from '@/lib/site/jobDeposits'
 import { listJobTeams } from '@/lib/site/jobTeams'
+import { valuesFor } from '@/lib/site/customFields'
 import { listAccounts } from '@/lib/site/bankAccounts'
 import { listUsers } from '@/lib/site/users'
 import { storedMillis } from '@/lib/jobStatusModel'
@@ -43,6 +44,10 @@ import JobPartsPanel from './JobPartsPanel'
 import JobSlaCard from './JobSlaCard'
 import JobChecks from './JobChecks'
 import JobPeoplePanel from './JobPeoplePanel'
+import CustomFieldsPanel from '@/components/CustomFieldsPanel'
+import { setCustomValuesAction } from '../actions'
+import JobFeedbackCard from './JobFeedbackCard'
+import { feedbackFor } from '@/lib/site/jobFeedback'
 import JobDepositsPanel from './JobDepositsPanel'
 import JobAssetCard from './JobAssetCard'
 
@@ -154,6 +159,8 @@ export default async function JobPage({
     deposits,
     bankAccounts,
     teams,
+    customValues,
+    feedback,
   ] = await Promise.all([
       listJobStatuses(siteId, false),
       can(capabilities, 'jobs.invoice') ? billableLines(siteId, jobId) : Promise.resolve([]),
@@ -204,6 +211,12 @@ export default async function JobPage({
       // Crews (§16). Tolerant of a site without 126 — an empty list simply
       // hides the picker.
       listJobTeams(siteId, false),
+      // Custom fields (§24). Tolerant of a site without 127, and the panel
+      // renders nothing at all when the business has defined none.
+      valuesFor(siteId, 'job', jobId),
+      // Feedback (§ rating). Tolerant of a site without 128; null when the
+      // customer was never asked, which is the ordinary case.
+      feedbackFor(siteId, jobId),
     ])
 
   const overdue = !job.isClosed && job.dueAt !== null && storedMillis(job.dueAt) < Date.now()
@@ -343,6 +356,19 @@ export default async function JobPage({
           />
         )}
 
+        {/* Above the roster and below the equipment, and only once somebody has
+            been asked. A rating is about work already finished, so it reads as
+            the outcome of the job rather than part of running it — but a poor
+            one is the most important thing on the screen, which is why it is not
+            buried at the bottom. */}
+        {tab === 'overview' && feedback !== null && (
+          <JobFeedbackCard
+            jobId={job.id}
+            feedback={feedback}
+            canEdit={can(capabilities, 'jobs.view')}
+          />
+        )}
+
         {/* Who, after what — a technician reading down the page wants the job and
             the equipment before the roster. */}
         {tab === 'overview' && (
@@ -363,6 +389,20 @@ export default async function JobPage({
               name: t.name,
               memberCount: t.members.length,
             }))}
+          />
+        )}
+
+        {/* Whatever this business records that the app does not ask for. After
+            the people and before the address: it is detail about the job, and a
+            technician wants the roster and the location first. Renders nothing
+            when no job fields are defined. */}
+        {tab === 'overview' && (
+          <CustomFieldsPanel
+            entity="job"
+            entityId={job.id}
+            fields={customValues}
+            canEdit={can(capabilities, 'jobs.edit') && !job.isClosed}
+            onSave={setCustomValuesAction}
           />
         )}
 
