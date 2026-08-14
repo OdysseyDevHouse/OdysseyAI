@@ -18,5 +18,11 @@ next-env.d.ts
 # Backed up alongside the site databases, not with the source.
 uploads/
 
+# Isolated checkouts for parallel agent sessions. Each is a full working tree
+# with its own node_modules and .env, and its work reaches main by merging its
+# branch — never by being committed from here. Tracking them would put a second
+# copy of the whole repo inside the repo.
+.claude/worktrees/
+
 .DS_Store
 Thumbs.db
