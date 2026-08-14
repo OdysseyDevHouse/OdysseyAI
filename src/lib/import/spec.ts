@@ -88,6 +88,16 @@ export type LookupTables = {
   customerGroupByName: Map<string, number>
   salesRepByName: Map<string, number>
   /**
+   * Product id by barcode — main barcodes AND the 143 aliases together.
+   *
+   * Main barcodes are deliberately not unique ("several products may share
+   * one"), so a shared barcode goes into `barcodeAmbiguous` instead: a row
+   * naming it is asked for the product code rather than silently filed
+   * against whichever product loaded first.
+   */
+  productIdByBarcode: Map<string, number>
+  barcodeAmbiguous: Set<string>
+  /**
    * Every existing code for THIS entity, upper-cased, for create-vs-update.
    *
    * Built from a raw query that includes closed/archived records. The list
@@ -112,6 +122,8 @@ export function emptyLookups(): LookupTables {
     supplierByCode: new Map(),
     customerGroupByName: new Map(),
     salesRepByName: new Map(),
+    productIdByBarcode: new Map(),
+    barcodeAmbiguous: new Set(),
     existingIdByCode: new Map(),
     dateFormat: null,
   }

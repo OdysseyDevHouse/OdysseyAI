@@ -361,10 +361,18 @@ export default async function ProductsPage({
               </PrimaryLink>
             </div>
           ) : (
-            <PrimaryLink href="/products/new">
-              <Plus size={15} />
-              New product
-            </PrimaryLink>
+            <div className="flex items-center gap-2">
+              {/* The whole catalogue, headed for Excel and back through the
+                  import — the round trip, not a view of this list's filters. */}
+              <ButtonLink variant="ghost" href="/api/products/export">
+                <Icons.Download size={15} />
+                Export
+              </ButtonLink>
+              <PrimaryLink href="/products/new">
+                <Plus size={15} />
+                New product
+              </PrimaryLink>
+            </div>
           )
         }
       />

@@ -4,6 +4,7 @@ import { departmentSpec } from './specs/departments'
 import { supplierSpec } from './specs/suppliers'
 import { customerSpec } from './specs/customers'
 import { productSpec } from './specs/products'
+import { supplierPriceSpec } from './specs/supplierPrices'
 
 /**
  * Everything that can be imported, by its id in the URL.
@@ -24,6 +25,8 @@ const SPECS: readonly ImportSpec<any>[] = [
   supplierSpec,
   customerSpec,
   productSpec,
+  // After products, because every row here points at one.
+  supplierPriceSpec,
 ]
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

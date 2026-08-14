@@ -54,6 +54,8 @@ export async function loadLookups(
     suppliers?: boolean
     customerGroups?: boolean
     salesReps?: boolean
+    /** Product resolution by barcode, main and 143 aliases together. */
+    productBarcodes?: boolean
     /** The table whose codes decide create-vs-update for this run. */
     existing?: 'products' | 'customers' | 'suppliers' | 'departments'
   },
@@ -130,6 +132,31 @@ export async function loadLookups(
     for (const row of rows) {
       lookups.salesRepByName.set(norm(String(row.name)), Number(row.id))
       if (row.code) lookups.salesRepByName.set(norm(String(row.code)), Number(row.id))
+    }
+  }
+
+  if (want.productBarcodes) {
+    // Main barcodes may be shared between products; alias barcodes (143) are
+    // strictly unique but can still collide with a main barcode on ANOTHER
+    // product. Every collision lands in barcodeAmbiguous, so a file using it
+    // is asked for the product code rather than guessing.
+    const rows = await siteQuery<RowDataPacket & { product_id: number; barcode: string }>(
+      siteId,
+      `SELECT id AS product_id, barcode FROM products
+        WHERE barcode IS NOT NULL AND barcode <> '' AND is_archived = 0
+       UNION ALL
+       SELECT pb.product_id, pb.barcode FROM product_barcodes pb
+        JOIN products p ON p.id = pb.product_id AND p.is_archived = 0`,
+    )
+    for (const row of rows) {
+      const key = norm(String(row.barcode))
+      const held = lookups.productIdByBarcode.get(key)
+      if (held !== undefined && held !== Number(row.product_id)) {
+        lookups.barcodeAmbiguous.add(key)
+        lookups.productIdByBarcode.delete(key)
+      } else if (!lookups.barcodeAmbiguous.has(key)) {
+        lookups.productIdByBarcode.set(key, Number(row.product_id))
+      }
     }
   }
 
