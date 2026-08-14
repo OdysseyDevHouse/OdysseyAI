@@ -39,6 +39,53 @@ import { getSetting } from './settings'
 
 type Row = RowDataPacket & Record<string, unknown>
 
+/**
+ * Every job an asset appears on — as the primary asset OR as one of the others.
+ *
+ * ── WHY THIS IS A SHARED STRING AND NOT FOUR QUERIES ───────────────────────
+ *
+ * Before 161 a job named one asset, and "the jobs for this asset" was
+ * `WHERE asset_id = ?` written out in ELEVEN places in this file: the history
+ * query, three separate job_count subqueries, an open-job count, the setter and
+ * the unlinker.
+ *
+ * Adding a join table and updating only the history query is the failure mode
+ * that looks like working software — an asset would show four jobs on its own
+ * screen and six in the history below it, and neither number would look
+ * obviously wrong. So every count and every listing goes through these two
+ * fragments, and a fifth caller cannot forget the second half.
+ *
+ * `?` binds the asset id. UNION rather than UNION ALL, so a job that names an
+ * asset BOTH as primary and in the join table is counted once — which is a
+ * shape the UNIQUE key does not prevent, because the two live in different
+ * tables.
+ */
+const JOB_IDS_FOR_ASSET = `
+  SELECT id FROM job_cards WHERE asset_id = ?
+  UNION
+  SELECT job_card_id FROM job_card_assets WHERE asset_id = ?`
+
+/**
+ * The same count, correlated to an outer `a.id`.
+ *
+ * ── WHY THIS IS NOT THE UNION ABOVE WRAPPED IN COUNT(*) ────────────────────
+ *
+ * Because MySQL will not do it. A derived table — `FROM (SELECT … ) x` — cannot
+ * see a column from the enclosing query, so the obvious
+ * `(SELECT COUNT(*) FROM (<union on a.id>) jc)` fails at runtime with
+ * "Unknown column 'a.id' in 'WHERE'". It typechecks, it reads correctly, and it
+ * throws the first time a screen loads.
+ *
+ * Counting job_cards with an OR over the two sources does correlate, and counts
+ * each job once without needing DISTINCT — a job is one row in job_cards
+ * whether it names the asset as primary, as secondary, or as both.
+ */
+const JOB_COUNT_FOR_ASSET = `
+  SELECT COUNT(*) FROM job_cards j
+   WHERE j.asset_id = a.id
+      OR EXISTS (SELECT 1 FROM job_card_assets ja
+                  WHERE ja.job_card_id = j.id AND ja.asset_id = a.id)`
+
 const text = (value: unknown): string | null => {
   if (value === null || value === undefined) return null
   const trimmed = String(value).trim()
@@ -253,7 +300,7 @@ const SELECT_ASSET = `
          a.is_active, a.retired_on, a.retired_reason,
          t.name AS type_name, t.identifier_label,
          c.name AS customer_name, sa.name AS address_name, p.code AS product_code,
-         (SELECT COUNT(*) FROM job_cards j WHERE j.asset_id = a.id) AS job_count
+         (${JOB_COUNT_FOR_ASSET}) AS job_count
     FROM customer_assets a
     LEFT JOIN asset_types t        ON t.id = a.asset_type_id
     LEFT JOIN customers c          ON c.id = a.customer_id
@@ -683,7 +730,7 @@ export async function deleteAsset(
   const asset = await siteQueryOne<Row>(
     siteId,
     `SELECT a.id, a.description,
-            (SELECT COUNT(*) FROM job_cards j WHERE j.asset_id = a.id) AS n
+            (${JOB_COUNT_FOR_ASSET}) AS n
        FROM customer_assets a WHERE a.id = ?`,
     [id],
   )
@@ -736,7 +783,7 @@ export async function jobAssetFor(
     `SELECT a.id, a.description, a.document_number, a.serial_text,
             a.warranty_until, a.next_service_on,
             COALESCE(t.identifier_label, 'Serial number') AS identifier_label,
-            (SELECT COUNT(*) FROM job_cards j2 WHERE j2.asset_id = a.id) AS job_count
+            (${JOB_COUNT_FOR_ASSET}) AS job_count
        FROM job_cards j
        JOIN customer_assets a  ON a.id = j.asset_id
        LEFT JOIN asset_types t ON t.id = a.asset_type_id
@@ -829,6 +876,181 @@ export async function setJobAsset(
   return { ok: true }
 }
 
+/* ── The other equipment on a job (18.4, migration 161) ───────────────────── */
+
+export type JobAssetRow = {
+  id: number
+  assetId: number
+  documentNumber: string | null
+  description: string
+  serialText: string | null
+  identifierLabel: string
+  warrantyUntil: string | null
+  isActive: boolean
+  note: string | null
+}
+
+/**
+ * The additional equipment on a job — never the primary one.
+ *
+ * The primary asset stays where it was, on `job_cards.asset_id`, and is read by
+ * `jobAssetFor()`. Keeping the two apart is what lets every existing cost,
+ * check and warranty question keep meaning something unambiguous: this list is
+ * "what else was looked at", not "the assets, one of which happens to be first".
+ */
+export async function otherJobAssets(
+  siteId: number,
+  jobId: number,
+): Promise<JobAssetRow[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT ja.id, ja.asset_id, ja.note,
+            a.document_number, a.description, a.serial_text, a.warranty_until, a.is_active,
+            COALESCE(t.identifier_label, 'Serial number') AS identifier_label
+       FROM job_card_assets ja
+       JOIN customer_assets a  ON a.id = ja.asset_id
+       LEFT JOIN asset_types t ON t.id = a.asset_type_id
+      WHERE ja.job_card_id = ?
+      ORDER BY ja.sort_order, ja.id`,
+    [jobId],
+  ).catch(() => [])
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    assetId: Number(r.asset_id),
+    documentNumber: text(r.document_number),
+    description: String(r.description),
+    serialText: text(r.serial_text),
+    identifierLabel: String(r.identifier_label),
+    warrantyUntil: dateOnly(r.warranty_until),
+    isActive: Number(r.is_active) === 1,
+    note: text(r.note),
+  }))
+}
+
+/**
+ * Put another piece of equipment on a job.
+ *
+ * Every guard `setJobAsset` applies applies here too, and for the same reasons —
+ * a wrong unit added as the fourth on a visit is exactly as wrong as a wrong
+ * primary, and the picker offers more chances to make the mistake.
+ */
+export async function addJobAsset(
+  siteId: number,
+  actor: Actor,
+  jobId: number,
+  assetId: number,
+  note: string | null = null,
+): Promise<AssetActionResult> {
+  const job = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id, status, customer_id, asset_id FROM job_cards WHERE id = ?`,
+    [jobId],
+  )
+  if (!job) return { ok: false, error: 'That job no longer exists.' }
+  if (String(job.status) !== 'open') {
+    return { ok: false, error: 'This job is closed, so its equipment cannot be changed.' }
+  }
+
+  /*
+   * The primary asset is not "another" one.
+   *
+   * Refused rather than silently ignored: somebody adding the unit already at
+   * the top of the screen has misread something, and a row that vanished on
+   * save would teach them the button was broken.
+   */
+  if (job.asset_id !== null && Number(job.asset_id) === assetId) {
+    return {
+      ok: false,
+      error: 'That is already the main piece of equipment on this job.',
+    }
+  }
+
+  const asset = await siteQueryOne<Row>(
+    siteId,
+    `SELECT a.id, a.description, a.customer_id, c.name AS customer_name
+       FROM customer_assets a
+       LEFT JOIN customers c ON c.id = a.customer_id
+      WHERE a.id = ?`,
+    [assetId],
+  )
+  if (!asset) return { ok: false, error: 'That equipment no longer exists.' }
+
+  // The same ownership guard setJobAsset applies. See its header: two customers
+  // owning the same model is the ordinary way the wrong unit gets picked, and
+  // the consequence is a warranty claim against the wrong account.
+  const assetCustomer = asset.customer_id === null ? null : Number(asset.customer_id)
+  const jobCustomer = job.customer_id === null ? null : Number(job.customer_id)
+  if (assetCustomer !== null && jobCustomer !== null && assetCustomer !== jobCustomer) {
+    return {
+      ok: false,
+      error: `${asset.description} belongs to ${asset.customer_name ?? 'another customer'}, not to this job's customer.`,
+    }
+  }
+
+  // INSERT IGNORE against uq_jca: adding the same unit twice is a mistake, not
+  // a quantity, and saying so beats a duplicate row or a raised error.
+  const result = await siteExecute(
+    siteId,
+    `INSERT IGNORE INTO job_card_assets (job_card_id, asset_id, note, sort_order)
+     VALUES (?, ?, ?, (SELECT COALESCE(MAX(x.sort_order), 0) + 1
+                         FROM (SELECT sort_order FROM job_card_assets
+                                WHERE job_card_id = ?) x))`,
+    [jobId, assetId, text(note), jobId],
+  )
+  if (result.affectedRows === 0) {
+    return { ok: false, error: `${asset.description} is already on this job.` }
+  }
+
+  await logActivity(siteId, actor, {
+    entity: 'job_card',
+    entityId: jobId,
+    action: 'asset_added',
+    detail: String(asset.description),
+  })
+  return { ok: true }
+}
+
+/**
+ * Take a piece of equipment off a job.
+ *
+ * The parts fitted and the checks done STAY — `fk_jcl_asset` and `fk_jci_asset`
+ * are ON DELETE SET NULL, so their `asset_id` becomes NULL rather than the rows
+ * going. The work happened; what is being withdrawn is the claim about which
+ * unit it was done to.
+ */
+export async function removeJobAsset(
+  siteId: number,
+  actor: Actor,
+  jobId: number,
+  assetId: number,
+): Promise<AssetActionResult> {
+  const job = await siteQueryOne<Row>(siteId, `SELECT id, status FROM job_cards WHERE id = ?`, [
+    jobId,
+  ])
+  if (!job) return { ok: false, error: 'That job no longer exists.' }
+  if (String(job.status) !== 'open') {
+    return { ok: false, error: 'This job is closed, so its equipment cannot be changed.' }
+  }
+
+  const result = await siteExecute(
+    siteId,
+    `DELETE FROM job_card_assets WHERE job_card_id = ? AND asset_id = ?`,
+    [jobId, assetId],
+  )
+  if (result.affectedRows === 0) {
+    return { ok: false, error: 'That equipment is not on this job.' }
+  }
+
+  await logActivity(siteId, actor, {
+    entity: 'job_card',
+    entityId: jobId,
+    action: 'asset_removed',
+    detail: `Equipment #${assetId} removed`,
+  })
+  return { ok: true }
+}
+
 /* ── Service history ──────────────────────────────────────────────────────── */
 
 export type AssetHistoryRow = {
@@ -840,6 +1062,12 @@ export type AssetHistoryRow = {
   reportedAt: string | null
   closedAt: string | null
   ownerName: string | null
+  /**
+   * True when the job was ABOUT this asset, false when it was one of several
+   * looked at on the visit (161). "We came out for this" and "we checked it
+   * while we were there" are different facts about a warranty.
+   */
+  isPrimary: boolean
 }
 
 /**
@@ -855,14 +1083,24 @@ export async function assetHistory(
 ): Promise<AssetHistoryRow[]> {
   const rows = await siteQuery<Row>(
     siteId,
+    /*
+     * Both halves (161): the jobs this asset is the SUBJECT of, and the jobs it
+     * was one of several on. A history that showed only the first would tell a
+     * technician the unit had never been touched on any multi-unit visit.
+     *
+     * `is_primary` is carried through because the distinction is real and worth
+     * showing: "we came out for this" and "we looked at it while we were there"
+     * are different facts about a warranty.
+     */
     `SELECT j.id, j.document_number, j.title, j.status, j.reported_at, j.closed_at,
-            j.owner_name, s.name AS status_name
+            j.owner_name, s.name AS status_name,
+            CASE WHEN j.asset_id = ? THEN 1 ELSE 0 END AS is_primary
        FROM job_cards j
        LEFT JOIN job_statuses s ON s.id = j.status_id
-      WHERE j.asset_id = ?
+      WHERE j.id IN (${JOB_IDS_FOR_ASSET})
       ORDER BY j.reported_at DESC, j.id DESC
       LIMIT ${Math.max(1, Math.min(500, Math.floor(limit)))}`,
-    [assetId],
+    [assetId, assetId, assetId],
   )
   return rows.map((r) => ({
     jobId: Number(r.id),
@@ -873,6 +1111,7 @@ export async function assetHistory(
     reportedAt: dateOnly(r.reported_at),
     closedAt: dateOnly(r.closed_at),
     ownerName: text(r.owner_name),
+    isPrimary: Number(r.is_primary) === 1,
   }))
 }
 
@@ -894,16 +1133,31 @@ export async function recordServiceOnClose(siteId: number, jobId: number): Promi
 
     await siteExecute(
       siteId,
+      /*
+       * EVERY asset on the job (161), not only the primary one.
+       *
+       * Closing a visit that serviced four units must stamp four units. Left as
+       * the primary alone, three of them would still be showing as due — and
+       * the due list is the screen this whole feature exists to feed, so the
+       * failure would be somebody driving out to a unit serviced last week.
+       *
+       * The subquery names both sources; a job that lists an asset twice (once
+       * primary, once in the join table) updates it once, because this is an
+       * UPDATE against customer_assets and not a per-row loop.
+       */
       `UPDATE customer_assets a
-         JOIN job_cards j ON j.asset_id = a.id
          LEFT JOIN asset_types t ON t.id = a.asset_type_id
           SET a.last_service_on = CURDATE(),
               a.next_service_on = CASE
                 WHEN t.service_months IS NULL THEN a.next_service_on
                 ELSE DATE_ADD(CURDATE(), INTERVAL t.service_months MONTH)
               END
-        WHERE j.id = ?`,
-      [jobId],
+        WHERE a.id IN (
+                SELECT asset_id FROM job_cards WHERE id = ? AND asset_id IS NOT NULL
+                UNION
+                SELECT asset_id FROM job_card_assets WHERE job_card_id = ?
+              )`,
+      [jobId, jobId],
     )
   } catch {
     // 115 has not run on this site. Closing the job matters more than the date.
@@ -949,16 +1203,37 @@ export async function reconcileAssets(siteId: number): Promise<AssetDrift> {
     ),
     siteQuery<Row>(
       siteId,
-      `SELECT j.id, j.document_number, j.asset_id
+      /*
+       * A job whose asset belongs to somebody else — checked across BOTH
+       * sources (161). Somebody adding the wrong unit to a multi-unit visit
+       * makes exactly this mistake, and the secondary case is the likelier one
+       * because the picker offers more choices.
+       */
+      `SELECT j.id, j.document_number, a.id AS asset_id
          FROM job_cards j
-         JOIN customer_assets a ON a.id = j.asset_id
+         JOIN customer_assets a
+           ON a.id = j.asset_id
+           OR a.id IN (SELECT ja.asset_id FROM job_card_assets ja WHERE ja.job_card_id = j.id)
         WHERE j.customer_id IS NOT NULL AND a.customer_id IS NOT NULL
           AND j.customer_id <> a.customer_id`,
     ),
     siteQuery<Row>(
       siteId,
+      /*
+       * OPEN jobs only, so this cannot reuse JOB_COUNT_FOR_ASSET as-is: a
+       * retired asset with a closed job behind it is history, not drift.
+       *
+       * Same OR-over-both-sources shape though, and for the same reason — an
+       * asset retired while a job that names it SECONDARILY is still open is
+       * exactly as wrong as the primary case, and the multi-unit visit is where
+       * somebody is most likely to retire a unit without noticing.
+       */
       `SELECT a.id, a.document_number, a.description,
-              (SELECT COUNT(*) FROM job_cards j WHERE j.asset_id = a.id AND j.status = 'open') AS n
+              (SELECT COUNT(*) FROM job_cards j
+                WHERE j.status = 'open'
+                  AND (j.asset_id = a.id
+                       OR EXISTS (SELECT 1 FROM job_card_assets ja
+                                   WHERE ja.job_card_id = j.id AND ja.asset_id = a.id))) AS n
          FROM customer_assets a
         WHERE a.is_active = 0
        HAVING n > 0`,

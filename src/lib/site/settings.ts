@@ -451,6 +451,34 @@ export const SETTING_DEFAULTS = {
   job_signature_statement:
     'I confirm the work described on this job card has been completed to my satisfaction.',
 
+  /**
+   * Which sign-off a job must carry before it can close (159).
+   *
+   *   none      recorded when it happens, blocks nothing
+   *   customer  the customer must have signed
+   *   both      neither signature may be missing
+   *
+   * Three values rather than two flags, because two flags allow "technician
+   * only", which nobody asks for: a technician signature exists to accompany a
+   * customer's, not to stand in for one.
+   *
+   * Defaults to none, and 159 seeds the same. A business that has been closing
+   * jobs for months must not find every one of them refused the morning after a
+   * migration — switching this on is a decision somebody makes.
+   */
+  job_signoff_required: 'none',
+
+  /**
+   * Whether a technician may ask for a part the shop does not have (162, §28).
+   *
+   * ON by default, unlike almost every other switch here. The refusal it
+   * replaces — "BRK-PAD-01 has only 0 in Main Store" — is already in front of
+   * people with nowhere to go from it, so a feature that fixes that and ships
+   * switched off fixes nothing. A business that would rather people phoned can
+   * turn it off.
+   */
+  job_part_requests_enabled: '1',
+
   /* ── Who is on a job, and who hears about it ────────────────────────────── */
 
   /**

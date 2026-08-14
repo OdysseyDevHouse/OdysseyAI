@@ -16,6 +16,7 @@ import {
   getDocument,
   type LineInput,
 } from '@/lib/site/salesDocuments'
+import { requireLicensedDevice } from '@/lib/control/requireDevice'
 import { finaliseDocument, voidDocument, recordPrint } from '@/lib/site/salesPosting'
 import { setOrderDetails } from '@/lib/site/salesOrders'
 import { searchForTill, browseForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
@@ -346,6 +347,14 @@ export async function finaliseSaleAction(
     reference?: string | null
     terminalId?: number | null
     terminalCode?: string | null
+    /**
+     * The machine ringing this up, for the licence check below.
+     *
+     * Optional so every existing caller keeps compiling and trading — an absent
+     * serial is a till build that predates licensing, not a refusal. See
+     * `requireLicensedDevice`.
+     */
+    deviceSerial?: string | null
     priceStructureId?: number | null
     lines: LineInput[]
   },
@@ -371,6 +380,12 @@ export async function finaliseSaleAction(
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
+
+  /* IS THIS MACHINE LICENSED TO SELL?
+     Checked here rather than only on the screen: this is a public endpoint, and
+     the till-side gate can be skipped by anyone calling it directly. */
+  const licensed = await requireLicensedDevice(siteId, sale.deviceSerial)
+  if (!licensed.ok) return { ok: false, error: licensed.error }
 
   // The one that takes money. Same check as the draft path, repeated rather
   // than assumed: a basket can be saved by one person and finalised by another.

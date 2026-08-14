@@ -22,12 +22,23 @@ export type NotificationEvent =
   | 'sale_voided'
   | 'grv_received'
   | 'low_stock'
+  /** A technician asked for a part that is not on the shelf (162). */
+  | 'job_part_requested'
+  /** The part somebody asked for has arrived. Addressed to them by name. */
+  | 'job_part_received'
 
 export type NotificationInput = {
   event: NotificationEvent
   /** Capability that may see it, or null for everyone with a session. */
   audience: Capability | null
-  /** Narrows to one person and wins over audience. No v1 producer sets it. */
+  /**
+   * Narrows to one person and wins over audience.
+   *
+   * First producer: `job_part_received` (162), which tells the technician who
+   * ASKED that their part has arrived. That is a message for one person — the
+   * shop at large does not need it, and an audience-wide version would be noise
+   * everyone learns to ignore.
+   */
   userId?: number | null
   title: string
   body?: string | null

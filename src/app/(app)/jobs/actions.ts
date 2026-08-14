@@ -66,6 +66,8 @@ import {
   saveAssetType,
   deleteAssetType,
   setJobAsset,
+  addJobAsset,
+  removeJobAsset,
   listAssets,
   type AssetInput,
   type AssetTypeInput,
@@ -83,6 +85,20 @@ import {
   type SeriesActionResult,
   type SeriesRun,
 } from '@/lib/site/jobSeries'
+import {
+  signJob,
+  unsignJob,
+  type SignoffParty,
+  type SignoffResult,
+} from '@/lib/site/jobSignoff'
+import {
+  requestPart,
+  decideRequest,
+  // Aliased: jobIntake already exports a RequestActionResult for INBOUND work
+  // requests, which are a different thing entirely.
+  type RequestResult as PartRequestResult,
+  type RequestActionResult as PartRequestActionResult,
+} from '@/lib/site/jobPartRequests'
 import { setSetting } from '@/lib/site/settings'
 import { storeUpload, deleteStoredFile } from '@/lib/uploads'
 import {
@@ -925,6 +941,42 @@ export async function setJobAssetAction(
 }
 
 /**
+ * Add another unit to the visit (161, §18.4).
+ *
+ * `jobs.edit` — the same right setJobAssetAction needs, because it is the same
+ * act: saying what the visit covered. Both revalidate the EQUIPMENT page too, so
+ * the unit's own service history and job count are right the moment it is added.
+ */
+export async function addJobAssetAction(
+  jobId: number,
+  assetId: number,
+  note: string | null,
+): Promise<AssetActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await addJobAsset(ctx.siteId, ctx.actor, jobId, assetId, note)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  revalidateAssets(assetId)
+  return result
+}
+
+export async function removeJobAssetAction(
+  jobId: number,
+  assetId: number,
+): Promise<AssetActionResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await removeJobAsset(ctx.siteId, ctx.actor, jobId, assetId)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  revalidateAssets(assetId)
+  return result
+}
+
+/**
  * The equipment a job may name: this customer's, plus anything unclaimed.
  *
  * Unclaimed units are included because naming one on a job is often HOW it gets
@@ -1077,6 +1129,126 @@ export async function captureEvidenceAction(
 
   revalidateJobs(jobId)
   return { ok: true }
+}
+
+/* ── Asking for a part the shop does not have (162, §28) ──────────────────── */
+
+/**
+ * `jobs.edit` — the right a technician recording what they used already has.
+ *
+ * Deliberately NOT `purchasing.edit`: asking is not buying. The whole point is
+ * that somebody on site can raise the question without holding the right to
+ * spend money, and a buyer answers it.
+ */
+export async function requestPartAction(
+  jobId: number,
+  input: { description: string; qty: number; reason: string | null; jobCardLineId?: number | null },
+): Promise<PartRequestResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await requestPart(ctx.siteId, ctx.actor, {
+    jobCardId: jobId,
+    jobCardLineId: input.jobCardLineId ?? null,
+    description: input.description,
+    qty: input.qty,
+    reason: input.reason,
+  })
+  if (result.ok) {
+    revalidateJobs(jobId)
+    revalidatePath('/jobs/part-requests')
+  }
+  return result
+}
+
+/**
+ * Deciding is a BUYING act, so it needs `purchasing.edit` — the same right
+ * raising the order needs. Somebody who may not spend must not be able to
+ * approve spending.
+ */
+export async function decideRequestAction(
+  id: number,
+  decision: 'approved' | 'cancelled',
+  note: string | null,
+): Promise<PartRequestActionResult> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await decideRequest(ctx.siteId, ctx.actor, id, decision, note)
+  if (result.ok) {
+    revalidatePath('/jobs/part-requests')
+    revalidatePath('/jobs')
+  }
+  return result
+}
+
+/* ── Two-party sign-off (159) ─────────────────────────────────────────────── */
+
+/**
+ * File a signature against the job as the customer or as the technician.
+ *
+ * Guarded on `jobs.edit`, the same right captureEvidenceAction needs, because
+ * this is the same act: a technician on site attaching evidence. A separate
+ * capability would mean the person holding the tablet could tick a check but
+ * not take the signature that finishes the job.
+ *
+ * The stored file is deleted on any failure, mirroring captureEvidenceAction —
+ * an orphaned upload is a file on disk that nothing in the database knows about,
+ * and uploads/ is backed up as if every byte in it is referenced.
+ */
+export async function signJobAction(
+  jobId: number,
+  party: SignoffParty,
+  form: FormData,
+): Promise<SignoffResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const file = form.get('file')
+  if (!(file instanceof File)) return { ok: false, error: 'No signature was received.' }
+
+  const nameField = form.get('name')
+  const stored = await storeUpload(file)
+  if (!stored.ok) return { ok: false, error: stored.error }
+
+  try {
+    const result = await signJob(
+      ctx.siteId,
+      ctx.actor,
+      jobId,
+      party,
+      stored.file,
+      typeof nameField === 'string' && nameField.trim() ? nameField.trim() : null,
+    )
+    if (!result.ok) {
+      await deleteStoredFile(stored.file.storedName)
+      return result
+    }
+  } catch (error) {
+    await deleteStoredFile(stored.file.storedName)
+    throw error
+  }
+
+  revalidateJobs(jobId)
+  return { ok: true }
+}
+
+/**
+ * Withdraw a sign-off.
+ *
+ * The drawn file is deliberately left on the Files tab — see unsignJob. What is
+ * withdrawn is the claim, not the evidence that a mark was made.
+ */
+export async function unsignJobAction(
+  jobId: number,
+  party: SignoffParty,
+): Promise<SignoffResult> {
+  const ctx = await actorFor('jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await unsignJob(ctx.siteId, ctx.actor, jobId, party)
+  if (result.ok) revalidateJobs(jobId)
+  return result
 }
 
 /* ── Bulk actions and saved views (37.2) ──────────────────────────────────── */

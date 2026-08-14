@@ -1,7 +1,9 @@
 import 'server-only'
+import { randomUUID } from 'node:crypto'
 import { redirect } from 'next/navigation'
 import type { RowDataPacket } from 'mysql2/promise'
 import { queryOne, execute } from './db'
+import { claimSession, sessionIsCurrent, releaseSession } from './control/sessions'
 import { verifyPassword, hashPassword } from './password'
 import { getSiteForUser, listSitesForUser, type Site } from './sites'
 import { siteExecute } from './siteDb'
@@ -147,12 +149,25 @@ async function finishSignIn(user: UserRow, normalisedEmail: string): Promise<Sig
   const sites = await listSitesForUser(user.id)
   const siteId = sites.length === 1 ? sites[0].id : null
 
+  /* ── ONE LIVE SESSION PER USER ───────────────────────────────────────────
+     Claiming displaces whatever was there, so this sign-in ends the previous
+     one wherever it was — the whole point of the feature, and the reason a
+     company cannot buy one seat and share it across ten desks.
+
+     NOT wrapped in a try/catch, unlike the sign-in log above. A swallowed
+     failure here would leave the user signed in with no registry row, which
+     reads as "not enrolled" and silently exempts them from enforcement. Better
+     to refuse the sign-in and have somebody notice. */
+  const sid = randomUUID()
+  await claimSession(user.id, sid, await signInMeta())
+
   const token = await createSessionToken({
     userId: user.id,
     email: user.email,
     name: user.full_name?.trim() || user.email,
     siteId,
     mustChangePassword: !!user.must_change_password,
+    sid,
   })
   await setSessionCookie(token)
 
@@ -214,6 +229,27 @@ export async function completeTotpSignIn(code: string): Promise<SignInResult> {
   return finishSignIn(user, user.email)
 }
 
+/**
+ * Where this sign-in came from, for the session registry.
+ *
+ * Best-effort: the columns exist so support can answer "why was I signed out?"
+ * with "because this account signed in from Chrome on Windows at 14:02", and a
+ * missing header is not worth failing a sign-in over — unlike the registry row
+ * itself, which is.
+ */
+async function signInMeta(): Promise<{ ip: string | null; userAgent: string | null }> {
+  try {
+    const { headers } = await import('next/headers')
+    const head = await headers().catch(() => null)
+    return {
+      ip: head?.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: head?.get('user-agent') ?? null,
+    }
+  } catch {
+    return { ip: null, userAgent: null }
+  }
+}
+
 /** The log write, never allowed to fail a sign-in. */
 async function recordSignInSafe(e: {
   userId: number | null
@@ -232,6 +268,11 @@ async function recordSignInSafe(e: {
 }
 
 export async function signOut(): Promise<void> {
+  /* Free the seat, rather than leaving it held until the token would have
+     expired twelve hours from now. Read the session BEFORE clearing the cookie,
+     which is the only place the user id is available. */
+  const session = await getSession()
+  if (session?.sid) await releaseSession(session.userId)
   await clearSessionCookie()
 }
 
@@ -302,11 +343,40 @@ export async function changePassword(
   return { ok: true }
 }
 
-/** Session or redirect to login. Use at the top of every protected page. */
+/**
+ * Session or redirect to login. Use at the top of every protected page.
+ *
+ * ── THE ONE CHOKEPOINT ──────────────────────────────────────────────────────
+ *
+ * Every guard in this file reaches here: requireSite, requireSiteUser, all the
+ * capability helpers, actorFor and its variants. Three hundred-odd files import
+ * one of those, and not one of them had to change for the session check below —
+ * which is exactly why it belongs here rather than in each of them.
+ *
+ * `src/proxy.ts` deliberately does NOT do this. It checks only that a cookie is
+ * present, because it runs on every asset request and verifying a JWT (let alone
+ * reading a database) there would be paid for on every image the app serves.
+ */
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession()
   // The login page is '/', not '/login' — there is no route at the latter.
   if (!session) redirect('/')
+
+  /* SUPERSEDED BY A NEWER SIGN-IN?
+     A token with no `sid` is not enrolled and is skipped — a session minted
+     before this shipped, or one minted by the till's PIN unlock. See the field's
+     own comment in session.ts for why both are deliberate. */
+  if (session.sid && !(await sessionIsCurrent(session.userId, session.sid))) {
+    /* NO clearSessionCookie() HERE, deliberately.
+       Deleting a cookie is a WRITE, and Next forbids cookie writes during a page
+       render — it throws, which surfaces as "a server error occurred" instead of
+       the redirect. (Found exactly that way: the eviction fired and the page
+       500'd.) Leaving the dead cookie in place costs nothing, because every
+       later request re-runs this check and lands here again; the login page
+       clears it, which is a context where writing is allowed. */
+    redirect('/?kicked=1')
+  }
+
   return session
 }
 

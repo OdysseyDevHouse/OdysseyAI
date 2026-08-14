@@ -1,5 +1,6 @@
 import type { ColumnType } from './spec'
 import type { Capability } from '../site/permissions'
+import { LINE_KINDS } from '../jobStatusModel'
 
 /**
  * The report builder's FIELD CATALOG — the whitelist of everything anyone is
@@ -3572,7 +3573,19 @@ const JOB_LINES_SOURCE: CatalogSource = {
       expr: 'j.customer_name',
       group: FIELD_GROUPS.IDENTITY,
     },
-    enumField('lineKind', 'Kind', 't.line_kind', ['part', 'labour', 'travel', 'charge'], {
+    /*
+     * The kinds come FROM the union, not from a copy of it.
+     *
+     * This line previously spelled the four values out. A string array is
+     * something the compiler cannot tie back to JobLineKind, so adding
+     * 'expense' to the union left this list four-long and silently correct-
+     * looking: the field still worked, still filtered, and simply never offered
+     * — or matched — an expense. A report of "everything except parts" would
+     * have quietly omitted the whole new category.
+     *
+     * Spreading LINE_KINDS means the next kind appears here by construction.
+     */
+    enumField('lineKind', 'Kind', 't.line_kind', [...LINE_KINDS], {
       starter: true,
     }),
     /*

@@ -197,7 +197,7 @@ export function isJobSource(value: string): value is JobSource {
  *   travel  distance. qty is kilometres.
  *   charge  a fixed fee: callout, disposal, a subcontractor invoice
  */
-export const LINE_KINDS = ['part', 'labour', 'travel', 'charge'] as const
+export const LINE_KINDS = ['part', 'labour', 'travel', 'charge', 'expense'] as const
 export type JobLineKind = (typeof LINE_KINDS)[number]
 
 export const LINE_KIND_LABEL: Record<JobLineKind, string> = {
@@ -205,6 +205,7 @@ export const LINE_KIND_LABEL: Record<JobLineKind, string> = {
   labour: 'Labour',
   travel: 'Travel',
   charge: 'Charge',
+  expense: 'Expense',
 }
 
 /** The unit `qty` is counted in, which differs per kind. */
@@ -213,7 +214,20 @@ export const LINE_KIND_UNIT: Record<JobLineKind, string> = {
   labour: 'hours',
   travel: 'km',
   charge: '',
+  // An expense is a sum of money, not a count of anything. qty stays 1 and the
+  // figure lives in the price, the same way a charge works.
+  expense: '',
 }
+
+/**
+ * Which kinds name an outside party rather than something we did ourselves.
+ *
+ * Only `expense` today, and it is a set rather than a comparison so the next one
+ * is a one-line change instead of a hunt for `=== 'expense'` scattered across
+ * screens. A subcontractor invoice, a permit fee, a skip: money that left the
+ * business to somebody specific.
+ */
+export const LINE_KINDS_WITH_SUPPLIER: ReadonlySet<JobLineKind> = new Set<JobLineKind>(['expense'])
 
 export function isJobLineKind(value: string): value is JobLineKind {
   return (LINE_KINDS as readonly string[]).includes(value)

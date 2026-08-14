@@ -195,6 +195,26 @@ export default function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   if (PUBLIC_EXACT.includes(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
+    /*
+     * EVICTED: the session was superseded by a sign-in somewhere else.
+     *
+     * `requireSession` cannot clear the cookie itself — deleting one is a WRITE,
+     * and Next forbids cookie writes during a page render, so attempting it
+     * throws and the user gets a server error instead of the login screen. The
+     * middleware is the one layer that both sees every request and may write, so
+     * the redirect carries `?kicked=1` and the actual clearing happens here.
+     *
+     * It has to happen SOMEWHERE, and cannot simply be left: the branch below
+     * bounces anybody holding a session cookie off '/' to '/dashboard', which
+     * would redirect straight back here — an infinite loop with the login form
+     * never once rendered.
+     */
+    if (pathname === '/' && req.nextUrl.searchParams.get('kicked') === '1') {
+      const res = NextResponse.next()
+      res.cookies.delete(SESSION_COOKIE)
+      return res
+    }
+
     // Already signed in? Skip the login form.
     if (pathname === '/' && req.cookies.has(SESSION_COOKIE)) {
       return NextResponse.redirect(new URL('/dashboard', req.url))

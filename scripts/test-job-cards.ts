@@ -206,6 +206,22 @@ import {
 } from '../src/lib/site/jobViews'
 import { getSetting, setSetting } from '../src/lib/site/settings'
 import {
+  jobSignoff,
+  reconcileSignoff,
+  signJob,
+  signoffRule,
+  unsignJob,
+} from '../src/lib/site/jobSignoff'
+import {
+  requestPart,
+  decideRequest,
+  linkToOrder,
+  requestsForJob,
+  requestQueue,
+  markReceivedForDocument,
+  reconcileJobPartRequests,
+} from '../src/lib/site/jobPartRequests'
+import {
   escalateBreaches,
   autoInvoiceClosed,
   automationRuns,
@@ -239,6 +255,9 @@ import {
   listAssets,
   findDuplicateAssets,
   setJobAsset,
+  addJobAsset,
+  removeJobAsset,
+  otherJobAssets,
   jobAssetFor,
   assetHistory,
   retireAsset,
@@ -367,6 +386,22 @@ const DEPOSIT_JOB_PATTERN = '^JCT[0-9]{6} deposit job$'
  */
 const CREW_PATTERN = '^JCT[0-9]{6} north crew$'
 const CREW_JOB_PATTERN = '^JCT[0-9]{6} crew( owner)? job$'
+/*
+ * (J29). Its own pattern, like every fixture above it — TITLE_PATTERN is 'JCT %'
+ * with a space and matches none of these titles, so the LIKE sweep below cannot
+ * catch a job that is not also registered here. Leaving it out left a cancelled
+ * job behind, which then failed the CUSTOMER delete with a foreign key error and
+ * took the whole suite down at the last line.
+ */
+const SIGNOFF_JOB_PATTERN = '^JCT[0-9]{6} signoff job$'
+/* (J30). Its own pattern for the same reason — see the note above. */
+const EXPENSE_JOB_PATTERN = '^JCT[0-9]{6} expense job$'
+const EXPENSE_SUPPLIER_PATTERN = '^JCX[0-9]{6}$'
+const EXPENSE_CATEGORY_PATTERN = '^JCT[0-9]{6} subcontract$'
+/* (J31). Its own pattern, like every fixture above it. */
+const MULTI_ASSET_JOB_PATTERN = '^JCT[0-9]{6} multi asset job$'
+/* (J32). Its own pattern, like every fixture above it. */
+const PART_REQUEST_JOB_PATTERN = '^JCT[0-9]{6} parts request job$'
 
 /**
  * Deletes only this suite's fixtures.
@@ -431,6 +466,32 @@ async function sweepStrays() {
   // (J28) crews. job_team_members CASCADE from the team; the JOBS are separate
   // rows matched by title, and job_card_people CASCADEs from those.
   await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [CREW_JOB_PATTERN])
+  // (J29). The signature documents go first: they are an (entity, entity_id)
+  // pair with no foreign key, so deleting the job does not take them with it.
+  await siteExecute(
+    SITE,
+    `DELETE FROM party_documents
+      WHERE entity = 'job_card'
+        AND entity_id IN (SELECT id FROM job_cards WHERE title REGEXP ?)`,
+    [SIGNOFF_JOB_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [SIGNOFF_JOB_PATTERN])
+  /*
+   * (J30). Lines before the job (fk_jcl_job CASCADEs, but the supplier and
+   * category below are RESTRICTed by those lines, so they must go first), then
+   * the job, then the two lookup rows the section created for itself.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE l FROM job_card_lines l JOIN job_cards j ON j.id = l.job_card_id
+      WHERE j.title REGEXP ?`,
+    [EXPENSE_JOB_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [EXPENSE_JOB_PATTERN])
+  await siteExecute(SITE, `DELETE FROM expense_categories WHERE name REGEXP ?`, [
+    EXPENSE_CATEGORY_PATTERN,
+  ])
+  await siteExecute(SITE, `DELETE FROM suppliers WHERE code REGEXP ?`, [EXPENSE_SUPPLIER_PATTERN])
   await siteExecute(SITE, `DELETE FROM job_teams WHERE name REGEXP ?`, [CREW_PATTERN]).catch(
     () => {},
   )
@@ -464,6 +525,32 @@ async function sweepStrays() {
       WHERE asset_id IN (SELECT id FROM customer_assets WHERE description REGEXP ?)`,
     [ASSET_PATTERN],
   )
+  /*
+   * (J31) The join table too — fk_jca_asset is RESTRICT, matching the primary
+   * column, so a leftover row here blocks the asset delete below and the whole
+   * sweep dies at that line.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE FROM job_card_assets
+      WHERE asset_id IN (SELECT id FROM customer_assets WHERE description REGEXP ?)`,
+    [ASSET_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [MULTI_ASSET_JOB_PATTERN])
+  /*
+   * (J32) Part requests, then the job. fk_jpr_job CASCADEs so the job delete
+   * would take them, but the request FK to purchase_document_lines is SET NULL
+   * and the notifications carry no FK at all — both are swept by name.
+   */
+  await siteExecute(
+    SITE,
+    `DELETE r FROM job_part_requests r JOIN job_cards j ON j.id = r.job_card_id
+      WHERE j.title REGEXP ?`,
+    [PART_REQUEST_JOB_PATTERN],
+  )
+  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [
+    PART_REQUEST_JOB_PATTERN,
+  ])
   await siteExecute(SITE, `DELETE FROM customer_assets WHERE description REGEXP ?`, [ASSET_PATTERN])
   await siteExecute(SITE, `DELETE FROM asset_types WHERE code REGEXP ?`, [ASSET_TYPE_PATTERN])
 
@@ -749,6 +836,8 @@ async function main() {
       vatRatePct: 15,
       discountPct: 0,
       note: null,
+      supplierId: null,
+      expenseCategoryId: null,
     },
     {
       id: null,
@@ -763,6 +852,8 @@ async function main() {
       vatRatePct: 15,
       discountPct: 0,
       note: null,
+      supplierId: null,
+      expenseCategoryId: null,
     },
     {
       id: null,
@@ -777,6 +868,8 @@ async function main() {
       vatRatePct: 15,
       discountPct: 0,
       note: null,
+      supplierId: null,
+      expenseCategoryId: null,
     },
   ])
   ok('lines are saved', saved.ok, JSON.stringify(saved))
@@ -1179,6 +1272,8 @@ async function main() {
       vatRatePct: 15,
       discountPct: 0,
       note: null,
+      supplierId: null,
+      expenseCategoryId: null,
     },
     {
       id: null,
@@ -1193,6 +1288,8 @@ async function main() {
       vatRatePct: 15,
       discountPct: 0,
       note: null,
+      supplierId: null,
+      expenseCategoryId: null,
     },
   ])
 
@@ -1290,6 +1387,8 @@ async function main() {
       vatRatePct: l.vatRatePct,
       discountPct: l.discountPct,
       note: l.note,
+      supplierId: null,
+      expenseCategoryId: null,
     })),
     {
       id: null,
@@ -1304,6 +1403,8 @@ async function main() {
       vatRatePct: 15,
       discountPct: 0,
       note: null,
+      supplierId: null,
+      expenseCategoryId: null,
     },
   ])
 
@@ -1421,6 +1522,8 @@ async function main() {
       vatRatePct: l.vatRatePct,
       discountPct: l.discountPct,
       note: l.note,
+      supplierId: null,
+      expenseCategoryId: null,
     })),
     {
       id: null,
@@ -1435,6 +1538,8 @@ async function main() {
       vatRatePct: 15,
       discountPct: 0,
       note: null,
+      supplierId: null,
+      expenseCategoryId: null,
     },
   ])
 
@@ -2081,6 +2186,8 @@ async function main() {
     recordedSource: 'odometer' as const,
     travelMinutes: 35,
     note: null,
+    supplierId: null,
+    expenseCategoryId: null,
   }
 
   const nothing = await saveTravel(SITE, actor, {
@@ -2431,6 +2538,8 @@ async function main() {
         vatRatePct: 15,
         discountPct: 0,
         note: null,
+        supplierId: null,
+        expenseCategoryId: null,
       },
     ])
     ok('(J13) a part line with a real product saves', pLines.ok, pLines.ok ? '' : pLines.error)
@@ -2613,10 +2722,10 @@ async function main() {
     const withSerial = await saveLines(SITE, actor, pJob, [
       { ...afterReturn[0]!, id: afterReturn[0]!.lineId, lineKind: 'part', billingState: 'quoted',
         productId: part, productCode: `JCP${stamp}`, description: 'JCT thermostat', qty: 10,
-        unitCostExcl: 60, unitPriceIncl: 138, vatRatePct: 15, discountPct: 0, note: null },
+        unitCostExcl: 60, unitPriceIncl: 138, vatRatePct: 15, discountPct: 0, note: null, supplierId: null, expenseCategoryId: null },
       { id: null, lineKind: 'part', billingState: 'quoted', productId: serialPart,
         productCode: `JCS${stamp}`, description: 'JCT compressor', qty: 1, unitCostExcl: 900,
-        unitPriceIncl: 2070, vatRatePct: 15, discountPct: 0, note: null },
+        unitPriceIncl: 2070, vatRatePct: 15, discountPct: 0, note: null, supplierId: null, expenseCategoryId: null },
     ])
     ok('(J13) a serial-tracked part can be ON a job', withSerial.ok, withSerial.ok ? '' : withSerial.error)
 
@@ -5274,6 +5383,652 @@ async function main() {
     await setSetting(SITE, 'job_notify_enabled', notifyWasEnabled)
   }
 
+  // ── 34. (J29) Two-party sign-off ──────────────────────────────────────────
+  //
+  // The rule is a SETTING, so this section changes it and must put it back —
+  // leaving a site demanding signatures would fail every close in every suite
+  // that runs after this one.
+  {
+    const signoffWas = await getSetting(SITE, 'job_signoff_required')
+    try {
+      const sJob = await saveJobCard(SITE, actor, {
+        id: null, customerId, customerName: null, customerPhone: null,
+        customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+        priority: 'normal', ownerUserId: null, ownerName: '',
+        title: `JCT${stamp} signoff job`, description: null, dueAt: null,
+        source: 'manual', reference: null, internalNote: null,
+      })
+      if (!sJob.ok) throw new Error('signoff job fixture failed')
+      const sJobId = sJob.id
+
+      const file = (name: string) => ({
+        storedName: `jct-${stamp}-${name}.png`,
+        filename: `${name}.png`,
+        mimeType: 'image/png',
+        sizeBytes: 128,
+      })
+
+      // ── The default must change nothing ──────────────────────────────────
+      await setSetting(SITE, 'job_signoff_required', 'none')
+      ok(
+        '(J29) *** the default demands nothing — a migration must not refuse every close ***',
+        (await signoffRule(SITE)) === 'none',
+      )
+      const unsignedClose = await closeJob(SITE, actor, sJobId, 'Nothing required.')
+      ok(
+        '(J29) so an unsigned job still closes',
+        unsignedClose.ok,
+        unsignedClose.ok ? '' : unsignedClose.error,
+      )
+
+      // ── A closed job cannot be signed ────────────────────────────────────
+      //
+      // The guard that makes the rule below mean anything. Without it a job
+      // could close unsigned and be signed afterwards at leisure, which makes
+      // the requirement decorative.
+      const lateSign = await signJob(SITE, actor, sJobId, 'customer', file('late'), 'Too Late')
+      ok(
+        '(J29) *** a CLOSED job refuses a signature — otherwise the rule is decorative ***',
+        !lateSign.ok,
+        lateSign.ok ? 'ACCEPTED' : lateSign.error,
+      )
+
+      await reopenJob(SITE, actor, sJobId, 'Signing test.')
+
+      // ── Requiring the customer ───────────────────────────────────────────
+      await setSetting(SITE, 'job_signoff_required', 'customer')
+      const refused = await closeJob(SITE, actor, sJobId, 'Should be refused.')
+      ok(
+        '(J29) *** with a signature required, closing is REFUSED ***',
+        !refused.ok,
+        refused.ok ? 'CLOSED ANYWAY' : refused.error,
+      )
+      ok(
+        '(J29) and the refusal NAMES who has to sign',
+        !refused.ok && /customer/i.test(refused.error),
+        refused.ok ? '' : refused.error,
+      )
+
+      const signed = await signJob(SITE, actor, sJobId, 'customer', file('cust'), 'Mrs Adams')
+      ok('(J29) the customer signs', signed.ok, signed.ok ? '' : signed.error)
+
+      const marks = await jobSignoff(SITE, sJobId)
+      ok(
+        '(J29) the mark reads back with the name they typed, not the account name',
+        marks.customer?.name === 'Mrs Adams',
+        marks.customer?.name ?? 'null',
+      )
+      ok(
+        '(J29) *** and resolves the STORED name, not the display filename ***',
+        marks.customer?.storedName === `jct-${stamp}-cust.png`,
+        marks.customer?.storedName ?? 'null',
+      )
+      ok(
+        '(J29) the technician side is still empty — one party is not both',
+        marks.technician === null,
+      )
+
+      const nowCloses = await closeJob(SITE, actor, sJobId, 'Signed for.')
+      ok('(J29) and now it closes', nowCloses.ok, nowCloses.ok ? '' : nowCloses.error)
+      await reopenJob(SITE, actor, sJobId, 'More signing.')
+
+      // ── Requiring both ───────────────────────────────────────────────────
+      await setSetting(SITE, 'job_signoff_required', 'both')
+      const halfSigned = await closeJob(SITE, actor, sJobId, 'Half signed.')
+      ok(
+        '(J29) with BOTH required, one signature is not enough',
+        !halfSigned.ok,
+        halfSigned.ok ? 'CLOSED ANYWAY' : halfSigned.error,
+      )
+      ok(
+        '(J29) and it names the missing party only — not the one already signed',
+        !halfSigned.ok &&
+          /technician/i.test(halfSigned.error) &&
+          !/customer/i.test(halfSigned.error),
+        halfSigned.ok ? '' : halfSigned.error,
+      )
+
+      // An unnamed technician mark falls back to whoever is holding the device,
+      // because there the signer and the account almost always agree.
+      const techSigned = await signJob(SITE, actor, sJobId, 'technician', file('tech'), null)
+      ok('(J29) the technician signs', techSigned.ok)
+      const bothMarks = await jobSignoff(SITE, sJobId)
+      ok(
+        '(J29) an unnamed TECHNICIAN mark falls back to the actor',
+        bothMarks.technician?.name === actor.userName,
+        bothMarks.technician?.name ?? 'null',
+      )
+      ok(
+        '(J29) *** but an unnamed CUSTOMER mark stays unnamed — it is not our name to give ***',
+        (
+          await (async () => {
+            await unsignJob(SITE, actor, sJobId, 'customer')
+            await signJob(SITE, actor, sJobId, 'customer', file('anon'), null)
+            return jobSignoff(SITE, sJobId)
+          })()
+        ).customer?.name === null,
+      )
+
+      const bothClose = await closeJob(SITE, actor, sJobId, 'Both signed.')
+      ok('(J29) with both signed it closes', bothClose.ok, bothClose.ok ? '' : bothClose.error)
+
+      // ── Cancelling is never blocked ──────────────────────────────────────
+      //
+      // Refusing to CANCEL a job because nobody signed for work that never
+      // happened is how a job nobody wants stays open forever. 123 seeds
+      // Cancelled with blocks_on_incomplete = 0 for exactly this reason.
+      await reopenJob(SITE, actor, sJobId, 'Cancelling test.')
+      await unsignJob(SITE, actor, sJobId, 'customer')
+      await unsignJob(SITE, actor, sJobId, 'technician')
+      const cancelStatus = await statusForRole(SITE, 'cancelled')
+      if (cancelStatus) {
+        const cancelled = await setStatus(SITE, actor, sJobId, cancelStatus.id, 'Customer withdrew.')
+        ok(
+          '(J29) *** an UNSIGNED job still cancels — a job nobody wants must not be trapped ***',
+          cancelled.ok,
+          cancelled.ok ? '' : cancelled.error,
+        )
+      }
+
+      // ── Withdrawing keeps the evidence ───────────────────────────────────
+      const afterUnsign = await jobSignoff(SITE, sJobId)
+      ok(
+        '(J29) withdrawing clears the claim',
+        afterUnsign.customer === null && afterUnsign.technician === null,
+      )
+      /*
+       * Every mark ever made is still filed — three of them: the customer's
+       * first, the unnamed one that replaced it, and the technician's.
+       *
+       * Re-signing REPLACES the link and leaves the old document, exactly as
+       * captureEvidence does, so the count is what was drawn rather than what is
+       * currently claimed. An earlier version of this assertion expected four by
+       * counting sign() calls and forgetting that a withdrawal writes nothing.
+       */
+      const stillFiled = await siteQuery<{ n: number }>(
+        SITE,
+        `SELECT COUNT(*) AS n FROM party_documents
+          WHERE entity = 'job_card' AND entity_id = ?`,
+        [sJobId],
+      )
+      ok(
+        '(J29) *** but the marks stay on the Files tab — a withdrawal is not a deletion ***',
+        Number(stillFiled[0]?.n ?? 0) === 3,
+        `${stillFiled[0]?.n ?? 0} document(s)`,
+      )
+
+      // ── Reports, never repairs ───────────────────────────────────────────
+      //
+      // Closed and unsigned, deliberately, so there is something real to find.
+      // Asserting only that reconcile returned an ARRAY would pass on an empty
+      // one — the shape of vacuous test that let a cross-audience token check
+      // pass while checking nothing.
+      await setSetting(SITE, 'job_signoff_required', 'none')
+      const reopenedForDrift = await reopenJob(SITE, actor, sJobId, 'Drift fixture.')
+      const closedUnsigned = await closeJob(SITE, actor, sJobId, 'Closed unsigned.')
+      ok(
+        '(J29) the drift fixture is genuinely closed and unsigned',
+        reopenedForDrift.ok && closedUnsigned.ok,
+        closedUnsigned.ok ? '' : `reopen ${reopenedForDrift.ok} / close ${closedUnsigned.ok}`,
+      )
+      await setSetting(SITE, 'job_signoff_required', 'customer')
+      const drift = await reconcileSignoff(SITE)
+      ok(
+        '(J29) *** reconcile REPORTS a job closed without the signature it needed ***',
+        drift.closedUnsigned.some((j) => j.id === sJobId && j.missing === 'customer'),
+        `${drift.closedUnsigned.length} reported`,
+      )
+      const stillUnsigned = await jobSignoff(SITE, sJobId)
+      ok(
+        '(J29) and repairs nothing — reconcile never signs on anybody behalf',
+        stillUnsigned.customer === null,
+      )
+
+    } finally {
+      await setSetting(SITE, 'job_signoff_required', signoffWas ?? 'none')
+    }
+  }
+
+  // ── 35. (J30) An expense is its own kind of line ──────────────────────────
+  {
+    const eJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} expense job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!eJob.ok) throw new Error('expense job fixture failed')
+    const eJobId = eJob.id
+
+    // Its own supplier and category, so nothing here depends on demo data.
+    const supRes = await siteExecute(
+      SITE,
+      `INSERT INTO suppliers (code, name, status) VALUES (?, ?, 'active')`,
+      [`JCX${stamp}`, `JCT${stamp} subcontractor`],
+    )
+    const supplierId = Number(supRes.insertId)
+    const catRes = await siteExecute(
+      SITE,
+      `INSERT INTO expense_categories (account_code, name, category_type)
+       VALUES (?, ?, 'cost_of_sales')`,
+      [`JC${stamp.slice(0, 4)}`, `JCT${stamp} subcontract`],
+    )
+    const categoryId = Number(catRes.insertId)
+
+    const base = {
+      id: null, productId: null, productCode: null, qty: 1,
+      vatRatePct: 15, discountPct: 0, note: null,
+    }
+
+    const savedExp = await saveLines(SITE, actor, eJobId, [
+      {
+        ...base, lineKind: 'expense' as const, billingState: 'pending' as const,
+        description: 'JCT subcontractor invoice', unitCostExcl: 4000, unitPriceIncl: 5750,
+        supplierId, expenseCategoryId: categoryId,
+      },
+      {
+        ...base, lineKind: 'labour' as const, billingState: 'pending' as const,
+        description: 'JCT supervision', qty: 2, unitCostExcl: 300, unitPriceIncl: 690,
+        supplierId, expenseCategoryId: categoryId,
+      },
+    ])
+    ok('(J30) an expense line saves', savedExp.ok, savedExp.ok ? '' : savedExp.error)
+
+    const withExp = await getJobCard(SITE, eJobId)
+    const expLine = withExp!.lines.find((l) => l.lineKind === 'expense')
+    const labLine = withExp!.lines.find((l) => l.lineKind === 'labour')
+
+    ok(
+      '(J30) it keeps who was paid, and reads the name back',
+      expLine?.supplierId === supplierId && expLine?.supplierName === `JCT${stamp} subcontractor`,
+      `${expLine?.supplierId} / ${expLine?.supplierName ?? 'null'}`,
+    )
+    ok(
+      '(J30) and the category it lands in on the P&L',
+      expLine?.expenseCategoryId === categoryId &&
+        expLine?.expenseCategoryName === `JCT${stamp} subcontract`,
+      expLine?.expenseCategoryName ?? 'null',
+    )
+    /*
+     * The rule the screen cannot enforce on its own: a supplier belongs to an
+     * expense. The labour line was SENT one, deliberately, because the kind can
+     * be changed on a row that already carries one.
+     */
+    ok(
+      '(J30) *** a supplier sent on a LABOUR line is dropped — it belongs to an expense ***',
+      labLine?.supplierId === null && labLine?.expenseCategoryId === null,
+      `${labLine?.supplierId} / ${labLine?.expenseCategoryId}`,
+    )
+
+    // Switching an existing expense to another kind must clear it too, which is
+    // the case a create-time check would miss entirely.
+    const switched = await saveLines(SITE, actor, eJobId, [
+      {
+        ...base, id: expLine!.id, lineKind: 'charge' as const, billingState: 'pending' as const,
+        description: 'JCT subcontractor invoice', unitCostExcl: 4000, unitPriceIncl: 5750,
+        supplierId, expenseCategoryId: categoryId,
+      },
+    ])
+    ok('(J30) the line changes kind', switched.ok, switched.ok ? '' : switched.error)
+    const afterSwitch = await getJobCard(SITE, eJobId)
+    ok(
+      '(J30) *** and switching AWAY from expense clears the supplier ***',
+      afterSwitch!.lines[0]?.supplierId === null,
+      String(afterSwitch!.lines[0]?.supplierId),
+    )
+
+    /*
+     * (J2) still holds: cost counts EVERY line whatever its kind. An expense is
+     * a cost like any other, and a new kind that quietly fell out of the total
+     * would be the worst possible outcome of this change.
+     */
+    await saveLines(SITE, actor, eJobId, [
+      {
+        ...base, lineKind: 'expense' as const, billingState: 'internal' as const,
+        description: 'JCT disposal fee', unitCostExcl: 250, unitPriceIncl: 0,
+        supplierId: null, expenseCategoryId: null,
+      },
+    ])
+    const costed = await getJobCard(SITE, eJobId)
+    ok(
+      '(J30) *** an expense counts in cost — (J2) holds for the new kind ***',
+      costed!.totals.cost === 250,
+      `cost ${costed!.totals.cost}`,
+    )
+
+    // The report builder must OFFER the new kind, which is the drift the plan
+    // flagged: a hard-coded four-value list would filter expenses out silently.
+    const kindField = fieldsFor(getSource('jobCardLines')!, (() => true) as never).find(
+      (f) => f.key === 'lineKind',
+    )
+    ok(
+      '(J30) *** the report builder offers Expense — a hard-coded list would hide it ***',
+      kindField?.options?.some((o) => o.value === 'expense') === true,
+      (kindField?.options ?? []).map((o) => o.value).join(', '),
+    )
+
+    await siteExecute(SITE, `DELETE FROM job_card_lines WHERE job_card_id = ?`, [eJobId])
+    await siteExecute(SITE, `DELETE FROM expense_categories WHERE id = ?`, [categoryId])
+    await siteExecute(SITE, `DELETE FROM suppliers WHERE id = ?`, [supplierId])
+  }
+
+  // ── 36. (J31) More than one piece of equipment on a job ───────────────────
+  //
+  // The whole risk of 161 is the READS, not the write. "The jobs for this asset"
+  // was `WHERE asset_id = ?` in eleven places; a join table that fixes only the
+  // history query leaves three job_count subqueries quietly wrong, and an asset
+  // showing four jobs on one screen and six on another looks like working
+  // software from every angle except the right one.
+  {
+    const mkAsset = async (label: string) => {
+      const r = await saveAsset(SITE, actor, {
+        id: null, assetTypeId: null, customerId, serviceAddressId: null,
+        description: `AS${stamp} ${label}`, make: null, model: null,
+        serialText: null, productId: null, serialId: null,
+        installedOn: null, purchasedOn: null, purchaseReference: null,
+        warrantyUntil: null, conditionNote: null, note: null,
+        nextServiceOn: null,
+      } as never)
+      if (!r.ok) throw new Error(`asset fixture ${label} failed`)
+      return r.id
+    }
+    const primary = await mkAsset('multi primary')
+    const second = await mkAsset('multi second')
+
+    const mJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} multi asset job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!mJob.ok) throw new Error('multi asset job fixture failed')
+    const mJobId = mJob.id
+
+    await setJobAsset(SITE, actor, mJobId, primary)
+    const added = await addJobAsset(SITE, actor, mJobId, second, 'Gas top-up')
+    ok('(J31) a second unit goes on the visit', added.ok, added.ok ? '' : added.error)
+
+    ok(
+      '(J31) *** the primary is NOT one of the others — it is the subject, not a member ***',
+      !(await addJobAsset(SITE, actor, mJobId, primary)).ok,
+    )
+    const twice = await addJobAsset(SITE, actor, mJobId, second)
+    ok(
+      '(J31) adding the same unit twice says so rather than duplicating',
+      !twice.ok,
+      twice.ok ? 'ACCEPTED' : twice.error,
+    )
+
+    const others = await otherJobAssets(SITE, mJobId)
+    ok(
+      '(J31) the list holds the second unit and its note',
+      others.length === 1 && others[0]?.assetId === second && others[0]?.note === 'Gas top-up',
+      `${others.length} row(s)`,
+    )
+
+    /*
+     * THE READS. Both assets must report this job — in the history AND in the
+     * count — or the two screens disagree.
+     */
+    const hPrimary = await assetHistory(SITE, primary)
+    const hSecond = await assetHistory(SITE, second)
+    ok(
+      '(J31) the primary asset has the job in its history, marked primary',
+      hPrimary.some((h) => h.jobId === mJobId && h.isPrimary),
+    )
+    ok(
+      '(J31) *** and so does the SECOND — a history that missed it would say the unit was never touched ***',
+      hSecond.some((h) => h.jobId === mJobId && !h.isPrimary),
+      `${hSecond.length} row(s)`,
+    )
+
+    const listed = await listAssets(SITE, { includeRetired: true })
+    const countOf = (id: number) => listed.find((a) => a.id === id)?.jobCount ?? -1
+    ok(
+      '(J31) *** the job COUNT spans both sources — fixing only the history is the silent failure ***',
+      countOf(primary) === 1 && countOf(second) === 1,
+      `primary ${countOf(primary)}, second ${countOf(second)}`,
+    )
+
+    /*
+     * Closing the visit must service EVERY unit on it. Left as the primary
+     * alone, three of four would still show as due — and somebody would drive
+     * out to a unit serviced last week.
+     */
+    await closeJob(SITE, actor, mJobId, 'All units done.')
+    const servicedPrimary = await getAsset(SITE, primary)
+    const servicedSecond = await getAsset(SITE, second)
+    ok(
+      '(J31) *** closing services every unit on the visit, not just the primary ***',
+      servicedPrimary?.lastServiceOn !== null && servicedSecond?.lastServiceOn !== null,
+      `primary ${servicedPrimary?.lastServiceOn ?? 'null'}, second ${servicedSecond?.lastServiceOn ?? 'null'}`,
+    )
+
+    // A closed job refuses equipment changes, matching setJobAsset.
+    ok(
+      '(J31) a closed job refuses another unit',
+      !(await addJobAsset(SITE, actor, mJobId, second)).ok,
+    )
+
+    await reopenJob(SITE, actor, mJobId, 'Removing a unit.')
+    const removed = await removeJobAsset(SITE, actor, mJobId, second)
+    ok('(J31) a unit comes off the visit', removed.ok, removed.ok ? '' : removed.error)
+    ok(
+      '(J31) and removing it twice says so rather than throwing',
+      !(await removeJobAsset(SITE, actor, mJobId, second)).ok,
+    )
+    ok(
+      '(J31) its history entry goes with it — the visit no longer covered it',
+      !(await assetHistory(SITE, second)).some((h) => h.jobId === mJobId),
+    )
+
+    await siteExecute(SITE, `DELETE FROM job_card_assets WHERE job_card_id = ?`, [mJobId])
+    await siteExecute(SITE, `UPDATE job_cards SET asset_id = NULL WHERE id = ?`, [mJobId])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [mJobId])
+    await siteExecute(SITE, `DELETE FROM customer_assets WHERE id IN (?, ?)`, [primary, second])
+  }
+
+  // ── 37. (J32) Asking for a part the shop does not have ────────────────────
+  {
+    const pJobReq = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} parts request job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!pJobReq.ok) throw new Error('parts request job fixture failed')
+    const prJobId = pJobReq.id
+
+    // Counted BEFORE, because the assertion is that asking writes none at all —
+    // stock_movements carries no reference we could match on, and a total is
+    // the honest test anyway.
+    const movesBefore = await siteQuery<{ n: number }>(
+      SITE,
+      `SELECT COUNT(*) AS n FROM stock_movements`,
+    )
+
+    const asked = await requestPart(SITE, actor, {
+      jobCardId: prJobId,
+      description: `JCT${stamp} brake pad set`,
+      qty: 4,
+      reason: 'Customer waiting',
+    })
+    ok('(J32) a technician can ask for a part', asked.ok, asked.ok ? '' : asked.error)
+    if (!asked.ok) throw new Error('part request fixture failed')
+    const reqId = asked.id
+
+    /*
+     * *** IT RESERVES NOTHING. ***
+     *
+     * jobParts.ts:23-41 records that a job reservation folded into
+     * reservedQtyFor() was designed and DELIBERATELY DROPPED: availableToSell()
+     * subtracts a site-wide reservation from the MAIN pile which has already
+     * dropped by the transfer, so the same unit is deducted twice for every part
+     * in every van, permanently. A part that does not exist yet must certainly
+     * not reserve anything.
+     */
+    const movesAfter = await siteQuery<{ n: number }>(
+      SITE,
+      `SELECT COUNT(*) AS n FROM stock_movements`,
+    )
+    ok(
+      '(J32) *** asking writes NO stock movement — a request reserves nothing ***',
+      Number(movesAfter[0]?.n ?? 0) === Number(movesBefore[0]?.n ?? 0),
+      `${movesBefore[0]?.n} then ${movesAfter[0]?.n}`,
+    )
+
+    ok(
+      '(J32) it shows on the job, and on the buyer queue',
+      (await requestsForJob(SITE, prJobId)).some((r) => r.id === reqId) &&
+        (await requestQueue(SITE)).some((r) => r.id === reqId),
+    )
+
+    // ── Deciding ────────────────────────────────────────────────────────────
+    const approved = await decideRequest(SITE, actor, reqId, 'approved', 'Order it')
+    ok('(J32) a buyer approves it', approved.ok, approved.ok ? '' : approved.error)
+    const twice = await decideRequest(SITE, actor, reqId, 'cancelled', null)
+    ok(
+      '(J32) *** and a decided request cannot be decided again ***',
+      !twice.ok,
+      twice.ok ? 'ACCEPTED' : twice.error,
+    )
+
+    // ── The order, raised the ordinary way ──────────────────────────────────
+    const sup = await siteQuery<{ id: number; code: string; name: string }>(
+      SITE,
+      `SELECT id, code, name FROM suppliers WHERE status = 'active' LIMIT 1`,
+    )
+    const poRes = await siteExecute(
+      SITE,
+      `INSERT INTO purchase_documents (doc_type, status, document_date, supplier_id,
+         supplier_code, supplier_name, user_id, user_name, subtotal_excl, vat_total, total_incl)
+       VALUES ('purchase_order','draft',CURDATE(),?,?,?,?,?,0,0,0)`,
+      [Number(sup[0]!.id), String(sup[0]!.code), String(sup[0]!.name), actor.userId, actor.userName],
+    )
+    const poId = Number(poRes.insertId)
+    const plRes = await siteExecute(
+      SITE,
+      `INSERT INTO purchase_document_lines
+         (document_id, line_number, description, qty_ordered, qty_received, unit_cost_excl, vat_rate_pct)
+       VALUES (?,1,?,4,0,100,15)`,
+      [poId, `JCT${stamp} brake pad set`],
+    )
+    const plId = Number(plRes.insertId)
+
+    const linked = await linkToOrder(SITE, actor, reqId, plId)
+    ok('(J32) linking it to a purchase line moves it to on order', linked.ok)
+    ok(
+      '(J32) and the job can see which order it is on',
+      (await requestsForJob(SITE, prJobId))[0]?.purchaseLineId === plId,
+    )
+
+    /*
+     * Nothing has been received yet, so nothing may be claimed. A request that
+     * flipped to "arrived" the moment it was ordered would tell a technician
+     * their part was in when it was still on a lorry.
+     */
+    await markReceivedForDocument(SITE, poId)
+    ok(
+      '(J32) *** nothing received yet, so nothing is claimed ***',
+      (await requestsForJob(SITE, prJobId))[0]?.status === 'ordered',
+    )
+
+    await siteExecute(SITE, `UPDATE purchase_document_lines SET qty_received = 4 WHERE id = ?`, [
+      plId,
+    ])
+    await markReceivedForDocument(SITE, poId)
+    ok(
+      '(J32) once the goods arrive, the request says so',
+      (await requestsForJob(SITE, prJobId))[0]?.status === 'received',
+    )
+
+    /*
+     * The CLAIM is stamped before the bell, so running the tail twice cannot
+     * notify twice — lowStockAlert.ts:85 is the pattern. Asserted by counting
+     * the notifications after a second call.
+     */
+    const beforeSecond = await siteQuery<{ n: number }>(
+      SITE,
+      `SELECT COUNT(*) AS n FROM notifications WHERE event = 'job_part_received' AND title LIKE ?`,
+      [`%${stamp}%`],
+    )
+    await markReceivedForDocument(SITE, poId)
+    const afterSecond = await siteQuery<{ n: number }>(
+      SITE,
+      `SELECT COUNT(*) AS n FROM notifications WHERE event = 'job_part_received' AND title LIKE ?`,
+      [`%${stamp}%`],
+    )
+    ok(
+      '(J32) *** running the receipt tail twice notifies ONCE — the claim precedes the bell ***',
+      Number(beforeSecond[0]?.n ?? 0) === Number(afterSecond[0]?.n ?? 0) &&
+        Number(afterSecond[0]?.n ?? 0) === 1,
+      `${beforeSecond[0]?.n} then ${afterSecond[0]?.n}`,
+    )
+
+    ok(
+      '(J32) *** and it is addressed to the person who ASKED — the first userId producer ***',
+      (
+        await siteQuery<{ user_id: number | null }>(
+          SITE,
+          `SELECT user_id FROM notifications WHERE event = 'job_part_received' AND title LIKE ?`,
+          [`%${stamp}%`],
+        )
+      )[0]?.user_id === actor.userId,
+    )
+
+    /*
+     * *** THE SEVERING TRAP. ***
+     *
+     * saveOrder rewrites its lines wholesale — DELETE then re-INSERT — so a
+     * buyer editing an issued order blanks job_card_line_id on every line of
+     * it. The parts still arrive and no job knows they were its. Nothing else
+     * in the system would ever say so, which is why this bucket exists.
+     */
+    await siteExecute(SITE, `UPDATE job_part_requests SET status = 'ordered' WHERE id = ?`, [reqId])
+    await siteExecute(SITE, `DELETE FROM purchase_document_lines WHERE id = ?`, [plId])
+    const drift = await reconcileJobPartRequests(SITE)
+    ok(
+      '(J32) *** reconcile catches a request whose purchase line has vanished ***',
+      drift.orderedWithoutLine.some((d) => d.id === reqId),
+      `${drift.orderedWithoutLine.length} reported`,
+    )
+
+    // Outstanding on a closed job: nobody is waiting, and it should be said.
+    await closeJob(SITE, actor, prJobId, 'Done without the part.')
+    const drift2 = await reconcileJobPartRequests(SITE)
+    ok(
+      '(J32) and one still outstanding on a CLOSED job',
+      drift2.openOnClosedJob.some((d) => d.id === reqId),
+    )
+    ok(
+      '(J32) a closed job refuses a new request',
+      !(await requestPart(SITE, actor, {
+        jobCardId: prJobId, description: `JCT${stamp} too late`, qty: 1,
+      })).ok,
+    )
+
+    await siteExecute(SITE, `DELETE FROM job_part_requests WHERE job_card_id = ?`, [prJobId])
+    await siteExecute(SITE, `DELETE FROM purchase_documents WHERE id = ?`, [poId])
+    /*
+     * BOTH notifications, by event rather than only by title.
+     *
+     * The first version swept `%stamp%`, which caught the "Part arrived" bell
+     * but left "Part needed" behind — the two are written at different moments
+     * and the requested one carries the DESCRIPTION, not the job title, so a
+     * single LIKE matched only one of them. A leaked notification is exactly
+     * the litter that makes somebody else's suite fail.
+     */
+    await siteExecute(
+      SITE,
+      `DELETE FROM notifications
+        WHERE event IN ('job_part_requested','job_part_received') AND title LIKE ?`,
+      [`%${stamp}%`],
+    )
+  }
+
   await sweepStrays()
 
   /*
@@ -5377,6 +6132,40 @@ async function main() {
   await sweepCheck('crew jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
     CREW_JOB_PATTERN,
   ])
+  await sweepCheck('signoff jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    SIGNOFF_JOB_PATTERN,
+  ])
+  await sweepCheck('expense jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    EXPENSE_JOB_PATTERN,
+  ])
+  await sweepCheck('expense suppliers', 'SELECT id FROM suppliers WHERE code REGEXP ?', [
+    EXPENSE_SUPPLIER_PATTERN,
+  ])
+  await sweepCheck('expense categories', 'SELECT id FROM expense_categories WHERE name REGEXP ?', [
+    EXPENSE_CATEGORY_PATTERN,
+  ])
+  await sweepCheck('multi-asset jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    MULTI_ASSET_JOB_PATTERN,
+  ])
+  await sweepCheck(
+    'orphaned job equipment links',
+    'SELECT id FROM job_card_assets WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  await sweepCheck('part request jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
+    PART_REQUEST_JOB_PATTERN,
+  ])
+  await sweepCheck(
+    'orphaned part requests',
+    'SELECT id FROM job_part_requests WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
+  )
+  // Notifications carry no foreign key, so nothing removes them when the job
+  // goes. A leaked one is litter of exactly the kind (J17) exists to catch.
+  await sweepCheck(
+    'part request notifications',
+    `SELECT id FROM notifications
+      WHERE event IN ('job_part_requested','job_part_received') AND title LIKE ?`,
+    [`%${stamp}%`],
+  )
   await sweepCheck('crews', 'SELECT id FROM job_teams WHERE name REGEXP ?', [CREW_PATTERN])
   await sweepCheck(
     'orphaned crew members',

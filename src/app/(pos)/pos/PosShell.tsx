@@ -1108,6 +1108,10 @@ export default function PosShell({
             customerPhone: state.customer?.phone ?? null,
             terminalId: terminal?.id ?? null,
             terminalCode: terminal?.code ?? null,
+            /* Which machine is ringing this up. The server re-checks its licence
+               rather than trusting the screen that already did — see
+               requireLicensedDevice. */
+            deviceSerial: device,
             priceStructureId,
             lines: salePayloadLines(
               state.lines,

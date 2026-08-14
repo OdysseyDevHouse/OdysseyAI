@@ -102,6 +102,15 @@ export type GridLine = PurchaseLineValues & {
   lastCost: number
   /** Shelf price, VAT inclusive. Editable here so a delivery can be repriced. */
   sellIncl: number
+  /**
+   * The job line this was bought for (163). Carried, never edited here.
+   *
+   * The grid does not show it and nobody sets it on this screen — it arrives on
+   * a line raised from a job part request and has to survive a round trip,
+   * because saveOrder deletes and re-inserts every line. Dropping it here is
+   * how a buyer fixing a quantity silently severs every job from its parts.
+   */
+  jobCardLineId?: number | null
 }
 
 export type GridColumnId =

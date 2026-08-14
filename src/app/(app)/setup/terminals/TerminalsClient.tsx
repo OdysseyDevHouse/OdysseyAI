@@ -18,13 +18,11 @@ import {
   Switch,
   useToast,
 } from '@/components/ui'
-import { deviceId, deviceLabel, isDesktopShell } from '@/lib/deviceId'
+import { deviceId } from '@/lib/deviceId'
 import type { Terminal } from '@/lib/site/terminals'
 import {
   saveTerminalAction,
   deleteTerminalAction,
-  releaseTerminalAction,
-  claimTerminalAction,
 } from './actions'
 
 /**
@@ -48,23 +46,13 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
   // `ready` gates the status cells: until the effect has run, device.id is
   // null for one frame even on a machine that HAS claimed a till, and showing
   // "unclaimed" for that frame is a lie. A skeleton holds the space instead.
-  const [device, setDevice] = useState<{
-    id: string | null
-    label: string
-    desktop: boolean
-    ready: boolean
-  }>({ id: null, label: '', desktop: false, ready: false })
+  const [device, setDevice] = useState<{ id: string | null; ready: boolean }>({
+    id: null,
+    ready: false,
+  })
   useEffect(() => {
-    setDevice({ id: deviceId(), label: deviceLabel(), desktop: isDesktopShell(), ready: true })
+    setDevice({ id: deviceId(), ready: true })
   }, [])
-
-  const claimedHere = device.id ? terminals.find((t) => t.deviceId === device.id) : undefined
-
-  // When this machine has no till yet, claiming one IS the screen's main act —
-  // but only when there is exactly one candidate is the primary unambiguous.
-  const claimable = terminals.filter((t) => t.isActive && t.deviceId !== device.id)
-  const claimIsPrimary =
-    device.ready && device.id !== null && !claimedHere && claimable.length === 1
 
   function run(work: () => Promise<{ ok: true; message: string } | { ok: false; error: string }>) {
     startTransition(async () => {
@@ -81,64 +69,29 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
     })
   }
 
+  /* ── NO "THIS MACHINE" CARD, AND NO CLAIM BUTTONS ────────────────────────
+     There used to be a card here that registered this browser against a till,
+     and a "Use here" button on each row below doing the same thing. Both
+     pre-date POS licensing, and they bound a TERMINAL without touching the
+     LICENCE — so a supervisor could register a machine, see it confirmed on
+     this screen, and still be blocked at the till, with nothing on the page
+     hinting at why. (Observed exactly that way.)
+
+     Linking now happens once, under Till licences below, in a single action
+     that sets both. This card is a list of the shop's registers again — what a
+     sale records, not which machine is standing at one. */
   return (
     <>
       <Card>
         <CardHeader
-          title="This machine"
-          description={
-            device.desktop
-              ? 'Running in the desktop app, which supplies a stable machine id.'
-              : 'Running in a browser. The id is kept in this browser’s storage.'
-          }
-        />
-        <SettingRow
-          icon={<Icons.Terminal size={16} />}
-          label={
-            !device.ready
-              ? 'Identifying this machine…'
-              : claimedHere
-                ? `Registered as ${claimedHere.name}`
-                : 'Not registered to a till'
-          }
-          description={
-            !device.ready
-              ? ''
-              : claimedHere
-                ? `${claimedHere.code} · ${device.label}`
-                : device.id
-                  ? `${device.label} · claim a till below to ring up sales from this machine`
-                  : 'This browser cannot store an identifier, so a till must be chosen each time.'
-          }
-        >
-          {!device.ready ? (
-            <Skeleton className="h-4 w-20" />
-          ) : (
-            claimedHere && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={pending}
-                onClick={() => run(() => releaseTerminalAction(claimedHere.id))}
-              >
-                <Icons.Close size={15} />
-                Release
-              </Button>
-            )
-          )}
-        </SettingRow>
-      </Card>
-
-      <Card>
-        <CardHeader
           title="Tills"
           description="Every register in the store. A sale records which one rang it up."
+          /* Always primary now. It used to step down to `secondary` when
+             claiming a till was the more urgent act on this screen — but
+             claiming no longer happens here, so registering one is the only
+             thing this card does. */
           action={
-            <Button
-              variant={claimIsPrimary ? 'secondary' : 'primary'}
-              onClick={() => setAdding(true)}
-              disabled={pending}
-            >
+            <Button variant="primary" onClick={() => setAdding(true)} disabled={pending}>
               <Icons.Plus size={15} />
               Register a till
             </Button>
@@ -179,21 +132,7 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
                         <Badge tone="success">This machine</Badge>
                       )}
                       {terminal.deviceId && terminal.deviceId !== device.id && (
-                        <Badge tone="brand">Claimed</Badge>
-                      )}
-
-                      {terminal.isActive && terminal.deviceId !== device.id && device.id && (
-                        <Button
-                          variant={claimIsPrimary ? 'primary' : 'secondary'}
-                          size="sm"
-                          disabled={pending}
-                          onClick={() =>
-                            run(() => claimTerminalAction(terminal.id, device.id!, device.label))
-                          }
-                        >
-                          <Icons.Check size={15} />
-                          Use here
-                        </Button>
+                        <Badge tone="brand">In use</Badge>
                       )}
                     </>
                   )}

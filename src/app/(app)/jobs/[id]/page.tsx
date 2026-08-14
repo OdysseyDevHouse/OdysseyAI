@@ -13,7 +13,8 @@ import { jobTravel } from '@/lib/site/jobTravel'
 import { jobParts, vanHoldings } from '@/lib/site/jobParts'
 import { jobStanding, tradingHours } from '@/lib/site/jobSla'
 import { jobItems, jobHeadlineIds, listHeadlines } from '@/lib/site/jobHeadlines'
-import { jobAssetFor } from '@/lib/site/jobAssets'
+import { jobAssetFor, otherJobAssets } from '@/lib/site/jobAssets'
+import { requestsForJob } from '@/lib/site/jobPartRequests'
 import { jobSeriesFor } from '@/lib/site/jobSeries'
 import { getServiceAddress, formatAddress, mapsHref } from '@/lib/site/serviceAddresses'
 import { formatMoney } from '@/lib/decimals'
@@ -41,13 +42,18 @@ import { storedMillis } from '@/lib/jobStatusModel'
 import JobDetail from './JobDetail'
 import JobVisits from './JobVisits'
 import JobPartsPanel from './JobPartsPanel'
+import JobPartRequests from './JobPartRequests'
 import JobSlaCard from './JobSlaCard'
 import JobChecks from './JobChecks'
+import JobSignoffCard from './JobSignoffCard'
 import JobPeoplePanel from './JobPeoplePanel'
 import CustomFieldsPanel from '@/components/CustomFieldsPanel'
 import { setCustomValuesAction } from '../actions'
 import JobFeedbackCard from './JobFeedbackCard'
 import { feedbackFor } from '@/lib/site/jobFeedback'
+import { jobSignoff, signoffRule } from '@/lib/site/jobSignoff'
+import { supplierOptions } from '@/lib/site/suppliers'
+import { listCategories } from '@/lib/site/expenseCategories'
 import JobDepositsPanel from './JobDepositsPanel'
 import JobAssetCard from './JobAssetCard'
 
@@ -161,6 +167,12 @@ export default async function JobPage({
     teams,
     customValues,
     feedback,
+    signoff,
+    signoffRequired,
+    expenseSuppliers,
+    expenseCategories,
+    otherAssets,
+    partRequests,
   ] = await Promise.all([
       listJobStatuses(siteId, false),
       can(capabilities, 'jobs.invoice') ? billableLines(siteId, jobId) : Promise.resolve([]),
@@ -217,6 +229,56 @@ export default async function JobPage({
       // Feedback (§ rating). Tolerant of a site without 128; null when the
       // customer was never asked, which is the ordinary case.
       feedbackFor(siteId, jobId),
+      // Sign-off (159). Both tolerant of a site without it: jobSignoff returns
+      // two nulls and signoffRule returns 'none', so the card renders as
+      // unsigned-and-not-required rather than the job refusing to open.
+      jobSignoff(siteId, jobId),
+      signoffRule(siteId),
+      /*
+       * Who an expense was paid to, and what bucket it lands in (160).
+       *
+       * Both are only offered to somebody who may see costs — an expense line IS
+       * a cost, and a technician who cannot see the money has no use for a
+       * supplier picker. Both tolerant: a site without 042's categories, or
+       * without 160, gets an empty picker rather than a job card that will not
+       * open.
+       */
+      /*
+       * The CODE is part of the label, not decoration.
+       *
+       * This site has four active suppliers all called "Adams Cash & Carry" and
+       * six called "Adams Trading" — real rows with different codes and
+       * different balances. A picker showing bare names offers four identical
+       * options and no way to tell which is which, and the wrong one is a
+       * subcontractor spend report pointing at the wrong account.
+       */
+      /*
+       * Every ACTIVE supplier — see supplierOptions for why it is not
+       * listSuppliers, and why the code is part of the label.
+       *
+       * Retired suppliers are excluded on their own merits: one must not be
+       * offered for money spent today. An expense already pointing at one keeps
+       * pointing at it — the id is stored, and the name is joined on read.
+       */
+      can(capabilities, 'jobs.cost')
+        ? supplierOptions(siteId).catch(() => [])
+        : Promise.resolve([]),
+      can(capabilities, 'jobs.cost')
+        ? listCategories(siteId)
+            .then((r) => r.map((c) => ({ id: c.id, name: `${c.accountCode} — ${c.name}` })))
+            .catch(() => [])
+        : Promise.resolve([]),
+      // The other units on this visit (161). Appended at the END, like every
+      // addition before it — this array's order IS the destructuring order, and
+      // an earlier edit that inserted in the middle silently swapped the
+      // deposits for the people.
+      //
+      // Tolerant: a site without the join table shows the primary alone rather
+      // than failing to open the job.
+      otherJobAssets(siteId, jobId).catch(() => []),
+      // Parts this job is waiting on (162). Also appended at the END, and also
+      // tolerant — a site without the table shows no card rather than failing.
+      requestsForJob(siteId, jobId).catch(() => []),
     ])
 
   const overdue = !job.isClosed && job.dueAt !== null && storedMillis(job.dueAt) < Date.now()
@@ -351,6 +413,7 @@ export default async function JobPage({
             jobId={job.id}
             customerId={job.customerId}
             asset={jobAsset}
+            others={otherAssets}
             canEdit={can(capabilities, 'jobs.edit')}
             jobClosed={job.isClosed}
           />
@@ -439,23 +502,35 @@ export default async function JobPage({
         )}
 
         {tab === 'checks' ? (
-          <JobChecks
-            jobId={job.id}
-            jobClosed={job.isClosed}
-            items={items}
-            headlines={headlines.map((h) => ({
-              id: h.id,
-              name: h.name,
-              itemCount: h.items.length,
-            }))}
-            selectedHeadlineIds={jobHeadlines}
-            canEdit={can(capabilities, 'jobs.edit')}
-            // getSetting already falls back to the registered default; this covers
-            // only the catch above, where the settings row could not be read at all.
-            signatureStatement={
-              signatureStatement?.trim() || SETTING_DEFAULTS.job_signature_statement
-            }
-          />
+          <div className="space-y-4">
+            <JobSignoffCard
+              jobId={job.id}
+              jobClosed={job.isClosed}
+              canEdit={can(capabilities, 'jobs.edit')}
+              signoff={signoff}
+              rule={signoffRequired}
+              signatureStatement={
+                signatureStatement?.trim() || SETTING_DEFAULTS.job_signature_statement
+              }
+            />
+            <JobChecks
+              jobId={job.id}
+              jobClosed={job.isClosed}
+              items={items}
+              headlines={headlines.map((h) => ({
+                id: h.id,
+                name: h.name,
+                itemCount: h.items.length,
+              }))}
+              selectedHeadlineIds={jobHeadlines}
+              canEdit={can(capabilities, 'jobs.edit')}
+              // getSetting already falls back to the registered default; this covers
+              // only the catch above, where the settings row could not be read at all.
+              signatureStatement={
+                signatureStatement?.trim() || SETTING_DEFAULTS.job_signature_statement
+              }
+            />
+          </div>
         ) : tab === 'visits' ? (
           <JobVisits
             jobId={job.id}
@@ -506,6 +581,17 @@ export default async function JobPage({
                 canIssue={can(capabilities, 'stock.transfer')}
               />
             )}
+            {/* Directly under the parts panel (162), because the two are one
+                thought: what this job needs, and what is not on the shelf. The
+                refusal that sends somebody here comes from the card above. */}
+            {tab === 'costs' && (
+              <JobPartRequests
+                jobId={job.id}
+                jobClosed={job.isClosed}
+                requests={partRequests}
+                canEdit={can(capabilities, 'jobs.edit')}
+              />
+            )}
             {/* On the Quotes tab, because a deposit is part of the money
                 conversation with the customer — it belongs beside what was
                 quoted, not beside what the job cost us. */}
@@ -529,6 +615,8 @@ export default async function JobPage({
               activity={activity}
               quotes={quotes}
               variance={variance}
+              suppliers={expenseSuppliers}
+              expenseCategories={expenseCategories}
               can={{
                 edit: can(capabilities, 'jobs.edit'),
                 assign: can(capabilities, 'jobs.assign'),

@@ -2454,6 +2454,409 @@ proven to return data by borrowing one line and putting it straight back.
 
 ---
 
+## What phase 32 shipped
+
+The job card as a document a customer can be handed — the only customer-facing
+artefact the module lacked, and the thing that makes the signature capture built
+in phase 13 worth something. `src/lib/jobs/render.ts` + `src/lib/jobs/pdf.ts`
+behind `GET /api/jobs/[id]/report`. No migration.
+
+### What may appear is decided in one place
+
+The `render`/`pdf` split copies `statements/`: the render module assembles and
+decides, the pdf module only draws. So a future preview screen cannot disagree
+with the printed sheet, and "may a customer see this" has one answer.
+
+Withheld, matching what [portalData.ts](src/lib/site/portalData.ts) already
+enforces: cost, margin, `internal` and `written_off` lines, `pending` lines
+(nobody has decided who pays), internal notes, and staff names beyond whoever
+signed. Every field is **named** in the mapping rather than spread — `{...line}`
+would publish `costExcl` the day somebody widens `JobCardLine`.
+
+On the live fixture that meant **4 billable lines shown and 5 withheld**.
+
+### Three bugs, and only one was in my reasoning
+
+**Every image silently failed.** `JobItem.attachmentName` is
+`party_documents.filename` — the *display* name. Passing it to `readStoredFile`
+finds nothing, so every photograph fell back to "could not be shown" while the
+PDF still rendered and looked plausible. The stored name is now fetched
+explicitly, and deliberately not added to `JobItem`: a stored name is a path
+component and should travel as little as possible.
+
+**A malformed PNG killed the whole node process.** pdfkit's decoder inflates the
+pixel data on a *later tick* and rethrows from inside a zlib callback — so the
+error arrives with no caller on the stack, escaping the try/catch at the draw
+site, escaping the Promise, and taking the server down. `doc.image()` had already
+returned successfully. `isDrawable()` now does the same inflate synchronously,
+where a throw is catchable. A corrupt customer photograph must not be able to
+stop the server.
+
+Worth recording: **pdfkit sniffs content, not the extension** — a PNG saved as
+`.pdf` is still decoded as a PNG, so checking the filename proves nothing.
+
+**Raw values on a customer document.** The first render printed
+`2026-08-12T18:00:17`, the enum `on_site`, and "Callout to Parow · qty 29" with
+no unit. All three were invisible to assertions and obvious in a picture. Dates
+are now formatted by hand (not `toLocaleString` — the server's locale is not the
+customer's), the status uses the existing `APPOINTMENT_STATUS_LABEL`, and the
+quantity carries `LINE_KIND_UNIT`, so it reads **"29 km"** and **"2 hours"**.
+
+### The one I chased that was not a bug
+
+The signature appeared to be missing for four rounds of investigation. The
+layout was correct throughout — the test fixture was a **64×64 RGBA icon**
+borrowed from `uploads/`, scaled into a 200×60 box and easy to miss. Rendering a
+real 600×200 signature proved the path works. The lesson is the cheaper one:
+when the code and the picture disagree four times, suspect the fixture.
+
+### Verified
+
+Typecheck, `check-ui-kit`, production build and `test:job-cards` /
+`test:navigation` / `test:invoicing` all clean. Smoke crawl reports only the
+pre-existing `/sales/[id]/bill` sampling failure.
+
+Driven end to end in Chrome against a fixture carrying a real photo, a real
+signature, a file whose bytes were deleted, and a file pdfkit cannot decode: the
+first two embed, the last two fall back to *"The attached file could not be shown
+here."*, a failed check prints red, results group by work phase, and the charges
+table repeats its header across the page break. Fixture removed; site 1 verified
+back to its prior state by query.
+
+**Not built here:** the sign-off block is drawn but empty — phase 33 fills it.
+Laid out now so the page is not designed twice.
+
+---
+
+## What phase 33 shipped
+
+**Two-party sign-off.** `159_job_signoff.sql` puts six columns on `job_cards` —
+`{customer,technician}_signed_{at,name,signature_id}` — plus the setting
+`job_signoff_required` (`none` | `customer` | `both`, defaulting to `none`).
+`src/lib/site/jobSignoff.ts` is the module; `JobSignoffCard` is the screen, on
+the Checks tab beside the pad it reuses.
+
+### Why columns and not two checklist items
+
+It very nearly is two checklist items, and that is the honest starting point:
+114 gives an item a `response_type` of `signature`, 119 attaches a real drawn
+PNG, and a site can already make one mandatory before closing. Everything here
+reuses that machinery — the same `SignaturePad`, the same `party_documents` row,
+the same uploads directory.
+
+What it cannot do is answer a question. Nothing in the schema knows *which*
+signature item is the customer's: both are rows whose name somebody typed, and
+the wording differs per site and per kind of work. So "completed jobs missing a
+customer signature" — a report the PRD names — would mean matching on
+configurable text. Two named pairs make it one indexed read.
+
+### Three decisions worth keeping
+
+- **`signed_name` is typed, not looked up.** The person holding the tablet is
+  often not the person on the account — a foreman, a receptionist, a tenant. The
+  technician side defaults to the actor because there the two nearly always
+  agree; the customer side never does, because that name is not ours to give.
+- **A closed job refuses a signature.** Without that, a job could close unsigned
+  and be signed at leisure afterwards, which makes the whole rule decorative.
+- **Withdrawing clears the claim, not the evidence.** The document row stays on
+  the Files tab, exactly as `captureEvidence` leaves a replaced photo. A customer
+  who re-signed because the first mark smudged has not made the first one untrue.
+
+**Cancelling is never blocked**, deliberately — refusing to cancel a job because
+nobody signed for work that never happened is how a job nobody wants stays open
+forever. This is a *separate* rule from the checklist guard beside it, which asks
+whether the STAGE demands its checks.
+
+### Two bugs the probe caught
+
+- **`missingSignoff` read `job_cards` through the pool while inside
+  `setStatus`'s transaction** — a second connection waiting on a lock the caller
+  itself holds, which would have surfaced as a hung close rather than an error.
+  Now takes the `PoolConnection`, matching `outstandingRequiredTx`; the setting
+  read stays on the pool, matching `itemsBlockClose`.
+- **The fixture leaked a cancelled job**, which then failed the customer delete
+  with a foreign key error and took the whole suite down at its last line.
+  `TITLE_PATTERN` is `'JCT %'` with a space and matches **none** of this suite's
+  titles — every fixture registers its own regexp, and mine had not.
+
+A third was self-inflicted and worth recording: the drift assertion originally
+checked only `Array.isArray`, which passes on an empty array. Tightened to name
+the fixture, it immediately failed — the job was still `'both'`-blocked and had
+never closed.
+
+### Verified
+
+Typecheck, `check-ui-kit`, production build, and `test:job-cards` (22 new J29
+assertions) / `test:navigation` / `test:invoicing` all clean. Smoke crawl reports
+only the pre-existing `/sales/[id]/bill` sampling failure.
+
+Driven end to end in Chrome: a real pointer stroke on the pad, uploaded, filed,
+and read back — the header narrowed from "customer and technician" to
+"technician", the button became Withdraw, and the same mark then appeared **above
+the rule** on the PDF beside "Mrs Adams" and its timestamp. Site 1 verified back
+to its prior state by query, including the uploaded PNG removed from disk.
+
+**Noticed, not fixed:** job 1222 on site 1 is `PORTAL PROBE other customer job`,
+litter from the phase 29 probe. Left alone rather than swept blind — it is not
+this phase's, and deleting somebody else's fixture is how a suite loses a row it
+was relying on.
+
+---
+
+## What phase 34 shipped
+
+**Expenses as a line kind.** `160_job_expenses.sql` widens
+`job_card_lines.line_kind` to include `'expense'` and adds two nullable FKs:
+`supplier_id` (who was paid) and `expense_category_id` (which bucket it lands in
+on the P&L, reusing 042's categories). `'expense'` joins `LINE_KINDS`, so the
+picker, the labels and the units all follow.
+
+### Why not keep using `charge`
+
+Because it works, which is the honest starting point — 104's own comment says a
+subcontractor invoice is a `charge` with `product_id` NULL, and it is right: the
+cost lands in the total and the margin is correct. What it cannot do is
+*report*. A callout fee, a disposal fee and a R14,000 subcontractor invoice are
+one undifferentiated bucket, and not one of them names who was paid.
+
+**Existing `charge` rows are left alone.** Reclassifying them would rewrite
+history to fit an enum value that did not exist when they were written, and a
+callout fee genuinely is a charge. The cost is that the first quarter after this
+ships has expenses in two places — visible and explicable, where rewritten
+history is neither.
+
+### The drift the compiler could not catch
+
+The typed union means adding a value makes the compiler name every
+`Record<JobLineKind, …>` — and it did, across `JobLineInput`, the drafts in
+`JobDetail` and seventeen test fixtures. But it found **nothing** at
+[catalog.ts:3575](src/lib/reportBuilder/catalog.ts#L3575), which spelled the four
+values into a plain `string[]`. The field would have kept working, kept
+filtering, and simply never offered or matched an expense — a report of
+"everything except parts" quietly omitting the whole new category.
+
+Fixed by spreading `LINE_KINDS` itself, so the next kind appears there by
+construction rather than by somebody remembering. A J30 assertion now names all
+five values, so this cannot regress silently.
+
+### A supplier belongs to an expense, enforced in the action
+
+`saveLines` clears `supplier_id` and `expense_category_id` on any kind but
+`expense`. Not a UI concern: the kind can be changed on a row that already
+carries them, and a create-time check would miss exactly that case. A labour
+line that arrives carrying a supplier is a labour line with no supplier.
+
+### What the browser caught that the tests could not
+
+The supplier picker was silently wrong. `listSuppliers` **hard-caps at 500** and
+this site has **844 active suppliers** — so the picker would have offered
+whichever 500 sorted first with nothing on screen saying the rest existed. A cap
+is right for a paged screen and wrong for a picker, which has to be able to name
+anything. Now `supplierOptions()`, uncapped and active-only.
+
+The same screenshot showed **four options reading "Adams Cash & Carry"** — real
+distinct suppliers with different codes and different balances. The code is now
+part of the label, because picking the wrong one puts a spend report against the
+wrong account.
+
+Both were invisible to every assertion: the data was correct, the query
+succeeded, and the control rendered.
+
+### Verified
+
+Typecheck clean, `check-ui-kit` clean, `test:job-cards` (9 new J30 assertions),
+`test:invoicing`, `test:report-columns` and `test:purchasing` all pass. Smoke
+crawl reports only the pre-existing `/sales/[id]/bill` sampling failure.
+Migration applied to sites 1 and 2, both confirmed carrying all five enum values
+and the two FKs; site 1 verified free of fixtures by query.
+
+Driven in Chrome: Expense appears as a fifth add button, the sub-row renders
+"Paid to … for …" indented under the description — a sub-row rather than two
+more columns, because only one kind of five uses them and two permanently-empty
+columns would narrow the description on every part, hour and kilometre.
+
+**Two failures that are not from this work**, both confirmed by reverting the
+catalog to HEAD and re-running: `test:report-templates` fails
+`jobs-open-by-stage` and `jobs-by-customer` on a `__rows` sort, which is a
+synthetic row-count field unrelated to `line_kind`. Also, the production build's
+type-check gate is currently blocked by another session's in-progress edits to
+`TerminalsClient.tsx` and `LicencesPanel.tsx` — the build compiles, and every
+file in this phase typechecks clean.
+
+**Not changed:** `job_headline_parts.line_kind` keeps its four values. That table
+requires a `product_id`, so it cannot hold an expense — offering the value on the
+template screen would put a choice there that saving would refuse.
+
+---
+
+## What phase 35 shipped
+
+**Multiple assets per job (§18.4).** `161_job_assets.sql` adds `job_card_assets`
+plus a nullable `asset_id` on `job_card_lines` and `job_card_items`.
+`job_cards.asset_id` **stays, and stays primary**.
+
+### Why both, rather than migrating to a join table
+
+115 argued the single column deliberately — "a join table would mean every cost,
+every check and every warranty question needed to say WHICH asset it belonged
+to" — and that argument still holds. So the existing data does not move: the
+primary asset remains the answer whenever nothing says otherwise, and the join
+table adds the *others* on the visit.
+
+115 also said, in the same breath, that "a join table can be added later without
+moving the ones already recorded". This is that, done the way it said.
+
+A part or a check MAY name one of the others, and usually will not. `asset_id`
+on those tables is nullable because NULL means the job's asset, which on the
+overwhelming majority of jobs is the only possible answer — and on a four-unit
+job it honestly records that the technician did not say, which beats forcing a
+guess a warranty claim would later rely on.
+
+### The read that had to keep working
+
+This was the whole risk, and it was bigger than the plan estimated: `WHERE
+asset_id = ?` appears **eleven** times in `jobAssets.ts`, not five. The history
+query, three `job_count` subqueries, an open-job count, `recordServiceOnClose`,
+the setter, the unlinker, and two drift checks.
+
+Fixing only the history leaves an asset showing four jobs on its own screen and
+six in the history below it — neither number obviously wrong. So every count
+goes through one shared fragment, and the two most consequential reads were
+changed deliberately:
+
+- **`recordServiceOnClose`** now services *every* unit on the visit. Left as the
+  primary alone, three of four would still show as due, and somebody would drive
+  out to a unit serviced last week — the due list being the screen this whole
+  feature exists to feed.
+- **`assetHistory`** spans both and carries `isPrimary`, badged on the equipment
+  page. "We came out for this" and "we checked it while we were there" are
+  different facts about a warranty.
+
+### The bug only a live query could find
+
+The obvious shared fragment — `(SELECT COUNT(*) FROM (<union on a.id>) jc)` —
+**MySQL will not run**. A derived table cannot see a column from the enclosing
+query, so it fails with `Unknown column 'a.id' in 'WHERE'`. It typechecks, it
+reads correctly, and it throws the first time a screen loads. Caught by running
+the queries against site 1 before building any UI on them; replaced with a
+correlated `COUNT(*) … WHERE primary OR EXISTS(join table)`, which also counts
+each job once without needing DISTINCT.
+
+### Verified
+
+Typecheck and `check-ui-kit` clean; `test:job-cards` (12 new J31 assertions),
+`test:navigation` and `test:invoicing` all pass. Smoke crawl reports only the
+pre-existing `/sales/[id]/bill` sampling failure. Migration applied to sites 1
+and 2, both confirmed carrying the table and both new columns.
+
+Driven end to end in Chrome: the picker offered only the second unit (correctly
+excluding the primary and anything already added), the note saved, the card
+showed "Also on this visit (1)", and the secondary unit's own equipment page
+showed the job badged "Also on this visit" — the read that would otherwise have
+silently returned nothing. Site 1 verified back to its prior state by query.
+
+**Guards, all asserted:** the primary is refused as one of the others (it is the
+subject, not a member); adding the same unit twice says so; a closed job refuses
+equipment changes; and removing a unit keeps the parts and checks, because
+`fk_jcl_asset` and `fk_jci_asset` are `SET NULL` — the work happened, only the
+claim about which unit is withdrawn.
+
+---
+
+## What phase 36 shipped
+
+**Stock ordering (§28).** The largest genuine gap: today a technician who needs
+a part that is not on the shelf gets *"BRK-PAD-01 has only 0 in Main Store —
+cannot move 4"* and there is nowhere to go from it. Now they can ask.
+
+`162_job_part_requests.sql` adds `job_part_requests`, modelled on
+`leave_requests` (058) — the repo's one true requested-then-approved table.
+`163_purchase_line_job_link.sql` adds `job_card_line_id` to
+`purchase_document_lines`. `src/lib/site/jobPartRequests.ts` is the module,
+`/jobs/part-requests` the buyer's queue, and a card on the job's Costs tab is
+where the asking happens.
+
+### Three rules that keep this safe
+
+- **The job module raises no purchase order and writes no stock movement.**
+  `linkToOrder` takes a purchase line id that somebody else created; nothing
+  here calls `saveOrder` or `recordMovement`. Same discipline that kept
+  `finaliseDocument()` the only posting engine.
+- **A request reserves nothing**, and the screen says so in as many words.
+  `jobParts.ts:23-41` records that a job reservation folded into
+  `reservedQtyFor()` was designed and deliberately dropped, because the same
+  unit would be deducted twice for every part in every van, permanently. A part
+  that does not exist yet must certainly not reserve anything. Asserted by
+  counting `stock_movements` across the request.
+- **A request is not a document** — no sequence number burned on something
+  usually declined, the doctrine `job_requests` (129) already set.
+
+### The severing trap, and what closes it
+
+`saveOrder` rewrites its lines wholesale — `DELETE FROM purchase_document_lines
+WHERE document_id = ?` then re-INSERT. So a buyer editing an issued order to fix
+one quantity would blank `job_card_line_id` on **every** line, and nothing would
+report it: the order still exists, the parts still arrive, and no job knows they
+were its.
+
+Closed three ways: `jobCardLineId` is on `OrderLineInput` and re-supplied on
+every save; it is read back onto `PurchaseLine` and carried through `GridLine`
+and the edit page so it survives the round trip; and
+`reconcileJobPartRequests()` has a bucket for "ordered, but the purchase line
+has vanished" if it is ever got wrong anyway.
+
+### The claim precedes the bell
+
+`markReceivedForDocument` scopes its UPDATE `WHERE status = 'ordered'` and
+notifies only what that UPDATE actually claimed — `lowStockAlert.ts:85`'s
+pattern, so a dead channel means one missed message rather than one on every
+receipt for ever. Asserted by running the receipt tail twice and counting one
+notification.
+
+It is also **the first producer of `notify()`'s `userId` field**, which migration
+155 shipped with no producer: "your part has arrived" is a message for the person
+who asked, not for the shop.
+
+### Two bugs the live probe caught
+
+- **`markReceivedForDocument` was being handed the GRV's document id.**
+  `qty_received` is bumped on the **order** lines (`purchasePosting.ts:951` and
+  `:1057`), which is what a request points at — so the GRV id matched nothing
+  and would have notified nobody. A feature that silently does nothing looks
+  exactly like a feature nobody uses.
+- **The suite leaked a notification.** The sweep matched `%stamp%`, which caught
+  "Part arrived" but not "Part needed" — the two are written at different
+  moments and the requested one carries the *description*, not the job title.
+  Now swept by event, and asserted in (J17).
+
+### Verified
+
+Typecheck and `check-ui-kit` clean; `test:job-cards` (14 new J32 assertions),
+`test:purchasing`, `test:purchase-orders`, `test:invoicing` and
+`test:navigation` all pass. Smoke crawl reports only the pre-existing
+`/sales/[id]/bill` sampling failure, and the new route crawled clean. Migrations
+applied to sites 1 and 2, both confirmed.
+
+`test:navigation` caught a real thing: the nav keywords repeated "stock" (via
+"out of stock"), which the suite refuses. Worth having — a synonym that appears
+twice is a search result that ranks wrong.
+
+Driven end to end in Chrome: asked for a part on the job, and it appeared on the
+buyer's queue with quantity, the technician's reason, the job link and
+Approve/Decline. Site 1 verified back to its prior state by query.
+
+**Named, not built:** partial receipts, substitutions and backorders. A request
+moves to `received` when its purchase line has received anything at all.
+Splitting one request across two deliveries is a real thing that happens; saying
+so beats silently marking a half-delivered request complete.
+
+**A naming decision worth keeping:** the nav entry is "Parts asked for", not
+"Requests" — `/jobs/requests` is already inbound *work* from outside the
+business, and two menu entries a technician reads as the same word is how
+somebody ends up on the wrong queue.
+
+---
+
 ## Deferred, and what each is blocked on
 
 Not "later" — **blocked on infrastructure that does not exist**.

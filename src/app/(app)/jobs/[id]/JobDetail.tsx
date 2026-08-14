@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { Fragment, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
@@ -92,6 +92,8 @@ function toDraft(line: JobCardLine): Draft {
     vatRatePct: line.vatRatePct,
     discountPct: line.discountPct,
     note: line.note,
+    supplierId: line.supplierId,
+    expenseCategoryId: line.expenseCategoryId,
     invoicedQty: line.invoicedQty,
     // An invoiced line is evidence of something a customer was charged for.
     // Editing its quantity would make the invoice and the job disagree.
@@ -124,6 +126,8 @@ export default function JobDetail({
   activity,
   quotes,
   variance,
+  suppliers,
+  expenseCategories,
   can,
 }: {
   job: JobCardDetail
@@ -143,6 +147,15 @@ export default function JobDetail({
   activity: ActivityEvent[]
   quotes: JobQuote[]
   variance: QuoteVariance
+  /**
+   * Who an expense was paid to, and which bucket it lands in (160).
+   *
+   * Both arrive empty for somebody who may not see costs, which is why the
+   * expense sub-row below is drawn only when `can.cost` — an empty picker is
+   * worse than no picker.
+   */
+  suppliers: { id: number; name: string }[]
+  expenseCategories: { id: number; name: string }[]
   can: {
     edit: boolean
     assign: boolean
@@ -192,12 +205,16 @@ export default function JobDetail({
         productId: null,
         productCode: null,
         description: '',
-        qty: kind === 'part' ? 1 : 0,
+        // An expense is a sum of money, not a count: qty stays 1 so the figure
+        // in the price column is the figure, the way a part of one is.
+        qty: kind === 'part' || kind === 'expense' ? 1 : 0,
         unitCostExcl: 0,
         unitPriceIncl: 0,
         vatRatePct: 15,
         discountPct: 0,
         note: null,
+        supplierId: null,
+        expenseCategoryId: null,
         invoicedQty: 0,
         locked: false,
       },
@@ -225,6 +242,11 @@ export default function JobDetail({
         vatRatePct: l.vatRatePct,
         discountPct: l.discountPct,
         note: l.note,
+        // Sent as-is; saveLines clears them on any kind but expense, so a row
+        // switched away from Expense cannot keep a supplier the screen no
+        // longer shows.
+        supplierId: l.supplierId,
+        expenseCategoryId: l.expenseCategoryId,
       }))
       const result = await saveLinesAction(job.id, payload)
       if (!result.ok) {
@@ -521,7 +543,8 @@ export default function JobDetail({
                     const stored = job.lines.find((l) => l.id === line.id)
                     const editable = can.edit && !job.isClosed && !line.locked
                     return (
-                      <tr key={line.key}>
+                      <Fragment key={line.key}>
+                      <tr>
                         <td className={TABLE_TD_INPUT}>
                           <Select
                             value={line.lineKind}
@@ -622,6 +645,63 @@ export default function JobDetail({
                           )}
                         </td>
                       </tr>
+
+                      {/* ── Who was paid, on an expense line only (160) ──────
+                          A sub-row rather than two more columns: only one kind
+                          of five uses them, and two permanently-empty columns
+                          would narrow the description on every part, hour and
+                          kilometre in the table to serve the rare case. */}
+                      {line.lineKind === 'expense' && can.cost && (
+                        <tr>
+                          <td className={TABLE_TD} />
+                          <td className={TABLE_TD_INPUT} colSpan={6}>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs text-muted">Paid to</span>
+                              <Select
+                                value={line.supplierId === null ? '' : String(line.supplierId)}
+                                disabled={!editable || pending}
+                                onChange={(e) =>
+                                  patch(line.key, {
+                                    supplierId: e.target.value === '' ? null : Number(e.target.value),
+                                  })
+                                }
+                                className="w-48"
+                              >
+                                <option value="">Not recorded</option>
+                                {suppliers.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.name}
+                                  </option>
+                                ))}
+                              </Select>
+                              <span className="text-xs text-muted">for</span>
+                              <Select
+                                value={
+                                  line.expenseCategoryId === null
+                                    ? ''
+                                    : String(line.expenseCategoryId)
+                                }
+                                disabled={!editable || pending}
+                                onChange={(e) =>
+                                  patch(line.key, {
+                                    expenseCategoryId:
+                                      e.target.value === '' ? null : Number(e.target.value),
+                                  })
+                                }
+                                className="w-56"
+                              >
+                                <option value="">Uncategorised</option>
+                                {expenseCategories.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     )
                   })}
                 </tbody>

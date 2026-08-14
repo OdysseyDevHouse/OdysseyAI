@@ -1173,6 +1173,30 @@ export async function receiveGoods(
       href: `/purchasing/${posted.documentId}`,
     })
 
+    /*
+     * Job part requests waiting on this delivery (162).
+     *
+     * Purchasing does not learn about jobs to do this — it calls one function
+     * that reads its own table and answers on its own terms. The claim is
+     * stamped inside that function BEFORE any bell rings, so a dead channel
+     * means one missed message rather than one on every receipt for ever.
+     *
+     * Never throws, for the same reason the bell above never does: this runs
+     * after a receipt that has already committed.
+     *
+     * The ORDER id, not the GRV's — `qty_received` is bumped on the ORDER lines
+     * (:951 and :1057), and those are the lines a request points at. Passing
+     * posted.documentId here would match nothing and silently notify nobody,
+     * which is the shape of bug that looks like a feature nobody uses.
+     *
+     * A receipt with no order behind it (goods that arrived unordered) has no
+     * requests to satisfy, so there is nothing to do.
+     */
+    if (input.orderId) {
+      const { markReceivedForDocument } = await import('./jobPartRequests')
+      await markReceivedForDocument(siteId, input.orderId)
+    }
+
     // The outbound mirror of the bell — thin ids-and-totals payload; a
     // subscriber fetches the lines back through /api/v1 with a key.
     const { enqueueEvent } = await import('./webhooks')

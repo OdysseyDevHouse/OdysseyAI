@@ -453,6 +453,21 @@
   margin-bottom: 16px;
 }
 
+/* Something the user should know, not something they did wrong.
+   Being displaced by a sign-in elsewhere is a normal outcome of a rule the
+   account is subject to — painting it in danger red would tell somebody who
+   has done nothing wrong that they have. Same shape as .error so the two sit
+   identically in the card; only the colour differs. */
+.notice {
+  background: color-mix(in srgb, var(--l-brand) 10%, var(--l-surface));
+  border: 1px solid color-mix(in srgb, var(--l-brand) 30%, var(--l-surface));
+  color: var(--l-brand-dark);
+  padding: 10px 12px;
+  border-radius: var(--l-radius);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
 /* ============================================================================
    Store picker
    ----------------------------------------------------------------------------

@@ -370,6 +370,19 @@ export const NAV: NavSection[] = [
         description: 'Schedules that raise a job when it falls due',
       },
       {
+        /* "Parts asked for", not "Requests" — /jobs/requests above is already
+           inbound WORK from outside the business, and two menu entries a
+           technician reads as the same word is how somebody ends up on the
+           wrong queue. This one is internal: our people asking for stock. */
+        label: 'Parts asked for',
+        href: '/jobs/part-requests',
+        icon: Package,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'part parts request requests order stock shortage backorder buy purchase needed waiting unavailable',
+        description: 'What technicians need that is not on the shelf',
+      },
+      {
         label: 'Equipment',
         href: '/jobs/equipment',
         icon: Wrench,

@@ -29,12 +29,17 @@ export const dynamic = 'force-dynamic'
  *
  * ── THE HISTORY IS A QUERY ─────────────────────────────────────────────────
  *
- * `assetHistory()` is `SELECT ... FROM job_cards WHERE asset_id = ?`. There is no
- * history table, because it would be a second copy of the job list and the two
- * would drift the first time a job was cancelled. The consequence worth naming:
- * cancelled jobs appear here, marked as such — a visit that was called off is part
- * of the story of a unit, and hiding it would make the record read as though
- * nobody ever came out.
+ * `assetHistory()` reads the job list directly. There is no history table,
+ * because it would be a second copy of the job list and the two would drift the
+ * first time a job was cancelled. The consequence worth naming: cancelled jobs
+ * appear here, marked as such — a visit that was called off is part of the story
+ * of a unit, and hiding it would make the record read as though nobody ever came
+ * out.
+ *
+ * Since 161 it spans BOTH sources: jobs this unit was the subject of, and jobs
+ * where it was one of several looked at. The second kind is badged, because the
+ * difference matters to a warranty. A history that showed only the first would
+ * tell a technician the unit had never been touched on any multi-unit visit.
  */
 export default async function EquipmentDetailPage({
   params,
@@ -235,6 +240,15 @@ export default async function EquipmentDetailPage({
                       </td>
                       <td className={TABLE_TD}>
                         <span className="text-ink-2">{h.title}</span>
+                        {/* A visit that covered several units, of which this was
+                            one (161). Worth marking rather than hiding: "we came
+                            out for this" and "we checked it while we were there"
+                            are different facts about a warranty. */}
+                        {!h.isPrimary && (
+                          <Badge tone="neutral" className="ml-2">
+                            Also on this visit
+                          </Badge>
+                        )}
                       </td>
                       <td className={TABLE_TD}>
                         {h.lifecycle === 'cancelled' ? (

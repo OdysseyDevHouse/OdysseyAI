@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { offlineSession, type OfflineSession } from '@/lib/posOffline/signInOffline'
+import { deviceId } from '@/lib/deviceId'
+import { checkDeviceAction, type DeviceState } from './deviceActions'
 import PosGate from './PosGate'
+import PosNotLicensed from './PosNotLicensed'
 import PosShell from './PosShell'
 import type { Special } from '@/lib/specialsEngine'
 import type { PendingSchedule } from '@/lib/priceSchedules'
@@ -128,6 +131,56 @@ export default function PosEntry({
     }
   }, [siteId, serverOperator])
 
+  /* ── This machine's licence ───────────────────────────────────────────────
+     `undefined` while unasked, for the same reason `session` uses it: rendering
+     a refusal during the gap would flash "not licensed" at a shop that is
+     perfectly licensed, on every single load. */
+  const [licence, setLicence] = useState<DeviceState | undefined>(undefined)
+  const [serial, setSerial] = useState<string | null>(null)
+  /* Bumped to re-ask, for the case that actually happens: a supervisor links
+     this machine in the back office on another screen, then comes back and taps
+     "Check again" rather than reloading. */
+  const [licenceNonce, setLicenceNonce] = useState(0)
+  const recheckLicence = useCallback(() => setLicenceNonce((n) => n + 1), [])
+
+  useEffect(() => {
+    let cancelled = false
+    const id = deviceId()
+    setSerial(id)
+
+    /*
+     * NO IDENTIFIER AT ALL — private browsing, or storage blocked.
+     *
+     * Allowed through rather than refused. `deviceId()` already returns null in
+     * that case by design, and a shop whose kiosk browser forbids localStorage
+     * would otherwise be unable to trade at all. The sale path treats an absent
+     * serial the same way, so this is one decision made consistently rather than
+     * two that could disagree.
+     */
+    if (!id) {
+      setLicence({ status: 'licensed', terminalId: null, name: '', trialEndsOn: null })
+      return
+    }
+
+    void checkDeviceAction(id)
+      .then((state) => {
+        if (!cancelled) setLicence(state)
+      })
+      .catch(() => {
+        /* The control database is unreachable. Trade on — the same trade
+           `requireLicensedDevice` makes server-side, and for the same reason: a
+           shop stopped by a licence server hiccup is a far worse failure than a
+           few minutes of unverified trading. */
+        if (!cancelled) {
+          setLicence({ status: 'licensed', terminalId: null, name: '', trialEndsOn: null })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [siteId, licenceNonce])
+
   /* The server's answer wins whenever it has one: it knows about a PIN changed five
      minutes ago on another machine, where the local verifiers are only as fresh as
      the last catalog refresh. */
@@ -156,6 +209,18 @@ export default function PosEntry({
 
   if (!operator) {
     return <PosGate siteId={siteId} siteName={siteName} onOfflineSignIn={setSession} />
+  }
+
+  /* ── IS THIS MACHINE LICENSED? ────────────────────────────────────────────
+     After sign-in, not before. The check needs `sales.till`, and a cashier who
+     cannot sign in learns nothing useful from a licensing message. `undefined`
+     is "not asked yet" — see the state above for why that is not `null`. */
+  if (licence === undefined) return null
+
+  if (licence.status === 'blocked') {
+    return (
+      <PosNotLicensed message={licence.message} serial={serial} onRetry={recheckLicence} />
+    )
   }
 
   return (

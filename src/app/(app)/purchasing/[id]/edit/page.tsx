@@ -114,6 +114,11 @@ export default async function EditOrderPage({
             lastCost: positionFor.get(l.productId ?? -1)?.lastCost ?? 0,
             currentStock: positionFor.get(l.productId ?? -1)?.stockOnHand ?? 0,
             sellIncl: positionFor.get(l.productId ?? -1)?.sellIncl ?? 0,
+            // Carried into the form so it survives the save (163). saveOrder
+            // deletes and re-inserts every line, so a job link that does not
+            // make this round trip is lost the first time somebody edits the
+            // order — silently, because the parts still arrive.
+            jobCardLineId: l.jobCardLineId,
           })),
         }}
       />

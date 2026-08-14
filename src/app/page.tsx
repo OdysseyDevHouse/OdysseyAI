@@ -15,9 +15,9 @@ import styles from './login.module.css'
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>
+  searchParams: Promise<{ next?: string; kicked?: string }>
 }) {
-  const { next } = await searchParams
+  const { next, kicked } = await searchParams
 
   return (
     <div className={styles.wrapper}>
@@ -35,6 +35,18 @@ export default async function HomePage({
           <h1 className={styles.title}>Welcome back</h1>
           <p className={styles.subtitle}>Sign in to your back office</p>
         </div>
+
+        {/* WHY they are back here, when they did not ask to be.
+            `requireSession` sets this after finding the session was superseded.
+            Without it, being dropped at the login screen mid-task is
+            indistinguishable from the app having broken — and the natural
+            response to that is to sign in again, which would displace whoever
+            legitimately holds the seat and start a loop. */}
+        {kicked === '1' && (
+          <div className={styles.notice} role="status">
+            You were signed out because this account signed in on another device.
+          </div>
+        )}
 
         <LoginForm next={next ?? ''} />
 

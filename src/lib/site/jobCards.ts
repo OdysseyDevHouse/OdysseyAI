@@ -8,6 +8,7 @@ import { statusForRole, listJobStatuses } from './jobStatuses'
 import { applyDeadlinesTx } from './jobSla'
 // Likewise jobHeadlines — it reads settings and its own tables, never jobCards.
 import { itemsBlockClose, outstandingRequiredTx } from './jobHeadlines'
+import { missingSignoffTx, signoffRule } from './jobSignoff'
 // And jobAssets, which reads its own tables plus job_cards but never imports back.
 import { recordServiceOnClose } from './jobAssets'
 // And jobPeople, which reads its own table plus job_cards and never imports back.
@@ -24,6 +25,7 @@ import {
   isClosed,
   reclassifyNeedsReason,
   validateJobCardFields,
+  LINE_KINDS_WITH_SUPPLIER,
   type BillingState,
   type JobLineKind,
   type JobPriority,
@@ -85,6 +87,12 @@ export type JobCardLine = {
   invoicedNumber: string | null
   invoicedQty: number
   note: string | null
+  /** Who was paid (160). Only ever set on an `expense` line. */
+  supplierId: number | null
+  supplierName: string | null
+  /** Which expense bucket it lands in on the P&L. Reuses 042's categories. */
+  expenseCategoryId: number | null
+  expenseCategoryName: string | null
   decidedByUserId: number | null
   decidedAt: string | null
   decidedReason: string | null
@@ -225,6 +233,12 @@ export type JobLineInput = {
   vatRatePct: number
   discountPct: number
   note: string | null
+  /**
+   * Who was paid, and what the spend was for (160). Both only meaningful on an
+   * `expense` line, and both cleared when the kind changes — see saveLines.
+   */
+  supplierId: number | null
+  expenseCategoryId: number | null
 }
 
 export type JobSaveResult =
@@ -379,6 +393,13 @@ function mapLine(row: Row): JobCardLine {
     invoicedNumber: text(row.invoiced_number),
     invoicedQty,
     note: text(row.note),
+    supplierId: row.supplier_id === null || row.supplier_id === undefined ? null : Number(row.supplier_id),
+    supplierName: text(row.supplier_name),
+    expenseCategoryId:
+      row.expense_category_id === null || row.expense_category_id === undefined
+        ? null
+        : Number(row.expense_category_id),
+    expenseCategoryName: text(row.expense_category_name),
     decidedByUserId: row.decided_by_user_id === null ? null : Number(row.decided_by_user_id),
     decidedAt: wallClock(row.decided_at),
     decidedReason: text(row.decided_reason),
@@ -727,9 +748,15 @@ export async function getJobCard(siteId: number, id: number): Promise<JobCardDet
   const [lineRows, docRows] = await Promise.all([
     siteQuery<Row>(
       siteId,
-      `SELECT l.*, d.document_number AS invoiced_number
+      // The two names (160) are joined rather than stored, unlike the crew
+      // member snapshots: a supplier rename should show through here, because
+      // this is a live cost record and not evidence of who somebody once was.
+      `SELECT l.*, d.document_number AS invoiced_number,
+              sup.name AS supplier_name, ec.name AS expense_category_name
          FROM job_card_lines l
          LEFT JOIN sales_documents d ON d.id = l.invoiced_doc_id
+         LEFT JOIN suppliers sup ON sup.id = l.supplier_id
+         LEFT JOIN expense_categories ec ON ec.id = l.expense_category_id
         WHERE l.job_card_id = ?
         ORDER BY l.line_number, l.id`,
       [id],
@@ -1136,6 +1163,27 @@ export async function setStatus(
           }
         }
       }
+
+      /*
+       * And the sign-off the site asks for (159).
+       *
+       * A SEPARATE rule from the checklist guard above, deliberately, because it
+       * answers a different question. `blocking` asks whether this STAGE demands
+       * its checks — and Cancelled must not, or a job nobody wants stays open
+       * forever. A signature rule is about the business's paperwork and applies
+       * wherever a job is being closed as done.
+       *
+       * It is skipped for a cancellation for the same reason 123 seeds Cancelled
+       * with blocks_on_incomplete = 0: refusing to cancel a job because the
+       * customer never signed for work that never happened is nonsense.
+       */
+      if (role !== 'cancelled') {
+        // The RULE is a setting, read through the pool exactly as
+        // itemsBlockClose above does; the JOB's own columns are read on the
+        // transaction, because that is the row this transaction has locked.
+        const missing = await missingSignoffTx(tx, jobId, await signoffRule(siteId))
+        if (missing) return { ok: false as const, error: missing }
+      }
     }
 
     // started_at is stamped once, the first time work begins, and never moved:
@@ -1300,6 +1348,23 @@ export async function saveLines(
     if (line.qty < 0) return { ok: false, error: 'A quantity cannot be negative.' }
   }
 
+  /*
+   * A supplier and a category belong to an EXPENSE and to nothing else (160).
+   *
+   * Cleared here rather than trusted from the client, because the kind can be
+   * changed on a line that already has them: somebody records a subcontractor
+   * invoice, then switches the row to Labour. Leaving the supplier behind would
+   * make a spend report count that money against a supplier on a line that no
+   * longer claims to be an expense — a figure nothing on screen explains.
+   *
+   * Done at the action's own boundary rather than in the UI so the three call
+   * sites that reach saveLines all get the same answer.
+   */
+  const supplierFor = (line: JobLineInput) =>
+    LINE_KINDS_WITH_SUPPLIER.has(line.lineKind) ? line.supplierId : null
+  const categoryFor = (line: JobLineInput) =>
+    LINE_KINDS_WITH_SUPPLIER.has(line.lineKind) ? line.expenseCategoryId : null
+
   return siteTransaction(siteId, async (tx) => {
     const [jobRows] = await tx.query<Row[]>(`SELECT status FROM job_cards WHERE id = ?`, [jobId])
     if (!jobRows[0]) return { ok: false as const, error: 'That job no longer exists.' }
@@ -1329,8 +1394,9 @@ export async function saveLines(
         await tx.execute(
           `INSERT INTO job_card_lines
              (job_card_id, line_number, line_kind, billing_state, product_id, product_code,
+              supplier_id, expense_category_id,
               description, qty, unit_cost_excl, unit_price_incl, vat_rate_pct, discount_pct, note)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             jobId,
             lineNumber,
@@ -1338,6 +1404,8 @@ export async function saveLines(
             line.billingState,
             line.productId,
             text(line.productCode),
+            supplierFor(line),
+            categoryFor(line),
             line.description.trim(),
             line.qty,
             line.unitCostExcl,
@@ -1357,6 +1425,7 @@ export async function saveLines(
         await tx.execute(
           `UPDATE job_card_lines
               SET line_number = ?, line_kind = ?, product_id = ?, product_code = ?,
+                  supplier_id = ?, expense_category_id = ?,
                   description = ?, qty = ?, unit_cost_excl = ?, unit_price_incl = ?,
                   vat_rate_pct = ?, discount_pct = ?, note = ?
             WHERE id = ? AND job_card_id = ?`,
@@ -1365,6 +1434,8 @@ export async function saveLines(
             line.lineKind,
             line.productId,
             text(line.productCode),
+            supplierFor(line),
+            categoryFor(line),
             line.description.trim(),
             line.qty,
             line.unitCostExcl,

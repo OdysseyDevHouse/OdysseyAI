@@ -89,6 +89,18 @@ export async function posUnlockAction(deviceId: string, pin: string): Promise<Un
   // BOTH cookies. The browser session is what stops proxy.ts redirecting the next
   // request; the till session is who the sales belong to. Minting only the first
   // would put the operator back at the PIN pad immediately.
+  //
+  // ── DELIBERATELY NO `sid`, SO THIS SESSION IS NEVER EVICTED ──────────────
+  //
+  // The back office allows one live session per user (src/lib/control/sessions.ts),
+  // and a token carrying no `sid` is exempt from that. It has to be: this mints a
+  // back-office session from a PIN alone, so enrolling it would mean a waiter
+  // unlocking a till signs the manager out of the back office — and the manager
+  // signing back in bounces the till to the PIN pad, mid-service.
+  //
+  // Tills are limited by DEVICE instead (src/lib/control/devices.ts), which is the
+  // right lever: a shop pays per till, not per person standing at one. If this is
+  // ever changed to call `finishSignIn`, that exemption disappears silently.
   await setSessionCookie(
     await createSessionToken({
       userId: result.user.id,

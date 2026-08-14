@@ -385,6 +385,10 @@ export default function OrderScreen({
           discountPct: l.discountPct,
           discountAmount: l.discountAmount,
           vatRatePct: l.vatRatePct,
+          // Carried straight back (163). saveOrder rewrites its lines wholesale,
+          // so a line raised from a job part request loses its job the moment
+          // somebody edits the order unless this makes the round trip.
+          jobCardLineId: l.jobCardLineId ?? null,
         })),
       })
 

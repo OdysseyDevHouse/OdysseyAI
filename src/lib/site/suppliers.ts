@@ -612,6 +612,35 @@ export async function supplierIdsMatching(
   return rows.map((r) => Number(r.id))
 }
 
+/**
+ * Every active supplier as a pickable option — id, and a label that identifies
+ * one uniquely.
+ *
+ * ── WHY NOT listSuppliers ──────────────────────────────────────────────────
+ *
+ * That one hard-caps at 500, which is right for a paged screen and wrong for a
+ * picker. A site with 844 active suppliers would get whichever 500 sorted first
+ * and no indication that the rest exist — a control that silently cannot name
+ * some of its subjects. A picker has to be able to name anything.
+ *
+ * ── WHY THE CODE IS IN THE LABEL ───────────────────────────────────────────
+ *
+ * Because names are not unique and really are duplicated in practice: one live
+ * site has four active suppliers called "Adams Cash & Carry" and six called
+ * "Adams Trading", each with its own balance. A picker of bare names offers
+ * four identical options, and picking the wrong one puts a spend report against
+ * the wrong account.
+ */
+export async function supplierOptions(
+  siteId: number,
+): Promise<{ id: number; name: string }[]> {
+  const rows = await siteQuery<RowDataPacket & { id: number; code: string; name: string }>(
+    siteId,
+    `SELECT id, code, name FROM suppliers WHERE status = 'active' ORDER BY name, code`,
+  )
+  return rows.map((r) => ({ id: Number(r.id), name: `${String(r.name)} (${String(r.code)})` }))
+}
+
 export function toSupplierStatus(value: unknown): SupplierStatus | null {
   const raw = String(value ?? '')
   return (SUPPLIER_STATUSES as readonly string[]).includes(raw) ? (raw as SupplierStatus) : null

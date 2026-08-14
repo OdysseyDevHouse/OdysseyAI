@@ -57,6 +57,14 @@ export type PurchaseLine = {
   locationId: number | null
   /** On a supplier_return line: the GRV line it sends back. Null elsewhere. */
   sourceLineId: number | null
+  /**
+   * The job line this was bought for (163). Null on ordinary stock buying.
+   *
+   * Read so the order screen can carry it back into OrderLineInput on save —
+   * without that round trip, editing an order silently severs every job from
+   * its parts.
+   */
+  jobCardLineId: number | null
 }
 
 export type PurchaseDocument = {
@@ -131,6 +139,12 @@ function mapLine(r: Row): PurchaseLine {
     locationId: r.location_id === null || r.location_id === undefined ? null : Number(r.location_id),
     sourceLineId:
       r.source_line_id === null || r.source_line_id === undefined ? null : Number(r.source_line_id),
+    // Undefined until 163 reaches this site, which reads as null: no job link,
+    // which is the truth on every line that predates the column.
+    jobCardLineId:
+      r.job_card_line_id === null || r.job_card_line_id === undefined
+        ? null
+        : Number(r.job_card_line_id),
   }
 }
 
@@ -404,6 +418,25 @@ export type OrderLineInput = {
   /** An absolute discount, which wins over the percentage — see 086. */
   discountAmount?: number
   vatRatePct: number
+  /**
+   * The job line this was bought for (163). Almost always null.
+   *
+   * ── WHY THIS HAS TO BE ON THE INPUT ────────────────────────────────────────
+   *
+   * Because saveOrder rewrites its lines wholesale — `DELETE FROM
+   * purchase_document_lines WHERE document_id = ?` and then re-INSERT. A buyer
+   * who edits an issued order to fix one quantity would otherwise blank the job
+   * link on EVERY line of it, and nothing would report that: the order still
+   * exists, the parts still arrive, and no job knows they were its.
+   *
+   * So every caller that rebuilds an order's lines must re-supply this, and the
+   * order screen carries it through untouched. `reconcileJobPartRequests()` has
+   * a bucket for the case where this was got wrong anyway.
+   *
+   * Purchasing learns nothing else about jobs: there is no job parameter on
+   * saveOrder, and the decision logic lives on job_part_requests.
+   */
+  jobCardLineId?: number | null
 }
 
 export type OrderInput = {
@@ -537,6 +570,10 @@ export async function saveOrder(
     // and the amount is what the two disagree about by at most a cent.
     const hasDiscountAmount = await columnExistsTx(tx, 'purchase_document_lines', 'discount_amount')
 
+    // 163 adds job_card_line_id, and a site that has not had it applied must
+    // still be able to save an order — same tolerance, same reason.
+    const hasJobLine = await columnExistsTx(tx, 'purchase_document_lines', 'job_card_line_id')
+
     // Locations that actually exist, so a stale dropdown cannot fail the save
     // on a foreign key. An id we do not recognise becomes null, which reads as
     // "wherever main is when it arrives" — the answer an order gave before it
@@ -552,15 +589,18 @@ export async function saveOrder(
         line.locationId && knownLocations.has(line.locationId) ? line.locationId : null
       await tx.execute(
         `INSERT INTO purchase_document_lines
-           (document_id, line_number, product_id, location_id, product_code, supplier_code,
+           (document_id, line_number, product_id, ${hasJobLine ? 'job_card_line_id, ' : ''}location_id,
+            product_code, supplier_code,
             description, product_type, department_id, qty_ordered, qty_received, unit_cost_excl,
             discount_pct, ${hasDiscountAmount ? 'discount_amount, ' : ''}vat_rate_pct,
             line_total_excl, line_vat, line_total_incl)
-         VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,${hasDiscountAmount ? '?,' : ''}?,?,?,?)`,
+         VALUES (?,?,?,${hasJobLine ? '?,' : ''}?,?,?,?,?,?,?,0,?,?,${hasDiscountAmount ? '?,' : ''}?,?,?,?)`,
         [
           id,
           index + 1,
           line.productId ?? null,
+          // Re-supplied on every save, because the DELETE above just removed it.
+          ...(hasJobLine ? [line.jobCardLineId ?? null] : []),
           locationId,
           line.productCode ?? null,
           line.supplierCode ?? null,
