@@ -8,6 +8,7 @@ import {
   SPECIAL_TYPES,
   type Special,
   type SpecialItem,
+  type SpecialTier,
   type ComboMode,
   type SpecialType,
   validateSpecial,
@@ -33,7 +34,7 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 /** Long enough to describe a deal, short enough to fit a column on a list. */
 const NAME_MAX = 100
 
-function mapSpecial(r: Row, items: SpecialItem[]): Special {
+function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special {
   const type = String(r.type)
   const mode = String(r.combo_mode ?? '')
   return {
@@ -60,6 +61,7 @@ function mapSpecial(r: Row, items: SpecialItem[]): Special {
     // is at least stable and matches the order it was created in.
     priority: Number(r.priority) || Number(r.id),
     items,
+    tiers,
   }
 }
 
@@ -78,9 +80,11 @@ function mapItem(r: Row): SpecialItem {
 
 /** Every special, in firing order. Includes the switched-off ones. */
 export async function listSpecials(siteId: number): Promise<Special[]> {
-  const [specials, items] = await Promise.all([
+  const [specials, items, tiers] = await Promise.all([
     siteQuery<Row>(siteId, `SELECT * FROM specials ORDER BY priority, id`),
     siteQuery<Row>(siteId, `SELECT * FROM special_items ORDER BY id`),
+    // Smallest first, so a tiers list reads the way the ladder is described.
+    siteQuery<Row>(siteId, `SELECT * FROM special_tiers ORDER BY special_id, qty`),
   ])
 
   const bySpecial = new Map<number, SpecialItem[]>()
@@ -91,7 +95,17 @@ export async function listSpecials(siteId: number): Promise<Special[]> {
     bySpecial.set(id, list)
   }
 
-  return specials.map((r) => mapSpecial(r, bySpecial.get(Number(r.id)) ?? []))
+  const tiersBySpecial = new Map<number, SpecialTier[]>()
+  for (const row of tiers) {
+    const id = Number(row.special_id)
+    const list = tiersBySpecial.get(id) ?? []
+    list.push({ qty: Number(row.qty), priceIncl: toNum(row.price_incl) })
+    tiersBySpecial.set(id, list)
+  }
+
+  return specials.map((r) =>
+    mapSpecial(r, bySpecial.get(Number(r.id)) ?? [], tiersBySpecial.get(Number(r.id)) ?? []),
+  )
 }
 
 /**
@@ -389,6 +403,19 @@ export async function saveSpecial(
           Math.max(item.priceIncl, 0).toFixed(4),
         ],
       )
+    }
+
+    // The tiers, same replace-wholesale rule as the items — and dropped
+    // entirely when the special is not a multibuy, so a deal edited into
+    // another shape does not keep a ladder nothing reads.
+    await tx.query(`DELETE FROM special_tiers WHERE special_id = ?`, [id])
+    if (input.type === 'combo' && input.comboMode === 'multibuy') {
+      for (const tier of input.tiers) {
+        await tx.query(
+          `INSERT INTO special_tiers (special_id, qty, price_incl) VALUES (?,?,?)`,
+          [id, Math.max(2, Math.floor(tier.qty)), Math.max(tier.priceIncl, 0).toFixed(4)],
+        )
+      }
     }
 
     return { ok: true as const, id }

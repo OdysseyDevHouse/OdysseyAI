@@ -621,6 +621,88 @@ function DealSection({
     )
   }
 
+  if (shape === 'multibuy') {
+    const tiers = draft.tiers
+    const patchTier = (index: number, changes: Partial<(typeof tiers)[number]>) => {
+      const next = [...tiers]
+      next[index] = { ...next[index], ...changes }
+      patch({ tiers: next })
+    }
+    return (
+      <Section
+        icon={<Icons.ShoppingCart size={14} />}
+        title="The deal"
+        hint="A quantity ladder — 3 for R25, 6 for R45. Any mix of the items below counts."
+      >
+        <Field
+          label="Tiers"
+          hint="Bigger tiers fill first: nine units against 3-for and 6-for tiers is one six and one three. Units below the smallest tier pay the shelf price."
+        >
+          <div className="flex flex-col gap-2">
+            {tiers.length === 0 && (
+              <p className="text-sm text-muted">No tiers yet — add the first rung of the ladder.</p>
+            )}
+            {tiers.map((tier, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <span className="w-24">
+                  <NumberInput
+                    value={tier.qty}
+                    min={2}
+                    aria-label={`Tier ${index + 1} quantity`}
+                    onChange={(e) => patchTier(index, { qty: Number(e.target.value) || 2 })}
+                  />
+                </span>
+                <span className="text-sm text-muted">for</span>
+                <span className="w-32">
+                  <CurrencyInput
+                    value={tier.priceIncl || ''}
+                    aria-label={`Tier ${index + 1} price`}
+                    onChange={(e) => patchTier(index, { priceIncl: Number(e.target.value) || 0 })}
+                  />
+                </span>
+                <Button
+                  variant="danger-ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={`Remove tier ${index + 1}`}
+                  onClick={() => patch({ tiers: tiers.filter((_, i) => i !== index) })}
+                >
+                  <Icons.Trash size={14} />
+                </Button>
+              </div>
+            ))}
+            <div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  patch({
+                    tiers: [
+                      ...tiers,
+                      // The next rung starts above the last, so the ladder
+                      // climbs by itself as rungs are added.
+                      { qty: (tiers.at(-1)?.qty ?? 1) + 2, priceIncl: 0 },
+                    ],
+                  })
+                }
+              >
+                <Icons.Plus size={14} />
+                Add tier
+              </Button>
+            </div>
+          </div>
+        </Field>
+
+        {editor({
+          role: 'trigger',
+          label: 'Counting towards the tiers',
+          hint: 'Products and/or whole departments — any mix fills a tier.',
+          empty: 'Nothing added yet — add the products or departments the tiers cover.',
+        })}
+      </Section>
+    )
+  }
+
   // percent_off — a combo, not a happy hour: it only pays once every trigger
   // row is on the slip.
   return (

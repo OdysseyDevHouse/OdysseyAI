@@ -436,6 +436,7 @@ function toInput(s: Special): SpecialInput {
     bundlePriceIncl: s.bundlePriceIncl,
     spendAmountIncl: s.spendAmountIncl,
     items: s.items.map((i) => ({ ...i })),
+    tiers: s.tiers.map((t) => ({ ...t })),
   }
 }
 
@@ -462,5 +463,6 @@ function blankSpecial(): SpecialInput {
     bundlePriceIncl: 0,
     spendAmountIncl: 0,
     items: [],
+    tiers: [],
   }
 }

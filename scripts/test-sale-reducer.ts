@@ -286,6 +286,7 @@ function main() {
         spendAmountIncl: 0,
         priority: 0,
         items: [{ role: 'scope', productId: 1, departmentId: null, qty: 0, priceIncl: 0 }],
+        tiers: [],
       },
     ]
     const withSpecial = specialsFor(s.lines, specials, new Date())

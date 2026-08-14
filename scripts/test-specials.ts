@@ -53,6 +53,7 @@ function special(over: Partial<Special>): Special {
     spendAmountIncl: 0,
     priority: 1,
     items: [],
+    tiers: [],
     ...over,
   }
 }
@@ -271,6 +272,82 @@ async function main() {
     )
   }
 
+  /* ── Multibuy tiers ─────────────────────────────────────────────────── */
+  console.log('\n— Multibuy tiers —')
+  {
+    // 3 for R25 against R10 shelf units: R30 of goods for R25.
+    const lines = [line(1, 10, 3)]
+    const s = special({ type: 'combo', comboMode: 'multibuy', items: [trigger(1)],
+      tiers: [{ qty: 3, priceIncl: 25 }] })
+    const r = computeSpecials(lines, [s], NOW)
+    const paid = lines.reduce(
+      (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
+    )
+    ok('three R10 units ring up at the R25 tier', near(paid, 25, 0.01), `paid ${paid.toFixed(2)}`)
+  }
+  {
+    // Nine units against 3-for-R25 and 6-for-R45: the LARGEST tier fills
+    // first — one six and one three (R70), not three threes (R75).
+    const lines = [line(1, 10, 9)]
+    const s = special({ type: 'combo', comboMode: 'multibuy', items: [trigger(1)],
+      tiers: [{ qty: 3, priceIncl: 25 }, { qty: 6, priceIncl: 45 }] })
+    const r = computeSpecials(lines, [s], NOW)
+    const paid = lines.reduce(
+      (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
+    )
+    ok('nine units fill the six-tier THEN the three-tier', near(paid, 70, 0.01),
+      `paid ${paid.toFixed(2)}, expected 45 + 25`)
+  }
+  {
+    // Four units against a 3-tier: three at the tier, the fourth at shelf.
+    const lines = [line(1, 10, 4)]
+    const s = special({ type: 'combo', comboMode: 'multibuy', items: [trigger(1)],
+      tiers: [{ qty: 3, priceIncl: 25 }] })
+    const r = computeSpecials(lines, [s], NOW)
+    const paid = lines.reduce(
+      (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
+    )
+    ok('the unit below the smallest tier pays the shelf price', near(paid, 35, 0.01),
+      `paid ${paid.toFixed(2)}, expected 25 + 10`)
+  }
+  {
+    // A mixed group: the deal spends the CHEAPEST units, the house rule.
+    const lines = [line(1, 10, 2), line(2, 20, 2)]
+    const s = special({ type: 'combo', comboMode: 'multibuy',
+      items: [trigger(1), trigger(2)], tiers: [{ qty: 2, priceIncl: 15 }] })
+    const r = computeSpecials(lines, [s], NOW)
+    // Two bundles fire: [10,10] for 15 and [20,20] for 15 — greedy consumes
+    // all four units, cheapest bundle first.
+    const paid = lines.reduce(
+      (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
+    )
+    ok('a mixed group fills tiers cheapest-first across products',
+      near(paid, 30, 0.01), `paid ${paid.toFixed(2)}`)
+  }
+  {
+    // A tier at or above what the units cost is not a deal, and must not
+    // claim — the special below still gets its chance.
+    const lines = [line(1, 10, 2)]
+    const dud = special({ id: 1, priority: 1, type: 'combo', comboMode: 'multibuy',
+      items: [trigger(1)], tiers: [{ qty: 2, priceIncl: 25 }] })
+    const other = special({ id: 2, priority: 2, type: 'happy_hour', discountPct: 5, items: [scope(1)] })
+    const r = computeSpecials(lines, [dud, other], NOW)
+    ok('a tier dearer than the goods does not fire, and does not claim',
+      r.lineSpecials[0]?.specialId === 2)
+  }
+  {
+    // Once ANY tier fires, every qualifying line is claimed — including the
+    // units paying shelf price — exactly like cheapest_free.
+    const lines = [line(1, 10, 4)]
+    const mb = special({ id: 1, priority: 1, type: 'combo', comboMode: 'multibuy',
+      items: [trigger(1)], tiers: [{ qty: 3, priceIncl: 25 }] })
+    const other = special({ id: 2, priority: 2, type: 'happy_hour', discountPct: 50, items: [scope(1)] })
+    const r = computeSpecials(lines, [mb, other], NOW)
+    ok('a fired multibuy claims the whole qualifying line',
+      r.lineSpecials[0]?.specialId === 1,
+      'otherwise the 50% below would discount the full-price fourth unit')
+  }
+
   /* ── Free item ──────────────────────────────────────────────────────── */
   console.log('\n— Buy this, get that —')
   {
@@ -421,6 +498,7 @@ async function databaseChecks() {
     bundlePriceIncl: 0,
     spendAmountIncl: 0,
     items: [],
+    tiers: [] as { qty: number; priceIncl: number }[],
   }
 
   console.log('\n— Validation —')
@@ -441,6 +519,19 @@ async function databaseChecks() {
     'a department row prices everything in it — the legacy shop relies on this',
   )
   ok('a good one passes', validateSpecial(base) === null)
+
+  const mbBase = {
+    ...base, type: 'combo' as const, comboMode: 'multibuy' as const, appliesToAll: false,
+    items: [{ role: 'trigger' as const, productId: 2, departmentId: null, qty: 1, priceIncl: 0 }],
+  }
+  ok('a multibuy with no tiers is refused',
+    validateSpecial({ ...mbBase, tiers: [] }) !== null)
+  ok('a one-unit tier is refused — that is just the shelf price',
+    validateSpecial({ ...mbBase, tiers: [{ qty: 1, priceIncl: 10 }] }) !== null)
+  ok('two tiers at the same quantity are refused',
+    validateSpecial({ ...mbBase, tiers: [{ qty: 3, priceIncl: 25 }, { qty: 3, priceIncl: 20 }] }) !== null)
+  ok('a priced ladder passes',
+    validateSpecial({ ...mbBase, tiers: [{ qty: 3, priceIncl: 25 }, { qty: 6, priceIncl: 45 }] }) === null)
 
   console.log('\n— The window survives the database —')
   const saved = await saveSpecial(SITE, base, 'test')
@@ -483,6 +574,40 @@ async function databaseChecks() {
     'and a row the kind cannot use is dropped',
     !updated.items.some((i) => i.role === 'scope'),
   )
+
+  console.log('\n— Tiers round-trip —')
+  const withTiers = await saveSpecial(
+    SITE,
+    {
+      ...base, id: saved.id, name: `${TAG} tiers`, type: 'combo', comboMode: 'multibuy',
+      appliesToAll: false,
+      items: [{ role: 'trigger', productId: 2, departmentId: null, qty: 1, priceIncl: 0 }],
+      tiers: [{ qty: 6, priceIncl: 45 }, { qty: 3, priceIncl: 25 }],
+    },
+    'test',
+  )
+  ok('a multibuy saves', withTiers.ok, withTiers.ok ? '' : withTiers.error)
+  const tiered = (await listSpecials(SITE)).find((s) => s.id === saved.id)!
+  ok('its tiers come back smallest-first, exactly as priced',
+    tiered.tiers.length === 2 &&
+      tiered.tiers[0].qty === 3 && near(tiered.tiers[0].priceIncl, 25) &&
+      tiered.tiers[1].qty === 6 && near(tiered.tiers[1].priceIncl, 45),
+    JSON.stringify(tiered.tiers))
+
+  // Edited into another shape, the ladder must not linger. Back to the combo
+  // it was above — NOT to `base`, whose applies-to-all happy hour would claim
+  // every line in the basket checks further down.
+  await saveSpecial(
+    SITE,
+    {
+      ...base, id: saved.id, name: `${TAG} two`, type: 'combo', comboMode: 'cheapest_free',
+      triggerQty: 3, appliesToAll: false, discountPct: 100,
+      items: [{ role: 'trigger', productId: 2, departmentId: null, qty: 1, priceIncl: 0 }],
+    },
+    'test',
+  )
+  ok('a special edited out of multibuy drops its tiers',
+    ((await listSpecials(SITE)).find((s) => s.id === saved.id)!).tiers.length === 0)
 
   console.log('\n— Switching off and ordering —')
   await setSpecialActive(SITE, saved.id, false)
@@ -557,6 +682,7 @@ async function basketChecks() {
       discountPct: 20, appliesToAll: false, triggerQty: 0,
       bundlePriceIncl: 0, spendAmountIncl: 0,
       items: [{ role: 'scope', productId: product.id, departmentId: null, qty: 1, priceIncl: 0 }],
+      tiers: [],
     },
     'test',
   )

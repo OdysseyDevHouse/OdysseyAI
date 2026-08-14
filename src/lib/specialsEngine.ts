@@ -46,7 +46,13 @@ export const TYPE_LABEL: Record<SpecialType, string> = {
 }
 
 /** What a combo actually does. Only meaningful when the type is `combo`. */
-export const COMBO_MODES = ['cheapest_free', 'free_item', 'percent_off', 'bundle_price'] as const
+export const COMBO_MODES = [
+  'cheapest_free',
+  'free_item',
+  'percent_off',
+  'bundle_price',
+  'multibuy',
+] as const
 export type ComboMode = '' | (typeof COMBO_MODES)[number]
 
 export const COMBO_MODE_LABEL: Record<Exclude<ComboMode, ''>, string> = {
@@ -54,6 +60,13 @@ export const COMBO_MODE_LABEL: Record<Exclude<ComboMode, ''>, string> = {
   free_item: 'Buy these, get one free',
   percent_off: 'Buy these, get % off',
   bundle_price: 'Bundle price',
+  multibuy: 'Multibuy tiers',
+}
+
+/** One rung of a multibuy ladder: this many units for this much. */
+export type SpecialTier = {
+  qty: number
+  priceIncl: number
 }
 
 export type SpecialRole = 'scope' | 'trigger' | 'reward'
@@ -90,6 +103,8 @@ export type Special = {
   spendAmountIncl: number
   priority: number
   items: SpecialItem[]
+  /** multibuy only: the quantity ladder, e.g. 3 for R25, 6 for R45. */
+  tiers: SpecialTier[]
 }
 
 /** What the engine needs to know about one thing in the basket. */
@@ -144,6 +159,7 @@ export type SpecialInput = {
   bundlePriceIncl: number
   spendAmountIncl: number
   items: SpecialItemInput[]
+  tiers: SpecialTier[]
 }
 
 /**
@@ -221,6 +237,20 @@ export function validateSpecial(input: SpecialInput): string | null {
       if (input.bundlePriceIncl <= 0) return "Set the bundle's selling price"
       if (triggers.length === 0) return 'Add the products that make up the bundle'
       break
+
+    case 'multibuy': {
+      if (triggers.length === 0) return 'Add the products the tiers apply to'
+      if (input.tiers.length === 0) return 'Add at least one tier — a quantity and its price'
+      if (input.tiers.some((t) => Math.floor(t.qty) < 2)) {
+        return 'A tier needs at least 2 units — one unit is just the shelf price'
+      }
+      if (input.tiers.some((t) => t.priceIncl <= 0)) return 'Every tier needs its price'
+      const qtys = input.tiers.map((t) => Math.floor(t.qty))
+      if (new Set(qtys).size !== qtys.length) {
+        return 'Two tiers name the same quantity — keep one of them'
+      }
+      break
+    }
 
     case 'spend':
       if (input.spendAmountIncl <= 0) return 'Set the amount the customer must spend'
@@ -520,6 +550,76 @@ export function computeSpecials(
           if (line.qty > 0) give(index, (units / line.qty) * fraction * 100)
         }
         claim(matching(triggers))
+        break
+      }
+
+      /*
+       * A quantity ladder: 3 for R25, 6 for R45. Greedy LARGEST tier first —
+       * nine units against those tiers is one six and one three, not three
+       * threes — because the bigger tier is the better deal and the ladder is
+       * priced assuming it fills first. Whatever falls below the smallest
+       * tier pays the shelf price.
+       */
+      case 'multibuy': {
+        const tiers = [...special.tiers]
+          .filter((t) => Math.floor(t.qty) >= 2 && t.priceIncl > 0)
+          .sort((a, b) => b.qty - a.qty)
+        if (tiers.length === 0) break
+
+        const qualifying = matching(triggers)
+        // Cheapest units first, the same house rule as every other combo: the
+        // deal spends the least valuable units, so the discount is smallest.
+        const pool = [...qualifying].sort((a, b) => a.line.priceIncl - b.line.priceIncl)
+        const remaining = new Map<number, number>()
+        let unitsLeft = 0
+        for (const { line, index } of pool) {
+          const qty = Math.max(line.qty, 0)
+          remaining.set(index, qty)
+          unitsLeft += qty
+        }
+
+        /** Value saved per line index, summed across every tier fired. */
+        const savings = new Map<number, number>()
+        let fired = false
+
+        for (const tier of tiers) {
+          const need = Math.floor(tier.qty)
+          while (unitsLeft >= need) {
+            const alloc: { index: number; units: number; priceIncl: number }[] = []
+            let want = need
+            let value = 0
+            for (const { line, index } of pool) {
+              if (want <= 0) break
+              const spare = remaining.get(index) ?? 0
+              if (spare <= 0) continue
+              const take = Math.min(want, spare)
+              alloc.push({ index, units: take, priceIncl: line.priceIncl })
+              value += take * line.priceIncl
+              want -= take
+            }
+            // A tier at or above what the units cost is not a deal. Do not
+            // fire it — and since the units are allocated cheapest-first,
+            // no later bundle of this tier would fare better.
+            if (value <= tier.priceIncl) break
+            const fraction = 1 - tier.priceIncl / value
+            for (const a of alloc) {
+              savings.set(a.index, (savings.get(a.index) ?? 0) + a.units * a.priceIncl * fraction)
+              remaining.set(a.index, (remaining.get(a.index) ?? 0) - a.units)
+            }
+            unitsLeft -= need
+            fired = true
+          }
+        }
+
+        if (!fired) break
+        for (const [index, saved] of savings) {
+          const line = lines[index]
+          const lineValue = line.priceIncl * line.qty
+          if (lineValue > 0) give(index, (saved / lineValue) * 100)
+        }
+        // EVERY qualifying line, including units paying shelf price — the
+        // same rule as cheapest_free, for the same reason.
+        claim(qualifying)
         break
       }
 
