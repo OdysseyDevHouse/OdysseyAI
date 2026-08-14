@@ -102,6 +102,11 @@ CATALOGUE['/reports/multi-store-sales'] = {
   icon: 'BarChart',
   keywords: 'multi store group sales turnover daily monthly trend compare growth branches',
 }
+CATALOGUE['/reports/multi-store-like-for-like'] = {
+  description: 'Growth against the same period last year, counting only stores that traded in both.',
+  icon: 'LineChart',
+  keywords: 'like for like lfl same store comp sales growth year on year multi store group',
+}
 
 /**
  * The searchable index for ONE user, built from the sections they can see.

@@ -19,6 +19,8 @@ import {
   stockCoverMonths,
   storeExceptions,
   salesByStore,
+  likeForLike,
+  yearAgoWindow,
   type GroupDashboardRow,
   type SiteResult,
 } from '../src/lib/groupReporting'
@@ -300,6 +302,52 @@ async function main() {
     salesGhost.failures.some((f) => f.siteId === 999) && salesGhost.sites.length === 2)
   ok('  and its column is left out rather than shown as zero',
     salesGhost.periods.every((p) => p.perSite.length === 2))
+
+  /* ── 8. Like-for-like ────────────────────────────────────────────────── */
+
+  ok('*** the prior window is the same dates a year earlier ***',
+    yearAgoWindow({ from: '2026-03-01', to: '2026-08-14' }).from === '2025-03-01' &&
+    yearAgoWindow({ from: '2026-03-01', to: '2026-08-14' }).to === '2025-08-14')
+
+  // 2024 is a leap year; 2023 is not, so 29 Feb has no counterpart.
+  ok('  29 February lands on the 28th when the prior year is common',
+    yearAgoWindow({ from: '2024-02-29', to: '2024-02-29' }).from === '2023-02-28',
+    yearAgoWindow({ from: '2024-02-29', to: '2024-02-29' }).from)
+
+  // 2028 and 2027: 2027 is common, so the same rule applies going forward.
+  ok('  and a leap-to-leap span keeps the 29th',
+    yearAgoWindow({ from: '2025-02-28', to: '2025-02-28' }).from === '2024-02-28')
+
+  const lfl = await likeForLike(both, { from: '2026-01-01', to: '2026-12-31' })
+
+  ok('*** like-for-like reports every store, counted or not ***',
+    lfl.stores.length === 2, lfl.stores.map((s) => `${s.name}:${s.comparable ? 'in' : 'out'}`).join(' '))
+
+  ok('  the comparable total only sums comparable stores',
+    Math.abs(
+      lfl.comparableCurrent -
+        lfl.stores.filter((s) => s.comparable).reduce((t, s) => t + s.current, 0),
+    ) < 0.01)
+
+  ok('  the group total includes non-comparable stores too',
+    lfl.totalCurrent >= lfl.comparableCurrent,
+    `group ${lfl.totalCurrent} >= comparable ${lfl.comparableCurrent}`)
+
+  /* The property the measure exists for: a store with no sales a year ago is
+     excluded WITH A REASON, never silently dropped and never counted as growth
+     from zero. On this dev data the second store opened in August 2026. */
+  const newStore = lfl.stores.find((s) => s.excluded === 'not-trading-then')
+  ok('*** a store not trading a year ago is excluded, with a reason ***',
+    newStore === undefined || (!newStore.comparable && newStore.excluded === 'not-trading-then'),
+    newStore ? `${newStore.name} excluded` : 'both stores traded last year (no exclusion to prove)')
+
+  ok('  an excluded store is still listed, never silently dropped',
+    lfl.stores.length === both.length)
+
+  const lflGhost = await likeForLike(withGhost, { from: '2026-01-01', to: '2026-12-31' })
+  ok('*** an unreadable store is excluded and reported as a failure ***',
+    lflGhost.failures.some((f) => f.siteId === 999) &&
+    lflGhost.stores.some((s) => s.siteId === 999 && s.excluded === 'unreadable'))
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)

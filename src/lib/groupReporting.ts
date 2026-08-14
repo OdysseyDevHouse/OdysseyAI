@@ -446,6 +446,148 @@ function periodKey(value: unknown): string {
   return String(value ?? '')
 }
 
+/* ── Like-for-like ────────────────────────────────────────────────────────── */
+
+/** Why a store is not counted in the like-for-like figure. */
+export type LfeExclusion = 'not-trading-then' | 'not-trading-now' | 'unreadable'
+
+export type LikeForLikeStore = {
+  siteId: number
+  name: string
+  current: number
+  prior: number
+  /** Null when the store took nothing in the prior window — see percentChange. */
+  changePct: number | null
+  /** Included in the headline figure. False stores are listed with a reason. */
+  comparable: boolean
+  excluded?: LfeExclusion
+}
+
+export type LikeForLike = {
+  current: DateRange
+  prior: DateRange
+  stores: LikeForLikeStore[]
+  /** Totals over COMPARABLE stores only — the whole point of the measure. */
+  comparableCurrent: number
+  comparablePrior: number
+  comparableChangePct: number | null
+  /** Every store that traded now, comparable or not — the honest group total. */
+  totalCurrent: number
+  failures: { siteId: number; name: string; error: string }[]
+}
+
+/**
+ * The same span, one year earlier.
+ *
+ * Aligned by CALENDAR DATE, matching how the report engine's own 'lastYear'
+ * period resolves (reportBuilder/spec.ts). Retail practice often aligns by
+ * weekday instead, so that a Saturday is compared against a Saturday — worth
+ * knowing, but two conventions inside one product is worse than one imperfect
+ * one, and a figure that disagrees with every other report in the app is not
+ * an improvement.
+ *
+ * 29 February has no counterpart in a common year and lands on the 28th, which
+ * is the conventional treatment and keeps the window from silently spilling
+ * into March.
+ */
+export function yearAgoWindow(range: DateRange): DateRange {
+  return { from: shiftYear(range.from), to: shiftYear(range.to) }
+}
+
+function shiftYear(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return iso
+  const priorYear = y - 1
+  // 29 Feb in a leap year has no counterpart in a common one.
+  const day = m === 2 && d === 29 && !isLeap(priorYear) ? 28 : d
+  return `${priorYear}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function isLeap(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
+}
+
+/**
+ * Like-for-like: growth with new stores taken out of it.
+ *
+ * The measure a chain is actually judged on. Opening a shop lifts group
+ * turnover by construction, so a headline "up 22%" says nothing about whether
+ * the business improved — it may be four stores trading worse and a fifth one
+ * new. Same-store sales answer the question underneath: did the shops we had
+ * last year sell more this year.
+ *
+ * A store counts as COMPARABLE only when it traded in BOTH windows. One that
+ * opened during the year, or closed, is excluded from the headline and listed
+ * with its reason rather than dropped silently — an exclusion nobody can see is
+ * indistinguishable from a bug.
+ */
+export async function likeForLike(
+  sites: GroupSite[],
+  current: DateRange,
+): Promise<LikeForLike> {
+  const prior = yearAgoWindow(current)
+
+  const results = await perSite(sites, async (siteId) => {
+    const [now, then] = await Promise.all([
+      tradingFor(siteId, current.from, current.to),
+      tradingFor(siteId, prior.from, prior.to),
+    ])
+    return { now, then }
+  })
+
+  const failures = results
+    .filter((r): r is SiteResult<{ now: PeriodTrading; then: PeriodTrading }> & { ok: false } => !r.ok)
+    .map((r) => ({ siteId: r.siteId, name: r.name, error: r.error }))
+
+  const stores: LikeForLikeStore[] = results.map((r) => {
+    if (!r.ok) {
+      return {
+        siteId: r.siteId, name: r.name, current: 0, prior: 0, changePct: null,
+        comparable: false, excluded: 'unreadable' as const,
+      }
+    }
+    const currentTotal = r.data.now.turnoverIncl
+    const priorTotal = r.data.then.turnoverIncl
+
+    /* Trading is decided on SALE COUNT, not turnover. A store that took R0.00
+       across a whole year but rang up sales and refunds to the same value did
+       trade; one with no documents at all did not. */
+    const tradedNow = r.data.now.saleCount > 0
+    const tradedThen = r.data.then.saleCount > 0
+
+    const excluded: LfeExclusion | undefined = !tradedThen
+      ? 'not-trading-then'
+      : !tradedNow
+        ? 'not-trading-now'
+        : undefined
+
+    return {
+      siteId: r.siteId,
+      name: r.name,
+      current: currentTotal,
+      prior: priorTotal,
+      changePct: percentChange(currentTotal, priorTotal),
+      comparable: excluded === undefined,
+      excluded,
+    }
+  })
+
+  const comparable = stores.filter((s) => s.comparable)
+  const comparableCurrent = round(comparable.reduce((t, s) => t + s.current, 0), 2)
+  const comparablePrior = round(comparable.reduce((t, s) => t + s.prior, 0), 2)
+
+  return {
+    current,
+    prior,
+    stores,
+    comparableCurrent,
+    comparablePrior,
+    comparableChangePct: percentChange(comparableCurrent, comparablePrior),
+    totalCurrent: round(stores.reduce((t, s) => t + s.current, 0), 2),
+    failures,
+  }
+}
+
 /* ── Dashboard arithmetic ─────────────────────────────────────────────────── */
 
 /**

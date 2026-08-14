@@ -84,6 +84,17 @@ export default async function ReportsPage() {
       createdByName: '',
       broken: false,
     })
+    templates.push({
+      id: 'multi-store-like-for-like',
+      name: 'Like-for-like sales',
+      description:
+        'Growth against the same period last year, counting only the stores that traded in both.',
+      category: 'Multi-store',
+      source: 'sales',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
   }
   if (allow('reports.financial')) {
     templates.push({

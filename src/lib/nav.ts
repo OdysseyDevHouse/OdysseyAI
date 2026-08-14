@@ -549,6 +549,7 @@ export const SUBPAGE_LABELS = {
      inside the overview. */
   '/reports/multi-store-income-statement': 'Multi-store profit and loss',
   '/reports/multi-store-sales': 'Sales by store',
+  '/reports/multi-store-like-for-like': 'Like-for-like sales',
 } as const
 
 /**
@@ -698,6 +699,10 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
     'multi store group consolidated p&l income statement profit all stores branches',
   '/reports/multi-store-sales':
     'multi store group sales by store turnover daily monthly trend branches compare growth',
+  /* "same store" and "comp" are what this measure is called elsewhere — a
+     retailer who learnt the term in one chain must find it here. */
+  '/reports/multi-store-like-for-like':
+    'like for like lfl same store sales comp growth year on year multi store group branches',
 }
 
 /**
