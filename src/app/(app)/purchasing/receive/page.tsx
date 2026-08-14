@@ -119,6 +119,10 @@ export default async function ReceivePage({
                     locationId: l.locationId,
                     serials: [],
                     warrantyUntil: '',
+                    // Lot data is client state only, like serials: a draft
+                    // that sat overnight asks for the note again at posting.
+                    batchNo: '',
+                    expiryDate: '',
                     // Read fresh rather than from the draft: it may have sat
                     // overnight, and the cost preview must reflect where the
                     // product stands NOW, not when it was put down.

@@ -394,6 +394,9 @@ export async function createCreditNote(
                 sourceDocId: documentId,
                 terminalId: input.terminalId ?? null,
                 note: invoice ? `Credit of ${invoice.documentNumber}` : 'No-receipt return',
+                // A receipted batch return goes back to the lots the ORIGINAL
+                // line took (148); a no-receipt return falls to the newest lot.
+                batch: { returnOfLineId: line.sourceLineId ?? null },
               })
             }
           }

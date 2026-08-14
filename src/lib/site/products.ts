@@ -1039,7 +1039,7 @@ export async function updateProduct(
   const wanted = toProductType(input.productType) === 'recipe' && input.isManufactured ? 1 : 0
   const existing = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
     siteId,
-    `SELECT p.is_manufactured, p.stock_on_hand,
+    `SELECT p.is_manufactured, p.stock_on_hand, p.product_type,
             (SELECT COUNT(*) FROM stock_movements m WHERE m.product_id = p.id) AS movements
        FROM products p WHERE p.id = ?`,
     [id],
@@ -1124,6 +1124,21 @@ export async function updateProduct(
     }
 
     await writePrices(tx, id, input.prices, audit)
+
+    // A product BECOMING batch-tracked with stock already on hand seeds the
+    // untracked bucket in this same transaction, so the lot invariant (148 T1)
+    // holds from the moment of conversion instead of drifting until a count.
+    if (
+      toProductType(input.productType) === 'batch' &&
+      String(existing?.product_type ?? '') !== 'batch'
+    ) {
+      const { seedUntrackedBatchesTx } = await import('./batches')
+      await seedUntrackedBatchesTx(
+        tx,
+        { userId: 0, userName: audit?.userName ?? 'Product edit' },
+        id,
+      )
+    }
     return { ok: true as const, id }
   }).catch((err) => ({ ok: false as const, error: (err as Error).message }))
 }

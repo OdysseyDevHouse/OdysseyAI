@@ -108,6 +108,9 @@ type ReceiveLine = GridLine & {
   serials: string[]
   /** Manufacturer expiry, applied to every serial captured on this line. */
   warrantyUntil: string
+  /** The lot identity for a batch-tracked product (148). '' on other lines. */
+  batchNo: string
+  expiryDate: string
 }
 
 export default function ReceiveScreen({
@@ -302,6 +305,8 @@ export default function ReceiveScreen({
               : mainLocationId,
             serials: [],
             warrantyUntil: '',
+            batchNo: '',
+            expiryDate: '',
             currentAverage: positionFor.get(l.productId ?? -1)?.averageCost ?? 0,
             lastCost: positionFor.get(l.productId ?? -1)?.lastCost ?? 0,
             currentStock: positionFor.get(l.productId ?? -1)?.stockOnHand ?? 0,
@@ -342,6 +347,8 @@ export default function ReceiveScreen({
         locationId: current[current.length - 1]?.locationId ?? mainLocationId,
         serials: [],
         warrantyUntil: '',
+        batchNo: '',
+        expiryDate: '',
         currentAverage: product.costExcl,
         // The search path has no separate last cost; costExcl already follows
         // the site cost basis, so it is the same comparison a buyer makes.
@@ -391,6 +398,8 @@ export default function ReceiveScreen({
           locationId: locationIdFor(row.locationCode) ?? inherited,
           serials: row.serials,
           warrantyUntil: '',
+          batchNo: '',
+          expiryDate: '',
           currentAverage: 0,
           lastCost: 0,
           currentStock: 0,
@@ -506,6 +515,8 @@ export default function ReceiveScreen({
         vatRatePct: l.vatRatePct,
         serials: l.productType === 'serial' ? l.serials : undefined,
         warrantyUntil: l.productType === 'serial' ? l.warrantyUntil || null : undefined,
+        batchNo: l.productType === 'batch' ? l.batchNo || null : undefined,
+        expiryDate: l.productType === 'batch' ? l.expiryDate || null : undefined,
       })),
     }
   }
@@ -557,11 +568,18 @@ export default function ReceiveScreen({
       (l.serials.length !== l.qty + l.qtyBonus || !Number.isInteger(l.qty + l.qtyBonus)),
   )
 
+  /* A batch line with neither lot number nor expiry cannot post — the posting
+     path refuses it too; this tells the receiver while the note is in hand. */
+  const batchGaps = lines.filter(
+    (l) => l.productType === 'batch' && !l.batchNo.trim() && !l.expiryDate.trim(),
+  )
+
   const ready =
     supplierId !== '' &&
     lines.length > 0 &&
     lines.every((l) => l.qty > 0) &&
-    serialGaps.length === 0
+    serialGaps.length === 0 &&
+    batchGaps.length === 0
 
   const comboOptions: ComboboxOption<TillProduct>[] = options.map((p) => ({
     value: String(p.id),
@@ -853,15 +871,27 @@ export default function ReceiveScreen({
                ten-line delivery ten interruptions. */
             renderAfterRow={(line) => {
               const l = lines.find((x) => x.key === line.key)
-              if (!l || l.productType !== 'serial') return null
-              return (
-                <SerialCapture
-                  serials={l.serials}
-                  warrantyUntil={l.warrantyUntil}
-                  qtyReceived={l.qty + l.qtyBonus}
-                  onChange={(patch) => patchLine(l.key, patch as Partial<GridLine>)}
-                />
-              )
+              if (!l) return null
+              if (l.productType === 'serial') {
+                return (
+                  <SerialCapture
+                    serials={l.serials}
+                    warrantyUntil={l.warrantyUntil}
+                    qtyReceived={l.qty + l.qtyBonus}
+                    onChange={(patch) => patchLine(l.key, patch as Partial<GridLine>)}
+                  />
+                )
+              }
+              if (l.productType === 'batch') {
+                return (
+                  <BatchCapture
+                    batchNo={l.batchNo}
+                    expiryDate={l.expiryDate}
+                    onChange={(patch) => patchLine(l.key, patch as Partial<GridLine>)}
+                  />
+                )
+              }
+              return null
             }}
           />
         )}
@@ -1193,6 +1223,53 @@ function SerialCapture({
           ))}
         </ul>
       )}
+    </div>
+  )
+}
+
+/**
+ * The lot capture for a batch-tracked line (148) — one number, one date,
+ * inline under the row like SerialCapture and for the same reason: the
+ * delivery note is in the receiver's hand NOW. At least one of the two is
+ * required; expiry alone names the lot EXP-<date> server-side.
+ */
+function BatchCapture({
+  batchNo,
+  expiryDate,
+  onChange,
+}: {
+  batchNo: string
+  expiryDate: string
+  onChange: (patch: { batchNo?: string; expiryDate?: string }) => void
+}) {
+  const filled = !!batchNo.trim() || !!expiryDate.trim()
+  return (
+    <div className="my-1.5 rounded-control border border-border bg-surface-2 p-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex items-center gap-2 self-center">
+          <Icons.Barcode size={15} className="text-muted" />
+          <span className="text-sm font-medium text-ink">Lot</span>
+          {filled ? (
+            <Badge tone="success">captured</Badge>
+          ) : (
+            <Badge tone="warning">batch number or expiry needed</Badge>
+          )}
+        </div>
+        <Field label="Batch / lot number" className="w-52">
+          <Input
+            value={batchNo}
+            placeholder="e.g. L2408A"
+            onChange={(e) => onChange({ batchNo: e.target.value })}
+          />
+        </Field>
+        <Field label="Expiry date" className="w-44">
+          <Input
+            type="date"
+            value={expiryDate}
+            onChange={(e) => onChange({ expiryDate: e.target.value })}
+          />
+        </Field>
+      </div>
     </div>
   )
 }

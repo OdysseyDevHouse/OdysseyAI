@@ -21,6 +21,7 @@ export type ProductTypeId =
   | 'buyout'
   | 'calcqty'
   | 'gift_card'
+  | 'batch'
 
 export type ProductTypeOption = {
   id: ProductTypeId
@@ -90,6 +91,13 @@ export const PRODUCT_TYPES: ProductTypeOption[] = [
     name: 'Gift card',
     description:
       'Sells stored value. The till asks for the card number and the amount; no stock is carried, and the sale posts to the gift card liability rather than revenue.',
+  },
+  {
+    id: 'batch',
+    name: 'Batch-tracked product',
+    description:
+      'A stocked item tracked per lot, with an optional expiry date. Receipts capture the batch number; sales take the earliest expiry first automatically.',
+    setupLabel: 'Batches',
   },
 ]
 

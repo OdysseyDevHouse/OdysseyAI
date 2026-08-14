@@ -87,7 +87,10 @@ export function offlineBlockedTender(tender: {
  *     last case. See referBreakdown.ts and 103_refer_methods.sql.
  *
  * `normal`, `returnable`, `service`, `buyout` and `calcqty` all sell offline, which
- * is nearly everything in nearly every shop.
+ * is nearly everything in nearly every shop. A BATCH product sells offline too,
+ * deliberately: which lot moved is decided by the server (earliest expiry
+ * first) inside recordMovement, so allocation simply happens at sync — no
+ * local decision exists to get wrong.
  */
 export function offlineBlockedProduct(product: { productType: string }): string | null {
   if (product.productType === 'serial') return 'Serial-tracked items need the network'

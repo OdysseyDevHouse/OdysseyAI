@@ -18,6 +18,7 @@ import { reconcileJobPeople } from '@/lib/site/jobPeople'
 import { reconcileJobAutomations } from '@/lib/site/jobAutomations'
 import { reconcileJobDeposits } from '@/lib/site/jobDeposits'
 import { reconcileJobTeams } from '@/lib/site/jobTeams'
+import { reconcileBatches } from '@/lib/site/batches'
 import { listSequences, verifySequence } from '@/lib/site/sequences'
 import { formatMoney } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader } from '@/components/ui'
@@ -116,6 +117,7 @@ export default async function ReconciliationPage() {
     jobAutomations,
     jobDeposits,
     jobTeams,
+    batches,
     sequences,
   ] = await Promise.all([
     reconcileStock(siteId),
@@ -150,6 +152,8 @@ export default async function ReconciliationPage() {
     reconcileJobDeposits(siteId).catch(() => null),
     // Likewise 126.
     reconcileJobTeams(siteId).catch(() => null),
+    // Likewise 148: a site without product_batches reports nothing.
+    reconcileBatches(siteId).catch(() => null),
     listSequences(siteId),
   ])
 
@@ -309,7 +313,8 @@ export default async function ReconciliationPage() {
     jobDrift === 0 &&
     itemDrift === 0 &&
     assetDrift === 0 &&
-    seriesDrift === 0
+    seriesDrift === 0 &&
+    (batches === null || batches.length === 0)
   const clean = ledgersClean && missingNumbers.length === 0
 
   return (
@@ -391,6 +396,41 @@ export default async function ReconciliationPage() {
             <AdjustmentDriftTable rows={adjustments} />
           </Card>
         )}
+
+        {batches !== null &&
+          (batches.length === 0 ? (
+            <Callout tone="success" title="Batches">
+              Every batch-tracked pile matches the sum of its lots, and every lot matches its
+              own slices.
+            </Callout>
+          ) : (
+            <Card>
+              <CardHeader
+                title="Batches"
+                description="The per-location lot sums against the piles (T2), and each lot against its own movement slices (T3). Drift here means the movement hook missed a path."
+              />
+              <div className="overflow-x-auto px-4 pb-4">
+                <ul className="divide-y divide-border text-sm">
+                  {byDrift(batches).map((row, index) => (
+                    <li key={index} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <span className="min-w-0">
+                        <span className="font-medium text-ink">{row.description}</span>
+                        <span className="ml-2 text-xs text-muted">
+                          {row.code}
+                          {row.locationCode ? ` · ${row.locationCode}` : ''}
+                          {row.batchNo !== null ? ` · lot ${row.batchNo || 'untracked'}` : ' · pile total'}
+                        </span>
+                      </span>
+                      <span className="numeric text-danger-ink">
+                        {row.drift > 0 ? '+' : ''}
+                        {row.drift.toFixed(3)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </Card>
+          ))}
 
         {unsettled.length === 0 ? (
           <Callout tone="success" title="Store transfers">

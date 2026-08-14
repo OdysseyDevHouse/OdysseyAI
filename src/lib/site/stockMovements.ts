@@ -6,6 +6,9 @@ import { mainLocationId, mainLocationIdTx } from './stockLocations'
 import { isParentTx } from './productVariants'
 import { heldQtyFor } from './stockHolds'
 import type { ProductTypeId } from '../productTypes'
+// Type-only: the runtime import is dynamic inside recordMovement, so the two
+// modules cannot form a load-order cycle.
+import type { BatchDirective } from './batches'
 
 /**
  * Every quantity change in the business, in one place.
@@ -136,6 +139,10 @@ export function stockDirectionFor(
     // WHICH unit moved, it does not replace the movement.
     case 'serial':
       return -1
+    // A batch product likewise: the batch table records WHICH lot moved,
+    // via the hook inside recordMovement — the movement itself is ordinary.
+    case 'batch':
+      return -1
     // A made item that is stocked behaves like a normal product: the build
     // already took its ingredients, so the sale takes the finished unit.
     case 'recipe':
@@ -194,6 +201,12 @@ export type MovementInput = {
   terminalId?: number | null
   shiftId?: number | null
   note?: string | null
+  /**
+   * Lot directives for a batch-tracked product (148) — receipt identity, an
+   * exact lot, a return's original line, a receipt void. Absent means the
+   * hook decides: FEFO out, newest-lot or the untracked bucket in.
+   */
+  batch?: BatchDirective
 }
 
 /**
@@ -282,10 +295,11 @@ export async function recordMovement(
   //
   // The per-location position at a past date is the running Σ qty_change for
   // that (product, location) — invariant (B) — and needs no second column.
-  const [rows] = await tx.execute('SELECT stock_on_hand FROM products WHERE id = ?', [
+  const [rows] = await tx.execute('SELECT stock_on_hand, product_type FROM products WHERE id = ?', [
     input.productId,
   ] as never)
   const qtyAfter = toNum((rows as Row[])[0]?.stock_on_hand)
+  const productType = String((rows as Row[])[0]?.product_type ?? 'normal')
 
   const [res] = await tx.execute(
     `INSERT INTO stock_movements
@@ -309,8 +323,33 @@ export async function recordMovement(
       input.note?.slice(0, 190) ?? null,
     ] as never,
   )
+  const movementId = (res as { insertId: number }).insertId
 
-  return (res as { insertId: number }).insertId
+  /*
+   * The batch hook (148), for batch-tracked products only. This gate is the
+   * one place every stock change passes through, which is exactly what makes
+   * the lot invariants hold for every caller by construction — including
+   * ones the serial per-caller hooks never covered. The hook writes ONLY
+   * product_batches and batch_movements; the three figures above stay this
+   * function's alone.
+   */
+  if (productType === 'batch') {
+    const { applyBatchMovementTx } = await import('./batches')
+    await applyBatchMovementTx(tx, actor, {
+      productId: input.productId,
+      locationId,
+      movementType: input.movementType,
+      qtyChange: qty,
+      unitCostExcl: input.unitCostExcl ?? 0,
+      movementId,
+      source: input.source ?? 'sale',
+      sourceDocId: input.sourceDocId ?? null,
+      sourceLineId: input.sourceLineId ?? null,
+      batch: input.batch,
+    })
+  }
+
+  return movementId
 }
 
 /** One product's movement history, newest first. */

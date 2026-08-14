@@ -165,6 +165,7 @@ export const NAV: NavSection[] = [
       /* Sits beside stock takes because it answers the same question from the
          other end: a count discovers a variance, an adjustment declares one. */
       { label: 'Adjustments', href: '/adjustments', icon: SlidersHorizontal, built: true, capability: 'stock.adjust', keywords: 'write off write-off shrinkage damage breakage wastage expired spoiled scrap', description: 'Write stock on or off with a reason, without counting the location' },
+      { label: 'Batches', href: '/batches', icon: Boxes, built: true, capability: 'stock.view', keywords: 'lot expiry expiring fefo recall trace batch', description: 'Which lots are on the shelf, what is expiring, and where each went' },
       /* A supplier exists in this app because stock comes from one. Their age
          analysis and remittances are money questions and sit in that hub. */
       { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view', description: 'Who the shop buys from, and what it owes them' },

@@ -69,6 +69,8 @@ export type AdjustmentLine = {
   reasonCode: string | null
   reasonName: string | null
   serials: number[]
+  /** The exact lot this line adjusts, when one was named (148). */
+  batchId: number | null
   note: string | null
   movementId: number | null
 }
@@ -344,7 +346,7 @@ export async function getAdjustment(siteId: number, id: number): Promise<StockAd
     siteId,
     `SELECT ln.id, ln.product_id, ln.product_code, ln.description,
             ln.qty_before, ln.qty_change, ln.unit_cost_excl, ln.reason_id,
-            ln.serial_ids, ln.note, ln.movement_id,
+            ln.serial_ids, ln.batch_id, ln.note, ln.movement_id,
             r.code AS reason_code, r.name AS reason_name
        FROM stock_adjustment_lines ln
        LEFT JOIN stock_adjustment_reasons r ON r.id = ln.reason_id
@@ -367,6 +369,7 @@ export async function getAdjustment(siteId: number, id: number): Promise<StockAd
       reasonCode: (l.reason_code as string | null) ?? null,
       reasonName: (l.reason_name as string | null) ?? null,
       serials: parseSerials(l.serial_ids),
+      batchId: l.batch_id === null || l.batch_id === undefined ? null : Number(l.batch_id),
       note: (l.note as string | null) ?? null,
       movementId: l.movement_id === null ? null : Number(l.movement_id),
     })),
@@ -406,6 +409,12 @@ export type AdjustmentLineInput = {
    * unit still claimed to be on a shelf.
    */
   serialIds?: readonly number[]
+  /**
+   * For a batch-tracked product, the exact LOT this line adjusts — the recall
+   * write-off. Optional: absent means the hook decides (earliest expiry first
+   * going down, the newest lot going up).
+   */
+  batchId?: number | null
   note?: string | null
 }
 
@@ -555,8 +564,8 @@ export async function saveAdjustment(
         await tx.execute(
           `INSERT INTO stock_adjustment_lines
              (adjustment_id, line_number, product_id, product_code, description,
-              qty_before, qty_change, unit_cost_excl, reason_id, serial_ids, note)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+              qty_before, qty_change, unit_cost_excl, reason_id, serial_ids, batch_id, note)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             adjustmentId,
             index + 1,
@@ -568,6 +577,7 @@ export async function saveAdjustment(
             round(line.unitCostExcl ?? 0, 4).toFixed(4),
             line.reasonId ?? null,
             line.serialIds && line.serialIds.length > 0 ? JSON.stringify([...line.serialIds]) : null,
+            line.batchId ?? null,
             line.note?.trim()?.slice(0, 190) || null,
           ] as never,
         )
@@ -884,6 +894,9 @@ export async function postAdjustment(
           sourceDocId: adjustment.id,
           sourceLineId: line.id,
           note: reasonLabel.slice(0, 190),
+          // An exact lot when the line named one (the recall write-off, 148);
+          // otherwise the hook spreads the delta itself.
+          batch: line.batchId ? { batchId: line.batchId } : undefined,
         })
 
         await tx.execute(

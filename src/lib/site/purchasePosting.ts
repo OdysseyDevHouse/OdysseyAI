@@ -87,6 +87,14 @@ export type ReceiveLineInput = {
   serials?: string[]
   /** Manufacturer warranty expiry, applied to every serial on this line. */
   warrantyUntil?: string | null
+  /**
+   * The lot identity for a batch-tracked product (148), captured with the
+   * receipt for the same reason serials are: this is the only moment the
+   * delivery note is in the receiver's hand. At least one of the two is
+   * required for a batch line; expiry alone names the lot EXP-<date>.
+   */
+  batchNo?: string | null
+  expiryDate?: string | null
 }
 
 /**
@@ -245,6 +253,17 @@ export function validateReceive(input: ReceiveInput): string | null {
       }
       if (new Set(serials).size !== serials.length) {
         return `${where}: the same serial number is entered twice.`
+      }
+    }
+
+    // A batch line needs its lot data NOW, for the same reason a serial line
+    // does: the delivery note leaves with the driver.
+    if (line.productId && (line.productType ?? 'normal') === 'batch') {
+      if (!line.batchNo?.trim() && !line.expiryDate?.trim()) {
+        return `${where}: a batch-tracked product needs its lot number or expiry date to be received.`
+      }
+      if (line.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(line.expiryDate)) {
+        return `${where}: write the expiry as a date, like 2027-03-31.`
       }
     }
   }
@@ -958,6 +977,12 @@ export async function receiveGoods(
           source: 'grv',
           sourceDocId: documentId,
           note: input.supplierInvoiceNo ? `Inv ${input.supplierInvoiceNo}` : undefined,
+          // The lot identity (148) rides the movement into the batch hook,
+          // which creates or tops up the lot in this same transaction.
+          batch:
+            (line.productType ?? 'normal') === 'batch'
+              ? { batchNo: line.batchNo ?? null, expiryDate: line.expiryDate ?? null }
+              : undefined,
         })
 
         // The individual units, in the SAME transaction that just moved the
@@ -1260,6 +1285,10 @@ export async function voidReceipt(
           source: 'cancelled',
           sourceDocId: documentId,
           note: `Void of ${doc.document_number}`,
+          // Back out exactly the lots this receipt created (148). The hook
+          // THROWS when a lot has been partly consumed — a supplier return is
+          // the honest document then — and the catch below shows the reason.
+          batch: { reverseReceiptOfDocId: documentId },
         })
       }
 

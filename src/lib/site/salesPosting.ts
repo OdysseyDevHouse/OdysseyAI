@@ -1449,6 +1449,8 @@ export async function voidDocument(
         sourceLineId: line.id,
         terminalId: document.terminalId,
         note: `Void of ${document.documentNumber}`,
+        // A voided batch line returns to the lots IT took (148).
+        batch: { returnOfLineId: line.id },
       })
     }
 

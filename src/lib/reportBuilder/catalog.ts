@@ -3094,6 +3094,73 @@ const PRODUCT_SUPPLIERS_SOURCE: CatalogSource = {
   ],
 }
 
+/* ── batches ───────────────────────────────────────────────────────────────── */
+
+const BATCHES_SOURCE: CatalogSource = {
+  key: 'batches',
+  label: 'Batches',
+  description: 'Every lot on the shelf — what it is, when it expires, and what is left of it.',
+  category: 'Stock',
+  permission: 'stock.view',
+  /* A snapshot: the lots as they stand now. The expiring-soon report is a
+     filter on daysToExpiry, which is what makes it schedulable for free. */
+  shape: 'snapshot',
+  table: 'product_batches',
+  joins: [
+    { name: 'product', sql: 'INNER JOIN products pm ON pm.id = t.product_id', always: true },
+    PRODUCT_DEPT_JOIN,
+    { name: 'location', sql: 'LEFT JOIN stock_locations bl ON bl.id = t.location_id' },
+    { name: 'grv', sql: 'LEFT JOIN purchase_documents bpd ON bpd.id = t.received_doc_id' },
+  ],
+  fields: [
+    { key: 'productCode', label: 'Product code', type: 'text', expr: 'pm.code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'description', label: 'Description', type: 'text', expr: 'pm.description', starter: true, group: FIELD_GROUPS.IDENTITY },
+    {
+      key: 'batchNo',
+      label: 'Lot number',
+      type: 'text',
+      // The untracked bucket reads as words rather than an empty cell.
+      expr: "COALESCE(NULLIF(t.batch_no, ''), '(untracked)')",
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'department',
+      label: 'Department',
+      type: 'text',
+      expr: 'pdm.name',
+      needs: ['productDept'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    { key: 'location', label: 'Location', type: 'text', expr: 'bl.code', needs: ['location'], group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'expiryDate', label: 'Expiry date', type: 'date', expr: 't.expiry_date', starter: true, group: FIELD_GROUPS.DATES },
+    {
+      key: 'daysToExpiry',
+      label: 'Days to expiry',
+      type: 'number',
+      expr: '(CASE WHEN t.expiry_date IS NULL THEN NULL ELSE DATEDIFF(t.expiry_date, CURDATE()) END)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.DATES,
+      hint: 'Negative means already expired. Empty when the lot carries no date.',
+    },
+    { key: 'qtyRemaining', label: 'Qty remaining', type: 'number', expr: 't.qty_remaining', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    { key: 'qtyReceived', label: 'Qty received', type: 'number', expr: 't.qty_received', numeric: true, group: FIELD_GROUPS.QUANTITIES },
+    { key: 'costExcl', label: 'Landed cost', type: 'currency', expr: 't.cost_excl', numeric: true, noTotal: true, permission: 'products.cost', group: FIELD_GROUPS.COST },
+    {
+      key: 'valueRemaining',
+      label: 'Value remaining',
+      type: 'currency',
+      expr: '(t.qty_remaining * t.cost_excl)',
+      numeric: true,
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    { key: 'receivedAt', label: 'Received', type: 'datetime', expr: 't.received_at', group: FIELD_GROUPS.DATES },
+    { key: 'grvNumber', label: 'GRV number', type: 'text', expr: 'bpd.document_number', needs: ['grv'], group: FIELD_GROUPS.IDENTITY },
+  ],
+}
+
 /* ── job cards ─────────────────────────────────────────────────────────────── */
 
 /**
@@ -4048,6 +4115,7 @@ export const SOURCES: CatalogSource[] = [
   STOCK_TAKE_LINES_SOURCE,
   ADJUSTMENT_LINES_SOURCE,
   PRODUCT_SUPPLIERS_SOURCE,
+  BATCHES_SOURCE,
   SUPPLIER_TXN_SOURCE,
   LOYALTY_LEDGER_SOURCE,
   LOYALTY_MEMBERS_SOURCE,
