@@ -548,6 +548,7 @@ export const SUBPAGE_LABELS = {
      /reports/multi-store/income-statement would read as though the P&L lived
      inside the overview. */
   '/reports/multi-store-income-statement': 'Multi-store profit and loss',
+  '/reports/multi-store-sales': 'Sales by store',
 } as const
 
 /**
@@ -695,6 +696,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/reports/multi-store': 'multi store group consolidated branches linked stores combined all stores side by side',
   '/reports/multi-store-income-statement':
     'multi store group consolidated p&l income statement profit all stores branches',
+  '/reports/multi-store-sales':
+    'multi store group sales by store turnover daily monthly trend branches compare growth',
 }
 
 /**

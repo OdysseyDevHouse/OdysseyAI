@@ -18,6 +18,7 @@ import {
   marginPct,
   stockCoverMonths,
   storeExceptions,
+  salesByStore,
   type GroupDashboardRow,
   type SiteResult,
 } from '../src/lib/groupReporting'
@@ -250,6 +251,55 @@ async function main() {
   ok('  a store can raise more than one flag, worst first',
     both2.length === 2 && both2[0].kind === 'cash-short',
     both2.map((e) => e.kind).join(' > '))
+
+  /* ── 7. Sales by store ───────────────────────────────────────────────── */
+
+  const salesRange = { from: '2026-01-01', to: '2026-12-31' }
+  const byDay = await salesByStore(both, salesRange, 'day')
+  const byMonth = await salesByStore(both, salesRange, 'month')
+
+  ok('*** sales by store returns a column per readable store ***',
+    byDay.sites.length === 2 && byDay.perSiteTotals.length === 2,
+    byDay.sites.map((s) => s.name).join(', '))
+
+  ok('  day periods are ISO dates, month periods are YYYY-MM',
+    byDay.periods.every((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.period)) &&
+    byMonth.periods.every((p) => /^\d{4}-\d{2}$/.test(p.period)),
+    `${byDay.periods[0]?.period} / ${byMonth.periods[0]?.period}`)
+
+  ok('  periods come back in ascending order',
+    byDay.periods.every((p, i) => i === 0 || byDay.periods[i - 1].period <= p.period))
+
+  /* The grain must not change the money. Daily and monthly are the same sales
+     bucketed differently, and a mismatch means one of them is dropping rows. */
+  ok('*** the same range totals the same by day and by month ***',
+    Math.abs(byDay.total - byMonth.total) < 0.01,
+    `day ${byDay.total} vs month ${byMonth.total}`)
+
+  ok('  each row total is the sum of its store columns',
+    byDay.periods.every((p) => {
+      const summed = p.perSite.reduce<number>((t, v) => (v === null ? t : t + v), 0)
+      return Math.abs(summed - p.total) < 0.01
+    }))
+
+  ok('  the group total is the sum of the per-store totals',
+    Math.abs(byDay.perSiteTotals.reduce((t, v) => t + v, 0) - byDay.total) < 0.01,
+    `${byDay.perSiteTotals.join(' + ')} = ${byDay.total}`)
+
+  /* The property the whole report rests on: a store that did not trade in a
+     period is null, NOT zero. Over a range spanning an opening, zeros would
+     read as months of catastrophic trading rather than a store that did not
+     exist yet. */
+  const hasNull = byMonth.periods.some((p) => p.perSite.some((v) => v === null))
+  ok('*** a store that did not trade in a period is null, not zero ***',
+    hasNull || byMonth.sites.length < 2,
+    hasNull ? 'found a dash' : 'both stores traded every month (no dash to prove)')
+
+  const salesGhost = await salesByStore(withGhost, salesRange, 'month')
+  ok('*** an unreachable store is a failure, not a crash ***',
+    salesGhost.failures.some((f) => f.siteId === 999) && salesGhost.sites.length === 2)
+  ok('  and its column is left out rather than shown as zero',
+    salesGhost.periods.every((p) => p.perSite.length === 2))
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)

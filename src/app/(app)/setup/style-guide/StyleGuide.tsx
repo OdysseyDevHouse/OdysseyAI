@@ -59,6 +59,7 @@ import {
   SettingRow,
   Sparkline,
   MeterBar,
+  StoreColumnTable,
   StatStrip,
   StatTile,
   SummaryList,
@@ -1855,6 +1856,44 @@ function ChartSection() {
             segments={[{ label: 'Reconciled', value: 34, tone: 'brand' }]}
             total={50}
             height={10}
+          />
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<StoreColumnTable />"
+          note="A row per thing, a column per store, a group total. For cross-store reports. The point of it is the dash: `null` is “this store does not carry this line” and is excluded from the total, while `0` is a real zero that counts. On a rebalancing report those two call for opposite actions, so collapsing them makes the report misleading rather than merely imprecise."
+        />
+        <div className="flex-1">
+          <StoreColumnTable
+            columns={[
+              { siteId: 1, name: 'Main' },
+              { siteId: 2, name: 'Northgate' },
+            ]}
+            rows={[
+              {
+                key: 'A-1042',
+                label: 'Coffee beans, 1kg',
+                values: [128, 96],
+              },
+              {
+                /* Not ranged at Northgate — a dash, and it does not drag the
+                   total down the way a zero would. */
+                key: 'A-1077',
+                label: 'Filter papers, box',
+                values: [6, null],
+              },
+              {
+                // Ranged and sold out. A real zero, and it counts.
+                key: 'B-2210',
+                label: 'Takeaway cups, 500',
+                values: [0, 31],
+              },
+            ]}
+            format={(n) => String(n)}
+            firstHeading="Product"
+            totalHeading="Group"
+            emptyNote="A dash means the product is not carried at that store."
           />
         </div>
       </Row>

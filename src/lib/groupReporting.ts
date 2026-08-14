@@ -4,7 +4,7 @@ import { groupForSite, membersOfGroup, type StoreGroup } from './storeGroups'
 import { getSiteForUser } from './sites'
 import { getUserByControlId } from './site/users'
 import { capabilitiesForRole, can, type Capability } from './site/permissions'
-import { siteQueryOne } from './siteDb'
+import { siteQuery, siteQueryOne } from './siteDb'
 import { incomeStatement, type IncomeStatement, type DateRange } from './site/financialStatements'
 import { subtypeRank } from './glModel'
 import { addDays, daysBetweenDates } from './site/interestRules'
@@ -313,6 +313,137 @@ export async function groupDashboard(
       },
     }
   })
+}
+
+/* ── Sales by store, over time ────────────────────────────────────────────── */
+
+/** How the date axis is bucketed. */
+export type SalesGrain = 'day' | 'month'
+
+export type SalesByStorePeriod = {
+  /** '2026-08-14' for a day, '2026-08' for a month — sorts correctly as text. */
+  period: string
+  /**
+   * One entry per site, index-aligned with `sites`. Null means the store did
+   * not trade in that period at all, which is a different statement from a day
+   * it opened and took nothing — see StoreColumnTable.
+   */
+  perSite: (number | null)[]
+  total: number
+}
+
+export type SalesByStore = {
+  range: DateRange
+  grain: SalesGrain
+  sites: { siteId: number; name: string }[]
+  failures: { siteId: number; name: string; error: string }[]
+  periods: SalesByStorePeriod[]
+  /** Each store's total for the whole range, index-aligned with `sites`. */
+  perSiteTotals: number[]
+  total: number
+}
+
+/**
+ * Turnover per store per day or month — the backbone chain report.
+ *
+ * Grouped in SQL rather than by reading every document and bucketing in
+ * TypeScript: a year of daily sales across five stores is a few hundred rows
+ * out of the database this way, and hundreds of thousands the other.
+ *
+ * A store missing from a period keeps NULL rather than zero. Over a date range
+ * this matters more than it looks: a store that opened in June should show
+ * dashes for January to May, not five months of "R0.00" implying it traded and
+ * sold nothing.
+ */
+export async function salesByStore(
+  sites: GroupSite[],
+  range: DateRange,
+  grain: SalesGrain = 'day',
+): Promise<SalesByStore> {
+  // The format string is chosen HERE from a closed union, never interpolated
+  // from anything a caller supplies.
+  const bucket = grain === 'month' ? `DATE_FORMAT(d.document_date, '%Y-%m')` : `d.document_date`
+
+  const results = await perSite(sites, async (siteId) => {
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT ${bucket} AS period,
+              COALESCE(SUM(l.line_total_incl), 0) AS incl
+         FROM sales_document_lines l
+         JOIN sales_documents d ON d.id = l.document_id
+        WHERE d.status = 'finalised'
+          AND d.doc_type IN ('invoice','credit_sale')
+          AND d.document_date BETWEEN ? AND ?
+        GROUP BY period
+        ORDER BY period`,
+      [range.from, range.to],
+    )
+    const out = new Map<string, number>()
+    for (const r of rows) {
+      // A DATE comes back as a Date object from the driver; the month bucket is
+      // already a string. periodKey normalises both without a timezone shift.
+      out.set(periodKey(r.period), toNum(r.incl))
+    }
+    return out
+  })
+
+  const ok = results.filter((r): r is SiteResult<Map<string, number>> & { ok: true } => r.ok)
+  const failures = results
+    .filter((r): r is SiteResult<Map<string, number>> & { ok: false } => !r.ok)
+    .map((r) => ({ siteId: r.siteId, name: r.name, error: r.error }))
+
+  // Every period any store traded in, ascending. Built from what came back
+  // rather than generated from the range, so a 400-day range with two trading
+  // days is two rows.
+  const allPeriods = [...new Set(ok.flatMap((r) => [...r.data.keys()]))].sort()
+
+  const periods: SalesByStorePeriod[] = allPeriods.map((period) => {
+    const perSiteValues = ok.map((r) => r.data.get(period) ?? null)
+    return {
+      period,
+      perSite: perSiteValues,
+      total: round(
+        perSiteValues.reduce<number>((t, v) => (v === null ? t : t + v), 0),
+        2,
+      ),
+    }
+  })
+
+  return {
+    range,
+    grain,
+    sites: ok.map((r) => ({ siteId: r.siteId, name: r.name })),
+    failures,
+    periods,
+    perSiteTotals: ok.map((r) =>
+      round(
+        [...r.data.values()].reduce((t, v) => t + v, 0),
+        2,
+      ),
+    ),
+    total: round(
+      periods.reduce((t, p) => t + p.total, 0),
+      2,
+    ),
+  }
+}
+
+/**
+ * A period cell as a sortable string.
+ *
+ * The driver hands back a Date for a DATE column, and the pool runs in UTC
+ * (timezone 'Z'), so the wall-clock date must be read with getUTC* — using
+ * getDate() here would shift a day backwards for anyone east of Greenwich and
+ * silently file Monday's takings under Sunday.
+ */
+function periodKey(value: unknown): string {
+  if (value instanceof Date) {
+    const y = value.getUTCFullYear()
+    const m = String(value.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(value.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  return String(value ?? '')
 }
 
 /* ── Dashboard arithmetic ─────────────────────────────────────────────────── */

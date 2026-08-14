@@ -73,6 +73,18 @@ export default async function ReportsPage() {
       broken: false,
     })
   }
+  if (allow('reports.view')) {
+    templates.push({
+      id: 'multi-store-sales',
+      name: 'Sales by store',
+      description: 'Turnover per store, day by day or month by month — who is growing and who is sliding.',
+      category: 'Multi-store',
+      source: 'sales',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+  }
   if (allow('reports.financial')) {
     templates.push({
       id: 'multi-store-income-statement',

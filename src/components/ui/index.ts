@@ -128,6 +128,11 @@ export { DateRangeField, type DateRange } from './DateRangeField'
 export { useChartColors, ChartTooltip, ChartGlow, type ChartColors } from './charts'
 export { Sparkline } from './Sparkline'
 export { MeterBar, type MeterSegment, type MeterTone } from './MeterBar'
+export {
+  StoreColumnTable,
+  type StoreColumn,
+  type StoreRow,
+} from './StoreColumnTable'
 export { ToastProvider, useToast } from './Toast'
 
 export * as Icons from './icons'

@@ -97,6 +97,11 @@ CATALOGUE['/reports/multi-store-income-statement'] = {
   icon: 'LineChart',
   keywords: 'multi store group consolidated p&l income statement profit branches',
 }
+CATALOGUE['/reports/multi-store-sales'] = {
+  description: 'Turnover per store, day by day or month by month — who is growing and who is sliding.',
+  icon: 'BarChart',
+  keywords: 'multi store group sales turnover daily monthly trend compare growth branches',
+}
 
 /**
  * The searchable index for ONE user, built from the sections they can see.
