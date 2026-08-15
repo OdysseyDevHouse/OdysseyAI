@@ -1323,7 +1323,11 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'daysOpen', agg: 'avg' },
         { field: 'daysOpen', agg: 'max' },
       ],
-      sort: { key: '__rows', dir: 'desc' },
+      /* 'rowCount', not '__rows': outputKey() renames the synthetic row-count
+         field, and validateSpec drops a sort whose key it cannot find — so the
+         spec compiled fine and the report simply came back in the wrong order.
+         test:report-templates catches exactly this. */
+      sort: { key: 'rowCount', dir: 'desc' },
       chartType: 'bar',
     }),
   },
@@ -1365,7 +1369,8 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'totalCost', agg: 'sum' },
         { field: 'daysOpen', agg: 'avg' },
       ],
-      sort: { key: '__rows', dir: 'desc' },
+      // 'rowCount', not '__rows' — see jobs-open-by-stage above.
+      sort: { key: 'rowCount', dir: 'desc' },
       chartType: 'bar',
     }),
   },
