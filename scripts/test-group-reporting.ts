@@ -27,6 +27,7 @@ import {
   departmentsByStore,
   tendersByStore,
   hoursByStore,
+  consolidatedBalanceSheet,
   type GroupDashboardRow,
   type SiteResult,
 } from '../src/lib/groupReporting'
@@ -514,6 +515,39 @@ async function main() {
   const mixGhost = await departmentsByStore(withGhost, mixRange)
   ok('*** an unreadable store is a failure, not a crash ***',
     mixGhost.failures.some((f) => f.siteId === 999) && mixGhost.sites.length === 2)
+
+  /* ── 13. Consolidated balance sheet ──────────────────────────────────── */
+
+  const bs = await consolidatedBalanceSheet(both, '2026-12-31')
+
+  /* The identity the whole statement rests on. A group balances when every
+     store does, so a failure here points at one store's ledger rather than at
+     the merge — which is exactly what the screen tells the reader. */
+  ok('*** assets equal liabilities plus equity and reserves ***',
+    Math.abs(bs.assetsTotal - (bs.liabilitiesTotal + bs.totalEquityAndReserves)) < 0.01,
+    `${bs.assetsTotal} vs ${bs.liabilitiesTotal} + ${bs.totalEquityAndReserves}`)
+
+  ok('  and the sheet says so itself', bs.balanced === (Math.abs(bs.outOfBalance) < 0.01))
+
+  ok('  equity carries this year\'s unclosed result',
+    Math.abs(bs.totalEquityAndReserves - (bs.equityTotal + bs.currentYearResult)) < 0.01,
+    `${bs.equityTotal} + ${bs.currentYearResult}`)
+
+  ok('  each store column is index-aligned with the sites',
+    bs.perSiteAssets.length === bs.sites.length &&
+    bs.assets.every((b) => b.perSiteTotals.length === bs.sites.length))
+
+  /* The refactor risk: mergeIncomeStatements and the balance sheet now share
+     mergeGroups, so the P&L must still agree with each store's own statement.
+     Section 3 asserts that against the live database; this checks the balance
+     sheet's own totals foot from its blocks. */
+  ok('*** block totals foot to the section total ***',
+    Math.abs(bs.assets.reduce((t, b) => t + b.total, 0) - bs.assetsTotal) < 0.01 &&
+    Math.abs(bs.liabilities.reduce((t, b) => t + b.total, 0) - bs.liabilitiesTotal) < 0.01)
+
+  const bsGhost = await consolidatedBalanceSheet(withGhost, '2026-12-31')
+  ok('*** an unreachable store is a failure, not a crash ***',
+    bsGhost.failures.some((f) => f.siteId === 999) && bsGhost.sites.length === 2)
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)

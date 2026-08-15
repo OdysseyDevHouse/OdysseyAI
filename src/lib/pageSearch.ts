@@ -112,6 +112,11 @@ CATALOGUE['/reports/multi-store-stock'] = {
   icon: 'Boxes',
   keywords: 'stock on hand rebalance transfer surplus shortage overstock understock multi store group',
 }
+CATALOGUE['/reports/multi-store-balance-sheet'] = {
+  description: 'What the whole group owns and owes at a date, a column per store, by account code.',
+  icon: 'Scale',
+  keywords: 'consolidated balance sheet assets liabilities equity multi store group branches',
+}
 CATALOGUE['/reports/multi-store-mix'] = {
   description: 'What sells, how it is paid for, and when the shops are busy — three cuts, every store.',
   icon: 'LayoutGrid',

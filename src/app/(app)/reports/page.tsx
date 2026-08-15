@@ -139,6 +139,17 @@ export default async function ReportsPage() {
   }
   if (allow('reports.financial')) {
     templates.push({
+      id: 'multi-store-balance-sheet',
+      name: 'Multi-store balance sheet',
+      description:
+        'What the whole group owns and owes at a date, a column per store, by account code.',
+      category: 'Multi-store',
+      source: 'journalLines',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+    templates.push({
       id: 'multi-store-income-statement',
       name: 'Multi-store profit and loss',
       description: 'One profit and loss across every linked store, a column each, by account code.',

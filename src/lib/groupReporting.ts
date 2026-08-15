@@ -5,7 +5,14 @@ import { getSiteForUser } from './sites'
 import { getUserByControlId } from './site/users'
 import { capabilitiesForRole, can, type Capability } from './site/permissions'
 import { siteQuery, siteQueryOne } from './siteDb'
-import { incomeStatement, type IncomeStatement, type DateRange } from './site/financialStatements'
+import {
+  incomeStatement,
+  balanceSheet,
+  type IncomeStatement,
+  type BalanceSheet,
+  type StatementGroup,
+  type DateRange,
+} from './site/financialStatements'
 import { subtypeRank } from './glModel'
 import { reconcileStoreTransfers, type StoreTransferDrift } from './site/storeTransfers'
 import { addDays, daysBetweenDates } from './site/interestRules'
@@ -751,6 +758,153 @@ export function rebalanceSuggestions(stock: GroupStock): RebalanceSuggestion[] {
   return out.sort((a, b) => b.qty - a.qty)
 }
 
+/* ── Consolidated balance sheet ───────────────────────────────────────────── */
+
+export type ConsolidatedBalanceSheet = {
+  asAt: string
+  sites: { siteId: number; name: string }[]
+  failures: { siteId: number; name: string; error: string }[]
+  assets: ConsolidatedBlock[]
+  assetsTotal: number
+  perSiteAssets: number[]
+  liabilities: ConsolidatedBlock[]
+  liabilitiesTotal: number
+  equity: ConsolidatedBlock[]
+  equityTotal: number
+  /** This year's unclosed result, summed — it belongs in equity but has no account. */
+  currentYearResult: number
+  totalEquityAndReserves: number
+  /** assets − (liabilities + equity + result). Zero when every ledger is sound. */
+  outOfBalance: number
+  balanced: boolean
+}
+
+/**
+ * Merges statement groups from several stores into blocks keyed by ACCOUNT CODE.
+ *
+ * Pulled out of mergeIncomeStatements so the balance sheet gets the identical
+ * treatment: same code matching, same first-seen naming, same null-where-absent
+ * rule. Two implementations of this would be two chances to disagree about what
+ * a missing account means.
+ */
+function mergeGroups(
+  siteCount: number,
+  perStoreGroups: StatementGroup[][],
+): { blocks: ConsolidatedBlock[]; perSiteTotals: number[]; total: number } {
+  type Merged = ConsolidatedLine & { subtype: string | null; label: string }
+  const merged = new Map<string, Merged>()
+
+  perStoreGroups.forEach((groups, siteIndex) => {
+    for (const group of groups) {
+      for (const line of group.lines) {
+        const existing = merged.get(line.accountCode)
+        if (existing) {
+          existing.perSite[siteIndex] = line.amount
+          existing.total = round(existing.total + line.amount, 2)
+        } else {
+          const perSite: (number | null)[] = Array.from({ length: siteCount }, () => null)
+          perSite[siteIndex] = line.amount
+          merged.set(line.accountCode, {
+            accountCode: line.accountCode,
+            name: line.name,
+            subtype: group.subtype,
+            label: group.label,
+            perSite,
+            total: line.amount,
+          })
+        }
+      }
+    }
+  })
+
+  const grouped = new Map<string, ConsolidatedBlock>()
+  const lines = [...merged.values()].sort((a, b) => a.accountCode.localeCompare(b.accountCode))
+  for (const line of lines) {
+    const key = line.subtype ?? '~none'
+    const block = grouped.get(key) ?? {
+      subtype: line.subtype,
+      label: line.label,
+      lines: [],
+      perSiteTotals: Array.from({ length: siteCount }, () => 0),
+      total: 0,
+    }
+    block.lines.push({
+      accountCode: line.accountCode,
+      name: line.name,
+      perSite: line.perSite,
+      total: line.total,
+    })
+    line.perSite.forEach((v, i) => {
+      block.perSiteTotals[i] = round(block.perSiteTotals[i] + (v ?? 0), 2)
+    })
+    block.total = round(block.total + line.total, 2)
+    grouped.set(key, block)
+  }
+
+  const blocks = [...grouped.values()].sort(
+    (a, b) => subtypeRank(a.subtype) - subtypeRank(b.subtype),
+  )
+  const perSiteTotals = Array.from({ length: siteCount }, (_, i) =>
+    round(blocks.reduce((t, b) => t + b.perSiteTotals[i], 0), 2),
+  )
+
+  return {
+    blocks,
+    perSiteTotals,
+    total: round(blocks.reduce((t, b) => t + b.total, 0), 2),
+  }
+}
+
+/**
+ * One balance sheet across every linked store, merged by account code.
+ *
+ * The same simple consolidation the P&L makes, and the same caveat: balances
+ * between linked stores are NOT eliminated. If one store owes another, both the
+ * receivable and the payable appear. For a group of shops with no inter-company
+ * lending that is the whole picture; for one with a treasury function it is a
+ * starting point, and the page says so.
+ *
+ * `outOfBalance` is summed rather than recomputed. A group whose stores each
+ * balance individually balances in total, so a non-zero figure here always
+ * points at a specific store's ledger rather than at the merge.
+ */
+export async function consolidatedBalanceSheet(
+  sites: GroupSite[],
+  asAt: string,
+): Promise<ConsolidatedBalanceSheet> {
+  const results = await perSite(sites, (siteId) => balanceSheet(siteId, asAt))
+  const ok = results.filter((r): r is SiteResult<BalanceSheet> & { ok: true } => r.ok)
+  const failures = results
+    .filter((r): r is SiteResult<BalanceSheet> & { ok: false } => !r.ok)
+    .map((r) => ({ siteId: r.siteId, name: r.name, error: r.error }))
+
+  const n = ok.length
+  const assets = mergeGroups(n, ok.map((r) => r.data.assets))
+  const liabilities = mergeGroups(n, ok.map((r) => r.data.liabilities))
+  const equity = mergeGroups(n, ok.map((r) => r.data.equity))
+
+  const currentYearResult = round(ok.reduce((t, r) => t + r.data.currentYearResult, 0), 2)
+  const totalEquityAndReserves = round(equity.total + currentYearResult, 2)
+  const outOfBalance = round(assets.total - (liabilities.total + totalEquityAndReserves), 2)
+
+  return {
+    asAt,
+    sites: ok.map((r) => ({ siteId: r.siteId, name: r.name })),
+    failures,
+    assets: assets.blocks,
+    assetsTotal: assets.total,
+    perSiteAssets: assets.perSiteTotals,
+    liabilities: liabilities.blocks,
+    liabilitiesTotal: liabilities.total,
+    equity: equity.blocks,
+    equityTotal: equity.total,
+    currentYearResult,
+    totalEquityAndReserves,
+    outOfBalance,
+    balanced: Math.abs(outOfBalance) < 0.01,
+  }
+}
+
 /* ── Keyed merges: departments, tenders, hours ────────────────────────────── */
 
 /**
@@ -1440,100 +1594,34 @@ export function mergeIncomeStatements(
   sites: { siteId: number; name: string }[],
   statements: IncomeStatement[],
 ): Omit<ConsolidatedIncomeStatement, 'failures' | 'range'> {
-  type MergedLine = ConsolidatedLine & { subtype: string | null; label: string }
-  const bySection = new Map<Section, Map<string, MergedLine>>(
-    SECTIONS.map((s) => [s, new Map()]),
-  )
+  /* One merge for all three sections, shared with the balance sheet — see
+     mergeGroups. Two implementations of "match by code, keep null where
+     absent" would be two chances to disagree about what a dash means. */
+  const merged = Object.fromEntries(
+    SECTIONS.map((section) => [
+      section,
+      mergeGroups(sites.length, statements.map((s) => s[section])),
+    ]),
+  ) as Record<Section, ReturnType<typeof mergeGroups>>
 
-  statements.forEach((statement, siteIndex) => {
-    for (const section of SECTIONS) {
-      const merged = bySection.get(section)!
-      for (const block of statement[section]) {
-        for (const line of block.lines) {
-          const existing = merged.get(line.accountCode)
-          if (existing) {
-            existing.perSite[siteIndex] = line.amount
-            existing.total = round(existing.total + line.amount, 2)
-          } else {
-            const perSite: (number | null)[] = sites.map(() => null)
-            perSite[siteIndex] = line.amount
-            merged.set(line.accountCode, {
-              accountCode: line.accountCode,
-              // First-seen wins; sites are ordered primary-first, so the
-              // primary store names shared accounts.
-              name: line.name,
-              subtype: block.subtype,
-              label: block.label,
-              perSite,
-              total: line.amount,
-            })
-          }
-        }
-      }
-    }
-  })
-
-  const buildBlocks = (section: Section): ConsolidatedBlock[] => {
-    const grouped = new Map<string, ConsolidatedBlock>()
-    const lines = [...bySection.get(section)!.values()].sort((a, b) =>
-      a.accountCode.localeCompare(b.accountCode),
-    )
-    for (const line of lines) {
-      const key = line.subtype ?? '~none'
-      const block = grouped.get(key) ?? {
-        subtype: line.subtype,
-        label: line.label,
-        lines: [],
-        perSiteTotals: sites.map(() => 0),
-        total: 0,
-      }
-      block.lines.push({
-        accountCode: line.accountCode,
-        name: line.name,
-        perSite: line.perSite,
-        total: line.total,
-      })
-      line.perSite.forEach((v, i) => {
-        block.perSiteTotals[i] = round(block.perSiteTotals[i] + (v ?? 0), 2)
-      })
-      block.total = round(block.total + line.total, 2)
-      grouped.set(key, block)
-    }
-    return [...grouped.values()].sort((a, b) => subtypeRank(a.subtype) - subtypeRank(b.subtype))
-  }
-
-  const sumBlocks = (blocks: ConsolidatedBlock[]): { perSite: number[]; total: number } => {
-    const perSite = sites.map(() => 0)
-    let total = 0
-    for (const block of blocks) {
-      block.perSiteTotals.forEach((v, i) => {
-        perSite[i] = round(perSite[i] + v, 2)
-      })
-      total = round(total + block.total, 2)
-    }
-    return { perSite, total }
-  }
-
-  const revenue = buildBlocks('revenue')
-  const costOfSales = buildBlocks('costOfSales')
-  const expenses = buildBlocks('expenses')
-  const revenueSums = sumBlocks(revenue)
-  const cosSums = sumBlocks(costOfSales)
-  const expenseSums = sumBlocks(expenses)
+  const { revenue, costOfSales, expenses } = merged
 
   return {
     sites,
-    revenue,
-    revenueTotal: revenueSums.total,
-    perSiteRevenue: revenueSums.perSite,
-    costOfSales,
-    costOfSalesTotal: cosSums.total,
-    grossProfit: round(revenueSums.total - cosSums.total, 2),
-    expenses,
-    expenseTotal: expenseSums.total,
-    netProfit: round(revenueSums.total - cosSums.total - expenseSums.total, 2),
+    revenue: revenue.blocks,
+    revenueTotal: revenue.total,
+    perSiteRevenue: revenue.perSiteTotals,
+    costOfSales: costOfSales.blocks,
+    costOfSalesTotal: costOfSales.total,
+    grossProfit: round(revenue.total - costOfSales.total, 2),
+    expenses: expenses.blocks,
+    expenseTotal: expenses.total,
+    netProfit: round(revenue.total - costOfSales.total - expenses.total, 2),
     perSiteNet: sites.map((_, i) =>
-      round(revenueSums.perSite[i] - cosSums.perSite[i] - expenseSums.perSite[i], 2),
+      round(
+        revenue.perSiteTotals[i] - costOfSales.perSiteTotals[i] - expenses.perSiteTotals[i],
+        2,
+      ),
     ),
   }
 }

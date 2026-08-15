@@ -595,6 +595,7 @@ export const SUBPAGE_LABELS = {
   '/reports/multi-store-stock': 'Stock across stores',
   '/reports/multi-store-transfers': 'Store transfers',
   '/reports/multi-store-mix': 'Sales mix by store',
+  '/reports/multi-store-balance-sheet': 'Multi-store balance sheet',
 } as const
 
 /**
@@ -762,6 +763,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
      across subtrees. "paid" and "payment mix" reach this screen instead. */
   '/reports/multi-store-mix':
     'department hour trading pattern mix how paid payment cash card busiest peak multi store group branches',
+  '/reports/multi-store-balance-sheet':
+    'consolidated balance sheet assets liabilities equity net worth multi store group branches',
 }
 
 /**
