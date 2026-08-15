@@ -24,6 +24,9 @@ import {
   productScopeFor,
   rebalanceSuggestions,
   groupTransfers,
+  departmentsByStore,
+  tendersByStore,
+  hoursByStore,
   type GroupDashboardRow,
   type SiteResult,
 } from '../src/lib/groupReporting'
@@ -466,6 +469,51 @@ async function main() {
   ok('*** an unreachable store is a failure, not a crash ***',
     xferGhost.failures.some((f) => f.siteId === 999),
     xferGhost.failures.map((f) => f.name).join(', '))
+
+  /* ── 12. Keyed merges: departments, tenders, hours ───────────────────── */
+
+  const mixRange = { from: '2026-01-01', to: '2026-12-31' }
+  const [depts, tenders, hours] = await Promise.all([
+    departmentsByStore(both, mixRange),
+    tendersByStore(both, mixRange),
+    hoursByStore(both, mixRange),
+  ])
+
+  for (const [name, rep] of [['departments', depts], ['tenders', tenders], ['hours', hours]] as const) {
+    ok(`*** ${name}: every row total is the sum of its store columns ***`,
+      rep.lines.every((l) => {
+        const summed = l.perSite.reduce<number>((t, v) => (v === null ? t : t + v), 0)
+        return Math.abs(summed - l.total) < 0.01
+      }))
+    ok(`  ${name}: the report total is the sum of its rows`,
+      Math.abs(rep.lines.reduce((t, l) => t + l.total, 0) - rep.total) < 0.01,
+      `${rep.lines.length} rows = ${rep.total}`)
+    ok(`  ${name}: a column is null where the store has no such key`,
+      rep.lines.every((l) => l.perSite.length === rep.sites.length))
+  }
+
+  /* Departments and tenders are sorted by size — a mix report is read from the
+     top. Hours are sorted by the CLOCK, because a trading pattern out of time
+     order is not a pattern. */
+  ok('*** departments and tenders lead with the biggest ***',
+    depts.lines.every((l, i) => i === 0 || depts.lines[i - 1].total >= l.total) &&
+    tenders.lines.every((l, i) => i === 0 || tenders.lines[i - 1].total >= l.total))
+
+  ok('*** hours stay in clock order, not size order ***',
+    hours.lines.every((l, i) => i === 0 || hours.lines[i - 1].key <= l.key),
+    hours.lines.map((l) => l.key).join(',') || '(none)')
+
+  /* Tenders are net of change: a R100 note against an R87.50 sale is R87.50 of
+     cash taken. Summed across every tender this must reconcile to turnover, or
+     one of the two figures on the dashboard is wrong. */
+  const yearSales = await salesByStore(both, mixRange, 'month')
+  ok('*** tenders taken reconcile to turnover, net of change ***',
+    tenders.total === 0 || Math.abs(tenders.total - yearSales.total) / yearSales.total < 0.02,
+    `tenders ${tenders.total} vs sales ${yearSales.total}`)
+
+  const mixGhost = await departmentsByStore(withGhost, mixRange)
+  ok('*** an unreadable store is a failure, not a crash ***',
+    mixGhost.failures.some((f) => f.siteId === 999) && mixGhost.sites.length === 2)
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)

@@ -751,6 +751,187 @@ export function rebalanceSuggestions(stock: GroupStock): RebalanceSuggestion[] {
   return out.sort((a, b) => b.qty - a.qty)
 }
 
+/* ── Keyed merges: departments, tenders, hours ────────────────────────────── */
+
+/**
+ * One merged row: a key every store agrees on, a figure per store, a total.
+ *
+ * The shape three reports share, so the merge is written once. `perSite` keeps
+ * null where a store has no such key at all — a department it does not run, a
+ * tender it does not accept — which the table renders as a dash rather than a
+ * zero, exactly as the consolidated statement does for a missing account.
+ */
+export type KeyedLine = {
+  key: string
+  label: string
+  perSite: (number | null)[]
+  total: number
+}
+
+export type KeyedReport = {
+  sites: { siteId: number; name: string }[]
+  failures: { siteId: number; name: string; error: string }[]
+  lines: KeyedLine[]
+  total: number
+}
+
+/** What one store returned: a key, a display label, and a figure. */
+type KeyedRow = { key: string; label: string; value: number }
+
+/**
+ * Fans a per-store keyed query out and merges it, first-seen naming the row.
+ *
+ * Sites arrive primary-first, so the primary store's label for a key wins —
+ * the same rule mergeIncomeStatements uses for account names, and for the same
+ * reason: two stores can spell a department differently and only one name can
+ * head the row.
+ */
+async function keyedMerge(
+  sites: GroupSite[],
+  read: (siteId: number) => Promise<KeyedRow[]>,
+  sortBy: 'total' | 'key' = 'total',
+): Promise<KeyedReport> {
+  const results = await perSite(sites, read)
+  const ok = results.filter((r): r is SiteResult<KeyedRow[]> & { ok: true } => r.ok)
+  const failures = results
+    .filter((r): r is SiteResult<KeyedRow[]> & { ok: false } => !r.ok)
+    .map((r) => ({ siteId: r.siteId, name: r.name, error: r.error }))
+
+  const labels = new Map<string, string>()
+  const values = new Map<string, Map<number, number>>()
+
+  ok.forEach((store, i) => {
+    for (const row of store.data) {
+      if (!labels.has(row.key)) labels.set(row.key, row.label)
+      const byStore = values.get(row.key) ?? new Map<number, number>()
+      byStore.set(i, row.value)
+      values.set(row.key, byStore)
+    }
+  })
+
+  const lines: KeyedLine[] = [...values.entries()].map(([key, byStore]) => {
+    const perSite = ok.map((_, i) => byStore.get(i) ?? null)
+    return {
+      key,
+      label: labels.get(key) ?? key,
+      perSite,
+      total: round(perSite.reduce<number>((t, v) => (v === null ? t : t + v), 0), 2),
+    }
+  })
+
+  lines.sort((a, b) => (sortBy === 'key' ? a.key.localeCompare(b.key) : b.total - a.total))
+
+  return {
+    sites: ok.map((r) => ({ siteId: r.siteId, name: r.name })),
+    failures,
+    lines,
+    total: round(lines.reduce((t, l) => t + l.total, 0), 2),
+  }
+}
+
+/**
+ * Turnover per department, per store.
+ *
+ * Matched by department NAME, not code: `departments.code` is nullable and
+ * frequently unset, so a code match would silently drop most rows. Name is what
+ * the shops actually keep in step, and `shares_departments` is what keeps it
+ * so. A store that does not run a department keeps null, not zero.
+ */
+export async function departmentsByStore(
+  sites: GroupSite[],
+  range: DateRange,
+): Promise<KeyedReport> {
+  return keyedMerge(sites, async (siteId) => {
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT COALESCE(dep.name, '(no department)') AS label,
+              COALESCE(SUM(l.line_total_incl), 0) AS value
+         FROM sales_document_lines l
+         JOIN sales_documents d ON d.id = l.document_id
+         LEFT JOIN products p ON p.id = l.product_id
+         LEFT JOIN departments dep ON dep.id = p.department_id
+        WHERE d.status = 'finalised'
+          AND d.doc_type IN ('invoice','credit_sale')
+          AND d.document_date BETWEEN ? AND ?
+        GROUP BY label`,
+      [range.from, range.to],
+    )
+    return rows.map((r) => ({
+      key: String(r.label ?? ''),
+      label: String(r.label ?? ''),
+      value: toNum(r.value),
+    }))
+  })
+}
+
+/**
+ * What was paid with, per store.
+ *
+ * Matched by tender CODE — the schema is explicit that code is the stable
+ * handle and name is what a cashier may rename to "Kontant" without breaking a
+ * rule. The code is snapshotted onto every tender row, so this needs no join
+ * and a tender deleted since the sale still reports.
+ *
+ * Amounts are NET of change: a R100 note against an R87.50 sale is R87.50 of
+ * cash taken, not R100. The gross figure is what the drawer saw, which is the
+ * cash-up's question rather than this one.
+ */
+export async function tendersByStore(sites: GroupSite[], range: DateRange): Promise<KeyedReport> {
+  return keyedMerge(sites, async (siteId) => {
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT t.tender_code AS code,
+              MIN(t.tender_name) AS label,
+              COALESCE(SUM(t.amount - t.change_given), 0) AS value
+         FROM sales_tenders t
+         JOIN sales_documents d ON d.id = t.document_id
+        WHERE d.status = 'finalised'
+          AND d.document_date BETWEEN ? AND ?
+        GROUP BY t.tender_code`,
+      [range.from, range.to],
+    )
+    return rows.map((r) => ({
+      key: String(r.code ?? ''),
+      label: String(r.label ?? r.code ?? ''),
+      value: toNum(r.value),
+    }))
+  })
+}
+
+/**
+ * Turnover by hour of day, per store.
+ *
+ * Keyed on the hour as a zero-padded string so it sorts as text and reads as a
+ * label without a second lookup. Sorted by KEY rather than by total — a trading
+ * pattern is only legible in clock order.
+ *
+ * Read from `created_at`, not `document_date`: a DATE column has no time in it,
+ * and the whole question here is what time of day the shop was busy.
+ */
+export async function hoursByStore(sites: GroupSite[], range: DateRange): Promise<KeyedReport> {
+  return keyedMerge(
+    sites,
+    async (siteId) => {
+      const rows = await siteQuery<Row>(
+        siteId,
+        `SELECT LPAD(HOUR(d.created_at), 2, '0') AS hh,
+                COALESCE(SUM(d.total_incl), 0) AS value
+           FROM sales_documents d
+          WHERE d.status = 'finalised'
+            AND d.doc_type IN ('invoice','credit_sale')
+            AND d.document_date BETWEEN ? AND ?
+          GROUP BY hh`,
+        [range.from, range.to],
+      )
+      return rows.map((r) => {
+        const hh = String(r.hh ?? '00')
+        return { key: hh, label: `${hh}:00`, value: toNum(r.value) }
+      })
+    },
+    'key',
+  )
+}
+
 /* ── Store transfers, across the group ────────────────────────────────────── */
 
 export type GroupTransferDrift = StoreTransferDrift & {

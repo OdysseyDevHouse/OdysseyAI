@@ -112,6 +112,11 @@ CATALOGUE['/reports/multi-store-stock'] = {
   icon: 'Boxes',
   keywords: 'stock on hand rebalance transfer surplus shortage overstock understock multi store group',
 }
+CATALOGUE['/reports/multi-store-mix'] = {
+  description: 'What sells, how it is paid for, and when the shops are busy — three cuts, every store.',
+  icon: 'LayoutGrid',
+  keywords: 'department hour trading pattern mix how paid payment cash card busiest peak multi store group',
+}
 CATALOGUE['/reports/multi-store-transfers'] = {
   description: 'What moved between stores, what is on the road, and what is counted twice.',
   icon: 'Truck',

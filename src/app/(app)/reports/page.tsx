@@ -85,6 +85,17 @@ export default async function ReportsPage() {
       broken: false,
     })
     templates.push({
+      id: 'multi-store-mix',
+      name: 'Sales mix by store',
+      description:
+        'What sells, how it is paid for, and when the shops are busy — three cuts, every store.',
+      category: 'Multi-store',
+      source: 'saleLines',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+    })
+    templates.push({
       id: 'multi-store-like-for-like',
       name: 'Like-for-like sales',
       description:

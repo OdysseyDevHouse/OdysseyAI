@@ -594,6 +594,7 @@ export const SUBPAGE_LABELS = {
   '/reports/multi-store-like-for-like': 'Like-for-like sales',
   '/reports/multi-store-stock': 'Stock across stores',
   '/reports/multi-store-transfers': 'Store transfers',
+  '/reports/multi-store-mix': 'Sales mix by store',
 } as const
 
 /**
@@ -755,6 +756,12 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
      screen is found by what it holds, not by the check it performs. */
   '/reports/multi-store-transfers':
     'store transfers in transit counted twice unsettled stale goods on the road between branches multi store group',
+  /* No "tender" or "reconcil": every substring of a keyword matches, and both
+     words belong to Setup screens that configure them. test-navigation.ts uses
+     /reports + "tender" as its canonical example of a term that must not leak
+     across subtrees. "paid" and "payment mix" reach this screen instead. */
+  '/reports/multi-store-mix':
+    'department hour trading pattern mix how paid payment cash card busiest peak multi store group branches',
 }
 
 /**
