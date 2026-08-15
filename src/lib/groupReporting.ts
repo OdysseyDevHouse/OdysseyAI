@@ -3,7 +3,12 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { groupForSite, membersOfGroup, linkedStores, type StoreGroup } from './storeGroups'
 import { getSiteForUser } from './sites'
 import { getUserByControlId } from './site/users'
-import { capabilitiesForRole, can, type Capability } from './site/permissions'
+import {
+  capabilitiesForRole,
+  can,
+  type Capability,
+  type CapabilitySet,
+} from './site/permissions'
 import { siteQuery, siteQueryOne } from './siteDb'
 import {
   incomeStatement,
@@ -169,6 +174,30 @@ export async function productScopeFor(
     group: scope.group,
     sites: scope.sites.filter((s) => sharesProducts.has(s.siteId)),
     excluded: scope.excluded.filter((e) => sharesProducts.has(e.siteId)),
+  }
+}
+
+/**
+ * What this control user may do AT one member store, under that store's own role.
+ *
+ * The same lookup groupScopeFor makes inline, exported because running a report
+ * across stores needs the predicate itself rather than a yes/no answer: the
+ * engine strips columns per store, so a junior at one shop sees that shop's
+ * figures without cost while an owner's own store keeps them.
+ *
+ * Null when the user has never opened that store (no local users row yet) or it
+ * cannot be read — both mean "assume nothing", and the caller refuses.
+ */
+export async function capabilitiesForSiteUser(
+  siteId: number,
+  controlUserId: number,
+): Promise<CapabilitySet | null> {
+  try {
+    const local = await getUserByControlId(siteId, controlUserId)
+    if (!local || !local.isActive) return null
+    return await capabilitiesForRole(siteId, local.roleId)
+  } catch {
+    return null
   }
 }
 

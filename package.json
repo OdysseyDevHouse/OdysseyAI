@@ -53,6 +53,7 @@
     "test:customer-pricing": "tsx --conditions=react-server --env-file=.env scripts/test-customer-pricing.ts",
     "test:accounting": "tsx --conditions=react-server --env-file=.env scripts/test-accounting.ts",
     "test:group-reporting": "tsx --conditions=react-server --env-file=.env scripts/test-group-reporting.ts",
+    "test:multi-site-reports": "tsx --conditions=react-server --env-file=.env scripts/test-multi-site-reports.ts",
     "test:notifications": "tsx --conditions=react-server --env-file=.env scripts/test-notifications.ts",
     "test:public-api": "tsx --conditions=react-server --env-file=.env scripts/test-public-api.ts",
     "test:webhooks": "tsx --conditions=react-server --env-file=.env scripts/test-webhooks.ts",

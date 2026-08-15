@@ -3,11 +3,14 @@ import { requireCapability } from '@/lib/auth'
 import { can, type Capability } from '@/lib/site/permissions'
 import { resolveReport } from '@/lib/reportBuilder/resolve'
 import { runBuilderSpec, ReportAccessError } from '@/lib/reportBuilder/run'
+import { runAcrossSites, mergeRefusalFor } from '@/lib/reportBuilder/runAcrossSites'
+import { groupScopeFor, capabilitiesForSiteUser } from '@/lib/groupReporting'
 import { listFavorites } from '@/lib/site/reportFavorites'
 import { reportColumnsFor, applyStoreColumns } from '@/lib/site/reportColumns'
-import { listUsers } from '@/lib/site/users'
+import { listUsers, getUser } from '@/lib/site/users'
 import { PERIOD_KEYS, PERIOD_LABELS, type PeriodKey } from '@/lib/reportBuilder/spec'
-import { PageHeader, PageBody, Card, Callout, Icons } from '@/components/ui'
+import { PageHeader, PageBody, Card, Callout, Icons, LinkTabs, Badge } from '@/components/ui'
+import { hrefBuilder } from '@/lib/searchParams'
 import ReportView from './ReportView'
 
 export const dynamic = 'force-dynamic'
@@ -24,7 +27,7 @@ export default async function ReportPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ period?: string; from?: string; to?: string }>
+  searchParams: Promise<{ period?: string; from?: string; to?: string; stores?: string }>
 }) {
   const { siteId, actor, capabilities } = await requireCapability('reports.view')
   const allow = (c: Capability) => can(capabilities, c)
@@ -65,10 +68,56 @@ export default async function ReportPage({
         .map((u) => ({ id: u.id, name: u.name, email: u.email! }))
     : []
 
+  /*
+   * ── ONE STORE, OR ALL OF THEM ────────────────────────────────────────────
+   *
+   * The same spec, run against every linked store and merged. Offered only when
+   * the site is in a group AND the arithmetic survives the merge — a report
+   * built on averages or a per-group top ten cannot be combined honestly, and
+   * `mergeRefusalFor` says so in a sentence rather than producing a wrong
+   * figure. The toggle is hidden entirely for a single-store site.
+   */
+  /* requireCapability narrows the actor to id and name, so the control-user id
+     — which is what identifies this person ACROSS stores — is read here rather
+     than by widening an auth helper every screen in the app depends on. */
+  const me = await getUser(siteId, actor.userId)
+  const controlUserId = me?.controlUserId ?? null
+
+  const groupScope =
+    controlUserId === null
+      ? null
+      : await groupScopeFor(siteId, controlUserId, 'reports.view')
+  const canGoGroupWide = (groupScope?.sites.length ?? 0) > 1
+  const refusal = canGoGroupWide ? mergeRefusalFor(spec) : null
+  const allStores = query.stores === 'all' && canGoGroupWide && !refusal
+
   let result
+  let multiSite: Awaited<ReturnType<typeof runAcrossSites>> | null = null
   let error: string | null = null
   try {
-    result = await runBuilderSpec(siteId, spec, allow)
+    if (allStores && groupScope) {
+      /* Capabilities are resolved per store BEFORE the run, because a user
+         holds a different role in each shop and the predicate the engine takes
+         is synchronous. A store where they may not read the source drops out
+         with a reason rather than contributing an empty column. */
+      const perStore = new Map<number, (c: Capability) => boolean>([[siteId, allow]])
+      await Promise.all(
+        groupScope.sites
+          .filter((s) => s.siteId !== siteId)
+          .map(async (s) => {
+            const caps = await capabilitiesForSiteUser(s.siteId, controlUserId!)
+            perStore.set(s.siteId, (c: Capability) => (caps ? can(caps, c) : false))
+          }),
+      )
+      multiSite = await runAcrossSites(
+        groupScope.sites,
+        spec,
+        (site) => perStore.get(site) ?? (() => false),
+      )
+      result = multiSite
+    } else {
+      result = await runBuilderSpec(siteId, spec, allow)
+    }
   } catch (e) {
     if (e instanceof ReportAccessError) notFound()
     error = e instanceof Error ? e.message : 'This report could not be run.'
@@ -86,6 +135,9 @@ export default async function ReportPage({
    * and a preview filtered by the store's choice would hide the column you just
    * added.
    */
+  // Keeps the period the reader chose while flipping which stores are counted.
+  const storeHref = hrefBuilder(`/reports/${encodeURIComponent(id)}`, query)
+
   const producedKeys = result ? result.columns.map((c) => c.key) : []
   const storeColumns = result
     ? await reportColumnsFor(siteId, report.id, producedKeys)
@@ -103,6 +155,45 @@ export default async function ReportPage({
         }
       />
       <PageBody>
+        {/* One store, or every linked one. Hidden entirely for a single-store
+            site, and shown disabled with its reason when the spec's arithmetic
+            cannot survive a merge — a toggle that silently does nothing is
+            worse than one that explains itself. */}
+        {canGoGroupWide && (
+          <div className="flex flex-wrap items-center gap-3">
+            <LinkTabs
+              items={[
+                { value: 'one', label: 'This store', href: storeHref({ stores: null }) },
+                { value: 'all', label: 'All stores', href: storeHref({ stores: 'all' }) },
+              ]}
+              value={allStores ? 'all' : 'one'}
+              aria-label="Which stores"
+            />
+            {refusal && (
+              <span className="text-xs text-muted">
+                <Badge tone="neutral">One store only</Badge>
+                <span className="ml-2">{refusal.message}</span>
+              </span>
+            )}
+            {multiSite && multiSite.failures.length > 0 && (
+              <span className="text-xs text-muted">
+                <Badge tone="warning">
+                  {multiSite.failures.length} store
+                  {multiSite.failures.length === 1 ? '' : 's'} left out
+                </Badge>
+                <span className="ml-2">
+                  {multiSite.failures.map((f) => `${f.name}: ${f.error}`).join('; ')}
+                </span>
+              </span>
+            )}
+            {multiSite && multiSite.failures.length === 0 && (
+              <span className="text-xs text-muted">
+                Combining {multiSite.sites.map((s) => s.name).join(', ')}.
+              </span>
+            )}
+          </div>
+        )}
+
         {error ? (
           <Card>
             <div className="p-4">
