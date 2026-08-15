@@ -27,6 +27,27 @@ import {
 const MAX_FAILED_ATTEMPTS = 5
 const LOCK_MINUTES = 15
 
+/**
+ * Is one-session-per-user enforcement switched off?
+ *
+ * Only ever true OUTSIDE a production build, and only when asked for. Local
+ * work wants several tabs open at once — a second tab, or an automated run
+ * signing in while you are mid-task, mints a new session and evicts the first,
+ * which makes the app unusable for exactly the person developing it.
+ *
+ * ── WHY TWO CONDITIONS AND NOT JUST THE FLAG ────────────────────────────────
+ *
+ * `NODE_ENV` is the authority; the flag only opts in. Gating on the variable
+ * alone would mean a stray ALLOW_MULTIPLE_SESSIONS=1 left in a deployed .env
+ * silently disables the licensing rule on the live product — the failure would
+ * be invisible, because nothing looks broken when a check stops firing. Next
+ * sets NODE_ENV=production for `next build`/`next start` and cannot be talked
+ * out of it, so the production path cannot reach the opt-out at all.
+ */
+function multipleSessionsAllowed(): boolean {
+  return process.env.NODE_ENV !== 'production' && process.env.ALLOW_MULTIPLE_SESSIONS === '1'
+}
+
 type UserRow = RowDataPacket & {
   id: number
   email: string
@@ -365,8 +386,16 @@ export async function requireSession(): Promise<SessionPayload> {
   /* SUPERSEDED BY A NEWER SIGN-IN?
      A token with no `sid` is not enrolled and is skipped — a session minted
      before this shipped, or one minted by the till's PIN unlock. See the field's
-     own comment in session.ts for why both are deliberate. */
-  if (session.sid && !(await sessionIsCurrent(session.userId, session.sid))) {
+     own comment in session.ts for why both are deliberate.
+
+     `multipleSessionsAllowed()` short-circuits the whole check in local
+     development. Note it comes FIRST: it skips the database round trip too, not
+     just the redirect, so the dev path costs nothing per guarded request. */
+  if (
+    !multipleSessionsAllowed() &&
+    session.sid &&
+    !(await sessionIsCurrent(session.userId, session.sid))
+  ) {
     /* NO clearSessionCookie() HERE, deliberately.
        Deleting a cookie is a WRITE, and Next forbids cookie writes during a page
        render — it throws, which surfaces as "a server error occurred" instead of

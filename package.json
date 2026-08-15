@@ -165,7 +165,7 @@
     "test:pos-floor": "tsx --conditions=react-server --env-file=.env scripts/test-pos-floor.ts",
     "test:pos-licensing": "tsx --conditions=react-server --env-file=.env scripts/test-pos-licensing.ts",
     "test:user-sessions": "tsx --conditions=react-server --env-file=.env scripts/test-user-sessions.ts",
-    "test:session-eviction": "node --env-file=.env.local scripts/test-session-eviction.mjs",
+    "test:session-eviction": "node --env-file=.env --env-file=.env.local scripts/test-session-eviction.mjs",
     "test:pos-split": "tsx --conditions=react-server --env-file=.env scripts/test-pos-split.ts",
     "test:rich-paste": "tsx scripts/test-rich-paste.ts",
     "test:imports": "tsx --conditions=react-server --env-file=.env scripts/test-imports.ts"

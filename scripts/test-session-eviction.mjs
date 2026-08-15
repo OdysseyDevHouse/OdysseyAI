@@ -3,6 +3,17 @@
 //
 // Two profiles rather than two tabs, deliberately — tabs share a cookie jar, so
 // they cannot demonstrate one session displacing another.
+//
+// ── BOTH MODES ARE TESTED, NOT JUST THE DEFAULT ────────────────────────────
+//
+// ALLOW_MULTIPLE_SESSIONS=1 switches eviction off for local development (see
+// .env.example). This script reads the same flag the app does and flips its
+// expectation, because the alternative is a test that fails on every developer
+// machine that has the flag set — and a test that is expected to fail teaches
+// people to ignore it, which is worse than not having one.
+//
+// The assertions are genuinely inverted, not skipped: with the flag on, A
+// keeping its session is the thing being proved.
 import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,6 +24,10 @@ const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const BASE = process.env.APP_URL || 'http://localhost:4100'
 const CHROME =
   process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+
+/* Mirrors multipleSessionsAllowed() in src/lib/auth.ts. The dev server sets its
+   own NODE_ENV, so what matters here is the flag the server was started with. */
+const MULTI = process.env.ALLOW_MULTIPLE_SESSIONS === '1'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let fails = 0
@@ -175,16 +190,26 @@ async function main() {
     const dashB = await b.goto('/dashboard')
     ok('  and reaches the dashboard', dashB.startsWith('/dashboard'), dashB)
 
-    // ── A's very next request must be refused ─────────────────────────────
+    // ── A's very next request: refused, or not, depending on the mode ──────
     const nextA = await a.goto('/products')
-    ok('*** A is EVICTED on its next request ***', nextA.startsWith('/?kicked=1'), nextA)
 
-    const textA = await a.text()
-    ok(
-      '  and is told why',
-      /signed in on another device/i.test(textA),
-      textA.slice(0, 90),
-    )
+    if (MULTI) {
+      ok('*** A KEEPS working (ALLOW_MULTIPLE_SESSIONS=1) ***', nextA.startsWith('/products'), nextA)
+      const textA = await a.text()
+      ok(
+        '  and is never told it was signed out',
+        !/signed in on another device/i.test(textA),
+        textA.slice(0, 90),
+      )
+    } else {
+      ok('*** A is EVICTED on its next request ***', nextA.startsWith('/?kicked=1'), nextA)
+      const textA = await a.text()
+      ok(
+        '  and is told why',
+        /signed in on another device/i.test(textA),
+        textA.slice(0, 90),
+      )
+    }
 
     // ── B must be untouched ───────────────────────────────────────────────
     const stillB = await b.goto('/products')
@@ -194,7 +219,10 @@ async function main() {
     b.close()
   }
 
-  console.log(fails === 0 ? '\nSingle-session enforcement works.' : `\n${fails} FAILURE(S)`)
+  const mode = MULTI
+    ? 'Multiple sessions allowed (ALLOW_MULTIPLE_SESSIONS=1) — eviction is off, as intended.'
+    : 'Single-session enforcement works.'
+  console.log(fails === 0 ? `\n${mode}` : `\n${fails} FAILURE(S)  [mode: ${MULTI ? 'multi' : 'single'}]`)
   process.exit(fails === 0 ? 0 : 1)
 }
 
