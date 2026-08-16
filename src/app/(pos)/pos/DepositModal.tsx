@@ -209,6 +209,12 @@ export function DepositModal({
                 total={100}
                 segments={[{ value: percentHeld(position), tone: 'success', label: 'Held' }]}
               />
+              {/* Labelled, because the bar has no scale of its own: a stripe a
+                  third of the way along only means something if the reader knows
+                  a third of what. */}
+              <p className="mt-1.5 text-xs text-muted">
+                {percentHeld(position).toFixed(0)}% of {formatMoney(totalIncl)} held
+              </p>
             </div>
           )}
         </div>

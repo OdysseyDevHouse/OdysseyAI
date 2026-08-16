@@ -182,12 +182,27 @@ export function DepositPanel({
           }
         />
         <CardBody>
-          <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-3">
+          {/*
+           * A GRID, not justify-between.
+           *
+           * The three figures and the meter under them are one picture: the bar
+           * says what proportion of the document total is held, so its rails
+           * have to be the same rails the figures stand on. `justify-between`
+           * pushed the outer two to the card edges and let the middle float
+           * wherever the text width put it, which left the fill pointing at
+           * nothing — the bar ended under "Held" by coincidence rather than by
+           * meaning.
+           *
+           * Right-aligning the last column keeps "Still to pay" against the
+           * card edge, which is where the eye goes for the answer, while the
+           * bar below still measures the full width it is a proportion of.
+           */}
+          <div className="grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3">
             <Figure label="Document total" value={totalIncl} />
             <Figure label="Held" value={held} tone={held > 0 ? 'success' : 'default'} />
             {/* The loudest number on the card: what the customer still owes is
                 the question anybody opens this panel to answer. */}
-            <div>
+            <div className="col-span-2 sm:col-span-1 sm:text-right">
               <p className="text-xs uppercase tracking-wide text-muted">Still to pay</p>
               <p className="numeric text-2xl font-semibold text-ink">{formatMoney(left)}</p>
             </div>
@@ -202,6 +217,12 @@ export function DepositPanel({
                 total={100}
                 segments={[{ value: percentHeld(position), tone: 'success', label: 'Held' }]}
               />
+              {/* The bar carries no scale of its own, so it is labelled. A green
+                  stripe that stops a third of the way along is only meaningful
+                  if the reader knows a third OF WHAT. */}
+              <p className="mt-1.5 text-xs text-muted">
+                {percentHeld(position).toFixed(0)}% of {formatMoney(totalIncl)} held
+              </p>
             </div>
           )}
 
