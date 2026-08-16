@@ -36,7 +36,11 @@ export async function GET(request: NextRequest) {
   const id = params.get('id')
   if (!id) return NextResponse.json({ error: 'No report' }, { status: 400 })
 
-  const report = await resolveReport(auth.siteId, id)
+  /* The cut, for a report that offers them. Without it the file would silently
+     be the DEFAULT cut while the screen it was downloaded from showed another —
+     the export carrying different figures from the report is precisely the bug
+     the stored-prefs note below exists to prevent. */
+  const report = await resolveReport(auth.siteId, id, params.get('cut'))
   if (!report) return NextResponse.json({ error: 'Unknown report' }, { status: 404 })
   if (report.permission && !allow(report.permission)) {
     return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
@@ -80,7 +84,7 @@ export async function GET(request: NextRequest) {
      Both come from the stored row rather than the URL, so a typed or shared
      link cannot produce a file that disagrees with the screen it came from —
      and the scheduled send, which has no URL at all, gets the same answer. */
-  const prefs = await reportPrefsFor(auth.siteId, report.id)
+  const prefs = await reportPrefsFor(auth.siteId, report.prefsId)
   const shown = applyStoreColumns(
     result.columns,
     parseStoredColumns(prefs.columns, result.columns.map((c) => c.key)),

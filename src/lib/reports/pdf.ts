@@ -207,7 +207,11 @@ function draw(doc: Doc, report: ReportRender): void {
     // same figures twice under two names read as a discrepancy.
     if (grouped && section.subtotal && !cut) {
       ensure(rowH)
-      drawTotals(doc, columns, widths, section.subtotal, 'Total', left, contentWidth, labelKey, false)
+      /* Named for the band it closes — "Card subtotal", matching the screen. A
+         bare "Total" on a printed page, several bands down from the heading it
+         belongs to, does not say what it is the total OF. */
+      const label = section.label ? `${section.label} subtotal` : 'Total'
+      drawTotals(doc, columns, widths, section.subtotal, label, left, contentWidth, labelKey, false)
     }
   }
 

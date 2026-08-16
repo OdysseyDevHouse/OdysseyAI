@@ -178,6 +178,7 @@ export default async function MultiStoreBalanceSheetPage({
         ) : (
           <Card>
             <CardHeader
+              tone="default"
               title="Balance sheet, by store"
               description="Accounts are matched across stores by their code. A dash means the account does not exist at that store."
             />

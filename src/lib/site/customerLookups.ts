@@ -24,6 +24,19 @@ export type CustomerGroup = {
   code: string | null
   defaultTermsDays: number
   defaultCreditLimit: number
+  /** Spend caps seeded onto a new account. Zero means no cap — see 175. */
+  defaultDailyLimit: number
+  defaultMonthlyLimit: number
+  /**
+   * The group's standing discount, resolved LIVE rather than seeded.
+   *
+   * Null means the group grants none, and an account whose own discount is
+   * also null then has none. Unlike the credit defaults above, changing this
+   * moves every account in the group that has not set its own — it is the
+   * other half of `priceStructureId`, and both answer "what does this group
+   * pay". See the header of 176.
+   */
+  defaultDiscountPct: number | null
   /** Interest defaults inherited by accounts in this group that set none of their own. */
   defaultInterestRatePct: number
   defaultInterestEnabled: boolean
@@ -45,6 +58,13 @@ function mapGroup(r: Row): CustomerGroup {
     code: (r.code as string | null) ?? null,
     defaultTermsDays: Number(r.default_terms_days),
     defaultCreditLimit: toNum(r.default_credit_limit),
+    defaultDailyLimit: toNum(r.default_daily_limit),
+    defaultMonthlyLimit: toNum(r.default_monthly_limit),
+    // Null survives rather than collapsing to 0 — they are different claims.
+    defaultDiscountPct:
+      r.default_discount_pct === null || r.default_discount_pct === undefined
+        ? null
+        : toNum(r.default_discount_pct),
     defaultInterestRatePct: toNum(r.default_interest_rate_pct),
     defaultInterestEnabled: Boolean(r.default_interest_enabled),
     defaultInterestGraceDays: Number(r.default_interest_grace_days ?? 0),
@@ -59,6 +79,7 @@ function mapGroup(r: Row): CustomerGroup {
 
 const SELECT_GROUP = `
   SELECT g.id, g.name, g.code, g.default_terms_days, g.default_credit_limit,
+         g.default_daily_limit, g.default_monthly_limit, g.default_discount_pct,
          g.default_interest_rate_pct, g.default_interest_enabled, g.default_interest_grace_days,
          g.default_statement_cycle, g.default_statement_anchor_day,
          g.price_structure_id, g.sort_order, g.is_active,
@@ -89,6 +110,26 @@ export type GroupInput = {
   code?: string | null
   defaultTermsDays?: number
   defaultCreditLimit?: number
+  /** Spend caps seeded onto a new account. Zero means no cap. */
+  defaultDailyLimit?: number
+  defaultMonthlyLimit?: number
+  /** Live-resolved standing discount. Null = the group grants none. */
+  defaultDiscountPct?: number | null
+  /**
+   * The interest and statement-cycle defaults.
+   *
+   * These columns have existed since 037 and 065 and are READ everywhere — the
+   * customer form falls back to them, and its hints quote them at the user —
+   * but until the setup screen landed there was no write path, so nothing could
+   * ever set them off their column defaults. Adding them here rather than in a
+   * second update function: a partial save that silently drops half an
+   * aggregate is the failure mode this codebase has been bitten by before.
+   */
+  defaultInterestRatePct?: number
+  defaultInterestEnabled?: boolean
+  defaultInterestGraceDays?: number
+  defaultStatementCycle?: StatementCycle
+  defaultStatementAnchorDay?: number
   priceStructureId?: number | null
   sortOrder?: number
   isActive?: boolean
@@ -103,6 +144,37 @@ export function validateGroup(input: GroupInput): string | null {
     return 'Payment terms must be between 0 and 365 days.'
   }
   if ((input.defaultCreditLimit ?? 0) < 0) return 'Credit limit cannot be negative.'
+  if ((input.defaultDailyLimit ?? 0) < 0) return 'A daily limit cannot be negative.'
+  if ((input.defaultMonthlyLimit ?? 0) < 0) return 'A monthly limit cannot be negative.'
+  // A daily cap above the monthly one can never bind — the same check the
+  // account itself applies, so a group cannot seed a combination the account
+  // would refuse the moment somebody opened it.
+  if (
+    (input.defaultDailyLimit ?? 0) > 0 &&
+    (input.defaultMonthlyLimit ?? 0) > 0 &&
+    (input.defaultDailyLimit ?? 0) > (input.defaultMonthlyLimit ?? 0)
+  ) {
+    return 'The daily limit cannot be more than the monthly limit.'
+  }
+  // Null is "grants none" and is fine; a number has to be a percentage.
+  if (input.defaultDiscountPct !== null && input.defaultDiscountPct !== undefined) {
+    if (input.defaultDiscountPct < 0 || input.defaultDiscountPct > 100) {
+      return 'A standing discount must be between 0 and 100 percent.'
+    }
+  }
+  // The same bounds validateCustomer() applies, so a group cannot seed an
+  // account with figures the account itself would reject.
+  if ((input.defaultInterestRatePct ?? 0) < 0) return 'An interest rate cannot be negative.'
+  if ((input.defaultInterestRatePct ?? 0) > 100) {
+    return 'That interest rate looks wrong — enter it as a yearly percentage.'
+  }
+  if ((input.defaultInterestGraceDays ?? 0) < 0 || (input.defaultInterestGraceDays ?? 0) > 365) {
+    return 'The grace period must be between 0 and 365 days.'
+  }
+  // 0 means "calendar month" for a monthly cycle; 1–31 pins the cut day.
+  if ((input.defaultStatementAnchorDay ?? 0) < 0 || (input.defaultStatementAnchorDay ?? 0) > 31) {
+    return 'The cut day must be between 0 and 31.'
+  }
   return null
 }
 
@@ -121,13 +193,27 @@ export async function createCustomerGroup(siteId: number, input: GroupInput): Pr
   const res = await siteExecute(
     siteId,
     `INSERT INTO customer_groups
-       (name, code, default_terms_days, default_credit_limit, price_structure_id, sort_order, is_active)
-     VALUES (?,?,?,?,?,?,?)`,
+       (name, code, default_terms_days, default_credit_limit,
+        default_daily_limit, default_monthly_limit, default_discount_pct,
+        default_interest_rate_pct, default_interest_enabled, default_interest_grace_days,
+        default_statement_cycle, default_statement_anchor_day,
+        price_structure_id, sort_order, is_active)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       name,
       input.code?.trim() || null,
       input.defaultTermsDays ?? 30,
       (input.defaultCreditLimit ?? 0).toFixed(4),
+      (input.defaultDailyLimit ?? 0).toFixed(4),
+      (input.defaultMonthlyLimit ?? 0).toFixed(4),
+      input.defaultDiscountPct === null || input.defaultDiscountPct === undefined
+        ? null
+        : input.defaultDiscountPct.toFixed(3),
+      (input.defaultInterestRatePct ?? 0).toFixed(4),
+      input.defaultInterestEnabled ? 1 : 0,
+      input.defaultInterestGraceDays ?? 0,
+      input.defaultStatementCycle ?? 'monthly',
+      input.defaultStatementAnchorDay ?? 0,
       input.priceStructureId ?? null,
       input.sortOrder ?? 0,
       input.isActive === false ? 0 : 1,
@@ -156,6 +242,10 @@ export async function updateCustomerGroup(
     siteId,
     `UPDATE customer_groups
         SET name = ?, code = ?, default_terms_days = ?, default_credit_limit = ?,
+            default_daily_limit = ?, default_monthly_limit = ?, default_discount_pct = ?,
+            default_interest_rate_pct = ?, default_interest_enabled = ?,
+            default_interest_grace_days = ?,
+            default_statement_cycle = ?, default_statement_anchor_day = ?,
             price_structure_id = ?, sort_order = ?, is_active = ?
       WHERE id = ?`,
     [
@@ -163,6 +253,16 @@ export async function updateCustomerGroup(
       input.code?.trim() || null,
       input.defaultTermsDays ?? 30,
       (input.defaultCreditLimit ?? 0).toFixed(4),
+      (input.defaultDailyLimit ?? 0).toFixed(4),
+      (input.defaultMonthlyLimit ?? 0).toFixed(4),
+      input.defaultDiscountPct === null || input.defaultDiscountPct === undefined
+        ? null
+        : input.defaultDiscountPct.toFixed(3),
+      (input.defaultInterestRatePct ?? 0).toFixed(4),
+      input.defaultInterestEnabled ? 1 : 0,
+      input.defaultInterestGraceDays ?? 0,
+      input.defaultStatementCycle ?? 'monthly',
+      input.defaultStatementAnchorDay ?? 0,
       input.priceStructureId ?? null,
       input.sortOrder ?? 0,
       input.isActive === false ? 0 : 1,

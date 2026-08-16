@@ -62,6 +62,10 @@ export function publicCustomer(c: Customer) {
     category: c.category,
     paymentTermsDays: c.paymentTermsDays,
     creditLimit: c.creditLimit,
+    // Zero means no cap, unlike creditLimit where zero means no credit.
+    dailyLimit: c.dailyLimit,
+    monthlyLimit: c.monthlyLimit,
+    autoEmailInvoices: c.autoEmailInvoices,
     balance: c.balance,
     // The sync cursor: poll ?updatedSince= with the largest value seen so far.
     updatedAt: c.updatedAt.toISOString(),

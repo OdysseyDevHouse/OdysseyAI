@@ -10,8 +10,11 @@ import {
   availableCredit,
   creditBlockedReason,
   headroomRefusal,
+  NO_SPEND,
   type CreditPosition,
+  type PeriodSpend,
 } from '../creditRules'
+import { accountSpend } from './customerSpend'
 import { toAccountType } from '../accountTypes'
 
 /**
@@ -65,6 +68,8 @@ export type CustomerAccount = {
   availableCredit: number
   /** The raw position, so callers can re-ask the shared rules. */
   position: CreditPosition
+  /** Account spend in the current day and month, for the spend caps. */
+  spend: PeriodSpend
   /** False when the account is on hold, closed, or otherwise not trading. */
   accountOpen: boolean
 }
@@ -174,7 +179,8 @@ export async function customerAccount(
 ): Promise<CustomerAccount | null> {
   const row = await siteQueryOne<Row>(
     siteId,
-    `SELECT c.id, c.name, c.status, c.account_type, c.credit_limit, c.balance, c.phone,
+    `SELECT c.id, c.name, c.status, c.account_type, c.credit_limit,
+            c.daily_limit, c.monthly_limit, c.balance, c.phone,
             -- The login email is what they sign in with; the customer record's
             -- own email may differ, and the sign-in one is the one they know.
             COALESCE(cl.email, c.email) AS email
@@ -198,8 +204,18 @@ export async function customerAccount(
     status: String(row.status),
     accountType: toAccountType(row.account_type),
     creditLimit: toNum(row.credit_limit),
+    dailyLimit: toNum(row.daily_limit),
+    monthlyLimit: toNum(row.monthly_limit),
     balance: toNum(row.balance),
   }
+
+  // Carried on the account so accountCanCover — which is synchronous, and
+  // called from render paths — can apply the spend caps without a query. Same
+  // reason the till customer carries it. Measured only where a cap exists.
+  const spend =
+    (position.dailyLimit ?? 0) > 0 || (position.monthlyLimit ?? 0) > 0
+      ? await accountSpend(siteId, Number(row.id))
+      : NO_SPEND
 
   return {
     customerId: Number(row.id),
@@ -207,6 +223,7 @@ export async function customerAccount(
     email: String(row.email ?? ''),
     phone: String(row.phone ?? ''),
     position,
+    spend,
     availableCredit: availableCredit(position),
     // "Can this account take credit at all", by the shared rule — not merely
     // whether the status string says active.
@@ -231,7 +248,7 @@ export function accountCanCover(
   if (!account) {
     return { ok: false, reason: 'You are not signed in to an account.' }
   }
-  const refusal = headroomRefusal(account.position, total)
+  const refusal = headroomRefusal(account.position, total, account.spend)
   return refusal ? { ok: false, reason: refusal } : { ok: true }
 }
 

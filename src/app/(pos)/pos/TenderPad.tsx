@@ -900,9 +900,16 @@ function TenderKeys({
            * Still only a courtesy: finaliseDocument re-reads the balance under a
            * lock, because another till can take an order against the same account
            * while this basket sits open.
+           *
+           * `customer.spend` was measured when the customer was attached, so it
+           * covers the daily and monthly caps here too. It can go stale the same
+           * way the balance can, and is re-measured server-side for the same
+           * reason.
            */
           const creditRefusal =
-            tender.postsToDebtor && customer ? headroomRefusal(customer, owed) : null
+            tender.postsToDebtor && customer
+              ? headroomRefusal(customer, owed, customer.spend)
+              : null
 
           const refusal = needsCustomer
             ? 'Needs a customer'

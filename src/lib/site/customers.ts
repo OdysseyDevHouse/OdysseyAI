@@ -55,6 +55,15 @@ export type Customer = {
   category: string | null
   paymentTermsDays: number
   creditLimit: number
+  /**
+   * Spend caps over a window. Zero means NO limit, which is the opposite of
+   * creditLimit above — a limit is a grant, a cap is a restriction. See the
+   * header of 175_customer_spend_limits.sql.
+   */
+  dailyLimit: number
+  monthlyLimit: number
+  /** Email every finalised invoice to this account, without being asked. */
+  autoEmailInvoices: boolean
   balance: number
   /** This account's own structure. Null = the group's, else the site default. */
   priceStructureId: number | null
@@ -122,6 +131,9 @@ function mapCustomer(r: Row): Customer {
     category: (r.category as string | null) ?? null,
     paymentTermsDays: Number(r.payment_terms_days),
     creditLimit,
+    dailyLimit: toNum(r.daily_limit),
+    monthlyLimit: toNum(r.monthly_limit),
+    autoEmailInvoices: !!r.auto_email_invoices,
     balance,
     priceStructureId:
       r.price_structure_id === null || r.price_structure_id === undefined
@@ -155,7 +167,8 @@ const SELECT_CUSTOMER = `
          c.contact_name, c.email, c.phone, c.address_line1, c.address_line2,
          c.city, c.postal_code, c.vat_number, c.loyalty_number,
          c.group_id, c.rep_id, c.category, c.payment_terms_days,
-         c.credit_limit, c.balance, c.price_structure_id, c.discount_pct,
+         c.credit_limit, c.daily_limit, c.monthly_limit, c.auto_email_invoices,
+         c.balance, c.price_structure_id, c.discount_pct,
          c.interest_rate_pct, c.interest_enabled, c.interest_grace_days,
          c.statement_cycle, c.statement_anchor_day, c.statement_anchor_date,
          c.notes, c.created_at, c.updated_at,
@@ -331,6 +344,10 @@ export type CustomerInput = {
   category?: string | null
   paymentTermsDays?: number
   creditLimit?: number
+  /** Spend caps over a window. Zero means no limit — see the Customer type. */
+  dailyLimit?: number
+  monthlyLimit?: number
+  autoEmailInvoices?: boolean
   /** This account's own structure. Null falls back to group, then site. */
   priceStructureId?: number | null
   /** Standing discount, capped per product at application time. Null = none. */
@@ -359,6 +376,22 @@ export function validateCustomer(input: CustomerInput): string | null {
     return 'That email address does not look valid.'
   }
   if ((input.creditLimit ?? 0) < 0) return 'Credit limit cannot be negative.'
+  if ((input.dailyLimit ?? 0) < 0) return 'A daily limit cannot be negative.'
+  if ((input.monthlyLimit ?? 0) < 0) return 'A monthly limit cannot be negative.'
+  // A daily cap above the monthly one can never bind, so it is almost always a
+  // typo — and the one reading it would never know which figure was wrong.
+  if (
+    (input.dailyLimit ?? 0) > 0 &&
+    (input.monthlyLimit ?? 0) > 0 &&
+    (input.dailyLimit ?? 0) > (input.monthlyLimit ?? 0)
+  ) {
+    return 'The daily limit cannot be more than the monthly limit.'
+  }
+  // Auto-emailing needs somewhere to send to. Accepting the switch without an
+  // address would fail silently on every invoice, which is the worst of both.
+  if (input.autoEmailInvoices && !input.email?.trim()) {
+    return 'Give the account an email address before switching on automatic invoices.'
+  }
   if (input.discountPct !== null && input.discountPct !== undefined) {
     if (input.discountPct < 0 || input.discountPct > 100) {
       return 'A standing discount must be between 0 and 100 percent.'
@@ -405,6 +438,9 @@ function writableColumns(input: CustomerInput): unknown[] {
     input.category?.trim() || null,
     input.paymentTermsDays ?? 30,
     (input.creditLimit ?? 0).toFixed(4),
+    (input.dailyLimit ?? 0).toFixed(4),
+    (input.monthlyLimit ?? 0).toFixed(4),
+    input.autoEmailInvoices ?? false,
     input.priceStructureId ?? null,
     input.discountPct === null || input.discountPct === undefined
       ? null
@@ -427,6 +463,7 @@ function writableColumns(input: CustomerInput): unknown[] {
 const COLUMN_LIST = `code, name, status, status_reason, account_type, contact_name, email, phone,
                      address_line1, address_line2, city, postal_code, vat_number, loyalty_number,
                      group_id, rep_id, category, payment_terms_days, credit_limit,
+                     daily_limit, monthly_limit, auto_email_invoices,
                      price_structure_id, discount_pct,
                      interest_rate_pct, interest_enabled, interest_grace_days,
                      statement_cycle, statement_anchor_day, statement_anchor_date, notes`

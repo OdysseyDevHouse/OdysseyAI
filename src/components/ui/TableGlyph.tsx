@@ -66,14 +66,35 @@ const CHAIR_MIN_GAP = 5
 /** How far the edge banding sits in from the table's outline. */
 const RIM = 4.5
 
+/**
+ * Breathing room between the table top and the edge of the viewBox.
+ *
+ * An SVG clips at its viewBox, and a stroke straddles its path — so a shape drawn flush
+ * against the edge loses the outer half of its stroke and that side renders at half
+ * width. This reserves enough for the widest stroke here (2.5) plus the contact shadow's
+ * 2-unit offset, so nothing is ever trimmed on any side.
+ */
+const EDGE_PAD = 4
+
 export function TableGlyph({
   shape,
   seats,
+  footprint,
   className,
   style,
 }: {
   shape: TableGlyphShape
   seats: TableGlyphSeats
+  /**
+   * The table's real proportions, in whatever units the caller works in — only the
+   * RATIO is used.
+   *
+   * Needed because the drawing is stretched to fit its box, so features drawn at a fixed
+   * size in viewBox units come out wider across than down. Pass the same width/height
+   * you size the box with. Optional; without it the rim is drawn as if the table were
+   * square, which is visibly uneven on anything long.
+   */
+  footprint?: { width: number; height: number }
   className?: string
   style?: CSSProperties
 }) {
@@ -87,18 +108,81 @@ export function TableGlyph({
    */
   const uid = useId().replace(/:/g, '')
 
-  /* The table top is inset by however much the chairs need on each side — a table with
-     no chairs fills its whole footprint, which is what an unseated counter should do. */
+  /*
+   * How far one viewBox unit is stretched on each axis.
+   *
+   * The viewBox is SQUARE and `preserveAspectRatio="none"` stretches it to whatever box
+   * the table occupies, so on a wide table one unit across covers more screen than one
+   * unit down. Anything specified as a fixed number of units therefore renders thicker
+   * on one axis than the other — which is what made the left and right edges of a long
+   * table look thinner than its top and bottom.
+   *
+   * Dividing each axis by its own scale cancels the stretch, so a chair, a rim and a
+   * corner all come out the same visual thickness the whole way round.
+   *
+   * `footprint` is how the caller states its proportions; without it we assume square,
+   * which is exactly the behaviour this had before — uncorrected, but no worse.
+   */
+  const aspect =
+    footprint && footprint.width > 0 && footprint.height > 0
+      ? footprint.width / footprint.height
+      : 1
+
+  /*
+   * ── THE VIEWBOX MATCHES THE FOOTPRINT, SO NOTHING IS EVER STRETCHED ───────
+   *
+   * This replaces a scheme that drew into a SQUARE viewBox, stretched it to the caller's
+   * box with `preserveAspectRatio="none"`, and then divided every single measurement by
+   * a per-axis factor to undo the distortion. That scheme was wrong three times running —
+   * measured at 1.59, then 0.74, then still visibly uneven — because a stroke, a corner
+   * radius and a clip edge each distort under a non-uniform scale in their own way, and
+   * no set of pre-divided numbers can cancel all of them at once.
+   *
+   * Here the coordinate system simply has the table's real proportions: a 20×8 counter is
+   * drawn in a 250×100 viewBox, a square top in a 100×100 one. Scaling to the caller's
+   * box is then UNIFORM, so a 2-unit stroke is 2 units on every side by construction and
+   * there is nothing left to correct. `RIM`, `CHAIR_DEPTH` and the corner radii are plain
+   * numbers again.
+   */
+  const vbW = aspect >= 1 ? VB * aspect : VB
+  const vbH = aspect >= 1 ? VB : VB / aspect
+
+  /* One depth, both axes — the scale is uniform now, so a chair is the same thickness
+     wherever it sits. Expressed as a share of the SHORTER side so it stays proportionate
+     on a long counter rather than growing with the length.
+     `+ EDGE_PAD` keeps the BAND (pad + chair) reaching the table, since the chair now
+     starts EDGE_PAD in from the viewBox edge; the chair itself keeps its own thickness,
+     which is `depth - EDGE_PAD` where it is drawn below. */
+  const depth = (CHAIR_DEPTH / 100) * Math.min(vbW, vbH) + EDGE_PAD
+
+  /*
+   * ── EVERY SIDE GETS AT LEAST `EDGE_PAD`, AND THAT IS THE BUG FIX ──────────
+   *
+   * A stroke straddles its path: half inside, half outside. A shape drawn flush against
+   * the viewBox edge therefore has the outer half of its stroke CLIPPED AWAY, and the
+   * side reads as a half-width line.
+   *
+   * Chairs used to be the only thing insetting the top, so a table with chairs above and
+   * below (the common case) sat flush left and right — full stroke top and bottom, half
+   * stroke on the sides. That is the "thinner on the left and right" everyone could see
+   * and no amount of correcting the rim arithmetic could touch, because the rim was never
+   * what was wrong.
+   *
+   * The pad is the visible half of the stroke plus a hair, so nothing is ever trimmed.
+   */
   const inset = {
-    top: seats.top > 0 ? CHAIR_DEPTH : 0,
-    bottom: seats.bottom > 0 ? CHAIR_DEPTH : 0,
-    left: seats.left > 0 ? CHAIR_DEPTH : 0,
-    right: seats.right > 0 ? CHAIR_DEPTH : 0,
+    top: Math.max(EDGE_PAD, seats.top > 0 ? depth : 0),
+    bottom: Math.max(EDGE_PAD, seats.bottom > 0 ? depth : 0),
+    left: Math.max(EDGE_PAD, seats.left > 0 ? depth : 0),
+    right: Math.max(EDGE_PAD, seats.right > 0 ? depth : 0),
   }
   const x = inset.left
   const y = inset.top
-  const w = VB - inset.left - inset.right
-  const h = VB - inset.top - inset.bottom
+  const w = vbW - inset.left - inset.right
+  const h = vbH - inset.top - inset.bottom
+
+  /* Plain numbers again: no axis needs its own version of anything. */
+  const rim = (RIM / 100) * Math.min(vbW, vbH)
 
   /**
    * How much of an edge is actually seatable.
@@ -114,8 +198,12 @@ export function TableGlyph({
 
   /** Whether the top is drawn as an ellipse. A counter is a rounded RECT, not an oval. */
   const curvedTop = shape === 'round' || shape === 'oval'
-  /** Corner radius for the rectangular tops — a counter's ends are fully round. */
-  const corner = shape === 'counter' ? Math.min(w, h) / 2 : 8
+  /* One radius, both axes — the scale is uniform, so a corner curves the same way round.
+     A counter's ends stay fully round, which is what makes it a counter. */
+  const corner =
+    shape === 'counter'
+      ? Math.min(w, h) / 2
+      : (8 / 100) * Math.min(vbW, vbH)
 
   /** One edge's chairs, spaced evenly along the table's seatable span on that side. */
   const chairsFor = (n: number, side: 'top' | 'bottom' | 'left' | 'right') => {
@@ -127,29 +215,39 @@ export function TableGlyph({
     const start = (horizontal ? x : y) + (edge - span) / 2
     /* Chair length is a share of the span it sits on, capped so two chairs on a long
        counter stay chair-sized rather than becoming two long bars — and floored against
-       CHAIR_MIN_GAP so a crowded edge reads as separate seats. */
-    const size = Math.max(4, Math.min(span / n - CHAIR_MIN_GAP, 22))
-    const thickness = CHAIR_DEPTH - CHAIR_GAP
+       CHAIR_MIN_GAP so a crowded edge reads as separate seats.
+
+       All in one set of units now — the scale is uniform, so a chair on a wide table is
+       already the same size as one on a narrow table with no per-axis fiddling. */
+    const unit = Math.min(vbW, vbH) / 100
+    const gap = CHAIR_MIN_GAP * unit
+    const size = Math.max(4 * unit, Math.min(span / n - gap, 22 * unit))
+    /* `- EDGE_PAD` so the chair keeps the thickness it had before the pad was introduced
+       — the pad moved its start inward, and without this it would simply grow by that
+       much and read as a fat slab rather than a chair. */
+    const thickness = depth - EDGE_PAD - CHAIR_GAP * unit
 
     return Array.from({ length: n }, (_, i) => {
       /* Evenly spaced centres: the i-th of n sits at (i + 0.5)/n along the span. */
       const centre = start + (span * (i + 0.5)) / n
+      /* Pulled in by EDGE_PAD like the top is, so a chair against the outer edge is not
+         clipped either — it has no stroke, but a rounded end still loses its curve. */
       const cross =
         side === 'top'
-          ? 0
+          ? EDGE_PAD
           : side === 'bottom'
-            ? VB - thickness
+            ? vbH - thickness - EDGE_PAD
             : side === 'left'
-              ? 0
-              : VB - thickness
+              ? EDGE_PAD
+              : vbW - thickness - EDGE_PAD
 
       /*
        * A chair, not a bar: a seat pad with a back rail behind it.
        *
        * The back is the outer third and sits FURTHER from the table, which is what makes
-       * a row of these read as chairs facing inward rather than as tick marks. Both
-       * pieces are drawn per-side rather than rotated, because `preserveAspectRatio`
-       * stretches the viewBox unevenly and a rotation would shear them.
+       * a row of these read as chairs facing inward rather than as tick marks. Drawn
+       * per-side rather than rotated — four explicit cases read more plainly here than a
+       * transform would.
        */
       const cx = horizontal ? centre - size / 2 : cross
       const cy = horizontal ? cross : centre - size / 2
@@ -209,10 +307,12 @@ export function TableGlyph({
     <svg
       aria-hidden
       focusable="false"
-      viewBox={`0 0 ${VB} ${VB}`}
-      /* Stretched to the caller's box rather than kept square: a table's footprint is
-         its real proportions, and letterboxing a counter into a square would draw a
-         shape the room does not contain. */
+      /* The viewBox already HAS the table's proportions (see `vbW`/`vbH`), so scaling to
+         the caller's box is uniform and nothing is distorted. `none` is still correct
+         here: the caller sizes the box from the same footprint, so the two ratios agree
+         and there is nothing to letterbox — but should they ever disagree, filling the
+         box the caller asked for is the behaviour every screen already depends on. */
+      viewBox={`0 0 ${vbW} ${vbH}`}
       preserveAspectRatio="none"
       className={className}
       style={style}
@@ -232,29 +332,26 @@ export function TableGlyph({
           <stop offset="55%" stopColor="currentColor" stopOpacity={0.3} />
           <stop offset="100%" stopColor="currentColor" stopOpacity={0.22} />
         </linearGradient>
-        <pattern
-          id={`${uid}-grain`}
-          patternUnits="userSpaceOnUse"
-          width={100}
-          height={9}
-        >
+        {/* Grain spacing needs no correction now — the scale is uniform, so a line every
+            9 units is 9 units apart on screen in every direction. */}
+        <pattern id={`${uid}-grain`} patternUnits="userSpaceOnUse" width={vbW} height={9}>
           <line
             x1={0}
             y1={4.5}
-            x2={100}
+            x2={vbW}
             y2={4.5}
             stroke="currentColor"
             strokeWidth={1.1}
             opacity={0.12}
           />
         </pattern>
-        {/* Clips the grain and rim to the table's own silhouette, so a round top does
-            not show square grain in its corners. */}
+        {/* Clips the GRAIN to the table's silhouette, so a round top does not show square
+            grain in its corners. The rim is deliberately outside this — see below. */}
         <clipPath id={`${uid}-clip`}>
           {curvedTop ? (
             <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} />
           ) : (
-            <rect x={x} y={y} width={w} height={h} rx={corner} />
+            <rect x={x} y={y} width={w} height={h} rx={corner} ry={corner} />
           )}
         </clipPath>
       </defs>
@@ -283,6 +380,7 @@ export function TableGlyph({
           width={w}
           height={h}
           rx={corner}
+          ry={corner}
           fill="currentColor"
           opacity={0.16}
         />
@@ -297,9 +395,9 @@ export function TableGlyph({
           ry={h / 2}
           fill={`url(#${uid}-top)`}
           stroke="currentColor"
-          /* Stroke is scaled by the same stretch that sizes the box, so a wide counter
-             would otherwise show a thin top edge and a fat side. vectorEffect keeps it
-             even at any aspect ratio. */
+          /* `non-scaling-stroke` keeps the outline a constant screen width whatever the
+             table's size — a small table would otherwise get a hairline and a bar a slab.
+             It no longer has to compensate for a distortion, because there is none. */
           vectorEffect="non-scaling-stroke"
           strokeWidth={2.5}
         />
@@ -310,6 +408,7 @@ export function TableGlyph({
           width={w}
           height={h}
           rx={corner}
+          ry={corner}
           fill={`url(#${uid}-top)`}
           stroke="currentColor"
           vectorEffect="non-scaling-stroke"
@@ -317,37 +416,44 @@ export function TableGlyph({
         />
       )}
 
+      {/* The grain, and ONLY the grain, is clipped to the table's outline — a square
+          pattern would otherwise show in the corners of a round top. */}
       <g clipPath={`url(#${uid}-clip)`}>
         <rect x={x} y={y} width={w} height={h} fill={`url(#${uid}-grain)`} />
-        {/* An inset rim — the edge banding of a real table top, and what gives it
-            thickness rather than looking like a sticker. */}
-        {curvedTop ? (
-          <ellipse
-            cx={x + w / 2}
-            cy={y + h / 2}
-            rx={w / 2 - RIM}
-            ry={h / 2 - RIM}
-            fill="none"
-            stroke="currentColor"
-            vectorEffect="non-scaling-stroke"
-            strokeWidth={1}
-            opacity={0.4}
-          />
-        ) : (
-          <rect
-            x={x + RIM}
-            y={y + RIM}
-            width={Math.max(0, w - RIM * 2)}
-            height={Math.max(0, h - RIM * 2)}
-            rx={Math.max(0, corner - RIM)}
-            fill="none"
-            stroke="currentColor"
-            vectorEffect="non-scaling-stroke"
-            strokeWidth={1}
-            opacity={0.4}
-          />
-        )}
       </g>
+
+      {/* The edge banding. ONE inset on every side, which is only correct because the
+          coordinate system is no longer distorted — this is the line whose left and right
+          edges kept reading thinner than its top and bottom, through three failed
+          attempts at cancelling a stretch that should not have existed. It sits outside
+          the clip above so its stroke is not shaved by the clip edge. */}
+      {curvedTop ? (
+        <ellipse
+          cx={x + w / 2}
+          cy={y + h / 2}
+          rx={Math.max(0.5, w / 2 - rim)}
+          ry={Math.max(0.5, h / 2 - rim)}
+          fill="none"
+          stroke="currentColor"
+          vectorEffect="non-scaling-stroke"
+          strokeWidth={1}
+          opacity={0.4}
+        />
+      ) : (
+        <rect
+          x={x + rim}
+          y={y + rim}
+          width={Math.max(0, w - rim * 2)}
+          height={Math.max(0, h - rim * 2)}
+          rx={Math.max(0, corner - rim)}
+          ry={Math.max(0, corner - rim)}
+          fill="none"
+          stroke="currentColor"
+          vectorEffect="non-scaling-stroke"
+          strokeWidth={1}
+          opacity={0.4}
+        />
+      )}
     </svg>
   )
 }

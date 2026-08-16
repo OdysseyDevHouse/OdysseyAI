@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   EmptyState,
   Icons,
@@ -10,8 +10,14 @@ import {
   TABLE_TH,
 } from '@/components/ui'
 import { formatCell } from '@/lib/reportBuilder/format'
-import { buildSections, isGrouped, rowCountKeyFor } from '@/lib/reportBuilder/shape'
+import {
+  buildSections,
+  isGrouped,
+  rowCountKeyFor,
+  type ReportSection,
+} from '@/lib/reportBuilder/shape'
 import type { ReportColumn } from '@/lib/reportBuilder/spec'
+import { GroupTile, groupStyleFor } from './groupStyle'
 
 /**
  * The report grid.
@@ -68,6 +74,23 @@ export default function ReportGrid({
     [sorted, columns, groupKey],
   )
 
+  /* Resolved for the whole run rather than per band, because each band needs to
+     know what the one above it took — see the de-collision note in groupStyle.
+     Above the empty-state guard below: a hook may not sit behind a return. */
+  const bandStyles = useMemo(() => {
+    /* One sequential pass, carrying the accent actually USED by the band above
+       — including one that was itself nudged. Recomputing the previous band's
+       accent independently would drop that nudge and let a third band collide
+       with the second. */
+    let previous: string | undefined
+    return sections.map((section) => {
+      if (section.label === null) return null
+      const style = groupStyleFor(section.label, groupKey ?? undefined, previous)
+      previous = style.accent
+      return style
+    })
+  }, [sections, groupKey])
+
   if (columns.length === 0 || rows.length === 0) {
     return (
       <EmptyState
@@ -104,8 +127,21 @@ export default function ReportGrid({
     )
   }
 
+  /*
+   * A gutter around the whole grid — even on all four sides.
+   *
+   * The table used to run flush to the card's edge, which put the first column's
+   * text hard against the border and the header row's fill into the card's
+   * rounded corner. A report is a document — it wants a margin — and this is the
+   * one place to set it, so the band washes and the totals rows all stop at the
+   * same line.
+   *
+   * `p-3`, not `px-3 pb-3`: the header row had no gutter above it and so sat
+   * hard against the toolbar, which made the top the one edge that did not match
+   * the other three.
+   */
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto p-3">
       <table className="w-full text-sm">
         <thead>
           <tr className={TABLE_HEAD_ROW}>
@@ -147,69 +183,30 @@ export default function ReportGrid({
         </thead>
         <tbody>
           {sections.map((section, s) => (
-            <Fragment key={section.label ?? s}>
-              {/* The band heading. Carries its row count, because "how many
-                  card sales" is half of what banding is asked for. */}
-              {section.label !== null && (
-                <tr className="border-b border-border bg-surface-2">
-                  <td
-                    colSpan={columns.length}
-                    className={`${TABLE_TD} font-semibold text-ink`}
-                  >
-                    {section.label}{' '}
-                    <span className="font-normal text-muted">({section.rows.length})</span>
-                  </td>
-                </tr>
-              )}
-
-              {section.rows.map((row, i) => (
-                <tr key={i} className="border-b border-border hover:bg-surface-2">
-                  {columns.map((col) => (
-                    <td
-                      key={col.key}
-                      className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''} ${
-                        col.numeric && Number(row[col.key]) < 0 ? 'text-danger' : ''
-                      }`}
-                    >
-                      {formatCell(row[col.key], col.type)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-
-              {/* A band's subtotal. Only when banded — an unbanded report ends
-                  with the grand total in the footer, and printing the same
-                  figures twice under two names reads as a discrepancy. */}
-              {grouped && section.subtotal && (
-                <tr className="border-b border-border bg-surface-2/60 font-medium text-ink">
-                  {columns.map((col) => (
-                    <td
-                      key={col.key}
-                      className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''}`}
-                    >
-                      {col.key === rowCountKey
-                        ? 'Total'
-                        : col.total
-                          ? formatCell(section.subtotal![col.key], col.type)
-                          : ''}
-                    </td>
-                  ))}
-                </tr>
-              )}
-            </Fragment>
+            <GroupBlock
+              key={section.label ?? `__section_${s}`}
+              section={section}
+              columns={columns}
+              grouped={grouped}
+              style={bandStyles[s]}
+              rowCountKey={rowCountKey}
+            />
           ))}
         </tbody>
         {hasTotals && (
           <tfoot>
-            <tr className="border-t-2 border-border bg-surface-2 font-semibold text-ink">
+            <tr className="border-y-2 border-border bg-surface-2 font-semibold text-ink">
               {columns.map((col) => (
-                <td key={col.key} className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''}`}>
+                <td
+                  key={col.key}
+                  className={`${TOTALS_TD} ${col.numeric ? TABLE_NUMERIC : ''}`}
+                >
                   {col.key === rowCountKey
                     ? // Banded, the closing row is the total OF the bands and
                       // says so; flat, it is the only summary line and the row
                       // count is the more useful thing to put there.
                       grouped
-                      ? `Grand total (${rows.length})`
+                      ? 'Grand total'
                       : `${rows.length} row${rows.length === 1 ? '' : 's'}`
                     : col.total
                       ? formatCell(totals[col.key], col.type)
@@ -221,5 +218,161 @@ export default function ReportGrid({
         )}
       </table>
     </div>
+  )
+}
+
+/*
+ * A totals line is roomier than a data row.
+ *
+ * TABLE_TD is 36px because rows are scanned hundreds of times; a subtotal is
+ * read once per band and is what the eye stops on, so it gets the extra couple
+ * of pixels rather than inheriting the density the rows were tuned for.
+ */
+const TOTALS_TD = 'px-4 py-2 text-ink'
+
+/**
+ * One band: its heading, its rows, and the line that closes it.
+ *
+ * ── COLLAPSING ──────────────────────────────────────────────────────────
+ *
+ * The triangle folds the band away. While it is folded the band's SUBTOTALS
+ * move up onto the heading row, so a fully-collapsed report reads as a
+ * one-line-per-band summary — which is the main reason to collapse one in the
+ * first place. Expanded, those figures live on the subtotal row instead, so the
+ * same numbers are never on screen twice.
+ */
+function GroupBlock({
+  section,
+  columns,
+  grouped,
+  style,
+  rowCountKey,
+}: {
+  section: ReportSection
+  columns: ReportColumn[]
+  grouped: boolean
+  /** Resolved by the grid, which alone can see the band above. Null when flat. */
+  style: { icon: ReactNode; color: string } | null
+  rowCountKey: string | undefined
+}) {
+  const [open, setOpen] = useState(true)
+  const label = section.label
+
+  const showHeader = grouped && label !== null && style !== null
+  // A row whose group value is empty still forms a band — sales with no payment
+  // type recorded are a real answer. Give it a readable name rather than a gap.
+  const displayLabel = label === '' ? '(none)' : label
+  const subtotal = section.subtotal
+
+  return (
+    <>
+      {/* Breathing room above each band, so a block (heading → rows → subtotal)
+          reads as its own thing rather than as one continuous grid. */}
+      {showHeader && (
+        <tr aria-hidden>
+          <td colSpan={columns.length} className="h-2 border-0 p-0" />
+        </tr>
+      )}
+
+      {showHeader && (
+        <tr
+          className="border-y border-border"
+          style={{
+            /* Mixed from the accent rather than a flat token, so the wash, the
+               tile and the count pill are visibly one colour per band. 8% keeps
+               it a tint: the rows underneath must stay the thing being read. */
+            background: `color-mix(in srgb, ${style.color} 8%, var(--color-surface))`,
+          }}
+        >
+          <td className="whitespace-nowrap px-4 py-3 text-[13px] font-semibold text-ink">
+            <div className="flex items-center gap-2.5">
+              {/* Chromeless on purpose, like the sort buttons in the header
+                  above: the row it sits on is already the affordance, and a
+                  bordered control inside a table cell reads as a second table.
+                  data-kit-ok — see scripts/check-ui-kit.mjs. */}
+              <button
+                data-kit-ok
+                type="button"
+                onClick={() => setOpen((o) => !o)}
+                aria-expanded={open}
+                title={open ? `Collapse ${displayLabel}` : `Expand ${displayLabel}`}
+                className="flex items-center gap-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                <Icons.ChevronDown
+                  size={14}
+                  className="shrink-0 text-muted transition-transform"
+                  style={{ transform: open ? 'none' : 'rotate(-90deg)' }}
+                  aria-hidden
+                />
+                <GroupTile icon={style.icon} color={style.color} />
+                <span className="text-[13px] font-semibold text-ink">{displayLabel}</span>
+              </button>
+              <span
+                className="numeric inline-flex items-center rounded-pill px-2 py-px text-[11px] font-semibold"
+                style={{
+                  color: style.color,
+                  background: `color-mix(in srgb, ${style.color} 14%, transparent)`,
+                }}
+              >
+                {section.rows.length.toLocaleString()}
+              </span>
+            </div>
+          </td>
+
+          {/* The band's figures, but only while it is folded — see above. */}
+          {columns.slice(1).map((col) => {
+            const v = subtotal?.[col.key]
+            const show = !open && col.total && v !== null && v !== undefined
+            return (
+              <td
+                key={col.key}
+                className={`whitespace-nowrap px-4 py-3 text-[13px] font-semibold text-ink ${
+                  col.numeric ? TABLE_NUMERIC : ''
+                }`}
+              >
+                {show ? formatCell(v, col.type) : ''}
+              </td>
+            )
+          })}
+        </tr>
+      )}
+
+      {open &&
+        section.rows.map((row, i) => (
+          <tr key={i} className="border-b border-border hover:bg-surface-2">
+            {columns.map((col) => (
+              <td
+                key={col.key}
+                className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''} ${
+                  col.numeric && Number(row[col.key]) < 0 ? 'text-danger' : ''
+                }`}
+              >
+                {formatCell(row[col.key], col.type)}
+              </td>
+            ))}
+          </tr>
+        ))}
+
+      {/* The line that closes a band, named for the band it closes — "Card
+          subtotal" rather than a bare "Total", so a figure read out of context
+          still says what it is the total OF. Hidden while collapsed, because
+          the heading is carrying those numbers instead. */}
+      {open && grouped && subtotal && (
+        <tr className="border-y border-border bg-surface-2/60 font-semibold text-ink">
+          {columns.map((col) => (
+            <td
+              key={col.key}
+              className={`${TOTALS_TD} ${col.numeric ? TABLE_NUMERIC : ''}`}
+            >
+              {col.key === rowCountKey
+                ? `${displayLabel} subtotal`
+                : col.total
+                  ? formatCell(subtotal[col.key], col.type)
+                  : ''}
+            </td>
+          ))}
+        </tr>
+      )}
+    </>
   )
 }

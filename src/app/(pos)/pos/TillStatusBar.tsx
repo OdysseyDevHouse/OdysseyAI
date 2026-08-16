@@ -153,8 +153,21 @@ export function TillStatusBar({
           />
           {/* Set in the LOGO's own face, not the UI stack — it is a wordmark
               sitting directly against the logo mark, and the two have to look
-              like one lockup rather than an image with a caption. */}
-          <h1 className="wordmark text-[20px] leading-none text-ink">Odyssey POS</h1>
+              like one lockup rather than an image with a caption.
+
+              `.wordmark-lockup` at text-xl — the SAME treatment as the back
+              office rail (see Sidebar.tsx), because this is the same thing: the
+              product's name beside the mark in the top-left corner, not a screen
+              title. The two front doors of the product must be set identically,
+              so the class and the size are the rail's, not this file's.
+
+              The second word carries the brand blue at 700 against the name's
+              800, exactly as the rail sets "AI" — the colour is what separates
+              the two halves of the name, and leaving both at one weight made
+              the blue read as an accident of markup rather than a second word. */}
+          <h1 className="wordmark-lockup text-xl leading-none text-ink">
+            Odyssey <span className="font-bold text-brand">POS</span>
+          </h1>
         </span>
       ) : (
         <h1 className="wordmark text-[20px] leading-none text-ink">{screenTitle}</h1>

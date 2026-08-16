@@ -192,6 +192,28 @@ export default function CustomerForm({
   const group = groups.find((g) => g.id === Number(groupId))
   const isNew = customer === null
 
+  /*
+   * REMOUNT KEY FOR THE FIELDS A GROUP SEEDS.
+   *
+   * Those fields are uncontrolled — `defaultValue` plus FormData on submit,
+   * per the note above — and React applies a defaultValue ONLY when the node
+   * first mounts. Changing the group re-renders with a new default that an
+   * already-mounted input ignores, so picking a group after touching the box
+   * left the old figure sitting there. Worse, it was inconsistent: an
+   * untouched CurrencyInput happened to pick the change up, a typed-in one
+   * did not, which is exactly the sort of "sometimes works" that reads as a
+   * saving bug rather than a form one.
+   *
+   * Keying on the group id makes the remount real, so every seeded field
+   * re-reads its default the moment the group changes.
+   *
+   * Only on a NEW account: an existing one must never have its agreed terms
+   * silently rewritten by someone reassigning its group, which is the whole
+   * point of these being a starting point rather than a live lookup. So the
+   * key is constant once `customer` exists, and nothing remounts.
+   */
+  const seedKey = isNew ? `group-${groupId || 'none'}` : 'existing'
+
   return (
     <>
       {/* Gutters come from the page's <PageBody>, not from here. */}
@@ -344,12 +366,14 @@ export default function CustomerForm({
                   3-digit value tells the user the wrong thing. */}
               <Field label="Payment terms (days)" hint="Zero means cash on delivery." className="max-w-40">
                 <NumberInput
+                  key={seedKey}
                   name="paymentTermsDays"
                   defaultValue={customer?.paymentTermsDays ?? group?.defaultTermsDays ?? 30}
                 />
               </Field>
               <Field label="Credit limit" hint="Zero means no credit granted — not unlimited.">
                 <CurrencyInput
+                  key={seedKey}
                   name="creditLimit"
                   defaultValue={customer?.creditLimit ?? group?.defaultCreditLimit ?? 0}
                 />
@@ -367,6 +391,38 @@ export default function CustomerForm({
                   </p>
                 </div>
               )}
+            </div>
+
+            {/* Spend limits cap VELOCITY where the credit limit caps EXPOSURE.
+                Kept visually apart from the limit above, and labelled with the
+                zero rule spelled out, because the two zeroes mean opposite
+                things — a grant of nothing allows nothing, a restriction of
+                nothing stops nothing. */}
+            <div className="border-t border-border pt-4">
+              <h3 className="text-sm font-medium text-ink">Spend limits</h3>
+              <p className="mt-1 text-sm text-muted">
+                How much may go on the account in one day or one month. Unlike the credit limit,
+                paying does not free these up — they cap how fast the account is drawn, not how
+                much is owed. Leave at zero for no limit.
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                {/* Seeded from the group on a NEW account only, like the credit
+                    limit above — an existing account keeps what it agreed to. */}
+                <Field label="Daily limit" hint="Zero means no daily limit.">
+                  <CurrencyInput
+                    key={seedKey}
+                    name="dailyLimit"
+                    defaultValue={customer?.dailyLimit ?? group?.defaultDailyLimit ?? 0}
+                  />
+                </Field>
+                <Field label="Monthly limit" hint="Zero means no monthly limit.">
+                  <CurrencyInput
+                    key={seedKey}
+                    name="monthlyLimit"
+                    defaultValue={customer?.monthlyLimit ?? group?.defaultMonthlyLimit ?? 0}
+                  />
+                </Field>
+              </div>
             </div>
 
             {/* Interest is a separate decision from credit, and a legal one:
@@ -418,7 +474,10 @@ export default function CustomerForm({
                 cycle decides when the account is CUT into a statement. They are
                 independent, and saying so here is cheaper than the support call. */}
             <div className="border-t border-border pt-4">
-              <StatementCycleFields customer={customer} group={group} />
+              {/* Same remount key as the credit fields: this component seeds its
+                  own useState from the group, and useState reads its initial
+                  value once for exactly the same reason defaultValue does. */}
+              <StatementCycleFields key={seedKey} customer={customer} group={group} />
             </div>
           </CardBody>
         </Card>
@@ -450,10 +509,18 @@ export default function CustomerForm({
                     ))}
                   </Select>
                 </Field>
+                {/* Left BLANK rather than seeded, because this one resolves
+                    live: an empty field means "follow the group", so prefilling
+                    it with the group's number would silently pin the account to
+                    today's value and stop it following a later change. */}
                 <Field
                   label="Standing discount (%)"
                   className="max-w-40"
-                  hint="The default line discount wherever this account is attached — capped per product at its own ceiling."
+                  hint={
+                    group?.defaultDiscountPct
+                      ? `Leave blank to follow the group's ${group.defaultDiscountPct}%.`
+                      : 'The default line discount wherever this account is attached — capped per product at its own ceiling.'
+                  }
                 >
                   <NumberInput
                     name="discountPct"
@@ -479,6 +546,21 @@ export default function CustomerForm({
               <Field label="Phone">
                 <Input name="phone" defaultValue={customer?.phone ?? ''} maxLength={40} />
               </Field>
+            </div>
+
+            {/* Sits with the email rather than under Credit terms: it is a
+                statement about where post goes, and the address it depends on
+                is the field directly above it. */}
+            <div className="border-t border-border pt-4">
+              <Checkbox
+                name="autoEmailInvoices"
+                defaultChecked={customer?.autoEmailInvoices ?? false}
+                label="Email every invoice to this account automatically"
+              />
+              <p className="mt-1 text-sm text-muted">
+                Sent to the account email above as each invoice is finalised, with the PDF
+                attached. Credit notes are not sent automatically.
+              </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

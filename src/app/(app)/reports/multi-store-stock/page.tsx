@@ -184,6 +184,7 @@ export default async function MultiStoreStockPage({
         {view === 'rebalance' && (
           <Card>
             <CardHeader
+              tone="default"
               title="Suggested moves"
               description="A store only offers what it holds above its own reorder level, so a move can never create a second shortage to fix the first."
             />
@@ -255,6 +256,7 @@ export default async function MultiStoreStockPage({
         {/* ── The detail ────────────────────────────────────────────────────── */}
         <Card>
           <CardHeader
+              tone="default"
             title={view === 'rebalance' ? 'Lines short somewhere' : 'On hand, by store'}
             description={
               detailTrimmed

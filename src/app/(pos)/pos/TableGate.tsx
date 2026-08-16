@@ -18,6 +18,7 @@ import {
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { seatLayout } from '@/lib/site/floorGeometry'
+import { useFloorViewport } from '@/lib/site/useFloorViewport'
 import type { OpenTab } from './actions'
 import type { PosTable, TableState } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
@@ -699,30 +700,74 @@ function FloorView({
   onSplit?: (table: PosTable) => void
   onTransfer?: (table: PosTable) => void
 }) {
+  /*
+   * How wide one room unit renders relative to its height.
+   *
+   * The box asks for the room's aspect ratio, but `maxWidth: 100%` can win on a narrow
+   * pane and squeeze it — at which point a square table is no longer square on screen,
+   * and `TableGlyph` would draw its rim thicker on the sides than the top. Measured
+   * rather than assumed to be 1, because the two disagree exactly when it matters.
+   */
+  /* Pan and pinch, shared with the designer so the gesture is the same in both. Always
+     enabled here: nothing else on this screen claims a drag, and a tap still picks a
+     table because the hook only commits to a pan after real travel. */
+  const viewport = useFloorViewport()
+
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const [unitAspect, setUnitAspect] = useState(1)
+  useEffect(() => {
+    const node = surfaceRef.current
+    if (!node) return
+    const observer = new ResizeObserver(([entry]) => {
+      const box = entry.contentRect
+      if (box.width <= 0 || box.height <= 0) return
+      const ratio = box.width / room.width / (box.height / room.height)
+      if (Number.isFinite(ratio) && ratio > 0) setUnitAspect(ratio)
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [room.width, room.height])
+
   return (
     <div
+      /* ── The VIEWPORT: a fixed window onto a movable room ──────────────────
+         Pan and pinch live here, not on the room, because the room is the thing that
+         moves. `overflow-hidden` is what makes this a window rather than a page. */
+      ref={viewport.surfaceRef}
+      {...viewport.handlers}
       className="relative overflow-hidden rounded-card border border-border bg-surface-2"
-      /*
-       * The room's own aspect ratio, so a long verandah is long — letterboxed rather than
-       * distorted, because a plan whose proportions are wrong looks authoritative and is
-       * misleading in a way a list cannot be.
-       *
-       * CAPPED IN HEIGHT, and that cap is the point. The first version was `w-full` with
-       * only an aspect ratio, so a 100×70 room filled the page width and stood ~1100px
-       * tall: one table visible and the rest below the fold. A waiter scrolling a floor
-       * plan has lost the only thing a plan is for — seeing the whole room at once — so the
-       * height is bounded and the width follows from it. `max-w-full` keeps a very wide
-       * room inside the pane instead of the other way round.
-       */
       style={{
-        aspectRatio: `${room.width} / ${room.height}`,
-        /* HEIGHT drives it, width follows from the ratio — an aspect ratio with only a
-           maxHeight has nothing to compute from and collapses. 58vh leaves the walk-in
-           button, the split control and a section heading on screen above it. */
         height: '58vh',
-        maxWidth: '100%',
+        width: '100%',
+        /* The browser's own pan and zoom must not fight the gesture — without this,
+           Chrome scrolls the page under a one-finger drag and takes the pinch. */
+        touchAction: 'none',
+        cursor: viewport.panning ? 'grabbing' : 'grab',
       }}
     >
+      <div
+        ref={surfaceRef}
+        className="absolute left-1/2 top-1/2"
+        /*
+         * The room's own aspect ratio, so a long verandah is long — letterboxed rather
+         * than distorted, because a plan whose proportions are wrong looks authoritative
+         * and is misleading in a way a list cannot be.
+         *
+         * Sized to FIT the viewport at scale 1 and then transformed, so "zoomed all the
+         * way out" is the whole room on screen — the state a waiter starts in and returns
+         * to. `translate(-50%, -50%)` centres it before the pan offset is applied.
+         */
+        style={{
+          aspectRatio: `${room.width} / ${room.height}`,
+          height: '100%',
+          maxWidth: '100%',
+          transform: `translate(${viewport.view.x}px, ${viewport.view.y}px) translate(-50%, -50%) scale(${viewport.view.scale})`,
+          transformOrigin: 'center center',
+          /* No transition while a gesture is running: animating every pointermove makes
+             the floor lag the finger. Buttons and reset get the ease. */
+          transition: viewport.panning ? undefined : 'transform 140ms ease-out',
+        }}
+      >
       {features.map((f) => (
         <div
           key={f.id}
@@ -787,6 +832,8 @@ function FloorView({
           <TableGlyph
             shape={table.shape}
             seats={seatLayout(table.seats, table.width, table.height)}
+            /* Screen proportions, not room units — see `unitAspect` above. */
+            footprint={{ width: table.width * unitAspect, height: table.height }}
             className="absolute inset-0 h-full w-full"
           />
           <span
@@ -800,6 +847,45 @@ function FloorView({
           </span>
         </button>
       ))}
+      </div>
+
+      {/* ── Zoom controls ────────────────────────────────────────────────────
+          Buttons as well as gestures, because a mouse-only till has no pinch and a
+          resistive panel's driver reports every touch as a mouse. Small, in a corner,
+          and out of the way of the floor itself. */}
+      <div className="absolute bottom-3 right-3 flex flex-col gap-1">
+        <Button
+          variant="secondary"
+          size="sm"
+          iconOnly
+          aria-label="Zoom in"
+          onClick={() => viewport.zoomBy(1.3)}
+        >
+          <Icons.Plus size={16} />
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          iconOnly
+          aria-label="Zoom out"
+          onClick={() => viewport.zoomBy(1 / 1.3)}
+        >
+          <Icons.Minus size={16} />
+        </Button>
+        {/* Only once the view has moved — a reset that does nothing is a puzzle. */}
+        {viewport.moved && (
+          <Button
+            variant="secondary"
+            size="sm"
+            iconOnly
+            aria-label="Fit the whole room"
+            title="Fit the whole room"
+            onClick={viewport.reset}
+          >
+            <Icons.Minimize size={16} />
+          </Button>
+        )}
+      </div>
     </div>
   )
 }

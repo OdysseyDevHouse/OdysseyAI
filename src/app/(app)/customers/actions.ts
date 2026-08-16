@@ -72,6 +72,11 @@ function readInput(form: FormData): CustomerInput {
     statementAnchorDay: num(form, 'statementAnchorDay', 0),
     statementAnchorDate: text(form, 'statementAnchorDate'),
     creditLimit: num(form, 'creditLimit', 0),
+    dailyLimit: num(form, 'dailyLimit', 0),
+    monthlyLimit: num(form, 'monthlyLimit', 0),
+    // A Checkbox posts nothing when off, so absence means false — same as
+    // interestEnabled below.
+    autoEmailInvoices: form.get('autoEmailInvoices') !== null,
     priceStructureId: optionalId(form, 'priceStructureId'),
     // Blank means NO standing discount — distinct from an explicit 0.
     discountPct: String(form.get('discountPct') ?? '').trim()

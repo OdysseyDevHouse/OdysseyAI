@@ -3,7 +3,16 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
 import { toNum } from '../decimals'
 import { toAccountType, type AccountType } from '../accountTypes'
-import { availableCredit, creditBlockedReason, headroomRefusal } from '../creditRules'
+import {
+  availableCredit,
+  creditBlockedReason,
+  headroomRefusal,
+  remainingDaily,
+  remainingMonthly,
+  NO_SPEND,
+  type PeriodSpend,
+} from '../creditRules'
+import { accountSpendFor } from './customerSpend'
 
 /**
  * Finding a customer at the till.
@@ -26,10 +35,25 @@ export type TillCustomer = {
   status: string
   accountType: AccountType
   creditLimit: number
+  /** Spend caps over a window. Zero means no limit — see creditRules.ts. */
+  dailyLimit: number
+  monthlyLimit: number
   balance: number
   /** What is left before the limit is reached. Never negative. */
   availableCredit: number
   overLimit: boolean
+  /**
+   * What has already been charged to this account today and this month.
+   *
+   * Carried on the till customer because the Account button has to grey out as
+   * the basket grows, and the till is a Client Component that cannot query.
+   * Measured once when the customer is attached; the posting engine measures
+   * it again at finalise, which is the authoritative read.
+   */
+  spend: PeriodSpend
+  /** What is left of each spend cap. Null where that cap is not set. */
+  remainingDaily: number | null
+  remainingMonthly: number | null
   paymentTermsDays: number
   vatNumber: string | null
   phone: string | null
@@ -42,18 +66,27 @@ export type TillCustomer = {
    * second resolver somewhere else is the one that drifts.
    */
   priceStructureId: number | null
-  /** The account's standing discount, as the default line discount. 0 = none. */
+  /**
+   * ALREADY RESOLVED, the same way and for the same reason as the structure
+   * above: the customer's own discount, else the group's, else none. 0 = none.
+   *
+   * Both halves of "what does this group pay" resolve live, so a renegotiated
+   * trade discount is one edit and the counter follows. Still capped per
+   * product at its own ceiling when applied — see checkPricing.
+   */
   discountPct: number
 }
 
 type Row = RowDataPacket & Record<string, unknown>
 
-function mapCustomer(r: Row): TillCustomer {
+function mapCustomer(r: Row, spend: PeriodSpend = NO_SPEND): TillCustomer {
   const account = {
     name: String(r.name),
     status: String(r.status),
     accountType: toAccountType(r.account_type),
     creditLimit: toNum(r.credit_limit),
+    dailyLimit: toNum(r.daily_limit),
+    monthlyLimit: toNum(r.monthly_limit),
     balance: toNum(r.balance),
   }
 
@@ -63,6 +96,9 @@ function mapCustomer(r: Row): TillCustomer {
     ...account,
     availableCredit: availableCredit(account),
     overLimit: account.balance > account.creditLimit,
+    spend,
+    remainingDaily: remainingDaily(account, spend),
+    remainingMonthly: remainingMonthly(account, spend),
     paymentTermsDays: Number(r.payment_terms_days),
     vatNumber: (r.vat_number as string | null) ?? null,
     phone: (r.phone as string | null) ?? null,
@@ -73,7 +109,14 @@ function mapCustomer(r: Row): TillCustomer {
         : r.group_price_structure_id !== null && r.group_price_structure_id !== undefined
           ? Number(r.group_price_structure_id)
           : null,
-    discountPct: toNum(r.discount_pct),
+    // NULL on the customer means "not set", which falls through to the group —
+    // an explicit 0 is a decision and stops there. Reading it with toNum()
+    // alone would collapse the two and make a group discount unreachable for
+    // every account, which is the bug this ternary exists to prevent.
+    discountPct:
+      r.discount_pct !== null && r.discount_pct !== undefined
+        ? toNum(r.discount_pct)
+        : toNum(r.group_discount_pct),
   }
 }
 
@@ -82,11 +125,30 @@ function mapCustomer(r: Row): TillCustomer {
    import one thing. */
 export { headroomRefusal, creditBlockedReason, availableCredit }
 
+/**
+ * Maps rows, measuring period spend for the accounts that actually have a cap.
+ *
+ * Only those: a picker showing a hundred customers should not sum a month of
+ * tenders for the ninety-odd with no daily or monthly limit set, where the
+ * answer cannot change any decision. Accounts without a cap get NO_SPEND,
+ * which is the truthful value for "not measured, and nothing depends on it".
+ */
+async function mapWithSpend(siteId: number, rows: Row[]): Promise<TillCustomer[]> {
+  const capped = rows
+    .filter((r) => toNum(r.daily_limit) > 0 || toNum(r.monthly_limit) > 0)
+    .map((r) => Number(r.id))
+
+  const spend = capped.length > 0 ? await accountSpendFor(siteId, capped) : new Map()
+  return rows.map((r) => mapCustomer(r, spend.get(Number(r.id)) ?? NO_SPEND))
+}
+
 const SELECT_CUSTOMER = `
-  SELECT c.id, c.code, c.name, c.status, c.account_type, c.credit_limit, c.balance,
+  SELECT c.id, c.code, c.name, c.status, c.account_type, c.credit_limit,
+         c.daily_limit, c.monthly_limit, c.balance,
          c.payment_terms_days, c.vat_number, c.phone,
          c.price_structure_id, c.discount_pct,
-         cg.price_structure_id AS group_price_structure_id
+         cg.price_structure_id AS group_price_structure_id,
+         cg.default_discount_pct AS group_discount_pct
     FROM customers c
     LEFT JOIN customer_groups cg ON cg.id = c.group_id
 `
@@ -123,7 +185,7 @@ export async function searchCustomersForTill(
     [like, like, like, needle, needle, needle],
   )
 
-  return rows.map(mapCustomer)
+  return mapWithSpend(siteId, rows)
 }
 
 /**
@@ -152,7 +214,7 @@ export async function listCustomersForPicker(
       LIMIT ${capped}`,
   )
 
-  return rows.map(mapCustomer)
+  return mapWithSpend(siteId, rows)
 }
 
 export async function getTillCustomer(
@@ -162,5 +224,7 @@ export async function getTillCustomer(
   const row = await siteQueryOne<Row>(siteId, `${SELECT_CUSTOMER} WHERE c.id = ? LIMIT 1`, [
     customerId,
   ])
-  return row ? mapCustomer(row) : null
+  if (!row) return null
+  const [customer] = await mapWithSpend(siteId, [row])
+  return customer
 }

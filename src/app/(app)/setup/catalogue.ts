@@ -174,6 +174,17 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'rose',
         capability: 'customers.credit',
       },
+      /* Beside the credit ladder because both answer "what terms does this
+         account trade on" — this one sets where a NEW account starts, that one
+         decides when an existing one is stopped. */
+      {
+        href: '/setup/customer-groups',
+        description: 'The terms and price structure a new account starts on — wholesale, retail, staff.',
+        keywords: 'customer groups categories wholesale retail staff trade terms price structure defaults segment',
+        icon: 'Users',
+        tone: 'sky',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/expense-categories',
         description: 'What the business spends on, and where each one posts in the ledger.',

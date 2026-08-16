@@ -4,8 +4,6 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import {
   Badge,
-  Button,
-  ButtonLink,
   Callout,
   Card,
   CardHeader,
@@ -30,7 +28,6 @@ import type { GroupOption } from '@/lib/reportBuilder/shape'
 import { toggleFavoriteAction } from '../actions'
 import ReportGrid from '../ReportGrid'
 import ReportChart from '../ReportChart'
-import ScheduleModal from '../schedules/ScheduleModal'
 import ReportColumnsButton from './ReportColumnsButton'
 import ReportGroupByControl from './ReportGroupByControl'
 
@@ -42,6 +39,7 @@ import ReportGroupByControl from './ReportGroupByControl'
  */
 export default function ReportView({
   reportId,
+  prefsId,
   name,
   description,
   columns,
@@ -57,15 +55,22 @@ export default function ReportView({
   hiddenColumns,
   periodKey,
   spec,
-  savedId,
   kind,
   starred,
-  canBuild,
-  canSchedule,
   chartType,
-  scheduleUsers,
+  variantKey,
 }: {
   reportId: string
+  /** Which cut is showing, so the export asks for the same one. Null when the
+      report has no cuts, which is nearly all of them. */
+  variantKey?: string | null
+  /**
+   * Where COLUMN and BANDING choices are stored, which is not always the report
+   * id — a cut of a consolidated report keeps the preferences of the report it
+   * replaced. Favouriting, exporting and Customise all still use `reportId`,
+   * because those are about the report you are looking at.
+   */
+  prefsId: string
   name: string
   description: string
   /** What is rendered: the store's chosen columns, in the store's order. */
@@ -98,14 +103,9 @@ export default function ReportView({
   hiddenColumns: string[]
   periodKey: PeriodKey
   spec: CustomReportSpec
-  savedId: number | null
   kind: 'builtin' | 'builder' | 'ask'
   starred: boolean
-  canBuild: boolean
-  canSchedule: boolean
   chartType: ChartType
-  /** Who this report could be emailed to. Empty when scheduling is not allowed. */
-  scheduleUsers: { id: number; name: string; email: string }[]
 }) {
   const router = useRouter()
   const params = useSearchParams()
@@ -113,7 +113,6 @@ export default function ReportView({
   const [, startTransition] = useTransition()
   const [fav, setFav] = useState(starred)
   const [view, setView] = useState<'table' | 'chart'>('table')
-  const [scheduling, setScheduling] = useState(false)
 
   // A chart needs one label column and at least one number to plot.
   const chartable =
@@ -155,12 +154,23 @@ export default function ReportView({
     })
   }
 
-  const exportHref = `/api/reports/export?id=${encodeURIComponent(reportId)}&period=${periodKey}&from=${range.from}&to=${range.to}`
+  /* The cut rides along, so the file matches the screen it was asked for from —
+     see the note at the top of the export route. */
+  const exportHref =
+    `/api/reports/export?id=${encodeURIComponent(reportId)}&period=${periodKey}` +
+    `&from=${range.from}&to=${range.to}` +
+    (variantKey ? `&cut=${encodeURIComponent(variantKey)}` : '')
 
   return (
     <>
       <Card>
         <CardHeader
+          /* No brand rule down the card's left edge. A report is a sheet of
+             figures read across, and a 2px bar on the leading edge sits right
+             where the first column's values start — it reads as part of the
+             table rather than as the card's own marker. The kit's documented
+             opt-out, so every other card in the app keeps its rule. */
+          tone="default"
           title={
             <span className="flex items-center gap-2">
               {name}
@@ -214,18 +224,15 @@ export default function ReportView({
                   dates, not an action. */}
               {canSetColumns && (
                 <ReportGroupByControl
-                  reportId={reportId}
+                  reportId={prefsId}
                   options={groupOptions}
                   value={groupKey}
                 />
               )}
 
-              {canSchedule && (
-                <Button variant="ghost" onClick={() => setScheduling(true)}>
-                  <Icons.Clock size={16} />
-                  Schedule
-                </Button>
-              )}
+              {/* Schedule and Customise are NOT here — they sit in the page
+                  header, because neither changes what is on this card. See
+                  ReportHeaderActions. */}
 
               {/* Beside Export, because both are about what leaves this screen
                   rather than about which rows are on it. Only for a role that
@@ -233,7 +240,7 @@ export default function ReportView({
                   choice. */}
               {canSetColumns && (
                 <ReportColumnsButton
-                  reportId={reportId}
+                  reportId={prefsId}
                   allColumns={allColumns}
                   storeColumns={storeColumns}
                   shownKeys={columns.map((c) => c.key)}
@@ -273,19 +280,6 @@ export default function ReportView({
                 </MenuItem>
               </Menu>
 
-              {canBuild && (
-                <ButtonLink
-                  href={
-                    savedId
-                      ? `/reports/builder?saved=${savedId}`
-                      : `/reports/builder?from=${encodeURIComponent(reportId)}`
-                  }
-                  variant="secondary"
-                >
-                  <Icons.Pencil size={16} />
-                  {savedId ? 'Edit' : 'Customise'}
-                </ButtonLink>
-              )}
             </div>
           }
         />
@@ -328,15 +322,6 @@ export default function ReportView({
         )}
       </Card>
 
-      {scheduling && (
-        <ScheduleModal
-          reportId={reportId}
-          reportName={name}
-          defaultPeriod={periodKey}
-          users={scheduleUsers}
-          onClose={() => setScheduling(false)}
-        />
-      )}
     </>
   )
 }

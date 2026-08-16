@@ -13,6 +13,7 @@ import { PERIOD_KEYS, PERIOD_LABELS, type PeriodKey } from '@/lib/reportBuilder/
 import { PageHeader, PageBody, Card, Callout, Icons, LinkTabs, Badge } from '@/components/ui'
 import { hrefBuilder } from '@/lib/searchParams'
 import ReportView from './ReportView'
+import ReportHeaderActions from './ReportHeaderActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,7 +29,13 @@ export default async function ReportPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ period?: string; from?: string; to?: string; stores?: string }>
+  searchParams: Promise<{
+    period?: string
+    from?: string
+    to?: string
+    stores?: string
+    cut?: string
+  }>
 }) {
   const { siteId, actor, capabilities } = await requireCapability('reports.view')
   const allow = (c: Capability) => can(capabilities, c)
@@ -36,7 +43,7 @@ export default async function ReportPage({
   const { id } = await params
   const query = await searchParams
 
-  const report = await resolveReport(siteId, decodeURIComponent(id))
+  const report = await resolveReport(siteId, decodeURIComponent(id), query.cut)
   if (!report) notFound()
 
   // A built-in's own capability, on top of reports.view — someone who may run
@@ -139,9 +146,26 @@ export default async function ReportPage({
   // Keeps the period the reader chose while flipping which stores are counted.
   const storeHref = hrefBuilder(`/reports/${encodeURIComponent(id)}`, query)
 
+  /*
+   * Switching cut DROPS the period, unlike switching store which keeps it.
+   *
+   * Each cut declares its own period — the month cut is a year, the others a
+   * month — and a period carried across would defeat that: arriving at "by
+   * month" with period=thisMonth produces a single row, which is not a report.
+   * Custom dates go with it, since a range chosen for one cut is rarely the
+   * right range for another. The store scope survives, because which shops are
+   * counted is orthogonal to how the takings are sliced.
+   */
+  const cutHref = hrefBuilder(`/reports/${encodeURIComponent(id)}`, {
+    stores: query.stores ?? null,
+  })
+
+  /* Keyed on prefsId, not the report id: each cut of a consolidated report keeps
+     its own columns and banding, inherited from the report it replaced. Cuts do
+     not even share a source, so one shared column list could not apply to all. */
   const producedKeys = result ? result.columns.map((c) => c.key) : []
   const prefs = result
-    ? await reportPrefsFor(siteId, report.id)
+    ? await reportPrefsFor(siteId, report.prefsId)
     : { columns: null, groupBy: null }
   const storeColumns = parseStoredColumns(prefs.columns, producedKeys)
   const shownColumns = result ? applyStoreColumns(result.columns, storeColumns) : []
@@ -167,8 +191,51 @@ export default async function ReportPage({
             ? `${PERIOD_LABELS[spec.period.key]} · ${result.range.from} to ${result.range.to}`
             : report.description
         }
+        /* Schedule and Customise live up here, right-anchored, rather than in
+           the report card's toolbar — neither changes what the card shows. See
+           ReportHeaderActions. */
+        action={
+          <ReportHeaderActions
+            reportId={report.id}
+            reportName={report.name}
+            savedId={report.savedId}
+            periodKey={spec.period.key}
+            canBuild={allow('reports.build')}
+            canSchedule={allow('reports.schedule')}
+            scheduleUsers={scheduleUsers}
+          />
+        }
       />
       <PageBody>
+        {/*
+          Which cut of the question this is.
+
+          ABOVE the card, with the store scope, rather than in the card's own
+          toolbar. That toolbar is already eight controls, and every one of them
+          narrows or formats THIS report — the period, the columns, the banding.
+          Choosing a cut is a bigger statement than any of them: it changes what
+          is being counted and which columns exist. It reads as a peer of "This
+          store / All stores", which is the other control that swaps the report
+          out from under the same heading.
+
+          Links rather than a client control, so each cut is a real URL that can
+          be bookmarked, opened in a new tab and shared — the six ids it replaced
+          could all do that, and consolidating must not take it away.
+        */}
+        {report.variants.length > 0 && (
+          <LinkTabs
+            items={report.variants.map((v) => ({
+              value: v.key,
+              label: v.label,
+              /* The default cut carries no ?cut= at all, so the report's own URL
+                 stays clean and is what a bookmark of "the sales report" keeps. */
+              href: cutHref({ cut: v.key === report.variants[0].key ? null : v.key }),
+            }))}
+            value={report.variantKey ?? report.variants[0].key}
+            aria-label="How to cut this report"
+          />
+        )}
+
         {/* One store, or every linked one. Hidden entirely for a single-store
             site, and shown disabled with its reason when the spec's arithmetic
             cannot survive a merge — a toggle that silently does nothing is
@@ -219,6 +286,8 @@ export default async function ReportPage({
         ) : result ? (
           <ReportView
             reportId={report.id}
+            prefsId={report.prefsId}
+            variantKey={report.variantKey}
             name={report.name}
             description={report.description}
             columns={shownColumns}
@@ -234,13 +303,9 @@ export default async function ReportPage({
             hiddenColumns={result.hiddenColumns}
             periodKey={spec.period.key}
             spec={spec}
-            savedId={report.savedId}
             kind={report.kind}
             starred={favorites.has(report.id)}
-            canBuild={allow('reports.build')}
-            canSchedule={allow('reports.schedule')}
             chartType={spec.chartType ?? 'bar'}
-            scheduleUsers={scheduleUsers}
           />
         ) : null}
       </PageBody>

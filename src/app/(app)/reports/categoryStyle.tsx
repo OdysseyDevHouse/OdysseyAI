@@ -22,6 +22,13 @@ export const CATEGORY_TONE: Record<string, CategoryTone> = {
   Suppliers: 'rose',
   Money: 'emerald',
   Operations: 'amber',
+  /* Shares Customers' hue, because the nine tones were already spoken for and
+     the alternative was slate — the "no identity yet" fallback — on a category
+     that has its own menu entry. Safe here in a way a third claim on indigo
+     would not be: the Job cards reports live behind their OWN screen, where
+     Customers is filtered out entirely, so the two hues are never read side by
+     side. The glyph is what tells them apart on the unfiltered hub. */
+  'Job cards': 'sky',
   'Multi-store': 'orange',
   Saved: 'violet',
 }
@@ -45,6 +52,7 @@ const CATEGORY_DESCRIPTION: Record<string, string> = {
   Suppliers: 'What was bought in, from whom, and what it cost.',
   Money: 'Takings, expenses and what the day added up to.',
   Operations: 'How the shop ran — shifts, tills and who did what.',
+  'Job cards': 'Work booked in, who did it, and what it earned.',
   'Multi-store': 'Every linked store together, and what they came to.',
   Saved: 'Reports this shop built or had generated.',
 }
@@ -67,6 +75,10 @@ export function categoryIcon(category: string, size = 18): ReactNode {
       return <Icons.Coins size={size} strokeWidth={1.7} />
     case 'Operations':
       return <Icons.Settings size={size} strokeWidth={1.7} />
+    /* The same wrench the Job cards section wears in the sidebar — the menu
+       entry and the category heading it opens must read as one thing. */
+    case 'Job cards':
+      return <Icons.Wrench size={size} strokeWidth={1.7} />
     case 'Multi-store':
       return <Icons.Store size={size} strokeWidth={1.7} />
     case 'Saved':
@@ -109,6 +121,19 @@ export function sourceIcon(sourceKey: string, size = 18): ReactNode {
       return <Icons.Banknote size={size} strokeWidth={1.7} />
     case 'activity':
       return <Icons.History size={size} strokeWidth={1.7} />
+    /* The five job datasets. Without these the Job cards screen was fifteen
+       tiles wearing the same fallback database glyph — which is no identifier
+       at all on a screen where every report is a job report. */
+    case 'jobCards':
+      return <Icons.Wrench size={size} strokeWidth={1.7} />
+    case 'jobCardLines':
+      return <Icons.ListOrdered size={size} strokeWidth={1.7} />
+    case 'jobTime':
+      return <Icons.Clock size={size} strokeWidth={1.7} />
+    case 'jobTravel':
+      return <Icons.Truck size={size} strokeWidth={1.7} />
+    case 'jobVisits':
+      return <Icons.CalendarClock size={size} strokeWidth={1.7} />
     default:
       return <Icons.Database size={size} strokeWidth={1.7} />
   }
@@ -129,6 +154,11 @@ const SOURCE_TONE: Record<string, CategoryTone> = {
   expenseLines: 'emerald',
   shifts: 'amber',
   activity: 'slate',
+  jobCards: 'sky',
+  jobCardLines: 'violet',
+  jobTime: 'amber',
+  jobTravel: 'orange',
+  jobVisits: 'teal',
 }
 
 export function sourceTone(sourceKey: string): CategoryTone {

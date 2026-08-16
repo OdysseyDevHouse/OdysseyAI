@@ -50,6 +50,8 @@
     "test:cashbook": "tsx --conditions=react-server --env-file=.env scripts/test-cashbook.ts",
     "test:scale-barcodes": "tsx --conditions=react-server --env-file=.env scripts/test-scale-barcodes.ts",
     "test:invoice-email": "tsx --conditions=react-server --env-file=.env scripts/test-invoice-email.ts",
+    "test:spend-limits": "tsx --conditions=react-server --env-file=.env scripts/test-spend-limits.ts",
+    "test:customer-groups": "tsx --conditions=react-server --env-file=.env scripts/test-customer-groups.ts",
     "test:budgets": "tsx --conditions=react-server --env-file=.env scripts/test-budgets.ts",
     "test:recurring-journals": "tsx --conditions=react-server --env-file=.env scripts/test-recurring-journals.ts",
     "test:customer-addresses": "tsx --conditions=react-server --env-file=.env scripts/test-customer-addresses.ts",

@@ -1095,17 +1095,45 @@ function ColumnPickerSection() {
         title="Column picker"
         description="<ColumnPicker /> — for a table too wide to show at once. Multi-select, so unlike <Menu> it stays open while columns are ticked. Locked columns show ticked and disabled rather than hidden."
       />
-      <CardBody className="flex items-center gap-3">
-        <ColumnPicker
-          columns={columns}
-          visible={visible}
-          onChange={setVisible}
-          onReset={() => setVisible(new Set(['cost', 'markup']))}
-          align="left"
-        />
-        <span className="text-sm text-muted">
-          Showing: {['item', 'qty', ...visible].join(', ')}
-        </span>
+      <CardBody className="flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <ColumnPicker
+            columns={columns}
+            visible={visible}
+            onChange={setVisible}
+            onReset={() => setVisible(new Set(['cost', 'markup']))}
+            align="left"
+          />
+          <span className="text-sm text-muted">
+            Showing: {['item', 'qty', ...visible].join(', ')}
+          </span>
+        </div>
+
+        {/* Both heights, side by side with a Menu — the pairing that matters,
+            since these two sit next to each other in a report toolbar and a
+            mismatch is only visible against something else. */}
+        <div className="flex items-center gap-3 border-t border-border pt-4">
+          <ColumnPicker
+            columns={columns}
+            visible={visible}
+            onChange={setVisible}
+            align="left"
+          />
+          <ColumnPicker
+            columns={columns}
+            visible={visible}
+            onChange={setVisible}
+            align="left"
+            size="md"
+          />
+          <Menu label="Export" variant="ghost">
+            <MenuItem>PDF</MenuItem>
+          </Menu>
+          <span className="text-sm text-muted">
+            Default <code>sm</code> (32px) for a list toolbar; <code>md</code> (40px) to sit level
+            with full-height controls, as the report toolbar does.
+          </span>
+        </div>
       </CardBody>
     </Card>
   )
@@ -1461,6 +1489,7 @@ function ModalSection() {
           Open filling modal
         </Button>
       </Row>
+
 
       <Modal
         open={open}
@@ -2417,6 +2446,7 @@ function ChartSection() {
                 <TableGlyph
                   shape={t.shape}
                   seats={seatLayout(t.seats, t.w, t.h)}
+                  footprint={{ width: t.w, height: t.h }}
                   className="absolute inset-0 h-full w-full"
                 />
               </div>
@@ -2429,6 +2459,7 @@ function ChartSection() {
               <TableGlyph
                 shape="rect"
                 seats={seatLayout(4, 104, 70)}
+                footprint={{ width: 104, height: 70 }}
                 className="absolute inset-0 h-full w-full"
               />
             </div>

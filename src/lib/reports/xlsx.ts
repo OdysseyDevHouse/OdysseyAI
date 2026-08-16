@@ -82,7 +82,16 @@ export function renderReportXlsx(report: ReportRender): Buffer {
     // Only when banded: an unbanded sheet closes with the grand total, and the
     // same figures under two names read as a discrepancy.
     if (grouped && section.subtotal) {
-      aoa.push(totalsRow(columns, section.subtotal, 'Total', labelKey))
+      // Named for its band, matching the screen and the PDF — a sheet is sorted
+      // and filtered after the fact, so a bare "Total" loses track of its band.
+      aoa.push(
+        totalsRow(
+          columns,
+          section.subtotal,
+          section.label ? `${section.label} subtotal` : 'Total',
+          labelKey,
+        ),
+      )
     }
   }
 

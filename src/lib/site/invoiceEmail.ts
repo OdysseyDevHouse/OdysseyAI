@@ -7,6 +7,7 @@ import { send, isConfigured } from '../mail'
 import { renderInvoicePdf } from '../invoices/pdf'
 import { buildInvoice, type IssuingSite } from '../invoices/build'
 import { createCallbackToken } from '../callbackToken'
+import { appBaseUrl } from '../appUrl'
 import { createIntent, getGateway } from './payments'
 import { outstandingForDocument } from './paidInvoices'
 import { getDocument } from './salesDocuments'
@@ -121,6 +122,75 @@ export async function emailInvoiceDocument(
   }
 
   return { ok: true, to }
+}
+
+/**
+ * Emails a just-finalised invoice, if the account asked for that.
+ *
+ * ── WHY THIS IS A SEPARATE FUNCTION AND NOT A FLAG ON THE ONE ABOVE ──────
+ *
+ * Because it must decide whether to send at all, and every reason NOT to is a
+ * silent, expected no-op rather than an error: the customer never opted in,
+ * has no address on file, or the site has no mail configured. A manual press
+ * of "Email" with no address is a mistake worth a message; an automatic send
+ * skipped for the same reason is simply not applicable, and reporting it as a
+ * failure would fill the log with noise on every sale of every site that does
+ * not use this.
+ *
+ * So the return is a quiet outcome, not a Result. The CALLER — the posting
+ * engine — is on the far side of the commit and does not act on it either
+ * way; it exists so the tests can assert which branch ran.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ─────────────────────────────────────
+ *
+ * No retry, no queue, no email_status column. Contracts have all three
+ * because a monthly billing run is unattended and a missed invoice there is
+ * missed revenue nobody notices. This is a counter sale: the document screen
+ * shows the last send, the Email button re-sends, and a person is standing
+ * right there. Adding a retry ladder would be building the contract sender
+ * again for a case that already has a human in it.
+ */
+export type AutoEmailOutcome =
+  | { sent: true; to: string }
+  | { sent: false; reason: 'not-enabled' | 'no-address' | 'not-configured' | 'failed'; error?: string }
+
+export async function autoEmailInvoice(
+  siteId: number,
+  actor: Actor,
+  customerId: number,
+  documentId: number,
+  deps: MailDeps = { send, configured: isConfigured },
+): Promise<AutoEmailOutcome> {
+  const customer = await getCustomer(siteId, customerId)
+  if (!customer?.autoEmailInvoices) return { sent: false, reason: 'not-enabled' }
+
+  // The ACCOUNT's email, not a contact's. See the header of
+  // 031_party_contacts_documents_comments.sql: contacts are people who come
+  // and go, and an invoice belongs to the business.
+  const to = customer.email?.trim()
+  if (!to) return { sent: false, reason: 'no-address' }
+
+  if (!deps.configured()) return { sent: false, reason: 'not-configured' }
+
+  const site = await issuingSiteFor(siteId)
+  if (!site) return { sent: false, reason: 'failed', error: 'No issuing site.' }
+
+  // Null when APP_URL is unset, which emailInvoiceDocument reads as "no pay
+  // link" and sends the invoice anyway. A localhost link in a customer's
+  // inbox forever is worse than no link — see appUrl.ts.
+  const origin = appBaseUrl() ?? ''
+
+  const result = await emailInvoiceDocument(
+    siteId,
+    site,
+    actor,
+    documentId,
+    { to, origin },
+    deps,
+  )
+  return result.ok
+    ? { sent: true, to: result.to }
+    : { sent: false, reason: 'failed', error: result.error }
 }
 
 /** The most recent 'emailed' audit row, so a resend is an informed act. */

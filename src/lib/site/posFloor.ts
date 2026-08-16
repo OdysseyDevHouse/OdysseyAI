@@ -136,7 +136,13 @@ export async function createRoom(
     )
     return { ok: true, id: result.insertId }
   } catch (error) {
-    if (isDuplicateName(error)) return { ok: false, error: 'There is already a room by that name.' }
+    /* Names the room, rather than asserting one exists somewhere. A bare "there is
+       already a room by that name" was unanswerable when the clash was with a row the
+       screen could not show — see 176. It should not happen now, but if a name is ever
+       held by something invisible again, the message says what. */
+    if (isDuplicateName(error)) {
+      return { ok: false, error: `There is already a room called "${name}".` }
+    }
     throw error
   }
 }
@@ -177,12 +183,38 @@ export async function updateRoom(
  * name may appear on old shift reports.
  */
 export async function retireRoom(siteId: number, id: number): Promise<SaveResult> {
-  await siteExecute(siteId, `UPDATE pos_floor_rooms SET is_active = 0 WHERE id = ?`, [id])
+  /*
+   * DELETED, not flagged inactive — and that is a fix, not a preference.
+   *
+   * `uq_room_name` is a plain UNIQUE index on `name`, so it sees retired rows too. A
+   * room flagged inactive therefore kept its name reserved forever while `listRooms`
+   * filtered it out of every screen: a manager who removed "Main" and tried to make a
+   * new one was told "There is already a room by that name" next to an empty page
+   * reading "No rooms yet". There is no way out of that from the UI, and no way to
+   * even see what is holding the name.
+   *
+   * Deleting is safe because a room owns nothing that outlives it. The FKs from 086
+   * already say so and do the work:
+   *   · pos_tables.room_id  ON DELETE SET NULL — tables survive, unplaced, and any
+   *     open bill on them is untouched. This is the case the SET NULL exists for.
+   *   · pos_floor_features  ON DELETE CASCADE  — a wall has no existence without its
+   *     room, as that migration's own comment says.
+   *
+   * The tables are cleared FIRST rather than left to the FK, because `pos_x`/`pos_y`
+   * are not part of the constraint: SET NULL would blank `room_id` and leave stale
+   * coordinates behind, and a table carrying a position for a room that no longer
+   * exists is a row nothing can interpret.
+   *
+   * `is_active` stays on the table. It costs nothing, `listRooms(includeInactive)`
+   * still reads it, and dropping a column to tidy up is not worth a migration on a
+   * live site.
+   */
   await siteExecute(
     siteId,
     `UPDATE pos_tables SET room_id = NULL, pos_x = NULL, pos_y = NULL WHERE room_id = ?`,
     [id],
   )
+  await siteExecute(siteId, `DELETE FROM pos_floor_rooms WHERE id = ?`, [id])
   return { ok: true }
 }
 

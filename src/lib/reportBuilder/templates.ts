@@ -32,11 +32,65 @@ export interface ReportTemplate {
    * makes a category a real thing rather than a free string, and the hub's
    * `HubItem.category` is typed from it.
    */
-  category: 'Sales' | 'Stock' | 'Customers' | 'Suppliers' | 'Money' | 'Operations' | 'Multi-store'
+  category:
+    | 'Sales'
+    | 'Stock'
+    | 'Customers'
+    | 'Suppliers'
+    | 'Money'
+    | 'Operations'
+    | 'Job cards'
+    | 'Multi-store'
   /** Capability needed to see it in the catalogue at all. */
   permission: Capability
   /** Extra capability the report's headline figures need (cost/margin). */
   financial?: boolean
+  spec: Omit<CustomReportSpec, 'name'>
+  /**
+   * Other ways of cutting the SAME question, offered as a switch on the report.
+   *
+   * ── WHY A WHOLE SPEC PER CUT, NOT JUST A GROUP FIELD ─────────────────────
+   *
+   * The obvious design is one spec with a swappable `groupFields`. It is wrong
+   * here, and the six sales cuts are exactly why: day/product/department/month
+   * run on `saleLines`, which carries cost and so can show gross profit;
+   * cashier/till run on `sales`, where one row IS one basket, so `__rows` is a
+   * basket count and `totalIncl avg` a real average basket. Move those two onto
+   * saleLines to share a spec and both silently become LINE counts — the same
+   * trap the sales-by-cashier note has warned about since it was written.
+   *
+   * So a cut carries its own source, columns, sort and chart. What makes them
+   * one report is that they answer one question — "what did we sell, cut which
+   * way" — not that they share a spec.
+   *
+   * ── WHY THE OLD IDS SURVIVE ──────────────────────────────────────────────
+   *
+   * Each cut names the template id it replaced. That id keeps resolving, because
+   * it is not ours to retire: it is in `report_favorites`, `report_columns`,
+   * `report_group_by` and `report_schedules` on every live site, and it is a
+   * documented key of the public POST /api/v1/reports/run. Consolidating the
+   * CATALOGUE is a presentation change and must not break a shop's integration
+   * or silently drop the report somebody scheduled at 06:00.
+   */
+  variants?: ReportVariant[]
+}
+
+export interface ReportVariant {
+  /** URL value: /reports/sales-by?cut=product. Stable — it is a bookmark. */
+  key: string
+  /** The switch's label. Terse: it sits in a row of six. */
+  label: string
+  /** Replaces the report's name and subtitle when this cut is showing. */
+  name: string
+  description: string
+  /**
+   * The template id this cut replaces in the catalogue, if any.
+   *
+   * Kept resolvable forever (see above). It also gives the cut somewhere to
+   * inherit a store's saved columns from, so consolidating does not reset the
+   * column choices a shop already made on the old report.
+   */
+  legacyId?: string
   spec: Omit<CustomReportSpec, 'name'>
 }
 
@@ -59,10 +113,28 @@ function spec(s: Partial<CustomReportSpec> & Pick<CustomReportSpec, 'source'>): 
 
 export const TEMPLATES: ReportTemplate[] = [
   /* ── Sales ───────────────────────────────────────────────────────────────── */
+  /*
+   * ── Sales by … ───────────────────────────────────────────────────────────
+   *
+   * SIX REPORTS THAT WERE ONE QUESTION. Day, product, department, cashier,
+   * month and till were six catalogue tiles differing only in what they cut the
+   * period by, so finding the right one meant reading six near-identical
+   * descriptions — and having found it, seeing the same figures by another cut
+   * meant going back to the catalogue and opening a different report.
+   *
+   * They are one tile now, with the cut chosen ON the report. Each cut keeps its
+   * own spec rather than sharing one with a swapped group field: see the note on
+   * ReportTemplate.variants for why collapsing sales/saleLines into a single
+   * source would quietly turn basket counts into line counts.
+   *
+   * The first variant is the default cut and MUST match `spec` below — the
+   * report has to render before anyone has chosen anything.
+   */
   {
-    id: 'sales-summary-by-day',
-    name: 'Sales by day',
-    description: 'Turnover, VAT and profit for each trading day in the period.',
+    id: 'sales-by',
+    name: 'Sales by day, product, department, cashier, month or till',
+    description:
+      'What was sold over the period, cut whichever way answers the question — by trading day, by product, by department, by the person serving, by month, or by till.',
     category: 'Sales',
     permission: 'reports.view',
     spec: spec({
@@ -79,104 +151,191 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: 'day', dir: 'asc' },
       chartType: 'line',
     }),
+    variants: [
+      {
+        key: 'day',
+        label: 'Day',
+        name: 'Sales by day',
+        description: 'Turnover, VAT and profit for each trading day in the period.',
+        legacyId: 'sales-summary-by-day',
+        spec: spec({
+          source: 'saleLines',
+          groupFields: ['day'],
+          columns: [
+            { field: 'lineTotalIncl', agg: 'sum' },
+            { field: 'lineTotalExcl', agg: 'sum' },
+            { field: 'lineVat', agg: 'sum' },
+            { field: 'grossProfit', agg: 'sum' },
+            { field: 'grossProfitPct', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'day', dir: 'asc' },
+          chartType: 'line',
+        }),
+      },
+      {
+        key: 'product',
+        label: 'Product',
+        name: 'Sales by product',
+        description: 'What sold, how much of it, and what it made. The top-sellers list.',
+        legacyId: 'sales-by-product',
+        spec: spec({
+          source: 'saleLines',
+          /* Department is a GROUP field, not a column: on a summarised report an
+             unaggregated text column takes defaultAgg, which for text is `count` —
+             it would have rendered "Count department" showing a row count. Grouping
+             by it is also free, since a product sits in one department. */
+          groupFields: ['lineDepartment', 'productCode', 'description'],
+          /* v2's Product performance, which carried the department, the cost and
+             the VAT beside the margin.
+             Stock on hand is NOT here. It is a live per-product figure, so summing
+             it multiplies the shop's stock by how often the product sold, and the
+             `max` that fixes the arithmetic labels the column "Highest stock on
+             hand now" — accurate and daft for a number that is the same on every
+             row. A store that wants it beside sales adds it as a grouping, where it
+             adds no rows and keeps its own name. stock-on-hand answers it plainly. */
+          columns: [
+            { field: 'qty', agg: 'sum' },
+            { field: 'lineCostExcl', agg: 'sum' },
+            { field: 'lineTotalExcl', agg: 'sum' },
+            { field: 'lineVat', agg: 'sum' },
+            { field: 'lineTotalIncl', agg: 'sum' },
+            { field: 'discountIncl', agg: 'sum' },
+            { field: 'grossProfit', agg: 'sum' },
+            { field: 'grossProfitPct', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
+        }),
+      },
+      {
+        key: 'department',
+        label: 'Department',
+        name: 'Sales by department',
+        description: 'Which parts of the business are earning, and at what margin.',
+        legacyId: 'sales-by-department',
+        spec: spec({
+          source: 'saleLines',
+          groupFields: ['lineDepartment'],
+          /* Cost and excl. selling added, as v2's Department performance carried
+             them. Its "Turnover %" — each department's share of the total — has no
+             equivalent: a percent-of-grand-total column is not something the spec
+             model can express, and it is a known gap rather than an oversight. */
+          columns: [
+            { field: 'qty', agg: 'sum' },
+            { field: 'lineCostExcl', agg: 'sum' },
+            { field: 'lineTotalExcl', agg: 'sum' },
+            { field: 'lineTotalIncl', agg: 'sum' },
+            { field: 'grossProfit', agg: 'sum' },
+            { field: 'grossProfitPct', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
+          chartType: 'pie',
+        }),
+      },
+      {
+        key: 'cashier',
+        label: 'Cashier',
+        name: 'Sales by cashier',
+        description: 'Turnover, basket count and average basket for each person serving.',
+        legacyId: 'sales-by-cashier',
+        spec: spec({
+          source: 'sales',
+          groupFields: ['userName'],
+          /* Deliberately still on `sales` rather than `saleLines`, though that
+             source has no cost and so this report can never show margin.
+             `__rows` here is a BASKET count and `totalIncl avg` a real average
+             basket; on saleLines both would silently become line counts, which is
+             the wrong answer to the question this report asks.
+             v2's "Clerk performance" was a different report — one row per clerk AND
+             product — and is added separately as products-sold-per-clerk rather
+             than by bending this one out of shape. */
+          columns: [
+            { field: '__rows' },
+            { field: 'totalIncl', agg: 'sum' },
+            { field: 'totalIncl', agg: 'avg' },
+            { field: 'subtotalExcl', agg: 'sum' },
+            { field: 'vatTotal', agg: 'sum' },
+            { field: 'discountTotal', agg: 'sum' },
+          ],
+          filters: [
+            { field: 'status', op: 'eq', value: 'finalised' },
+            { field: 'docType', op: 'eq', value: 'invoice' },
+          ],
+          sort: { key: 'totalIncl_sum', dir: 'desc' },
+        }),
+      },
+      {
+        key: 'month',
+        label: 'Month',
+        name: 'Sales by month',
+        description:
+          'Turnover and profit month by month — the shape of the year rather than of the week.',
+        legacyId: 'sales-by-month',
+        /* The one cut that overrides the period: a month-by-month report over
+           "this month" is a single row, which is not a report. Choosing this cut
+           therefore also moves the period to the year — and because the period
+           picker stays live beside it, a reader who wants a narrower span can
+           still say so. */
+        spec: spec({
+          source: 'saleLines',
+          period: { key: 'thisYear' },
+          groupFields: ['month'],
+          columns: [
+            { field: 'lineTotalIncl', agg: 'sum' },
+            { field: 'lineTotalExcl', agg: 'sum' },
+            { field: 'lineVat', agg: 'sum' },
+            { field: 'grossProfit', agg: 'sum' },
+            { field: 'grossProfitPct', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'month', dir: 'asc' },
+          chartType: 'line',
+        }),
+      },
+      {
+        key: 'till',
+        label: 'Till',
+        name: 'Sales by till',
+        description:
+          'Turnover, basket count and average basket for each till — which lanes carry the shop.',
+        legacyId: 'sales-by-till',
+        spec: spec({
+          source: 'sales',
+          groupFields: ['terminalCode'],
+          columns: [
+            { field: '__rows' },
+            { field: 'totalIncl', agg: 'sum' },
+            { field: 'totalIncl', agg: 'avg' },
+          ],
+          filters: [
+            { field: 'status', op: 'eq', value: 'finalised' },
+            { field: 'docType', op: 'eq', value: 'invoice' },
+          ],
+          sort: { key: 'totalIncl_sum', dir: 'desc' },
+        }),
+      },
+    ],
   },
   {
-    id: 'sales-by-product',
-    name: 'Sales by product',
-    description: 'What sold, how much of it, and what it made. The top-sellers list.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'saleLines',
-      /* Department is a GROUP field, not a column: on a summarised report an
-         unaggregated text column takes defaultAgg, which for text is `count` —
-         it would have rendered "Count department" showing a row count. Grouping
-         by it is also free, since a product sits in one department. */
-      groupFields: ['lineDepartment', 'productCode', 'description'],
-      /* v2's Product performance, which carried the department, the cost and
-         the VAT beside the margin.
-         Stock on hand is NOT here. It is a live per-product figure, so summing
-         it multiplies the shop's stock by how often the product sold, and the
-         `max` that fixes the arithmetic labels the column "Highest stock on
-         hand now" — accurate and daft for a number that is the same on every
-         row. A store that wants it beside sales adds it as a grouping, where it
-         adds no rows and keeps its own name. stock-on-hand answers it plainly. */
-      columns: [
-        { field: 'qty', agg: 'sum' },
-        { field: 'lineCostExcl', agg: 'sum' },
-        { field: 'lineTotalExcl', agg: 'sum' },
-        { field: 'lineVat', agg: 'sum' },
-        { field: 'lineTotalIncl', agg: 'sum' },
-        { field: 'discountIncl', agg: 'sum' },
-        { field: 'grossProfit', agg: 'sum' },
-        { field: 'grossProfitPct', agg: 'avg' },
-      ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
-    }),
-  },
-  {
-    id: 'sales-by-department',
-    name: 'Sales by department',
-    description: 'Which parts of the business are earning, and at what margin.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'saleLines',
-      groupFields: ['lineDepartment'],
-      /* Cost and excl. selling added, as v2's Department performance carried
-         them. Its "Turnover %" — each department's share of the total — has no
-         equivalent: a percent-of-grand-total column is not something the spec
-         model can express, and it is a known gap rather than an oversight. */
-      columns: [
-        { field: 'qty', agg: 'sum' },
-        { field: 'lineCostExcl', agg: 'sum' },
-        { field: 'lineTotalExcl', agg: 'sum' },
-        { field: 'lineTotalIncl', agg: 'sum' },
-        { field: 'grossProfit', agg: 'sum' },
-        { field: 'grossProfitPct', agg: 'avg' },
-      ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
-      chartType: 'pie',
-    }),
-  },
-  {
-    id: 'sales-by-cashier',
-    name: 'Sales by cashier',
-    description: 'Turnover, basket count and average basket for each person serving.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'sales',
-      groupFields: ['userName'],
-      /* Deliberately still on `sales` rather than `saleLines`, though that
-         source has no cost and so this report can never show margin.
-         `__rows` here is a BASKET count and `totalIncl avg` a real average
-         basket; on saleLines both would silently become line counts, which is
-         the wrong answer to the question this report asks.
-         v2's "Clerk performance" was a different report — one row per clerk AND
-         product — and is added separately as products-sold-per-clerk rather
-         than by bending this one out of shape. */
-      columns: [
-        { field: '__rows' },
-        { field: 'totalIncl', agg: 'sum' },
-        { field: 'totalIncl', agg: 'avg' },
-        { field: 'subtotalExcl', agg: 'sum' },
-        { field: 'vatTotal', agg: 'sum' },
-        { field: 'discountTotal', agg: 'sum' },
-      ],
-      filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'invoice' },
-      ],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
-    }),
-  },
-  {
-    id: 'sales-by-hour',
-    name: 'Trading by hour',
-    description: 'When the shop is busy — takings and basket count by hour of day.',
+    /*
+     * ── Turnover by … ──────────────────────────────────────────────────────
+     *
+     * One question — "what did we take, over what stretch of time" — asked at
+     * four zoom levels. Hour answers "when in the day is the shop busy"; day,
+     * month and year answer "is the business growing", at three grains.
+     *
+     * All four share ONE spec shape, unlike `sales-by`: every cut runs on
+     * `sales`, so `__rows` is a basket count and `totalIncl avg` a real average
+     * basket throughout. Only the group field, the sort, the period and the
+     * chart change. They still get a spec each rather than a swapped
+     * groupFields, because the PERIOD has to move with the grain — see below.
+     */
+    id: 'turnover-by',
+    name: 'Turnover by hour, day, month or year',
+    description:
+      'Takings, basket count and average basket over time — by hour of day to see when the shop is busy, or by day, month and year to see which way the business is going.',
     category: 'Sales',
     permission: 'reports.view',
     spec: spec({
@@ -191,6 +350,94 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: 'hour', dir: 'asc' },
       chartType: 'bar',
     }),
+    variants: [
+      {
+        key: 'hour',
+        label: 'Hour',
+        name: 'Turnover by hour',
+        description: 'When the shop is busy — takings and basket count by hour of day.',
+        /* Was 'Trading by hour'. The id is kept because it is in favourites,
+           schedules and the public API; only the NAME changed. */
+        legacyId: 'sales-by-hour',
+        spec: spec({
+          source: 'sales',
+          groupFields: ['hour'],
+          columns: [
+            { field: '__rows' },
+            { field: 'totalIncl', agg: 'sum' },
+            { field: 'totalIncl', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'hour', dir: 'asc' },
+          chartType: 'bar',
+        }),
+      },
+      {
+        key: 'day',
+        label: 'Day',
+        name: 'Turnover by day',
+        description: 'Takings, basket count and average basket for each trading day.',
+        spec: spec({
+          source: 'sales',
+          groupFields: ['day'],
+          columns: [
+            { field: '__rows' },
+            { field: 'totalIncl', agg: 'sum' },
+            { field: 'totalIncl', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'day', dir: 'asc' },
+          /* A line, not bars: a day-by-day series is read as a trend, where
+             hour-of-day is read as a profile of the trading day. */
+          chartType: 'line',
+        }),
+      },
+      {
+        key: 'month',
+        label: 'Month',
+        name: 'Turnover by month',
+        description: 'Takings, basket count and average basket month by month.',
+        /* The period moves with the grain: a month-by-month report over "this
+           month" is a single row, which is not a report. Same for the year cut
+           below. The period picker stays live, so a reader wanting a narrower
+           span can still say so. */
+        spec: spec({
+          source: 'sales',
+          period: { key: 'thisYear' },
+          groupFields: ['month'],
+          columns: [
+            { field: '__rows' },
+            { field: 'totalIncl', agg: 'sum' },
+            { field: 'totalIncl', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'month', dir: 'asc' },
+          chartType: 'line',
+        }),
+      },
+      {
+        key: 'year',
+        label: 'Year',
+        name: 'Turnover by year',
+        description: 'Takings, basket count and average basket for each year on record.',
+        spec: spec({
+          source: 'sales',
+          /* The only multi-year period there is — a year-by-year report needs
+             more than one year in it to say anything at all. Added for exactly
+             this cut; see PeriodKey in spec.ts. */
+          period: { key: 'last5Years' },
+          groupFields: ['year'],
+          columns: [
+            { field: '__rows' },
+            { field: 'totalIncl', agg: 'sum' },
+            { field: 'totalIncl', agg: 'avg' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'year', dir: 'asc' },
+          chartType: 'bar',
+        }),
+      },
+    ],
   },
   {
     id: 'sales-by-tender',
@@ -297,49 +544,8 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: 'documentDate', dir: 'desc' },
     }),
   },
-  {
-    id: 'sales-by-month',
-    name: 'Sales by month',
-    description: 'Turnover and profit month by month — the shape of the year rather than of the week.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'saleLines',
-      period: { key: 'thisYear' },
-      groupFields: ['month'],
-      columns: [
-        { field: 'lineTotalIncl', agg: 'sum' },
-        { field: 'lineTotalExcl', agg: 'sum' },
-        { field: 'lineVat', agg: 'sum' },
-        { field: 'grossProfit', agg: 'sum' },
-        { field: 'grossProfitPct', agg: 'avg' },
-      ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'month', dir: 'asc' },
-      chartType: 'line',
-    }),
-  },
-  {
-    id: 'sales-by-till',
-    name: 'Sales by till',
-    description: 'Turnover, basket count and average basket for each till — which lanes carry the shop.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'sales',
-      groupFields: ['terminalCode'],
-      columns: [
-        { field: '__rows' },
-        { field: 'totalIncl', agg: 'sum' },
-        { field: 'totalIncl', agg: 'avg' },
-      ],
-      filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'invoice' },
-      ],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
-    }),
-  },
+  /* Sales by month and Sales by till used to sit here. They are cuts of
+     `sales-by` now — see its variants. Both ids still resolve. */
   {
     id: 'credit-notes',
     name: 'Credit notes',
@@ -1096,18 +1302,22 @@ export const TEMPLATES: ReportTemplate[] = [
 
   /* ── Job cards ───────────────────────────────────────────────────────────────
    *
-   * THREE, not fifteen. The builder is the answer to the other twelve, and a
-   * catalogue of near-identical job reports is how somebody ends up scrolling past
-   * the one they wanted. Each of these answers a question a service business
-   * actually asks out loud, and between them they exercise both sources and the
-   * cost gate.
+   * Their own CATEGORY, not a corner of Operations. A service business reads
+   * these on a different day, and usually a different person reads them, from
+   * the ones about tills and shifts — and the category is what the Job cards ›
+   * Reports screen selects on, so filing one of these under Operations would
+   * quietly drop it out of the menu entry that exists to show it.
+   *
+   * Each answers a question a service business asks out loud. The builder is the
+   * answer to anything narrower: a catalogue of near-identical job reports is how
+   * somebody ends up scrolling past the one they wanted.
    */
   {
     id: 'jobs-by-technician',
     name: 'Jobs by technician',
     description:
       'How many jobs each person carried in the period, and how long they took on average.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCards',
@@ -1126,7 +1336,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Work we did not charge for',
     description:
       'Every job carrying internal, written-off or undecided cost — the figure that quietly eats a service margin.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     /*
      * No `financial: true` — the flag is declared on ReportTemplate but read by
@@ -1158,7 +1368,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Parts and labour used on jobs',
     description:
       'Every line on every job, grouped by what kind of thing it was and who pays for it.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCardLines',
@@ -1190,7 +1400,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Time and labour on jobs',
     description:
       'Hours booked against jobs, by person — what was worked, what was on break, and what is still running.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobTime',
@@ -1209,7 +1419,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Travel on jobs',
     description:
       'Every trip with its expected, recorded and chargeable kilometres — and whether anybody checked it.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobTravel',
@@ -1233,7 +1443,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Travel nobody has checked',
     description:
       'Kilometres claimed and never approved. Each one is either money owed to a technician or money the business should not pay.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobTravel',
@@ -1255,7 +1465,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Did we turn up on time',
     description:
       'Every booked visit by outcome — attended, late, cancelled or a no-show. On time means within fifteen minutes.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobVisits',
@@ -1276,7 +1486,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Visits that did not happen',
     description:
       'Bookings cancelled or missed, with the reason recorded at the time. A customer whose name repeats here is one about to leave.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobVisits',
@@ -1304,7 +1514,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Where the work is',
     description:
       'Every open job by the stage it has reached, oldest first. The one to read at a stand-up: a stage that is filling up is a bottleneck.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCards',
@@ -1336,7 +1546,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Jobs past their date',
     description:
       'Anything promised for a day that has been and gone, worst first. Every row is a customer who was told something that did not happen.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCards',
@@ -1359,7 +1569,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Work by customer',
     description:
       'How many jobs each customer has had and what they absorbed. The top of this list is who the business actually works for.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCards',
@@ -1379,7 +1589,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Promises that were missed',
     description:
       'Jobs answered or finished later than the service target said. Grouped by promise, so a target nobody ever meets shows up as the target rather than as the team.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCards',
@@ -1400,7 +1610,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Costs nobody has decided about',
     description:
       'Lines still marked pending — work done that nobody has said is billable or absorbed. The commonest way a job leaks money, because it leaks quietly.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCardLines',
@@ -1420,7 +1630,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'What was written off',
     description:
       'Work done and deliberately not charged, by customer. A customer who appears here repeatedly is being subsidised, which is a decision worth making on purpose.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCardLines',
@@ -1439,7 +1649,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Billable work not yet invoiced',
     description:
       'Lines the business intends to charge for that no invoice has taken. Straightforwardly money it has earned and not asked for.',
-    category: 'Operations',
+    category: 'Job cards',
     permission: 'jobs.view',
     spec: spec({
       source: 'jobCardLines',
@@ -1463,7 +1673,14 @@ export const TEMPLATES: ReportTemplate[] = [
     id: 'cashup-history',
     name: 'Cash-up history',
     description: 'Every shift closed in the period, with its drawer variance.',
-    category: 'Operations',
+    /* Sales, not Operations, though it is declared here among the shift
+       reports — a cash-up is what the till TOOK, so whoever reaches for it is
+       reading the day's takings rather than auditing how the shop ran. It joins
+       Drawer variance by person, which was already filed under Sales for the
+       same reason. The per-tender breakdowns and the till-void reports below
+       stay in Operations: those ask whether the counting and the keying were
+       done properly, which is a different question. */
+    category: 'Sales',
     permission: 'sales.cashup',
     spec: spec({
       source: 'shifts',
@@ -2067,6 +2284,37 @@ const BY_ID = new Map(TEMPLATES.map((t) => [t.id, t]))
 
 export function getTemplate(id: string): ReportTemplate | undefined {
   return BY_ID.get(id)
+}
+
+/**
+ * A retired template id → the cut that replaced it.
+ *
+ * Built from the variants themselves, so a cut cannot claim a legacy id without
+ * that id becoming resolvable in the same edit. Six live sites' worth of stored
+ * favourites, column choices, group-by choices and 06:00 schedules point at
+ * these ids, as does the public API — see the note on ReportTemplate.variants.
+ */
+const BY_LEGACY_ID = new Map<string, { template: ReportTemplate; variant: ReportVariant }>(
+  TEMPLATES.flatMap((template) =>
+    (template.variants ?? [])
+      .filter((v) => v.legacyId)
+      .map((variant) => [variant.legacyId!, { template, variant }] as const),
+  ),
+)
+
+export function getLegacyVariant(id: string) {
+  return BY_LEGACY_ID.get(id)
+}
+
+/** The cut a report is showing: the named one, or its first (the default). */
+export function resolveVariant(
+  t: ReportTemplate,
+  key: string | null | undefined,
+): ReportVariant | null {
+  if (!t.variants?.length) return null
+  // An unknown key falls back to the default rather than 404ing — a hand-edited
+  // or stale bookmarked URL should degrade to the report, not to nothing.
+  return t.variants.find((v) => v.key === key) ?? t.variants[0]
 }
 
 /** A template as a runnable spec, with its name filled in. */

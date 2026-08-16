@@ -172,6 +172,7 @@ export default async function MultiStoreOverviewPage() {
         {exceptions.length > 0 && (
           <Card>
             <CardHeader
+              tone="default"
               title="Needs attention"
               description="Thresholds: gross profit down 2 points, drawer out by R500, turnover down 10%, or over 6 months of stock."
             />
@@ -199,6 +200,7 @@ export default async function MultiStoreOverviewPage() {
         {ranked.length > 1 && monthTotal > 0 && (
           <Card>
             <CardHeader
+              tone="default"
               title="Who is carrying the month"
               description="Share of group turnover, biggest first."
             />
@@ -235,6 +237,7 @@ export default async function MultiStoreOverviewPage() {
         {/* ── The detail ───────────────────────────────────────────────────── */}
         <Card>
           <CardHeader
+              tone="default"
             title="By store"
             description={`Today is ${now}. The month runs ${window.monthFrom} to ${window.monthTo}, compared against ${window.prevFrom} to ${window.prevTo}. Figures come from each store's own records.`}
           />

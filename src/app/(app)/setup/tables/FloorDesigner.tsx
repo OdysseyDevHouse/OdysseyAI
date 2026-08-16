@@ -43,6 +43,7 @@ import {
   createTableOnFloorAction,
   duplicateTablesAction,
   retireRoomAction,
+  updateRoomAction,
   savePlacementsAction,
   saveFeatureAction,
   deleteFeatureAction,
@@ -100,10 +101,21 @@ export default function FloorDesigner({
   rooms: initialRooms,
   tables: initialTables,
   features: initialFeatures,
+  chrome = 'card',
+  onExpand,
 }: {
   rooms: FloorRoom[]
   tables: PosTable[]
   features: FloorFeature[]
+  /**
+   * Whether to draw its own Card, or render bare for a host that already has a frame.
+   *
+   * 'bare' is what the full-screen dialog uses: the Modal supplies the panel, the title
+   * and the footer, so a Card inside it would be a second border around one thing.
+   */
+  chrome?: 'card' | 'bare'
+  /** Shows the "Open full screen" button. Omit where there is nothing to expand into. */
+  onExpand?: () => void
 }) {
   const toast = useToast()
   const [pending, startTransition] = useTransition()
@@ -115,6 +127,12 @@ export default function FloorDesigner({
   const [editing, setEditing] = useState(false)
   const [addingRoom, setAddingRoom] = useState(false)
   const [newRoom, setNewRoom] = useState({ name: '', width: 100, height: 70 })
+  /** The room being renamed or resized, or null. Seeded from the room when opened. */
+  const [editingRoom, setEditingRoom] = useState<{
+    name: string
+    width: number
+    height: number
+  } | null>(null)
   const [addingTable, setAddingTable] = useState(false)
   /** The scrolling viewport, so "show off-screen" can scroll it. */
   const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -405,6 +423,25 @@ export default function FloorDesigner({
     })
   }
 
+  /**
+   * Rename or resize the current room.
+   *
+   * SHRINKING is the case worth knowing about: `savePlacements` clamps every table into
+   * its room, but only on the next save — a table already sitting past the new edge stays
+   * there in the database until something moves it. The server does not re-clamp on a
+   * resize, so the note in the form warns rather than the code silently rearranging a
+   * floor somebody spent time on.
+   */
+  function saveRoom() {
+    if (!editingRoom || !room) return
+    startTransition(async () => {
+      const result = await updateRoomAction(room.id, editingRoom)
+      if (!apply(result)) return
+      setEditingRoom(null)
+      toast.success('Room updated.')
+    })
+  }
+
   /* ── Placing and removing ──────────────────────────────────────────────── */
 
   /** Drop a table onto the plan, somewhere it will not land on another one. */
@@ -549,7 +586,7 @@ export default function FloorDesigner({
       if (el?.closest("input, textarea, select, [contenteditable='true']")) return
       /* A dialog owns the keyboard while it is open — Delete in the add-table form must
          not unplace whatever happened to be selected behind it. */
-      if (addingTable || addingRoom) return
+      if (addingTable || addingRoom || editingRoom) return
 
       const mod = e.ctrlKey || e.metaKey
       if (mod && e.key.toLowerCase() === 'z') {
@@ -621,6 +658,7 @@ export default function FloorDesigner({
     duplicateSelection,
     addingTable,
     addingRoom,
+    editingRoom,
     tables,
     draft,
     featureDraft,
@@ -628,6 +666,40 @@ export default function FloorDesigner({
 
   const unplaced = tables.filter((t) => t.isActive && draft.get(t.id)?.roomId == null)
   const selectedTables = selectedKeys.filter((k) => k.startsWith('t')).length
+
+  /* ── What the side panel needs to describe the selection ─────────────────── */
+
+  /** The one selected feature, when a feature is exactly what is selected. */
+  const selectedFeature =
+    selectedKeys.length === 1 && selectedKeys[0].startsWith('f')
+      ? featureDraft.find((f) => f.id === Number(selectedKeys[0].slice(1))) ?? null
+      : null
+
+  /** A name for a single selection — the table's code, or the fixture's kind. */
+  const selectionLabel = useMemo(() => {
+    if (selectedKeys.length !== 1) return ''
+    const key = selectedKeys[0]
+    if (key.startsWith('t')) {
+      const table = tables.find((t) => t.id === Number(key.slice(1)))
+      if (!table) return ''
+      return table.seats > 0 ? `${table.code} · ${table.seats} seats` : table.code
+    }
+    return selectedFeature?.kind ?? ''
+  }, [selectedKeys, tables, selectedFeature])
+
+  /**
+   * The shape every selected table shares, or null when they differ.
+   *
+   * Read from the DRAFT so a shape changed and not yet saved shows as chosen — the panel
+   * would otherwise contradict the tile beside it.
+   */
+  const selectedShape = useMemo(() => {
+    const shapes = selectedKeys
+      .filter((k) => k.startsWith('t'))
+      .map((k) => geometryOf(k)?.shape ?? 'rect')
+    if (shapes.length === 0) return null
+    return shapes.every((s) => s === shapes[0]) ? shapes[0] : null
+  }, [selectedKeys, geometryOf])
 
   /**
    * Tables sitting (almost) entirely under another one.
@@ -665,29 +737,48 @@ export default function FloorDesigner({
     )
   }, [tables, draft, room])
 
-  return (
-    <Card>
-      <CardHeader
-        title="Floor plan"
-        description="Where the tables actually stand. Optional — a room you never build keeps showing as the sectioned list on the till."
-        action={
-          <div className="flex items-center gap-2">
-            {/* The count, not a dot. "6 changes" is actionable where a dirty indicator is
-                a puzzle. */}
-            {dirty > 0 && (
-              <span className="text-sm text-warning-ink">
-                {dirty} unsaved change{dirty === 1 ? '' : 's'}
-              </span>
-            )}
-            <Button variant="primary" disabled={dirty === 0 || pending} onClick={save}>
-              <Icons.Save size={16} />
-              Save plan
-            </Button>
-          </div>
-        }
-      />
+  /* The toolbar's right-hand side, shared by the card header and the dialog header so
+     the two cannot drift — Save is the same button in both, disabled by the same rule. */
+  const actions = (
+    <div className="flex items-center gap-2">
+      {/* The count, not a dot. "6 changes" is actionable where a dirty indicator is
+          a puzzle. */}
+      {dirty > 0 && (
+        <span className="text-sm text-warning-ink">
+          {dirty} unsaved change{dirty === 1 ? '' : 's'}
+        </span>
+      )}
+      {onExpand && (
+        /* Never disabled. The shell keeps this component mounted across the switch, so
+           an unsaved arrangement travels with you — there is nothing to save first and
+           nothing to warn about. See FloorPlanSection's note. */
+        <Button
+          variant="secondary"
+          size="sm"
+          title="Give the canvas the whole screen"
+          onClick={onExpand}
+        >
+          <Icons.Maximize size={16} />
+          Open full screen
+        </Button>
+      )}
+      <Button variant="primary" disabled={dirty === 0 || pending} onClick={save}>
+        <Icons.Save size={16} />
+        Save plan
+      </Button>
+    </div>
+  )
 
-      <CardBody className="space-y-4">
+  /*
+   * The body, without any chrome of its own.
+   *
+   * Pulled out so the SAME markup can sit in a Card on the setup page and bare inside a
+   * full-screen dialog. Rendering it twice would mean two copies of the draft, and a
+   * manager who arranged a room full-screen would find the page behind still showing the
+   * old layout — which is exactly the bug worth designing out.
+   */
+  const body = (
+    <div className="space-y-4">
         {rooms.length === 0 ? (
           <>
             <EmptyState
@@ -719,6 +810,27 @@ export default function FloorDesigner({
               <Icons.Plus size={14} />
               Room
             </Button>
+            {/* Renaming and resizing a room was previously impossible from here — the
+                action existed on the server and nothing called it, so a room typed wrong
+                had to be removed and rebuilt, taking its layout with it. */}
+            {room && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={pending}
+                onClick={() => {
+                  setEditingRoom({
+                    name: room.name,
+                    width: room.width,
+                    height: room.height,
+                  })
+                  setAddingRoom(false)
+                }}
+              >
+                <Icons.Pencil size={14} />
+                Edit room
+              </Button>
+            )}
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
               {room && (
@@ -778,32 +890,94 @@ export default function FloorDesigner({
         )}
 
         {addingRoom && (
-          <div className="flex flex-wrap items-end gap-3 rounded-card border border-border bg-surface-2 p-3">
-            <Field label="Room name" className="min-w-48">
-              <Input
-                value={newRoom.name}
-                onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })}
-                placeholder="Inside, Patio, Upstairs..."
-              />
-            </Field>
-            <Field label="Width" hint="Room units, not metres">
-              <NumberInput
-                value={newRoom.width}
-                onChange={(e) => setNewRoom({ ...newRoom, width: Number(e.target.value) || 0 })}
-              />
-            </Field>
-            <Field label="Height">
-              <NumberInput
-                value={newRoom.height}
-                onChange={(e) => setNewRoom({ ...newRoom, height: Number(e.target.value) || 0 })}
-              />
-            </Field>
-            <Button variant="primary" disabled={!newRoom.name.trim() || pending} onClick={addRoom}>
-              Add
-            </Button>
-            <Button variant="ghost" disabled={pending} onClick={() => setAddingRoom(false)}>
-              Cancel
-            </Button>
+          <div className="rounded-card border border-border bg-surface-2 p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Room name" className="min-w-48">
+                <Input
+                  value={newRoom.name}
+                  onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })}
+                  placeholder="Inside, Patio, Upstairs..."
+                />
+              </Field>
+              {/* No `hint` on any of these three. The row is `items-end`, so a hint under
+                  ONE field makes that field taller and lifts its input above the others —
+                  the three boxes stopped being level. The note moved below the row, where
+                  it explains the units for both without skewing the alignment. */}
+              <Field label="Width">
+                <NumberInput
+                  value={newRoom.width}
+                  onChange={(e) => setNewRoom({ ...newRoom, width: Number(e.target.value) || 0 })}
+                />
+              </Field>
+              <Field label="Height">
+                <NumberInput
+                  value={newRoom.height}
+                  onChange={(e) => setNewRoom({ ...newRoom, height: Number(e.target.value) || 0 })}
+                />
+              </Field>
+              <Button
+                variant="primary"
+                disabled={!newRoom.name.trim() || pending}
+                onClick={addRoom}
+              >
+                Add
+              </Button>
+              <Button variant="ghost" disabled={pending} onClick={() => setAddingRoom(false)}>
+                Cancel
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              Width and height are room units, not metres — and you can change them later.
+            </p>
+          </div>
+        )}
+
+        {editingRoom && room && (
+          <div className="rounded-card border border-border bg-surface-2 p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Room name" className="min-w-48">
+                <Input
+                  value={editingRoom.name}
+                  autoFocus
+                  onChange={(e) => setEditingRoom({ ...editingRoom, name: e.target.value })}
+                />
+              </Field>
+              <Field label="Width">
+                <NumberInput
+                  value={editingRoom.width}
+                  onChange={(e) =>
+                    setEditingRoom({ ...editingRoom, width: Number(e.target.value) || 0 })
+                  }
+                />
+              </Field>
+              <Field label="Height">
+                <NumberInput
+                  value={editingRoom.height}
+                  onChange={(e) =>
+                    setEditingRoom({ ...editingRoom, height: Number(e.target.value) || 0 })
+                  }
+                />
+              </Field>
+              <Button
+                variant="primary"
+                disabled={!editingRoom.name.trim() || pending}
+                onClick={saveRoom}
+              >
+                Save room
+              </Button>
+              <Button variant="ghost" disabled={pending} onClick={() => setEditingRoom(null)}>
+                Cancel
+              </Button>
+            </div>
+            {/* Said only when it applies. Growing a room is free; shrinking one can leave
+                a table beyond the new wall, and a manager should hear that before pressing
+                Save rather than discovering it on the canvas afterwards. */}
+            {(editingRoom.width < room.width || editingRoom.height < room.height) && (
+              <p className="mt-2 text-xs text-warning-ink">
+                Making the room smaller can leave tables outside the new edge. Drag any
+                that end up there back in, then save the plan.
+              </p>
+            )}
           </div>
         )}
 
@@ -815,230 +989,290 @@ export default function FloorDesigner({
               </Callout>
             )}
 
-            {/* ── The furniture palette, only while editing ───────────────── */}
-            {editing && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-muted">Add:</span>
-                {(['wall', 'bar', 'pass', 'door', 'plant', 'text'] as const).map((kind) => (
-                  <Button
-                    key={kind}
-                    variant="ghost"
-                    size="sm"
-                    disabled={pending}
-                    onClick={() =>
-                      startTransition(async () => {
-                        const result = await saveFeatureAction({
-                          roomId: room.id,
-                          kind,
-                          label: kind === 'text' ? 'Label' : '',
-                          /* Dropped near the top-left but not ON it, so a new wall never
-                             lands exactly under the last one and becomes impossible to
-                             separate. */
-                          x: 4 + ((featureDraft.length * 3) % 20),
-                          y: 4 + ((featureDraft.length * 3) % 20),
-                          width: kind === 'wall' ? 24 : 10,
-                          height: kind === 'wall' ? 2 : 6,
-                          rotation: 0,
-                        })
-                        apply(result)
-                      })
-                    }
-                  >
-                    {/* The drawing rather than a plus, so the palette shows what each
-                        one puts on the floor. 'text' has no glyph — a label is its own
-                        drawing — so it keeps the plus. */}
-                    {kind === 'text' ? (
-                      <Icons.Plus size={14} />
-                    ) : (
-                      <FeatureGlyph kind={kind} style={FEATURE_PALETTE_SIZE[kind]} />
-                    )}
-                    {kind}
-                  </Button>
-                ))}
-              </div>
-            )}
+            {/*
+              ── THE WORKBENCH: TOOLS LEFT, FLOOR RIGHT ──────────────────────
+              The tools used to sit in rows ABOVE the canvas, which meant the floor
+              jumped down the page every time a second item was selected and the align
+              row appeared. A fixed column holds its width whatever is in it, so the
+              canvas never moves and the eye never has to re-find it.
 
-            {/* ── Align / match / distribute ────────────────────────────────
-                Only while several things are selected: these tools are meaningless on one,
-                and a row of permanently-disabled buttons is noise on a screen that already
-                has plenty to say. */}
-            {editing && selectedKeys.length > 1 && (
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-card border border-border bg-surface-2 px-4 py-3">
-                <span className="text-xs font-semibold text-muted">
-                  {selectedKeys.length} selected · matching the one marked{' '}
-                  <span className="text-brand">REF</span>
-                </span>
+              Only while EDITING. Out of edit mode there is nothing to put in the column
+              and the plan should have the whole width, exactly as the till shows it.
+            */}
+            {/* `items-stretch` and NO height constraint: the canvas measures the space
+                left to it against its scrolling container, so a wrapper that also claimed
+                a height would fight that and collapse it — which is exactly what happened
+                the first time, out of edit mode where the sidebar is absent. */}
+            <div className="flex items-stretch gap-4">
+              {editing && (
+                /* Scrolls on its own if the panels outgrow the space beside the canvas,
+                   capped rather than stretched so a tall panel cannot push the floor
+                   down the page. */
+                <div className="flex max-h-[74vh] w-60 shrink-0 flex-col gap-4 overflow-y-auto">
 
-                <ToolGroup label="Align">
-                  {(
-                    [
-                      ['left', 'Align left edges'],
-                      ['hcentre', 'Align horizontal centres'],
-                      ['right', 'Align right edges'],
-                      ['top', 'Align top edges'],
-                      ['vmiddle', 'Align vertical middles'],
-                      ['bottom', 'Align bottom edges'],
-                    ] as [AlignMode, string][]
-                  ).map(([mode, title]) => (
-                    <Button
-                      key={mode}
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label={title}
-                      title={title}
-                      onClick={() => runTool((i) => alignTo(i, mode))}
-                    >
-                      <AlignGlyph kind={mode} />
-                    </Button>
-                  ))}
-                </ToolGroup>
+                  {/* ── Add items ───────────────────────────────────────────── */}
+                  <PanelSection title="Add items">
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['wall', 'bar', 'pass', 'door', 'plant', 'text'] as const).map(
+                        (kind) => (
+                          /* Not a kit Button: this is a picture-above-a-label tile, and
+                             forcing that into Button's single row is what made the seat
+                             presets overlap their captions earlier. */
+                          <button
+                            key={kind}
+                            type="button"
+                            data-kit-ok
+                            disabled={pending}
+                            title={`Add a ${kind}`}
+                            onClick={() =>
+                              startTransition(async () => {
+                                const result = await saveFeatureAction({
+                                  roomId: room.id,
+                                  kind,
+                                  label: kind === 'text' ? 'Label' : '',
+                                  /* Dropped near the top-left but not ON it, so a new wall
+                                     never lands exactly under the last one and becomes
+                                     impossible to separate. */
+                                  x: 4 + ((featureDraft.length * 3) % 20),
+                                  y: 4 + ((featureDraft.length * 3) % 20),
+                                  width: kind === 'wall' ? 24 : 10,
+                                  height: kind === 'wall' ? 2 : 6,
+                                  rotation: 0,
+                                })
+                                apply(result)
+                              })
+                            }
+                            className="flex h-[72px] flex-col items-center justify-center gap-1.5 rounded-card border border-border bg-surface text-[11px] font-medium capitalize text-ink transition-colors hover:border-brand hover:text-brand disabled:opacity-50"
+                          >
+                            {/* The drawing rather than a plus, so the palette shows what
+                                each one puts on the floor. 'text' has no glyph — a label
+                                is its own drawing — so it gets a letter instead. */}
+                            {kind === 'text' ? (
+                              <span className="text-lg font-bold leading-none">T</span>
+                            ) : (
+                              <span className="text-ink-2">
+                                <FeatureGlyph
+                                  kind={kind}
+                                  style={FEATURE_PALETTE_SIZE[kind]}
+                                />
+                              </span>
+                            )}
+                            {kind}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  </PanelSection>
 
-                <ToolGroup label="Same size">
-                  {(
-                    [
-                      ['width', 'Width'],
-                      ['height', 'Height'],
-                    ] as [MatchMode, string][]
-                  ).map(([mode, label]) => (
-                    <Button
-                      key={mode}
-                      variant="ghost"
-                      size="sm"
-                      title={`Make the selection the same ${mode} as the reference`}
-                      onClick={() => runTool((i) => matchSize(i, mode))}
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </ToolGroup>
-
-                {/* Distribute needs three to mean anything — with two there is nothing
-                    between the ends to space out. */}
-                <ToolGroup label="Space evenly">
-                  {(
-                    [
-                      ['horizontal', 'Space evenly across'],
-                      ['vertical', 'Space evenly down'],
-                    ] as [DistributeMode, string][]
-                  ).map(([mode, title]) => (
-                    <Button
-                      key={mode}
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label={title}
-                      title={
-                        selectedKeys.length < 3
-                          ? 'Select three or more to space them evenly'
-                          : title
+                  {/* ── Selected items ──────────────────────────────────────
+                      Everything that acts on a selection, in one place. Appears only
+                      when something is selected: a panel of permanently-disabled
+                      controls teaches nothing and takes the room the floor wants. */}
+                  {selectedKeys.length > 0 && (
+                    <PanelSection
+                      title="Selected items"
+                      /* Short enough not to truncate in a 240px column — the REF marker
+                         is drawn on the canvas, so the panel does not have to explain it
+                         in words as well. */
+                      note={
+                        selectedKeys.length === 1
+                          ? selectionLabel
+                          : `${selectedKeys.length} selected`
                       }
-                      disabled={selectedKeys.length < 3}
-                      onClick={() => runTool((i) => distribute(i, mode))}
-                    >
-                      <AlignGlyph kind={mode === 'horizontal' ? 'dist-h' : 'dist-v'} />
-                    </Button>
-                  ))}
-                </ToolGroup>
-
-                {selectedTables > 0 && (
-                  <>
-                    <ToolGroup label="Shape">
-                      {TABLE_SHAPES.map((s) => (
+                      action={
                         <Button
-                          key={s}
                           variant="ghost"
                           size="sm"
-                          iconOnly
-                          aria-label={`Make ${s}`}
-                          title={`Make ${s}`}
-                          onClick={() => setShape(s)}
+                          onClick={() => setSelectedKeys([])}
                         >
-                          <ShapeGlyph shape={s} />
+                          Clear
                         </Button>
-                      ))}
-                    </ToolGroup>
-                    <ToolGroup label="Tables">
-                      <Button variant="ghost" size="sm" onClick={duplicateSelection}>
-                        <Icons.Copy size={14} />
-                        Copy
+                      }
+                    >
+                      {/* The align tools need two things to compare. With one selected
+                          the panel still appears, carrying just what applies to it. */}
+                      {selectedKeys.length > 1 && (
+                        <>
+                          <PanelGroup label="Align">
+                            {(
+                              [
+                                ['left', 'Align left edges'],
+                                ['hcentre', 'Align horizontal centres'],
+                                ['right', 'Align right edges'],
+                                ['top', 'Align top edges'],
+                                ['vmiddle', 'Align vertical middles'],
+                                ['bottom', 'Align bottom edges'],
+                              ] as [AlignMode, string][]
+                            ).map(([mode, title]) => (
+                              <PanelIcon
+                                key={mode}
+                                label={title}
+                                onClick={() => runTool((i) => alignTo(i, mode))}
+                              >
+                                <AlignGlyph kind={mode} />
+                              </PanelIcon>
+                            ))}
+                          </PanelGroup>
+
+                          <PanelGroup label="Same size">
+                            {(
+                              [
+                                ['width', 'Width'],
+                                ['height', 'Height'],
+                              ] as [MatchMode, string][]
+                            ).map(([mode, label]) => (
+                              <Button
+                                key={mode}
+                                variant="secondary"
+                                size="sm"
+                                title={`Make the selection the same ${mode} as the reference`}
+                                onClick={() => runTool((i) => matchSize(i, mode))}
+                              >
+                                {label}
+                              </Button>
+                            ))}
+                          </PanelGroup>
+
+                          {/* Distribute needs three to mean anything — with two there is
+                              nothing between the ends to space out. */}
+                          <PanelGroup label="Space evenly">
+                            {(
+                              [
+                                ['horizontal', 'Space evenly across'],
+                                ['vertical', 'Space evenly down'],
+                              ] as [DistributeMode, string][]
+                            ).map(([mode, title]) => (
+                              <PanelIcon
+                                key={mode}
+                                label={
+                                  selectedKeys.length < 3
+                                    ? 'Select three or more to space them evenly'
+                                    : title
+                                }
+                                disabled={selectedKeys.length < 3}
+                                onClick={() => runTool((i) => distribute(i, mode))}
+                              >
+                                <AlignGlyph
+                                  kind={mode === 'horizontal' ? 'dist-h' : 'dist-v'}
+                                />
+                              </PanelIcon>
+                            ))}
+                          </PanelGroup>
+                        </>
+                      )}
+
+                      {selectedTables > 0 && (
+                        <>
+                          <PanelGroup label="Shape">
+                            {TABLE_SHAPES.map((s) => (
+                              <PanelIcon
+                                key={s}
+                                label={`Make ${s}`}
+                                /* Lit when every selected table already IS this shape,
+                                   so the panel reports the selection as well as changing
+                                   it — the single-selection bar used to do this and the
+                                   information should not be lost in the move. */
+                                active={selectedShape === s}
+                                onClick={() => setShape(s)}
+                              >
+                                <ShapeGlyph shape={s} />
+                              </PanelIcon>
+                            ))}
+                          </PanelGroup>
+
+                          <PanelGroup label="Tables">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={pending}
+                              onClick={duplicateSelection}
+                            >
+                              <Icons.Copy size={14} />
+                              Copy
+                            </Button>
+                            <Button
+                              variant="danger-ghost"
+                              size="sm"
+                              disabled={pending}
+                              onClick={unplaceSelection}
+                            >
+                              <Icons.Close size={14} />
+                              Off the plan
+                            </Button>
+                          </PanelGroup>
+                        </>
+                      )}
+
+                      {/* A feature has no shape or seats to change, only removal. */}
+                      {selectedFeature && (
+                        <PanelGroup label={selectedFeature.kind}>
+                          <Button
+                            variant="danger-ghost"
+                            size="sm"
+                            disabled={pending}
+                            onClick={() =>
+                              startTransition(async () => {
+                                const result = await deleteFeatureAction(selectedFeature.id)
+                                if (apply(result)) setSelectedKeys([])
+                              })
+                            }
+                          >
+                            <Icons.Trash size={14} />
+                            Remove
+                          </Button>
+                        </PanelGroup>
+                      )}
+                    </PanelSection>
+                  )}
+
+                  {/* The rescue: a table hidden under another is invisible and unfindable
+                      by eye. Tapping selects them so the next drag pulls one clear. */}
+                  {buried.length > 0 && (
+                    <PanelSection title="Overlapping">
+                      <p className="text-xs text-warning-ink">
+                        {buried.length === 1
+                          ? 'One table is sitting underneath another'
+                          : `${buried.length} tables are sitting underneath others`}{' '}
+                        — {buried.map((b) => b.table.code).join(', ')}.
+                      </p>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setSelectedKeys(buried.map((b) => `t${b.table.id}`))}
+                      >
+                        Select them
                       </Button>
-                      <Button variant="danger-ghost" size="sm" onClick={unplaceSelection}>
-                        <Icons.Close size={14} />
-                        Off the plan
-                      </Button>
-                    </ToolGroup>
-                  </>
-                )}
-              </div>
-            )}
-
-            <FloorCanvas
-              room={room}
-              tables={tables}
-              placements={draft}
-              features={featureDraft}
-              editing={editing}
-              selectedKeys={selectedKeys}
-              onSelectionChange={setSelectedKeys}
-              onCommit={commit}
-              onOpenItem={(key) => setSelectedKeys([key])}
-            />
-
-            {/* ── What the selection is, and what you can do to it ──────────── */}
-            {editing && selectedKeys.length === 1 && (
-              <SingleSelection
-                selectedKey={selectedKeys[0]}
-                tables={tables}
-                featureDraft={featureDraft}
-                pending={pending}
-                shapeOf={(key) => geometryOf(key)?.shape ?? 'rect'}
-                onSetShape={setShape}
-                onDuplicate={duplicateSelection}
-                onUnplace={unplaceSelection}
-                onDeleteFeature={(id) =>
-                  startTransition(async () => {
-                    const result = await deleteFeatureAction(id)
-                    if (apply(result)) setSelectedKeys([])
-                  })
-                }
-              />
-            )}
-
-            {/* The rescue: a table hidden under another is invisible and unfindable by
-                eye. Tapping selects them so the next drag pulls one clear. */}
-            {editing && buried.length > 0 && (
-              <Callout tone="warning">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span>
-                    {buried.length === 1
-                      ? 'One table is sitting underneath another'
-                      : `${buried.length} tables are sitting underneath others`}{' '}
-                    — {buried.map((b) => b.table.code).join(', ')}.
-                  </span>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setSelectedKeys(buried.map((b) => `t${b.table.id}`))}
-                  >
-                    Select them
-                  </Button>
+                    </PanelSection>
+                  )}
                 </div>
-              </Callout>
-            )}
+              )}
+
+              <div className="min-w-0 flex-1">
+                <FloorCanvas
+                  room={room}
+                  tables={tables}
+                  placements={draft}
+                  features={featureDraft}
+                  editing={editing}
+                  selectedKeys={selectedKeys}
+                  onSelectionChange={setSelectedKeys}
+                  onCommit={commit}
+                  onOpenItem={(key) => setSelectedKeys([key])}
+                  tall={chrome === 'bare'}
+                />
+              </div>
+            </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
               {editing ? (
-                <>
-                  <span>
-                    Drag to move · corner to resize · ⟳ to rotate · arrows to nudge (Shift =
-                    a whole unit)
-                  </span>
-                  <span>
-                    Shift-click or drag a box to select several · Ctrl+D copies · Ctrl+Z
-                    undoes · Delete takes a table off the plan
-                  </span>
-                </>
+                /* One line, not three. The tools moved into the side panel where they can
+                   be seen rather than read about, so what is left here is only what has
+                   no on-screen control: the gestures. Ctrl+drag especially — a plain drag
+                   selects, so nobody discovers it by trying. */
+                <span>
+                  Drag to move · corner to resize · ⟳ to rotate · arrows nudge · Ctrl+drag
+                  moves the floor · Ctrl+scroll or pinch zooms
+                </span>
               ) : (
                 <span>
                   This is what the till shows on its Floor view. Tap Edit layout to move
@@ -1104,19 +1338,56 @@ export default function FloorDesigner({
             )}
           </>
         )}
-      </CardBody>
+    </div>
+  )
 
-      {addingTable && room && (
-        <AddTableModal
-          roomName={room.name}
-          busy={pending}
-          /* Every code in the shop, not just this room's: the column is unique across the
-             site, so a clash with a table on the patio is still a clash. */
-          existing={tables.map((t) => t.code.trim().toLowerCase())}
-          onClose={() => setAddingTable(false)}
-          onAdd={addTable}
-        />
-      )}
+  /* The add-table dialog, rendered alongside whichever shell is in use. A nested
+     <dialog> is fine — the browser stacks them, so it opens above the full-screen one. */
+  const dialogs = addingTable && room && (
+    <AddTableModal
+      roomName={room.name}
+      busy={pending}
+      /* Every code in the shop, not just this room's: the column is unique across the
+         site, so a clash with a table on the patio is still a clash. */
+      existing={tables.map((t) => t.code.trim().toLowerCase())}
+      onClose={() => setAddingTable(false)}
+      onAdd={addTable}
+    />
+  )
+
+  /*
+   * BARE, for the full-screen dialog: the Modal already draws a header and a panel, so a
+   * Card inside it would be a second border around the same content. The dialog supplies
+   * its own title and puts `actions` in its footer.
+   */
+  if (chrome === 'bare') {
+    return (
+      <>
+        {/* The action row is pinned ABOVE the scrolling body rather than inside it: a
+            manager who has dragged six tables must be able to reach Save without
+            scrolling back up past the room they just arranged. */}
+        <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border pb-3">
+          {actions}
+        </div>
+        {/* `overflow-hidden`, not `auto`: the canvas measures the height left to it and
+            fits inside, so nothing should ever need to scroll here — and a scroll
+            container would let a mis-measurement hide as a scrollbar instead of showing
+            up as the layout bug it is. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-4">{body}</div>
+        {dialogs}
+      </>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Floor plan"
+        description="Where the tables actually stand. Optional — a room you never build keeps showing as the sectioned list on the till."
+        action={actions}
+      />
+      <CardBody>{body}</CardBody>
+      {dialogs}
     </Card>
   )
 }
@@ -1289,6 +1560,7 @@ function ShapeGlyph({ shape }: { shape: TableShape }) {
     <TableGlyph
       shape={shape}
       seats={{ top: 0, bottom: 0, left: 0, right: 0 }}
+      footprint={size[shape]}
       style={size[shape]}
     />
   )
@@ -1311,112 +1583,101 @@ function SeatPresetGlyph({ preset }: { preset: SeatPreset }) {
     <TableGlyph
       shape={preset.shape}
       seats={seatLayout(preset.seats, preset.w, preset.h)}
+      footprint={{ width, height }}
       style={{ width, height }}
     />
   )
 }
 
-/* ── The selected thing ───────────────────────────────────────────────────── */
-
-function SingleSelection({
-  selectedKey,
-  tables,
-  featureDraft,
-  pending,
-  shapeOf,
-  onSetShape,
-  onDuplicate,
-  onUnplace,
-  onDeleteFeature,
-}: {
-  selectedKey: string
-  tables: PosTable[]
-  featureDraft: FloorFeature[]
-  pending: boolean
-  shapeOf: (key: string) => TableShape
-  onSetShape: (shape: TableShape) => void
-  onDuplicate: () => void
-  onUnplace: () => void
-  onDeleteFeature: (id: number) => void
-}) {
-  if (selectedKey.startsWith('t')) {
-    const table = tables.find((t) => t.id === Number(selectedKey.slice(1)))
-    if (!table) return null
-    /* The DRAFT's shape, not the table's — a shape changed and not yet saved must show
-       as chosen here, or the picker contradicts the tile beside it. */
-    const current = shapeOf(selectedKey)
-    return (
-      <div className="flex flex-wrap items-center gap-2 rounded-card border border-border bg-surface p-3">
-        <Badge tone="brand">{table.code}</Badge>
-        {table.seats > 0 && <span className="text-sm text-muted">{table.seats} seats</span>}
-
-        <div className="flex items-center gap-1">
-          {TABLE_SHAPES.map((s) => (
-            <Button
-              key={s}
-              variant={current === s ? 'primary' : 'ghost'}
-              size="sm"
-              iconOnly
-              aria-label={`Make ${s}`}
-              title={`Make ${s}`}
-              disabled={pending}
-              onClick={() => onSetShape(s)}
-            >
-              <ShapeGlyph shape={s} />
-            </Button>
-          ))}
-        </div>
-
-        <Button variant="ghost" size="sm" disabled={pending} onClick={onDuplicate}>
-          <Icons.Copy size={14} />
-          Copy
-        </Button>
-        <Button variant="danger-ghost" size="sm" disabled={pending} onClick={onUnplace}>
-          <Icons.Close size={14} />
-          Off the plan
-        </Button>
-      </div>
-    )
-  }
-
-  const feature = featureDraft.find((f) => f.id === Number(selectedKey.slice(1)))
-  if (!feature) return null
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-card border border-border bg-surface p-3">
-      {feature.kind !== 'text' && (
-        <span className="text-ink-2">
-          <FeatureGlyph kind={feature.kind} style={FEATURE_PALETTE_SIZE[feature.kind]} />
-        </span>
-      )}
-      <Badge tone="neutral">{feature.kind}</Badge>
-      <Button
-        variant="danger-ghost"
-        size="sm"
-        disabled={pending}
-        onClick={() => onDeleteFeature(feature.id)}
-      >
-        <Icons.Trash size={14} />
-        Remove
-      </Button>
-    </div>
-  )
-}
 
 /* ── Alignment toolbar bits ───────────────────────────────────────────────────
    Small enough to live here rather than in components/ui: they are specific to this
    toolbar, and pulling them out would make a shared primitive of something exactly one
    screen uses. */
 
-function ToolGroup({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * One card in the left tool column.
+ *
+ * A plain bordered box rather than the kit's `Card`: this sits INSIDE a card already (or
+ * inside the full-screen shell), and nesting Card in Card doubles the border and the
+ * padding. Small enough to live here — it is specific to this one panel, and pulling it
+ * into `components/ui` would make a shared primitive of something exactly one screen uses.
+ */
+function PanelSection({
+  title,
+  note,
+  action,
+  children,
+}: {
+  title: string
+  /** A line under the title — what is selected, usually. */
+  note?: string
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="rounded-card border border-border bg-surface p-3">
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-ink">{title}</h3>
+          {note && <p className="mt-0.5 truncate text-xs text-muted">{note}</p>}
+        </div>
+        {action}
+      </div>
+      <div className="flex flex-col gap-3">{children}</div>
+    </div>
+  )
+}
+
+/** A labelled row of controls inside a panel section. */
+function PanelGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
       <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
         {label}
       </span>
-      <div className="flex items-center gap-1 rounded-card border border-border bg-surface p-1">
-        {children}
-      </div>
+      <div className="flex flex-wrap items-center gap-1">{children}</div>
     </div>
+  )
+}
+
+/**
+ * A square icon button for the panel's tool rows.
+ *
+ * Not a kit `Button iconOnly`: these sit six-to-a-row in a 240px column and need to be
+ * smaller than the kit's 36px control height, and `active` gives them a pressed state the
+ * kit's ghost variant has no equivalent for. Marked so the kit check knows it was a
+ * decision rather than an oversight.
+ */
+function PanelIcon({
+  label,
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string
+  active?: boolean
+  disabled?: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      data-kit-ok
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex h-8 w-8 items-center justify-center rounded-control border transition-colors disabled:opacity-40 ${
+        active
+          ? 'border-brand bg-brand-soft text-brand'
+          : 'border-border bg-surface text-ink hover:border-brand hover:text-brand'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 

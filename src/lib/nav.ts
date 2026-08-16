@@ -396,6 +396,22 @@ export const NAV: NavSection[] = [
         keywords: 'sla service level agreement response time resolution deadline breach overdue target promise',
         description: 'Who is waiting for a reply, and what is about to be late',
       },
+      {
+        /* LAST, and deliberately so: everything above is work in flight, which
+           is what this section is opened for daily. Reading back over a period
+           is a different, less frequent job — but it belongs here rather than
+           only in Reports, because the person who wants it is already in this
+           section and the general catalogue is mostly about tills and stock.
+           The main Reports hub no longer lists these, so this is their one
+           front door. */
+        label: 'Reports',
+        href: '/jobs/reports',
+        icon: BarChart,
+        built: true,
+        capability: 'jobs.view',
+        keywords: 'report reports analysis technician write off absorbed billable invoiced travel visits sla breaches overdue stage productivity',
+        description: 'What the work earned, and where it is going wrong',
+      },
     ],
   },
   /*
@@ -489,6 +505,7 @@ export const SUBPAGE_LABELS = {
   '/setup/adjustment-reasons': 'Adjustment reasons',
   '/setup/sales-reasons': 'Void & return reasons',
   '/setup/pricing': 'Price types & VAT',
+  '/setup/customer-groups': 'Customer groups',
   '/setup/purchasing': 'Purchasing & cost',
   '/setup/tender-types': 'Tender types',
   '/setup/tips': 'Tips',
@@ -699,6 +716,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/adjustment-reasons': 'write off shrinkage damage breakage wastage codes',
   '/setup/sales-reasons': 'void cancel reasons refund return credit note faulty codes exception',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
+  '/setup/customer-groups':
+    'customer groups categories wholesale retail staff trade terms price structure defaults segment',
   '/setup/tender-types': 'cash card eft payment methods vouchers',
   '/setup/tips': 'tips gratuity service charge tiers waiter pool',
   '/setup/terminals': 'terminals registers pos devices',

@@ -161,6 +161,20 @@ export default async function ReportsPage() {
     })
   }
 
+  /*
+   * Job card reports are NOT listed here.
+   *
+   * They have their own screen, under the Job cards section that owns them —
+   * see /jobs/reports. A report reachable from two front doors is the problem
+   * that hub screens exist to solve, and the service reports are the set most
+   * likely to be read by somebody who never opens this catalogue at all.
+   *
+   * Filtered by CATEGORY rather than by id prefix: the category is the thing
+   * the Job cards screen selects on, so a new template lands on exactly one of
+   * the two screens and can never be listed twice or go missing from both.
+   */
+  const general = templates.filter((t) => t.category !== 'Job cards')
+
   return (
     <>
       <PageHeader
@@ -169,7 +183,7 @@ export default async function ReportsPage() {
       />
       <PageBody>
         <ReportsHub
-          templates={templates}
+          templates={general}
           saved={saved.map((s) => ({
             id: `saved:${s.id}`,
             name: s.name,

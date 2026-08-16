@@ -3,7 +3,8 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { assertBalanced, documentTotals, roundToCash } from '../documentMath'
-import { headroomRefusal } from '../creditRules'
+import { headroomRefusal, NO_SPEND } from '../creditRules'
+import { accountSpend } from './customerSpend'
 import { toAccountType } from '../accountTypes'
 import {
   adoptDocumentNumber,
@@ -455,7 +456,12 @@ export async function finaliseDocument(
   const accountTender = tenders.find((t) => t.type.postsToDebtor)
   if (accountTender) {
     if (!customerId) return { ok: false, error: 'Choose a customer for an account sale.' }
-    const refusal = await creditRefusal(siteId, customerId, accountTender.input.amount)
+    const refusal = await creditRefusal(
+      siteId,
+      customerId,
+      accountTender.input.amount,
+      document.documentDate,
+    )
     if (refusal) return { ok: false, error: refusal }
   }
 
@@ -1236,6 +1242,32 @@ export async function finaliseDocument(
       console.error('[webhooks] enqueue failed for', posted.documentNumber, error)
     }
 
+    /*
+     * Auto-email the invoice, post-commit and fail-soft.
+     *
+     * On this side of the commit for the same reason as loyalty and the
+     * webhook queue: the sale is already posted, the customer is already at
+     * the counter, and a mail server that is down or slow must never be the
+     * reason a shop cannot trade. A missing email is visible and re-sendable
+     * from the document screen; an un-postable sale is not recoverable.
+     *
+     * Awaited rather than fired and forgotten, because the process may be
+     * serverless and a floating promise would be killed when the response is
+     * returned — the send would simply not happen, silently, on exactly the
+     * deployments where nobody is watching a console.
+     */
+    if (customerId && !isCreditSale) {
+      try {
+        // Dynamic, like the webhook and loyalty hooks above: this pulls in the
+        // PDF renderer and the mail transport, which no till sale that is not
+        // auto-emailing should pay to load.
+        const { autoEmailInvoice } = await import('./invoiceEmail')
+        await autoEmailInvoice(siteId, actor, customerId, document.id)
+      } catch (error) {
+        console.error('[invoice] auto-email failed for', posted.documentNumber, error)
+      }
+    }
+
     return {
       ok: true,
       documentId: document.id,
@@ -1343,24 +1375,37 @@ async function creditRefusal(
   siteId: number,
   customerId: number,
   amount: number,
+  documentDate: string,
 ): Promise<string | null> {
   const row = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
     siteId,
-    'SELECT name, status, account_type, credit_limit, balance FROM customers WHERE id = ? LIMIT 1',
+    `SELECT name, status, account_type, credit_limit, daily_limit, monthly_limit, balance
+       FROM customers WHERE id = ? LIMIT 1`,
     [customerId],
   )
   if (!row) return 'That customer no longer exists.'
 
-  return headroomRefusal(
-    {
-      name: String(row.name),
-      status: String(row.status),
-      accountType: toAccountType(row.account_type),
-      creditLimit: toNum(row.credit_limit),
-      balance: toNum(row.balance),
-    },
-    amount,
-  )
+  const account = {
+    name: String(row.name),
+    status: String(row.status),
+    accountType: toAccountType(row.account_type),
+    creditLimit: toNum(row.credit_limit),
+    dailyLimit: toNum(row.daily_limit),
+    monthlyLimit: toNum(row.monthly_limit),
+    balance: toNum(row.balance),
+  }
+
+  // Measured against the document's OWN date, not today: a back-dated invoice
+  // belongs to the window it falls in, and charging it against this morning's
+  // daily limit would refuse it for spending that happened in another month.
+  // Skipped entirely where no cap is set — the common case, and a month of
+  // tenders is not worth summing to reach a conclusion that cannot change.
+  const spend =
+    account.dailyLimit > 0 || account.monthlyLimit > 0
+      ? await accountSpend(siteId, customerId, documentDate)
+      : NO_SPEND
+
+  return headroomRefusal(account, amount, spend)
 }
 
 /* ── Void ────────────────────────────────────────────────────────────────── */

@@ -165,6 +165,7 @@ export default async function MultiStoreTransfersPage({
         {unsettled.length > 0 && (
           <Card>
             <CardHeader
+              tone="default"
               title="Counted twice"
               description="The receiving store has these goods and the sending store still holds them. Group stock is overstated until each dispatch is settled."
             />
@@ -181,6 +182,7 @@ export default async function MultiStoreTransfersPage({
         {stale.length > 0 && (
           <Card>
             <CardHeader
+              tone="default"
               title="Late in transit"
               description="Dispatched over a week ago and still not received. Usually a lorry, sometimes a receiver who forgot — not an error, but the goods sit on the sender's books."
             />
@@ -203,6 +205,7 @@ export default async function MultiStoreTransfersPage({
         {/* ── Where stock actually flows ────────────────────────────────────── */}
         <Card>
           <CardHeader
+              tone="default"
             title="Where stock flowed"
             description="Counted once, from the sending store. A store that only ever sends is doing warehouse duty for the others."
           />
@@ -243,6 +246,7 @@ export default async function MultiStoreTransfersPage({
         {report.inTransit.length > 0 && (
           <Card>
             <CardHeader
+              tone="default"
               title="On the road now"
               description="Dispatched and not yet received. These sit on the sending store's books, which is correct — but it is capital nobody can sell."
             />

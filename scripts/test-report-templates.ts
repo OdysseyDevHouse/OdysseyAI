@@ -37,13 +37,62 @@ const ok = (label: string, cond: boolean, extra = '') => {
 /** The templates assume a full-access reader; per-capability hiding is run.ts's own test. */
 const canAll = () => true
 
+/**
+ * Every runnable spec: each template, plus each CUT of one that offers them.
+ *
+ * A variant's spec is not reachable from `TEMPLATES[].spec`, so iterating the
+ * templates alone would leave five of the six sales cuts unchecked — they would
+ * stop being verified against the live schema on the very day they stopped
+ * being top-level entries. A cut is a report somebody opens; it gets the same
+ * validation and the same live run as any other.
+ */
+function runnable() {
+  return TEMPLATES.flatMap((t) => {
+    const base = { id: t.id, spec: t.spec, name: t.name }
+    const cuts = (t.variants ?? []).map((v) => ({
+      id: `${t.id}?cut=${v.key}`,
+      spec: v.spec,
+      name: v.name,
+    }))
+    /* A template WITH cuts has its own spec duplicated by the default cut — see
+       the note on ReportTemplate.variants — so checking both would report every
+       result twice. The cuts are the truth; the base spec is only what renders
+       before anyone chooses, and the first cut is asserted equal to it below. */
+    return cuts.length > 0 ? cuts : [base]
+  })
+}
+
 async function main() {
-  console.log(`\n${TEMPLATES.length} built-in reports\n`)
+  const units = runnable()
+  console.log(`\n${TEMPLATES.length} built-in reports, ${units.length} runnable specs\n`)
 
   const ids = TEMPLATES.map((t) => t.id)
   ok('every template id is unique', new Set(ids).size === ids.length)
 
-  for (const t of TEMPLATES) {
+  /* A retired id must never collide with a live one, and every cut claiming one
+     must be resolvable — that is what keeps a shop's schedules and the public
+     API working after a consolidation. */
+  const legacyIds = TEMPLATES.flatMap((t) =>
+    (t.variants ?? []).map((v) => v.legacyId).filter((x): x is string => !!x),
+  )
+  ok(
+    'no retired id collides with a live template',
+    legacyIds.every((l) => !ids.includes(l)),
+    legacyIds.filter((l) => ids.includes(l)).join(', '),
+  )
+  ok('every retired id is unique', new Set(legacyIds).size === legacyIds.length)
+
+  /* The default cut IS the base spec: the report has to render before anyone has
+     chosen a cut, and if the two drift the first thing a reader sees is not the
+     thing the tab says is selected. */
+  for (const t of TEMPLATES.filter((x) => x.variants?.length)) {
+    ok(
+      `${t.id}: the first cut matches the report's own spec`,
+      JSON.stringify(t.variants![0].spec) === JSON.stringify(t.spec),
+    )
+  }
+
+  for (const t of units) {
     const source = getSource(t.spec.source)
     if (!source) {
       ok(`${t.id}: source exists`, false, `no such source: ${t.spec.source}`)
@@ -51,7 +100,8 @@ async function main() {
     }
 
     // ── nothing silently dropped ────────────────────────────────────────────
-    const checked = validateSpec(templateSpec(t))
+    const runSpec = { ...t.spec, name: t.name }
+    const checked = validateSpec(runSpec)
     if (!checked.ok) {
       ok(`${t.id}: spec is valid`, false, checked.error)
       continue
@@ -87,7 +137,7 @@ async function main() {
 
     // ── the SQL actually runs ───────────────────────────────────────────────
     try {
-      const result = await runBuilderSpec(SITE, templateSpec(t), canAll, { limit: 5 })
+      const result = await runBuilderSpec(SITE, runSpec, canAll, { limit: 5 })
       ok(
         `${t.id}: runs (${result.rows.length} row${result.rows.length === 1 ? '' : 's'}, ${result.columns.length} cols)`,
         result.columns.length > 0,

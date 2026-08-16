@@ -18,7 +18,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ColumnsIcon, Check, DragHandle } from './icons'
-import { buttonClass } from './styles'
+import { buttonClass, type ButtonSize } from './styles'
 
 /**
  * Which columns a wide table shows.
@@ -125,6 +125,7 @@ export function ColumnPicker({
   order,
   label = 'Columns',
   align = 'right',
+  size = 'sm',
 }: {
   columns: readonly ColumnOption[]
   /** The ids currently shown. Locked ids need not be in here. */
@@ -151,6 +152,16 @@ export function ColumnPicker({
   order?: readonly string[]
   label?: string
   align?: 'left' | 'right'
+  /**
+   * Trigger height, matching Button/Menu.
+   *
+   * `sm` (32px) is the default because this usually sits in a LIST toolbar,
+   * among the inline table actions that size is for. A report's toolbar is a row
+   * of full-height controls — a period Select, an Export menu — and a 32px
+   * button in that row reads as misaligned rather than as deliberately smaller,
+   * so those callers pass 'md'.
+   */
+  size?: ButtonSize
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -244,7 +255,7 @@ export function ColumnPicker({
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
-        className={buttonClass({ variant: 'ghost', size: 'sm' })}
+        className={buttonClass({ variant: 'ghost', size })}
       >
         <ColumnsIcon size={15} />
         {label}

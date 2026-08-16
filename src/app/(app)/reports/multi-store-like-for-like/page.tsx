@@ -177,6 +177,7 @@ export default async function MultiStoreLikeForLikePage({
 
         <Card>
           <CardHeader
+              tone="default"
             title="By store"
             description="Finalised invoices and credit sales, VAT inclusive. The prior window is the same calendar dates one year earlier."
           />

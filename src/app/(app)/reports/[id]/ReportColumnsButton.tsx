@@ -80,6 +80,10 @@ export default function ReportColumnsButton({
       columns={options}
       visible={visible}
       order={order}
+      /* Full height, to sit level with the period Select and the Export menu
+         either side of it. The picker defaults to the shorter inline-table size,
+         which is right in a list toolbar and wrong in this row. */
+      size="md"
       label={pending ? 'Saving…' : 'Columns'}
       onChange={(next) => save(order.filter((key) => next.has(key)))}
       onReorder={(nextOrder) => save(nextOrder.filter((key) => visible.has(key)))}

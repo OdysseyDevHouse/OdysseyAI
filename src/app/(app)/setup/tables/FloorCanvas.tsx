@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { FeatureGlyph, TableGlyph } from '@/components/ui'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import type { PosTable } from '@/lib/site/posTables'
@@ -16,6 +16,7 @@ import {
   type Rect,
   type TableShape,
 } from '@/lib/site/floorGeometry'
+import { useFloorViewport } from '@/lib/site/useFloorViewport'
 import type { Geometry, GeometryChange } from './useFloorHistory'
 
 /**
@@ -119,6 +120,7 @@ export function FloorCanvas({
   onSelectionChange,
   onCommit,
   onOpenItem,
+  tall = false,
 }: {
   room: FloorRoom
   tables: PosTable[]
@@ -132,7 +134,37 @@ export function FloorCanvas({
   onCommit: (changes: GeometryChange[]) => void
   /** A click on an item while NOT editing. */
   onOpenItem: (key: string) => void
+  /** Give the canvas more height — set by the full-screen shell. */
+  tall?: boolean
 }) {
+  /*
+   * Pan and pinch — the same hook the till uses, so the gesture is identical on both.
+   *
+   * DISABLED IN EDIT MODE. There, a drag on the floor draws a marquee and a drag on a
+   * tile moves it; letting the viewport also claim the gesture is how a canvas ends up
+   * fighting the user. Out of edit mode nothing else wants a drag, so panning is free.
+   * The zoom buttons work in both.
+   */
+  const viewport = useFloorViewport({
+    enabled: !editing,
+    /*
+     * Ctrl (or Cmd) + drag pans while EDITING.
+     *
+     * Without it, working zoomed in meant leaving edit mode to move the floor and coming
+     * back — for every corner of a big room. The modifier is what separates the two
+     * gestures: plain drag still moves a table or draws a marquee, and holding Ctrl says
+     * "move the floor instead".
+     *
+     * Ctrl+click on a TILE still adds to the selection — see `begin`, which runs first
+     * and does not let the press reach here.
+     */
+    panWith: (e) => editing && (e.ctrlKey || e.metaKey),
+  })
+
+  /* SVG ids are document-global, and the till renders a canvas of its own — two grids
+     sharing one id means the second points at whichever pattern rendered last. */
+  const gridId = useId().replace(/:/g, '')
+
   const surfaceRef = useRef<HTMLDivElement>(null)
   const drag = useRef<DragState | null>(null)
   const [preview, setPreview] = useState<Record<string, Geometry>>({})
@@ -198,6 +230,12 @@ export function FloorCanvas({
    * canvas that reflows mid-gesture (the toolbar appearing when a second table joins the
    * selection is exactly this) would otherwise apply a stale scale and the table would
    * jump away from the finger.
+   *
+   * This is also what makes dragging correct while ZOOMED, for free:
+   * `getBoundingClientRect` reports the box AFTER the viewport's transform, so a room
+   * scaled to 2× measures twice as wide and the division lands on the same room unit.
+   * Anything that cached the untransformed size, or computed units from `room.width`
+   * alone, would send tables flying at any zoom but 1.
    */
   const toUnits = useCallback(
     (e: { clientX: number; clientY: number }) => {
@@ -232,6 +270,10 @@ export function FloorCanvas({
        *
        * ORDER MATTERS: the array is append-only, so selectedKeys[0] stays the first thing
        * clicked. That is the reference the align and match tools measure against.
+       *
+       * Ctrl here still means "add to selection" and NOT "pan", even though Ctrl-drag on
+       * the empty floor pans: the `stopPropagation` above keeps this press from ever
+       * reaching the viewport. Ctrl on a tile adds it; Ctrl on the floor moves the floor.
        */
       if (e.shiftKey || e.ctrlKey || e.metaKey) {
         onSelectionChange(
@@ -281,6 +323,10 @@ export function FloorCanvas({
   const beginMarquee = useCallback(
     (e: React.PointerEvent) => {
       if (!editing || e.button !== 0) return
+      /* Ctrl-drag on the floor PANS rather than selecting — the viewport claims it. This
+         handler sits on the room and the viewport's on its parent, so the room sees the
+         press first and has to stand down explicitly. */
+      if (e.ctrlKey || e.metaKey) return
       const point = toUnits(e)
       drag.current = {
         mode: 'marquee',
@@ -437,6 +483,31 @@ export function FloorCanvas({
     [preview, onCommit],
   )
 
+  /*
+   * The canvas's rendered size, watched.
+   *
+   * Only used to work out how much a room unit is stretched on screen (see `unitAspect`),
+   * which is a RATIO of the two axes — so the viewport's uniform `scale()` cancels out of
+   * it and zooming cannot skew the rim. (`ResizeObserver` reports the untransformed
+   * content box in any case; the ratio would hold either way.)
+   * Observed rather than read once, because the pane resizes with the window and with the
+   * toolbar appearing — and a stale measurement would draw the rim correctly at one width
+   * and wrongly at every other.
+   */
+  const [canvasBox, setCanvasBox] = useState<{ width: number; height: number } | null>(null)
+  useEffect(() => {
+    const node = surfaceRef.current
+    if (!node) return
+    const observer = new ResizeObserver(([entry]) => {
+      const box = entry.contentRect
+      if (box.width > 0 && box.height > 0) {
+        setCanvasBox({ width: box.width, height: box.height })
+      }
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+
   /* A pointer lost to a system gesture or an alt-tab must not leave the canvas thinking a
      drag is still running — the preview would stick at an offset nothing would reset. */
   useEffect(() => {
@@ -457,54 +528,174 @@ export function FloorCanvas({
 
   const pct = (value: number, of: number) => `${(value / of) * 100}%`
 
+  /*
+   * How much height is actually left below the pane, in the full-screen shell.
+   *
+   * Re-measured on resize AND whenever the toolbar above changes size — the align tools
+   * appear when a second table is selected, the unsaved-changes callout appears on the
+   * first drag, and both push the canvas down. A height fixed at mount would leave the
+   * pane overflowing by exactly the height of whatever appeared.
+   *
+   * `undefined` until measured, so the first paint has no height rather than a wrong one
+   * that visibly snaps.
+   */
+  const [availableHeight, setAvailableHeight] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (!tall) return
+    const node = viewport.surfaceRef.current
+    if (!node) return
+
+    /*
+     * Measured against the SCROLLING CONTAINER, not the window.
+     *
+     * `window.innerHeight` looked equivalent — the overlay is `fixed inset-0` — but it is
+     * not: it ignores the overlay's own padding and every ancestor's, and it cannot see a
+     * container that is shorter than the window for any other reason. Walking up to the
+     * nearest element that actually bounds the height is the honest question, and it is
+     * the one that holds if this is ever embedded somewhere else.
+     */
+    const container = node.closest('.flex.min-h-0.flex-1') ?? node.parentElement
+    if (!container) return
+
+    const measure = () => {
+      const top = node.getBoundingClientRect().top
+      const bottom = container.getBoundingClientRect().bottom
+      /* A floor plan below ~240px is unusable; better to overflow slightly and be told
+         about it than to render a sliver. */
+      setAvailableHeight(`${Math.round(Math.max(240, bottom - top))}px`)
+    }
+    measure()
+
+    /*
+     * Watched on BOTH, and for different reasons: the container changes with the window,
+     * and the toolbar above the pane changes height on its own — the align tools appear
+     * when a second table is selected, the unsaved-changes callout on the first drag.
+     * Either one moves the pane's top without the other moving at all.
+     */
+    const observer = new ResizeObserver(measure)
+    observer.observe(container)
+    if (node.parentElement) observer.observe(node.parentElement)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [tall, viewport.surfaceRef])
+
+  /*
+   * How wide one room unit is on screen, relative to how tall — the canvas's own stretch.
+   *
+   * Every tile is positioned and sized in PERCENTAGES of the room, so if the canvas
+   * element is not laid out at exactly the room's aspect ratio, a square table renders
+   * as a rectangle. `TableGlyph` needs this to draw an even rim: without it a 10×10 table
+   * looks square to the glyph, no correction is applied, and the band comes out visibly
+   * thicker on the left and right. Measured rather than assumed, because `maxWidth` and
+   * the surrounding layout can both stop the box reaching its nominal ratio.
+   */
+  const unitAspect = useMemo(() => {
+    if (!canvasBox) return 1
+    const byUnit = canvasBox.width / room.width / (canvasBox.height / room.height)
+    return Number.isFinite(byUnit) && byUnit > 0 ? byUnit : 1
+  }, [canvasBox, room.width, room.height])
+
   return (
     <div
-      ref={surfaceRef}
-      /* `till-surface` matches what the POS floor view wears, so the designer and the
-         screen it designs read as the same room. */
-      className={`till-surface relative overflow-hidden rounded-card border-2 ${
-        editing ? 'border-brand/40 bg-surface-2' : 'border-border bg-surface-2'
-      }`}
+      /* ── The VIEWPORT ─────────────────────────────────────────────────────
+         Pan and pinch out of edit mode, exactly as the till does. In edit mode the
+         viewport is disabled and this is an inert frame: a drag there moves a TABLE, and
+         two things claiming one gesture is how a canvas ends up fighting the user. The
+         zoom BUTTONS stay live in both, so a manager can still work in close. */
+      ref={viewport.surfaceRef}
+      {...viewport.handlers}
+      /*
+       * The height is MEASURED, not assumed.
+       *
+       * It used to be a hard `74vh` in full screen, which ignored its container entirely:
+       * on any window shorter than that assumed, the pane overflowed and put a horizontal
+       * scrollbar under the plan. `availableHeight` instead measures from the pane's own
+       * top to the bottom of the window, so it shrinks and grows with the browser.
+       *
+       * Measured rather than `flex-1`, because the wrapper chain above is a plain block
+       * holding toolbars, callouts and the tray — making every one of those a flex child
+       * to pass a height down would be a lot of `shrink-0` in places that have no other
+       * reason for it, and one missing would collapse the canvas silently.
+       *
+       * In the PAGE it stays 58vh: a card in a scrolling column genuinely has no
+       * container height to fill, and a viewport-relative size is the right answer there.
+       */
+      className="relative w-full overflow-hidden"
       style={{
-        aspectRatio: `${room.width} / ${room.height}`,
-        /*
-         * HEIGHT drives it and the width follows from the ratio — NOT `w-full` with a
-         * maxHeight, which is the trap the till's floor view documents: an aspect ratio
-         * with only a maximum has nothing to compute from, so width wins and a 100×70
-         * room stands ~690px tall with the rest of the plan below the fold. A floor plan
-         * you have to scroll has lost the only thing a plan is for, which is seeing the
-         * whole room at once.
-         *
-         * `maxWidth` then keeps a very wide room inside the pane rather than the other
-         * way round.
-         */
-        height: '58vh',
-        maxWidth: '100%',
-        margin: '0 auto',
-        /* Only while editing: the browser's own pan/zoom must not fight a drag, but out of
-           edit mode a touch should still scroll the page. */
-        touchAction: editing ? 'none' : undefined,
+        height: tall ? availableHeight : '58vh',
+        touchAction: 'none',
+        /* Grabbing whenever a pan is actually running, in EITHER mode — a Ctrl-drag in
+           edit mode should feel like the pan it is. Out of edit mode the open hand also
+           shows at rest, because everything there is pannable. */
+        cursor: viewport.panning ? 'grabbing' : editing ? undefined : 'grab',
       }}
-      /* move/up live HERE rather than on each tile, because the canvas holds pointer
-         capture — see the header note. */
-      onPointerDown={beginMarquee}
-      onPointerMove={move}
-      onPointerUp={end}
-      onPointerCancel={end}
     >
-      {/* A faint grid, so a manager can line things up by eye even before a guide
-          appears. Two gradients rather than an image: it scales with the canvas and
-          needs no asset. */}
       <div
-        aria-hidden
-        data-kit-ok
-        className="pointer-events-none absolute inset-0 opacity-[0.14]"
+        ref={surfaceRef}
+        /* `till-surface` matches what the POS floor view wears, so the designer and the
+           screen it designs read as the same room. */
+        className={`till-surface absolute left-1/2 top-1/2 overflow-hidden rounded-card border-2 ${
+          editing ? 'border-brand/40 bg-surface-2' : 'border-border bg-surface-2'
+        }`}
         style={{
-          backgroundImage:
-            'linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)',
-          backgroundSize: `${(10 / room.width) * 100}% ${(10 / room.height) * 100}%`,
+          transform: `translate(${viewport.view.x}px, ${viewport.view.y}px) translate(-50%, -50%) scale(${viewport.view.scale})`,
+          transformOrigin: 'center center',
+          transition: viewport.panning ? undefined : 'transform 140ms ease-out',
+          /*
+           * The room's own aspect ratio, sized to FIT the viewport at scale 1 — so
+           * "zoomed all the way out" is the whole room on screen, which is where both
+           * screens start and what Reset returns to. Everything past that is the
+           * transform's job now, not the layout's.
+           */
+          aspectRatio: `${room.width} / ${room.height}`,
+          height: '100%',
+          maxWidth: '100%',
         }}
-      />
+        /* move/up live HERE rather than on each tile, because the canvas holds pointer
+           capture — see the header note. */
+        onPointerDown={beginMarquee}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+      >
+      {/*
+        A DASHED grid, so a manager can line things up by eye even before a guide appears.
+        Dashed rather than solid because a solid lattice competes with the furniture drawn
+        on top of it — the eye reads continuous lines as part of the plan, where a broken
+        one stays background. Same reason graph paper and design tools use it.
+
+        An SVG pattern rather than the two CSS gradients this replaced: a gradient can
+        draw a line but not break it, so dashes were not expressible at all. The pattern
+        is sized in ROOM UNITS (10 per cell), so the grid stays square and matches the
+        snapping regardless of the room's proportions.
+      */}
+      <svg
+        aria-hidden
+        className="pointer-events-none absolute inset-0 h-full w-full text-border-strong opacity-90"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${room.width} ${room.height}`}
+      >
+        <defs>
+          <pattern id={`${gridId}-cell`} width={10} height={10} patternUnits="userSpaceOnUse">
+            {/* Only the top and left edge of each cell — drawing all four would double
+                every interior line and read twice as heavy. */}
+            <path
+              d="M 10 0 L 0 0 0 10"
+              fill="none"
+              stroke="currentColor"
+              /* A hairline at any zoom — `non-scaling-stroke` means this is PIXELS, not
+                 room units, so the grid stays one pixel whether zoomed in or out. */
+              strokeWidth={1}
+              strokeDasharray="3 3"
+              vectorEffect="non-scaling-stroke"
+            />
+          </pattern>
+        </defs>
+        <rect width={room.width} height={room.height} fill={`url(#${gridId}-cell)`} />
+      </svg>
 
       {/* Guides sit above the floor but below the items, so nothing hides the line
           explaining where it snapped. */}
@@ -584,6 +775,7 @@ export function FloorCanvas({
                 rotation={geo.rotation}
                 selected={isSelected}
                 geo={geo}
+                unitAspect={unitAspect}
               />
             ) : (
               <FeatureFace
@@ -629,6 +821,44 @@ export function FloorCanvas({
           </div>
         )
       })}
+      </div>
+
+      {/* ── Zoom controls ────────────────────────────────────────────────────
+          Live in BOTH modes, unlike the pan gesture: a manager arranging a crowded
+          corner needs to zoom in and then keep dragging tables, and taking the buttons
+          away in edit mode would make close work impossible on a big floor. */}
+      <div className="absolute bottom-3 right-3 z-30 flex flex-col gap-1">
+        <button
+          type="button"
+          data-kit-ok
+          aria-label="Zoom in"
+          onClick={() => viewport.zoomBy(1.3)}
+          className="flex h-8 w-8 items-center justify-center rounded-control border border-border bg-surface text-ink shadow-card transition hover:bg-surface-2"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          data-kit-ok
+          aria-label="Zoom out"
+          onClick={() => viewport.zoomBy(1 / 1.3)}
+          className="flex h-8 w-8 items-center justify-center rounded-control border border-border bg-surface text-ink shadow-card transition hover:bg-surface-2"
+        >
+          −
+        </button>
+        {viewport.moved && (
+          <button
+            type="button"
+            data-kit-ok
+            aria-label="Fit the whole room"
+            title="Fit the whole room"
+            onClick={viewport.reset}
+            className="flex h-8 w-8 items-center justify-center rounded-control border border-border bg-surface text-[10px] font-semibold text-ink shadow-card transition hover:bg-surface-2"
+          >
+            FIT
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -643,6 +873,7 @@ function TableFace({
   rotation,
   selected,
   geo,
+  unitAspect,
 }: {
   label: string
   sub: string
@@ -651,6 +882,8 @@ function TableFace({
   rotation: number
   selected: boolean
   geo: Geometry
+  /** How wide a room unit renders relative to its height — see the canvas's note. */
+  unitAspect: number
 }) {
   /* Laid out from the DRAWN size, not the preset's: a six-top dragged long and narrow
      should move its chairs to the long edges, which is the whole reason seatLayout takes
@@ -669,7 +902,16 @@ function TableFace({
         selected ? 'text-brand' : 'text-ink-2'
       }`}
     >
-      <TableGlyph shape={shape} seats={chairs} className="absolute inset-0 h-full w-full" />
+      <TableGlyph
+        shape={shape}
+        seats={chairs}
+        /* The drawn size in SCREEN proportions, not room units: the canvas maps the room
+           onto a box that need not share its aspect ratio, so a 10×10-unit table is not
+           square on screen. Passing raw units left the rim uncorrected on exactly those
+           tables — measurably 1.59× thicker on the sides here. */
+        footprint={{ width: geo.w * unitAspect, height: geo.h }}
+        className="absolute inset-0 h-full w-full"
+      />
 
       {/* The BOX rotates but the LABEL does not — a table turned 90° against a diagonal
           wall should still have a code you can read without tilting your head. Same rule

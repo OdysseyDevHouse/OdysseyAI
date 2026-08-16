@@ -200,7 +200,7 @@ export default async function MultiStoreMixPage({
             {/* Share of the group, which the table's own columns cannot show. */}
             {report.total > 0 && (
               <Card>
-                <CardHeader title={meta.shareTitle} description={meta.shareHint} />
+                <CardHeader tone="default" title={meta.shareTitle} description={meta.shareHint} />
                 <CardBody>
                   <div className="flex flex-col gap-3">
                     {report.lines.slice(0, 12).map((line) => (
@@ -242,7 +242,7 @@ export default async function MultiStoreMixPage({
             )}
 
             <Card>
-              <CardHeader title={meta.tableTitle} description={meta.tableHint} />
+              <CardHeader tone="default" title={meta.tableTitle} description={meta.tableHint} />
               <StoreColumnTable
                 columns={report.sites.map((s) => ({ siteId: s.siteId, name: s.name }))}
                 rows={rows}

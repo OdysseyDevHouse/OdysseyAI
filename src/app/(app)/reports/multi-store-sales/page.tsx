@@ -168,6 +168,7 @@ export default async function MultiStoreSalesPage({
         ) : (
           <Card>
             <CardHeader
+              tone="default"
               title={grain === 'month' ? 'By month' : 'By day'}
               description="Finalised invoices and credit sales, VAT inclusive, by document date."
               action={

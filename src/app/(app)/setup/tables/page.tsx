@@ -5,7 +5,7 @@ import { PageHeader, PageBody } from '@/components/ui'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
 import { listVisitTypes } from '@/lib/site/visitTypes'
 import TablesClient from './TablesClient'
-import FloorDesigner from './FloorDesigner'
+import { FloorPlanSection } from './FloorPlanSection'
 import VisitTypesCard from './VisitTypesCard'
 
 export const dynamic = 'force-dynamic'
@@ -53,7 +53,7 @@ export default async function TablesPage() {
             drawing of them. A counter shop has no visits to type. */}
         {hospitality && <VisitTypesCard types={visitTypes} />}
         {hospitality && (
-          <FloorDesigner tables={tables} rooms={rooms} features={features} />
+          <FloorPlanSection tables={tables} rooms={rooms} features={features} />
         )}
       </PageBody>
     </>

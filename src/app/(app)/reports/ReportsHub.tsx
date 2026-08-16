@@ -63,6 +63,7 @@ export default function ReportsHub({
   canBuild,
   canSchedule,
   canUseAi,
+  emptyHint,
 }: {
   templates: HubItem[]
   saved: HubItem[]
@@ -70,6 +71,12 @@ export default function ReportsHub({
   canBuild: boolean
   canSchedule: boolean
   canUseAi: boolean
+  /**
+   * What to say when there is nothing at all to list. The Job cards cut needs a
+   * different sentence from the main hub's — "your role grants no reports" is
+   * the wrong answer for somebody who simply has no job reports.
+   */
+  emptyHint?: string
 }) {
   const [search, setSearch] = useState('')
   const [view, setView] = useState<ViewMode>('grid')
@@ -126,7 +133,10 @@ export default function ReportsHub({
       <Card>
         <EmptyState
           title="No reports available"
-          hint="Your role does not include access to any report data yet. An owner can grant this under Setup → Roles."
+          hint={
+            emptyHint ??
+            'Your role does not include access to any report data yet. An owner can grant this under Setup → Roles.'
+          }
           icon={<Icons.BarChart size={28} strokeWidth={1.75} />}
         />
       </Card>

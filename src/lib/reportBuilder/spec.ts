@@ -40,6 +40,16 @@ export type PeriodKey =
   | 'last90'
   | 'thisYear'
   | 'lastYear'
+  /**
+   * This year and the four before it.
+   *
+   * The only period spanning more than one year, and it exists because a
+   * year-by-year report has nothing to say inside one: grouping by year over
+   * "this year" is a single row. Bounded at five rather than unbounded, because
+   * "everything on file" over a shop trading since 2009 is a table scan to
+   * render a chart nobody reads past the recent end of.
+   */
+  | 'last5Years'
   | 'custom'
 
 export interface SpecPeriod {
@@ -61,6 +71,7 @@ export const PERIOD_LABELS: Record<PeriodKey, string> = {
   last90: 'Last 90 days',
   thisYear: 'This year',
   lastYear: 'Last year',
+  last5Years: 'Last 5 years',
   custom: 'Specific dates',
 }
 
@@ -77,6 +88,7 @@ export const PERIOD_KEYS: PeriodKey[] = [
   'last90',
   'thisYear',
   'lastYear',
+  'last5Years',
   'custom',
 ]
 
@@ -147,6 +159,11 @@ export function resolvePeriod(
       const y = now.getFullYear() - 1
       return { from: iso(new Date(y, 0, 1)), to: iso(new Date(y, 11, 31)) }
     }
+    /* Runs to TODAY, not to the end of the current year: every other period
+       stops at today, and a range ending in the future would make the report
+       claim a span it has no data for. */
+    case 'last5Years':
+      return { from: iso(new Date(now.getFullYear() - 4, 0, 1)), to: today }
     case 'custom':
       return {
         from: validIso(period?.from) ?? iso(new Date(now.getFullYear(), now.getMonth(), 1)),

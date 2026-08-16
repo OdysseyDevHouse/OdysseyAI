@@ -32,6 +32,10 @@ export {
   RefreshCw as Refresh,
   Printer,
   Copy,
+  // Open a workspace edge to edge, and come back out of it. Used by the floor-plan
+  // designer, whose canvas is unusable at the size a page column allows.
+  Maximize2 as Maximize,
+  Minimize2 as Minimize,
   // Step back and forward through an edit history. Distinct from `Reverse`
   // above, which means reversing a posted DOCUMENT — a business act, not an
   // editing one — and must not be confused with it.

@@ -147,6 +147,7 @@ export default async function MultiStoreIncomeStatementPage({
         ) : (
           <Card>
             <CardHeader
+              tone="default"
               title="Profit and loss, by store"
               description="Accounts are matched across stores by their code. A dash means the account does not exist at that store."
             />
