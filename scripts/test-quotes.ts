@@ -98,6 +98,51 @@ async function main() {
       String(asDocument?.totalIncl))
   ok('  and no number until issued', asDocument?.documentNumber === null)
 
+  /*
+   * ── SAVING A QUOTE MUST NOT TURN IT INTO AN INVOICE ──────────────────────
+   *
+   * The quote screen renders the INVOICE editor, which saves through
+   * saveInvoiceAction — and that used to pass `docType: 'invoice'` outright.
+   * saveDraft writes doc_type on UPDATE as well as INSERT, so every save of a
+   * quote silently rewrote it: the quote screen then redirected to invoicing,
+   * getQuote stopped finding it, and its validity and outcome were orphaned.
+   *
+   * Caught in the browser, fixed by reading the type off the stored document.
+   *
+   * NOTE ON WHAT THIS CAN AND CANNOT REACH: saveInvoiceAction is a 'use server'
+   * action and needs a request context, so this cannot call the thing that was
+   * actually broken. What it pins is the layer underneath — that an UPDATE
+   * carrying docType 'quote' keeps it, and that getQuote still finds the row.
+   * The real path is covered by scripts/probe-quote-savebug.mjs, which drives
+   * the Save button in a browser. Both exist because neither is sufficient.
+   */
+  const resaved = await saveDraft(
+    SITE,
+    actor,
+    {
+      docType: 'quote',
+      customerName: `Quote Customer ${stamp}`,
+      lines: [
+        {
+          productCode: `QS${stamp}`,
+          description: 'Quoted service',
+          productType: 'service',
+          qty: 2,
+          unitPriceIncl: 575,
+          vatRatePct: 15,
+          unitCostExcl: 200,
+        },
+      ],
+    },
+    draft.id,
+  )
+  ok('  re-saving keeps it a quote', resaved.ok, resaved.ok ? '' : resaved.error)
+  const afterResave = await getDocument(SITE, draft.id)
+  ok('  doc_type survives an update', afterResave?.docType === 'quote',
+      String(afterResave?.docType))
+  ok('  and getQuote still finds it', (await getQuote(SITE, draft.id)) !== null,
+      'a rewritten doc_type makes a quote vanish from its own screen')
+
   console.log('\n── Issuing ─────────────────────────────────────────────────\n')
 
   await setValidUntil(SITE, actor, draft.id, daysFromNow(30))

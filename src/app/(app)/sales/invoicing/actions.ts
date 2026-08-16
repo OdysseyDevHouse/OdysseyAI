@@ -153,11 +153,32 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
    */
   const terminal = payload.deviceId ? await terminalForDevice(siteId, payload.deviceId) : null
 
+  /*
+   * ── THE DOCUMENT KEEPS ITS OWN TYPE ──────────────────────────────────────
+   *
+   * This used to pass `docType: 'invoice'` outright, and `saveDraft` writes
+   * `doc_type` on UPDATE as well as INSERT — so saving a QUOTE through this
+   * editor rewrote it into an invoice. The quote screen then redirected to
+   * invoicing on the next load, `getQuote` (which filters on doc_type) stopped
+   * finding it, and its validity, outcome and lost-reason were orphaned on a
+   * row nothing would ever read as a quote again.
+   *
+   * MEASURED, not reasoned: probe-quote-savebug.mjs drove the real Save button
+   * on a real quote and read doc_type back as 'invoice'.
+   *
+   * Read from the stored document rather than taken from the payload. The
+   * editor knows which kind it is showing and could send it, but then a crafted
+   * request could turn an invoice into a quote — and the server already has to
+   * load the document to check it is editable, so the honest answer is free.
+   */
+  const existing = await getDocument(siteId, payload.documentId)
+  if (!existing) return { ok: false, error: 'That document no longer exists.' }
+
   const result = await saveDraft(
     siteId,
     actor,
     {
-      docType: 'invoice',
+      docType: existing.docType,
       documentDate: payload.documentDate,
       customerId: payload.customerId,
       customerName: payload.customerName,
