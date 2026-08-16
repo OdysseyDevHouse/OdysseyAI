@@ -82,6 +82,12 @@ async function makeInvoice(value: number, docType: 'invoice' | 'quote' = 'invoic
       },
     ],
   })
+  /* saveDraft returns a union — a refusal has no id. Narrowed rather than
+     asserted, so a seeding failure says what went wrong instead of throwing
+     "cannot read property id of undefined" thirty lines later. */
+  if (!('id' in draft)) {
+    throw new Error(`Could not seed a test document: ${(draft as { error: string }).error}`)
+  }
   madeDocuments.push(draft.id)
   return draft.id
 }
