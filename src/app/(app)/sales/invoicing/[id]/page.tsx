@@ -85,17 +85,23 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
 
       {/* Money already paid against this invoice. Below the grid: the lines are
           what somebody opened this screen to work on, and the deposit is what
-          they check once they know what the invoice is worth. */}
-      <DepositPanel
-        documentId={documentId}
-        docType="invoice"
-        status={document.status}
-        totalIncl={deposits.totalIncl}
-        held={deposits.held}
-        entries={deposits.entries}
-        hasCustomer={document.customerId !== null}
-        canEdit={can(capabilities, 'sales.edit') && isEditable(document.status)}
-      />
+          they check once they know what the invoice is worth.
+
+          In a PageBody like every other section on this page — it carries the
+          page gutter and the gap between sections, so a bare Card here sits
+          flush against the editor above it and runs to the window edges. */}
+      <PageBody>
+        <DepositPanel
+          documentId={documentId}
+          docType="invoice"
+          status={document.status}
+          totalIncl={deposits.totalIncl}
+          held={deposits.held}
+          entries={deposits.entries}
+          hasCustomer={document.customerId !== null}
+          canEdit={can(capabilities, 'sales.edit') && isEditable(document.status)}
+        />
+      </PageBody>
 
       {/* The signed delivery note. This is the answer when a customer says the
           delivery was short — the exact dispute credit control now tracks. */}

@@ -111,21 +111,28 @@ export default async function QuoteEditorPage({
           as on an invoice: the lines are the work, the deposit is the check.
 
           Editable while the quote is still open — once it is accepted the
-          deposit belongs to the invoice it became, and is managed there. */}
-      <DepositPanel
-        documentId={documentId}
-        docType="quote"
-        status={document.status}
-        totalIncl={deposits.totalIncl}
-        held={deposits.held}
-        entries={deposits.entries}
-        hasCustomer={document.customerId !== null}
-        canEdit={
-          can(capabilities, 'sales.edit') &&
-          isEditable(document.status) &&
-          quote.outcome === 'open'
-        }
-      />
+          deposit belongs to the invoice it became, and is managed there.
+
+          The gutter matches QuotePanel above rather than using PageBody, so the
+          two cards on this screen line up; pb-10 because this is the last thing
+          on the page and a card flush against the window bottom reads as cut
+          off. */}
+      <div className="px-6 pt-5 pb-10">
+        <DepositPanel
+          documentId={documentId}
+          docType="quote"
+          status={document.status}
+          totalIncl={deposits.totalIncl}
+          held={deposits.held}
+          entries={deposits.entries}
+          hasCustomer={document.customerId !== null}
+          canEdit={
+            can(capabilities, 'sales.edit') &&
+            isEditable(document.status) &&
+            quote.outcome === 'open'
+          }
+        />
+      </div>
     </>
   )
 }
