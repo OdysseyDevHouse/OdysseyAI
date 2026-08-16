@@ -198,9 +198,48 @@ export async function finaliseDocument(
     if (!type.isActive) return { ok: false, error: `${type.name} is not available.` }
     tenders.push({ input: tender, type })
   }
-  if (tenders.length === 0) return { ok: false, error: 'Take a payment before finalising.' }
 
   const customerId = input.customerId ?? document.customerId ?? null
+
+  /*
+   * ── A DEPOSIT ALREADY PAID IS A TENDER, NOT A DISCOUNT (172) ──────────────
+   *
+   * Money held against this document was handed over on an earlier day and
+   * counted in that day's cash-up. So it settles the sale exactly like the
+   * EXCHANGE tender settles the netted half of an exchange: added to the
+   * tender list BEFORE the check below, so `check.outstanding` reaches zero
+   * without the cashier keying money the customer is not handing over now.
+   *
+   * Reducing `netPayable` instead — the way a voucher does — would be wrong.
+   * A voucher reduces what is owed because no money ever existed; a deposit is
+   * real cash that was received, and the invoice has to say it was paid or the
+   * customer's copy shows a total nobody settled.
+   *
+   * Capped at the document total by `tenderAtFinalise`, and `allows_change = 0`
+   * on the tender row is the second guard: a deposit larger than the sale must
+   * never hand back cash from a drawer that never received it.
+   *
+   * Added only when the caller has not already sent one, so the offline sync
+   * path — which replays the tenders it captured at the till — is untouched.
+   */
+  const depositTender = await getTenderByCode(siteId, 'DEPOSIT')
+  let depositApplied = 0
+  if (depositTender?.isActive && !tenders.some((t) => t.type.code === 'DEPOSIT')) {
+    const { tenderForDocument } = await import('./deposits')
+    const held = await tenderForDocument(siteId, document.id)
+    if (held.amount > 0) {
+      depositApplied = held.amount
+      tenders.push({
+        input: { tenderTypeId: depositTender.id, amount: held.amount, reference: null },
+        type: depositTender,
+      })
+    }
+  }
+
+  /* Checked AFTER the deposit is added, not before: a sale covered in full by
+     money already paid is settled, and refusing it as "take a payment first"
+     would leave the cashier keying a tender the customer does not owe. */
+  if (tenders.length === 0) return { ok: false, error: 'Take a payment before finalising.' }
 
   // Which of the tenders spend a loyalty balance, and which vouchers were
   // scanned. Resolved before the tender arithmetic because a voucher changes
@@ -784,6 +823,29 @@ export async function finaliseDocument(
               : '0.0000',
             tender.reference?.trim() || null,
           ] as never,
+        )
+      }
+
+      /*
+       * Deposits consumed (172), on THIS connection.
+       *
+       * Written inside the transaction so a deposit can never be recorded as
+       * spent by a sale that then rolls back — the customer would have paid
+       * money the system had forgotten and the sale would still be owing.
+       *
+       * The row is negative with kind 'applied', so Σ amount falls to zero and
+       * nothing is still held, while what was taken and when stays readable on
+       * the document afterwards.
+       */
+      if (depositApplied > 0) {
+        const { applyDepositsTx } = await import('./deposits')
+        await applyDepositsTx(
+          tx,
+          actor,
+          document.id,
+          depositApplied,
+          shiftId,
+          document.terminalId ?? null,
         )
       }
 

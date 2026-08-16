@@ -111,6 +111,31 @@ export const SETTING_DEFAULTS = {
    */
   pos_mode: 'retail',
   /**
+   * How many times a cashier may undo within one basket.
+   *
+   * ── WHY A LIMIT AT ALL ────────────────────────────────────────────────
+   *
+   * Undo removes a line that was already rung up. One or two is a mis-scan being
+   * corrected, which is ordinary and should not need anybody's permission. A dozen
+   * is a basket being taken apart, and the difference between those two is the
+   * whole reason this setting exists — a shop that wants the second one noticed
+   * sets a low number, and the till then says no rather than quietly obliging.
+   *
+   * Counted PER BASKET, not per shift: the allowance resets when the basket
+   * clears, because the mistake being corrected belongs to the sale in front of
+   * the cashier. A per-shift count would leave the last customer of the day
+   * unable to fix a scan because of one at nine in the morning.
+   *
+   * '0' means no limit, which is what every till did before this setting existed —
+   * but the default is 2, deliberately. A limit nobody set is a limit nobody
+   * thought about, and the honest default for a control is the one that controls.
+   * A shop that disagrees sets it to 0 and is back where it started.
+   *
+   * Whether an undo is ALLOWED and whether it is RECORDED are separate: every
+   * undo is written to the audit log regardless of this number. See recordUndo.
+   */
+  pos_undo_limit: '2',
+  /**
    * Whether a service charge applies only to a TABLE's bill.
    *
    * ON by default, and that default is the careful one: a percentage added to a R600
@@ -143,6 +168,26 @@ export const SETTING_DEFAULTS = {
    * can be raised by a store with advice supporting it.
    */
   layby_max_fee_pct: '1',
+
+  /**
+   * The smallest deposit that may be taken, as a percentage of the document
+   * total. Zero means any amount.
+   *
+   * Defaults to zero because a shop taking R50 against a R5 000 quote is doing
+   * ordinary business, and a system that refused it would be inventing a rule
+   * the store never asked for. Measured against the DOCUMENT rather than the
+   * payment, so a second small deposit on top of a large first one still
+   * passes. See depositRules.ts.
+   */
+  deposit_min_pct: '0',
+  /**
+   * Whether a deposit may be taken without naming a customer.
+   *
+   * On by default: the money is held against the document, not against an
+   * account, so a walk-in deposit is coherent and needs no debtor record. A
+   * store that wants every deposit traceable to a person can turn it off.
+   */
+  deposit_allow_walkin: '1',
 
   /**
    * How long a quote's prices stand, in days.
@@ -862,6 +907,17 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === 'retail' || value === 'hospitality'
         ? null
         : "POS mode must be 'retail' or 'hospitality'."
+
+    case 'pos_undo_limit': {
+      const limit = Number(value)
+      if (!Number.isInteger(limit) || limit < 0) {
+        return 'The undo limit must be a whole number, or 0 for no limit.'
+      }
+      /* Not a correctness bound — a hundred undos on one basket is already past
+         any limit worth setting, so a bigger number is somebody meaning "off"
+         and typing it the long way. 0 is the way to say that. */
+      return limit > 99 ? 'Use 0 for no limit rather than a very large number.' : null
+    }
 
     /* A flag, so only the two values this table uses everywhere else. Validated rather
        than coerced: a stray 'true' would read as ON by the !== '0' test and as OFF by any
