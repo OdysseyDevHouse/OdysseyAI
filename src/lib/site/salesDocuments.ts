@@ -108,6 +108,14 @@ export type SalesLine = {
   kitchenSentQty: number
   /** The free-text note on this line. Empty string when there is none. */
   note: string
+  /**
+   * When the line was first rung, as epoch milliseconds (167).
+   *
+   * Null on any line written before 167 and on every line from a caller with no
+   * such notion. A reader wanting an age should fall back to its own clock
+   * rather than treating null as zero, which would report 1970.
+   */
+  orderedAt: number | null
 }
 
 /** One answer as recorded against a sale line. All of it snapshotted. */
@@ -266,7 +274,48 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
     // Tolerant of a site that has not run 142 — toNum(undefined) reads 0,
     // which is also the truthful answer: nothing was ever sent.
     kitchenSentQty: toNum(r.kitchen_sent_qty),
+    // Likewise tolerant of a site that has not run 167: absent reads null,
+    // meaning "no recorded order time", NOT the epoch.
+    orderedAt: orderedAtMillis(r.ordered_at),
   }
+}
+
+/**
+ * A stored `ordered_at` back to epoch milliseconds.
+ *
+ * The pool sets the connection timezone to 'Z', so the UTC parts of the driver's
+ * Date ARE the stored wall clock — and since this column only ever holds a UTC
+ * instant this side wrote, reading `getTime()` off it is exact. The string branch
+ * is defensive, for a driver configured with `dateStrings`: that shape has no
+ * zone, so it is stamped as UTC to match what `orderedAtSql` wrote.
+ *
+ * `String(value)` is the trap here, as everywhere else in this codebase: it
+ * yields a locale string that `Date.parse` reads in local time, which would put
+ * every line's age two hours out on a SAST machine.
+ */
+function orderedAtMillis(value: unknown): number | null {
+  if (!value) return null
+  if (value instanceof Date) {
+    const ms = value.getTime()
+    return Number.isNaN(ms) ? null : ms
+  }
+  if (typeof value === 'string') {
+    const ms = Date.parse(`${value.replace(' ', 'T').slice(0, 19)}Z`)
+    return Number.isNaN(ms) ? null : ms
+  }
+  return null
+}
+
+/**
+ * Epoch milliseconds to the `DATETIME` string this column stores.
+ *
+ * UTC parts, because the pool talks to the server in 'Z' — writing local parts
+ * would store a figure two hours off what `orderedAtMillis` reads back, and the
+ * till would show every line as two hours old the moment a tab was recalled.
+ */
+function orderedAtSql(ms: number | null | undefined): string | null {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return null
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
 }
 
 function mapDocument(r: Row, lines: SalesLine[]): SalesDocument {
@@ -580,6 +629,51 @@ export type LineInput = {
   instructions?: LineInstructionInput[]
   /** A free-text note for this line — "no ice", "allergy: nuts". */
   note?: string | null
+  /**
+   * When this line was FIRST rung, as epoch milliseconds (167).
+   *
+   * Sent by the till so a line's age survives park and recall. It cannot be
+   * inferred here: a table bill rewrites its lines wholesale on every save, so
+   * `created_at` would restart the clock each time a waiter added a round and a
+   * forty-minute-old starter would report as new.
+   *
+   * Omitted by every caller that has no such notion — a quote, an online order,
+   * a credit note — and stored NULL, which reads back as "no recorded order
+   * time" rather than as the epoch.
+   */
+  orderedAt?: number | null
+}
+
+/**
+ * Stamps every line with who sold it, unless the line already names someone.
+ *
+ * ── WHY THIS IS IN THE LIB AND NOT IN AN ACTIONS FILE ──────────────────────
+ *
+ * It lived as a private helper in the sales actions, so the RESTAURANT table
+ * actions — which call `saveDraft` directly rather than going through
+ * `saveSaleAction` — never stamped anything. Every line on every table bill was
+ * left with `sales_rep_user_id = NULL`, which `staffCost.ts` filters out
+ * entirely: table sales were silently absent from staff cost, and commission
+ * fell back to whoever captured the header for all of them.
+ *
+ * Living beside `LineInput` means any future path that builds lines has it in
+ * reach, which is the property the private copy did not have.
+ *
+ * ── PASS THE TILL OPERATOR, NOT THE BROWSER USER ───────────────────────────
+ *
+ * This decides who gets paid. Callers must resolve the actor with
+ * `withTillOperator` first — a value the client supplies is a value the client
+ * can choose, and the browser session on a shared floor machine is whoever
+ * opened it that morning.
+ *
+ * A line that already names someone keeps them: the back-office invoicing
+ * screen sets it per line deliberately, and that answer must not be overwritten.
+ */
+export function attributeTo<T extends { salesRepUserId?: number | null }>(
+  lines: T[],
+  userId: number,
+): T[] {
+  return lines.map((line) => ({ ...line, salesRepUserId: line.salesRepUserId ?? userId }))
 }
 
 /** One chosen answer, on its way into `sales_document_line_instructions`. */
@@ -837,8 +931,8 @@ export async function saveDraft(
             department_id, sales_rep_id, source_line_id, sales_rep_user_id,
             qty, unit_price_incl, discount_pct, discount_incl,
             vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,
-            special_id, discount_code_id, gift_card_code, line_note)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            special_id, discount_code_id, gift_card_code, line_note, ordered_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -863,6 +957,7 @@ export async function saveDraft(
           line.discountCodeId ?? null,
           line.giftCardCode ?? null,
           (line.note ?? '').trim().slice(0, 190),
+          orderedAtSql(line.orderedAt),
         ] as never,
       )
 
@@ -924,6 +1019,89 @@ export async function saveForLaterDocument(siteId: number, id: number): Promise<
   return { ok: true, id }
 }
 
+/**
+ * How long a claim survives without being renewed. See 171_document_claim.sql for
+ * why a claim is a lease at all, and why this number.
+ */
+export const CLAIM_LEASE_MINUTES = 15
+
+/**
+ * Takes a document for one till, refusing it to every other.
+ *
+ * ── THE RACE IS DECIDED BY THE UPDATE, NOT BY THE READ ────────────────────
+ *
+ * The WHERE clause is the entire guarantee. Two tills recalling the same bill both
+ * reach this line; the database applies the updates one after the other, so the first
+ * matches an unclaimed row and the second finds a row that no longer satisfies the
+ * predicate and reports zero rows changed. Reading first and then writing would leave a
+ * window between the two where both saw it free.
+ *
+ * A claim older than the lease is treated as absent — that is what stops a till that
+ * died holding one from stranding the bill forever. Re-claiming by the SAME user always
+ * succeeds and renews the lease, so a waiter who reloads gets their own bill back
+ * rather than being locked out of it by their own stale claim.
+ */
+export async function claimDocument(
+  siteId: number,
+  id: number,
+  userId: number,
+): Promise<SaveResult> {
+  const doc = await getDocument(siteId, id)
+  if (!doc) return { ok: false, error: 'That sale no longer exists.' }
+  if (doc.status !== 'saved') return { ok: false, error: 'That sale is not saved.' }
+
+  const claimed = await siteExecute(
+    siteId,
+    `UPDATE sales_documents
+        SET claimed_by = ?, claimed_at = UTC_TIMESTAMP()
+      WHERE id = ?
+        AND status = 'saved'
+        AND (claimed_at IS NULL
+             OR claimed_by = ?
+             OR claimed_at < UTC_TIMESTAMP() - INTERVAL ? MINUTE)`,
+    [userId, id, userId, CLAIM_LEASE_MINUTES],
+  )
+  if (claimed.affectedRows === 0) {
+    return { ok: false, error: 'That sale has already been taken.' }
+  }
+  return { ok: true, id }
+}
+
+/**
+ * Hands a document back, so the next till may take it.
+ *
+ * Also forces the status back to `saved`, which is what repairs a bill claimed under
+ * the OLD scheme — that one recorded a claim by moving the document to `draft`, and a
+ * till still running the previous build can leave one behind mid-upgrade. Cheap, and it
+ * means a mixed fleet cannot strand a table.
+ */
+export async function releaseDocument(siteId: number, id: number): Promise<SaveResult> {
+  const doc = await getDocument(siteId, id)
+  if (!doc) return { ok: false, error: 'That sale no longer exists.' }
+  /* Only an unposted document goes back on the shelf. A finalised or cancelled one has
+     its own status for good reason, and a released claim must never resurrect it. */
+  if (doc.status !== 'draft' && doc.status !== 'saved') {
+    return { ok: false, error: `A ${doc.status} sale cannot be parked.` }
+  }
+
+  await siteExecute(
+    siteId,
+    `UPDATE sales_documents
+        SET status = 'saved', claimed_by = NULL, claimed_at = NULL
+      WHERE id = ?`,
+    [id],
+  )
+  return { ok: true, id }
+}
+
+/**
+ * The old recall: claims a document by walking its status backwards.
+ *
+ * Kept ONLY for the back office, where a recalled sale is opened in an editor that has
+ * always expected a `draft` and where no floor screen derives occupancy from it. The
+ * till uses `claimDocument` instead — see 171_document_claim.sql for why a table's bill
+ * must stay `saved` while somebody edits it.
+ */
 export async function recallDocument(siteId: number, id: number): Promise<SaveResult> {
   const doc = await getDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
@@ -954,6 +1132,41 @@ export async function discardDocument(siteId: number, id: number): Promise<Delet
 
   await siteExecute(siteId, 'DELETE FROM sales_documents WHERE id = ?', [id])
   return { ok: true }
+}
+
+/**
+ * Takes an unposted document off the floor without destroying it.
+ *
+ * The sibling of `discardDocument`, and the difference is whether anything else
+ * is pointing at the row. A discard is for a sale nobody ever accounted for — a
+ * stale draft, a mis-tapped park — and deleting it leaves no hole. A CANCEL is
+ * for one that was deliberately voided: `pos_void_events` rows carry its
+ * `document_id`, so deleting it would orphan the very trail that explains why it
+ * went. The row stays, its status says what happened to it, and the two records
+ * agree.
+ *
+ * Refuses a finalised document on purpose. That one has a number, has moved
+ * stock and has taken money; reversing it is `voidDocument`, which writes the
+ * counter-entries this function deliberately does not.
+ */
+export async function cancelUnpostedDocument(siteId: number, id: number): Promise<SaveResult> {
+  const doc = await getDocument(siteId, id)
+  if (!doc) return { ok: false, error: 'That sale no longer exists.' }
+  if (doc.status !== 'draft' && doc.status !== 'saved') {
+    return { ok: false, error: `A ${doc.status} sale cannot be cancelled this way.` }
+  }
+
+  /* The claim goes with it. A cancelled bill nobody can reach still reads as held
+     by the till that voided it, and a stale claim on a dead document is a puzzle
+     for whoever finds it rather than a safeguard. */
+  await siteExecute(
+    siteId,
+    `UPDATE sales_documents
+        SET status = 'cancelled', claimed_by = NULL, claimed_at = NULL
+      WHERE id = ?`,
+    [id],
+  )
+  return { ok: true, id }
 }
 
 /** Statuses that may still be edited. Everything else is a posted record. */

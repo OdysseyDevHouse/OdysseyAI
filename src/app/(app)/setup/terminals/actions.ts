@@ -11,6 +11,7 @@ import {
   type TerminalInput,
 } from '@/lib/site/terminals'
 import { releaseSpot, claimSpot } from '@/lib/control/devices'
+import { setSetting } from '@/lib/site/settings'
 
 export type TerminalActionResult = { ok: true; message: string } | { ok: false; error: string }
 
@@ -146,4 +147,36 @@ export async function claimTerminalAction(
 
   revalidatePath('/setup/terminals')
   return { ok: true, message: 'This machine is now registered to that till.' }
+}
+
+/**
+ * How many times a cashier may undo within one basket.
+ *
+ * ── WHY THE LIMIT IS SET HERE AND NOT ON THE TILL ─────────────────────────
+ *
+ * It is a control ON the cashier, so it cannot be a control the cashier holds.
+ * `setup.edit` is the same right that adds a till or renames a register, and a
+ * cashier who found this on the POS could raise their own allowance the moment it
+ * refused them — which would make the whole setting theatre.
+ *
+ * Applies to every till in the shop, not to the register it happens to be set
+ * from. The question a shop is answering is "how much quiet removal are we
+ * comfortable with", and that has one answer per business rather than one per
+ * machine.
+ */
+export async function setUndoLimitAction(limit: number): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  /* Validated by `setSetting` against the same rule the till reads through — see
+     settings.ts. Passing the number as a string because that is what the settings
+     table stores; a number here would be coerced somewhere less obvious. */
+  const saved = await setSetting(ctx.siteId, 'pos_undo_limit', String(limit))
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/setup/terminals')
+  return {
+    ok: true,
+    message: limit === 0 ? 'Undo is now unlimited.' : `Cashiers may undo ${limit} times per sale.`,
+  }
 }

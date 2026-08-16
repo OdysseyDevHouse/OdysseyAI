@@ -2,6 +2,9 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
 import type { Capability } from '../site/permissions'
+// The grand total and a band subtotal have to be the same arithmetic, so the
+// function lives with the banding rather than here. See shape.ts.
+import { computeTotals } from './shape'
 import {
   canSeeField,
   getField,
@@ -643,35 +646,6 @@ function keepTopPerGroup(
     out.push(row)
   }
   return out
-}
-
-/**
- * Column totals. A ratio column is re-derived from its summed parts rather than
- * added down the column, for the same reason it is weighted per row: adding
- * percentages produces a number that means nothing.
- */
-function computeTotals(
-  rows: Record<string, unknown>[],
-  columns: ReportColumn[],
-): Record<string, number> {
-  const totals: Record<string, number> = {}
-  for (const col of columns) {
-    if (!col.total) continue
-    if (col.ratio) {
-      let num = 0
-      let den = 0
-      for (const row of rows) {
-        num += Number(row[col.ratio.num] ?? 0)
-        den += Number(row[col.ratio.den] ?? 0)
-      }
-      totals[col.key] = den === 0 ? 0 : (num / den) * col.ratio.scale
-      continue
-    }
-    let sum = 0
-    for (const row of rows) sum += Number(row[col.key] ?? 0)
-    totals[col.key] = sum
-  }
-  return totals
 }
 
 function isSyntaxError(err: unknown): boolean {

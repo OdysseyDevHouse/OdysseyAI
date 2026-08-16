@@ -18,6 +18,7 @@ import {
 import { MODAL_PANEL } from '@/components/ui/styles'
 import { buildPageIndex, groupHits, searchPages, type PageHit } from '@/lib/pageSearch'
 import type { NavSection } from '@/lib/nav'
+import { TILL_HREF, TILL_TARGET } from '@/lib/openTill'
 import type { SearchHit, SearchSection } from '@/app/api/search/route'
 
 /**
@@ -221,6 +222,16 @@ export default function GlobalSearch({
 
   const go = (href: string) => {
     onClose()
+    /* The till opens beside the back office rather than replacing it, the same
+       as pressing it in the sidebar — see lib/openTill.ts. Searching for "till"
+       and pressing Enter must not be the one route that takes the back office
+       away from someone mid-task. */
+    if (href === TILL_HREF) {
+      /* No 'noopener' feature: it would strip the window's name and open a
+         SECOND till on every search — see the note in lib/openTill.ts. */
+      window.open(TILL_HREF, TILL_TARGET)
+      return
+    }
     router.push(href)
   }
 

@@ -160,16 +160,26 @@ export function CatalogPane({
       </form>
 
       {/* ── Breadcrumb ───────────────────────────────────────────────────── */}
+      {/* The way out USED to sit here as a small ghost button, above the grid.
+          It now lives in the grid itself as the first tile, where the eye and
+          the thumb already are — so the trail starts at the left edge of this
+          row rather than after a control.
+
+          Search keeps its button: those results are a flat list with no trail
+          to walk and no Back tile in the grid, so removing it there would leave
+          a cashier with no way back but the rail. */}
       {view.kind !== 'keys' && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 pb-3">
-          <Button variant="ghost" size="sm" onClick={onShowKeys}>
-            <Icons.ChevronLeft size={16} />
-            Back
-          </Button>
           {view.kind === 'search' ? (
-            <span className="text-[13px] text-muted">
-              Results for <span className="font-semibold text-ink">{view.term}</span>
-            </span>
+            <>
+              <Button variant="ghost" size="sm" onClick={onShowKeys}>
+                <Icons.ChevronLeft size={16} />
+                Back to quick keys
+              </Button>
+              <span className="text-[13px] text-muted">
+                Results for <span className="font-semibold text-ink">{view.term}</span>
+              </span>
+            </>
           ) : (
             <Trail departments={departments} path={view.path} onDrillTo={onDrillTo} />
           )}
@@ -189,6 +199,8 @@ export function CatalogPane({
             path={view.path}
             browse={browse}
             onDrill={onDrill}
+            onDrillTo={onDrillTo}
+            onShowKeys={onShowKeys}
             onPick={onPick}
             priceFor={priceFor}
           />
@@ -244,6 +256,8 @@ function DepartmentLevel({
   path,
   browse,
   onDrill,
+  onDrillTo,
+  onShowKeys,
   onPick,
   priceFor,
 }: {
@@ -251,12 +265,42 @@ function DepartmentLevel({
   path: number[]
   browse: { loading: boolean; products: TillProduct[] }
   onDrill: (id: number) => void
+  onDrillTo: (path: number[]) => void
+  onShowKeys: () => void
   onPick: (product: TillProduct) => void
   priceFor: (product: TillProduct) => number
 }) {
   const current = path[path.length - 1] ?? null
   const tiles = useTileSizeValue()
   const children = childDepartments(departments, current)
+
+  /*
+   * The way out, as the first TILE in the grid — the only way out, now that the
+   * ghost button above the grid is gone. It is always present, and where it goes
+   * depends on how deep the cashier is:
+   *
+   *   INSIDE a sub-department  → the top department of the trail, in one tap
+   *   AT the top of one        → out of the drill entirely, to the quick keys
+   *
+   * Returning to the MAJOR department rather than stepping up one level is the
+   * deliberate part: a menu is walked downwards in one direction, and what a
+   * cashier wants after finishing with a sub-department is the rest of that
+   * department, not the intermediate level they passed through. The breadcrumb
+   * still offers every intermediate level for the rarer case where one of them is
+   * genuinely the target.
+   *
+   * Read off the TRAIL rather than the raw path: departmentTrail drops any id it
+   * cannot resolve, so a path of two whose first department has since been deleted
+   * is a trail of one — and taking path[0] there would point the tile at a
+   * department that is no longer in the tree.
+   */
+  const trail = departmentTrail(departments, path)
+  const root = trail.length > 1 ? trail[0] : null
+  const back = root
+    ? { title: 'Back', subtitle: root.name, onClick: () => onDrillTo([root.id]) }
+    : /* No subtitle: the caption already names where it goes, and "Back / Quick
+         keys" would say it twice. */
+      { title: 'Back to quick keys', subtitle: undefined, onClick: onShowKeys }
 
   /*
    * A branch shows its SUB-DEPARTMENTS ONLY; a leaf shows products.
@@ -272,17 +316,29 @@ function DepartmentLevel({
   if (browse.loading && showProducts) return <TileSkeleton />
 
   if (showProducts && browse.products.length === 0 && !browse.loading) {
+    /* The Back tile comes WITH the empty state rather than instead of it. An
+       empty department is the one screen where the way out matters most, and
+       now that the ghost button above the grid is gone this tile is the only
+       one — without it the cashier's sole escape is the rail. */
     return (
-      <EmptyState
-        icon={<Icons.Package size={28} />}
-        title="Nothing in here yet"
-        hint="This department has no products of its own."
-      />
+      <div className="flex flex-col gap-4">
+        <EmptyState
+          icon={<Icons.Package size={28} />}
+          title="Nothing in here yet"
+          hint="This department has no products of its own."
+        />
+        <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
+          <BackTile back={back} tiles={tiles} />
+        </TileGrid>
+      </div>
     )
   }
 
   return (
     <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
+      {/* FIRST cell, so it holds the same corner of the grid at every depth —
+          a cashier finds it by position rather than by reading it each time. */}
+      <BackTile back={back} tiles={tiles} />
       {children.map((d) => (
         <ProductTile
           key={`d${d.id}`}
@@ -303,6 +359,42 @@ function DepartmentLevel({
           <ProductTileFor key={`p${p.id}`} product={p} onPick={onPick} priceFor={priceFor} />
         ))}
     </TileGrid>
+  )
+}
+
+/**
+ * The way out of the drill — the first cell of every department grid.
+ *
+ * Where it goes is decided by the caller (see `back` in DepartmentLevel): out to
+ * the quick keys at the top of a department, back to the major department from
+ * anywhere below it. One tile in one place doing whichever of those applies,
+ * rather than a tile that appears at one depth and a button that appears at
+ * another — a cashier learns the corner, not the rule.
+ *
+ * A ProductTile rather than a hand-rolled button: it sits in the same grid as the
+ * departments and products around it, and anything else would be a differently
+ * shaped card among them. DASHED, with a brand disc, matching the new-table
+ * opener on the tables screen — the shared idiom for a tile that is a way out
+ * rather than a thing to sell.
+ */
+function BackTile({
+  back,
+  tiles,
+}: {
+  back: { title: string; subtitle?: string; onClick: () => void }
+  tiles: { width: number; height: number }
+}) {
+  return (
+    <ProductTile
+      title={back.title}
+      /* Present only when it adds something: the department being returned to.
+         At the top of a department the caption already names the destination. */
+      subtitle={back.subtitle}
+      icon={<Icons.Reverse size={20} />}
+      dashed
+      tileHeight={tiles.height}
+      onClick={back.onClick}
+    />
   )
 }
 

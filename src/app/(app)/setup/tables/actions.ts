@@ -170,6 +170,111 @@ export async function deleteFeatureAction(id: number): Promise<FloorResult> {
   return floorState(ctx.siteId)
 }
 
+/**
+ * Adds a table from the FLOOR DESIGNER, and hands back the whole floor.
+ *
+ * Deliberately separate from `createTableAction` rather than a flag on it. The two
+ * differ only in what they RETURN, and that difference is the whole point: the list
+ * screen holds tables, the designer holds rooms + tables + features, and a designer that
+ * adopted a bare `{ tables }` would blank its own rooms the moment somebody added a
+ * table. Same `createTable` underneath, so the code clash and the sort_order rule are
+ * answered in one place.
+ */
+export async function createTableOnFloorAction(input: TableInput): Promise<FloorResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await createTable(ctx.siteId, input)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/tables')
+  /* The till too, unlike an unplaced table added from the list: this one arrives WITH a
+     position, so the floor view has something new to draw and would otherwise keep
+     showing yesterday's room until something else revalidated it. */
+  revalidatePath('/pos')
+  return floorState(ctx.siteId)
+}
+
+/**
+ * Copies tables, offset a little so the copies are visible.
+ *
+ * ── WHY THE SERVER PICKS THE NAMES ────────────────────────────────────────
+ *
+ * A code is UNIQUE and it is what a waiter types, so the suffix search has to happen
+ * where the uniqueness is enforced. A client guessing "12 (2)" races every other till
+ * and every other tab: two managers duplicating at once would both compute the same
+ * free name and the second would simply fail. Here the whole loop runs inside one
+ * request against live rows.
+ *
+ * Partial success is REPORTED, not rolled back. Duplicating eight tables and having the
+ * seventh clash should leave six copies and say so — undoing the six a manager can see
+ * on their screen is the more surprising outcome.
+ */
+export async function duplicateTablesAction(
+  ids: number[],
+): Promise<FloorResult & { made?: number }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  if (ids.length === 0) return { ok: false, error: 'Nothing was selected to copy.' }
+  if (ids.length > 50) return { ok: false, error: 'Copy 50 tables at a time or fewer.' }
+
+  const all = await listTables(siteId)
+  const taken = new Set(all.map((t) => t.code.trim().toLowerCase()))
+
+  /** The next free "<code> (n)", skipping any that already exist. */
+  const nextCode = (base: string): string | null => {
+    const stem = base.replace(/\s*\(\d+\)$/, '')
+    for (let n = 2; n < 100; n++) {
+      const candidate = `${stem} (${n})`
+      /* 16 chars is the column, and a name that cannot be stored is not a name. */
+      if (candidate.length > 16) return null
+      if (!taken.has(candidate.toLowerCase())) {
+        taken.add(candidate.toLowerCase())
+        return candidate
+      }
+    }
+    return null
+  }
+
+  let made = 0
+  for (const id of ids) {
+    const source = all.find((t) => t.id === id)
+    if (!source || source.roomId === null || source.x === null || source.y === null) continue
+
+    const code = nextCode(source.code)
+    if (!code) continue
+
+    const result = await createTable(siteId, {
+      code,
+      name: source.name,
+      section: source.section,
+      seats: source.seats,
+      visitTypeId: source.visitTypeId,
+      placement: {
+        roomId: source.roomId,
+        /* Offset so the copy is visibly a second table rather than hidden exactly
+           beneath the original. savePlacements clamps it back inside the room. */
+        x: source.x + 3,
+        y: source.y + 3,
+        width: source.width,
+        height: source.height,
+        shape: source.shape,
+      },
+    })
+    if (result.ok) made++
+  }
+
+  if (made === 0) {
+    return { ok: false, error: 'Those tables could not be copied — the codes are taken.' }
+  }
+
+  revalidatePath('/setup/tables')
+  revalidatePath('/pos')
+  return { ...(await floorState(siteId)), made }
+}
+
 export async function createTableAction(input: TableInput): Promise<TablesResult> {
   const ctx = await actorFor('setup.edit')
   if ('ok' in ctx) return ctx

@@ -36,6 +36,7 @@ export {
 
 export {
   Field,
+  InlineField,
   Input,
   NumberInput,
   CurrencyInput,
@@ -120,6 +121,7 @@ export { TileGrid, SHORT_TILE_MAX, isShortTile } from './TileGrid'
 export { ProductTile } from './ProductTile'
 export { ActionTile } from './ActionTile'
 export { NumPad, NumPadDisplay, numPadValue } from './NumPad'
+export { TenderTile, tenderIcon } from './TenderTile'
 export { TouchRow } from './TouchRow'
 export { ExpandingCard } from './ExpandingCard'
 export { Accordion } from './Accordion'
@@ -128,6 +130,12 @@ export { DateRangeField, type DateRange } from './DateRangeField'
 export { useChartColors, ChartTooltip, ChartGlow, type ChartColors } from './charts'
 export { Sparkline } from './Sparkline'
 export { MeterBar, type MeterSegment, type MeterTone } from './MeterBar'
+export {
+  TableGlyph,
+  type TableGlyphShape,
+  type TableGlyphSeats,
+} from './TableGlyph'
+export { FeatureGlyph, type FeatureGlyphKind } from './FeatureGlyph'
 export {
   StoreColumnTable,
   type StoreColumn,

@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
+import { cleanShape, type TableShape } from './floorGeometry'
 
 /**
  * The floor plan: rooms, where the tables stand in them, and the fixed furniture.
@@ -195,7 +196,7 @@ export type PlacementInput = {
   width?: number
   height?: number
   rotation?: number
-  shape?: 'rect' | 'round'
+  shape?: TableShape
 }
 
 /**
@@ -266,7 +267,10 @@ export async function savePlacements(
           /* Normalised into 0..359 rather than refused: a designer that rotates past a
              full turn has computed 370, which means 10. */
           ((Math.round(p.rotation ?? 0) % 360) + 360) % 360,
-          p.shape === 'round' ? 'round' : 'rect',
+          /* Narrowed through the shared helper rather than a ternary here: the shape
+             list grew (174) and a second answer to "which shapes exist" is exactly how
+             a new one gets silently written back as 'rect'. */
+          cleanShape(p.shape),
           p.tableId,
         ] as never,
       )

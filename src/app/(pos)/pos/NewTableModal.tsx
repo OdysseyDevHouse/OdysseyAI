@@ -5,6 +5,7 @@ import {
   Button,
   Field,
   Icons,
+  InlineField,
   Input,
   Modal,
   NumPad,
@@ -132,7 +133,7 @@ export function NewTableModal({
         <div className="grid gap-3 sm:grid-cols-3">
           <PickCard
             active={target === 'table'}
-            icon={<Icons.LayoutGrid size={16} />}
+            icon={<Icons.TableIcon size={16} />}
             label="Table number"
             value={tableNumber}
             placeholder="Optional — leave blank to run a tab under the customer's name"
@@ -172,7 +173,7 @@ export function NewTableModal({
         )}
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Visit type">
+          <InlineField label="Visit type" icon={<Icons.Armchair size={16} />}>
             <Select
               value={visitTypeId === null ? '' : String(visitTypeId)}
               onChange={(e) => setVisitTypeId(e.target.value ? Number(e.target.value) : null)}
@@ -184,30 +185,41 @@ export function NewTableModal({
                 </option>
               ))}
             </Select>
-          </Field>
+          </InlineField>
 
           {/* READ-ONLY, deliberately. The bill is attributed server-side to
               whoever's PIN opened the till, and that attribution drives
-              commission — so a dropdown here would either be a lie (it changes
-              nothing) or a way to bill someone else's commission to yourself. */}
-          <Field label="Waiter" hint="Whoever is signed in to this till.">
-            <div className="flex h-control items-center gap-2 rounded-control border border-border bg-surface-2 px-3 text-sm text-ink-2">
-              <Icons.Contact size={16} className="text-muted" />
-              <span className="truncate">{waiterName || 'Not signed in'}</span>
-            </div>
-          </Field>
+              commission — so a real dropdown here would either be a lie (it
+              changes nothing) or a way to bill someone else's commission to
+              yourself.
+
+              It carries the select's SHAPE — a single option, so opening it
+              offers only the name already shown — rather than being disabled:
+              greyed-out text on the one field that says whose commission this
+              is reads as "not set yet", which is the opposite of the truth. */}
+          <InlineField label="Waiter" icon={<Icons.Contact size={16} />}>
+            <Select value="me" aria-label="Waiter" onChange={() => {}}>
+              <option value="me">{waiterName || 'Not signed in'}</option>
+            </Select>
+          </InlineField>
         </div>
 
         {/* One pad, aimed by the cards above. Whole numbers only: a table is
-            never 2.5 and neither is a party. */}
+            never 2.5 and neither is a party.
+
+            Inset on its own panel: ten keys loose on the dialog background read
+            as ten more buttons in a dialog that already has two that act, and
+            the recessed tray is what says "this is one control". */}
         {target !== 'customer' && (
-          <NumPad
-            value={target === 'table' ? tableNumber : people}
-            maxDecimals={0}
-            maxLength={target === 'table' ? 6 : 3}
-            disabled={busy}
-            onChange={target === 'table' ? setTableNumber : setPeople}
-          />
+          <div className="rounded-card bg-canvas p-3">
+            <NumPad
+              value={target === 'table' ? tableNumber : people}
+              maxDecimals={0}
+              maxLength={target === 'table' ? 6 : 3}
+              disabled={busy}
+              onChange={target === 'table' ? setTableNumber : setPeople}
+            />
+          </div>
         )}
 
         {touched && !labelled && (
@@ -252,20 +264,22 @@ function PickCard({
       type="button"
       data-kit-ok
       onClick={onPick}
-      className={`flex min-h-[104px] flex-col gap-1 rounded-card border p-3 text-left transition ${
+      className={`flex min-h-[104px] flex-col gap-1.5 rounded-card border p-4 text-left transition ${
         active
           ? 'border-brand bg-brand-soft ring-1 ring-brand'
           : 'border-border bg-surface hover:border-brand/50'
       }`}
     >
-      <span className="flex items-center gap-1.5 text-[13px] font-semibold text-brand">
-        {icon}
-        {label}
+      {/* Label left, glyph right — the glyph is a quiet marker of what the card
+          holds, so it sits out of the reading path rather than in front of it. */}
+      <span className="flex items-start justify-between gap-2">
+        <span className="text-sm font-semibold text-brand">{label}</span>
+        <span className="shrink-0 text-brand">{icon}</span>
       </span>
       {value ? (
-        <span className="numeric truncate text-xl font-bold text-ink">{value}</span>
+        <span className="numeric truncate text-2xl font-bold text-ink">{value}</span>
       ) : (
-        <span className="text-[12px] leading-snug text-muted">{placeholder}</span>
+        <span className="text-[13px] leading-snug text-muted">{placeholder}</span>
       )}
     </button>
   )

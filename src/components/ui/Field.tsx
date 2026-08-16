@@ -95,6 +95,53 @@ export function Field({
   )
 }
 
+/**
+ * A field whose label sits BESIDE the control rather than above it, inside its
+ * own bordered card.
+ *
+ * For the till, where a dialog is a row of equal-weight cards and a stacked
+ * label would leave the control floating with nothing framing it. The label is
+ * a fixed-content column on the left, the control takes the rest — so two of
+ * these side by side line their controls up even when one label is longer.
+ *
+ * Back-office forms keep `Field`: a column of stacked labels is faster to scan
+ * down, and that is what every edit screen is.
+ */
+export function InlineField({
+  label,
+  icon,
+  htmlFor,
+  children,
+  className = '',
+}: {
+  label: string
+  /** Small leading glyph, sized 16 by the caller. */
+  icon?: ReactNode
+  htmlFor?: string
+  children: ReactNode
+  className?: string
+}) {
+  const generatedId = useId()
+  const id = htmlFor ?? generatedId
+
+  return (
+    <FieldContext.Provider value={{ id, invalid: false }}>
+      <div
+        className={`flex items-center gap-3 rounded-card border border-border bg-surface p-3 ${className}`}
+      >
+        <label
+          htmlFor={id}
+          className="flex shrink-0 items-center gap-1.5 text-sm font-medium text-ink-2"
+        >
+          {icon && <span className="text-muted">{icon}</span>}
+          {label}
+        </label>
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
+    </FieldContext.Provider>
+  )
+}
+
 /* ── Text-like inputs ────────────────────────────────────────────────────── */
 
 /**
@@ -294,7 +341,11 @@ export function CurrencyInput({
   ...rest
 }: Omit<InputProps, 'type'> & { precision?: number }) {
   const format = (raw: unknown) => {
-    const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').replace(',', '.'))
+    /* EMPTY STAYS EMPTY. Number('') is 0, so without this an empty box renders
+       "0.00" — which on a cash-up is the difference between "counted, and there
+       was nothing" and "not counted yet". A caller wanting a zero passes 0. */
+    if (raw === '' || raw === null || raw === undefined) return ''
+    const n = typeof raw === 'number' ? raw : Number(String(raw).replace(',', '.'))
     return Number.isFinite(n) ? n.toFixed(precision) : ''
   }
 

@@ -369,7 +369,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Discounts and cancellations by cashier',
     description:
       'None of these is wrong on its own. Someone far outside their colleagues’ numbers is the pattern worth a conversation.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'reports.view',
     spec: spec({
       source: 'sales',
@@ -385,7 +385,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Cancellations by reason',
     description:
       'What cancelling is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'reports.view',
     spec: spec({
       source: 'sales',
@@ -400,7 +400,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Returns by reason',
     description:
       'Why goods come back, and what it costs. Faulty is a supplier conversation; wrong size is a description one.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'reports.view',
     spec: spec({
       source: 'sales',
@@ -1483,7 +1483,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Drawer variance by person',
     description:
       'Ranked by how far out the drawer was, ignoring direction — a consistent R100 over is as worth asking about as R100 short.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'sales.cashup',
     spec: spec({
       source: 'shifts',
@@ -1497,7 +1497,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Refund history',
     description:
       'Every credit note line — what was handed back, why, by whom, and what it cost in margin.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'reports.view',
     spec: spec({
       source: 'saleLines',
@@ -1534,7 +1534,7 @@ export const TEMPLATES: ReportTemplate[] = [
     name: 'Cancellation history',
     description:
       'Documents that were cancelled, with the reason given. A run of the same reason on one till is the pattern to ask about.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'reports.view',
     spec: spec({
       source: 'sales',
@@ -1563,7 +1563,7 @@ export const TEMPLATES: ReportTemplate[] = [
     id: 'discount-history',
     name: 'Discount history',
     description: 'Every discounted line, not a per-person total — the detail behind an outlier.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'reports.view',
     spec: spec({
       source: 'saleLines',
@@ -1592,7 +1592,7 @@ export const TEMPLATES: ReportTemplate[] = [
     id: 'clerk-shifts',
     name: 'Clerk time shifts',
     description: 'When each person opened and closed a till, and how long the shift ran.',
-    category: 'Operations',
+    category: 'Sales',
     permission: 'sales.cashup',
     spec: spec({
       source: 'shifts',
@@ -1694,6 +1694,88 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'reason' },
       ],
       sort: { key: 'movedAt', dir: 'desc' },
+    }),
+  },
+  /*
+   * The three TILL void reports.
+   *
+   * ── WHY THE IDS SAY till-void AND NOT void ────────────────────────────────
+   *
+   * 'voids-by-reason' and 'void-history' are already taken, by the two
+   * CANCELLATION reports in the Sales category. Those kept their old ids on
+   * purpose — an id is stored in report_favorites and report_schedules, so
+   * renaming one orphans every favourite and silently stops a scheduled email
+   * — while their names moved to the word the database actually uses.
+   *
+   * So the collision is not an accident of naming, it is the rename showing
+   * through, and the new reports take new ids rather than disturbing stored
+   * data. The names carry the distinction a reader needs: Cancellation is a
+   * finalised sale reversed, Till void is something taken off a draft.
+   *
+   * All three exclude the `sale` rollup row, because an abandoned basket writes
+   * BOTH that row and one per line — summing the two together counts every
+   * abandoned basket twice.
+   */
+  {
+    id: 'till-voids-by-reason',
+    name: 'Till voids by reason',
+    description:
+      'What is being taken off sales before they are paid for, and why. Items and lines only — a voided sale appears through its lines, so nothing is counted twice.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'posVoids',
+      groupFields: ['reasonName'],
+      filters: [{ field: 'voidType', op: 'ne', value: 'sale' }],
+      columns: [
+        { field: '__rows' },
+        { field: 'qty', agg: 'sum' },
+        { field: 'value', agg: 'sum' },
+      ],
+      sort: { key: 'value_sum', dir: 'desc' },
+      chartType: 'pie',
+    }),
+  },
+  {
+    id: 'till-voids-by-operator',
+    name: 'Till voids by operator',
+    description:
+      'Who is voiding, how often, and for how much. The first place to look when stock goes missing without a sale behind it.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'posVoids',
+      groupFields: ['userName'],
+      filters: [{ field: 'voidType', op: 'ne', value: 'sale' }],
+      columns: [
+        { field: '__rows' },
+        { field: 'qty', agg: 'sum' },
+        { field: 'value', agg: 'sum' },
+      ],
+      sort: { key: 'value_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'till-void-history',
+    name: 'Till void history',
+    description:
+      'Every void at the till, with the kind, the reason and the note — the detail behind a total somebody is questioning.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'posVoids',
+      columns: [
+        { field: 'voidedAt' },
+        { field: 'voidType' },
+        { field: 'description' },
+        { field: 'qty' },
+        { field: 'value' },
+        { field: 'reasonName' },
+        { field: 'note' },
+        { field: 'userName' },
+        { field: 'terminalCode' },
+      ],
+      sort: { key: 'voidedAt', dir: 'desc' },
     }),
   },
   {

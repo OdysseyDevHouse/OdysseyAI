@@ -46,6 +46,16 @@ export type OfflineSaleLine = {
    */
   instructions?: ChosenOption[]
   note?: string
+  /**
+   * When the line was first rung, as epoch milliseconds (167).
+   *
+   * OPTIONAL for the same load-bearing reason as the two above: a basket parked
+   * in the outbox before this shipped has no such field, and it must still
+   * recall and still post. A line without one falls back to the moment it comes
+   * back on screen, which reads as "just now" — modest, but never wrong in the
+   * way dating it to 1970 would be.
+   */
+  orderedAt?: number
 }
 
 export type OfflineTender = {

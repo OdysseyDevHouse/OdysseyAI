@@ -11,6 +11,8 @@ import {
   NumPad,
   NumPadDisplay,
   numPadValue,
+  TenderTile,
+  tenderIcon,
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
 import { roundToCash } from '@/lib/documentMath'
@@ -435,13 +437,26 @@ export function TenderPad({
        */
       footer={
         <>
+          {/* Bordered rather than bare: in the mockup it sits beside a filled
+              green key, and a ghost button next to that reads as disabled. The
+              glyph tracks what the key does — leaving, or stepping back. */}
           <Button
-            variant="ghost"
+            variant="secondary"
             size="touch"
             onClick={active || giftPrompt ? onBackToKeys : onClose}
             disabled={pending}
           >
-            {active || giftPrompt ? 'Back' : 'Cancel'}
+            {active || giftPrompt ? (
+              <>
+                <Icons.ArrowLeft size={18} />
+                Back
+              </>
+            ) : (
+              <>
+                <Icons.Close size={18} />
+                Cancel
+              </>
+            )}
           </Button>
           {giftPrompt ? (
             <Button
@@ -586,54 +601,80 @@ export function TenderPad({
             cashier reads out loud, and the one they get wrong if they have to
             hunt for it. */}
         <div
-          className={`rounded-card border px-4 py-3 ${
+          className={`rounded-card border px-5 py-4 ${
             check.outstanding > 0
-              ? 'border-border bg-surface-2'
-              : changeBack > 0
-                ? 'border-success/40 bg-success-soft'
-                : 'border-success/40 bg-success-soft'
+              ? 'border-brand/25 bg-brand-soft'
+              : 'border-success/40 bg-success-soft'
           }`}
         >
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              {check.outstanding > 0 ? 'Still to pay' : changeBack > 0 ? 'Change' : 'Settled'}
-            </span>
+          {/*
+            Label and detail on the LEFT, figure on the RIGHT, with a rule
+            between them.
+            The figure is the thing read out loud across a counter, so it gets
+            the whole right-hand side at its own size instead of sharing a
+            baseline with a caption. The rule is what stops the two columns
+            reading as one long sentence.
+          */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p
+                className={`text-xs font-semibold uppercase tracking-wide ${
+                  check.outstanding > 0 ? 'text-brand' : 'text-success-ink'
+                }`}
+              >
+                {check.outstanding > 0 ? 'Still to pay' : changeBack > 0 ? 'Change' : 'Settled'}
+              </p>
+              <p
+                className={`mt-1 text-sm ${
+                  check.outstanding > 0 ? 'text-ink-2' : 'text-success-ink/80'
+                }`}
+              >
+                {formatMoney(totalIncl)} due
+                {/* The exchange credit, named where the money is counted. */}
+                {credit && credit.amount > 0.005 && (
+                  <>
+                    {' · '}
+                    {credit.label} covers {formatMoney(Math.min(credit.amount, roundedTotal))} —{' '}
+                    {formatMoney(payable)} to pay
+                  </>
+                )}
+                {adjustment !== 0 && (
+                  <>
+                    {' · '}rounded to {formatMoney(payable)} at the drawer (
+                    {adjustment > 0 ? '+' : ''}
+                    {formatMoney(adjustment)}); the invoice stays {formatMoney(totalIncl)}
+                  </>
+                )}
+                {/* Named right beside the change figure, because the two come out of
+                    one excess and a cashier handing back money needs both at once. */}
+                {tipTotal > 0.005 && (
+                  <>
+                    {' · '}
+                    <span className="text-warning-ink">
+                      {formatMoney(tipTotal)} kept as a tip
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* self-stretch so the rule runs the full height of whichever column
+                is taller — a wrapped rounding note must not leave it short. */}
             <span
-              className={`numeric text-4xl font-extrabold ${
+              aria-hidden
+              className={`w-px self-stretch ${
+                check.outstanding > 0 ? 'bg-brand/25' : 'bg-success/30'
+              }`}
+            />
+
+            <span
+              className={`numeric shrink-0 text-4xl font-extrabold sm:text-5xl ${
                 check.outstanding > 0 ? 'text-ink' : 'text-success-ink'
               }`}
             >
               {formatMoney(check.outstanding > 0 ? check.outstanding : changeBack)}
             </span>
           </div>
-          <p className="mt-0.5 text-xs text-muted">
-            {formatMoney(totalIncl)} due
-            {/* The exchange credit, named where the money is counted. */}
-            {credit && credit.amount > 0.005 && (
-              <>
-                {' · '}
-                {credit.label} covers {formatMoney(Math.min(credit.amount, roundedTotal))} —{' '}
-                {formatMoney(payable)} to pay
-              </>
-            )}
-            {adjustment !== 0 && (
-              <>
-                {' · '}rounded to {formatMoney(payable)} at the drawer (
-                {adjustment > 0 ? '+' : ''}
-                {formatMoney(adjustment)}); the invoice stays {formatMoney(totalIncl)}
-              </>
-            )}
-            {/* Named right under the change figure, because the two come out of one
-                excess and a cashier handing back money needs to see both at once. */}
-            {tipTotal > 0.005 && (
-              <>
-                {' · '}
-                <span className="text-warning-ink">
-                  {formatMoney(tipTotal)} kept as a tip
-                </span>
-              </>
-            )}
-          </p>
         </div>
 
         {/* ── The service charge, and the only way out of it ────────────────
@@ -830,55 +871,59 @@ function TenderKeys({
   const active = tenders.filter((t) => t.isActive)
 
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-      {active.map((tender) => {
+    <div className="flex flex-col gap-2">
+      {/* Named, because the keys below stopped looking like a question once they
+          became icon tiles — a grid of pictures needs a sentence saying what
+          picking one does. */}
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+        Choose payment method
+      </p>
+      {/* auto-rows-fr, so a key carrying a refusal sentence does not make its
+          whole row taller than the one below it — the grid reads as a keypad
+          only while the keys are the same size. */}
+      <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3">
+        {active.map((tender) => {
         // Refused rather than hidden, with the reason ON the key. A tender that
         // vanishes when there is no customer leaves the cashier wondering whether
         // the store even has an account facility.
-        const needsCustomer = tender.requiresCustomer && !customer
-        const noBalance = loyaltyCeiling(tender, loyalty) === 0
-        /*
-         * The credit check, at the point of offer.
-         *
-         * `headroomRefusal` is the same pure function the posting engine uses, so
-         * a key that is offered here will not be refused a moment later by the
-         * server — which on a till means refused in front of the customer who has
-         * just agreed to pay on account. It covers both a blocked account and one
-         * this sale would push over its limit.
-         *
-         * Still only a courtesy: finaliseDocument re-reads the balance under a
-         * lock, because another till can take an order against the same account
-         * while this basket sits open.
-         */
-        const creditRefusal =
-          tender.postsToDebtor && customer ? headroomRefusal(customer, owed) : null
+          const needsCustomer = tender.requiresCustomer && !customer
+          const noBalance = loyaltyCeiling(tender, loyalty) === 0
+          /*
+           * The credit check, at the point of offer.
+           *
+           * `headroomRefusal` is the same pure function the posting engine uses, so
+           * a key that is offered here will not be refused a moment later by the
+           * server — which on a till means refused in front of the customer who has
+           * just agreed to pay on account. It covers both a blocked account and one
+           * this sale would push over its limit.
+           *
+           * Still only a courtesy: finaliseDocument re-reads the balance under a
+           * lock, because another till can take an order against the same account
+           * while this basket sits open.
+           */
+          const creditRefusal =
+            tender.postsToDebtor && customer ? headroomRefusal(customer, owed) : null
 
-        const refusal = needsCustomer
-          ? 'Needs a customer'
-          : creditRefusal
-            ? creditRefusal
-            : noBalance
-              ? 'Nothing to redeem'
-              : null
+          const refusal = needsCustomer
+            ? 'Needs a customer'
+            : creditRefusal
+              ? creditRefusal
+              : noBalance
+                ? 'Nothing to redeem'
+                : null
 
-        return (
-          <Button
-            key={tender.id}
-            variant={refusal ? 'ghost' : 'secondary'}
-            size="touch-lg"
-            /* whitespace-normal because a credit refusal is a sentence — "Acme
-               would be 240.00 over their 5000.00 limit." — and Button's default
-               whitespace-nowrap would run it off the key. h-auto for the same
-               reason: the key grows to fit its reason rather than clipping it. */
-            className="h-auto min-h-touch-lg flex-col gap-0.5 whitespace-normal py-2 text-center"
-            disabled={disabled || refusal !== null}
-            onClick={() => onPick(tender)}
-          >
-            <span className="text-base font-semibold">{tender.name}</span>
-            {refusal && <span className="text-[11px] font-normal leading-tight">{refusal}</span>}
-          </Button>
-        )
-      })}
+          return (
+            <TenderTile
+              key={tender.id}
+              name={tender.name}
+              icon={tenderIcon(tender)}
+              refusal={refusal}
+              disabled={disabled}
+              onClick={() => onPick(tender)}
+            />
+          )
+        })}
+      </div>
     </div>
   )
 }

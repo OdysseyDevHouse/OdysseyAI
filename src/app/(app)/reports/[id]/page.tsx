@@ -6,7 +6,8 @@ import { runBuilderSpec, ReportAccessError } from '@/lib/reportBuilder/run'
 import { runAcrossSites, mergeRefusalFor } from '@/lib/reportBuilder/runAcrossSites'
 import { groupScopeFor, capabilitiesForSiteUser } from '@/lib/groupReporting'
 import { listFavorites } from '@/lib/site/reportFavorites'
-import { reportColumnsFor, applyStoreColumns } from '@/lib/site/reportColumns'
+import { reportPrefsFor, parseStoredColumns, applyStoreColumns } from '@/lib/site/reportColumns'
+import { groupOptionsFor, resolveGroupKey } from '@/lib/reportBuilder/shape'
 import { listUsers, getUser } from '@/lib/site/users'
 import { PERIOD_KEYS, PERIOD_LABELS, type PeriodKey } from '@/lib/reportBuilder/spec'
 import { PageHeader, PageBody, Card, Callout, Icons, LinkTabs, Badge } from '@/components/ui'
@@ -139,10 +140,23 @@ export default async function ReportPage({
   const storeHref = hrefBuilder(`/reports/${encodeURIComponent(id)}`, query)
 
   const producedKeys = result ? result.columns.map((c) => c.key) : []
-  const storeColumns = result
-    ? await reportColumnsFor(siteId, report.id, producedKeys)
-    : null
+  const prefs = result
+    ? await reportPrefsFor(siteId, report.id)
+    : { columns: null, groupBy: null }
+  const storeColumns = parseStoredColumns(prefs.columns, producedKeys)
   const shownColumns = result ? applyStoreColumns(result.columns, storeColumns) : []
+
+  /*
+   * What this report can be banded by, and what it IS banded by.
+   *
+   * Derived from the columns actually ON SCREEN, not from everything the engine
+   * produced. A column the store has hidden must not stay bandable: its values
+   * would still head every band while the column itself was nowhere to be seen.
+   * The same filter covers a column the caller's permissions stripped, where the
+   * band headings would be an outright leak.
+   */
+  const groupOptions = groupOptionsFor(shownColumns)
+  const groupKey = resolveGroupKey(prefs.groupBy, shownColumns)
 
   return (
     <>
@@ -210,6 +224,8 @@ export default async function ReportPage({
             columns={shownColumns}
             allColumns={result.columns}
             storeColumns={storeColumns}
+            groupOptions={groupOptions}
+            groupKey={groupKey}
             canSetColumns={allow('setup.edit')}
             rows={result.rows}
             totals={result.totals}

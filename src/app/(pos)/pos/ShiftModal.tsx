@@ -49,6 +49,7 @@ export default function ShiftModal({
   pendingSales,
   onClose,
   onShiftChanged,
+  onDeclare,
 }: {
   open: boolean
   online: boolean
@@ -58,6 +59,15 @@ export default function ShiftModal({
   onClose: () => void
   /** Fires with the open shift's id (or null) so the shell can stash KV.shift. */
   onShiftChanged: (shiftId: number | null) => void
+  /**
+   * Hands off to the DETAILED cash-up.
+   *
+   * The quick count below still exists and is still the right tool for a till
+   * that just needs to balance and go home. But the ordinary act of cashing up
+   * is the full declaration — notes and coin by pile, a supervisor's name on
+   * it — so that is what this button offers, and the quick count sits under it.
+   */
+  onDeclare: () => void
 }) {
   const toast = useToast()
   const [pending, startTransition] = useTransition()
@@ -357,9 +367,21 @@ export default function ShiftModal({
               Drop to safe
             </Button>
           </div>
-          <Button variant="danger" disabled={pending} onClick={() => setFace({ kind: 'count' })}>
-            Cash up this shift
-          </Button>
+          <div className="flex flex-col gap-2">
+            <Button variant="danger" disabled={pending} onClick={onDeclare}>
+              Cash up this shift
+            </Button>
+            {/* The old flat count, kept and demoted. A shop that only wants to
+                know whether the drawer balances should not be made to count
+                every denomination — but it should not be the default either. */}
+            <Button
+              variant="ghost"
+              disabled={pending}
+              onClick={() => setFace({ kind: 'count' })}
+            >
+              Quick count instead
+            </Button>
+          </div>
         </div>
       )}
     </Modal>

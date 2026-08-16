@@ -103,6 +103,31 @@ ok('…and total for total', offline.totalIncl === built.totalIncl,
 ok('…and VAT for VAT', JSON.stringify(offline.vatByRate) === JSON.stringify(built.vatByRate))
 ok('offline carries no loyalty and copy 0', offline.loyalty === null && offline.copyNumber === 0)
 
+/*
+ * ── WHO IS ON THE SLIP ─────────────────────────────────────────────────────
+ *
+ * The two builders reach the cashier's name by different routes: the posted one
+ * from the DOCUMENT's `user_name`, the offline one from what the till hands it.
+ * They must land on the same person, because the paper given to the customer
+ * offline is the paper that must match the invoice posted at sync.
+ *
+ * This is not hypothetical. Until `withTillOperator` landed, the posted slip
+ * printed the BROWSER session's user while the offline slip printed the PIN
+ * operator — so on a shared machine the same sale printed two different
+ * cashiers depending on whether the line was up. The two builders were never
+ * compared on this field, so the divergence lived here unnoticed.
+ */
+ok('*** both slips name the same cashier ***',
+    offline.cashierName === built.cashierName,
+    `offline "${offline.cashierName}" vs posted "${built.cashierName}"`)
+
+/* And that the posted one takes it from the document rather than inventing it:
+   `user_name` is a snapshot written at save time from the actor, so a slip that
+   read anything else would be naming somebody the sale does not record. */
+ok('the posted slip takes its cashier from the document',
+    built.cashierName === doc.userName,
+    `${built.cashierName} vs ${doc.userName}`)
+
 console.log('\n── Notes formatting ────────────────────────────────────────\n')
 
 ok('qty > 1 formats as a count',

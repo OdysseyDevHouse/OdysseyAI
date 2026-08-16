@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import {
   Badge,
   Button,
@@ -7,11 +8,11 @@ import {
   EmptyState,
   TouchRow,
   CategoryTile,
-  SegmentedControl,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { effectiveDiscountPct } from '@/lib/specialsEngine'
-import type { BasketLine } from '@/lib/basket'
+import { type BasketLine } from '@/lib/basket'
+import { lineSessionState, minutesSince, type SessionBaseline } from '@/lib/lineSession'
 import { SaleLineCard } from './SaleLineCard'
 import type { SaleTotals, specialsFor } from './saleSelectors'
 
@@ -31,6 +32,9 @@ export function SalePane({
   lineSpecials,
   selectedKey,
   customerLabel,
+  baseline,
+  priceStructureName = null,
+  onLineMore,
   onSelect,
   onStep,
   onEdit,
@@ -39,14 +43,11 @@ export function SalePane({
   onClear,
   onPay,
   returning,
-  onToggleReturning,
   onPark,
   onShowSaved,
   savedCount,
-  onBill,
   onDocDiscount,
   onFindReceipt,
-  onSendKitchen,
   exchange = null,
   showParkKeys = true,
   busy,
@@ -57,6 +58,15 @@ export function SalePane({
   selectedKey: string | null
   /** The attached account, or a typed walk-in name, or null for nobody. */
   customerLabel: string | null
+  /**
+   * What the basket looked like when it was loaded, for the per-line state
+   * chips. Null on a basket that was not recalled — every line of which is new.
+   */
+  baseline: SessionBaseline
+  /** "Retail", "Wholesale" — the structure this basket is priced on. */
+  priceStructureName?: string | null
+  /** The overflow of per-line actions. Undefined leaves the More key out. */
+  onLineMore?: (line: BasketLine) => void
   onSelect: (key: string) => void
   onStep: (key: string, delta: number) => void
   onEdit: (line: BasketLine) => void
@@ -64,26 +74,21 @@ export function SalePane({
   onCustomer: () => void
   onClear: () => void
   onPay: () => void
-  /** True when this basket is a return rather than a sale. */
+  /**
+   * True when this basket is a return rather than a sale.
+   *
+   * Read-only here. The mode is entered by the credit-sale quick key and left when the
+   * credit note posts — the pane reports it, it does not offer to change it.
+   */
   returning: boolean
-  /** Switches the mode. CLEARS the basket — see the reducer's SET_RETURNING. */
-  onToggleReturning: (next: boolean) => void
   onPark: () => void
   onShowSaved: () => void
   /** How many baskets are parked, for the badge. */
   savedCount: number
-  /**
-   * Prints the pro-forma bill for the open tab. Hospitality only, and only
-   * once the tab has a parked document — undefined hides the button, which is
-   * every retail till and every basket not yet on a table.
-   */
-  onBill?: () => void
   /** Opens the whole-sale discount dialog. Undefined leaves the row inert. */
   onDocDiscount?: () => void
   /** Opens the receipted-return flow. Shown in return mode only. */
   onFindReceipt?: () => void
-  /** Prints the tab's NEW lines on the kitchen printer. Hospitality only. */
-  onSendKitchen?: () => void
   /** Exchange credit held from a return — shown as a banner until Pay. */
   exchange?: { label: string; onClear: () => void } | null
   /**
@@ -98,6 +103,7 @@ export function SalePane({
   busy: boolean
 }) {
   const empty = lines.length === 0
+  const now = useMinuteClock()
 
   /* A FLOATING CARD, not a pane sharing a border with its neighbour. The three
      columns of the till each lift off the canvas on their own — which is what
@@ -106,41 +112,40 @@ export function SalePane({
      carry a name, a quantity and a price on one row. */
   return (
     <section className="flex w-[500px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-surface shadow-card">
+      {/* NO TITLE ROW. The bar across the top of the till already says "Current
+          Sale", and the pane sat directly under it repeating the same two words
+          — so the basket now opens straight onto the customer row, and the
+          heading is said once, in the top-left corner where the screen names
+          itself. Return mode still announces itself, in the banner below. */}
       {/*
-        ── SALE OR RETURN ────────────────────────────────────────────────────
-        At the TOP of the pane, above everything, because it changes the meaning of every
-        figure below it. A cashier who thinks they are selling while taking a return hands
-        over goods AND money, and the only thing standing in the way is this being
-        impossible to miss.
+        ── RETURN BANNER ─────────────────────────────────────────────────────
+        There is no Sale/Return switch here. Return mode is entered from the credit-sale
+        quick key, and left when the credit note finishes — so the cashier never picks a
+        direction, they press a key for the job they are doing.
 
-        A SegmentedControl rather than a toggle or a checkbox: two named states, both
-        visible, with the active one filled — so the answer to "which am I doing" is
-        readable at a glance from arm's length rather than inferred from a switch position.
+        What the pane still owes them is the ANSWER to "which am I doing", because a
+        cashier who thinks they are selling while taking a return hands over goods AND
+        money. So the header stays silent in the ordinary case and turns into an
+        unmissable band the moment the basket is crediting rather than selling.
       */}
+      {/* Rendered ONLY when it has something to say. On a retail till that is selling
+          there is no banner at all — and an always-present wrapper would leave an
+          empty padded strip with a border under it, above the customer row.
+
+          Send and Bill USED to sit here. They are quick keys now: two slips only a
+          restaurant ever prints, costing every shop a strip of the basket whether or
+          not it served tables. A hospitality shop puts them on a bar; a retail one
+          never sees them. */}
+      {(returning || exchange) && (
       <div className="border-b border-border p-3 pb-2">
         <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1">
-            <SegmentedControl
-              value={returning ? 'return' : 'sale'}
-              onChange={(next) => onToggleReturning(next === 'return')}
-              options={[
-                { value: 'sale', label: 'Sale' },
-                { value: 'return', label: 'Return' },
-              ]}
-            />
-          </div>
-          {/* The kitchen and the bill — the two slips a tab produces before
-              payment. Only rendered when the shell says this basket IS a tab. */}
-          {onSendKitchen && !returning && (
-            <Button variant="secondary" disabled={busy} onClick={onSendKitchen}>
-              Send
-            </Button>
-          )}
-          {onBill && !returning && (
-            <Button variant="secondary" disabled={busy} onClick={onBill}>
-              <Icons.Printer size={15} />
-              Bill
-            </Button>
+          {returning && (
+            <div className="min-w-0 flex-1">
+              <span className="inline-flex items-center gap-1.5 rounded-control bg-warning-soft px-2.5 py-1 text-sm font-semibold text-warning-ink">
+                <Icons.Undo size={15} />
+                Return
+              </span>
+            </div>
           )}
         </div>
         {/* Said only in return mode, and it says the thing a cashier needs to know rather
@@ -179,6 +184,7 @@ export function SalePane({
           </div>
         )}
       </div>
+      )}
 
       {/* ── Customer ─────────────────────────────────────────────────────── */}
       <div className="border-b border-border p-3">
@@ -220,11 +226,19 @@ export function SalePane({
               lineTotal={totals.perLine[index]?.lineTotalIncl ?? 0}
               effectiveDiscountPct={effectiveDiscountPct(line.discountPct, lineSpecials[index])}
               specialName={lineSpecials[index]?.name ?? null}
+              priceStructureName={priceStructureName}
+              sessionState={lineSessionState(line, baseline)}
+              /* No recorded order time means the line was rung before 167 or
+                 restored from an old offline basket. `now` reads 0 minutes,
+                 which is the honest answer when nothing is known — better than
+                 dating it to 1970. */
+              ageMinutes={minutesSince(line.orderedAt ?? now, now)}
               selected={selectedKey === line.key}
               onSelect={() => onSelect(line.key)}
               onStep={(delta) => onStep(line.key, delta)}
               onEdit={() => onEdit(line)}
               onRemove={() => onRemove(line.key)}
+              onMore={onLineMore ? () => onLineMore(line) : undefined}
             />
           ))}
         </ul>
@@ -347,6 +361,35 @@ export function SalePane({
       </div>
     </section>
   )
+}
+
+/**
+ * `Date.now()`, re-read every thirty seconds.
+ *
+ * The line ages have to count up on their own. A till showing a tab can sit
+ * untouched for twenty minutes while a waiter is on the floor, and nothing else
+ * on this screen would re-render in that time — so without a clock of its own
+ * every line would still claim the age it had when the table was opened, which
+ * is worse than showing no age at all.
+ *
+ * THIRTY seconds, for a figure that changes every sixty: a minute-long timer
+ * started mid-minute shows each value for up to two minutes, and "2 minutes"
+ * lingering while the customer's third minute passes is the kind of small lie
+ * that stops the number being trusted. Two ticks a minute costs nothing and
+ * bounds the error at thirty seconds.
+ *
+ * Initialised from a state initialiser rather than a module-level constant, so
+ * every mount reads the clock fresh; and SSR renders the server's `now` and
+ * hydration corrects it on the first tick, which is invisible because the till
+ * is a client-rendered screen behind a gate.
+ */
+function useMinuteClock(): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
+  return now
 }
 
 function Row({

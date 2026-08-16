@@ -1,12 +1,18 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId, requireSiteUser, actorFor, actorForAny, actorForOrThrow } from '@/lib/auth'
-import { can, capabilitiesForRole, type Capability, type CapabilitySet } from '@/lib/site/permissions'
+import {
+  requireActor,
+  requireSiteId,
+  requireSiteUser,
+  actorFor,
+  actorForAny,
+  actorForOrThrow,
+  withTillOperator,
+} from '@/lib/auth'
+import { can, type Capability, type CapabilitySet } from '@/lib/site/permissions'
 import { checkPricing } from '@/lib/site/priceGuard'
 import { verifyOverrideToken } from '@/lib/overrideToken'
-import { getTillSession } from '@/lib/tillSession'
-import { getUser } from '@/lib/site/users'
 import { createCreditNote, creditableLines, type CreditNoteInput } from '@/lib/site/salesReversal'
 import {
   saveDraft,
@@ -14,6 +20,7 @@ import {
   recallDocument,
   discardDocument,
   getDocument,
+  attributeTo,
   type LineInput,
 } from '@/lib/site/salesDocuments'
 import { requireLicensedDevice } from '@/lib/control/requireDevice'
@@ -143,20 +150,21 @@ export async function saveSaleAction(
   /** A supervisor's authorisation for a price/discount beyond the operator's rights. */
   overrideToken?: string,
 ): Promise<SaleResult> {
-  const ctx = await actorFor('sales.till')
-  if ('ok' in ctx) return ctx
+  const denied = await actorFor('sales.till')
+  if ('ok' in denied) return denied
+  /* The PIN operator, not the browser session — they are different people on a
+     shared machine, and this actor's id is what commission gets paid on. */
+  const ctx = await withTillOperator(denied)
   const { siteId, actor } = ctx
 
   // Checked here, not only where the input was greyed out: this action is a
   // public endpoint and the price arrives from the client.
   const refused = await checkPricing(
     siteId,
-    await withOverride(
-      siteId,
-      await operatorCapabilities(siteId, ctx.capabilities),
-      overrideToken,
-      ['sales.discount_override', 'sales.price_override'],
-    ),
+    await withOverride(siteId, ctx.capabilities, overrideToken, [
+      'sales.discount_override',
+      'sales.price_override',
+    ]),
     input.priceStructureId ?? null,
     input.lines,
   )
@@ -170,42 +178,6 @@ export async function saveSaleAction(
   )
   if (!result.ok) return { ok: false, error: result.error }
   return { ok: true, documentId: result.id }
-}
-
-/**
- * Stamps every till line with whoever is at the till.
- *
- * Done on the SERVER from the PIN session rather than sent up by the browser:
- * this decides who gets paid commission, and a value the client supplies is a
- * value the client can choose. `requireActor` already resolves the till
- * operator ahead of the browser session, so `actor.userId` is the person
- * standing there rather than whoever opened the browser that morning.
- *
- * A line that already names someone keeps them — the back-office invoicing
- * screen sets it explicitly per line, and that is a deliberate answer this
- * must not overwrite.
- */
-function attributeTo<T extends { salesRepUserId?: number | null }>(
-  lines: T[],
-  userId: number,
-): T[] {
-  return lines.map((line) => ({ ...line, salesRepUserId: line.salesRepUserId ?? userId }))
-}
-
-/**
- * The capabilities of whoever is actually at the till.
- *
- * NOT the browser session's. A manager signed into the back office who hands
- * the till to a junior must not leave their own price and discount rights
- * behind on the screen — the PIN decides, exactly as it does for attribution.
- * Falls back to the session when no till session exists, which is the
- * back-office case.
- */
-async function operatorCapabilities(siteId: number, fallback: CapabilitySet) {
-  const till = await getTillSession(siteId)
-  if (!till) return fallback
-  const operator = await getUser(siteId, till.userId)
-  return operator ? capabilitiesForRole(siteId, operator.roleId) : fallback
 }
 
 /**
@@ -377,8 +349,12 @@ export async function finaliseSaleAction(
   /** A discount code the till validated — the lines already carry its money. */
   discountCode: { codeId: number; code: string; amountIncl: number } | null = null,
 ): Promise<FinaliseSaleResult> {
-  const ctx = await actorFor('sales.till')
-  if ('ok' in ctx) return ctx
+  const denied = await actorFor('sales.till')
+  if ('ok' in denied) return denied
+  /* The PIN operator, not the browser session. This actor lands on the sale
+     header, on every line's commission attribution, and — in `user` cash-up
+     mode — decides whose shift the money banks into. */
+  const ctx = await withTillOperator(denied)
   const { siteId, actor } = ctx
 
   /* IS THIS MACHINE LICENSED TO SELL?
@@ -391,12 +367,10 @@ export async function finaliseSaleAction(
   // than assumed: a basket can be saved by one person and finalised by another.
   const refusedPrice = await checkPricing(
     siteId,
-    await withOverride(
-      siteId,
-      await operatorCapabilities(siteId, ctx.capabilities),
-      overrideToken,
-      ['sales.discount_override', 'sales.price_override'],
-    ),
+    await withOverride(siteId, ctx.capabilities, overrideToken, [
+      'sales.discount_override',
+      'sales.price_override',
+    ]),
     sale.priceStructureId ?? null,
     sale.lines,
   )
@@ -437,16 +411,14 @@ export async function voidSaleAction(
   // whoever is ACTING: the PIN operator when a till session exists (widened by
   // a verified supervisor token), else the browser session. The entry gate is
   // any-of so a till cashier reaches the operator check at all.
-  const ctx = await actorForAny('sales.void', 'sales.till')
-  if ('ok' in ctx) return ctx
+  const denied = await actorForAny('sales.void', 'sales.till')
+  if ('ok' in denied) return denied
+  /* Identity as well as rights: `voided_by` on the document must name the person
+     who actually voided it, which on a shared machine is the PIN operator. */
+  const ctx = await withTillOperator(denied)
   const { siteId, actor } = ctx
 
-  const effective = await withOverride(
-    siteId,
-    await operatorCapabilities(siteId, ctx.capabilities),
-    overrideToken,
-    ['sales.void'],
-  )
+  const effective = await withOverride(siteId, ctx.capabilities, overrideToken, ['sales.void'])
   if (!can(effective, 'sales.void')) {
     return { ok: false, error: 'Voiding a sale needs a supervisor. Ask a manager to approve it.' }
   }

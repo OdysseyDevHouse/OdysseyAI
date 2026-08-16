@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   ActionTile,
   Button,
@@ -16,6 +16,7 @@ import {
   quickKeyLabel,
   topLevelKeys,
   type QuickKeyRow,
+  type QuickKeySection,
 } from '@/lib/quickKeys'
 import { quickKeyArt, quickKeyArtSrc } from '@/lib/quickKeyArt'
 import { useTileSizeValue } from '@/lib/posOffline/useTileSize'
@@ -37,12 +38,31 @@ import { useTileSizeValue } from '@/lib/posOffline/useTileSize'
  */
 export function QuickKeyPanel({
   keys,
+  section = 'main',
+  emptyState,
+  showEyebrow = true,
   productNames,
   departmentNames,
   isEnabled,
   onPress,
 }: {
   keys: readonly QuickKeyRow[]
+  /**
+   * Which bar to draw. The till holds every section in one list, so this is what
+   * decides between the catalogue pane's keys and the floor's — see QUICK_KEY_SECTIONS.
+   */
+  section?: QuickKeySection
+  /**
+   * What to show when this bar has nothing on it. Defaults to the catalogue pane's
+   * message, which names the wrong remedy on the floor: a waiter sent to "pick a
+   * department on the left" is being pointed at a pane that is not on screen.
+   */
+  emptyState?: ReactNode
+  /**
+   * The "Quick keys — tap to run" line above the grid. Off where a dialog title
+   * already says it — see the label itself for why it exists at all.
+   */
+  showEyebrow?: boolean
   /** A product key with no caption reads its product's name. Resolved by the shell. */
   productNames: Record<number, string>
   departmentNames: Record<number, string>
@@ -63,7 +83,7 @@ export function QuickKeyPanel({
   /* A folder with nothing visible inside is a dead end — a tile whose tap can only
      show an empty screen — so the TILL drops it. The designer keeps rendering it,
      because an empty folder has to be visible somewhere to get filled. */
-  const topShown = visible(topLevelKeys(keys)).filter(
+  const topShown = visible(topLevelKeys(keys, section)).filter(
     (k) => k.kind !== 'group' || visible(groupMembers(keys, k.id)).length > 0,
   )
   const shown = openGroup ? visible(groupMembers(keys, openGroup.id)) : topShown
@@ -83,11 +103,13 @@ export function QuickKeyPanel({
      rendering a bare eyebrow label over nothing would read as a broken till. */
   if (!openGroup && topShown.length === 0) {
     return (
-      <EmptyState
-        icon={<Icons.Sparkles size={28} />}
-        title="No quick keys yet"
-        hint="A manager can set these up in Setup → Quick keys. Until then, pick a department on the left or scan a barcode."
-      />
+      emptyState ?? (
+        <EmptyState
+          icon={<Icons.Sparkles size={28} />}
+          title="No quick keys yet"
+          hint="A manager can set these up in Setup → Quick keys. Until then, pick a department on the left or scan a barcode."
+        />
+      )
     )
   }
 
@@ -106,12 +128,18 @@ export function QuickKeyPanel({
           </span>
         </div>
       ) : (
-        /* Says what the grid IS and what tapping does, in one line. The tiles below
-           are now white cards like the product tiles, so without this a cashier
-           landing on the till has no cue that these run rather than sell. */
-        <p className="mb-1 text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
-          Quick keys — tap to run
-        </p>
+        showEyebrow && (
+          /* Says what the grid IS and what tapping does, in one line. The tiles below
+             are now white cards like the product tiles, so without this a cashier
+             landing on the till has no cue that these run rather than sell.
+
+             Dropped on the floor, where the grid is in a dialog whose own title already
+             says "Quick keys" — the eyebrow earns its place by separating these tiles
+             from the product ones beside them, and there are none beside them there. */
+          <p className="mb-1 text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
+            Quick keys — tap to run
+          </p>
+        )
       )}
 
       {shown.length === 0 ? (

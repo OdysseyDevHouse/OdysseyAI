@@ -11,7 +11,7 @@ import { terminalForDevice } from '@/lib/site/terminals'
 import { getSequence } from '@/lib/site/sequences'
 import { numberingConfig, tillNumber } from '@/lib/site/numbering'
 import { operatorsForDevice } from '@/lib/site/offlineOperators'
-import { listQuickKeys } from '@/lib/site/quickKeys'
+import { listAllQuickKeys } from '@/lib/site/quickKeys'
 import { readInstructionLibrary } from '@/lib/site/instructions'
 import { siteQuery } from '@/lib/siteDb'
 
@@ -235,8 +235,12 @@ export async function GET(req: NextRequest) {
 
   /* The quick keys, plus the names their captions fall back to. Only the products and
      departments actually ON a key — the product file is already in this response, but the
-     till would have to search 40,000 rows to label six buttons. */
-  const quickKeys = await listQuickKeys(siteId, 'main')
+     till would have to search 40,000 rows to label six buttons.
+
+     Every bar, not just `main`: the floor's Quick keys button draws the tables section,
+     and a hospitality till that reloaded offline with only the main bar cached would lose
+     it — the same failure this block was written to fix for the catalogue pane. */
+  const quickKeys = await listAllQuickKeys(siteId)
   const keyProductIds = [
     ...new Set(quickKeys.map((k) => k.productId).filter((id): id is number => !!id)),
   ]

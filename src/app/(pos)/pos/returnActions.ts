@@ -1,9 +1,7 @@
 'use server'
 
-import { actorFor } from '@/lib/auth'
-import { getTillSession } from '@/lib/tillSession'
-import { getUser } from '@/lib/site/users'
-import { can, capabilitiesForRole, type CapabilitySet } from '@/lib/site/permissions'
+import { actorFor, withTillOperator } from '@/lib/auth'
+import { can, type CapabilitySet } from '@/lib/site/permissions'
 import { verifyOverrideToken } from '@/lib/overrideToken'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
 import { getDocument, saveDraft, type LineInput } from '@/lib/site/salesDocuments'
@@ -42,21 +40,20 @@ import type { RowDataPacket } from 'mysql2/promise'
  * posOffline/types.ts documents no-receipt-only offline returns.
  */
 
+/**
+ * The till guard and the PIN operator in one call, since every action here
+ * needs both. The operator swap itself is `withTillOperator` in auth.ts —
+ * shared, because this file, shiftActions and the sales actions each used to
+ * hold their own copy and the sales one had drifted into attributing sales to
+ * the browser user.
+ */
 async function operatorContext(): Promise<
   | { siteId: number; actor: { userId: number; userName: string }; capabilities: CapabilitySet }
   | { ok: false; error: string }
 > {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
-  const till = await getTillSession(ctx.siteId)
-  if (!till) return ctx
-  const operator = await getUser(ctx.siteId, till.userId)
-  if (!operator) return ctx
-  return {
-    siteId: ctx.siteId,
-    actor: { userId: operator.id, userName: operator.name },
-    capabilities: await capabilitiesForRole(ctx.siteId, operator.roleId),
-  }
+  return withTillOperator(ctx)
 }
 
 export type ReceiptLookup =

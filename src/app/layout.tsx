@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { brandFont } from './brandFont'
 
 export const metadata: Metadata = {
   title: 'OdysseyAI Back Office',
@@ -53,7 +54,10 @@ function ThemeScript() {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    /* The wordmark face is declared on <html> so every route group — the back
+       office AND the till, which has its own layout — can reach it through the
+       `.wordmark` class without each one remembering to add it. */
+    <html lang="en" className={brandFont.variable} suppressHydrationWarning>
       <head>
         <ThemeScript />
       </head>

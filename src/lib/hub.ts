@@ -68,6 +68,9 @@ export type HubIconName =
   | 'Gem'
   | 'Stamp'
   | 'History'
+  /* Training mode's tile — a mortarboard, beside the integrity tools it sits
+     with in Setup. */
+  | 'GraduationCap'
 
 /** A screen as written in a catalogue — no label, the href already implies it. */
 export type DeclaredItem<Href extends SubpageHref = SubpageHref> = {

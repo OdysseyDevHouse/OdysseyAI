@@ -1,0 +1,55 @@
+-- How a report is BANDED for the store, alongside which columns it shows.
+--
+-- (Written as 168 and renumbered: another change took that number first. The
+-- runner keys off the FILENAME, so any site that applied it under the old name
+-- has its record renamed to match rather than the file being left to re-run —
+-- ADD COLUMN is not idempotent.)
+--
+-- ── WHY THIS IS A COLUMN ON 111 AND NOT A TABLE OF ITS OWN ───────────────
+--
+-- 111 stores "which columns this report shows, in this order, for this store".
+-- This stores "and it is broken into bands by this column". The two are the
+-- same kind of fact about the same thing: keyed on the same report_id in the
+-- resolver's id space ('sales-by-product' or 'saved:12'), decided per STORE
+-- rather than per user, set from the same toolbar, and guarded by the same
+-- setup.edit capability.
+--
+-- A second table would mean a second round trip in all three readers — the
+-- report screen, the export route and the scheduled send — to reunite two
+-- facts that were never apart, or a JOIN whose only purpose is to put them
+-- back together.
+--
+-- `columns` becomes nullable in the same breath. The row now means "the store
+-- has decided SOMETHING about this report", and each column independently
+-- means "...and this is what". That is what lets a store band a report without
+-- also having to pick its columns, and lets either be reset without disturbing
+-- the other.
+--
+-- ── WHAT IS STORED ───────────────────────────────────────────────────────
+--
+-- ONE ReportColumn.key — an OUTPUT key, the same string 111 stores in its
+-- array and the same one the grid, the PDF, the spreadsheet and the scheduled
+-- email all key off. Not SpecColumn.field: the same field may appear twice
+-- under different aggregates, so a field key cannot identify a column.
+--
+-- NULL means "no banding" and is a real, chosen state — the store picked "No
+-- grouping" — as well as the default for a store that has never chosen. The
+-- two do not need telling apart: both render flat.
+--
+-- An unknown key is dropped on read, so a renamed or removed catalog field
+-- needs no migration here. Same rule as `columns`.
+--
+-- ── WHAT THIS IS NOT ─────────────────────────────────────────────────────
+--
+-- NOT CustomReportSpec.groupFields. That is SQL GROUP BY: it collapses many
+-- rows into one aggregated row, and it belongs to the report's definition —
+-- editing it is editing the report. This is presentational BANDING: every
+-- detail row stays on the page and a subtotal is inserted under each group. A
+-- store banding the invoice list by payment type must still see every invoice.
+--
+-- The two are independent and may both be on: a report summarised by product
+-- can still be banded by department. Nothing here ever writes to the spec.
+
+ALTER TABLE report_columns
+  ADD COLUMN group_by VARCHAR(64) NULL AFTER columns,
+  MODIFY COLUMN columns TEXT NULL;

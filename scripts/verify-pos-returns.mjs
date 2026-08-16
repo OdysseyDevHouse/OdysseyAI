@@ -29,7 +29,7 @@
 // one to a real users row to make a test pass is the wrong trade; a signed 8-hour
 // session token is an artefact this script creates and throws away.
 import { spawn } from 'node:child_process'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { SignJWT } from 'jose'
@@ -40,7 +40,10 @@ const SECRET = process.env.SESSION_SECRET
 const BASE = process.env.APP_URL || 'http://localhost:4100'
 const OUT = process.env.SHOT_DIR || path.join(process.cwd(), '.screenshots')
 const PORT = 9343
-const DEVICE = process.env.VERIFY_DEVICE_ID || 'b7a53389-9e44-4378-873c-af3cbd870b7d'
+/* A serial_number from cp2_devices with status='active' — the till licence this run
+   pretends to be. The previous default named no row at all, which the catalog API
+   tolerated while the SCREEN refused to render. Override with VERIFY_DEVICE_ID. */
+const DEVICE = process.env.VERIFY_DEVICE_ID || '8d3bc8d3-0d97-4cc1-91cc-02afd3fa4c8c'
 
 if (!EMAIL || !PASSWORD) {
   console.error('Set DEV_LOGIN_EMAIL / DEV_LOGIN_PASSWORD in .env.local')
@@ -211,7 +214,58 @@ await evaluate(
     '})()',
   ].join('\n'),
 )
-await sleep(4000)
+/* POLLED, not a fixed sleep. Sign-in takes anywhere from a moment to several seconds
+   depending on how warm the dev server is, and a 4s guess that loses the race lands on
+   the "<!DOCTYPE is not valid JSON" crash below rather than saying what went wrong. */
+for (let i = 0; i < 30; i++) {
+  const state = await evaluate(
+    [
+      '(() => {',
+      '  const dialog = document.querySelector("dialog[open]")',
+      '  if (dialog && /choose a store|select which one/i.test(dialog.innerText || "")) return "picker"',
+      '  return location.pathname.startsWith("/login") || location.pathname === "/" ? "login" : "app"',
+      '})()',
+    ].join('\n'),
+  )
+  if (state === 'picker' || state === 'app') break
+  await sleep(500)
+}
+
+/*
+ * ── Choose a store ─────────────────────────────────────────────────────────
+ *
+ * The dev account can reach more than one store, so sign-in ends on a picker dialog
+ * OVER the login card rather than in the app. Skipping this does not fail loudly: the
+ * catalog fetch below returns the picker's HTML with a 200, and `r.json()` dies on
+ * "<!DOCTYPE" a hundred lines from the actual cause. See screenshot.mjs, which learned
+ * the same lesson.
+ */
+const picked = await evaluate(
+  [
+    '(() => {',
+    '  const dialog = document.querySelector("dialog[open]")',
+    '  if (!dialog || !/choose a store|select which one/i.test(dialog.innerText || "")) return "no picker"',
+    '  const rows = [...dialog.querySelectorAll("button, a[href]")]',
+    '    .filter((el) => (el.textContent || "").trim().length > 0)',
+    '    .filter((el) => !/cancel|sign out/i.test(el.textContent))',
+    '  const want = ' + JSON.stringify(process.env.SHOT_SITE || ''),
+    '  const hit = want',
+    '    ? rows.find((el) => el.textContent.toLowerCase().includes(want.toLowerCase()))',
+    '    : rows[0]',
+    '  if (!hit) return null',
+    '  hit.click()',
+    '  return hit.textContent.replace(/\\s+/g, " ").trim()',
+    '})()',
+  ].join('\n'),
+)
+if (picked === null) {
+  console.error('The store picker opened but held no store to choose.')
+  process.exit(1)
+}
+if (picked !== 'no picker') {
+  await sleep(4000)
+  console.log('chose store:', picked, '->', await evaluate('location.pathname'))
+}
 
 /* ── Past the PIN gate, by minting the till cookie the action would issue ───── */
 
@@ -247,7 +301,13 @@ await send(
   { name: 'odyssey_till', value: token, domain: 'localhost', path: '/', httpOnly: true },
   sessionId,
 )
-await evaluate(`localStorage.setItem('ody-device-id', ${JSON.stringify(DEVICE)}), true`)
+/* The key `deviceId()` actually reads — see src/lib/deviceId.ts. It was 'ody-device-id'
+   once, and this script kept writing that long after the rename, so the page generated a
+   fresh UUID instead, found it unlicensed, and rendered "This device is not set up as a
+   till" while the API calls below (which take DEVICE as a parameter) went on passing. */
+await evaluate(
+  `localStorage.setItem('odyssey.device.id', ${JSON.stringify(DEVICE)}), true`,
+)
 
 consoleErrors.length = 0
 const landed = await goto('/pos')
@@ -259,6 +319,44 @@ if (stillGated) {
   console.log('assertions below cannot run. Nothing about the feature is proven either way.')
   console.log(`\n${fails} FAILURE(S)`)
   process.exit(1)
+}
+
+/*
+ * ── Past the tables gate ───────────────────────────────────────────────────
+ *
+ * A HOSPITALITY till opens on Tables and has no sale pane until a basket exists, so
+ * every assertion below it ran against a screen with no basket, no primary button and
+ * no quick keys — reporting the return feature as broken when nothing had been opened.
+ * "Quick sale" is the counter/walk-in path and the closest thing to a retail till.
+ * A retail till has no gate, so the click is best-effort.
+ */
+for (let i = 0; i < 20; i++) {
+  const state = await evaluate(
+    [
+      '(() => {',
+      "  if (document.querySelector('section')) return 'pane'",
+      "  const q = [...document.querySelectorAll('button, a')].find((b) => /Quick sale/i.test(b.innerText || ''))",
+      "  if (q) { q.click(); return 'clicked' }",
+      "  return 'waiting'",
+      '})()',
+    ].join('\n'),
+  )
+  if (state === 'pane') break
+  await sleep(700)
+}
+
+/*
+ * VERIFY_PROBE_FILE='<path>' runs that file's JS in the signed-in till and prints the
+ * result, then stops. The screenshot script has the same hook, but it cannot get past
+ * the clerk PIN gate — and this one has already minted the till cookie by here, so it
+ * is the only place a question about the RENDERED till can be asked directly.
+ */
+if (process.env.VERIFY_PROBE_FILE) {
+  const body = readFileSync(process.env.VERIFY_PROBE_FILE, 'utf8')
+  const probed = await evaluate(`(async () => { ${body} })()`)
+  console.log('probe:', typeof probed === 'string' ? probed : JSON.stringify(probed))
+  console.log('screenshot ->', await shot('pos-probe'))
+  process.exit(0)
 }
 
 /* ── Helpers for driving the pane ────────────────────────────────────────── */
@@ -287,17 +385,27 @@ const clickByText = (text) =>
  * never added anything, and every assertion after it failed on an empty basket. A
  * product tile is the one that shows a price; a department tile does not.
  */
-async function addOneItem() {
-  await evaluate(
+async function addOneItem(railIndex = 0) {
+  /* Into the DEPARTMENT rail first. Since the quick keys became the way into return
+     mode, the keys floor holds an action key ("Refund") that lives in the same kind of
+     grid as a product tile — the drill below would happily click it and put the till
+     into a return instead of adding anything. Starting from a department sidesteps it.
+
+     `railIndex` because the FIRST department on this site ("Imp …") holds no products of
+     its own — a real shape, not a broken fixture, and one that made this script pass or
+     fail depending on which department it happened to land in. The caller walks the rail
+     until one of them yields something priced. */
+  const rail = await evaluate(
     [
       '(() => {',
       "  const nav = document.querySelector('nav')",
       "  const rows = nav ? [...nav.querySelectorAll('button')] : []",
-      '  if (rows.length) rows[0].click()',
+      `  if (rows[${railIndex}]) rows[${railIndex}].click()`,
       '  return rows.length',
       '})()',
     ].join('\n'),
   )
+  if (railIndex >= (rail ?? 0)) return { clicked: null, reason: 'no such department' }
   await sleep(1800)
 
   /* Down through the tree. Six levels is far more than this catalogue has, and stopping
@@ -390,15 +498,102 @@ async function addOneItem() {
   return added
 }
 
-/** The primary end-of-sale button: its word and its computed background. */
+/*
+ * Back to the quick-key floor of the catalogue.
+ *
+ * `addOneItem` drills DOWN through departments to find something priced, and the quick
+ * keys only render on the top view (CatalogPane renders them for view.kind === 'keys').
+ * So after adding an item the Refund key is not on screen — which looks exactly like the
+ * key having been removed. Clicks Back until it stops moving.
+ */
+async function backToKeys() {
+  /* Give the catalogue a moment to arrive before deciding where we are — the till can
+     paint its panes before the products (and therefore the quick keys) land. */
+  for (let i = 0; i < 20; i++) {
+    const ready = await evaluate(
+      `[...document.querySelectorAll('button')].some((b) => /Credits goods coming back/.test(b.innerText||'')) ||
+       [...document.querySelectorAll('button')].some((b) => (b.innerText||'').trim() === 'Back')`,
+    )
+    if (ready) break
+    await sleep(500)
+  }
+  for (let i = 0; i < 8; i++) {
+    /* Already there? The keys floor is the one that shows an action key. Checked FIRST
+       and each time round, because "Back" does not disappear at the top of the tree —
+       looping on its presence alone never terminates at the right place.
+       Matched on the key's HINT, not on "Refund": the primary button says Refund too
+       once the till is in return mode, and that one is on screen at every depth. */
+    const onKeys = await evaluate(
+      `[...document.querySelectorAll('button')].some((b) => /Credits goods coming back/.test(b.innerText||''))`,
+    )
+    if (onKeys) return true
+    const clicked = await evaluate(
+      [
+        '(() => {',
+        "  const b = [...document.querySelectorAll('button')].find(",
+        "    (x) => (x.innerText || '').trim() === 'Back' && x.getBoundingClientRect().width > 0",
+        '  )',
+        '  if (!b) return false',
+        '  b.click()',
+        '  return true',
+        '})()',
+      ].join('\n'),
+    )
+    if (!clicked) break
+    await sleep(900)
+  }
+  /*
+   * Into the Supervisor FOLDER, which is where the seeder actually puts the refund key —
+   * it is a supervisor action, not a counter one. A quick-key group is a tile that opens
+   * a second floor of keys rather than running anything, so the key is one tap deeper
+   * than the floor this function had been settling for.
+   */
+  const already = await evaluate(
+    `[...document.querySelectorAll('button')].some((b) => /Credits goods coming back/.test(b.innerText||''))`,
+  )
+  if (already) return true
+
+  await evaluate(
+    [
+      '(() => {',
+      "  const g = [...document.querySelectorAll('button')].find(",
+      "    (b) => /Supervisor/i.test(b.innerText || '') && b.getBoundingClientRect().width > 0",
+      '  )',
+      '  if (!g) return false',
+      '  g.click()',
+      '  return true',
+      '})()',
+    ].join('\n'),
+  )
+  await sleep(900)
+
+  /* One last look, so a caller can tell "we got there" from "we gave up". If the key
+     still is not there, the till genuinely has no Refund key configured. */
+  return evaluate(
+    `[...document.querySelectorAll('button')].some((b) => /Credits goods coming back/.test(b.innerText||''))`,
+  )
+}
+
+/**
+ * The primary end-of-sale button: its word and its computed background.
+ *
+ * The BIGGEST match, not the first one in document order. "Refund" is now both the
+ * quick key's label and the primary button's word in return mode, and the key comes
+ * first in the DOM — so a plain find() would measure the key's colour and compare it
+ * against the footer Pay button, which proves nothing about what a cashier presses.
+ */
 const primaryButton = () =>
   evaluate(
     [
       '(() => {',
-      "  const b = [...document.querySelectorAll('button')].find((x) =>",
+      "  const all = [...document.querySelectorAll('button')].filter((x) =>",
       "    /^(Pay|Refund|Working)/.test((x.innerText || '').trim())",
       '  )',
-      '  if (!b) return null',
+      '  if (!all.length) return null',
+      '  const b = all.sort((p, q) => {',
+      '    const a = p.getBoundingClientRect(), c = q.getBoundingClientRect()',
+      '    return c.width * c.height - a.width * a.height',
+      '  })[0]',
       '  return {',
       "    text: (b.innerText || '').replace(/\\s+/g, ' ').trim(),",
       '    background: getComputedStyle(b).backgroundColor,',
@@ -418,21 +613,70 @@ const basketCount = () =>
     ].join('\n'),
   )
 
-/* ── 1. The toggle exists, and says which mode ───────────────────────────── */
+/* ── 1. There is no mode switch, and a plain basket says nothing ─────────── */
 
-const toggle = await evaluate(
+/* The Sale/Return segmented control was REMOVED: return mode is entered by the Refund
+   quick key and left when the credit note posts. So the check inverted — a pane that
+   offered the choice again would be the regression. What must still hold is that an
+   ordinary basket is not labelled a return, since the banner below is the only thing
+   distinguishing the two directions once the switch is gone. */
+/* The quick keys arrive with the catalogue, a beat after the pane paints, and reading
+   the labels too early reports "no Refund key" for a till that has one. backToKeys
+   polls for the key itself, so it doubles as that wait. */
+await backToKeys()
+const modeUi = await evaluate(
   [
     '(() => {',
     "  const labels = [...document.querySelectorAll('button')].map((b) => (b.innerText||'').trim())",
-    "  return { sale: labels.includes('Sale'), ret: labels.includes('Return') }",
+    "  const pane = document.querySelector('section')",
+    /* startsWith, not equality: the key renders its caption AND its hint inside the
+       button, so its innerText is "Refund\nCredits goods coming back." */
+    "  return { sale: labels.includes('Sale'), refundKey: labels.some((t) => /^Refund/.test(t)),",
+    "           banner: /Return/.test((pane && pane.innerText || '').split('\\n').slice(0, 3).join(' ')) }",
     '})()',
   ].join('\n'),
 )
-ok('the pane offers Sale and Return', toggle?.sale === true && toggle?.ret === true, JSON.stringify(toggle))
+ok('the pane no longer offers a Sale/Return switch', modeUi?.sale === false, JSON.stringify(modeUi))
+ok('  and a selling basket wears no Return banner', modeUi?.banner === false)
+
+/*
+ * The Refund quick key is the ONLY way into return mode now that the switch is gone, so
+ * a till with no key configured cannot take a return at all.
+ *
+ * `pos_quick_keys` is empty on a freshly seeded site, which is a FIXTURE gap rather than
+ * a code fault — but it is not something to pass over quietly either, because the same
+ * empty table on a real shop's till is exactly the misconfiguration that strands a
+ * cashier. So it is called out, and the assertions that depend on pressing the key are
+ * skipped rather than reported as failures of the feature they cannot reach.
+ */
+/* Not asserted HERE, only reported. On a hospitality till the catalogue opens on the
+   tables view rather than the quick-key floor, so the key legitimately is not on screen
+   yet at this point — the assertion that matters is the press further down, which runs
+   after backToKeys() has actually reached the floor. Asserting it here reported a
+   missing key on a till whose key then worked two steps later. */
+if (modeUi?.refundKey !== true) {
+  console.log('\nNOTE: no Refund quick key on screen yet — expected on a hospitality till,')
+  console.log('which opens on the tables view. The press is asserted below instead.')
+  console.log('If it fails there too, check pos_quick_keys has an a:refund row.\n')
+}
 
 /* ── 2. A sale basket, then switching to Return, CLEARS it ───────────────── */
 
-const added = await addOneItem()
+/* Walks the department rail rather than trusting the first one to hold stock: the first
+   department on this site holds none of its own, so a fixed index made this pass or fail
+   on which one it happened to land in. */
+async function addFromAnyDepartment() {
+  let result = null
+  for (let dept = 0; dept < 6; dept++) {
+    result = await addOneItem(dept)
+    if ((await basketCount()) > 0) return result
+    if (result?.reason === 'no such department') return result
+    await backToKeys()
+  }
+  return result
+}
+
+const added = await addFromAnyDepartment()
 ok(
   'an item goes in the basket',
   (await basketCount()) > 0,
@@ -452,7 +696,24 @@ ok(
 )
 const payColour = paySale?.background
 
-ok('switching to Return is possible', (await clickByText('Return')) === true)
+/* The Refund QUICK KEY is now the way in.
+   Found by its HINT rather than by the word "Refund": a quick key renders its caption
+   and its hint inside the one button, so its innerText is "Refund\nCredits goods coming
+   back." and an exact-text match finds nothing at all. */
+await backToKeys()
+const pressedKey = await evaluate(
+  [
+    '(() => {',
+    "  const b = [...document.querySelectorAll('button')].find(",
+    "    (x) => /Credits goods coming back/.test(x.innerText || '')",
+    '  )',
+    '  if (!b) return false',
+    '  b.click()',
+    '  return true',
+    '})()',
+  ].join('\n'),
+)
+ok('the Refund key switches into return mode', pressedKey === true)
 await sleep(900)
 
 /* THE assertion. A return's lines surviving into a sale — or a sale's into a return —
@@ -463,9 +724,23 @@ ok(
   `${await basketCount()} line(s) left`,
 )
 
+/* With the switch gone, the banner is the ONLY thing on screen saying which direction
+   the goods are going. If it fails to appear, a cashier is crediting blind. */
+const banner = await evaluate(
+  [
+    '(() => {',
+    "  const pane = document.querySelector('section')",
+    "  return /Return/.test((pane && pane.innerText || '').split('\\n').slice(0, 3).join(' '))",
+    '})()',
+  ].join('\n'),
+)
+ok('*** the pane now shows the Return banner ***', banner === true)
+
 /* ── 3. The button changes word AND colour ──────────────────────────────── */
 
-await addOneItem()
+/* Something IN the return basket, or the Refund button is disabled and the colour and
+   pad assertions below measure a greyed control instead of the one a cashier presses. */
+await addFromAnyDepartment()
 const refundBtn = await primaryButton()
 ok('the button now says Refund', /^Refund/.test(refundBtn?.text ?? ''), refundBtn?.text ?? '')
 /* Green means "money coming in" on every other control here, so a green Refund is the

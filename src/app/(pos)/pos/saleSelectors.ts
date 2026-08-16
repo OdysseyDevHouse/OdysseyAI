@@ -185,6 +185,12 @@ export function salePayloadLines(
       // The card a gift-card line sells (147). Whitelisted here or it would
       // vanish silently at finalise — see the comment above.
       ...(line.giftCardCode ? { giftCardCode: line.giftCardCode } : {}),
+      /* When the line was first rung (167). Whitelisted for the same reason,
+         and it MATTERS most on the save path a table takes: that rewrites the
+         bill's lines wholesale, so a line's order time is only preserved
+         because it makes this round trip. Left off entirely when unknown, so
+         the column stays NULL rather than claiming the epoch. */
+      ...(line.orderedAt ? { orderedAt: line.orderedAt } : {}),
     }
   })
 }

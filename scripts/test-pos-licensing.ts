@@ -16,6 +16,8 @@ import {
 import { execute, query } from '../src/lib/db'
 
 const SITE = 1
+/** A second store, for the one-machine-two-stores case. Swept exactly like SITE. */
+const OTHER_SITE = 2
 const TAG = 'LICTEST'
 let fails = 0
 
@@ -32,13 +34,19 @@ function isoDaysFromNow(days: number): string {
 
 async function seed(
   name: string,
-  opts: { serial?: string | null; paid?: boolean; expiry?: string | null; status?: string },
+  opts: {
+    serial?: string | null
+    paid?: boolean
+    expiry?: string | null
+    status?: string
+    site?: number
+  },
 ): Promise<number> {
   const res = await execute(
     `INSERT INTO cp2_devices (site_id, device_name, serial_number, status, is_paid, expiry_date)
      VALUES (?,?,?,?,?,?)`,
     [
-      SITE,
+      opts.site ?? SITE,
       `${TAG} ${name}`,
       opts.serial ?? null,
       opts.status ?? 'active',
@@ -49,10 +57,14 @@ async function seed(
   return res.insertId
 }
 
+/* Sweeps BOTH sites. Scoped by site as well as tag so a stray row in a third
+   site is never this suite's to delete — but it must cover OTHER_SITE, because
+   a leaked scratch row there consumes a licence on a real store just as surely
+   as one here. */
 async function sweep() {
   const rows = await query<{ id: number }>(
-    `SELECT id FROM cp2_devices WHERE site_id = ? AND device_name LIKE ?`,
-    [SITE, `${TAG}%`],
+    `SELECT id FROM cp2_devices WHERE site_id IN (?, ?) AND device_name LIKE ?`,
+    [SITE, OTHER_SITE, `${TAG}%`],
   )
   for (const r of rows) await execute('DELETE FROM cp2_devices WHERE id = ?', [r.id])
   return rows.length
@@ -118,10 +130,40 @@ async function main() {
   const stillFree = (await freeSpots(SITE)).filter((s) => s.deviceRowId === freeId)
   ok('  the spot is no longer free', stillFree.length === 0)
 
-  // The serial is taken; a second row must not be able to grab it.
+  // The serial is taken IN THIS STORE; a second row here must not grab it.
   const secondSpot = await seed('second-spot', { serial: null, paid: true })
   const stolen = await claimSpot(SITE, secondSpot, `${TAG}-BROWSER-1`, 'Browser')
-  ok('*** the same machine cannot claim a second licence ***', stolen.ok === false)
+  ok('*** the same machine cannot claim a second licence in one store ***', stolen.ok === false)
+
+  /* ── One machine, two stores ───────────────────────────────────────────────
+
+     The back office of a small group is one desk, not one desk per store, so
+     the same PC has to be able to work every store the operator runs. Each
+     store's licence is a separate row, separately sold and separately paid —
+     what is shared is only the machine.
+
+     This is the case the old global unique index on serial_number made
+     impossible, and the reason it is now (site_id, serial_number). */
+  const otherSpot = await seed('other-store', { serial: null, paid: true, site: OTHER_SITE })
+  const cross = await claimSpot(OTHER_SITE, otherSpot, `${TAG}-BROWSER-1`, 'Browser')
+  ok('*** the same machine CAN hold a licence in another store ***', cross.ok === true)
+
+  const inOther = await licenceForSerial(OTHER_SITE, `${TAG}-BROWSER-1`)
+  ok('  and trades there', inOther.ok === true)
+
+  const inFirst = await licenceForSerial(SITE, `${TAG}-BROWSER-1`)
+  ok('  while still trading in the first store', inFirst.ok === true)
+
+  // Two rows, two licences — not one row answering for both stores.
+  ok(
+    '  the two stores resolve to different licence rows',
+    inOther.ok && inFirst.ok && inOther.deviceRowId !== inFirst.deviceRowId,
+  )
+
+  // Releasing one store's licence must not disturb the other's.
+  await releaseSpot(OTHER_SITE, otherSpot)
+  const firstAfterOtherReleased = await licenceForSerial(SITE, `${TAG}-BROWSER-1`)
+  ok('*** releasing one store leaves the other trading ***', firstAfterOtherReleased.ok === true)
 
   // Re-claiming the SAME spot with the same serial is harmless.
   const again = await claimSpot(SITE, freeId, `${TAG}-BROWSER-1`, 'Browser')

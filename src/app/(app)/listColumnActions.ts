@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
 import { setListColumns, clearListColumns, type ListKey } from '@/lib/site/listColumns'
-import { setReportColumns, clearReportColumns } from '@/lib/site/reportColumns'
+import { setReportColumns, clearReportColumns, setReportGroupBy } from '@/lib/site/reportColumns'
 
 /**
  * Setting which columns a list or a report shows, for the whole store.
@@ -71,6 +71,35 @@ export async function setReportColumnsAction(
   if (!result.ok) return result
 
   // The viewer is a dynamic route, so the list page alone would not refresh it.
+  revalidatePath(`/reports/${reportId}`)
+  revalidatePath('/reports')
+  return { ok: true }
+}
+
+/**
+ * Sets which column a REPORT is banded by, for the whole store.
+ *
+ * `key` is a single output key, or null for "no grouping" — which is a choice
+ * rather than a reset, and is stored as such.
+ *
+ * `known` is the BANDABLE keys from this run — not every column the report
+ * produced — so a hand-rolled POST cannot band by a money column or by one the
+ * caller's permissions stripped.
+ *
+ * setup.edit for the same reason the column choice needs it: this changes what
+ * every user of the store sees when they open the report.
+ */
+export async function setReportGroupByAction(
+  reportId: string,
+  key: string | null,
+  known: string[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await setReportGroupBy(ctx.siteId, reportId, key, known, ctx.actor.userId)
+  if (!result.ok) return result
+
   revalidatePath(`/reports/${reportId}`)
   revalidatePath('/reports')
   return { ok: true }

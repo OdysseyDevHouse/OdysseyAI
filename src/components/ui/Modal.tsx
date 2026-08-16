@@ -21,9 +21,12 @@ export function Modal({
   onClose,
   title,
   description,
+  titleMedia,
+  subheader,
   children,
   footer,
   size = 'md',
+  bodyFills = false,
   closeOnBackdrop = true,
 }: {
   open: boolean
@@ -31,10 +34,34 @@ export function Modal({
   title: string
   /** One line under the title. Longer explanations belong in the body. */
   description?: string
+  /**
+   * A thumbnail to the LEFT of the title — a product picture, a category tile.
+   *
+   * Deliberately not a free-form header: the title and close button keep their
+   * positions, so every dialog in the app still reads the same way. Size it
+   * yourself; the header is laid out for roughly a 48px square.
+   */
+  titleMedia?: ReactNode
+  /**
+   * A strip between the header and the scrolling body — a step indicator, a
+   * filter row. Stays PUT while the body scrolls, which is the whole point:
+   * it is there to say where you are, and that is useless if it scrolls away.
+   */
+  subheader?: ReactNode
   children?: ReactNode
   /** Action row. Omit for a purely informational dialog. */
   footer?: ReactNode
   size?: ModalSize
+  /**
+   * Give the body a FIXED tall height and let it scroll itself, instead of the
+   * default "as tall as it needs, up to 60vh".
+   *
+   * For a dialog whose body is a layout rather than a document — side-by-side
+   * panels that each scroll on their own. The default cap scrolls the whole body
+   * as one, which on two panels means dragging one out of view to read the other.
+   * Rare on purpose: most dialogs should grow to fit their content.
+   */
+  bodyFills?: boolean
   /** Off for a dialog holding half-typed work, where a stray click would lose it. */
   closeOnBackdrop?: boolean
 }) {
@@ -77,14 +104,21 @@ export function Modal({
       }}
     >
       <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold text-ink">{title}</h2>
-          {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+        <div className="flex min-w-0 items-center gap-3">
+          {titleMedia}
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-ink">{title}</h2>
+            {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+          </div>
         </div>
         <Button variant="bare" size="sm" iconOnly aria-label="Close" onClick={onClose}>
           <Close size={16} />
         </Button>
       </div>
+
+      {subheader && (
+        <div className="border-b border-border bg-surface-2 px-5 py-3">{subheader}</div>
+      )}
 
       {/*
         Keyed on `open` so the contents REMOUNT every time the dialog is
@@ -98,13 +132,32 @@ export function Modal({
         its parent, where it survives the remount.
       */}
       {children && (
-        <div key={open ? 'open' : 'closed'} className="max-h-[60vh] overflow-y-auto px-5 py-4 text-sm text-ink-2">
+        <div
+          key={open ? 'open' : 'closed'}
+          className={`px-5 py-4 text-sm text-ink-2 ${
+            bodyFills
+              ? /* The body owns the height and its children do the scrolling. `min-h-0`
+                   because a flex child will not shrink below its content without it —
+                   the panes would grow past the panel instead of overflowing. */
+                'flex h-[70vh] min-h-0 flex-col'
+              : 'max-h-[60vh] overflow-y-auto'
+          }`}
+        >
           {children}
         </div>
       )}
 
+      {/*
+        `flex-wrap` because every Button is `shrink-0 whitespace-nowrap` — a row
+        of them cannot narrow, so without wrapping an action row that outgrows
+        the panel simply overflows it and the leftmost button is clipped by the
+        panel edge. That is exactly how the till's Sale-complete dialog broke,
+        with five touch-size keys in an `sm` panel. Wrapping keeps the primary
+        action — last in the row, and so on the bottom line — reachable at any
+        width, which is the property that matters on a small till.
+      */}
       {footer && (
-        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3.5">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-3.5">
           {footer}
         </div>
       )}

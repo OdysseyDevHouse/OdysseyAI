@@ -103,6 +103,21 @@ export type ActivityEntity =
      authorisation, not at use — a manager who typed their PIN authorised
      something even if the sale then died, and the trail must say so. */
   | 'pos_override'
+  /* A line taken back off a basket at the till, before anything posted.
+
+     Separate from `pos_override` because nobody authorised it: an undo is a
+     cashier acting within their own rights, and filing it under overrides would
+     put a routine mis-scan correction in the list a manager reads to find out
+     what they approved. The question THIS answers is different and quieter —
+     "what was rung up and then removed" — which is the shape of both an honest
+     correction and a cashier walking goods out, and only volume tells them
+     apart. So every undo is logged, including the ones inside the limit.
+
+     entityId is the sale's draft document when it has one, and null otherwise:
+     an unsaved basket has no id, and most baskets are undone before they get
+     one. The product, the quantity, the line's value and how many undos this
+     basket had already used live in `changes`. */
+  | 'pos_undo'
   /* A gift card event outside a sale — generation, adjustment, void, the
      expiry sweep. Sales-side traffic already lives on the document's own
      audit; this covers the management actions where a balance moves with no

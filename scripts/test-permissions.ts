@@ -385,6 +385,69 @@ async function main() {
   // and points at a screen nothing links to.
   const orphans = [...declaredLabels.keys()].filter((href) => !catalogueHrefs.has(href))
   check('no label entry points at a screen the hub has dropped', orphans.length === 0, orphans.join(', '))
+
+  await tillAttributionIsTheOperator()
+}
+
+/**
+ * A till write must name the PIN OPERATOR, not the browser session.
+ *
+ * ── THE BUG THIS EXISTS FOR ────────────────────────────────────────────────
+ *
+ * `actorFor` resolves the browser session — on a shared shop-floor machine,
+ * whoever opened it that morning. `withTillOperator` swaps in the PIN operator.
+ * The sales actions used to resolve the operator for the PRICE check and then
+ * attribute the sale with `actorFor`'s browser actor, so every line's
+ * `sales_rep_user_id` — the column commission is PAID on — named the wrong
+ * person, and the restaurant table actions skipped attribution altogether.
+ *
+ * ── WHY IT IS A STATIC CHECK ───────────────────────────────────────────────
+ *
+ * Every behavioural test injects its actor directly (`test-sales-posting.ts`,
+ * `test-cashup-modes.ts`, `test-commission.ts` all hand-build one and call the
+ * lib), which is precisely the seam the bug lived in: they prove the engine is
+ * right GIVEN an attribution, never that the action resolved the right person.
+ * Reading the source is what catches a re-introduction.
+ */
+async function tillAttributionIsTheOperator() {
+  console.log('\ntill sales name the operator')
+
+  const files = await walk(APP, (name) => name === 'actions.ts' || name.endsWith('Actions.ts'))
+
+  // A file that writes a sale: it stamps lines, or hands an actor to the two
+  // functions that persist and post one.
+  const WRITES_A_SALE = /attributeTo\(|saveDraft\(|finaliseDocument\(/
+
+  const offenders: string[] = []
+  for (const file of files) {
+    const src = await readFile(file, 'utf8')
+    if (!WRITES_A_SALE.test(src)) continue
+    // Only the till paths. A back-office screen has no PIN session, so
+    // `actorFor` there already resolves the only person there is.
+    if (!/'sales\.till'/.test(src)) continue
+    if (!/withTillOperator/.test(src)) offenders.push(rel(file))
+  }
+
+  check(
+    'every till action that writes a sale resolves the PIN operator',
+    offenders.length === 0,
+    offenders.join(', '),
+  )
+
+  /* The helper itself must keep BOTH halves. An edit that dropped the
+     capability swap would silently hand a junior the manager's discount rights,
+     and one that dropped the identity swap is the original bug returning. */
+  const auth = await readFile(path.join(ROOT, 'src', 'lib', 'auth.ts'), 'utf8')
+  const helper = auth.slice(auth.indexOf('export async function withTillOperator'))
+  /* To the next top-level declaration rather than the first `\n}\n`: the generic
+     parameter list puts a closing brace at column 0 before the body even starts,
+     so the obvious boundary reads an empty function and passes vacuously. */
+  const end = helper.search(/\n(export |\/\*\*)/)
+  const body = end === -1 ? helper : helper.slice(0, end)
+  check(
+    'withTillOperator swaps identity as well as rights',
+    /getTillSession/.test(body) && /actor:/.test(body) && /capabilitiesForRole/.test(body),
+  )
 }
 
 main()

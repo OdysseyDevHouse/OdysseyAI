@@ -29,7 +29,17 @@ import {
   deleteQuickKey,
   ensureSupervisorGroup,
 } from '../src/lib/site/quickKeys'
-import { quickKeySig, actionForSlug, QUICK_KEY_ACTIONS, topLevelKeys, groupMembers } from '../src/lib/quickKeys'
+import {
+  quickKeySig,
+  actionForSlug,
+  QUICK_KEY_ACTIONS,
+  QUICK_KEY_ICON_NAMES,
+  quickKeyAllowedOnSection,
+  quickKeyAllowedOnTill,
+  topLevelKeys,
+  groupMembers,
+} from '../src/lib/quickKeys'
+import { STARTER_TEMPLATES } from '../src/app/(app)/setup/quick-keys/templates'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SITE = 1
@@ -287,8 +297,176 @@ async function main() {
   const supDelete = await deleteQuickKey(SITE, supId)
   ok('  it cannot be deleted', !supDelete.ok, supDelete.ok ? '' : supDelete.error)
 
+  /* ── 11. Which bar a key may live on ────────────────────────────────────── */
+
+  /*
+   * The `tables` section, which nothing wrote to before the designer grew a tab for it.
+   * Two things are worth proving: that a key CAN be put there at all, and that the
+   * till-level actions are refused — because the designer greys those out in its rail,
+   * and a rail that offers less than the server accepts is a screen that has to be kept
+   * in sync by hand.
+   */
+  const onTables = await createQuickKey(SITE, {
+    section: 'tables',
+    target: { kind: 'action', actionSlug: 'bill-print' },
+  })
+  ok('a key can go on the tables bar', onTables.ok, onTables.ok ? '' : onTables.error)
+
+  const cashupOnTables = await createQuickKey(SITE, {
+    section: 'tables',
+    target: { kind: 'action', actionSlug: 'cashup' },
+  })
+  ok(
+    '  but a till-level action is refused there',
+    !cashupOnTables.ok,
+    cashupOnTables.ok ? '' : cashupOnTables.error,
+  )
+
+  /* Every icon the CATALOGUE ships must be one the picker offers, or updateQuickKey
+     would reject the very name createQuickKey wrote a moment earlier — a key that
+     saves once and then refuses every later edit. */
+  const strayIcons = QUICK_KEY_ACTIONS.map((a) => a.icon).filter(
+    (icon) => icon && !QUICK_KEY_ICON_NAMES.has(icon),
+  )
+  ok(
+    'every catalogue icon is one the picker offers',
+    strayIcons.length === 0,
+    strayIcons.join(',') || 'none stray',
+  )
+  ok(
+    '  including the supervisor group’s own icon',
+    QUICK_KEY_ICON_NAMES.has('ShieldCheck'),
+  )
+
+  /* An icon outside the offered set is refused rather than stored — the same rule the
+     colour token has, and for the same reason: it would render as nothing. */
+  const iconTarget = topLevelKeys(await listQuickKeys(SITE))[0]
+  if (iconTarget) {
+    const badIcon = await updateQuickKey(SITE, iconTarget.id, { icon: 'NotARealIcon' })
+    ok('an invented icon name is refused', !badIcon.ok, badIcon.ok ? '' : badIcon.error)
+    const goodIcon = await updateQuickKey(SITE, iconTarget.id, { icon: 'Coins' })
+    ok('  and a real one is accepted', goodIcon.ok, goodIcon.ok ? '' : goodIcon.error)
+  }
+
+  /* ── 12. Only a group can be renamed ────────────────────────────────────── */
+
+  /*
+   * A key reads the name of what it POINTS AT — the action's label, the product's
+   * description. Letting a shop type over that produced a key called something other
+   * than what it does ("Refund" relabelled "Exchange" still posts a credit note), so
+   * the designer hides the field and the server refuses the change.
+   *
+   * A GROUP is the exception and must stay renameable: it points at nothing, so its
+   * caption is the only thing naming it, and `g:<caption>` is its signature.
+   */
+  const renameTarget = topLevelKeys(await listQuickKeys(SITE)).find((k) => k.kind === 'action')
+  if (renameTarget) {
+    const renamed = await updateQuickKey(SITE, renameTarget.id, { caption: 'Something else' })
+    ok('an action key cannot be renamed', !renamed.ok, renamed.ok ? '' : renamed.error)
+
+    /* The pass-through case: an unchanged caption sent alongside a real edit must NOT
+       be refused, or every colour change from a form that posts the whole key would
+       fail. */
+    const recolour = await updateQuickKey(SITE, renameTarget.id, {
+      caption: renameTarget.caption,
+      colourToken: 'tile-3',
+    })
+    ok('  but its own caption passing through is fine', recolour.ok, recolour.ok ? '' : recolour.error)
+  }
+
+  const renameGroup = topLevelKeys(await listQuickKeys(SITE)).find((k) => k.kind === 'group')
+  if (renameGroup) {
+    const groupRenamed = await updateQuickKey(SITE, renameGroup.id, { caption: 'Renamed folder' })
+    ok('  a group still can be', groupRenamed.ok, groupRenamed.ok ? '' : groupRenamed.error)
+  }
+
+  /* ── 13. Which kind of till an action suits ─────────────────────────────── */
+
+  /* RECALLING a parked basket is a counter idea: on a hospitality till the floor
+     already lists every open bill, so a second list is hidden from the designer
+     entirely. The rule is shared with the rail, so a filtered row and a refused save
+     cannot disagree. */
+  ok(
+    'view-saved-sales is hidden on a hospitality till',
+    Boolean(quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'view-saved-sales' }, true)),
+    quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'view-saved-sales' }, true) ?? '',
+  )
+  /* SAVING is not, and used to be. The key now runs the same naming-and-parking path
+     as Close rather than parking anonymously, so on a restaurant till it is that act
+     on a key a shop may place where it likes — which is what the designer is for. */
+  ok(
+    '  but save-sale is offered on both',
+    !quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'save-sale' }, true) &&
+      !quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'save-sale' }, false),
+  )
+  ok(
+    '  and view-saved-sales is fine on a retail till',
+    !quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'view-saved-sales' }, false),
+  )
+  ok(
+    '  and send-to-kitchen is hidden on a retail one',
+    Boolean(quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'send-to-kitchen' }, false)),
+  )
+  /* A product key is a way of adding to a bill, which is equally sensible either way —
+     only ACTIONS are restricted. */
+  ok(
+    '  a product key is never restricted by till kind',
+    !quickKeyAllowedOnTill({ kind: 'product' }, true) &&
+      !quickKeyAllowedOnTill({ kind: 'product' }, false),
+  )
+
+  /* ── 14. The starter templates ──────────────────────────────────────────── */
+
+  /*
+   * Every template is checked against the SAME rules the server enforces, because a
+   * starter that cannot be applied is worse than none: a shop presses the one button on
+   * an empty screen and gets an error. Static checks, so they fail here rather than in
+   * front of a customer.
+   */
+  for (const template of STARTER_TEMPLATES) {
+    for (const key of template.keys) {
+      ok(
+        `starter "${template.key}": ${key.action} is a real action`,
+        Boolean(actionForSlug(key.action)),
+      )
+      /* A key inside a group takes that group's bar — the same rule the action applies
+         — so the ban must be tested against where it will actually LAND. */
+      const landing = key.group
+        ? (template.groups.find((g) => g.caption === key.group)?.section ?? key.section)
+        : key.section
+      const banned = quickKeyAllowedOnSection(
+        { kind: 'action', actionSlug: key.action },
+        landing,
+      )
+      ok(`  and is allowed on the ${landing} bar`, !banned, banned ?? '')
+
+      /* And that the set suits the till it is offered to: the hospitality starter must
+         hold no counter-only key, and the retail one no restaurant key — either would
+         be refused by createQuickKeyAction and leave a half-built till. */
+      const wrongTill = quickKeyAllowedOnTill(
+        { kind: 'action', actionSlug: key.action },
+        Boolean(template.hospitalityOnly),
+      )
+      ok(`  and suits a ${template.hospitalityOnly ? 'restaurant' : 'retail'} till`, !wrongTill, wrongTill ?? '')
+    }
+    /* Two keys with the same signature in one scope is a uq_slot clash: the template
+       would create the first and be refused on the second, leaving a half-built till. */
+    const scopes = new Map<string, Set<string>>()
+    let dupes = 0
+    for (const key of template.keys) {
+      const scope = `${key.group ?? ''}:${key.section}`
+      const seen = scopes.get(scope) ?? new Set<string>()
+      if (seen.has(key.action)) dupes++
+      seen.add(key.action)
+      scopes.set(scope, seen)
+    }
+    ok(`starter "${template.key}" has no key twice in one scope`, dupes === 0, String(dupes))
+  }
+
   /* ── Clean up ───────────────────────────────────────────────────────────── */
-  await siteExecute(SITE, "DELETE FROM pos_quick_keys WHERE section = 'main'")
+  // Every section, not just 'main' — the tables bar now has rows on it too, and a
+  // leaked key here is a UNIQUE clash in whichever suite runs next.
+  await siteExecute(SITE, 'DELETE FROM pos_quick_keys')
   const left = await siteQuery<any>(SITE, 'SELECT COUNT(*) AS n FROM pos_quick_keys')
   ok('the test leaves nothing behind', Number(left[0]?.n) === 0, String(left[0]?.n))
 

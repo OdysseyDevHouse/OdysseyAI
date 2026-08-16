@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import {
   Accordion,
   ActionTile,
@@ -27,6 +28,7 @@ import {
   EmptyState,
   Field,
   FieldGroup,
+  InlineField,
   FileInput,
   FilterBar,
   FilterChip,
@@ -41,6 +43,7 @@ import {
   MenuSeparator,
   Modal,
   PinPad,
+  TenderTile,
   SignaturePad,
   LaneWeek,
   NumberInput,
@@ -59,6 +62,8 @@ import {
   SettingRow,
   Sparkline,
   MeterBar,
+  TableGlyph,
+  FeatureGlyph,
   StoreColumnTable,
   StatStrip,
   StatTile,
@@ -86,7 +91,21 @@ import {
 } from '@/components/ui'
 import type { Column } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+import { seatLayout } from '@/lib/site/floorGeometry'
 import { quickKeyArt, quickKeyArtSrc } from '@/lib/quickKeyArt'
+/* The REAL till line card, imported rather than mocked — the POS is behind a
+   clerk PIN, so this page is the only place it can be looked at, and a copy
+   here would drift from the thing it is meant to document. */
+import { SaleLineCard } from '@/app/(pos)/pos/SaleLineCard'
+import { LineOptionsModal } from '@/app/(pos)/pos/LineOptionsModal'
+import InstructionsModal from '@/app/(pos)/pos/InstructionsModal'
+import { ReceiptModal } from '@/app/(pos)/pos/ReceiptModal'
+import { SplitPreview } from './SplitPreview'
+import { GatePreview, FloorPreview } from './GatePreview'
+import { TenderPreview } from './TenderPreview'
+import type { TillInstructionGroup } from '@/lib/site/instructions'
+import type { TillProduct } from '@/lib/site/tillSearch'
+import type { BasketLine } from '@/lib/basket'
 
 /**
  * The style guide — every shared building block, rendered live and named.
@@ -148,11 +167,18 @@ export default function StyleGuidePage() {
         <DateRangeSection />
         <CategoryTileSection />
         <TillTileSection />
+        <TenderTileSection />
+        <SaleLineSection />
+        <InstructionsSection />
+        <ReceiptSection />
+        <SplitBillSection />
+        <TableGateSection />
         <PaginationSection />
         <EmptyStateSection />
         <SkeletonSection />
         <ChartSection />
         <LayoutSection />
+        <WordmarkSection />
         <TokensSection />
       </PageBody>
     </>
@@ -303,6 +329,26 @@ function FormSection() {
           <FileInput />
         </Field>
       </CardBody>
+
+      <Row>
+        <Spec
+          name="<InlineField label icon>"
+          note="Label BESIDE the control, in its own card — for till dialogs built from equal-weight cards. Stacked forms keep <Field>."
+        />
+        <div className="grid w-full gap-3 sm:grid-cols-2">
+          <InlineField label="Visit type" icon={<Icons.Armchair size={16} />}>
+            <Select defaultValue="sit">
+              <option value="sit">SIT DOWN</option>
+              <option value="take">TAKEAWAY</option>
+            </Select>
+          </InlineField>
+          <InlineField label="Waiter" icon={<Icons.Contact size={16} />}>
+            <Select defaultValue="me">
+              <option value="me">Tiaan Bryson Smith</option>
+            </Select>
+          </InlineField>
+        </div>
+      </Row>
 
       <Row>
         <Spec
@@ -608,7 +654,7 @@ function BadgeSection() {
     <Card>
       <CardHeader
         title="Badges"
-        description="<Badge tone=... /> — status & count pills, coloured by meaning. Add `dot` for the STATE of a record, where the mark is caught before the word is read; leave it off for a plain count."
+        description="<Badge tone=... /> — status & count pills, coloured by meaning. Add `dot` for the STATE of a record, where the mark is caught before the word is read; leave it off for a plain count. `solid` is the TILL variant (third row): a basket is read at arm's length, where a pale pill on a white card is a smudge — do not reach for it to make a back-office badge pop."
       />
       <CardBody className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -633,6 +679,23 @@ function BadgeSection() {
           </Badge>
           <Badge dot tone="neutral">
             Archived
+          </Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge solid tone="success">
+            Sent
+          </Badge>
+          <Badge solid tone="danger">
+            Refund
+          </Badge>
+          <Badge solid tone="warning">
+            modified
+          </Badge>
+          <Badge solid tone="brand">
+            new
+          </Badge>
+          <Badge solid tone="neutral">
+            48 minutes
           </Badge>
         </div>
       </CardBody>
@@ -933,11 +996,13 @@ function ToastSection() {
 
 function MenuSection() {
   const toast = useToast()
+  const [cols, setCols] = useState('4')
+  const [hideTotal, setHideTotal] = useState(false)
   return (
     <Card>
       <CardHeader
         title="Dropdown menu"
-        description="<Menu> + <MenuItem> — handles open/close, outside-click, Esc, aria. Pass `iconOnly` with a `triggerLabel` for the kebab at the end of a table row; the chevron drops with the text, since a lone ⋮ already reads as “opens something”."
+        description="<Menu> + <MenuItem> — handles open/close, outside-click, Esc, aria. Pass `iconOnly` with a `triggerLabel` for the kebab at the end of a table row; the chevron drops with the text, since a lone ⋮ already reads as “opens something”. Pass `keepOpen` when the panel holds settings rather than commands, so adjusting one control does not dismiss the rest."
       />
       <CardBody className="flex items-center gap-3">
         <Menu label="Actions" align="left">
@@ -972,6 +1037,41 @@ function MenuSection() {
             <Icons.Close size={15} />
             Cancel
           </MenuItem>
+        </Menu>
+
+        {/* The settings shape. Nothing in here is a MenuItem, and nothing in here
+            closes the panel — including a native <select>, whose option list the
+            OS draws outside the DOM and which used to read as a click elsewhere
+            on the page. */}
+        <Menu
+          keepOpen
+          align="left"
+          variant="secondary"
+          label={
+            <>
+              <Icons.SlidersHorizontal size={16} />
+              Customize
+            </>
+          }
+        >
+          <div className="flex w-[260px] flex-col gap-4 p-5">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[13px] font-semibold text-ink">Columns</span>
+              <Select value={cols} onChange={(e) => setCols(e.target.value)} aria-label="Columns">
+                {['3', '4', '5', '6', '7'].map((n) => (
+                  <option key={n} value={n}>
+                    {n} across
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <Switch
+              checked={hideTotal}
+              label="Hide total"
+              hint="Smaller tiles — no running total."
+              onChange={setHideTotal}
+            />
+          </div>
         </Menu>
       </CardBody>
     </Card>
@@ -1330,6 +1430,7 @@ function SelectionSection() {
 function ModalSection() {
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [filling, setFilling] = useState(false)
   const toast = useToast()
 
   return (
@@ -1349,6 +1450,15 @@ function ModalSection() {
         <Button variant="danger-ghost" onClick={() => setConfirming(true)}>
           <Icons.Trash size={15} />
           Delete something
+        </Button>
+      </Row>
+      <Row>
+        <Spec
+          name="<Modal bodyFills>"
+          note="Body is a LAYOUT, not a document — side-by-side panes that each scroll on their own (the till's split screen). The default body grows to fit and scrolls as one, which on two panes means dragging one out of view to read the other."
+        />
+        <Button variant="secondary" onClick={() => setFilling(true)}>
+          Open filling modal
         </Button>
       </Row>
 
@@ -1381,6 +1491,43 @@ function ModalSection() {
           <Field label="Credit limit">
             <CurrencyInput defaultValue={10000} />
           </Field>
+        </div>
+      </Modal>
+
+      <Modal
+        open={filling}
+        onClose={() => setFilling(false)}
+        title="Two panes, each scrolling itself"
+        description="What bodyFills is for — the till's split screen is this shape."
+        size="xl"
+        bodyFills
+        footer={
+          <Button variant="secondary" onClick={() => setFilling(false)}>
+            Close
+          </Button>
+        }
+      >
+        <div className="flex min-h-0 flex-1 gap-3">
+          {['Left pane', 'Right pane'].map((side) => (
+            <div
+              key={side}
+              className="flex min-h-0 flex-1 flex-col rounded-card border border-border bg-surface-2"
+            >
+              <p className="shrink-0 border-b border-border px-4 py-3 text-sm font-semibold text-ink">
+                {side}
+              </p>
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+                {Array.from({ length: 20 }, (_, i) => (
+                  <div
+                    key={i}
+                    className="rounded-card border border-border bg-surface p-3 text-sm text-ink-2"
+                  >
+                    Row {i + 1}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </Modal>
 
@@ -1682,6 +1829,386 @@ function KeyArt({ slug }: { slug: string }) {
   return <img src={quickKeyArtSrc(art.file)} alt="" className="h-7 w-7" />
 }
 
+/**
+ * The basket line, in each state a waiter has to tell apart.
+ *
+ * The REAL `SaleLineCard`, not a mock-up of one: the till is behind a clerk PIN,
+ * so without this there is nowhere the line card can be looked at, and a
+ * restyle of it could only be verified by someone standing at a till. Rendering
+ * the real component is also the only way this page cannot drift from it.
+ */
+function SaleLineSection() {
+  const [open, setOpen] = useState<string | null>('new')
+  const [showingOptions, setShowingOptions] = useState(false)
+
+  const line = (over: Partial<BasketLine>): BasketLine =>
+    ({
+      key: 'x',
+      productId: 1,
+      productCode: 'CAL',
+      description: 'Calamari Strips',
+      productType: 'normal',
+      departmentId: 1,
+      qty: 1,
+      unitPriceIncl: 125,
+      discountPct: 0,
+      vatRatePct: 15,
+      unitCostExcl: 60,
+      maxDiscountPct: 10,
+      shelfPriceIncl: 125,
+      allowFractions: false,
+      instructions: [],
+      note: '',
+      ...over,
+    }) as BasketLine
+
+  const modifier = (name: string) =>
+    ({
+      groupId: 1,
+      groupName: 'Extras',
+      optionId: 1,
+      optionName: name,
+      qty: 1,
+      priceAdjustIncl: 0,
+      productId: null,
+      stockQtyPer: 0,
+      printsOnKitchen: true,
+      printsOnReceipt: true,
+    }) as BasketLine['instructions'][number]
+
+  const demo = [
+    {
+      state: 'unmodified' as const,
+      note: 'On the tab when it was reopened, untouched since. Already with the kitchen.',
+      line: line({
+        key: 'unmodified',
+        kitchenSentQty: 1,
+        instructions: [modifier('Compound Butter')],
+      }),
+      total: 125,
+      age: 12,
+    },
+    {
+      state: 'modified' as const,
+      note: 'Was on the tab, and something has changed this sitting — here the quantity.',
+      line: line({
+        key: 'modified',
+        qty: 2,
+        kitchenSentQty: 1,
+        instructions: [modifier('Mushroom Sauce')],
+      }),
+      total: 250,
+      age: 12,
+    },
+    {
+      state: 'new' as const,
+      note: 'Rung after the tab was reopened. Shown open, which is how a selected line looks.',
+      /* shelfPriceIncl moves with the price, or the card would correctly flag
+         this as an override and wear a "Price changed" badge the demo does not
+         mean to show. */
+      line: line({
+        key: 'new',
+        description: 'Dry Wors 200g',
+        unitPriceIncl: 65,
+        shelfPriceIncl: 65,
+      }),
+      total: 65,
+      age: 0,
+    },
+  ]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Sale line"
+        description="<SaleLineCard /> — one line of the till basket. Each card answers four questions in order: what and how much, at which price, with what on it, and where it stands. The state chip and the age are what let a waiter reopening a table tell the lines the kitchen already has from the ones just added; only modified and new carry colour, so the two that need a second look are the two that get one."
+      />
+      {demo.map((d) => (
+        <Row key={d.state}>
+          <Spec name={`sessionState="${d.state}"`} note={d.note} />
+          {/* The width the real basket gives it, so the wrapping is honest. */}
+          <ul className="w-[500px] rounded-card bg-canvas py-1">
+            <SaleLineCard
+              line={d.line}
+              lineTotal={d.total}
+              effectiveDiscountPct={0}
+              specialName={null}
+              priceStructureName="Retail Price"
+              sessionState={d.state}
+              ageMinutes={d.age}
+              selected={open === d.line.key}
+              onSelect={() => setOpen(open === d.line.key ? null : d.line.key)}
+              onStep={() => {}}
+              onEdit={() => {}}
+              onRemove={() => {}}
+              onMore={() => setShowingOptions(true)}
+            />
+          </ul>
+        </Row>
+      ))}
+
+      <Row>
+        <Spec
+          name="<LineOptionsModal />"
+          note="What More opens — the rare per-line verbs, one tap deeper than + − Void. Sized so all seven fit a 1024×768 till without scrolling."
+        />
+        <div>
+          <Button variant="secondary" onClick={() => setShowingOptions(true)}>
+            Open the line options
+          </Button>
+          <LineOptionsModal
+            line={showingOptions ? demo[0].line : null}
+            onClose={() => setShowingOptions(false)}
+            onChoose={() => setShowingOptions(false)}
+          />
+        </div>
+      </Row>
+    </Card>
+  )
+}
+
+/**
+ * The questions a product asks, as the till puts them.
+ *
+ * The real modal, imported rather than mocked, for the same reason the sale line
+ * card is: it lives behind a clerk PIN, so this is the only place it can be
+ * looked at without opening a till.
+ */
+function InstructionsSection() {
+  const [asking, setAsking] = useState(false)
+
+  const option = (
+    id: number,
+    name: string,
+    extra: Partial<TillInstructionGroup['options'][number]> = {},
+  ) => ({
+    id,
+    name,
+    priceAdjust: 0,
+    productId: null,
+    quantity: 0,
+    isDefault: false,
+    /* 0 = no ceiling, which is what makes a tile countable — tapping it again
+       adds another rather than toggling it off. */
+    maxQty: 0,
+    minQty: 0,
+    defaultQty: 0,
+    imageId: null,
+    printsOnKitchen: true,
+    printsOnReceipt: true,
+    revealsGroupIds: [],
+    ...extra,
+  })
+
+  const groups: TillInstructionGroup[] = [
+    {
+      id: 1,
+      name: 'Sauces',
+      prompt: 'What sauces would you like with your meal?',
+      isRequired: false,
+      minChoices: 0,
+      maxChoices: 0,
+      imageId: null,
+      options: [
+        option(1, 'Mushroom Sauce'),
+        option(2, 'Compound Butter'),
+        option(3, 'Garlic-Herb Butter'),
+        option(4, 'Red Wine Sauce'),
+        option(5, 'Milk Gravy'),
+        option(6, 'Summer Sauce'),
+        option(7, 'Pepper Steak'),
+        option(8, 'Romesco Sauce'),
+        option(9, 'Brisket with Carrots'),
+      ],
+    },
+    {
+      id: 2,
+      name: 'Side-dish',
+      prompt: 'What Side-dish would you like with your meal?',
+      isRequired: false,
+      minChoices: 0,
+      maxChoices: 0,
+      imageId: null,
+      options: [
+        option(10, 'Mashed potatoes', { priceAdjust: 55 }),
+        option(11, 'Glazed carrots'),
+        option(12, 'Asparagus'),
+        option(13, 'Corn on the cob'),
+        option(14, 'Onion rings'),
+        option(15, 'Scalloped potatoes'),
+      ],
+    },
+  ]
+
+  const product = {
+    id: 1,
+    code: 'SB-103',
+    description: 'Calamari Strips',
+    priceIncl: 189,
+  } as unknown as TillProduct
+
+  return (
+    <Card>
+      <CardHeader
+        title="Instructions"
+        description="<InstructionsModal /> — the questions a product asks, answered before the line reaches the basket. Tapping an answer adds one MORE of it rather than toggling, so “mushroom sauce ×3” is three taps on the thing you are naming; the split minus at its right takes one back off. Every question is on one screen and the rail at the top only scrolls to them — paging would hide the order the cashier is building."
+      />
+      <Row>
+        <Spec
+          name="<InstructionsModal product groups byId>"
+          note="Blocks the add until the questions are answered. The running total builds as answers are chosen, using the same adjustPerUnit the server posts with."
+        />
+        <div>
+          <Button variant="secondary" onClick={() => setAsking(true)}>
+            Ask the questions
+          </Button>
+          {asking && (
+            <InstructionsModal
+              product={product}
+              qty={1}
+              groups={[1, 2]}
+              byId={new Map(groups.map((g) => [g.id, g]))}
+              basePriceIncl={189}
+              onCancel={() => setAsking(false)}
+              onConfirm={() => setAsking(false)}
+            />
+          )}
+        </div>
+      </Row>
+    </Card>
+  )
+}
+
+/**
+ * The last thing a cashier sees before the next customer.
+ *
+ * Real modal, same reason as the two above: it is behind a clerk PIN AND behind
+ * a completed sale, so short of tendering real money at a till there is nowhere
+ * else to look at it. Both button counts are here because the footer is the part
+ * that breaks — five touch keys is the widest this row ever gets.
+ */
+function ReceiptSection() {
+  const [showing, setShowing] = useState<'full' | 'offline' | 'big' | null>(null)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Sale complete"
+        description="<ReceiptModal /> — change first and biggest, because it is the only thing on screen with a job to do while the customer waits. The invoice number reads as filing rather than as a figure. Void is in the body, deliberately far from the key tapped a hundred times a day."
+      />
+      <Row>
+        <Spec
+          name="<ReceiptModal />"
+          note="Posted, with change and void rights — the widest the footer gets: five touch keys, which is why the panel is md and the footer wraps."
+        />
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => setShowing('full')}>
+            Open the receipt
+          </Button>
+          <Button variant="ghost" onClick={() => setShowing('offline')}>
+            Rung up offline
+          </Button>
+          {/* The figure that decides the type size — a big note broken on a
+              small purchase is the widest CHANGE ever gets. */}
+          <Button variant="ghost" onClick={() => setShowing('big')}>
+            Biggest change
+          </Button>
+        </div>
+      </Row>
+
+      <ReceiptModal
+        open={showing !== null}
+        documentNumber="INV_01_01_000001"
+        change={showing === 'big' ? 1987.65 : 15}
+        posted={showing !== 'offline'}
+        canVoid={showing !== 'offline'}
+        canPrint
+        onClose={() => setShowing(null)}
+        onPrint={() => {}}
+        onOpen={() => {}}
+        onGiftReceipt={() => {}}
+        onEmail={() => {}}
+        onVoid={() => setShowing(null)}
+      />
+    </Card>
+  )
+}
+
+function SplitBillSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Split the bill"
+        description="<SplitBillModal /> — the two bills side by side, and a line crossing between them. Both halves are on screen at once because the question a waiter is answering is “do each of these two bills now look right”, and that cannot be checked on a screen showing one of them. A line moves by drag OR by its Move button: on a till a drag needs a hold to start, so the button is the one-tap path and the drag is the fast one."
+      />
+      <Row>
+        <Spec
+          name="<SplitBillModal fromTable lines tables loadDestinationLines>"
+          note="Destination first — a line cannot be dropped on a bill that has not been named. Picking an OCCUPIED table shows what it already holds, greyed and immovable, and the split appends to it. Nothing is written until Confirm."
+        />
+        <SplitPreview />
+      </Row>
+    </Card>
+  )
+}
+
+function TableGateSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="The table gate"
+        description="<TableGate /> — every bill open in the shop, standing in front of the till. Split and Move are MODES rather than buttons on each tile: a quick key arms one, and the next tap on a bill runs it. The gate itself carries no button for either, so a shop that does not serve tables pays nothing for them; where the mode is armed, the amber banner says what the next tap will do and is also the way out."
+      />
+      <Row>
+        <Spec
+          name="<TableGate tabs tables splitting transferring onEmptyArm>"
+          note="Works on BOTH the floor and list views — a shop that never drew a plan still has tables. Each tile decides for itself: a bill on a configured table is armable and rings amber, a free-text tab goes inert and says why. Armed with nothing to act on, the mode drops and onEmptyArm explains rather than leaving a dead banner up."
+        />
+      </Row>
+      <GatePreview />
+      <Row>
+        <Spec
+          name="<TableGate rooms features> — the floor view"
+          note="The same component with a plan drawn. Tables are rendered by <TableGlyph />, the component the floor-plan designer draws with, so what a manager arranges is literally what a waiter sees — the alternative is two copies of the drawing that silently disagree. State is a TEXT colour the glyph inherits through currentColor, which is why a table's top, outline, chairs and code can never end up in different colours."
+        />
+      </Row>
+      <FloorPreview />
+    </Card>
+  )
+}
+
+function TenderTileSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Tender tiles"
+        description="<TenderTile /> — one payment-method key on the till's tender pad. A glyph above a name, because a cashier meeting the same six keys forty times a day aims at the shape. Every key wears the same brand circle: colour on that screen means how the sale is doing, not which method this is. A tender that cannot be taken keeps its place and says why — a key that vanishes leaves the cashier wondering whether the store has the facility at all"
+      />
+      <div className="flex flex-wrap items-start gap-6 px-5 py-5">
+        <Spec name="<TenderTile name icon>" note="icon from tenderIcon(tender)" />
+        <Spec name="refusal" note="a sentence, not a flag — it disables and explains" />
+        <Spec name="tenderIcon(t)" note="icon → code → integrationKey, then Wallet" />
+        <div className="grid w-full max-w-2xl auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3">
+          <TenderTile name="Cash" icon={Icons.Banknote} onClick={() => {}} />
+          <TenderTile name="Card" icon={Icons.CreditCard} onClick={() => {}} />
+          <TenderTile
+            name="Account"
+            icon={Icons.Users}
+            refusal="Needs a customer"
+            onClick={() => {}}
+          />
+          <TenderTile name="Direct deposit" icon={Icons.Landmark} onClick={() => {}} />
+          <TenderTile name="Online payment" icon={Icons.Globe} onClick={() => {}} />
+          <TenderTile name="Exchange credit" icon={Icons.ArrowLeftRight} onClick={() => {}} />
+        </div>
+        {/* The whole pad the keys live in, so the amount panel and the footer
+            can be looked at too — the POS itself is behind a clerk PIN. */}
+        <TenderPreview />
+      </div>
+    </Card>
+  )
+}
+
 function TillTileSection() {
   return (
     <Card>
@@ -1746,6 +2273,20 @@ function TillTileSection() {
               tone={toneForId(5)}
               edge={toneForId(5)}
               chevron
+              onClick={() => {}}
+            />
+          </TileGrid>
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<ProductTile dashed>" note="The way OUT of a grid, not a thing in it" />
+        <div className="w-full max-w-xl">
+          <TileGrid tileWidth={190} tileHeight={150}>
+            <ProductTile
+              title="Back"
+              subtitle="Butchery"
+              icon={<Icons.Reverse size={20} />}
+              dashed
               onClick={() => {}}
             />
           </TileGrid>
@@ -1857,6 +2398,64 @@ function ChartSection() {
             total={50}
             height={10}
           />
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<TableGlyph />"
+          note="A restaurant table, drawn — the top and its chairs, as one SVG. Used by BOTH the floor-plan designer and the till's floor view, which is the point: the designer promises “this is what the till shows”, and two copies of the drawing is how that promise quietly stops being true. It fills and strokes with `currentColor`, so the caller sets one text colour (its state token) and the top, outline, chairs and code all follow. Seats come in per edge from `seatLayout`, so a six-top dragged long and narrow moves its chairs to the long edges."
+        />
+        <div className="flex flex-1 flex-wrap items-end gap-6">
+          {[
+            { shape: 'round' as const, seats: 2, w: 70, h: 70, label: '2, round' },
+            { shape: 'rect' as const, seats: 4, w: 104, h: 70, label: '4, rect' },
+            { shape: 'oval' as const, seats: 6, w: 132, h: 70, label: '6, oval' },
+            { shape: 'counter' as const, seats: 4, w: 150, h: 52, label: '4, counter' },
+          ].map((t) => (
+            <div key={t.label} className="flex flex-col items-center gap-1.5">
+              <div className="relative text-ink" style={{ width: t.w, height: t.h }}>
+                <TableGlyph
+                  shape={t.shape}
+                  seats={seatLayout(t.seats, t.w, t.h)}
+                  className="absolute inset-0 h-full w-full"
+                />
+              </div>
+              <span className="text-xs text-muted">{t.label}</span>
+            </div>
+          ))}
+          {/* The same glyph in the till's three states — one text colour each. */}
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="relative text-warning-ink" style={{ width: 104, height: 70 }}>
+              <TableGlyph
+                shape="rect"
+                seats={seatLayout(4, 104, 70)}
+                className="absolute inset-0 h-full w-full"
+              />
+            </div>
+            <span className="text-xs text-muted">bill asked</span>
+          </div>
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<FeatureGlyph />"
+          note="The fixed furniture of a room, drawn — the companion to <TableGlyph /> and shared by the designer and the till for the same reason. A wall is hatched so it cannot be mistaken for a long table, a door is drawn as its swing (which way it opens is the whole information), a bar carries a service edge, a pass is a hatched shelf, a plant is a pot with foliage. `kind: 'text'` renders nothing — a label is its own drawing. Colour arrives through `currentColor`, so the caller sets one text tone and fill, outline and label follow together."
+        />
+        <div className="flex flex-1 flex-wrap items-end gap-6">
+          {[
+            { kind: 'wall' as const, w: 96, h: 26, tone: 'text-ink-2' },
+            { kind: 'bar' as const, w: 84, h: 46, tone: 'text-warning-ink' },
+            { kind: 'pass' as const, w: 84, h: 46, tone: 'text-success' },
+            { kind: 'door' as const, w: 52, h: 52, tone: 'text-border-strong' },
+            { kind: 'plant' as const, w: 44, h: 50, tone: 'text-success' },
+          ].map((f) => (
+            <div key={f.kind} className="flex flex-col items-center gap-1.5">
+              <div className={`relative ${f.tone}`} style={{ width: f.w, height: f.h }}>
+                <FeatureGlyph kind={f.kind} className="absolute inset-0 h-full w-full" />
+              </div>
+              <span className="text-xs text-muted">{f.kind}</span>
+            </div>
+          ))}
         </div>
       </Row>
       <Row>
@@ -1985,6 +2584,40 @@ function LayoutSection() {
             </p>
           </div>
         </Row>
+      </CardBody>
+    </Card>
+  )
+}
+
+function WordmarkSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="The wordmark"
+        description="The typeface the Odyssey logo is lettered in (Archivo, self-hosted by next/font). ONLY for headings that sit beside the logo — the till header, the login lockup. Body text stays on the system stack: it is what the OS hints best at small sizes, and a till must be readable the instant it opens."
+      />
+      <CardBody className="grid gap-5">
+        <div className="grid gap-2">
+          <Spec name=".wordmark" note="Uppercased and tightened to match the artwork" />
+          <p className="wordmark text-[32px] text-ink">Odyssey POS</p>
+        </div>
+        <div className="grid gap-2">
+          <Spec name=".wordmark-sub" note="The 'POINT OF SALE' subline — lighter, tracked wide" />
+          <p className="wordmark-sub text-[15px] text-muted">Point of sale</p>
+        </div>
+        <div className="grid gap-2">
+          <Spec name=".logo-plate" note="On <Image> for logo-full.png — a light plate in dark mode, since the wordmark artwork is dark navy and vanishes on a dark canvas" />
+          <div className="rounded-card bg-canvas p-4">
+            <Image
+              src="/logo-full.png"
+              alt="Odyssey Point of Sale"
+              width={1109}
+              height={304}
+              className="logo-plate h-12 w-auto object-contain"
+              unoptimized
+            />
+          </div>
+        </div>
       </CardBody>
     </Card>
   )

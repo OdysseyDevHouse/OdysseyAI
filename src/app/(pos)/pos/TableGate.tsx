@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Badge,
   Button,
@@ -8,13 +8,16 @@ import {
   EmptyState,
   Icons,
   Menu,
+  FeatureGlyph,
   SegmentedControl,
   Select,
   Switch,
+  TableGlyph,
   ToolbarSearch,
   toneForId,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+import { seatLayout } from '@/lib/site/floorGeometry'
 import type { OpenTab } from './actions'
 import type { PosTable, TableState } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
@@ -151,6 +154,8 @@ export function TableGate({
   transferring = false,
   onToggleTransferring,
   onTransferTable,
+  onEmptyArm,
+  onShowQuickKeys,
   onPickTab,
   onPickTable,
 }: {
@@ -170,16 +175,40 @@ export function TableGate({
   onNewTable: () => void
   /** Re-read the floor. Another till may have opened or settled a tab. */
   onRefresh?: () => void
-  /** Armed: the next FLOOR-PLAN tap opens the split screen instead of resuming. */
+  /**
+   * Armed: the next tap on a table-backed bill opens the split screen instead of
+   * resuming it. Armed by the `split-table` QUICK KEY — this screen no longer
+   * carries a button for it, only the banner that says a mode is live.
+   */
   splitting?: boolean
   onToggleSplitting?: (next: boolean) => void
-  /** Opens the split screen for a seated table. Floor view only — see the button. */
+  /** Opens the split screen for a seated table. Works on either view. */
   onSplitTable?: (table: PosTable) => void
-  /** Armed: the next FLOOR-PLAN tap picks the tab to MOVE instead of resuming. */
+  /** Armed: the next tap picks the tab to MOVE instead of resuming it. */
   transferring?: boolean
   onToggleTransferring?: (next: boolean) => void
-  /** Opens the destination picker for a seated table's whole tab. Floor view only. */
+  /** Opens the destination picker for a seated table's whole tab. Either view. */
   onTransferTable?: (table: PosTable) => void
+  /**
+   * A mode was armed with nothing on screen it could act on, and has been dropped.
+   *
+   * The gate refuses silently without this: it owns no toast, and the key that armed
+   * the mode was pressed on another screen entirely. The shell says why.
+   */
+  onEmptyArm?: (mode: 'split' | 'move') => void
+  /**
+   * Opens the shop's own keys for the floor — the `tables` bar from the designer.
+   *
+   * The gate never learns what a quick key IS: the shell owns the runner, the
+   * capability checks and the dialogs each key leads to, and a floor that could run
+   * one itself would be a second place deciding what a key means.
+   *
+   * Optional so a retail till — which has no floor and no tables bar — simply does
+   * not pass one. A hospitality till always does, EMPTY BAR INCLUDED: nothing had
+   * ever written to that section, so hiding the button until it was filled hid it on
+   * every existing shop. The dialog teaches the empty case instead.
+   */
+  onShowQuickKeys?: () => void
   /** Resume an open tab. */
   onPickTab: (tab: OpenTab) => void
   /** Seat or resume a table from the drawn floor plan. */
@@ -239,6 +268,23 @@ export function TableGate({
     return map
   }, [tables])
 
+  /* The same join the other way round, for the armed modes.
+     Split and move both act on a `pos_tables` row, so a tab can only be their source
+     if a configured table is carrying it. Held as the table ITSELF rather than a
+     boolean: the handlers take a PosTable, and re-finding it on tap would mean
+     scanning `tables` a second time inside the click. */
+  const tableByDoc = useMemo(() => {
+    const map = new Map<number, PosTable>()
+    for (const t of tables) {
+      if (t.documentId !== null) map.set(t.documentId, t)
+    }
+    return map
+  }, [tables])
+
+  /* Armed, and this device can actually act on the tap. Both modes are exclusive and
+     each has its own handler, so "armed" alone is not enough to know what a tap means. */
+  const arming = (splitting && onSplitTable) || (transferring && onTransferTable) ? true : false
+
   /* A tab with no visit type answers to the DEFAULT one. Nothing back-fills the
      column, and a quick sale never picks one — so filing them under "none" would
      hide most of the floor in a segment that does not exist. */
@@ -250,6 +296,43 @@ export function TableGate({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [searched, visit, defaultVisitId],
   )
+
+  /* How many of the bills ON SCREEN could be a source. Counted over `shown` rather
+     than over every tab, because that is what the waiter can actually reach: with the
+     search or the visit filter narrowing the floor to free-text tabs only, arming
+     would present a screen of dead tiles and no way to tell why. */
+  const armableCount = useMemo(
+    () => shown.filter((t) => tableByDoc.has(t.documentId)).length,
+    [shown, tableByDoc],
+  )
+
+  /* Disarm when there is nothing the mode could act on.
+     Two ways in: a waiter arms it and then types in the search box, or the key arms it
+     on a floor that never had a table-backed bill. Either way the banner would sit
+     amber saying "tap the bill" over a screen where no tap does anything, and with the
+     header buttons gone there is nothing else to explain it — so this refuses out loud
+     rather than leaving a dead mode up.
+
+     `onEmptyArm` is what carries the reason: the gate has no toast of its own, and the
+     shell owns the one the key was pressed from. */
+  /* Said ONCE per arming. The effect re-runs whenever `armableCount` moves — and it
+     moves on its own, because the floor is re-read on a timer behind this screen — so
+     without a latch the same refusal stacked up two and three toasts deep for a single
+     press of the key. React's development double-invoke made it a guaranteed pair. */
+  const refusedArm = useRef(false)
+  useEffect(() => {
+    if (!splitting && !transferring) {
+      refusedArm.current = false
+      return
+    }
+    if (armableCount === 0 && !refusedArm.current) {
+      refusedArm.current = true
+      onToggleSplitting?.(false)
+      onToggleTransferring?.(false)
+      onEmptyArm?.(splitting ? 'split' : 'move')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [armableCount, splitting, transferring])
 
   const visitOptions = [
     { value: ALL_VISITS, label: 'All tables', count: searched.length },
@@ -273,7 +356,9 @@ export function TableGate({
   const effectiveView = hasPlan ? prefs.view : 'list'
 
   return (
-    <div className="till-pane flex flex-1 flex-col overflow-y-auto p-4">
+    /* `px-4 pb-4`, no top: TillStatusBar carries its own py-4, so the gap
+       under the chips is already paid for. */
+    <div className="till-pane flex flex-1 flex-col overflow-y-auto px-4 pb-4">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-border bg-surface shadow-card">
         {/* ── Who this screen is and what it does ─────────────────────────── */}
         <div className="flex flex-wrap items-start justify-between gap-3 px-6 py-5">
@@ -309,6 +394,9 @@ export function TableGate({
             <Menu
               align="right"
               variant="secondary"
+              /* Settings, not commands: the waiter sets the columns AND the total
+                 in one visit, so neither control may dismiss the panel. */
+              keepOpen
               label={
                 <>
                   <Icons.SlidersHorizontal size={18} />
@@ -317,7 +405,8 @@ export function TableGate({
               }
             >
               {/* Not MenuItems: these are settings to leave open and adjust, not
-                  commands that dismiss the menu the moment they are touched. */}
+                  commands that dismiss the menu the moment they are touched —
+                  which is what `keepOpen` above buys. */}
               <div className="flex w-[280px] flex-col gap-4 p-5">
                 <label className="flex flex-col gap-1.5">
                   <span className="text-[13px] font-semibold text-ink">Columns</span>
@@ -341,6 +430,18 @@ export function TableGate({
                 />
               </div>
             </Menu>
+
+            {/* The shop's own keys, reachable WITHOUT opening a table first.
+                Everything else on this screen needs a bill to act on; these are the
+                acts that do not — clocking on, a reprint, a payment against an
+                account — and before this button the only way to one was to seat a
+                table you did not want in order to reach the pane behind it. */}
+            {onShowQuickKeys && (
+              <Button variant="secondary" size="touch" disabled={busy} onClick={onShowQuickKeys}>
+                <Icons.Sparkles size={18} />
+                Quick keys
+              </Button>
+            )}
 
             {onRefresh && (
               <Button variant="secondary" size="touch" disabled={busy} onClick={onRefresh}>
@@ -378,57 +479,50 @@ export function TableGate({
         </div>
 
         {/*
-          ── SPLITTING IS A MODE, NOT A CONTROL ON EACH TILE ────────────────
-          A tile already carries a code, a state and a total; a second button on it
-          would be a small target next to the tap that resumes the table, and getting
-          that wrong opens the wrong bill in front of a customer.
+          ── ARMED FROM A QUICK KEY, NOT FROM A BUTTON HERE ─────────────────
+          Split and Move used to be a pair of buttons on this header. They are quick
+          keys now: a shop that serves tables puts them on a bar and decides where,
+          and a shop that does not never pays for them in header space. See the
+          `split-table` and `table-transfer` entries in quickKeyRunner.
 
-          So: arm the mode, then tap the table to split. The floor stays the thing you
-          tap, and the armed state says plainly what the next tap will do — which is
-          also how the gesture cancels, by disarming rather than by finding a way out
-          of a dialog.
+          What stayed is everything BELOW the arming — `splitting` and `transferring`
+          still come in as props, a tap on an armable bill still runs the gesture, and
+          the banner below still says what the next tap will do. Only the on/off
+          switch moved.
 
-          ── ONLY ON THE FLOOR VIEW ─────────────────────────────────────────
-          A split MOVES lines from one table onto another, and `splitTableAction`
-          identifies both by `pos_tables.id`. A free-text tab has no such id — it
-          is a bill with a name on it — so there is nothing for the lines to land
-          on. Offering the mode over the tab list would arm a gesture that could
-          only ever fail on the second tap, in front of a customer.
+          A tile decides for itself whether it can be a target: a split moves lines
+          between two `pos_tables` rows, so a bill carried by a configured table is
+          armable and a free-text tab is not (see `tableByDoc` and TabCard's
+          `armable`). What is refused is refused on the tile, before the tap, rather
+          than on the second tap in front of a customer.
         */}
-        {(onSplitTable || onTransferTable) && effectiveView === 'floor' && (
-          <div className="flex flex-wrap gap-2 px-6 pb-3">
-            {onSplitTable && (
+        {arming && (
+          <div className="px-6 pb-3">
+            {/* The armed state needs somewhere to live now that the button that used
+                to carry it is gone — otherwise the mode is invisible and the only clue
+                is that the tiles look different. Also the way OUT: with no button to
+                tap again, this is what cancels. */}
+            <div className="flex flex-wrap items-center gap-3 rounded-card border border-warning bg-warning-soft px-4 py-2.5">
+              <Icons.ArrowLeftRight size={18} className="text-warning" />
+              <span className="text-[14px] font-semibold text-ink">
+                {splitting ? 'Tap the bill to split.' : 'Tap the bill to move.'}
+              </span>
+              <span className="text-[13px] text-muted">
+                {armableCount === 1 ? '1 bill can' : `${armableCount} bills can`} take it.
+              </span>
               <Button
-                variant={splitting ? 'warning' : 'ghost'}
-                size="touch"
+                variant="secondary"
+                size="sm"
+                className="ml-auto"
                 disabled={busy}
                 onClick={() => {
-                  // The two armed modes are exclusive — a tap can only mean one thing.
-                  if (!splitting) onToggleTransferring?.(false)
-                  onToggleSplitting?.(!splitting)
+                  onToggleSplitting?.(false)
+                  onToggleTransferring?.(false)
                 }}
               >
-                {/* ArrowLeftRight, not scissors: a split MOVES lines between two bills
-                    rather than cutting one, and the arrow says which. */}
-                <Icons.ArrowLeftRight size={18} />
-                {splitting ? 'Tap the bill to split — or tap here to stop' : 'Split a bill'}
+                Cancel
               </Button>
-            )}
-            {onTransferTable && (
-              <Button
-                variant={transferring ? 'warning' : 'ghost'}
-                size="touch"
-                disabled={busy}
-                onClick={() => {
-                  if (!transferring) onToggleSplitting?.(false)
-                  onToggleTransferring?.(!transferring)
-                }}
-              >
-                {/* The whole tab walks — the party moved, their bill follows. */}
-                <Icons.LayoutGrid size={18} />
-                {transferring ? 'Tap the table to move — or tap here to stop' : 'Move a table'}
-              </Button>
-            )}
+            </div>
           </div>
         )}
 
@@ -527,18 +621,40 @@ export function TableGate({
                   />
                 </div>
               ) : (
-                shown.map((tab) => (
-                  <TabCard
-                    key={tab.documentId}
-                    tab={tab}
-                    tableState={tableStateByDoc.get(tab.documentId) ?? null}
-                    busy={busy}
-                    showTotal={showTotals}
-                    dense={dense}
-                    minHeight={tileMinH}
-                    onPick={() => onPickTab(tab)}
-                  />
-                ))
+                shown.map((tab) => {
+                  /* Which configured table carries this bill — the source the armed
+                     gesture needs. Undefined for a free-text tab, which is what makes
+                     the tile inert while a mode is armed. */
+                  const sourceTable = tableByDoc.get(tab.documentId)
+                  return (
+                    <TabCard
+                      key={tab.documentId}
+                      tab={tab}
+                      tableState={tableStateByDoc.get(tab.documentId) ?? null}
+                      busy={busy}
+                      showTotal={showTotals}
+                      dense={dense}
+                      minHeight={tileMinH}
+                      /* Only meaningful while a mode is armed: it dims the tabs the
+                         gesture cannot use and labels why, so the refusal lands before
+                         the tap rather than as a toast after it. */
+                      arming={arming}
+                      armable={sourceTable !== undefined}
+                      onPick={() => {
+                        /* Armed taps mean the mode, not "resume". Guarded on a real
+                           source table so a free-text tab cannot start a gesture that
+                           the server would only refuse later. */
+                        if (arming) {
+                          if (!sourceTable) return
+                          if (splitting) onSplitTable?.(sourceTable)
+                          else if (transferring) onTransferTable?.(sourceTable)
+                          return
+                        }
+                        onPickTab(tab)
+                      }}
+                    />
+                  )
+                })
               )}
             </div>
           )}
@@ -611,9 +727,9 @@ function FloorView({
         <div
           key={f.id}
           aria-hidden
-          className={`absolute flex items-center justify-center text-[10px] text-muted ${
-            FEATURE_SKIN[f.kind]
-          }`}
+          /* The tone only — the SHAPE is drawn by FeatureGlyph inside, the same
+             component the floor designer uses. */
+          className={`absolute ${FEATURE_TONE[f.kind]}`}
           style={{
             left: `${(f.x / room.width) * 100}%`,
             top: `${(f.y / room.height) * 100}%`,
@@ -622,7 +738,15 @@ function FloorView({
             transform: `rotate(${f.rotation}deg)`,
           }}
         >
-          {f.label}
+          <FeatureGlyph kind={f.kind} className="absolute inset-0 h-full w-full" />
+          {f.label && (
+            <span
+              className="absolute inset-0 flex items-center justify-center text-center text-[10px] font-medium leading-none"
+              style={{ transform: `rotate(${-f.rotation}deg)` }}
+            >
+              {f.label}
+            </span>
+          )}
         </div>
       ))}
 
@@ -644,9 +768,10 @@ function FloorView({
                   : undefined
                 : onPick(table)
           }
-          className={`absolute flex flex-col items-center justify-center border-2 text-center transition active:scale-[0.97] ${
-            table.shape === 'round' ? 'rounded-full' : 'rounded-card'
-          } ${TILE[table.state]}`}
+          /* No border or radius of its own: the TABLE is drawn by TableGlyph inside,
+             which is what gives a round top round edges and a counter its rounded ends.
+             The state token still lives here, as a text colour the glyph inherits. */
+          className={`absolute transition active:scale-[0.97] ${TILE[table.state]}`}
           style={{
             left: `${((table.x ?? 0) / room.width) * 100}%`,
             top: `${((table.y ?? 0) / room.height) * 100}%`,
@@ -657,8 +782,15 @@ function FloorView({
             transform: `rotate(${table.rotation}deg)`,
           }}
         >
+          {/* The same component the designer draws with, so what a manager arranged is
+              literally what a waiter sees — see the note on TableGlyph. */}
+          <TableGlyph
+            shape={table.shape}
+            seats={seatLayout(table.seats, table.width, table.height)}
+            className="absolute inset-0 h-full w-full"
+          />
           <span
-            className="flex flex-col items-center leading-none"
+            className="absolute inset-0 flex flex-col items-center justify-center leading-none"
             style={{ transform: `rotate(${-table.rotation}deg)` }}
           >
             <span className="text-sm font-bold">{table.code}</span>
@@ -672,24 +804,36 @@ function FloorView({
   )
 }
 
-/** How each fixed feature draws. Tokens only, same rule as TILE below. */
-const FEATURE_SKIN: Record<FloorFeature['kind'], string> = {
-  wall: 'bg-ink-2/60',
-  bar: 'bg-warning-soft border border-warning/50',
-  pass: 'bg-success-soft border border-success/50',
-  door: 'border-2 border-dashed border-border-strong',
-  plant: 'bg-success-soft rounded-full',
-  text: '',
+/**
+ * What colour each fixed feature reads as. Tokens only, same rule as TILE below.
+ *
+ * TEXT colours: `FeatureGlyph` draws the shape and inherits this through `currentColor`,
+ * so a fixture's fill, outline and label can never disagree. Same map the designer uses.
+ */
+const FEATURE_TONE: Record<FloorFeature['kind'], string> = {
+  wall: 'text-ink-2',
+  bar: 'text-warning-ink',
+  pass: 'text-success',
+  door: 'text-border-strong',
+  plant: 'text-success',
+  text: 'text-muted',
 }
 
-/** Per-state surface for the FLOOR plan. Tokens only — a restaurant floor on a bright
-    screen still has to read, and a hex here would not follow the theme. */
+/**
+ * Per-state colour for the FLOOR plan. Tokens only — a restaurant floor on a bright
+ * screen still has to read, and a hex here would not follow the theme.
+ *
+ * TEXT colours, not surfaces: the tile's shape is drawn by `TableGlyph`, which fills and
+ * strokes with `currentColor`. So one class here colours the table top, its outline, its
+ * chairs and its code together, and a state can never end up with a brand-coloured top
+ * and a neutral outline because two class lists disagreed.
+ */
 const TILE: Record<TableState, string> = {
-  free: 'border-border bg-surface-2 text-ink',
-  open: 'border-brand/50 bg-brand-soft text-brand',
+  free: 'text-ink',
+  open: 'text-brand',
   /* The one that shouts. A table waiting to pay is the only state that needs a waiter
      to move, so it is the only one given a colour that carries urgency. */
-  bill: 'border-warning/60 bg-warning-soft text-warning-ink',
+  bill: 'text-warning-ink',
 }
 
 /**
@@ -773,6 +917,8 @@ function TabCard({
   showTotal,
   dense,
   minHeight,
+  arming = false,
+  armable = true,
   onPick,
 }: {
   tab: OpenTab
@@ -784,9 +930,17 @@ function TabCard({
   dense: boolean
   /** Set by the column count, so the whole row is the same height. */
   minHeight: string
+  /** A split or move mode is armed, so a tap means the gesture rather than "resume". */
+  arming?: boolean
+  /** A configured table carries this bill, so it can be the gesture's source. */
+  armable?: boolean
   onPick: () => void
 }) {
   const billAsked = tableState === 'bill'
+  /* Inert rather than hidden: a waiter hunting for table 12 mid-gesture must still
+     find it on screen, and a tile that vanished when a mode armed would read as a
+     bill that had been settled by somebody else. */
+  const inert = arming && !armable
   const mins = minutesSince(tab.updatedAt)
   /* Untouched too long is worth a colour, but only bill-asked earns the dot: one
      is "worth a look", the other is "somebody is waiting to pay". */
@@ -797,13 +951,23 @@ function TabCard({
       type="button"
       data-kit-ok
       data-tab-label={tab.label}
-      disabled={busy}
+      disabled={busy || inert}
+      /* Says WHY it will not take the tap, on the tile itself. A waiter who armed
+         the mode and found half the floor dead needs the reason here, not in a
+         toast they have to trigger first. */
+      title={inert ? 'This bill is not on a configured table, so it cannot be split or moved.' : undefined}
       onClick={onPick}
       style={{ minHeight }}
       className={`group flex flex-col rounded-card border ${
-        /* The same amber the floor view paints a bill-asked tile — the two views
-           must say "waiting to pay" in one colour, whichever one is open. */
-        billAsked ? 'border-warning/60 hover:border-warning' : 'border-border hover:border-brand/50'
+        /* Armed and usable: the tile says so, in the same amber the buttons wear
+           while a mode is live, so the eye goes straight to what it may tap. */
+        arming && armable
+          ? 'border-warning ring-2 ring-warning/40 hover:border-warning'
+          : /* The same amber the floor view paints a bill-asked tile — the two views
+               must say "waiting to pay" in one colour, whichever one is open. */
+            billAsked
+            ? 'border-warning/60 hover:border-warning'
+            : 'border-border hover:border-brand/50'
       } bg-surface ${
         dense ? 'p-3.5' : 'p-5'
       } text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50`}

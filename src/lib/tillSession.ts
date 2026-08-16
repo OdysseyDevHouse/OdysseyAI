@@ -82,3 +82,4 @@ export async function getTillSession(siteId: number): Promise<TillSession | null
     return null
   }
 }
+

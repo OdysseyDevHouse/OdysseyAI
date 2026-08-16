@@ -2849,6 +2849,94 @@ const TIPS_SOURCE: CatalogSource = {
   ],
 }
 
+/* ── till voids ────────────────────────────────────────────────────────────── */
+
+/**
+ * What came off a sale before anybody paid for it.
+ *
+ * ── THIS IS NOT THE CANCELLED-SALES REPORT ────────────────────────────────
+ *
+ * A cancel reverses a FINALISED sale and lives on sales_documents, where the
+ * Sales source already reports it via `voidReason`. This source is the other
+ * event entirely: a line or an item taken off a DRAFT, where nothing posted and
+ * no document may ever have existed. The two answer different questions and
+ * mixing them would put reversed invoices in a report about till behaviour.
+ *
+ * ── WHY `sale` ROWS MUST BE FILTERED WHEN SUMMING ─────────────────────────
+ *
+ * An abandoned basket writes a `sale` rollup AND a `line` row per line, so a
+ * total over both counts every abandoned basket twice. The starter columns lead
+ * with the kind for exactly that reason: the first thing anyone building on
+ * this must see is that the rows are two levels, not one.
+ */
+const POS_VOIDS_SOURCE: CatalogSource = {
+  key: 'posVoids',
+  label: 'Till voids',
+  description:
+    'Items, lines and whole sales voided off a draft at the till — with the reason, who did it and what it was worth. Not the same as a cancelled sale, which is a finalised document reversed.',
+  category: 'Operations',
+  /* The same right that guards the cash-up. A void report names individual
+     cashiers and is the first place a manager looks when stock walks, so it
+     belongs with the other supervisory numbers rather than with general sales. */
+  permission: 'sales.cashup',
+  shape: 'timeline',
+  table: 'pos_void_events',
+  dateColumn: 'voided_at',
+  joins: [
+    /* LEFT, and the fields below fall back to the stored code: a reason that has
+       since been deleted must not blank out the history naming it. */
+    { name: 'reason', sql: 'LEFT JOIN sales_void_reasons vr ON vr.id = t.reason_id' },
+    { name: 'product', sql: 'LEFT JOIN products p ON p.id = t.product_id' },
+    /* NOT named 'doc'. A join by that name is taken to be the PARENT that owns
+       the source's date — see dateColumnExpr — and the range filter is then
+       qualified with its alias. A void carries its own voided_at on `t`, so
+       borrowing the convention pointed every filter at d.voided_at, a column
+       that does not exist, and took all three reports down at request time. */
+    { name: 'draft', sql: 'LEFT JOIN sales_documents sd ON sd.id = t.document_id' },
+  ],
+  fields: [
+    { key: 'voidedAt', label: 'When', type: 'datetime', expr: 't.voided_at', starter: true, group: FIELD_GROUPS.DATES },
+    /* The distinction the cashier made with their hands, and the one the whole
+       report turns on — one unit off, a whole line off, or the sale abandoned. */
+    enumField('voidType', 'Kind', 't.void_type', ['item', 'line', 'sale'], { starter: true }),
+    {
+      key: 'reasonName',
+      label: 'Reason',
+      type: 'text',
+      /* Current name first so a renamed reason reads correctly, stored code as
+         the fallback, and a plain label when nobody was ever asked. */
+      expr: "COALESCE(vr.name, t.reason_code, 'Not recorded')",
+      needs: ['reason'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'reasonCode',
+      label: 'Reason code',
+      type: 'text',
+      expr: "COALESCE(vr.code, t.reason_code, 'NOT-RECORDED')",
+      needs: ['reason'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    { key: 'description', label: 'What', type: 'text', expr: 't.description', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'qty', label: 'Qty', type: 'number', expr: 't.qty', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    /* Gross, VAT in, before line discount — what the customer would have been
+       asked for. The figure that makes a pattern of voids worth reading. */
+    { key: 'value', label: 'Value (incl.)', type: 'currency', expr: 't.value_incl', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    /* The PIN operator who did it, not whoever signed the browser in. */
+    { key: 'userName', label: 'By', type: 'text', expr: 't.user_name', starter: true, group: FIELD_GROUPS.PEOPLE },
+    { key: 'terminalCode', label: 'Till', type: 'text', expr: 't.terminal_code', group: FIELD_GROUPS.PEOPLE },
+    { key: 'shiftId', label: 'Cash-up', type: 'number', expr: 't.shift_id', noTotal: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'productCode', label: 'Stock code', type: 'text', expr: 't.product_code', group: FIELD_GROUPS.IDENTITY },
+    { key: 'productName', label: 'Product (current name)', type: 'text', expr: 'p.name', needs: ['product'], group: FIELD_GROUPS.PRODUCT },
+    /* Only a parked tab, a table or a recalled draft has one. Null is the normal
+       case for a counter sale, which never reaches the database before it is paid. */
+    { key: 'documentNumber', label: 'Draft', type: 'document', expr: 'sd.document_number', needs: ['draft'], group: FIELD_GROUPS.IDENTITY },
+    ...timeBuckets('voided_at', { hours: true }),
+  ],
+}
+
 /* ── stock takes ───────────────────────────────────────────────────────────── */
 
 const STOCK_TAKE_LINES_SOURCE: CatalogSource = {
@@ -4125,6 +4213,7 @@ export const SOURCES: CatalogSource[] = [
   SHIFT_COUNTS_SOURCE,
   SHIFT_MOVEMENTS_SOURCE,
   TIPS_SOURCE,
+  POS_VOIDS_SOURCE,
   STOCK_TAKE_LINES_SOURCE,
   ADJUSTMENT_LINES_SOURCE,
   PRODUCT_SUPPLIERS_SOURCE,

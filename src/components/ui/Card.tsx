@@ -58,13 +58,21 @@ export function CardHeader({
          header. See globals.css. */
       data-brand-rule={brand ? '' : undefined}
       className={[
-        'flex items-start justify-between gap-4 border-b border-border px-5 py-4',
+        /* Wraps rather than squeezing. The action is shrink-0 and the title
+           min-w-0, so without a wrap a header carrying a real toolbar — the
+           report screen runs to six controls — wrung the description down to
+           one word per line. `flex-wrap` lets the toolbar drop to its own row
+           when the two cannot share one, and changes nothing for the two or
+           three buttons most cards carry. */
+        'flex flex-wrap items-start justify-between gap-4 border-b border-border px-5 py-4',
         className,
       ]
         .filter(Boolean)
         .join(' ')}
     >
-      <div className="flex min-w-0 items-start gap-3">
+      {/* basis-64 with grow: the title keeps a readable width and pushes the
+          toolbar onto the next line instead of being crushed by it. */}
+      <div className="flex min-w-0 shrink grow basis-64 items-start gap-3">
         {icon && (
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
             {icon}

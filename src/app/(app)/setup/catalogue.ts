@@ -469,6 +469,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/training',
+        description: 'Let someone practise on the real system, then remove everything they did.',
+        keywords: 'training practice demo test sandbox learn staff dummy trial reset clear',
+        icon: 'GraduationCap',
+        tone: 'amber',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/databases',
         description: 'This shop’s details, and the health of every database behind it.',
         keywords: 'connection health server site details',

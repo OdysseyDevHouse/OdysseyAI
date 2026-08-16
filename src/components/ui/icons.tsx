@@ -104,6 +104,10 @@ export {
   // the shop.
   Wrench,
   FileText,
+  // Somewhere a document is filed and can be opened — the till's "Open" key,
+  // which lands on the back-office document. Distinct from FileText (the
+  // document itself) and ExternalLink (leaving the app entirely).
+  FolderOpen,
   Settings,
   // Per-DEVICE display choices, as distinct from Settings (which is the shop's).
   // The till's "Customize" opens tile options that belong to this screen only.
@@ -153,10 +157,17 @@ export {
      table 15°. */
   RotateCw,
   Contact,
+  // How a customer is here: sitting down, taking away, collecting. A seat is
+  // the one shape that reads as "visit type" without naming a single one of
+  // them — Utensils would say "food" on a bar tab that is only ever drinks.
+  Armchair,
   CreditCard,
   Receipt,
   ReceiptText as TaxInvoice,
   History,
+  // Training mode. A mortarboard rather than a book: this is somebody being
+  // taught the till, not documentation to read.
+  GraduationCap,
   Sheet as Spreadsheet,
   // A count sheet. Same glyph the nav already uses for Stock Takes, so the menu
   // rail and the screen it opens agree with each other.

@@ -5,11 +5,14 @@ import { resolveReport } from '@/lib/reportBuilder/resolve'
 import { runBuilderSpec, ReportAccessError } from '@/lib/reportBuilder/run'
 import { PERIOD_KEYS, type PeriodKey } from '@/lib/reportBuilder/spec'
 import { exportCell } from '@/lib/reportBuilder/format'
-import { reportColumnsFor, applyStoreColumns } from '@/lib/site/reportColumns'
-import { toXlsx, toCsv, exportFilename, type ExportColumn } from '@/lib/export/table'
+import { buildSections, computeTotals, resolveGroupKey } from '@/lib/reportBuilder/shape'
+import { reportPrefsFor, parseStoredColumns, applyStoreColumns } from '@/lib/site/reportColumns'
+import { toCsv, exportFilename, type ExportColumn } from '@/lib/export/table'
+import { renderReportPdf } from '@/lib/reports/pdf'
+import { renderReportXlsx } from '@/lib/reports/xlsx'
 
 /**
- * A report as a spreadsheet.
+ * A report as a file: PDF to read, a workbook to work in, CSV to import.
  *
  * This route is the reason `actorForCapability` exists: `reports.view` gets you
  * the file, but which COLUMNS are in it depends on the caller's other
@@ -18,6 +21,10 @@ import { toXlsx, toCsv, exportFilename, type ExportColumn } from '@/lib/export/t
  *
  * Money is written as a NUMBER, never "R1 234.56" — the first thing anyone does
  * with an exported report is sum a column.
+ *
+ * The PDF and the workbook are BANDED the way the screen bands them, by the same
+ * buildSections the grid calls; the CSV deliberately is not. See the branch
+ * below for why.
  */
 export async function GET(request: NextRequest) {
   const auth = await actorForCapability('reports.view')
@@ -65,25 +72,34 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  /* The store's columns and order, exactly as the screen shows them. An export
-     that carried a column the store switched off would make hiding it a
-     screen-only gesture, and the spreadsheet is where these figures usually
-     end up. */
+  /* The store's columns, order and banding, exactly as the screen shows them.
+     An export that carried a column the store switched off would make hiding it
+     a screen-only gesture, and the spreadsheet is where these figures usually
+     end up.
+
+     Both come from the stored row rather than the URL, so a typed or shared
+     link cannot produce a file that disagrees with the screen it came from —
+     and the scheduled send, which has no URL at all, gets the same answer. */
+  const prefs = await reportPrefsFor(auth.siteId, report.id)
   const shown = applyStoreColumns(
     result.columns,
-    await reportColumnsFor(auth.siteId, report.id, result.columns.map((c) => c.key)),
+    parseStoredColumns(prefs.columns, result.columns.map((c) => c.key)),
   )
+  const groupKey = resolveGroupKey(prefs.groupBy, shown)
 
-  const columns: ExportColumn<Record<string, unknown>>[] = shown.map((col) => ({
-    header: col.label,
-    value: (row) => exportCell(row[col.key], col.type),
-    money: col.type === 'currency',
-  }))
-
-  const format = params.get('format') === 'csv' ? 'csv' : 'xlsx'
+  const format = params.get('format')
   const base = slug(report.name)
 
+  /* CSV stays FLAT. It is the format people import into something else, and a
+     sheet carrying band headings and subtotal rows is not importable — those
+     rows have a different shape from the data around them. The other two
+     formats are for reading, and get the bands. */
   if (format === 'csv') {
+    const columns: ExportColumn<Record<string, unknown>>[] = shown.map((col) => ({
+      header: col.label,
+      value: (row) => exportCell(row[col.key], col.type),
+      money: col.type === 'currency',
+    }))
     return new NextResponse(toCsv(result.rows, columns), {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
@@ -92,7 +108,31 @@ export async function GET(request: NextRequest) {
     })
   }
 
-  const buffer = toXlsx(result.rows, columns, report.name)
+  const render = {
+    title: report.name,
+    subtitle: report.description || undefined,
+    storeName: auth.siteName,
+    range: result.range,
+    columns: shown,
+    sections: buildSections(result.rows, shown, groupKey),
+    grandTotal: computeTotals(result.rows, shown),
+    rowCount: result.rows.length,
+    truncated: result.truncated,
+    hiddenColumns: result.hiddenColumns,
+  }
+
+  if (format === 'pdf') {
+    const pdf = await renderReportPdf(render)
+    return new NextResponse(new Uint8Array(pdf), {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${exportFilename(base, 'pdf')}"`,
+        'Cache-Control': 'no-store',
+      },
+    })
+  }
+
+  const buffer = renderReportXlsx(render)
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

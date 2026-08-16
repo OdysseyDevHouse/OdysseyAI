@@ -82,7 +82,7 @@ function csvCell(value: string | number | null): string {
 }
 
 /** A filename that sorts by date and cannot collide between two exports. */
-export function exportFilename(base: string, extension: 'xlsx' | 'csv'): string {
+export function exportFilename(base: string, extension: 'xlsx' | 'csv' | 'pdf'): string {
   const now = new Date()
   const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
     now.getDate(),

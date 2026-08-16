@@ -1,4 +1,34 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git blame:*)",
+      "Bash(git remote:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-files:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run shot:*)",
+      "Bash(npm run probe:page-score:*)",
+      "Bash(npx tsc --noEmit:*)",
+      "Bash(node scripts/:*)",
+      "Bash(tsx scripts/:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(pwd)",
+      "Bash(which:*)",
+      "Bash(curl -s -o /dev/null -w * http://localhost:4100/*)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {

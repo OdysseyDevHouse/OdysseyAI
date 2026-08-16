@@ -144,7 +144,10 @@ export function NumPad({
         onClick={() => press('back')}
         aria-label="Backspace"
       >
-        <Icons.ChevronLeft size={22} />
+        {/* The key a cashier already knows. A ChevronLeft — which this used to
+            be — reads as "go back a screen" on a touch till, which is the one
+            thing this key must not be mistaken for mid-entry. */}
+        <Icons.Backspace size={22} />
       </Button>
     </div>
   )

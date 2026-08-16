@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { Button, Callout, Input, Modal } from '@/components/ui'
-import { Minus, Plus } from '@/components/ui/icons'
+import { Check, Minus, Package, Plus } from '@/components/ui/icons'
 import { formatMoney } from '@/lib/decimals'
 import {
   adjustPerUnit,
@@ -32,6 +32,14 @@ import type { TillProduct } from '@/lib/site/tillSearch'
  * usually standing there and the question "how much is that with bacon" is
  * asked out loud. It is the same figure the line will carry — `adjustPerUnit` is
  * the one that computes it, here and at posting.
+ *
+ * ── WHY EVERY QUESTION IS ON ONE SCREEN ───────────────────────────────────
+ *
+ * The questions are listed together and the step rail at the top only SCROLLS to
+ * one, rather than paging between them. A cashier who has to click "next" to
+ * discover there was a second question cannot see the order they are building,
+ * and the count in the footer would be describing something off-screen. The rail
+ * says how many there are and which are answered; the list stays whole.
  */
 export default function InstructionsModal({
   product,
@@ -98,6 +106,8 @@ export default function InstructionsModal({
 
   const adjust = adjustPerUnit(chosen)
   const built = basePriceIncl + adjust
+  /** Distinct answers picked, across every question. The footer's count. */
+  const picked = chosen.length
 
   const confirm = () => {
     const refusal = validateSelection(asked, chosen)
@@ -113,7 +123,20 @@ export default function InstructionsModal({
       open
       onClose={onCancel}
       title={product.description}
-      description={qty > 1 ? `${qty} × — the answers apply to each one` : undefined}
+      description={describeAsk(asked.length, qty)}
+      /* The product as a picture. There is no photo on a till product — the
+         catalogue ships a colour, not an image — so this is the same tinted
+         glyph the catalogue tiles use, which at least makes the dialog and the
+         tile behind it read as the same item. */
+      titleMedia={
+        <span
+          data-kit-ok
+          className="flex size-12 shrink-0 items-center justify-center rounded-card border border-border bg-surface-2 text-muted"
+        >
+          <Package size={22} />
+        </span>
+      }
+      subheader={asked.length > 1 ? <StepRail groups={asked} chosen={chosen} /> : undefined}
       size="lg"
       /* Half-answered work: a stray tap on the backdrop with a customer waiting
          should not throw the order away. */
@@ -124,6 +147,11 @@ export default function InstructionsModal({
            cashier is in a hurry. */
         <div className="flex w-full items-center justify-between gap-3">
           <span className="text-sm text-muted">
+            {picked > 0 && (
+              <span className="mr-3">
+                {picked} picked
+              </span>
+            )}
             {adjust !== 0 && (
               <>
                 <span className="numeric">{formatMoney(basePriceIncl)}</span>
@@ -147,17 +175,30 @@ export default function InstructionsModal({
         </div>
       }
     >
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
         {error && <Callout tone="danger">{error}</Callout>}
 
         {asked.map((group) => (
-          <div key={group.id} className="flex flex-col gap-2">
-            <div className="flex items-baseline justify-between gap-3">
-              <h3 className="text-sm font-medium text-ink">{group.prompt}</h3>
-              <span className="text-xs text-muted">{ruleFor(group)}</span>
+          <section
+            key={group.id}
+            id={`instruction-group-${group.id}`}
+            /* Each question is its own panel so a long menu reads as several
+               questions rather than one continuous wall of buttons. */
+            className="rounded-card border border-border bg-surface-2 p-4"
+          >
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-ink">{group.prompt}</h3>
+                <p className="mt-0.5 text-xs text-muted">{ruleFor(group)}</p>
+              </div>
+              {/* Only the exception is marked. Most questions in a kitchen are
+                  compulsory, so it is the skippable one worth calling out. */}
+              {!group.isRequired && group.minChoices === 0 && (
+                <span className="shrink-0 text-xs text-muted">Optional</span>
+              )}
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {group.options.map((option) => (
                 <OptionTile
                   key={option.id}
@@ -168,11 +209,11 @@ export default function InstructionsModal({
                 />
               ))}
             </div>
-          </div>
+          </section>
         ))}
 
-        <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium text-ink">Anything else?</h3>
+        <section className="rounded-card border border-border bg-surface-2 p-4">
+          <h3 className="mb-3 text-sm font-semibold text-ink">Anything else?</h3>
           <Input
             size="touch"
             value={note}
@@ -180,9 +221,73 @@ export default function InstructionsModal({
             maxLength={190}
             placeholder="e.g. no ice, allergy: nuts"
           />
-        </div>
+        </section>
       </div>
     </Modal>
+  )
+}
+
+/** "2 questions — answer any of them", and who the answers apply to. */
+function describeAsk(count: number, qty: number): string {
+  const questions = count === 1 ? '1 question' : `${count} questions`
+  if (qty > 1) return `${questions} — the answers apply to each of the ${qty}`
+  return questions
+}
+
+/**
+ * How many questions there are, and which have been answered.
+ *
+ * It SCROLLS rather than pages — see the note at the top of the file. The tick
+ * is the only state worth showing: a cashier wants to know what is still
+ * outstanding, and "answered" is the one thing they cannot see without scrolling
+ * back up.
+ */
+function StepRail({
+  groups,
+  chosen,
+}: {
+  groups: readonly TillInstructionGroup[]
+  chosen: readonly ChosenOption[]
+}) {
+  return (
+    <div className="flex items-center justify-center gap-1 overflow-x-auto">
+      {groups.map((group, i) => {
+        const answered = chosen.some((c) => c.groupId === group.id)
+        return (
+          <span key={group.id} className="flex shrink-0 items-center gap-1">
+            {i > 0 && <span className="h-px w-6 shrink-0 bg-border" aria-hidden />}
+            <button
+              /* A scroll-to affordance, not a kit control: it is a tick and a
+                 label on the modal's own header strip. data-kit-ok */
+              data-kit-ok
+              type="button"
+              onClick={() =>
+                document
+                  .getElementById(`instruction-group-${group.id}`)
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
+              className="flex min-h-touch items-center gap-2 rounded-pill px-2 text-sm"
+            >
+              <span
+                className={`flex size-5 shrink-0 items-center justify-center rounded-pill border text-white ${
+                  answered ? 'border-transparent bg-brand' : 'border-border-strong bg-surface'
+                }`}
+              >
+                {answered && <Check size={13} />}
+              </span>
+              {/* Wide enough to tell two questions apart. The rail is a place
+                  marker, so a long prompt still truncates rather than pushing
+                  the later steps off the strip. */}
+              <span
+                className={`max-w-56 truncate ${answered ? 'text-brand' : 'text-muted'}`}
+              >
+                {group.prompt}
+              </span>
+            </button>
+          </span>
+        )
+      })}
+    </div>
   )
 }
 
@@ -190,18 +295,25 @@ export default function InstructionsModal({
 function ruleFor(group: TillInstructionGroup): string {
   const { minChoices: min, maxChoices: max, isRequired } = group
   if (max === 1) return min > 0 || isRequired ? 'Pick one' : 'Pick one, or skip'
-  if (max === 0) return min > 0 ? `At least ${min}` : 'Any number'
-  if (min > 0 && min === max) return `Exactly ${min}`
-  if (min > 0) return `${min} to ${max}`
-  return `Up to ${max}`
+  if (max === 0) return min > 0 ? `Choose at least ${min}` : 'Choose as many as you like'
+  if (min > 0 && min === max) return `Choose exactly ${min}`
+  if (min > 0) return `Choose ${min} to ${max}`
+  return `Choose up to ${max}`
 }
 
 /**
  * One answer as a till button.
  *
- * A plain answer toggles. One that may be taken more than once grows a stepper
- * once it is on, rather than showing +/− next to every answer on the menu —
- * most answers are yes-or-no and a row of steppers reads as clutter.
+ * ── WHY TAPPING AGAIN ADDS ANOTHER ────────────────────────────────────────
+ *
+ * On a countable answer the tile does NOT toggle — each tap is one more, and the
+ * minus at its right takes one off. That is the legacy till's behaviour and it is
+ * the right one: "mushroom sauce ×5" is five taps on the thing you are naming,
+ * with no stepper to find first. A toggle would make the fifth tap undo the
+ * order, which is the opposite of what the hand expects at speed.
+ *
+ * An answer that can only be taken once still toggles, because there is no
+ * second one to add and tapping it again can only mean "no, not that".
  */
 function OptionTile({
   option,
@@ -219,59 +331,73 @@ function OptionTile({
   const ceiling = option.maxQty === 0 ? Infinity : option.maxQty
   const floor = Math.max(1, option.minQty)
 
+  /** What the next tap on the body means. */
+  const bump = () => {
+    if (!countable) {
+      onPick(on ? 0 : floor)
+      return
+    }
+    if (!on) {
+      onPick(floor)
+      return
+    }
+    // At the ceiling a further tap is a no-op rather than a wrap to zero:
+    // silently emptying an answer somebody is tapping UP is how a line loses
+    // its bacon without anyone noticing.
+    if (count < ceiling) onPick(count + 1)
+  }
+
   return (
     <div
-      /* A selectable tile with a nested price and an optional stepper — not a
-         shape the kit expresses, and it is till-sized rather than form-sized.
+      /* A selectable tile with a count, a price and a split minus — not a shape
+         the kit expresses, and it is till-sized rather than form-sized.
          data-kit-ok */
       data-kit-ok
-      className={`flex items-center gap-2 rounded-control border px-3 py-2 transition ${
-        on ? 'border-brand bg-brand-soft' : 'border-border hover:border-brand/50'
+      className={`flex min-h-touch-lg items-stretch overflow-hidden rounded-control border transition ${
+        on ? 'border-brand bg-brand-soft' : 'border-border bg-surface hover:border-brand/50'
       }`}
     >
       <button
         data-kit-ok
         type="button"
-        onClick={() => onPick(on ? 0 : floor)}
-        className="flex min-h-touch min-w-0 flex-1 items-center justify-between gap-2 text-left"
+        onClick={bump}
+        className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left"
       >
+        {/* The count sits INSIDE the tile as a disc, so a line with four of
+            something reads at a glance without hunting for a stepper. */}
+        {on && (
+          <span className="numeric flex size-7 shrink-0 items-center justify-center rounded-pill bg-brand text-sm font-semibold text-white">
+            {count}
+          </span>
+        )}
         <span className="min-w-0">
-          <span className="block truncate text-sm text-ink">{option.name}</span>
+          <span
+            className={`block text-sm ${on ? 'font-medium text-brand' : 'text-ink'}`}
+          >
+            {option.name}
+          </span>
           {option.priceAdjust !== 0 && (
-            <span className="numeric block text-xs text-muted">
-              {option.priceAdjust > 0 ? '+' : '−'}
+            <span className="numeric mt-0.5 block text-xs text-muted">
+              {option.priceAdjust > 0 ? '+ ' : '− '}
               {formatMoney(Math.abs(option.priceAdjust))}
             </span>
           )}
         </span>
       </button>
 
-      {on && countable && (
-        <span className="flex shrink-0 items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`One fewer ${option.name}`}
-            disabled={count <= floor}
-            onClick={() => onPick(count - 1)}
-          >
-            <Minus size={15} />
-          </Button>
-          <span className="numeric w-6 text-center text-sm text-ink">{count}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`One more ${option.name}`}
-            disabled={count >= ceiling}
-            onClick={() => onPick(count + 1)}
-          >
-            <Plus size={15} />
-          </Button>
-        </span>
+      {/* The minus is a full-height sibling rather than a small icon button:
+          it is the undo for a control whose whole body adds, so it has to be
+          as easy to hit as the thing it undoes. */}
+      {on && (
+        <button
+          data-kit-ok
+          type="button"
+          aria-label={countable ? `One fewer ${option.name}` : `Remove ${option.name}`}
+          onClick={() => onPick(count <= floor ? 0 : count - 1)}
+          className="flex w-11 shrink-0 items-center justify-center border-l border-brand/40 text-brand transition hover:bg-brand/10"
+        >
+          <Minus size={16} />
+        </button>
       )}
     </div>
   )

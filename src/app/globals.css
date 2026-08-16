@@ -406,6 +406,102 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ----------------------------------------------------------------------------
+   The wordmark — headings that sit beside the Odyssey logo.
+
+   The logo artwork is lettered in a heavy grotesque, and a heading next to it in
+   the UI stack made the brand and the app look like two different products. This
+   is the same face the logo is drawn in (see src/app/brandFont.ts), tuned to
+   match the artwork rather than merely to use the font:
+
+     - UPPERCASE, because the logo is. "Odyssey POS" in mixed case beside an
+       all-caps wordmark is the mismatch this exists to remove.
+     - -0.01em, because measuring Archivo against the logo showed the artwork
+       set very slightly tighter than the font's own default tracking.
+     - Weight 800: the logo's stroke, and the reason 700 is not used here.
+
+   The WORD SPACE is widened to put back what the negative tracking takes out.
+   Tightening the letters of a two-word heading also tightens the gap between
+   the words, and at the 20px the till header uses that rendered "ODYSSEY POS"
+   as very nearly one word. Caps have no ascenders or descenders to signal the
+   break, so the gap has to carry it alone.
+
+   `.wordmark-sub` is the "POINT OF SALE" treatment — lighter, and tracked wide
+   the way the artwork's subline is.
+   ------------------------------------------------------------------------- */
+.wordmark {
+  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  word-spacing: 0.14em;
+}
+
+.wordmark-sub {
+  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.34em;
+}
+
+/* `.wordmark-lockup` is the RAIL treatment — the product's name standing on its
+   own in the sidebar, rather than a screen title sitting beside the artwork.
+
+   It differs from `.wordmark` in one way, and the reason is the setting. A
+   screen title is read once on arrival, so the artwork's own tight tracking is
+   right for it. The rail's name is in peripheral vision all day at the corner
+   of every screen, and set solid at -0.01em it reads as a dense block rather
+   than a name — the "standard" look, where nothing distinguishes the brand from
+   a bold label. Opening the letters is what separates a wordmark from bold text.
+
+   0.06em is small in absolute terms and does the whole job: at 20px it adds
+   about a pixel between letters, enough to let each one be seen separately
+   without the word coming apart the way `.wordmark-sub`'s 0.34em would.
+
+   The word space is NOT widened here (as `.wordmark` does to undo its negative
+   tracking). Positive tracking already opens the gap between the words, and
+   compounding the two pushed "AI" far enough from "ODYSSEY" to read as a
+   separate label rather than part of the name. */
+.wordmark-lockup {
+  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ----------------------------------------------------------------------------
+   A light plate behind the full logo, in dark mode only.
+
+   The wordmark in logo-full.png is dark navy on transparency, so on a dark
+   canvas it is very nearly invisible — and the screens that show it full-size
+   are the two front doors: the back-office login and the till's PIN gate. The
+   login solves this in its own CSS module (see `.logo` in login.module.css,
+   which is a deliberate pixel-port and stays as it is); this is the same fix
+   for every screen built on the design tokens.
+
+   NOT a `dark:` Tailwind variant: this app has no such variant registered — it
+   themes by swapping custom properties under [data-theme], so a `dark:` class
+   would compile to nothing and the logo would stay unreadable while looking
+   fixed in the diff. Hence the same three-way selector the tokens above use:
+   OS preference when no choice is stored, and the stored choice when there is
+   one.
+   ------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .logo-plate {
+    background: #ffffff;
+    border-radius: var(--radius-card);
+    padding: 0.5rem 1rem;
+    box-sizing: content-box;
+  }
+}
+
+:root[data-theme='dark'] .logo-plate {
+  background: #ffffff;
+  border-radius: var(--radius-card);
+  padding: 0.5rem 1rem;
+  box-sizing: content-box;
+}
+
 /* Consistent focus ring — keyboard users navigate this back office all day. */
 :focus-visible {
   outline: 2px solid var(--color-brand);

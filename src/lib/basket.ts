@@ -63,6 +63,35 @@ export type BasketLine = {
   instructions: ChosenOption[]
   /** A free-text note for this line — "no ice", "allergy: nuts". */
   note: string
+  /**
+   * When this line was FIRST rung, as epoch milliseconds.
+   *
+   * The till shows each line's age, so a waiter reopening a table can see how
+   * long the customer has been waiting for a plate. That has to be the age of
+   * the ORDER, which is why it rides on the line and is persisted across park
+   * and recall (167) rather than being read off `created_at`: a table bill
+   * rewrites its lines wholesale on every save, so the row's own timestamp is
+   * the moment of the last save, not of the order.
+   *
+   * Optional, and absent is not an error. A line parked before 167, or restored
+   * from an old offline basket, has no recorded order time and the card falls
+   * back to when the line entered this basket — which is the best available
+   * answer and still counts up honestly from there.
+   */
+  orderedAt?: number
+  /**
+   * How much of this line the kitchen has already been told about (142).
+   *
+   * A SNAPSHOT taken at recall, and read for one purpose: to show the waiter
+   * that a line is already being cooked. It is deliberately NOT what decides
+   * what prints — `kitchenDelta` runs server-side against the live column, so
+   * that a second till adding a course cannot be blinded by this till's stale
+   * copy. Wrong here costs a misleading badge; wrong there costs a duplicate
+   * plate, which is why the two are kept apart.
+   *
+   * Absent on a freshly rung line, which the kitchen has by definition not seen.
+   */
+  kitchenSentQty?: number
   /** The card a gift-card line sells (147). Absent on ordinary lines. */
   giftCardCode?: string
 }
@@ -129,6 +158,9 @@ export function lineFromProduct(
     allowFractions: product.allowFractions,
     instructions: [],
     note: '',
+    // Rung NOW. Same clock the key already reads, so this adds no impurity that
+    // was not here — and a line's age has to start from the moment it was rung.
+    orderedAt: Date.now(),
     ...(product.giftCardCode ? { giftCardCode: product.giftCardCode } : {}),
   }
 }

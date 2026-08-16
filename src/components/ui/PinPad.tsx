@@ -183,7 +183,13 @@ export function PinPad({
           The digits are `ghost` — NEUTRAL, not `secondary`.
           Secondary is brand-tinted, and ten tinted keys next to a brand-filled
           confirm is eleven things asking to be pressed. Colour on this pad means
-          "this is the one that acts", which only OK may claim. */}
+          "this is the one that acts", which only OK may claim.
+
+          w-full on every key: Button is inline-flex, so a key sizes to its own
+          glyph plus padding and sits at the LEFT of its grid cell. On the wide
+          pad the cells are ~165px and a "3" is nowhere near that, which left a
+          band of dead space down the right-hand column — the grid was the right
+          width all along, the keys inside it were not. */}
       <div className="grid grid-cols-3 gap-2">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
           <Button
@@ -192,7 +198,7 @@ export function PinPad({
             size={keySize}
             onClick={() => press(digit)}
             disabled={busy}
-            className={`font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
+            className={`w-full font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
           >
             {digit}
           </Button>
@@ -211,6 +217,7 @@ export function PinPad({
           size={keySize}
           onClick={() => setPin((current) => current.slice(0, -1))}
           disabled={busy || !pin}
+          className="w-full"
           aria-label="Backspace"
         >
           <Icons.Backspace size={22} />
@@ -220,7 +227,7 @@ export function PinPad({
           size={keySize}
           onClick={() => press('0')}
           disabled={busy}
-          className={`font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
+          className={`w-full font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
         >
           0
         </Button>
@@ -232,7 +239,7 @@ export function PinPad({
           size={keySize}
           onClick={() => send(pin)}
           disabled={busy || pin.length < 4}
-          className={`font-extrabold ${wide ? 'text-lg' : 'text-base'}`}
+          className={`w-full font-extrabold ${wide ? 'text-lg' : 'text-base'}`}
         >
           {busy ? '…' : submitLabel}
         </Button>

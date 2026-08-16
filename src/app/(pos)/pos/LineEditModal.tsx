@@ -34,6 +34,7 @@ import { discountAllowed, instructionAdjust, type BasketLine } from '@/lib/baske
  */
 export function LineEditModal({
   line,
+  field: openOn = 'qty',
   canOverrideDiscount,
   canOverridePrice,
   onClose,
@@ -42,6 +43,16 @@ export function LineEditModal({
 }: {
   /** Null closes the dialog. */
   line: BasketLine | null
+  /**
+   * Which field the pad opens on.
+   *
+   * The Line options menu names Line Discount, Price Override and Set new
+   * quantity as three separate entries, and each has to land on the field it
+   * promised — a cashier who tapped "Line Discount" and got the quantity tab has
+   * to read all three tabs to find the one they asked for. Defaults to quantity,
+   * which is what every caller that does not care wants.
+   */
+  field?: 'qty' | 'price' | 'discount'
   canOverrideDiscount: boolean
   canOverridePrice: boolean
   onClose: () => void
@@ -59,7 +70,7 @@ export function LineEditModal({
   }) => void
 }) {
   type FieldName = 'qty' | 'price' | 'discount'
-  const [field, setField] = useState<FieldName>('qty')
+  const [field, setField] = useState<FieldName>(openOn)
   const [qty, setQty] = useState('')
   const [price, setPrice] = useState('')
   const [discount, setDiscount] = useState('')
@@ -70,12 +81,14 @@ export function LineEditModal({
   // establish what it is now.
   useEffect(() => {
     if (!line) return
-    setField('qty')
+    // `openOn`, not a hardcoded 'qty' — the menu entry that opened this said
+    // which field it was promising, and re-seeding to quantity would break it.
+    setField(openOn)
     setQty(String(line.qty))
     setPrice(line.unitPriceIncl.toFixed(2))
     setDiscount(line.discountPct ? String(line.discountPct) : '')
     setNote(line.note)
-  }, [line])
+  }, [line, openOn])
 
   if (!line) return null
 

@@ -12,6 +12,8 @@ import {
   DateRangeField,
   FavoriteToggle,
   Icons,
+  Menu,
+  MenuItem,
   Select,
   SegmentedControl,
   useToast,
@@ -24,11 +26,13 @@ import {
   type PeriodKey,
   type ReportColumn,
 } from '@/lib/reportBuilder/spec'
+import type { GroupOption } from '@/lib/reportBuilder/shape'
 import { toggleFavoriteAction } from '../actions'
 import ReportGrid from '../ReportGrid'
 import ReportChart from '../ReportChart'
 import ScheduleModal from '../schedules/ScheduleModal'
 import ReportColumnsButton from './ReportColumnsButton'
+import ReportGroupByControl from './ReportGroupByControl'
 
 /**
  * One report on screen.
@@ -43,6 +47,8 @@ export default function ReportView({
   columns,
   allColumns,
   storeColumns,
+  groupOptions,
+  groupKey,
   canSetColumns,
   rows,
   totals,
@@ -74,7 +80,11 @@ export default function ReportView({
   allColumns: ReportColumn[]
   /** The store's stored order, or null when it has never chosen. */
   storeColumns: string[] | null
-  /** Whether this role may change the columns for everybody. */
+  /** The columns this run can be banded by — text and dates, never figures. */
+  groupOptions: GroupOption[]
+  /** The store's banding choice, already validated. Null renders flat. */
+  groupKey: string | null
+  /** Whether this role may change the columns and the banding for everybody. */
   canSetColumns: boolean
   rows: Record<string, unknown>[]
   totals: Record<string, number>
@@ -199,6 +209,17 @@ export default function ReportView({
                 />
               )}
 
+              {/* With the period rather than with Export: banding says how the
+                  rows are shaped, which is the same kind of statement as the
+                  dates, not an action. */}
+              {canSetColumns && (
+                <ReportGroupByControl
+                  reportId={reportId}
+                  options={groupOptions}
+                  value={groupKey}
+                />
+              )}
+
               {canSchedule && (
                 <Button variant="ghost" onClick={() => setScheduling(true)}>
                   <Icons.Clock size={16} />
@@ -219,10 +240,38 @@ export default function ReportView({
                 />
               )}
 
-              <ButtonLink href={exportHref} variant="ghost" prefetch={false}>
-                <Icons.Download size={16} />
-                Export
-              </ButtonLink>
+              {/*
+                Three formats, one control. Each is a plain anchor because only
+                a link can hand a route handler's response to the browser as a
+                file — see MenuItem.
+
+                None of them carries the banding in its URL: the route reads the
+                store's choice from the same row the screen did, so a typed URL
+                cannot produce a file that disagrees with what is on screen, and
+                the scheduled email gets the same answer without a URL at all.
+              */}
+              <Menu
+                label={
+                  <>
+                    <Icons.Download size={16} />
+                    Export
+                  </>
+                }
+                variant="ghost"
+              >
+                <MenuItem href={`${exportHref}&format=pdf`} download>
+                  <Icons.FileText size={16} />
+                  PDF
+                </MenuItem>
+                <MenuItem href={`${exportHref}&format=xlsx`} download>
+                  <Icons.FileSpreadsheet size={16} />
+                  Excel
+                </MenuItem>
+                <MenuItem href={`${exportHref}&format=csv`} download>
+                  <Icons.FileIcon size={16} />
+                  CSV
+                </MenuItem>
+              </Menu>
 
               {canBuild && (
                 <ButtonLink
@@ -273,6 +322,7 @@ export default function ReportView({
             columns={columns}
             rows={rows}
             totals={totals}
+            groupKey={groupKey}
             emptyHint={`Nothing matched between ${range.from} and ${range.to}. Try a wider period.`}
           />
         )}

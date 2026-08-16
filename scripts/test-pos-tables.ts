@@ -31,7 +31,15 @@ import {
   tableForDocument,
   validateTable,
 } from '../src/lib/site/posTables'
-import { saveDraft, saveForLaterDocument } from '../src/lib/site/salesDocuments'
+import {
+  saveDraft,
+  saveForLaterDocument,
+  claimDocument,
+  releaseDocument,
+  cancelUnpostedDocument,
+  getDocument,
+  CLAIM_LEASE_MINUTES,
+} from '../src/lib/site/salesDocuments'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { toNum } from '../src/lib/decimals'
@@ -202,6 +210,82 @@ async function main() {
   ok('freeing by document clears the pointer', cleared?.documentId === null)
   ok('  and is idempotent', (await freeTableForDocument(SITE, bill)) === undefined)
 
+  /* ── 7b. A VOIDED bill leaves the floor ──────────────────────────────────
+     The regression this guards actually shipped: voiding a hospitality sale
+     cleared the till screen and nothing else, so the table stayed pointed at a
+     fully populated `saved` document. The waiter watched the order vanish, the
+     next person to tap that table got it back, and the floor was right — the
+     sale had never been cancelled anywhere but on the screen.
+
+     CANCELLED, not deleted, is the other half. `pos_void_events` rows carry the
+     document_id, so removing the row would orphan the trail explaining why the
+     sale went. */
+
+  const voidedBill = await openBasket(75)
+  const voidTable = await createTable(SITE, { code: `T9${stamp}V`, section: 'Patio', seats: 2 })
+  ok('a table is created for the void test', voidTable.ok, voidTable.ok ? '' : voidTable.error)
+  if (!voidTable.ok) process.exit(1)
+  await seatTable(SITE, voidTable.id, voidedBill)
+  ok('a table is seated for the void test', (await getTable(SITE, voidTable.id))?.state === 'open')
+
+  /* CLAIMED first, because that is the real state a void happens from: the
+     waiter is holding the bill on their till at the moment they void it. Without
+     this the claim assertion below would be checking a column that was already
+     NULL and would pass no matter what the cancel did. */
+  const heldForVoid = await claimDocument(SITE, voidedBill, 1)
+  ok('  and claimed by the till voiding it', heldForVoid.ok, heldForVoid.ok ? '' : heldForVoid.error)
+
+  const cancelled = await cancelUnpostedDocument(SITE, voidedBill)
+  ok('a parked bill can be cancelled', cancelled.ok, cancelled.ok ? '' : cancelled.error)
+
+  const voidedDoc = await getDocument(SITE, voidedBill)
+  ok(
+    '*** the document is CANCELLED, not deleted ***',
+    voidedDoc?.status === 'cancelled',
+    `status ${voidedDoc?.status} — the void trail points at this row`,
+  )
+  /* Read off the COLUMN, not off getDocument — that mapper does not carry
+     claimed_by, so `doc.claimedBy == null` would be true of every document ever
+     written and would prove nothing about the cancel. */
+  const claimRow = await siteQueryOne<{ claimed_by: number | null; claimed_at: string | null }>(
+    SITE,
+    'SELECT claimed_by, claimed_at FROM sales_documents WHERE id = ?',
+    [voidedBill],
+  )
+  ok(
+    '  and its claim is let go with it',
+    claimRow?.claimed_by === null && claimRow?.claimed_at === null,
+    `claimed_by=${claimRow?.claimed_by} claimed_at=${claimRow?.claimed_at}`,
+  )
+
+  await freeTableForDocument(SITE, voidedBill)
+  const freedByVoid = await getTable(SITE, voidTable.id)
+  ok(
+    '*** the table is free again after the void ***',
+    freedByVoid?.state === 'free',
+    `state ${freedByVoid?.state}`,
+  )
+  ok('  with nothing left on it', freedByVoid?.totalIncl === 0, String(freedByVoid?.totalIncl))
+  ok('  and no pointer to the dead bill', freedByVoid?.documentId === null)
+
+  /* A finalised sale must never go down this path: that is real money, and
+     reversing it is voidDocument's job — which writes counter-entries this one
+     deliberately does not. */
+  const paidAgain = await openBasket(30)
+  const paidDoc = await finaliseDocument(SITE, actor, {
+    documentId: paidAgain,
+    tenders: [{ tenderTypeId: cash.id, amount: 30 }],
+  })
+  ok('a second bill posts, to test the refusal', paidDoc.ok, paidDoc.ok ? '' : paidDoc.error)
+  const refused = await cancelUnpostedDocument(SITE, paidAgain)
+  ok('*** a FINALISED sale is refused by this path ***', !refused.ok, refused.ok ? '' : refused.error)
+
+  /* Off the floor again before section 8, which counts the surviving T9 tables.
+     Leaving this one active would fail that assertion with a number that has
+     nothing to do with what it is testing. */
+  await freeTableForDocument(SITE, paidAgain)
+  await deactivateTable(SITE, voidTable.id)
+
   /* ── 8. Out of service ──────────────────────────────────────────────────── */
 
   await seatTable(SITE, t2.id, otherBill)
@@ -217,10 +301,69 @@ async function main() {
   const renamed = await updateTable(SITE, t1.id, { code: `T9${stamp}Z`, seats: 6 })
   ok('a table can be renamed', renamed.ok, renamed.ok ? '' : renamed.error)
 
+  /* ── 9. A claimed bill is still a bill (171) ────────────────────────────────
+     The regression this guards is the one that shipped: the claim used to be spelled by
+     moving the document to `draft`, and `listTables` joins on `saved` — so resuming a
+     table made the floor read it as FREE, hid its money from the split screen, and
+     stranded it outright if the till never came back. */
+
+  const claimTable = await createTable(SITE, { code: `T9${stamp}C`, seats: 2 })
+  if (!claimTable.ok) throw new Error('claim table not created')
+  const claimBill = await openBasket(120)
+  await seatTable(SITE, claimTable.id, claimBill)
+
+  const taken = await claimDocument(SITE, claimBill, 1)
+  ok('a waiter can claim a table bill', taken.ok, taken.ok ? '' : taken.error)
+
+  const whileHeld = (await listTables(SITE)).find((t) => t.id === claimTable.id)
+  ok(
+    '*** a claimed table is STILL occupied on the floor ***',
+    whileHeld?.state === 'open' && whileHeld?.documentId === claimBill,
+    `state=${whileHeld?.state} doc=${whileHeld?.documentId}`,
+  )
+  ok('  and its money is still on it', Number(whileHeld?.totalIncl) === 120, String(whileHeld?.totalIncl))
+
+  /* The whole reason the claim exists: a SECOND till must be refused. */
+  const stolenClaim = await claimDocument(SITE, claimBill, 2)
+  ok(
+    '*** a second till cannot take a held bill ***',
+    !stolenClaim.ok,
+    stolenClaim.ok ? '' : stolenClaim.error,
+  )
+
+  /* Its own holder re-claiming is a reload, not a conflict — refusing that would lock a
+     waiter out of the bill with their own stale claim. */
+  const again = await claimDocument(SITE, claimBill, 1)
+  ok('  but its own holder may re-claim it', again.ok, again.ok ? '' : again.error)
+
+  /* A claim older than the lease is dead, which is what stops a crashed till stranding
+     a table forever. Aged directly rather than waiting fifteen minutes. */
+  await siteExecute(
+    SITE,
+    'UPDATE sales_documents SET claimed_at = UTC_TIMESTAMP() - INTERVAL ? MINUTE WHERE id = ?',
+    [CLAIM_LEASE_MINUTES + 1, claimBill],
+  )
+  const afterLapse = await claimDocument(SITE, claimBill, 2)
+  ok('*** a lapsed claim can be taken by another till ***', afterLapse.ok, afterLapse.ok ? '' : afterLapse.error)
+
+  const released = await releaseDocument(SITE, claimBill)
+  ok('releasing hands it back', released.ok, released.ok ? '' : released.error)
+  const afterRelease = await getDocument(SITE, claimBill)
+  ok(
+    '  and leaves the bill saved, not draft',
+    afterRelease?.status === 'saved',
+    String(afterRelease?.status),
+  )
+  const freeAgain = await claimDocument(SITE, claimBill, 2)
+  ok('  so anyone may claim it again', freeAgain.ok, freeAgain.ok ? '' : freeAgain.error)
+
+  await freeTable(SITE, claimTable.id)
+
   /* ── Clean up ───────────────────────────────────────────────────────────── */
   await siteExecute(SITE, "DELETE FROM pos_tables WHERE code LIKE 'T9%'")
   await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE product_id = ?', [productId])
   await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [otherBill]).catch(() => null)
+  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [claimBill]).catch(() => null)
   await siteExecute(SITE, 'DELETE FROM stock_movements WHERE product_id = ?', [productId]).catch(
     () => null,
   )

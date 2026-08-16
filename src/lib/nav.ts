@@ -516,6 +516,7 @@ export const SUBPAGE_LABELS = {
   '/setup/printing': 'Printing',
   '/setup/expense-categories': 'Expense categories',
   '/setup/databases': 'Site & databases',
+  '/setup/training': 'Training mode',
   '/setup/style-guide': 'Style guide',
   /* Configuration that lives under another section's route but belongs in the
      setup hub: each is set once and decides what the daily screens above it
@@ -717,6 +718,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/printing': 'receipt printer thermal esc pos slip 80mm cash drawer kick kitchen bridge',
   '/setup/expense-categories': 'chart of accounts spending overheads account codes',
   '/setup/databases': 'connection health server site details',
+  '/setup/training': 'training practice demo test sandbox learn staff dummy trial reset clear',
   '/setup/style-guide': 'design system components reference ui kit',
   /* Configuration under another section's route. Without these, somebody who
      types "commission" or "overtime" into the sidebar gets nothing back for

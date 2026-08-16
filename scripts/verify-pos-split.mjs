@@ -240,6 +240,9 @@ const onFloor = await evaluate(
     "  const text = document.body.innerText || ''",
     '  return {',
     "    walkIn: /walk-in or takeaway/i.test(text),",
+    /* The gate must NOT offer its own Split button any more — the gesture is armed
+       from a quick key, and a button here would be a second way in that a shop
+       cannot turn off. Asserted as an absence on purpose. */
     "    splitOffer: /split a bill/i.test(text),",
     /*
      * Character classes, not \s and \d.
@@ -256,9 +259,10 @@ const onFloor = await evaluate(
   ].join('\n'),
 )
 ok('the till opens on the floor plan', onFloor?.walkIn === true, JSON.stringify(onFloor?.tiles))
-/* Offered only because a table HAS a bill. On an empty floor it would be a button that
-   can only ever explain why it does nothing. */
-ok('and offers "Split a bill" because a table has one', onFloor?.splitOffer === true)
+/* The gate carries NO Split button. It was removed once the gesture became a quick key:
+   a shop that does not serve tables should not pay for it in header space, and two ways
+   into one gesture is one more than a shop can configure. */
+ok('and the gate offers no Split button of its own', onFloor?.splitOffer === false)
 ok('the seeded tables are on the floor', (onFloor?.tiles?.length ?? 0) >= 4, String(onFloor?.tiles?.length))
 
 /* ── Arming the mode changes what a tap means, and says so ───────────────── */

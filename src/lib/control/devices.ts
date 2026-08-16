@@ -109,10 +109,14 @@ function entitlement(row: Row): { ok: true; trialEndsOn: string | null } | { ok:
 /**
  * The licence for one machine.
  *
- * Scoped by site as well as serial. The serial is globally unique, so the site
- * is not needed to FIND the row — but a device registered to one shop must not
- * resolve while somebody is signed in to another, and leaving that to the caller
- * would make it a check somebody can forget.
+ * Scoped by site as well as serial, and the site half is load-bearing: one
+ * machine may hold a licence in each store it works, so a serial identifies a
+ * row only together with the store asking. The pair is what `cp2_devices` is
+ * unique on.
+ *
+ * That also keeps the property the site scope was originally added for — a
+ * device registered to one shop must not resolve while somebody is signed in to
+ * another, which is the store's licence being spent by a different store.
  */
 export async function licenceForSerial(siteId: number, serial: string): Promise<DeviceLicence> {
   const trimmed = serial.trim()
@@ -213,15 +217,22 @@ export async function claimSpot(
   if (!trimmed) return { ok: false, error: 'This machine has no identifier to register.' }
 
   return transaction(async (tx) => {
+    /* Scoped to the site, matching the unique index.
+
+       A machine may hold one licence in each store it works — an operator with
+       two linked stores runs both from one back-office PC, and each store's
+       licence is separately sold and separately paid. What stays forbidden is
+       two licences in the SAME store, which is how a shop paying for two tills
+       would trade from one browser twice. */
     const [existing] = await tx.execute(
-      'SELECT id, site_id FROM cp2_devices WHERE serial_number = ? LIMIT 1',
-      [trimmed],
+      'SELECT id FROM cp2_devices WHERE site_id = ? AND serial_number = ? LIMIT 1',
+      [siteId, trimmed],
     )
     const already = (existing as Row[])[0]
     if (already && Number(already.id) !== deviceRowId) {
       return {
         ok: false as const,
-        error: 'This machine is already registered as another till.',
+        error: 'This machine is already registered as another till in this store.',
       }
     }
 

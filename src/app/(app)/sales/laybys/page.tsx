@@ -21,6 +21,7 @@ import ExpireButton from './ExpireButton'
 import RemindButton from './RemindButton'
 import { isSmsConfigured } from '@/lib/site/sms'
 import LaybysTable, { type LaybyTableRow } from './LaybysTable'
+import { TILL_HREF, tillLinkProps } from '@/lib/openTill'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,7 +96,7 @@ export default async function LaybysPage({
           <>
             <RemindButton smsConfigured={await isSmsConfigured(siteId)} />
             <ExpireButton />
-            <PrimaryLink href="/pos">
+            <PrimaryLink href={TILL_HREF} {...tillLinkProps}>
               <Icons.Plus size={15} />
               New lay-by at the till
             </PrimaryLink>
@@ -204,7 +205,7 @@ export default async function LaybysPage({
                       title: 'No lay-bys',
                       hint: 'Start one from the till: ring up the goods, attach a customer, then Save as lay-by.',
                       action: (
-                        <PrimaryLink href="/pos">
+                        <PrimaryLink href={TILL_HREF} {...tillLinkProps}>
                           <Icons.Plus size={15} />
                           New lay-by at the till
                         </PrimaryLink>

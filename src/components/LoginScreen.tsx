@@ -13,7 +13,9 @@ export default function LoginScreen({ children }: { children: ReactNode }) {
           <div className="flex size-11 items-center justify-center rounded-xl bg-brand text-white">
             <Store size={22} />
           </div>
-          <h1 className="text-xl font-semibold text-ink">OdysseyAI</h1>
+          {/* The brand's own face, not the UI stack — this is the wordmark
+              lockup, and it is the first thing anyone sees of the product. */}
+          <h1 className="wordmark text-xl text-ink">OdysseyAI</h1>
           <p className="text-sm text-muted">Point of sale back office</p>
         </div>
 

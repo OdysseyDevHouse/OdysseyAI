@@ -10,6 +10,7 @@ import {
   withInstructions,
   type BasketLine,
 } from '@/lib/basket'
+import { captureBaseline, type SessionBaseline } from '@/lib/lineSession'
 import type { ChosenOption } from '@/lib/instructionRules'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
@@ -79,6 +80,33 @@ export type SaleState = {
    *     convention.
    */
   returning: boolean
+  /**
+   * How many lines have been undone on THIS basket.
+   *
+   * State on the sale rather than a ref beside it, for the same reason everything
+   * else here is: the allowance belongs to the basket, so it has to reset exactly
+   * when the basket does. A counter held outside the reducer would survive a CLEAR
+   * that emptied the lines, and the next customer would inherit the last one's
+   * spent undos — which reads to a cashier as the till refusing a correction they
+   * have not made yet.
+   *
+   * Counts every undo, including ones the limit will later refuse to allow again.
+   * The limit itself is NOT here: it is a shop setting read by the shell, and a
+   * reducer that knew about it would have to be re-created when it changed.
+   */
+  undoCount: number
+  /**
+   * What the basket looked like when it was LOADED — the session baseline.
+   *
+   * Set by exactly one action, `LOAD`, and cleared by the two that start a
+   * basket over. Never re-taken while a basket is on screen: refreshing it after
+   * an edit would turn every `modified` line back into `unmodified`, which is
+   * precisely the signal a waiter reopening a table relies on. See lib/lineSession.
+   *
+   * Null on a counter sale, which was loaded from nowhere and whose every line
+   * is therefore new.
+   */
+  baseline: SessionBaseline
 }
 
 export const initialSaleState: SaleState = {
@@ -90,6 +118,8 @@ export const initialSaleState: SaleState = {
   catalog: { kind: 'keys' },
   query: '',
   returning: false,
+  undoCount: 0,
+  baseline: null,
 }
 
 export type SaleAction =
@@ -120,12 +150,40 @@ export type SaleAction =
   | { type: 'STEP'; key: string; delta: number }
   | { type: 'UPDATE'; key: string; changes: Partial<BasketLine> }
   | { type: 'REMOVE'; key: string }
+  /**
+   * Take the last line back off — the Undo key.
+   *
+   * Its own action rather than a REMOVE of the last key, because the two differ in
+   * what they MEAN. A REMOVE is a cashier editing a line they are looking at, the
+   * ordinary way a basket is corrected; an undo is a rung-up line disappearing, and
+   * the shop has asked to count and record those. Folding them together would
+   * either count every line edit against the allowance or count none of the undos.
+   *
+   * The reducer decides WHICH line — the last one — so the caller cannot pass a key
+   * and quietly turn an undo into a removal of anything it likes. A no-op on an
+   * empty basket, which the shell also guards against but the reducer must survive
+   * on its own.
+   */
+  | { type: 'UNDO' }
   | { type: 'CLEAR' }
   | { type: 'SET_CUSTOMER'; customer: TillCustomer | null }
   | { type: 'SET_CUSTOMER_NAME'; name: string }
   | { type: 'SET_QUERY'; query: string }
   | { type: 'SHOW_KEYS' }
-  | { type: 'DRILL'; departmentId: number }
+  /**
+   * Open a department.
+   *
+   * `root` distinguishes the two callers, which mean different things by it:
+   * the department RAIL always names a top-level department, so its pick
+   * REPLACES the path; a tile inside the grid is a child of the level being
+   * shown, so its pick extends it.
+   *
+   * Without that distinction, tapping the rail's Wood-Fired Pizza while already
+   * inside Wood-Fired Pizza appended it again, and a cashier who tapped it a few
+   * times got a breadcrumb reading "Wood-Fired Pizza › Wood-Fired Pizza › …"
+   * that wrapped over three lines.
+   */
+  | { type: 'DRILL'; departmentId: number; root?: boolean }
   | { type: 'DRILL_TO'; path: number[] }
   | { type: 'SHOW_SEARCH'; term: string }
   /**
@@ -255,6 +313,19 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
         selectedKey: state.selectedKey === action.key ? null : state.selectedKey,
       }
 
+    case 'UNDO': {
+      const last = state.lines[state.lines.length - 1]
+      /* Nothing to undo is not an undo. Counting it would let a cashier spend the
+         allowance on an empty basket and then be refused a real correction. */
+      if (!last) return state
+      return {
+        ...state,
+        lines: removeBasketLine(state.lines, last.key),
+        selectedKey: state.selectedKey === last.key ? null : state.selectedKey,
+        undoCount: state.undoCount + 1,
+      }
+    }
+
     case 'CLEAR':
       // Everything about the sale, in one place. The customer especially: an
       // attached account surviving into the next sale is how a walk-in's goods
@@ -309,10 +380,20 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
       return { ...state, catalog: { kind: 'keys' }, query: '' }
 
     case 'DRILL': {
-      const path =
-        state.catalog.kind === 'departments'
-          ? [...state.catalog.path, action.departmentId]
-          : [action.departmentId]
+      const current = state.catalog.kind === 'departments' ? state.catalog.path : []
+      /*
+       * The rail replaces the path; a tile extends it.
+       *
+       * And either way the same department cannot appear twice in a row. Re-opening
+       * the level already shown is a no-op, not another crumb: the grid would not
+       * change, so appending only grows the trail. That is the whole of the bug
+       * where spamming one department built a breadcrumb of a dozen copies of it.
+       */
+      const path = action.root
+        ? [action.departmentId]
+        : current[current.length - 1] === action.departmentId
+          ? current
+          : [...current, action.departmentId]
       return { ...state, catalog: { kind: 'departments', path }, query: '' }
     }
 
@@ -354,6 +435,26 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
          */
         customerName: action.customer ? '' : (action.customerName ?? '').trim(),
         selectedKey: null,
+        /*
+         * A recalled basket brings back its lines, not the last basket's spent undos.
+         *
+         * Not covered by the CLEAR spread above: LOAD replaces the sale in place,
+         * without passing through initialSaleState. Leaving the count alone would
+         * mean a cashier who used their two undos, parked, and pulled a different
+         * sale back could not correct a scan on it — the till refusing over
+         * somebody else's basket.
+         */
+        undoCount: 0,
+        /*
+         * THE session baseline is taken here and only here.
+         *
+         * This is the moment a tab comes back on screen, so this is what
+         * "unmodified" means for the rest of the sitting: every line the waiter
+         * has just been handed. Anything added after this is new, anything
+         * changed after this is modified, and nothing may re-take the snapshot
+         * until the basket is cleared. See lib/lineSession.
+         */
+        baseline: captureBaseline(action.lines),
       }
 
     default: {

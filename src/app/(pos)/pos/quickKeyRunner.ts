@@ -94,6 +94,8 @@ export type QuickKeyHandlers = {
   showOutbox: () => void
   /** Opens the shift modal — float, payouts, and the blind cash-up count. */
   showShift: () => void
+  /** Opens the DETAILED cash-up: denominations, every tender, banking. */
+  showDeclaration: () => void
   /** Opens the whole-sale discount dialog. */
   docDiscount: () => void
   /** Reprints the last slip this machine printed. */
@@ -102,6 +104,8 @@ export type QuickKeyHandlers = {
   giftCardBalance: () => void
   /** Prints the NEW lines of the open tab on the kitchen printer. */
   sendToKitchen: () => void
+  /** Prints the pro-forma bill for the open tab, and marks the table asked. */
+  printBill: () => void
   /**
    * Sends the waiter to the floor with the SPLIT mode already armed.
    *
@@ -255,12 +259,23 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       ? handlers.say('Already taking a return — scan what is coming back.', 'info')
       : handlers.startReturn(),
 
-  /* Online, the shift modal handles the whole thing at the till. Offline, the
-     outbox is where "can I cash up yet" is answered — it shows what is still
-     waiting to send, and closeShift's expected figure is wrong until it is empty. */
+  /*
+   * The full declaration, not the quick count.
+   *
+   * This key used to open the drawer-controls modal, whose count face is a flat
+   * list of one box per tender. That answers "does it balance" and nothing
+   * else — a cashier pressing "Cash up" is starting the count a supervisor
+   * signs, which needs the notes and coin counted pile by pile, the machine
+   * slips declared one at a time, and the banking. So the key opens THAT, and
+   * the drawer's own controls (float, payout, drop) stay on their own modal.
+   *
+   * Offline, the outbox is where "can I cash up yet" is answered — it shows
+   * what is still waiting to send, and every expected figure is wrong until it
+   * is empty.
+   */
   cashup: ({ handlers, online }) =>
     online
-      ? handlers.showShift()
+      ? handlers.showDeclaration()
       : handlers.showOutbox(),
 
   /* Reprints THIS machine's last slip — no hunting through the invoicing
@@ -400,10 +415,12 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
 
   'table-transfer': ({ handlers }) => handlers.armTransfer(),
 
-  /* The bill button lives beside the basket, where the tab it prints is open. */
+  /* This key IS the bill now. It used to point at a button beside the basket —
+     a pair of keys the basket carried whether or not the shop served tables —
+     so the slip header lost them and the key does the printing itself. */
   'bill-print': ({ handlers, online }) =>
     online
-      ? handlers.say('Open the table, then tap Bill beside the basket to print it.', 'info')
+      ? handlers.printBill()
       : handlers.say('Printing a bill needs the connection — the tab lives on the server.', 'info'),
 
   /* Prints what the kitchen has NOT seen yet — the delta since the last send.

@@ -1,0 +1,31 @@
+-- Two more table shapes, and the seat count that draws the chairs.
+--
+-- 086 stored `shape` as ENUM('rect','round') and said in its own comment that an ENUM
+-- was chosen over a boolean precisely so the list could grow in one ALTER. This is that
+-- ALTER.
+--
+-- ── WHY OVAL AND COUNTER ARE WORTH COLUMNS ────────────────────────────────
+--
+-- A floor plan earns its keep by being RECOGNISABLE without reading — a waiter should
+-- find "the big oval by the window" spatially, not by scanning codes. Rect and round
+-- alone flatten a bar, a communal bench and a six-top into the same two silhouettes,
+-- which is the point at which the drawing stops carrying information a list does not.
+--
+-- 'counter' is drawn as a long pill (a bar, a pass-height run of stools) and 'oval' as
+-- an ellipse. Neither changes any behaviour: shape is presentation only, and the till
+-- reads the same value the designer writes.
+--
+-- Existing rows keep 'rect'. Widening an ENUM re-writes no data and the two original
+-- members keep their positions, so nothing stored needs touching.
+ALTER TABLE pos_tables
+  MODIFY COLUMN shape ENUM('rect','round','oval','counter') NOT NULL DEFAULT 'rect';
+
+-- ── Seats are already here, and that is the point ──────────────────────────
+--
+-- 071 gave pos_tables a `seats` column and the setup LIST has always written it. What
+-- changes now is that the canvas DRAWS it: chairs are laid around the tile according to
+-- this number, so a four-seater reads as a four-seater at a glance.
+--
+-- No migration needed for that — the column exists and is populated. It is noted here
+-- only so the next person reading this file does not go looking for where the chair
+-- count is stored.

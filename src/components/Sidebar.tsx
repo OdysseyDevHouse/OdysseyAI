@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -13,6 +14,7 @@ import {
   type NavItem,
   type NavSection,
 } from '@/lib/nav'
+import { TILL_HREF, tillLinkProps } from '@/lib/openTill'
 
 const STORAGE_KEY = 'odyssey.sidebar'
 
@@ -252,8 +254,32 @@ export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwn
       <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-4">
         {!collapsed && (
           <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-brand" />
-            <span className="truncate text-sm font-bold tracking-wide text-ink">ODYSSEY</span>
+            {/* The real mark, same as the till's open-tables gate — this used to
+                be a bordered <span> standing in for it. Decorative beside the
+                wordmark text, so no alt of its own. */}
+            <Image
+              src="/logo-icon.png"
+              alt=""
+              aria-hidden
+              width={318}
+              height={278}
+              unoptimized
+              className="h-8 w-auto shrink-0 object-contain"
+            />
+            {/* Set in the LOGO's own face, not the UI stack: it sits directly
+                against the mark and the two have to read as one lockup.
+
+                `.wordmark-lockup`, not `.wordmark` — this is the name standing
+                alone in the rail rather than a title beside the artwork, and it
+                wants open tracking to read as a wordmark. See globals.css.
+
+                "AI" carries the brand blue and 700 against the name's 800: the
+                colour alone was already doing the separating, and leaving both
+                halves at the same weight made the blue look like an accident of
+                markup rather than the second word of the name. */}
+            <span className="wordmark-lockup truncate text-xl leading-none text-ink">
+              Odyssey <span className="font-bold text-brand">AI</span>
+            </span>
           </Link>
         )}
         <Button
@@ -512,6 +538,9 @@ function ChildLink({
       href={item.href}
       onClick={onNavigate}
       aria-current={itemActive ? 'page' : undefined}
+      /* The till opens beside the back office rather than replacing it — see
+         lib/openTill.ts. Spread LAST so it cannot be undone above. */
+      {...(item.href === TILL_HREF ? tillLinkProps : {})}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm transition ${
         itemActive ? 'font-medium text-brand' : 'text-muted hover:bg-surface-2 hover:text-ink'
       }`}

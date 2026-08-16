@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  ButtonLink,
   Card,
   CardBody,
   CardHeader,
@@ -152,10 +153,21 @@ export default function CashupClient({
                       <Icons.Coins size={15} />
                       Payout
                     </Button>
-                    <Button variant="success" size="sm" onClick={() => setCounting(shift)}>
+                    {/* The quick count stays: most shifts balance and want three
+                        boxes, not a denomination grid. The detailed declaration
+                        is the deliberate trip, so it is the secondary control
+                        rather than the one a hurried cashier hits by reflex. */}
+                    <Button variant="secondary" size="sm" onClick={() => setCounting(shift)}>
+                      Quick count
+                    </Button>
+                    <ButtonLink
+                      href={`/sales/cashup/${shift.id}/declare`}
+                      variant="success"
+                      size="sm"
+                    >
                       <Icons.Check size={15} />
                       Cash up
-                    </Button>
+                    </ButtonLink>
                   </div>
                 }
               />

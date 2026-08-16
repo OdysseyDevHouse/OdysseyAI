@@ -1,10 +1,19 @@
 'use server'
 
-import { actorForOrThrow } from '@/lib/auth'
-import { listSaved, listOpenTabs, getDocument, recallDocument } from '@/lib/site/salesDocuments'
-import { getTillProduct } from '@/lib/site/tillSearch'
+import { actorForOrThrow, withTillOperator } from '@/lib/auth'
+import {
+  listSaved,
+  listOpenTabs,
+  getDocument,
+  claimDocument,
+  listDocuments,
+} from '@/lib/site/salesDocuments'
+import { basketLinesForDocument, type RecalledLine } from './recalledLines'
 import { siteQuery } from '@/lib/siteDb'
 import { recordServiceChargeRemoval } from '@/lib/site/tips'
+import { logActivity } from '@/lib/site/activityLog'
+import { recordVoidEvents, type VoidType } from '@/lib/site/posVoids'
+import { requireSalesReason } from '@/lib/site/salesReasons'
 import type { BasketLine } from '@/lib/basket'
 
 /**
@@ -153,35 +162,10 @@ export type RecalledSale =
     }
   | { ok: false; error: string }
 
-/** One line of a recalled basket — a BasketLine, assembled server-side. */
-export type RecalledLine = {
-  key: string
-  productId: number | null
-  productCode: string | null
-  description: string
-  productType: BasketLine['productType']
-  departmentId: number | null
-  qty: number
-  unitPriceIncl: number
-  discountPct: number
-  vatRatePct: number
-  unitCostExcl: number
-  maxDiscountPct: number
-  shelfPriceIncl: number | null
-  allowFractions: boolean
-  /**
-   * The answers, and the note, exactly as they were stored.
-   *
-   * Re-read rather than recomputed, unlike the three product fields above: these
-   * are what the CUSTOMER ordered, and a waiter recalling table 4's bill must get
-   * back the burger that was actually sent to the kitchen. Looking them up from
-   * the product's current questions would silently rewrite the order if the menu
-   * had changed since — and dropping them would strip every modifier off the bill
-   * and reprice the line, which is the same bug wearing a quieter face.
-   */
-  instructions: BasketLine['instructions']
-  note: string
-}
+/* The line shape and the mapping that builds it live in `recalledLines`, which
+   the online-order action shares — see that module for why it is not exported
+   from here. Re-exported so existing importers are undisturbed. */
+export type { RecalledLine } from './recalledLines'
 
 /**
  * Reads a parked basket back onto the till.
@@ -210,7 +194,7 @@ export async function recallSaleForTillAction(
   documentId: number,
   priceStructureId: number | null,
 ): Promise<RecalledSale> {
-  const { siteId } = await actorForOrThrow('sales.till')
+  const { siteId, actor } = await withTillOperator(await actorForOrThrow('sales.till'))
 
   const doc = await getDocument(siteId, documentId)
   if (!doc) return { ok: false, error: 'That saved sale no longer exists.' }
@@ -219,70 +203,23 @@ export async function recallSaleForTillAction(
     return { ok: false, error: 'That sale has already been taken or discarded.' }
   }
 
-  // Move it out of `saved` FIRST. Two tills recalling the same basket would
-  // otherwise both put it on screen and the second would fail at finalise, in
-  // front of a customer. recallDocument flips the status under the database's own
-  // guard, so exactly one of them wins.
-  const claimed = await recallDocument(siteId, documentId)
+  // CLAIM it first. Two tills recalling the same basket would otherwise both put it on
+  // screen and the second would fail at finalise, in front of a customer — so the claim
+  // is taken under the database's own guard and exactly one of them wins.
+  //
+  // The claim no longer moves the document out of `saved`, which is what a table's
+  // occupancy is read from: a resumed table used to read as FREE, its bill invisible to
+  // the floor and the split screen, and stranded outright if the till never came back.
+  // See 171_document_claim.sql.
+  const claimed = await claimDocument(siteId, documentId, actor.userId)
   if (!claimed.ok) return { ok: false, error: claimed.error }
-
-  /* One query per distinct product, in parallel.
-     getTillProduct exists for exactly this — its own docblock says "for
-     re-pricing a recalled line" — and a parked basket is a handful of lines, so
-     N small indexed lookups beat writing a second variant of a 60-line SELECT
-     that would then have to be kept in step with the first. */
-  const productIds = [
-    ...new Set(doc.lines.map((l) => l.productId).filter((id): id is number => id !== null)),
-  ]
-  const products = await Promise.all(
-    productIds.map((id) => getTillProduct(siteId, id, priceStructureId)),
-  )
-  const byId = new Map(
-    products.filter((p): p is NonNullable<typeof p> => p !== null).map((p) => [p.id, p]),
-  )
 
   return {
     ok: true,
     documentId: doc.id,
     customerId: doc.customerId,
     customerName: doc.customerName,
-    lines: doc.lines.map((line, index) => {
-      const product = line.productId === null ? undefined : byId.get(line.productId)
-      return {
-        key: `r${doc.id}-${line.id}-${index}`,
-        productId: line.productId,
-        productCode: line.productCode,
-        description: line.description,
-        productType: line.productType,
-        departmentId: line.departmentId,
-        qty: line.qty,
-        unitPriceIncl: line.unitPriceIncl,
-        discountPct: line.discountPct,
-        vatRatePct: line.vatRatePct,
-        unitCostExcl: line.unitCostExcl,
-        // Fresh from the product, not from the parked line — see the note above.
-        maxDiscountPct: product?.maxDiscountPct ?? 0,
-        shelfPriceIncl: product && !product.askPriceAtSale ? product.priceIncl : null,
-        allowFractions: product?.allowFractions ?? false,
-        /* From the LINE, not the product — see the note on the type. What was
-           ordered is a fact about this bill, not about the menu as it stands
-           now. `unitPriceIncl` above already carries their price, so nothing is
-           re-folded here. */
-        instructions: line.instructions.map((c) => ({
-          groupId: c.groupId ?? 0,
-          groupName: c.groupName,
-          optionId: c.optionId ?? 0,
-          optionName: c.optionName,
-          qty: c.qty,
-          priceAdjustIncl: c.priceAdjustIncl,
-          productId: c.productId,
-          stockQtyPer: c.stockQtyPer,
-          printsOnKitchen: c.printsOnKitchen,
-          printsOnReceipt: c.printsOnReceipt,
-        })),
-        note: line.note,
-      }
-    }),
+    lines: await basketLinesForDocument(siteId, doc, priceStructureId),
   }
 }
 
@@ -315,4 +252,223 @@ export async function recordServiceChargeWaivedAction(
     reason: 'Removed at the till',
   })
   return { ok: true }
+}
+
+/**
+ * Records a line taken back off the basket.
+ *
+ * ── WHY AN UNDO IS WORTH A ROW ────────────────────────────────────────────
+ *
+ * Nothing posted, so there is nothing to reverse and nothing an auditor could
+ * reconcile against — which is exactly why this has to be written down here or
+ * not at all. A line rung up and removed leaves no trace in any document: the
+ * sale that finalises is simply a sale without it. An honest mis-scan and a
+ * cashier ringing goods up, taking the money and undoing the line produce the
+ * identical absence, and the only thing that separates them is how often it
+ * happens and to whom.
+ *
+ * So EVERY undo is recorded, including the ones inside the limit. The limit is
+ * about what the till permits; this is about what it remembers, and a shop that
+ * sets the limit to 0 for convenience should not thereby switch off the trail.
+ *
+ * Fire-and-forget from the caller's point of view — `logActivity` swallows its
+ * own errors, so a failed audit row can never block the undo it describes. The
+ * cashier's correction is not held hostage to the logging of it.
+ *
+ * `sales.till` and nothing heavier: undoing is inside a cashier's ordinary
+ * rights, and requiring more would mean the till could not record the undos it
+ * had just allowed.
+ */
+export async function recordUndoAction(input: {
+  /** The draft this basket has, when it has one. Most are undone before that. */
+  documentId: number | null
+  productId: number | null
+  description: string
+  qty: number
+  /** What the line was worth — the figure that makes a pattern worth reading. */
+  lineTotalIncl: number
+  /** Which undo this was on this basket: 1 for the first. */
+  undoNumber: number
+  terminalCode: string | null
+}): Promise<{ ok: boolean }> {
+  /* The PIN operator, not the browser session. A manager who signed this till in
+     at seven is not the person who pressed undo at four, and a trail naming them
+     is worse than no trail — it accuses the wrong person. */
+  const { siteId, actor } = await withTillOperator(await actorForOrThrow('sales.till'))
+
+  await logActivity(siteId, actor, {
+    entity: 'pos_undo',
+    entityId: input.documentId,
+    action: 'undo',
+    detail: `${formatQty(input.qty)} × ${input.description}`,
+    /* The shape `changes` takes everywhere else is from/to. An undo has no
+       "from" — the line simply stopped existing — so `to: null` says removed and
+       `from` carries what was removed. Reading the log, that is the sentence:
+       this was there, now it is not. */
+    changes: {
+      line: { from: input.description, to: null },
+      qty: { from: input.qty, to: null },
+      value: { from: input.lineTotalIncl, to: null },
+      productId: { from: input.productId, to: null },
+      undoNumber: { from: null, to: input.undoNumber },
+      terminal: { from: null, to: input.terminalCode },
+    },
+  })
+  return { ok: true }
+}
+
+/** Trailing zeros off a till quantity: "2" rather than "2.000". */
+function formatQty(qty: number): string {
+  return Number.isInteger(qty) ? String(qty) : String(Number(qty.toFixed(3)))
+}
+
+/** One thing the cashier voided off the draft, as the till reports it. */
+export type VoidEventPayload = {
+  voidType: VoidType
+  productId: number | null
+  productCode: string | null
+  description: string
+  qty: number
+  /** Gross, before line discount — the same basis the undo trail uses. */
+  valueIncl: number
+}
+
+/**
+ * Records what a cashier took off a sale that was never finalised.
+ *
+ * ── WHY THIS IS NOT voidSaleAction ────────────────────────────────────────
+ *
+ * They are different events and the vocabulary matters. `voidSaleAction`
+ * CANCELS a finalised document — stock back, money reversed, status cancelled.
+ * This records a VOID: something removed from a draft, where nothing has posted
+ * and there is nothing to reverse. The legacy system used void for this second
+ * meaning, which is why the first was renamed to cancel; writing both through
+ * one path would put reversed invoices in a report asking what the till loses
+ * to voids.
+ *
+ * ── WHY IT IS WORTH A ROW ─────────────────────────────────────────────────
+ *
+ * The same argument `recordUndoAction` makes, and more sharply. A line rung up
+ * and voided leaves NO trace in any document — the sale that finalises is
+ * simply a sale without it. An honest mis-scan and a cashier ringing goods up,
+ * taking the cash and voiding the line produce an identical absence, and the
+ * only thing separating them is how often it happens and to whom. Without this
+ * table that question has no answer at all.
+ *
+ * ── WHY THE SERVER RE-RESOLVES THE REASON ─────────────────────────────────
+ *
+ * The client sends a reason id, which arrives from a browser and may be stale —
+ * an offline till replays voids hours after a manager retired the reason. So
+ * `requireSalesReason` resolves it here and the row stores the code it returns,
+ * not one the client supplied. A rejected reason still records the void with a
+ * null reason rather than dropping it: the goods left the sale either way, and
+ * a void with an unresolved reason is worth incomparably more than no row.
+ *
+ * `sales.till` and nothing heavier: voiding a mis-scan is inside a cashier's
+ * ordinary rights, and requiring more would mean the till could not record the
+ * voids it had just permitted.
+ */
+export async function recordVoidAction(input: {
+  reasonId: number
+  note: string | null
+  documentId: number | null
+  terminalId: number | null
+  terminalCode: string | null
+  shiftId: number | null
+  /** Set when a whole basket went, tying its rollup to its line rows. */
+  groupId: string | null
+  events: VoidEventPayload[]
+}): Promise<{ ok: boolean }> {
+  /* The PIN operator, not the browser session. A manager who signed this till
+     in at seven is not the person who voided a line at four, and a trail naming
+     them is worse than no trail — it accuses the wrong person. */
+  const { siteId, actor } = await withTillOperator(await actorForOrThrow('sales.till'))
+
+  const chosen = await requireSalesReason(siteId, 'void', input.reasonId)
+
+  const ok = await recordVoidEvents(
+    siteId,
+    {
+      userId: actor.userId,
+      userName: actor.userName,
+      terminalId: input.terminalId,
+      terminalCode: input.terminalCode,
+      shiftId: input.shiftId,
+    },
+    input.events.map((e) => ({
+      voidType: e.voidType,
+      groupId: input.groupId,
+      reasonId: input.reasonId,
+      /* The code the SERVER resolved, not one the client sent. */
+      reasonCode: chosen.ok ? chosen.reason.code : null,
+      note: input.note,
+      documentId: input.documentId,
+      productId: e.productId,
+      productCode: e.productCode,
+      description: e.description,
+      qty: e.qty,
+      valueIncl: e.valueIncl,
+    })),
+  )
+  return { ok }
+}
+
+/** A past sale, as the reprint list shows it. */
+export type PastSaleRow = {
+  id: number
+  documentNumber: string | null
+  /** ISO date. The till formats it — the server does not know the locale. */
+  date: string
+  customerName: string | null
+  totalIncl: number
+  /** How many times it has been printed. Above zero, the next one says COPY. */
+  printCount: number
+}
+
+/**
+ * Finalised invoices, newest first, for the reprint list.
+ *
+ * ── WHY THE WHOLE SHOP AND NOT JUST THIS TILL ─────────────────────────────
+ *
+ * A customer comes back for a slip they were never given, or lost. They do not
+ * know which register served them, and the person at the counter now may not be
+ * the person who served them — so a list scoped to this terminal answers the
+ * question "what did I sell" when the question actually being asked is "what did
+ * this shop sell". Scoping it to the till would send somebody to the other
+ * register to look, which is not a workflow, it is a wild goose chase.
+ *
+ * The reach is real, so it is bounded rather than pretended away: finalised
+ * invoices only — nothing draft, saved or cancelled — and reading one is a
+ * `sales.view` right that a cashier without it does not get. Every reprint stamps
+ * COPY through `printCount`, so a duplicate can never pass for an original.
+ *
+ * `search` is what makes the reach usable rather than merely large. Without a
+ * term this returns the most recent sales, which is the common case (the customer
+ * is still in the shop); with one it matches a number, a customer name or a
+ * reference, which is what somebody holding a slip or a bank statement has.
+ */
+export async function listPastSalesAction(
+  search: string,
+  limit = 40,
+): Promise<PastSaleRow[]> {
+  const { siteId } = await actorForOrThrow('sales.view')
+
+  const { items } = await listDocuments(siteId, {
+    docTypes: ['invoice'],
+    /* Finalised ONLY. A draft has no number and no money against it, and a
+       cancelled invoice must never be reprintable — a cancelled document that can
+       be handed to a customer on paper is a document that still exists. */
+    statuses: ['finalised'],
+    search: search.trim() || undefined,
+    limit: Math.min(Math.max(limit, 1), 100),
+  })
+
+  return items.map((doc) => ({
+    id: doc.id,
+    documentNumber: doc.documentNumber,
+    date: doc.documentDate,
+    customerName: doc.customerName,
+    totalIncl: doc.totalIncl,
+    printCount: doc.printCount,
+  }))
 }

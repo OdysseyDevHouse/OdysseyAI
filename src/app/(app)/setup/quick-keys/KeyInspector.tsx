@@ -13,6 +13,7 @@ import {
   Switch,
 } from '@/components/ui'
 import { actionForSlug, type QuickKeyRow } from '@/lib/quickKeys'
+import { IconPicker } from './IconPicker'
 
 /**
  * The selected key's settings.
@@ -42,6 +43,7 @@ export function KeyInspector({
   canDelete: boolean
   onChange: (changes: {
     caption?: string
+    icon?: string
     colourToken?: string
     requireAuth?: boolean
     isHidden?: boolean
@@ -61,7 +63,7 @@ export function KeyInspector({
 
   if (!keyRow) {
     return (
-      <Card className="w-full lg:w-80">
+      <Card>
         <EmptyState
           icon={<Icons.Sparkles size={22} />}
           title="Nothing selected"
@@ -74,7 +76,7 @@ export function KeyInspector({
   const action = keyRow.kind === 'action' ? actionForSlug(keyRow.actionSlug) : null
 
   return (
-    <Card className="w-full lg:w-80">
+    <Card>
       <CardHeader title={label} description={kindLabel(keyRow)} />
 
       <div className="flex flex-col gap-4 p-4">
@@ -82,25 +84,71 @@ export function KeyInspector({
             and this is the screen where they decide whether they want it. */}
         {action && <p className="text-sm text-muted">{action.hint}</p>}
 
+        {/*
+          ── ONLY A GROUP CAN BE NAMED ───────────────────────────────────────
+
+          A key is named by what it POINTS AT: an action key reads the action's own
+          label, a product key its product's description, a department key the
+          department. That is not a limitation, it is the feature — rename the product
+          and the key follows, so a shop never maintains the same words twice.
+
+          Letting a shop type over that produced a key called something other than what
+          it does, which is a support call in waiting: "Refund" relabelled "Exchange"
+          still posts a credit note, and the person who typed it is not the person on
+          the till at 5pm. Removed deliberately.
+
+          A GROUP is the exception, and has to be: it points at nothing, so its caption
+          is the only thing that names it — and the signature `g:<caption>` is what
+          distinguishes two folders on one bar. A group made by dropping one key onto
+          another takes the target's name, which is a guess worth being able to correct.
+        */}
+        {keyRow.kind === 'group' ? (
+          <Field
+            label="What the group is called"
+            hint="Its name is how it is identified, so keep it distinct from the other folders."
+          >
+            <Input
+              value={caption}
+              maxLength={60}
+              placeholder={label}
+              disabled={busy}
+              onChange={(e) => setCaption(e.target.value)}
+              /* On blur, and only when it CHANGED — an unchanged blur would be a wasted
+                 round trip every time somebody tabbed through. */
+              onBlur={() => {
+                if (caption.trim() !== keyRow.caption) onChange({ caption })
+              }}
+            />
+          </Field>
+        ) : (
+          <Field label="What the key says">
+            {/* Shown, not editable. A manager still needs to see what the cashier will
+                read — and where it comes from, so the way to change it (rename the
+                product) is obvious rather than missing. */}
+            <p className="rounded-control border border-border bg-surface-2 px-3 py-2 text-sm text-ink">
+              {label}
+            </p>
+            <p className="mt-1.5 text-xs text-muted">
+              {keyRow.kind === 'product'
+                ? 'Taken from the product’s description — rename the product to change it.'
+                : keyRow.kind === 'department'
+                  ? 'Taken from the department’s name — rename the department to change it.'
+                  : 'The name of what this key does. It cannot be changed, so the till always says what the key actually does.'}
+            </p>
+          </Field>
+        )}
+
+        {/* Above the colour, because the icon is the thing a cashier actually aims at
+            and the colour is how the key is grouped with its neighbours. */}
         <Field
-          label="What the key says"
-          hint={
-            keyRow.kind === 'group'
-              ? 'Renaming a group is how it is identified, so keep it distinct.'
-              : 'Leave it empty and the key reads the name of what it points at.'
-          }
+          label="Icon"
+          hint="Leave it unset and the key shows what its kind implies."
         >
-          <Input
-            value={caption}
-            maxLength={60}
-            placeholder={label}
+          <IconPicker
+            value={keyRow.icon}
+            actionSlug={keyRow.actionSlug}
             disabled={busy}
-            onChange={(e) => setCaption(e.target.value)}
-            /* On blur, and only when it CHANGED — an unchanged blur would be a wasted
-               round trip every time somebody tabbed through. */
-            onBlur={() => {
-              if (caption.trim() !== keyRow.caption) onChange({ caption })
-            }}
+            onChange={(icon) => onChange({ icon })}
           />
         </Field>
 

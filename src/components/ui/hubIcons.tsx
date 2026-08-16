@@ -60,6 +60,7 @@ export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
   Gem: Icons.Gem,
   Stamp: Icons.Stamp,
   History: Icons.History,
+  GraduationCap: Icons.GraduationCap,
 }
 
 /** One catalogue glyph, at the weight the hubs draw them. */

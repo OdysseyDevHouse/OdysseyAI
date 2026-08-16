@@ -95,10 +95,25 @@ export function PageBody({ children, className = '' }: { children: ReactNode; cl
  *
  * Server components can't hand an onClick to <Button>, so navigation actions
  * use this — it borrows the exact same button skin.
+ *
+ * `target`/`rel` pass through for the one link that needs them: the till opens
+ * beside the back office rather than replacing it (see lib/openTill.ts). They
+ * are declared rather than spread from `...rest` so that this stays a link and
+ * not a place to re-style a button at the call site.
  */
-export function PrimaryLink({ href, children }: { href: string; children: ReactNode }) {
+export function PrimaryLink({
+  href,
+  target,
+  rel,
+  children,
+}: {
+  href: string
+  target?: string
+  rel?: string
+  children: ReactNode
+}) {
   return (
-    <Link href={href} className={buttonClass({ variant: 'primary' })}>
+    <Link href={href} target={target} rel={rel} className={buttonClass({ variant: 'primary' })}>
       {children}
     </Link>
   )

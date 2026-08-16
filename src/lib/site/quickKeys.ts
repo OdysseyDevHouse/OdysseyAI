@@ -6,7 +6,9 @@ import { TILE_SWATCHES, TILE_GRADIENTS, TILE_NONE } from '../../components/ui/ti
 import {
   quickKeySig,
   quickKeyCapability,
+  quickKeyAllowedOnSection,
   actionForSlug,
+  QUICK_KEY_ICON_NAMES,
   SUPERVISOR_GROUP_SIG,
   type QuickKeyKind,
   type QuickKeyRow,
@@ -89,6 +91,22 @@ export async function getQuickKey(siteId: number, id: number): Promise<QuickKeyR
   return row ? mapKey(row) : null
 }
 
+/**
+ * Every key on every bar.
+ *
+ * What a mutation returns, always — the designer holds both bars at once, and an action
+ * that replied with one section would have the canvas replace its whole list with half
+ * of it and the other bar would vanish until a reload. Cheap: a shop's entire key set is
+ * a few dozen rows.
+ *
+ * `listQuickKeys` stays section-scoped for the till, which draws one bar and has no use
+ * for the other.
+ */
+export async function listAllQuickKeys(siteId: number): Promise<QuickKeyRow[]> {
+  const rows = await siteQuery<Row>(siteId, `${SELECT_KEY} ORDER BY section, position, id`)
+  return rows.map(mapKey)
+}
+
 /* ── Validation ──────────────────────────────────────────────────────────── */
 
 const VALID_TOKENS = new Set<string>([
@@ -122,6 +140,16 @@ function validate(input: QuickKeyInput): string | null {
     // The one-level rule. Enforced here, not only in the designer's drag handling.
     return 'A group cannot go inside another group.'
   }
+  /* Which BAR the key is allowed on. The designer greys these out in the rail, but the
+     rail is a screen and this is an endpoint. */
+  const banned = quickKeyAllowedOnSection(
+    {
+      kind: input.target.kind,
+      actionSlug: input.target.kind === 'action' ? input.target.actionSlug : '',
+    },
+    input.section ?? 'main',
+  )
+  if (banned) return banned
   return null
 }
 
@@ -200,7 +228,7 @@ export async function createQuickKey(siteId: number, input: QuickKeyInput): Prom
     )
   })
 
-  return { ok: true, keys: await listQuickKeys(siteId, section) }
+  return { ok: true, keys: await listAllQuickKeys(siteId) }
 }
 
 /** The action slug out of a target, or '' — for capability lookup. */
@@ -305,7 +333,7 @@ export async function createQuickKeyGroup(
     await renumberScope(tx, section, null)
   })
 
-  return { ok: true, keys: await listQuickKeys(siteId, section) }
+  return { ok: true, keys: await listAllQuickKeys(siteId) }
 }
 
 /**
@@ -318,10 +346,38 @@ export async function createQuickKeyGroup(
 export async function moveQuickKey(
   siteId: number,
   id: number,
-  destination: { parentId: number | null; index: number },
+  destination: { parentId: number | null; index: number; section?: QuickKeySection },
 ): Promise<SaveResult> {
   const key = await getQuickKey(siteId, id)
   if (!key) return { ok: false, error: 'That key no longer exists.' }
+
+  /* Which bar the key ends up on. Defaults to the one it is already on, so every
+     existing caller — every reorder and every file-into-a-group — behaves exactly as
+     before and only a deliberate cross-bar move passes it. */
+  const section = destination.section ?? key.section
+
+  if (section !== key.section) {
+    const banned = quickKeyAllowedOnSection(key, section)
+    if (banned) return { ok: false, error: banned }
+
+    /* A GROUP carries its members across, so a folder holding a banned key would
+       smuggle it onto a bar it may not be on. Named, because "that group cannot go
+       there" leaves a manager opening folders to find out which key is the problem. */
+    if (key.kind === 'group') {
+      const members = await siteQuery<Row>(
+        siteId,
+        `SELECT kind, action_slug FROM pos_quick_keys WHERE parent_id = ?`,
+        [id],
+      )
+      for (const m of members) {
+        const memberBanned = quickKeyAllowedOnSection(
+          { kind: String(m.kind) as QuickKeyKind, actionSlug: String(m.action_slug ?? '') },
+          section,
+        )
+        if (memberBanned) return { ok: false, error: memberBanned }
+      }
+    }
+  }
 
   if (destination.parentId !== null) {
     if (key.kind === 'group') return { ok: false, error: 'A group cannot go inside another group.' }
@@ -329,13 +385,35 @@ export async function moveQuickKey(
     if (!parent) return { ok: false, error: 'That group no longer exists.' }
     if (parent.kind !== 'group') return { ok: false, error: 'Keys can only go inside a group.' }
     if (parent.id === id) return { ok: false, error: 'A group cannot hold itself.' }
+    /* A member's section is DERIVED from its group's — it is the group that sits on a
+       bar. Filing into a folder on the other bar therefore moves the key there too,
+       so the ban has to be tested against the folder's section, not the asked-for one. */
+    const intoBan = quickKeyAllowedOnSection(key, parent.section)
+    if (intoBan) return { ok: false, error: intoBan }
   }
+
+  /* Where the key actually lands. Filing into a group means adopting that group's bar,
+     whatever the caller asked for — the group is the thing that sits on a bar. */
+  const landingSection = destination.parentId !== null
+    ? (await getQuickKey(siteId, destination.parentId))!.section
+    : section
 
   await siteTransaction(siteId, async (tx) => {
     await tx.execute(
       `UPDATE pos_quick_keys SET parent_id = ?, section = ? WHERE id = ?`,
-      [destination.parentId, key.section, id] as never,
+      [destination.parentId, landingSection, id] as never,
     )
+
+    /* A group carries its members. Their section is derived from the folder's, so
+       moving a folder between bars without this would leave its keys behind on the old
+       one — present in the data, drawn on neither bar, since the till reads a section
+       and a member whose parent is elsewhere matches no scope. */
+    if (key.kind === 'group' && landingSection !== key.section) {
+      await tx.execute(`UPDATE pos_quick_keys SET section = ? WHERE parent_id = ?`, [
+        landingSection,
+        id,
+      ] as never)
+    }
 
     // Read the destination scope, drop the moved key, re-insert it at the index, then
     // write every position back. Done as a list rather than with +1/-1 arithmetic
@@ -347,8 +425,8 @@ export async function moveQuickKey(
         : `SELECT id FROM pos_quick_keys WHERE section = ? AND parent_id = ?
             ORDER BY position, id FOR UPDATE`,
       destination.parentId === null
-        ? [key.section]
-        : [key.section, destination.parentId],
+        ? [landingSection]
+        : [landingSection, destination.parentId],
     )
     const ids = (rows as Row[]).map((r) => Number(r.id)).filter((n) => n !== id)
     const at = Math.max(0, Math.min(destination.index, ids.length))
@@ -361,15 +439,15 @@ export async function moveQuickKey(
       ] as never)
     }
 
-    /* The scope the key LEFT also has a gap now. Skipped when it is the same scope —
-       the loop above already renumbered that one, and doing it twice is wasted writes
-       rather than wrong. */
-    if (key.parentId !== destination.parentId) {
+    /* The scope the key LEFT also has a gap now. Skipped only when it is genuinely the
+       same scope — which now means the same bar AND the same parent, since a key can
+       move between bars at the same parent level. */
+    if (key.parentId !== destination.parentId || key.section !== landingSection) {
       await renumberScope(tx, key.section, key.parentId)
     }
   })
 
-  return { ok: true, keys: await listQuickKeys(siteId, key.section) }
+  return { ok: true, keys: await listAllQuickKeys(siteId) }
 }
 
 export async function updateQuickKey(
@@ -381,8 +459,31 @@ export async function updateQuickKey(
   if (!key) return { ok: false, error: 'That key no longer exists.' }
 
   if ((input.caption ?? '').length > 60) return { ok: false, error: 'A caption must be 60 characters or fewer.' }
+  /*
+   * Only a GROUP may be named. Every other key reads what it points at — the action's
+   * label, the product's description, the department's name — so a stored caption would
+   * be a key saying something other than what it does, which is the support call this
+   * rule exists to prevent. The designer hides the field; this is the boundary.
+   *
+   * Compared against the CURRENT caption rather than refused outright, so an update
+   * that merely passes the existing value through (a colour change sent with the whole
+   * form) is not rejected.
+   */
+  if (
+    input.caption !== undefined &&
+    key.kind !== 'group' &&
+    input.caption.trim() !== key.caption
+  ) {
+    return { ok: false, error: 'Only a group can be renamed. A key reads the name of what it points at.' }
+  }
   if (input.colourToken !== undefined && !VALID_TOKENS.has(input.colourToken)) {
     return { ok: false, error: 'That is not a colour from the palette.' }
+  }
+  /* Same reasoning as the colour token: a name outside the offered set would render as
+     nothing on the till, and an invented one stored today is a blank key tomorrow. The
+     empty string is allowed and means "no icon chosen". */
+  if (input.icon !== undefined && input.icon !== '' && !QUICK_KEY_ICON_NAMES.has(input.icon)) {
+    return { ok: false, error: 'That is not an icon a key can use.' }
   }
 
   const caption = input.caption !== undefined ? input.caption.trim() : key.caption
@@ -408,7 +509,7 @@ export async function updateQuickKey(
     ],
   )
 
-  return { ok: true, keys: await listQuickKeys(siteId, key.section) }
+  return { ok: true, keys: await listAllQuickKeys(siteId) }
 }
 
 /**
@@ -459,7 +560,7 @@ export async function deleteQuickKey(siteId: number, id: number): Promise<SaveRe
     if (key.parentId !== null) await renumberScope(tx, key.section, null)
   })
 
-  return { ok: true, keys: await listQuickKeys(siteId, key.section) }
+  return { ok: true, keys: await listAllQuickKeys(siteId) }
 }
 
 /**

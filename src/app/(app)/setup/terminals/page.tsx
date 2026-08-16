@@ -2,8 +2,10 @@ import { requireCapability } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listLicences } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
+import { getNumericSetting } from '@/lib/site/settings'
 import TerminalsClient from './TerminalsClient'
 import LicencesPanel from './LicencesPanel'
+import UndoLimitPanel from './UndoLimitPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +17,10 @@ export default async function TerminalsPage() {
      rather than in the client so a manager sees them on first paint — this is
      the screen somebody opens when a till will not start. */
   const licences = await listLicences(siteId)
+  /* A shop-wide till rule rather than a per-register one — see setUndoLimitAction.
+     Absent or unreadable means no limit, matching what the POS itself does with a
+     setting it cannot read: fail open rather than start refusing corrections. */
+  const undoLimit = await getNumericSetting(siteId, 'pos_undo_limit')
 
   return (
     <>
@@ -25,6 +31,14 @@ export default async function TerminalsPage() {
       <PageBody>
         <div className="flex flex-col gap-4">
           <TerminalsClient terminals={terminals} />
+          {/* How the tills BEHAVE, under the list of which tills there are. One
+              field, so it sits between the registers and the licences rather than
+              earning a screen of its own. */}
+          <UndoLimitPanel
+            limit={
+              Number.isFinite(undoLimit) && (undoLimit ?? 0) > 0 ? Number(undoLimit) : 0
+            }
+          />
           {/* BELOW the tills, because a manager comes here to add a till far
               more often than to release a licence — and the licence list is the
               one they need when something is already wrong. */}

@@ -69,6 +69,20 @@ export type OnlineOrder = {
   customerId: number | null
   /** The shopper asked to charge this to their account when they placed it. */
   payOnAccount: boolean
+  /**
+   * Whether the money has already been taken (038).
+   *
+   * The column has existed since payments landed, and was written by
+   * `markOrderPayment` but never READ back onto this type — so every screen has
+   * been blind to it. That is fine while the only consumer is a back office that
+   * invoices a paid order down its own path, and dangerous the moment a till can
+   * pull an order into a basket: a 'paid' order has already been finalised, and
+   * ringing it up again charges a customer twice for the same burger.
+   *
+   * 'unpaid' is the default and the ordinary case for collect orders — the shop's
+   * whole point being that they pay when they fetch it.
+   */
+  paymentStatus: 'unpaid' | 'pending' | 'paid'
   contactName: string
   contactPhone: string
   contactEmail: string
@@ -138,6 +152,10 @@ function mapOrder(r: Row): OnlineOrder {
     documentStatus: (r.document_status as string | null) ?? null,
     customerId: r.customer_id === null ? null : Number(r.customer_id),
     payOnAccount: !!r.pay_on_account,
+    /* Defaulted rather than trusted: a row written before 038 has no value here,
+       and 'unpaid' is both the column's own default and the safe reading — it
+       leads to asking for money, never to skipping it. */
+    paymentStatus: (String(r.payment_status ?? 'unpaid') as OnlineOrder['paymentStatus']) || 'unpaid',
     contactName: String(r.contact_name ?? ''),
     contactPhone: String(r.contact_phone ?? ''),
     contactEmail: String(r.contact_email ?? ''),

@@ -115,9 +115,22 @@ export function TillStatusBar({
      below it and is separated from them by the shell's own padding — the chips
      are what carry the edges here, each floating on its own. A full-width bar
      with a rule under it would put a fourth horizontal band on a screen whose
-     whole layout is three floating cards. */
+     whole layout is three floating cards.
+
+     THE HEADER OWNS BOTH ITS GAPS — `py-4`, not `pt-4`.
+     It used to pay only for the top and leave the bottom to whatever was
+     mounted below, on the reasoning that every such screen opens with its own
+     p-4 and a pb-* here would stack on it. That holds on the sale screen, which
+     measures 16px above and 16px below. It does NOT hold on either gate: both
+     centre a single card in the space left over (`items-center`), so the
+     leftover is dealt out above the card as well as below it and the gap under
+     the chips grows with the window. The bar looked correct on one screen and
+     progressively wrong on the other two.
+     So the spacing is stated once, here, and the screens below drop their
+     top padding — see the `px-4 pb-4` on each. A rule the header enforces
+     cannot drift the way a convention three files have to remember does. */
   return (
-    <header className="flex shrink-0 flex-wrap items-center gap-2.5 px-4 pb-3 pt-4">
+    <header className="flex shrink-0 flex-wrap items-center gap-2.5 px-4 py-4">
       {/* WHAT THIS SCREEN IS, then what is on it. The screen's own name rather
           than the shop's: the cashier knows which shop they are standing in, and
           the one thing the top-left of a till should answer is "what am I looking
@@ -138,10 +151,13 @@ export function TillStatusBar({
             unoptimized
             className="h-8 w-auto object-contain"
           />
-          <h1 className="text-[20px] font-extrabold leading-none text-ink">Odyssey POS</h1>
+          {/* Set in the LOGO's own face, not the UI stack — it is a wordmark
+              sitting directly against the logo mark, and the two have to look
+              like one lockup rather than an image with a caption. */}
+          <h1 className="wordmark text-[20px] leading-none text-ink">Odyssey POS</h1>
         </span>
       ) : (
-        <h1 className="text-[20px] font-extrabold leading-none text-ink">{screenTitle}</h1>
+        <h1 className="wordmark text-[20px] leading-none text-ink">{screenTitle}</h1>
       )}
       {itemCount !== null && (
         <span className="rounded-control bg-surface-2 px-2.5 py-1.5 text-[12.5px] font-semibold leading-none text-muted">
@@ -357,9 +373,16 @@ export function TillStatusBar({
  * Exported as a string rather than only as a component because half of these are
  * buttons with their own tint, and a component that took a colour prop would be a
  * second place for the height and radius to drift.
+ *
+ * 46px, NOT `h-touch` (56px). These are status first and controls second — a
+ * cashier reads this row far more often than they tap it — so the header should
+ * not spend a full till-key's height on chrome above the sale. It stays above
+ * the 44px touch minimum, which is what keeps the four tappable ones (Tables,
+ * the queue, Shift, Logout) honest at this size. Set here rather than on
+ * --spacing-touch, which is also worn by the keypad, the quick keys and Pay.
  */
 const CHIP_BASE =
-  'inline-flex h-touch shrink-0 items-center gap-2 rounded-control border px-3.5 text-sm font-medium shadow-card'
+  'inline-flex h-[46px] shrink-0 items-center gap-2 rounded-control border px-3.5 text-sm font-medium shadow-card'
 
 function Chip({ children }: { children: React.ReactNode }) {
   return <span className={`${CHIP_BASE} border-border bg-surface text-ink-2`}>{children}</span>

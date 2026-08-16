@@ -18,6 +18,7 @@ export function Menu({
   iconOnly = false,
   size = 'md',
   triggerLabel,
+  keepOpen = false,
   className = '',
 }: {
   label: ReactNode
@@ -38,6 +39,16 @@ export function Menu({
   size?: ButtonSize
   /** Accessible name for the trigger. Required when `iconOnly`. */
   triggerLabel?: string
+  /**
+   * The panel holds SETTINGS rather than commands, so a click inside it must not
+   * dismiss it — picking a column count and then toggling a switch is one visit
+   * to the menu, not two.
+   *
+   * The default is right for a list of actions: tap an item, the thing happens,
+   * the menu gets out of the way. Pass this only for a panel of controls the
+   * user adjusts and then closes deliberately.
+   */
+  keepOpen?: boolean
   className?: string
 }) {
   const [open, setOpen] = useState(false)
@@ -48,6 +59,14 @@ export function Menu({
     if (!open) return
 
     function onPointerDown(event: MouseEvent) {
+      /* A native <select> draws its options as an OS popup, OUTSIDE the DOM — so
+         a mousedown on "5 across" reports a target this root does not contain
+         and reads as a click elsewhere on the page. Closing on it would shut the
+         menu before the change landed, which is exactly what a user picking a
+         value experiences as "the popup closed on me". While one of our own
+         selects has focus, an outside mousedown is that popup and is ignored. */
+      const focused = document.activeElement
+      if (focused?.tagName === 'SELECT' && rootRef.current?.contains(focused)) return
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
     }
     function onKeyDown(event: KeyboardEvent) {
@@ -84,8 +103,9 @@ export function Menu({
           id={menuId}
           role="menu"
           /* Close on any activation inside, so callers never have to thread a
-             setOpen down to each item. */
-          onClick={() => setOpen(false)}
+             setOpen down to each item — unless the panel is a set of settings,
+             which the user adjusts and then dismisses themselves. */
+          onClick={keepOpen ? undefined : () => setOpen(false)}
           className={`absolute z-20 mt-1.5 min-w-44 rounded-control border border-border bg-surface p-1 shadow-pop ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}

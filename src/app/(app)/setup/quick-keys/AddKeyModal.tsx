@@ -15,6 +15,8 @@ import {
 } from '@/components/ui'
 import {
   QUICK_KEY_ACTIONS,
+  quickKeyAllowedOnSection,
+  quickKeyAllowedOnTill,
   type QuickKeyRow,
   type QuickKeySection,
   type QuickKeyTarget,
@@ -39,12 +41,15 @@ import { searchProductsAction, listProductDepartmentsAction } from '@/app/(app)/
 export function AddKeyModal({
   open,
   section,
+  hospitality,
   parentId,
   onClose,
   onAdded,
 }: {
   open: boolean
   section: QuickKeySection
+  /** A restaurant till — decides which actions this shop can use at all. */
+  hospitality: boolean
   /** The group the key lands in, or null for the bar. */
   parentId: number | null
   onClose: () => void
@@ -193,24 +198,36 @@ export function AddKeyModal({
 
         {kind === 'action' && (
           <div className="till-pane flex max-h-[46vh] flex-col gap-1.5 overflow-y-auto">
-            {QUICK_KEY_ACTIONS.map((a) => (
-              <TouchRow
-                key={a.slug}
-                title={a.label}
-                /* The hint, not the slug. A manager choosing between "Void sale" and
-                   "Refund" needs to know which one reverses a posted invoice. */
-                subtitle={
-                  a.hospitalityOnly
-                    ? `${a.hint} — restaurant tills only`
-                    : a.retailOnly
-                      ? `${a.hint} — retail tills only`
-                      : a.hint
-                }
-                tone={slug === a.slug ? 'active' : 'default'}
-                disabled={pending}
-                onClick={() => setSlug(a.slug)}
-              />
-            ))}
+            {QUICK_KEY_ACTIONS.filter(
+              /* Actions this kind of till cannot use are dropped, not greyed — see
+                 quickKeyAllowedOnTill. A retail shop should never be offered
+                 "Send to kitchen", nor a restaurant "Saved sales". */
+              (a) => !quickKeyAllowedOnTill({ kind: 'action', actionSlug: a.slug }, hospitality),
+            ).map((a) => {
+              /* Offered-but-greyed rather than filtered out, for the same reason the
+                 catalogue keeps hospitality actions on a retail till: a manager
+                 hunting for "Cash up" on the tables bar needs to be told where it
+                 lives, not left wondering whether the feature exists. */
+              const banned = quickKeyAllowedOnSection(
+                { kind: 'action', actionSlug: a.slug },
+                section,
+              )
+              return (
+                <TouchRow
+                  key={a.slug}
+                  title={a.label}
+                  /* The hint, not the slug. A manager choosing between "Void sale" and
+                     "Refund" needs to know which one reverses a posted invoice. */
+                  /* No retail/hospitality suffix any more: an action this till cannot
+                     use is filtered out above, so every row left here is one this shop
+                     can actually have. What remains worth saying is the bar rule. */
+                  subtitle={banned ?? a.hint}
+                  tone={slug === a.slug ? 'active' : 'default'}
+                  disabled={pending || Boolean(banned)}
+                  onClick={() => setSlug(a.slug)}
+                />
+              )
+            })}
           </div>
         )}
 

@@ -18,6 +18,7 @@ import {
   StatStrip,
   StatTile,
   Badge,
+  ButtonLink,
   Icons,
   TABLE,
   TABLE_HEAD_ROW,
@@ -156,6 +157,7 @@ export default async function CashupPage() {
                     <th className={`${TABLE_TH} text-right`}>Expected</th>
                     <th className={`${TABLE_TH} text-right`}>Counted</th>
                     <th className={`${TABLE_TH} text-right`}>Variance</th>
+                    <th className={TABLE_TH}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -204,6 +206,17 @@ export default async function CashupPage() {
                               {byTender.join(' · ')}
                             </div>
                           )}
+                        </td>
+                        {/* Read the signed declaration back, exactly as it was
+                            committed. Hard right, as row actions always are. */}
+                        <td className={`${TABLE_TD} text-right`}>
+                          <ButtonLink
+                            href={`/sales/cashup/${shift.id}/declare`}
+                            variant="ghost"
+                            size="sm"
+                          >
+                            View
+                          </ButtonLink>
                         </td>
                       </tr>
                     )

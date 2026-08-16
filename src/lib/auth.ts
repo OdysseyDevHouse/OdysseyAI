@@ -8,7 +8,7 @@ import { verifyPassword, hashPassword } from './password'
 import { getSiteForUser, listSitesForUser, type Site } from './sites'
 import { siteExecute } from './siteDb'
 import { getTillSession } from './tillSession'
-import { getUserByControlId, type SiteUser } from './site/users'
+import { getUserByControlId, getUser, type SiteUser } from './site/users'
 import {
   capabilitiesForRole,
   can,
@@ -649,6 +649,56 @@ export async function actorForAny(
 }
 
 /**
+ * The till operator, swapped into an `actorFor` context.
+ *
+ * ── WHY THIS EXISTS ────────────────────────────────────────────────────────
+ *
+ * `actorFor` resolves the BROWSER session, which on a shared shop-floor machine
+ * is whoever opened it that morning. `requireActor` resolves the PIN operator
+ * but checks no capability. A till action needs both, and before this helper
+ * every file that wanted both wrote its own version — four of them, which drifted:
+ * `shiftActions.ts` and `returnActions.ts` returned the operator's identity AND
+ * capabilities, while the sales file's copy returned capabilities only and threw
+ * the identity away. So the till resolved the right person to decide whether a
+ * discount was allowed, and then wrote the wrong person's name on the sale.
+ *
+ * That is not a small mistake: `sales_document_lines.sales_rep_user_id` is what
+ * commission pays on, so every sale on a shared machine paid the browser user.
+ *
+ * ── PERMISSION VS IDENTITY ─────────────────────────────────────────────────
+ *
+ * Both move to the operator, deliberately. A manager signed into the back office
+ * who hands the till to a junior must not leave their own rights on the screen,
+ * and must not have their name on the junior's sales. The PIN decides both.
+ *
+ * ── WHEN THERE IS NO TILL SESSION ──────────────────────────────────────────
+ *
+ * The context is returned untouched. That is the back-office case, and it is
+ * also the till whose 8-hour cookie has lapsed under a 12-hour browser session
+ * — so this can never produce a MISSING actor, only the same one `actorFor`
+ * would have given. Offline sales, where the operator is known to the client but
+ * not to the server, are still attributed to the browser user; closing that
+ * needs the client to be trusted with an id it is currently not.
+ */
+export async function withTillOperator<
+  T extends { siteId: number; actor: { userId: number; userName: string }; capabilities: CapabilitySet },
+>(ctx: T): Promise<T> {
+  const till = await getTillSession(ctx.siteId)
+  if (!till) return ctx
+
+  const operator = await getUser(ctx.siteId, till.userId)
+  /* A till session naming a user who has since been deleted. Falling back is
+     right: refusing would strand a working till mid-sale over a stale cookie. */
+  if (!operator) return ctx
+
+  return {
+    ...ctx,
+    actor: { userId: operator.id, userName: operator.name },
+    capabilities: await capabilitiesForRole(ctx.siteId, operator.roleId),
+  }
+}
+
+/**
  * For actions whose return type has no room for a refusal.
  *
  * A lookup returning `TillProduct[]`, or a form action returning a state
@@ -706,6 +756,8 @@ export async function siteIdForCapability(capability: Capability): Promise<numbe
  */
 export async function actorForCapability(capability: Capability): Promise<{
   siteId: number
+  /** The store's name, for a document that outlives the screen it came from. */
+  siteName: string
   actor: { userId: number; userName: string }
   capabilities: CapabilitySet
 } | null> {
@@ -713,6 +765,7 @@ export async function actorForCapability(capability: Capability): Promise<{
   if (!can(capabilities, capability)) return null
   return {
     siteId: site.id,
+    siteName: site.displayName,
     actor: { userId: user.id, userName: user.name },
     capabilities,
   }

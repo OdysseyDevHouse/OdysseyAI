@@ -126,16 +126,19 @@ import {
   askForBillAction,
   tablePaidAction,
   billForSplitAction,
+  billForSplitByDocumentAction,
   destinationBillAction,
   splitTableAction,
+  splitBillAction,
   transferTableAction,
 } from './tableActions'
 import type { PosTable } from '@/lib/site/posTables'
 import type { VisitType } from '@/lib/site/visitTypes'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
-import { SplitBillModal, type SplitLine } from './SplitBillModal'
+import { SplitBillModal, type SplitLine, type SplitDestination } from './SplitBillModal'
 import TransferTableModal from './TransferTableModal'
 import ShiftModal from './ShiftModal'
+import DeclarationModal from './DeclarationModal'
 import OpenTillGate from './OpenTillGate'
 import { tillShiftStatusAction } from './shiftActions'
 import OverrideModal from './OverrideModal'
@@ -2491,9 +2494,16 @@ export default function PosShell({
   const [choosingTable, setChoosingTable] = useState(hospitality)
   /** The gate's split mode is armed — the next table tap opens the split screen. */
   const [armedForSplit, setArmedForSplit] = useState(false)
-  /** The table being split, and its lines. Null when the split screen is closed. */
+  /**
+   * The bill being split. Null when the split screen is closed.
+   *
+   * Keyed on the DOCUMENT, not the table: a split's source may be a free-text tab with
+   * no table row at all, and the destination is now a document too (see posSplit.ts).
+   * `label` is only what the screen calls it — a table code, or the tab's name.
+   */
   const [splitting, setSplitting] = useState<{
-    table: PosTable
+    documentId: number
+    label: string
     lines: SplitLine[]
   } | null>(null)
 
@@ -2512,7 +2522,7 @@ export default function PosShell({
       toast.error('That bill has nothing on it to split.')
       return
     }
-    setSplitting({ table, lines: bill.lines })
+    setSplitting({ documentId: bill.documentId, label: table.code, lines: bill.lines })
   }
 
   /**
@@ -2543,11 +2553,20 @@ export default function PosShell({
    * is what makes "what I can see is what I can split" true.
    */
   function openSplitForCurrentTable() {
-    if (!table) {
-      // No table open: fall back to the floor, which is where one gets chosen.
-      setArmedForTransfer(false)
-      setArmedForSplit(true)
-      setChoosingTable(true)
+    /* A tab is splittable too, now that a destination is a document rather than a table
+       row — "Walk-in" divides exactly like table six does. What cannot be split is a
+       basket that has never been saved, because a split moves lines between two SERVER
+       documents and an unsaved basket is not one yet. */
+    const label = table?.code ?? tabLabel ?? ''
+    if (!state.documentId) {
+      if (!table && !tabLabel) {
+        // A counter basket with no identity. Send them to the floor to pick a bill.
+        setArmedForTransfer(false)
+        setArmedForSplit(true)
+        setChoosingTable(true)
+        return
+      }
+      toast.error('Save this sale before splitting it.')
       return
     }
     if (state.lines.length === 0) {
@@ -2562,46 +2581,91 @@ export default function PosShell({
     }
 
     startTransition(async () => {
-      const documentId = state.documentId
-      if (documentId) {
-        const pushed = await updateTableBillAction(documentId, {
-          customerName: table.code,
-          terminalId: terminal?.id ?? null,
-          terminalCode: terminal?.code ?? null,
-          priceStructureId,
-          lines: salePayloadLines(state.lines, lineSpecials, docShares),
-        }).catch(() => null)
-        if (!pushed?.ok) {
-          toast.error(pushed?.error ?? "Couldn't save this bill, so it cannot be split yet.")
-          return
-        }
-        setTables(pushed.tables)
+      const documentId = state.documentId!
+      /* The basket on screen is pushed FIRST, or the split divides a bill missing
+         whatever was rung up in the last second — the table autosave runs on a 900ms
+         debounce. Only a seated table has that autosave; a tab is parked by its own
+         path, so this is the one that needs forcing. */
+      const pushed = await updateTableBillAction(documentId, {
+        customerName: label || 'Table',
+        terminalId: terminal?.id ?? null,
+        terminalCode: terminal?.code ?? null,
+        priceStructureId,
+        lines: salePayloadLines(state.lines, lineSpecials, docShares),
+      }).catch(() => null)
+      if (!pushed?.ok) {
+        toast.error(pushed?.error ?? "Couldn't save this bill, so it cannot be split yet.")
+        return
       }
-      await openSplit(table)
+      setTables(pushed.tables)
+
+      const bill = await billForSplitByDocumentAction(documentId).catch(() => null)
+      if (!bill || bill.lines.length === 0) {
+        toast.error('That bill has nothing on it to split.')
+        return
+      }
+      setArmedForSplit(false)
+      setSplitting({ documentId, label: label || 'this sale', lines: bill.lines })
     })
   }
 
+  /**
+   * Every OTHER open sale, as the split screen's picker offers them.
+   *
+   * Built from the open-TABS list rather than the floor, because that is the list of
+   * open bills — most of which are not seated on the floor plan. Where a bill does sit
+   * on a table, the table's code is carried along as context: two tabs can both be
+   * called "Walk-in", and where they are sitting is what tells them apart.
+   */
+  const splitDestinations = useMemo<SplitDestination[]>(() => {
+    const tableByDoc = new Map(
+      tables.filter((t) => t.documentId !== null).map((t) => [t.documentId!, t.code]),
+    )
+    return tabs
+      .filter((t) => t.documentId !== splitting?.documentId)
+      .map((t) => ({
+        documentId: t.documentId,
+        label: tableByDoc.get(t.documentId) ?? t.label ?? t.customerName ?? 'Walk-in',
+        tableCode: tableByDoc.get(t.documentId) ?? null,
+        lineCount: t.lineCount,
+        totalIncl: t.totalIncl,
+      }))
+  }, [tabs, tables, splitting?.documentId])
+
   /** Writes the split, then re-reads the floor so both halves show. */
-  function confirmSplit(toTableId: number, moves: { lineId: number; qty: number }[]) {
-    const from = splitting?.table
+  function confirmSplit(
+    toDocumentId: number | null,
+    moves: { lineId: number; qty: number }[],
+    newSaleName: string | null,
+  ) {
+    const from = splitting
     if (!from) return
-    /* Read BEFORE the write, because afterwards every destination is occupied — the
-       distinction the toast draws is between a table that already had a bill and one
-       that did not, and only the pre-split floor knows which. */
-    const wasOccupied = tables.find((t) => t.id === toTableId)?.state !== 'free'
-    /* Was this split started from INSIDE the table, rather than armed from the floor?
-       That decides where the waiter is left afterwards, and — more importantly — whether
-       there is a stale basket on screen that has to be reloaded. */
-    const fromOpenTable = table?.id === from.id
-    const keptDocumentId = fromOpenTable ? state.documentId : null
+    /* Read BEFORE the write: afterwards the destination always has a bill on it, and the
+       distinction the toast draws is between joining one that already existed and
+       starting a fresh one. */
+    const where =
+      toDocumentId === null
+        ? newSaleName?.trim() || 'a new sale'
+        : (splitDestinations.find((d) => d.documentId === toDocumentId)?.label ?? 'the other sale')
+    const joinedExisting = toDocumentId !== null
+    /* Was this split started from INSIDE the sale, rather than armed from the floor?
+       That decides whether there is a stale basket on screen that has to be reloaded —
+       left alone it would overwrite the split on the next autosave. */
+    const keptDocumentId = state.documentId === from.documentId ? from.documentId : null
     startTransition(async () => {
-      const result = await splitTableAction({ fromTableId: from.id, toTableId, moves })
+      const result = await splitBillAction({
+        fromDocumentId: from.documentId,
+        toDocumentId,
+        newSaleName,
+        moves,
+      })
       if (!result.ok) {
         toast.error(result.error)
         return
       }
       setTables(result.tables)
       setSplitting(null)
+      refreshTables()
 
       /*
        * The till is still holding the WHOLE bill, including the lines that just moved
@@ -2610,7 +2674,7 @@ export default function PosShell({
        * items reappear. So the kept half is re-read from the server, which is now the
        * only place that knows which lines survived.
        *
-       * The waiter STAYS on the table. They were serving it when they pressed the key,
+       * The waiter STAYS on the sale. They were serving it when they pressed the key,
        * the kept half is still theirs, and being thrown out to the floor mid-service is
        * how a bill gets abandoned half-finished.
        */
@@ -2628,7 +2692,7 @@ export default function PosShell({
           })
         } else {
           /* The kept half could not be re-read — rather than leave a basket on screen
-             that would overwrite the split, hand the table back and send the waiter to
+             that would overwrite the split, hand the bill back and send the waiter to
              the floor, where tapping it reloads cleanly. */
           releaseHeldBill()
           dispatch({ type: 'CLEAR' })
@@ -2637,11 +2701,9 @@ export default function PosShell({
         }
       }
 
-      const to = result.tables.find((t) => t.id === toTableId)
-      const where = to?.code ?? 'the other table'
       /* Says which of the two happened: added ONTO an existing bill is the one a waiter
          may want to check, since those lines are now mixed in with somebody else's. */
-      toast.success(wasOccupied ? `Added to ${where}'s bill.` : `Moved to ${where}.`)
+      toast.success(joinedExisting ? `Added to ${where}'s bill.` : `Moved to ${where}.`)
     })
   }
 
@@ -2656,7 +2718,12 @@ export default function PosShell({
    */
   function printBill() {
     const documentId = state.documentId
-    if (!documentId) return
+    if (!documentId) {
+      /* Said rather than ignored: the bill is a quick key now, so it can be
+         pressed on a basket that was never parked against a table. */
+      toast.info('Open the table first — the bill comes off the parked tab.')
+      return
+    }
     if (!till.online) {
       toast.error('Printing a bill needs the connection — the tab lives on the server.')
       return
@@ -2718,8 +2785,19 @@ export default function PosShell({
 
   /** The shift modal — float, payouts, and the blind cash-up count. */
   const [managingShift, setManagingShift] = useState(false)
+  /**
+   * The detailed cash-up — denominations, every tender, banking.
+   *
+   * Separate state from `managingShift` because they are different acts: that
+   * one is the drawer's controls (float in, payout, drop), this is the count a
+   * supervisor signs. The cashup quick key opens THIS; the drawer controls
+   * still reach it via their own button, so neither hides the other.
+   */
+  const [declaringCashup, setDeclaringCashup] = useState(false)
   /** "Shift open · Ruth" for the header chip, or null when none is open. */
   const [shiftLabel, setShiftLabel] = useState<string | null>(null)
+  /** The open shift's id — what the declaration counts against. */
+  const [shiftId, setShiftId] = useState<number | null>(null)
 
   /**
    * Whether this till is OPEN FOR BUSINESS — and the gate that says so.
@@ -2753,6 +2831,7 @@ export default function PosShell({
   const noteShift = useCallback(
     (shiftId: number | null, userName?: string) => {
       setShiftLabel(shiftId ? `Shift · ${userName ?? 'open'}` : null)
+      setShiftId(shiftId)
       setShiftStatus((s) => (s ? { ...s, open: shiftId !== null } : s))
       void kvPut(siteId, KV.shift, shiftId ? { id: shiftId } : null).catch(() => {})
     },
@@ -3110,8 +3189,10 @@ export default function PosShell({
         },
         showOutbox: () => setShowingOutbox(true),
         showShift: () => setManagingShift(true),
+        showDeclaration: () => setDeclaringCashup(true),
         docDiscount: () => setDiscountingDoc(true),
         sendToKitchen,
+        printBill,
         reprintLastSlip: () => {
           try {
             const raw = window.localStorage.getItem(`pos-last-sale-${siteId}`)
@@ -3440,10 +3521,6 @@ export default function PosShell({
           onPark={park}
           onShowSaved={() => setShowingSaved(true)}
           savedCount={savedTally}
-          /* Only a parked tab has a document to print — a counter basket lives
-             in this component until it is paid, and has no bill to show. */
-          onBill={hospitality && state.documentId ? printBill : undefined}
-          onSendKitchen={hospitality && state.documentId ? sendToKitchen : undefined}
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
           exchange={
@@ -3667,14 +3744,14 @@ export default function PosShell({
       <SplitBillModal
         open={splitting !== null}
         onClose={() => setSplitting(null)}
-        fromTable={splitting?.table ?? null}
+        fromLabel={splitting?.label ?? ''}
         lines={splitting?.lines ?? []}
-        tables={tables}
+        destinations={splitDestinations}
         busy={pending}
         /* What the chosen destination already has on it. Read when it is picked, not
-           held for every table on the floor: a waiter opens one of them. */
-        loadDestinationLines={async (tableId) => {
-          const bill = await destinationBillAction(tableId)
+           held for every open sale: a waiter opens one of them. */
+        loadDestinationLines={async (documentId) => {
+          const bill = await billForSplitByDocumentAction(documentId)
           return bill?.lines ?? []
         }}
         onConfirm={confirmSplit}
@@ -3689,6 +3766,21 @@ export default function PosShell({
         pendingSales={till.pending}
         onClose={() => setManagingShift(false)}
         onShiftChanged={(shiftId) => noteShift(shiftId, operatorName)}
+        onDeclare={() => {
+          setManagingShift(false)
+          setDeclaringCashup(true)
+        }}
+      />
+
+      {/* The detailed cash-up the "Cash up" key opens: notes and coin counted
+          by pile, every tender declared against a withheld expectation, and the
+          banking. Reuses the back office's engine — see DeclarationModal. */}
+      <DeclarationModal
+        open={declaringCashup}
+        shiftId={shiftId}
+        pendingSales={till.pending}
+        onClose={() => setDeclaringCashup(false)}
+        onFinalized={() => noteShift(null)}
       />
 
       {/* Moving a whole tab. The document keeps its identity — only the table's

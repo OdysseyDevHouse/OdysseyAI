@@ -33,6 +33,7 @@ export function ProductTile({
   tileHeight = 150,
   selected = false,
   disabled = false,
+  dashed = false,
   onClick,
 }: {
   title: string
@@ -63,6 +64,16 @@ export function ProductTile({
   tileHeight?: number
   selected?: boolean
   disabled?: boolean
+  /**
+   * A dashed brand outline instead of a solid card, for a tile that is not a
+   * THING in the grid but a way out of it — the till's Back tile.
+   *
+   * The same skin as the new-table opener on the tables screen: light blue
+   * dashes, a brand disc behind the glyph, and a fill on hover. It also drops
+   * the card shadow — a navigation tile sitting on the surface the way the
+   * products do reads as one of them, which is what the dashes prevent.
+   */
+  dashed?: boolean
   onClick?: () => void
 }) {
   // The whole responsive story. A short tile cannot stack a 44px disc above two
@@ -79,7 +90,22 @@ export function ProductTile({
       }`}
     />
   ) : icon ? (
-    <CategoryTile icon={icon} tone={tone} size={short ? 'md' : 'lg'} />
+    dashed ? (
+      /* A BRAND disc, matching the new-table opener rather than the category
+         ramp CategoryTile draws from. That ramp means "which kind of thing" —
+         and this tile is not a kind of thing, it is the way out of the grid, so
+         it takes the same light blue the other dashed tiles wear. */
+      <span
+        aria-hidden
+        className={`flex shrink-0 items-center justify-center rounded-pill bg-brand-soft text-brand ${
+          short ? 'h-10 w-10' : 'h-11 w-11'
+        }`}
+      >
+        {icon}
+      </span>
+    ) : (
+      <CategoryTile icon={icon} tone={tone} size={short ? 'md' : 'lg'} />
+    )
   ) : null
 
   // Tall: glyph on top, text below it filling the rest, price pinned to the
@@ -109,21 +135,34 @@ export function ProductTile({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex h-full min-w-0 rounded-card border bg-surface text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
-        selected
-          ? /* Selected takes the brand fill and hairline, but keeps its own leading
-               edge: being chosen must not change which product a tile reads as. */
-            `border-brand bg-brand-soft ${edge ? EDGE_LEAD[edge] : ''}`
-          : edge
-            ? /* No hover:border-brand with an edge — as one declaration it repaints
-                 all four sides and takes the leading colour with it, so the tile
-                 would lose its identity exactly when a finger is on it. */
-              `${EDGE_RING[edge]} ${EDGE_LEAD[edge]}`
-            : 'border-border hover:border-brand/50'
-      } ${edge ? 'border-l-4' : ''} ${
+      className={`flex h-full min-w-0 rounded-card border text-left transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
+        dashed
+          ? /* The same skin as the till's new-table opener — see HeroTile in
+               TableGate. Both are dashed tiles that start something rather than
+               being a thing, and phrasing that two ways on two till screens is
+               how a set stops looking like a set. */
+            'border-2 border-dashed border-brand/40 bg-surface hover:border-brand hover:bg-brand-soft'
+          : 'bg-surface shadow-card'
+      } ${
+        /* A dashed tile owns its own border entirely — the branches below would
+           emit a second, competing border colour at the same specificity, and
+           which one won would come down to stylesheet order. */
+        dashed
+          ? ''
+          : selected
+            ? /* Selected takes the brand fill and hairline, but keeps its own leading
+                 edge: being chosen must not change which product a tile reads as. */
+              `border-brand bg-brand-soft ${edge ? EDGE_LEAD[edge] : ''}`
+            : edge
+              ? /* No hover:border-brand with an edge — as one declaration it repaints
+                   all four sides and takes the leading colour with it, so the tile
+                   would lose its identity exactly when a finger is on it. */
+                `${EDGE_RING[edge]} ${EDGE_LEAD[edge]}`
+              : 'border-border hover:border-brand/50'
+      } ${edge && !dashed ? 'border-l-4' : ''} ${
         short
-          ? `items-center gap-3 py-2 pr-3 ${edge ? 'pl-2.5' : 'pl-3'}`
-          : `flex-col gap-2.5 py-3.5 pr-3.5 ${edge ? 'pl-3' : 'pl-3.5'}`
+          ? `items-center gap-3 py-2 pr-3 ${edge && !dashed ? 'pl-2.5' : 'pl-3'}`
+          : `flex-col gap-2.5 py-3.5 pr-3.5 ${edge && !dashed ? 'pl-3' : 'pl-3.5'}`
       }`}
     >
       {glyph}

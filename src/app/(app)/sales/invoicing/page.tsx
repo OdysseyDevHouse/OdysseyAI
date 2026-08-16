@@ -22,6 +22,7 @@ import { STATUS_LABELS } from '../status'
 import NewInvoiceButton from './NewInvoiceButton'
 import InvoicingTable, { type InvoiceTableRow } from './InvoicingTable'
 import { isConfigured as mailIsConfigured } from '@/lib/mail'
+import { TILL_HREF, tillLinkProps } from '@/lib/openTill'
 
 export const dynamic = 'force-dynamic'
 
@@ -300,7 +301,7 @@ export default async function InvoicingPage({
                         hint: 'Ring one up from the till, or capture one here.',
                         icon: <Icons.Receipt size={22} />,
                         action: (
-                          <ButtonLink variant="secondary" href="/pos">
+                          <ButtonLink variant="secondary" href={TILL_HREF} {...tillLinkProps}>
                             <Icons.Banknote size={15} />
                             Open the till
                           </ButtonLink>

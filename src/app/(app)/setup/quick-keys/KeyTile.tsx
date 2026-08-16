@@ -1,7 +1,7 @@
 'use client'
 
 import { useDraggable, useDroppable } from '@dnd-kit/core'
-import { CategoryTile, Icons, toneForId } from '@/components/ui'
+import { CategoryTile, Checkbox, Icons, toneForId } from '@/components/ui'
 import { actionForSlug, quickKeyLabel, type QuickKeyRow } from '@/lib/quickKeys'
 import { quickKeyArt, quickKeyArtSrc } from '@/lib/quickKeyArt'
 
@@ -39,6 +39,9 @@ export function KeyTile({
   intent,
   selected,
   onSelect,
+  ticked,
+  selecting,
+  onTick,
 }: {
   keyRow: QuickKeyRow
   /** Resolved by the canvas — a product key reads its product's name. */
@@ -54,6 +57,15 @@ export function KeyTile({
   intent: 'before' | 'after' | 'into' | null
   selected: boolean
   onSelect: () => void
+  /** True once this key is ticked for a bulk change. */
+  ticked: boolean
+  /**
+   * Ticking is offered on hover, and permanently once ANY key is ticked — the moment a
+   * selection exists, every other tile needs an obvious way to join it, including on a
+   * touchscreen where there is no hover to reveal one.
+   */
+  selecting: boolean
+  onTick: (additive: boolean) => void
 }) {
   const {
     attributes,
@@ -80,13 +92,41 @@ export function KeyTile({
         setDragRef(node)
         setDropRef(node)
       }}
-      className="relative"
+      className="group relative"
     >
       {/* The insert caret. A line between tiles rather than sliding them apart:
           tiles that move while a finger is over them is how a drop lands one slot
           from where it was aimed. */}
       {intent === 'before' && <Caret side="left" />}
       {intent === 'after' && <Caret side="right" />}
+
+      {/*
+        The tick, over the tile's top-left.
+        A sibling of the drag button rather than a child of it: nesting an interactive
+        element inside a <button> is invalid, and a click on it would start the drag
+        listeners the parent carries. Stops propagation for the same reason.
+        Shift-click extends a range, which is what makes "colour these eight" one
+        gesture instead of eight.
+      */}
+      <span
+        data-kit-ok
+        className={`absolute -left-1 -top-1 z-10 transition ${
+          ticked || selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}
+      >
+        <Checkbox
+          checked={ticked}
+          aria-label={`Select ${label}`}
+          className="rounded-control bg-surface p-1 shadow-card"
+          onClick={(e) => {
+            e.stopPropagation()
+            onTick(e.shiftKey)
+          }}
+          /* The state change is driven from onClick, which is the only handler carrying
+             shiftKey. React still wants onChange on a controlled input. */
+          onChange={() => {}}
+        />
+      </span>
 
       <button
         type="button"

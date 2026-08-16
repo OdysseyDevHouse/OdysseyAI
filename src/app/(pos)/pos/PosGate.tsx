@@ -134,20 +134,37 @@ export default function PosGate({
           This is the same front door as the back-office login, and a till standing
           unattended on a counter is the one screen in the product a customer sees
           from across the room. The logo is what it says at that distance. */}
+      {/* The plate is the same fix the back-office login makes (see .logo in
+          login.module.css): the wordmark in the artwork is dark navy, and on
+          the till's dark canvas it all but disappears — on the ONE screen that
+          is read from across the room. Light mode needs nothing, so the plate
+          is dark-mode only. */}
       <Image
         src="/logo-full.png"
         alt="Odyssey Point of Sale"
         width={1109}
         height={304}
-        className="h-20 w-auto object-contain dark:rounded-card dark:bg-white dark:px-3 dark:py-2"
+        className="logo-plate h-20 w-auto object-contain"
         priority
         unoptimized
       />
 
       <Card>
-        <div className="p-6">
-          <h2 className="mb-1 text-center text-[17px] font-bold text-ink">Clerk sign-in</h2>
-          <p className="mb-4 text-center text-[12.5px] text-muted">
+        {/* The card is sized by the PAD and nothing else.
+            Two earlier attempts got this wrong and the measurements say why:
+            w-fit alone resolved to the widest CHILD, and since the text has no
+            width of its own a one-line paragraph stretched the card to 689px
+            around a 510px pad — 130px of dead space down the right. Setting
+            w-[510px] then overflowed the other way, because border-box counts
+            the p-6 INSIDE that width and left the content box at 462px.
+            w-fit with the text capped at the pad's width is what holds: the pad
+            is the widest child at 510px, the paragraphs wrap to it rather than
+            past it, and the padding sits outside on all four sides. */}
+        <div className="w-fit p-6">
+          <h2 className="mb-1 max-w-[510px] text-center text-[17px] font-bold text-ink">
+            Clerk sign-in
+          </h2>
+          <p className="mb-4 max-w-[510px] text-center text-[12.5px] text-muted">
             Enter your PIN to open the till
           </p>
 
@@ -158,7 +175,7 @@ export default function PosGate({
               needs to fix before the line drops, not after — and while it is true
               there is nothing useful to announce. */}
           {offlineReady === false && (
-            <p className="mt-4 max-w-[560px] text-center text-[12px] text-muted">
+            <p className="mt-3 max-w-[510px] text-center text-[12px] text-muted">
               This till needs a connection to sign in. Each person should enter their
               PIN once while online so it works offline afterwards.
             </p>

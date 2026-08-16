@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
+import { cleanShape, type TableShape } from './floorGeometry'
 
 /**
  * The floor: which tables exist, and which of them has a bill open.
@@ -74,7 +75,7 @@ export type PosTable = {
   width: number
   height: number
   rotation: number
-  shape: 'rect' | 'round'
+  shape: TableShape
 }
 
 export type TableState = 'free' | 'open' | 'bill'
@@ -149,7 +150,7 @@ function mapTable(r: Row): PosTable {
     width: toNum(r.width, 8),
     height: toNum(r.height, 8),
     rotation: Number(r.rotation ?? 0),
-    shape: r.shape === 'round' ? 'round' : 'rect',
+    shape: cleanShape(r.shape),
   }
 }
 
@@ -343,6 +344,26 @@ export type TableInput = {
    * from the first.
    */
   visitTypeId?: number | null
+  /**
+   * Where it stands, when the FLOOR DESIGNER is what created it.
+   *
+   * Optional and absent everywhere else: the setup list creates tables with no
+   * placement, which is the normal state (`room_id IS NULL` renders as the sectioned
+   * grid). Supplied together or not at all — a table with a room and no coordinates
+   * would be placed nowhere and drawn by neither view.
+   *
+   * Written in the INSERT rather than by a follow-up `savePlacements`, so a table
+   * created on the plan cannot exist for a moment in a state where it is neither on
+   * the plan nor in the tray.
+   */
+  placement?: {
+    roomId: number
+    x: number
+    y: number
+    width: number
+    height: number
+    shape: TableShape
+  }
 }
 
 export function validateTable(input: TableInput): string | null {
@@ -376,16 +397,30 @@ export async function createTable(
   /* Appended, and the position read inside the same statement — a floor built by
      typing six tables in a row must not have them all at sort_order 0, where they
      would then order lexically and put table 10 before table 2. */
+  const place = input.placement
   const result = await siteExecute(
     siteId,
-    `INSERT INTO pos_tables (code, name, section, seats, visit_type_id, sort_order)
-     VALUES (?,?,?,?,?, (SELECT COALESCE(MAX(t.sort_order), -1) + 1 FROM pos_tables t))`,
+    `INSERT INTO pos_tables
+       (code, name, section, seats, visit_type_id,
+        room_id, pos_x, pos_y, width, height, shape,
+        sort_order)
+     VALUES (?,?,?,?,?, ?,?,?,?,?,?,
+             (SELECT COALESCE(MAX(t.sort_order), -1) + 1 FROM pos_tables t))`,
     [
       code,
       (input.name ?? '').trim(),
       (input.section ?? '').trim(),
       input.seats ?? 0,
       input.visitTypeId ?? null,
+      /* All-or-nothing: without a placement these stay NULL/default, which is exactly
+         what an unplaced table is. The caller clamps to the room — `savePlacements`
+         owns that rule and re-applies it on every later move. */
+      place?.roomId ?? null,
+      place ? place.x.toFixed(2) : null,
+      place ? place.y.toFixed(2) : null,
+      place ? place.width.toFixed(2) : '8.00',
+      place ? place.height.toFixed(2) : '8.00',
+      cleanShape(place?.shape),
     ],
   )
   return { ok: true, id: result.insertId }

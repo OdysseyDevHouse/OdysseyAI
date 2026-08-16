@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import {
   EmptyState,
   Icons,
@@ -10,6 +10,7 @@ import {
   TABLE_TH,
 } from '@/components/ui'
 import { formatCell } from '@/lib/reportBuilder/format'
+import { buildSections, isGrouped, rowCountKeyFor } from '@/lib/reportBuilder/shape'
 import type { ReportColumn } from '@/lib/reportBuilder/spec'
 
 /**
@@ -23,17 +24,25 @@ import type { ReportColumn } from '@/lib/reportBuilder/spec'
  * Sorting is client-side and deliberately so: the server already capped the
  * rows, they are all in memory, and a round trip to reorder 200 rows someone is
  * staring at feels broken.
+ *
+ * BANDING comes from lib/reportBuilder/shape.ts rather than being worked out
+ * here, so the PDF and the spreadsheet band the same rows the same way and
+ * subtotal them with the same arithmetic. Sorting happens FIRST and banding
+ * second, so the user's chosen order applies within each band.
  */
 export default function ReportGrid({
   columns,
   rows,
   totals,
   emptyHint,
+  groupKey = null,
 }: {
   columns: ReportColumn[]
   rows: Record<string, unknown>[]
   totals: Record<string, number>
   emptyHint?: string
+  /** The store's banding choice. Null renders one flat table, as before. */
+  groupKey?: string | null
 }) {
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null)
 
@@ -53,6 +62,12 @@ export default function ReportGrid({
     })
   }, [rows, sort, columns])
 
+  // Banded after sorting, so the order the user chose applies inside each band.
+  const sections = useMemo(
+    () => buildSections(sorted, columns, groupKey),
+    [sorted, columns, groupKey],
+  )
+
   if (columns.length === 0 || rows.length === 0) {
     return (
       <EmptyState
@@ -64,6 +79,7 @@ export default function ReportGrid({
   }
 
   const hasTotals = columns.some((c) => c.total)
+  const grouped = isGrouped(sections)
 
   /*
    * Where the "N rows" label goes: the first column that carries no total.
@@ -74,8 +90,10 @@ export default function ReportGrid({
    * put a money column first and the row count had nowhere to render, so it
    * silently disappeared. Undefined when every column totals, in which case the
    * footer is all figures and there is nowhere for the label to go anyway.
+   *
+   * Shared with the PDF and the spreadsheet, so they cannot re-learn this.
    */
-  const rowCountKey = columns.find((c) => !c.total)?.key
+  const rowCountKey = rowCountKeyFor(columns)
 
   function toggleSort(key: string) {
     setSort((s) =>
@@ -128,19 +146,57 @@ export default function ReportGrid({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row, i) => (
-            <tr key={i} className="border-b border-border last:border-0 hover:bg-surface-2">
-              {columns.map((col) => (
-                <td
-                  key={col.key}
-                  className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''} ${
-                    col.numeric && Number(row[col.key]) < 0 ? 'text-danger' : ''
-                  }`}
-                >
-                  {formatCell(row[col.key], col.type)}
-                </td>
+          {sections.map((section, s) => (
+            <Fragment key={section.label ?? s}>
+              {/* The band heading. Carries its row count, because "how many
+                  card sales" is half of what banding is asked for. */}
+              {section.label !== null && (
+                <tr className="border-b border-border bg-surface-2">
+                  <td
+                    colSpan={columns.length}
+                    className={`${TABLE_TD} font-semibold text-ink`}
+                  >
+                    {section.label}{' '}
+                    <span className="font-normal text-muted">({section.rows.length})</span>
+                  </td>
+                </tr>
+              )}
+
+              {section.rows.map((row, i) => (
+                <tr key={i} className="border-b border-border hover:bg-surface-2">
+                  {columns.map((col) => (
+                    <td
+                      key={col.key}
+                      className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''} ${
+                        col.numeric && Number(row[col.key]) < 0 ? 'text-danger' : ''
+                      }`}
+                    >
+                      {formatCell(row[col.key], col.type)}
+                    </td>
+                  ))}
+                </tr>
               ))}
-            </tr>
+
+              {/* A band's subtotal. Only when banded — an unbanded report ends
+                  with the grand total in the footer, and printing the same
+                  figures twice under two names reads as a discrepancy. */}
+              {grouped && section.subtotal && (
+                <tr className="border-b border-border bg-surface-2/60 font-medium text-ink">
+                  {columns.map((col) => (
+                    <td
+                      key={col.key}
+                      className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''}`}
+                    >
+                      {col.key === rowCountKey
+                        ? 'Total'
+                        : col.total
+                          ? formatCell(section.subtotal![col.key], col.type)
+                          : ''}
+                    </td>
+                  ))}
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
         {hasTotals && (
@@ -149,7 +205,12 @@ export default function ReportGrid({
               {columns.map((col) => (
                 <td key={col.key} className={`${TABLE_TD} ${col.numeric ? TABLE_NUMERIC : ''}`}>
                   {col.key === rowCountKey
-                    ? `${rows.length} row${rows.length === 1 ? '' : 's'}`
+                    ? // Banded, the closing row is the total OF the bands and
+                      // says so; flat, it is the only summary line and the row
+                      // count is the more useful thing to put there.
+                      grouped
+                      ? `Grand total (${rows.length})`
+                      : `${rows.length} row${rows.length === 1 ? '' : 's'}`
                     : col.total
                       ? formatCell(totals[col.key], col.type)
                       : ''}

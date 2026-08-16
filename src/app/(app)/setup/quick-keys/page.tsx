@@ -1,5 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listQuickKeys, ensureSupervisorGroup } from '@/lib/site/quickKeys'
+import { getSetting } from '@/lib/site/settings'
 import { siteQuery } from '@/lib/siteDb'
 import { PageHeader, PageBody, Callout } from '@/components/ui'
 import QuickKeyCanvas from './QuickKeyCanvas'
@@ -32,7 +33,28 @@ export default async function QuickKeysPage() {
      migration would have to know what to call it. Idempotent by signature. */
   await ensureSupervisorGroup(siteId)
 
-  const keys = await listQuickKeys(siteId, 'main')
+  /*
+   * Both bars, in one payload.
+   *
+   * The 'tables' section has existed in the ENUM since the table was created and
+   * nothing has ever written to it — every call site passed 'main'. A restaurant till
+   * needs its own bar, because the keys that matter with a table open (print the bill,
+   * move it, split it) are not the ones that matter at a counter.
+   *
+   * Fetched together rather than per-tab so switching tabs is instant and the canvas
+   * holds one list: every action already returns the whole section, and a tab that
+   * had to round-trip before drawing would feel like a page load.
+   */
+  const [mainKeys, tableKeys, posMode] = await Promise.all([
+    listQuickKeys(siteId, 'main'),
+    listQuickKeys(siteId, 'tables'),
+    getSetting(siteId, 'pos_mode'),
+  ])
+
+  /* A retail shop is never shown the tables bar — it has no tables, so a second tab
+     would be a permanently empty screen inviting somebody to fill it. */
+  const hospitality = posMode === 'hospitality'
+  const keys = hospitality ? [...mainKeys, ...tableKeys] : mainKeys
 
   /* Only the products and departments actually ON a key. The alternative — shipping the
      whole product file so the canvas can look one up — is 12 MB to label six buttons. */
@@ -79,6 +101,7 @@ export default async function QuickKeysPage() {
           initialKeys={keys}
           productNames={productNames}
           departmentNames={departmentNames}
+          hospitality={hospitality}
         />
       </PageBody>
     </>
