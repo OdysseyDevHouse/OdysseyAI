@@ -11,6 +11,7 @@ import type { Special } from '@/lib/specialsEngine'
 import type { PendingSchedule } from '@/lib/priceSchedules'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { Terminal } from '@/lib/site/terminals'
+import type { PriceStructure } from '@/lib/site/lookups'
 import type { QuickKeyRow } from '@/lib/quickKeys'
 import type { PosTable } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
@@ -51,10 +52,13 @@ export default function PosEntry({
   terminals,
   departments,
   priceStructureId,
+  priceStructures,
   tenders,
   voidReasons,
   returnReasons,
   cashRounding,
+  depositMinPct,
+  depositAllowWalkin,
   savedCount,
   specials,
   pendingPrices,
@@ -68,6 +72,7 @@ export default function PosEntry({
   visitTypes = [],
   serviceTiers,
   tipsTablesOnly,
+  undoLimit,
 }: {
   siteId: number
   siteName: string
@@ -90,11 +95,17 @@ export default function PosEntry({
   terminals: Terminal[]
   departments: Department[]
   priceStructureId: number | null
+  /** Every active price type, for the price-change key. Relayed unchanged. */
+  priceStructures: PriceStructure[]
   tenders: TenderType[]
   /** The void and return reason lists, relayed unchanged to the shell. */
   voidReasons: PickableReason[]
   returnReasons: PickableReason[]
   cashRounding: number
+  /** The smallest deposit this store takes, as a percentage. 0 means any. */
+  depositMinPct: number
+  /** Whether a deposit may be taken with no customer named. */
+  depositAllowWalkin: boolean
   savedCount: number
   specials: Special[]
   /** Approved price changes, moments unevaluated — the till decides on its clock. */
@@ -112,6 +123,8 @@ export default function PosEntry({
   /** Tips config. Relayed unchanged — this component owns sign-in, not pricing. */
   serviceTiers: ServiceTier[]
   tipsTablesOnly: boolean
+  /** How many undos a basket may spend. 0 is no limit. Relayed unchanged. */
+  undoLimit: number
 }) {
   /*
    * `undefined` means "not looked yet", which is NOT the same as "nobody is signed
@@ -233,10 +246,13 @@ export default function PosEntry({
       terminals={terminals}
       departments={departments}
       priceStructureId={priceStructureId}
+      priceStructures={priceStructures}
       tenders={tenders}
       voidReasons={voidReasons}
       returnReasons={returnReasons}
       cashRounding={cashRounding}
+      depositMinPct={depositMinPct}
+      depositAllowWalkin={depositAllowWalkin}
       savedCount={savedCount}
       canOverrideDiscount={operator.canOverrideDiscount}
       canOverridePrice={operator.canOverridePrice}
@@ -253,6 +269,7 @@ export default function PosEntry({
       visitTypes={visitTypes}
       serviceTiers={serviceTiers}
       tipsTablesOnly={tipsTablesOnly}
+      undoLimit={undoLimit}
     />
   )
 }

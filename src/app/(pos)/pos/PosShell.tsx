@@ -6,6 +6,7 @@ import {
   useToast,
   Button,
   ConfirmModal,
+  EmptyState,
   Icons,
   Modal,
   type PickableReason,
@@ -40,6 +41,7 @@ import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillInstructionGroup } from '@/lib/site/instructions'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { Terminal } from '@/lib/site/terminals'
+import type { PriceStructure } from '@/lib/site/lookups'
 import type { BasketLine } from '@/lib/basket'
 import {
   searchProductsAction,
@@ -57,7 +59,10 @@ import {
   listOpenTabsAction,
   recallSaleForTillAction,
   recordServiceChargeWaivedAction,
+  recordUndoAction,
+  recordVoidAction,
   type OpenTab,
+  type VoidEventPayload,
 } from './actions'
 import { NewTableModal, type NewTableDetails } from './NewTableModal'
 import { tillSignOutAction } from './pinActions'
@@ -71,9 +76,20 @@ import { CustomerModal } from './CustomerModal'
 import { SavedSalesModal, type SavedEntry } from './SavedSalesModal'
 import { OutboxModal } from './OutboxModal'
 import { LineEditModal } from './LineEditModal'
+import { LineOptionsModal, type LineOption } from './LineOptionsModal'
+import { PriceTypeModal } from './PriceTypeModal'
+import { AccountPaymentModal } from './AccountPaymentModal'
+import { DepositModal } from './DepositModal'
+import { depositSummaryAction } from './depositActions'
+import { ReprintModal } from './ReprintModal'
+import { OnlineOrdersModal } from './OnlineOrdersModal'
+import { ClockModal } from './ClockModal'
+import { collectOnlineOrderAction, type CollectableOrder } from './onlineOrderActions'
 import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
+import { VoidReasonModal } from './VoidReasonModal'
+import type { VoidType } from '@/lib/site/posVoids'
 import { useSaleState } from './useSaleState'
 import {
   specialsFor,
@@ -105,9 +121,12 @@ import {
   listTablesAction,
   openTableAction,
   updateTableBillAction,
+  reparkTableBillAction,
+  voidTableBillAction,
   askForBillAction,
   tablePaidAction,
   billForSplitAction,
+  destinationBillAction,
   splitTableAction,
   transferTableAction,
 } from './tableActions'
@@ -117,6 +136,7 @@ import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import { SplitBillModal, type SplitLine } from './SplitBillModal'
 import TransferTableModal from './TransferTableModal'
 import ShiftModal from './ShiftModal'
+import OpenTillGate from './OpenTillGate'
 import { tillShiftStatusAction } from './shiftActions'
 import OverrideModal from './OverrideModal'
 import { kvPut, KV } from '@/lib/posOffline/db'
@@ -183,10 +203,13 @@ export default function PosShell({
   terminals,
   departments,
   priceStructureId: siteDefaultStructureId,
+  priceStructures,
   tenders,
   voidReasons,
   returnReasons,
   cashRounding,
+  depositMinPct,
+  depositAllowWalkin,
   canOverrideDiscount,
   canOverridePrice,
   canVoid,
@@ -203,6 +226,7 @@ export default function PosShell({
   visitTypes = [],
   serviceTiers,
   tipsTablesOnly,
+  undoLimit,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
   siteId: number
@@ -214,6 +238,14 @@ export default function PosShell({
   terminals: Terminal[]
   departments: Department[]
   priceStructureId: number | null
+  /**
+   * Every active price type, for the price-change key to offer.
+   *
+   * The whole list rather than an id, because this key's job is to let a cashier
+   * SWITCH — "what could this sale be priced at" has no answer without the names.
+   * Shipped with the page: a shop has a handful and they change about never.
+   */
+  priceStructures: PriceStructure[]
   tenders: TenderType[]
   /**
    * The two reason lists, active entries only.
@@ -226,6 +258,10 @@ export default function PosShell({
   voidReasons: PickableReason[]
   returnReasons: PickableReason[]
   cashRounding: number
+  /** The smallest deposit this store takes, as a percentage. 0 means any. */
+  depositMinPct: number
+  /** Whether a deposit may be taken with no customer named. */
+  depositAllowWalkin: boolean
   canOverrideDiscount: boolean
   canOverridePrice: boolean
   /** Whether the OPERATOR may void. Re-checked by voidSaleAction regardless. */
@@ -265,19 +301,65 @@ export default function PosShell({
   serviceTiers: ServiceTier[]
   /** Whether a service charge applies only to a table's bill. Defaults on. */
   tipsTablesOnly: boolean
+  /**
+   * How many undos one basket may spend. 0 means no limit.
+   *
+   * Resolved to a number by the page — a missing or unreadable setting arrives here
+   * as 0, because a till that cannot read its limit must not start refusing
+   * corrections. The RECORD of each undo is independent of this and is written
+   * either way; see recordUndoAction.
+   */
+  undoLimit: number
 }) {
   const [state, dispatch] = useSaleState()
 
-  /*
-   * The EFFECTIVE price structure (135): the attached account's own — already
-   * resolved customer → group server-side on the TillCustomer — else the site
-   * default the page shipped. Named to shadow the old prop so every lookup
-   * below (scan, search, browse, recall, finalise) prices through the account
-   * with no further changes. Lines rung BEFORE the account was attached keep
-   * their prices — attach first is the till discipline, and the server
-   * re-checks pricing at finalise either way.
+  /**
+   * The price type this sale is being rung at, chosen at the till.
+   *
+   * Null means "whatever the account or the site says" — the ordinary case, and
+   * the state every sale starts and ends in. Set by the price-change key, and
+   * cleared the moment the basket goes (see resetPricing), because a till left on
+   * Wholesale after the trade customer walked out is how the next walk-in gets
+   * trade prices and nobody notices until the month-end margin report.
    */
-  const priceStructureId = state.customer?.priceStructureId ?? siteDefaultStructureId
+  const [pricingOverride, setPricingOverride] = useState<number | null>(null)
+  /** The price-type list is open. */
+  const [pickingPriceType, setPickingPriceType] = useState(false)
+  /** The account-payment dialog is open. Independent of the basket. */
+  const [takingPayment, setTakingPayment] = useState(false)
+  /**
+   * The deposit dialog is open, and what is already held against this basket.
+   *
+   * Held separately from the basket state rather than inside the reducer: a
+   * deposit is a fact recorded on the SERVER about this document, not part of
+   * what the basket is, and putting it in the reducer would give CLEAR and LOAD
+   * a money figure to forget. Re-read from the server whenever the dialog opens.
+   */
+  const [takingDeposit, setTakingDeposit] = useState(false)
+  const [depositHeld, setDepositHeld] = useState(0)
+  /** The past-sales list is open, to reprint one. */
+  const [showingReprints, setShowingReprints] = useState(false)
+  /** The web-order list is open, to collect one. */
+  const [showingOrders, setShowingOrders] = useState(false)
+  /** The clock pad is open. Whoever taps a PIN into it, not the operator. */
+  const [showingClock, setShowingClock] = useState(false)
+
+  /*
+   * The EFFECTIVE price structure (135): the till's own override first, then the
+   * attached account's — already resolved customer → group server-side on the
+   * TillCustomer — else the site default the page shipped. Named to shadow the old
+   * prop so every lookup below (scan, search, browse, recall, finalise) prices
+   * through it with no further changes. Lines rung BEFORE a change keep their
+   * prices — switch first is the till discipline, and the server re-checks pricing
+   * at finalise either way.
+   *
+   * The override wins over the ACCOUNT deliberately. A cashier who has just been
+   * told to put this one through at wholesale has more information than the
+   * customer record does, and a switch that silently lost to a price list on the
+   * account would be a key that did nothing on exactly the customers it is for.
+   */
+  const priceStructureId =
+    pricingOverride ?? state.customer?.priceStructureId ?? siteDefaultStructureId
 
   const [pending, startTransition] = useTransition()
   const [results, setResults] = useState<TillProduct[]>([])
@@ -292,6 +374,8 @@ export default function PosShell({
   const [showingSaved, setShowingSaved] = useState(false)
   const [showingOutbox, setShowingOutbox] = useState(false)
   const [sizingTiles, setSizingTiles] = useState(false)
+  /** The floor's quick-key dialog. The gate has no pane to draw them in. */
+  const [showingTableKeys, setShowingTableKeys] = useState(false)
   /** The refund pad is open. Distinct from `state.returning`, which is the MODE. */
   const [returning, setReturning] = useState(false)
   /* Per-machine, from localStorage, applied after mount — a counter screen's useful
@@ -310,6 +394,16 @@ export default function PosShell({
    */
   const [savedTally, setSavedTally] = useState(savedCount)
   const [editing, setEditing] = useState<BasketLine | null>(null)
+  /**
+   * Which field the line pad opens on.
+   *
+   * Set by the Line options menu, which names Line Discount, Price Override and
+   * Set new quantity as three separate entries and so has to land on the field
+   * each one promised. Everything else that opens the pad leaves it at quantity.
+   */
+  const [editingField, setEditingField] = useState<'qty' | 'price' | 'discount'>('qty')
+  /** The line whose options menu is open — the "More" key on a line card. */
+  const [lineOptions, setLineOptions] = useState<BasketLine | null>(null)
   /** A scale item waiting for its weight — see the guard in add(). */
   const [weighing, setWeighing] = useState<TillProduct | null>(null)
   /** A gift-card product waiting for its card and amount (147). */
@@ -552,6 +646,31 @@ export default function PosShell({
     (product: TillProduct) => resolvedFromIndex(product, priceStructureId, priceIndex),
     [priceIndex, priceStructureId],
   )
+
+  /*
+   * ── THE OVERRIDE DIES WITH THE BASKET ───────────────────────────────────
+   *
+   * Watched rather than cleared at each exit. A sale ends in fifteen places in
+   * this file — finalised, parked, voided, closed onto a table, switched to a
+   * return, recalled over — and a reset bolted onto each of them is a reset that
+   * will be missing from the sixteenth. What every one of those has in common is
+   * that the basket ends up empty, so that is the condition worth watching.
+   *
+   * The failure this prevents is quiet and expensive: a till left on Wholesale
+   * after the trade customer leaves prices the next walk-in at trade, and nothing
+   * on the screen is wrong — the sale simply rings up cheap. Nobody catches that
+   * at the counter. It surfaces as a margin question weeks later.
+   *
+   * An empty basket the cashier is still setting up is unaffected: switching the
+   * price type before scanning is the ordinary way to use this, and the effect
+   * only fires on the TRANSITION to empty, not on staying empty.
+   */
+  const hadLines = useRef(false)
+  useEffect(() => {
+    const has = state.lines.length > 0
+    if (hadLines.current && !has) setPricingOverride(null)
+    hadLines.current = has
+  }, [state.lines.length])
 
   /*
    * SPECIALS DO NOT APPLY TO A RETURN.
@@ -1338,7 +1457,12 @@ export default function PosShell({
         documentId: result.documentId,
         total,
       })
-      dispatch({ type: 'CLEAR' })
+      /* SET_RETURNING rather than CLEAR, and the difference matters: CLEAR keeps the
+         mode on purpose, so that a cashier who clears a mis-keyed return carries on
+         returning. But this credit note is FINISHED — there is no Sale/Return switch to
+         put the till back, so the posting is what ends the mode. Without this the next
+         customer's goods are credited instead of sold. */
+      dispatch({ type: 'SET_RETURNING', returning: false })
       router.refresh()
     })
   }
@@ -1392,7 +1516,8 @@ export default function PosShell({
       documentId: 0,
       total,
     })
-    dispatch({ type: 'CLEAR' })
+    /* Ends the mode as well as the basket — see the online path above. */
+    dispatch({ type: 'SET_RETURNING', returning: false })
   }
 
   /**
@@ -1438,6 +1563,75 @@ export default function PosShell({
    * the name straight from the dialog rather than setting state and hoping the
    * re-render lands before this runs, which it would not.
    */
+  /**
+   * Open the deposit dialog, saving the basket first if it has never been saved.
+   *
+   * A deposit is held against a DOCUMENT, so there has to be one. An unsaved
+   * basket has no id — `saveDraft` treats a null documentId as "create" — so this
+   * saves exactly as `park` does and then opens the dialog against the id that
+   * comes back.
+   *
+   * Offline it opens anyway and the dialog explains why it cannot take anything.
+   * Refusing to open at all would leave a cashier tapping a dead key with no
+   * idea why, which is the failure mode `NOT_WIRED` exists to prevent.
+   */
+  async function openDeposit() {
+    if (!till.online) {
+      setDepositHeld(0)
+      setTakingDeposit(true)
+      return
+    }
+
+    if (state.lines.length === 0) {
+      toast.info('Ring the sale up first, then take a deposit against it.')
+      return
+    }
+
+    startTransition(async () => {
+      let saved: Awaited<ReturnType<typeof saveSaleAction>>
+      try {
+        saved = await saveSaleAction(
+          state.documentId,
+          {
+            customerId: state.customer?.id ?? null,
+            customerName:
+              state.customer?.name || state.customerName.trim() || tabCustomer.trim() || 'Walk-in',
+            customerVatNo: state.customer?.vatNumber ?? null,
+            customerPhone: state.customer?.phone ?? null,
+            reference: (tabLabel ?? '').trim() || null,
+            personCount: tabPeople,
+            visitTypeId: tabVisitTypeId,
+            terminalId: terminal?.id ?? null,
+            terminalCode: terminal?.code ?? null,
+            priceStructureId,
+            lines: salePayloadLines(state.lines, lineSpecials, docShares),
+          },
+          /* Peeked, not spent — the same approval must still cover the finalise. */
+          overrideTokenRef.current ?? undefined,
+        )
+      } catch {
+        toast.error('The sale could not be saved, so no deposit was taken. Try again.')
+        return
+      }
+      if (!saved.ok) {
+        toast.error(saved.error)
+        return
+      }
+
+      /* Attach the id so the dialog, and everything after it, works against the
+         document that now exists. */
+      if (state.documentId !== saved.documentId) {
+        dispatch({ type: 'ATTACH_DOCUMENT', documentId: saved.documentId })
+      }
+
+      /* Read fresh rather than trusting a cached figure: another till may have
+         taken a deposit against this same document since it was last seen. */
+      const summary = await depositSummaryAction(saved.documentId).catch(() => null)
+      setDepositHeld(summary && !('ok' in summary) ? summary.held : 0)
+      setTakingDeposit(true)
+    })
+  }
+
   function park(label?: string, details?: { people: number | null; visitTypeId: number | null }) {
     if (!till.online) {
       startTransition(parkLocally)
@@ -1522,6 +1716,391 @@ export default function PosShell({
     })
   }
 
+  /**
+   * Take the last line back off — the Undo key.
+   *
+   * ── TWO SEPARATE QUESTIONS, ASKED IN THIS ORDER ───────────────────────────
+   *
+   * May they, and did it happen. The limit answers the first and refuses BEFORE
+   * anything is removed, because a till that took the line off and then complained
+   * would have already done the thing it was refusing. The record answers the
+   * second and is written for every undo that goes through, limit or no limit —
+   * see recordUndoAction for why those are not the same switch.
+   *
+   * The line is read here rather than inside the reducer's UNDO because the record
+   * needs to name what was removed, and by the time the reducer has run it is gone.
+   * The reducer picks the last line by the same rule, so the two cannot disagree
+   * about which one that is.
+   *
+   * The audit call is deliberately NOT awaited and its failure is deliberately not
+   * surfaced. An undo is a correction the cashier is watching for, and holding the
+   * screen on a log write — or worse, telling them it failed — would make the trail
+   * the cashier's problem. `logActivity` already swallows its own errors; this
+   * catch is for the transport.
+   */
+  /**
+   * The void the cashier has asked for and not yet given a reason for.
+   *
+   * Voiding is two steps — ask, then do — and nothing is removed until the
+   * reason comes back. Holding the intent here rather than removing optimistically
+   * is what makes "Keep it" mean keep it: a cashier who opens the prompt and
+   * changes their mind must get the line back exactly as it was, and a line put
+   * back after removal would have lost its position in the basket.
+   *
+   * `lines` carries what will be recorded, captured NOW, because the reducer
+   * destroys it. For an item void that is the single unit coming off, not the
+   * line it comes off — see buildItemVoid.
+   */
+  const [pendingVoid, setPendingVoid] = useState<{
+    voidType: VoidType
+    /** What the modal shows. */
+    description: string
+    qty: number
+    valueIncl: number
+    /** What gets written, one row each. */
+    events: VoidEventPayload[]
+    /** Applied once a reason is given. */
+    apply: () => void
+  } | null>(null)
+
+  /** The line's worth, VAT in and before discount — the undo trail's basis. */
+  function lineValue(line: BasketLine, qty: number): number {
+    return round(qty * line.unitPriceIncl, 2)
+  }
+
+  /**
+   * Asks why, then does it.
+   *
+   * Every void goes through here, so the prompt cannot be skipped on one path
+   * and enforced on another — which is the failure mode that makes a void report
+   * quietly wrong rather than visibly empty.
+   */
+  function askVoid(intent: NonNullable<typeof pendingVoid>) {
+    setPendingVoid(intent)
+  }
+
+  /**
+   * One unit off a line, via the − key.
+   *
+   * Recorded as an `item` void even when it empties the line, because item is
+   * what the cashier DID. `stepQty` removes a line that reaches zero, so on a
+   * single-unit line this looks identical to a line void from the outside —
+   * filing it as one would inflate line voids on every shop that sells singles.
+   */
+  function stepLine(key: string, delta: number) {
+    const line = state.lines.find((l) => l.key === key)
+    if (!line) return
+
+    // Adding is not a void. Only the − key asks a question.
+    if (delta > 0) {
+      dispatch({ type: 'STEP', key, delta })
+      return
+    }
+
+    const step = line.allowFractions ? Math.abs(delta) : Math.max(1, Math.round(Math.abs(delta)))
+    const coming = Math.min(step, line.qty)
+
+    askVoid({
+      voidType: 'item',
+      description: line.description,
+      qty: coming,
+      valueIncl: lineValue(line, coming),
+      events: [
+        {
+          voidType: 'item',
+          productId: line.productId ?? null,
+          productCode: line.productCode ?? null,
+          description: line.description,
+          qty: coming,
+          valueIncl: lineValue(line, coming),
+        },
+      ],
+      apply: () => dispatch({ type: 'STEP', key, delta }),
+    })
+  }
+
+  /** A whole line off, via the Void key on the line card. */
+  function voidLine(key: string) {
+    const line = state.lines.find((l) => l.key === key)
+    if (!line) return
+
+    askVoid({
+      voidType: 'line',
+      description: line.description,
+      qty: line.qty,
+      valueIncl: lineValue(line, line.qty),
+      events: [
+        {
+          voidType: 'line',
+          productId: line.productId ?? null,
+          productCode: line.productCode ?? null,
+          description: line.description,
+          qty: line.qty,
+          valueIncl: lineValue(line, line.qty),
+        },
+      ],
+      apply: () => dispatch({ type: 'REMOVE', key }),
+    })
+  }
+
+  /**
+   * The whole basket, abandoned.
+   *
+   * Writes a `sale` rollup AND one `line` row per line, sharing a group_id.
+   * Without the line rows a product-level report cannot see the goods that went
+   * out with the basket, which is where the value is; without the rollup nobody
+   * can tell four separate mistakes from one abandoned sale. Anything summing
+   * value must therefore filter on void_type — see the migration.
+   */
+  function voidSaleDraft(then?: () => void) {
+    const lines = state.lines
+    if (lines.length === 0) {
+      then?.()
+      return
+    }
+
+    const total = lines.reduce((sum, l) => sum + lineValue(l, l.qty), 0)
+
+    askVoid({
+      voidType: 'sale',
+      description: `${lines.length} ${lines.length === 1 ? 'line' : 'lines'}`,
+      qty: lines.length,
+      valueIncl: round(total, 2),
+      events: [
+        {
+          voidType: 'sale',
+          productId: null,
+          productCode: null,
+          description: `${lines.length} ${lines.length === 1 ? 'line' : 'lines'}`,
+          qty: lines.length,
+          valueIncl: round(total, 2),
+        },
+        ...lines.map((l) => ({
+          voidType: 'line' as const,
+          productId: l.productId ?? null,
+          productCode: l.productCode ?? null,
+          description: l.description,
+          qty: l.qty,
+          valueIncl: lineValue(l, l.qty),
+        })),
+      ],
+      apply: () => {
+        /*
+         * ── THE BILL GOES TOO, NOT JUST THE LINES ─────────────────────────
+         *
+         * This used to be a bare CLEAR, which is the whole job for a retail
+         * basket — that one lives in this component until it is paid, so
+         * emptying it IS voiding it. A hospitality basket is already parked on
+         * the server, and a CLEAR alone left the voided order sitting on the
+         * floor for the next waiter to pick up: the screen said the sale was
+         * gone, the table said it was still there, and the table was right.
+         *
+         * Read BEFORE the dispatch. CLEAR wipes `state.documentId`, so a
+         * version of this that read it afterwards would cancel nothing — the
+         * same ordering trap `releaseHeldBill` documents.
+         */
+        const parked = state.documentId
+        dispatch({ type: 'CLEAR' })
+        if (parked) void voidTableBillAction(parked).catch(() => {})
+
+        /*
+         * Hospitality has somewhere to go back TO. The sale that was on screen
+         * no longer exists, and a till sitting on a blank basket still labelled
+         * with the table it just voided invites the waiter to ring the next
+         * order onto a bill that is gone. Retail has no floor, so it stays put
+         * on an empty basket — which is exactly where a cleared retail sale has
+         * always left it.
+         *
+         * Skipped when the caller passed its own `then`: the unnamed-close
+         * prompt already walks to the gate itself, and doing it twice would
+         * fight over `choosingTable`.
+         */
+        if (then) {
+          then()
+          return
+        }
+        if (hospitality) {
+          clearTabIdentity()
+          setTable(null)
+          setChoosingTable(true)
+          refreshTables()
+        }
+      },
+    })
+  }
+
+  /**
+   * The reason came back: record it, then do the thing.
+   *
+   * The removal is applied FIRST and the write is fire-and-forget behind it. A
+   * cashier waiting on a database round trip to see a line leave the screen
+   * would be waiting on the audit trail, and an offline till would never let go
+   * of the line at all. `recordVoidEvents` swallows its own errors; this catch
+   * is for the transport.
+   */
+  function confirmVoid(reason: { reasonId: number; note: string | null }) {
+    const intent = pendingVoid
+    if (!intent) return
+
+    setPendingVoid(null)
+    intent.apply()
+
+    const groupId = intent.voidType === 'sale' ? crypto.randomUUID() : null
+
+    void (async () => {
+      try {
+        await recordVoidAction({
+          reasonId: reason.reasonId,
+          note: reason.note,
+          documentId: state.documentId,
+          terminalId: terminal?.id ?? null,
+          terminalCode: terminal?.code ?? null,
+          shiftId: await currentShiftId(siteId),
+          groupId,
+          events: intent.events,
+        })
+      } catch {
+        /* Offline, or the write failed. The void itself stands — it is local and
+           the cashier has watched it happen. Nothing useful to say to them about
+           a trail they did not ask for, and refusing the void because the audit
+           row would not write is the one behaviour nobody wants: it would hold a
+           customer at the counter over logging.
+
+           KNOWN GAP: a void taken while the line is down is LOST, not queued.
+           The outbox carries finalised sales, which are money owed and must
+           arrive; a void has no such claim on it, and putting one in the queue
+           would mean an abandoned basket could not be cleared until it drained.
+           The honest consequence is that void totals under-report an offline
+           spell rather than over-report it — which is the safer direction for a
+           number an accusation might rest on, but it is still a gap. Closing it
+           means its own IndexedDB store replayed on reconnect, the same shape
+           `parkOffline` uses, and that is a piece of work rather than a line. */
+      }
+    })()
+  }
+
+  /**
+   * A choice from the line's "More" menu.
+   *
+   * The menu is a list of verbs and this is the one place that says what each
+   * verb DOES, so a reader can see the whole set at once rather than chasing
+   * seven handlers. Three of them are the three fields of the line pad and open
+   * it on their own field; one is the note, which the pad also holds.
+   *
+   * ── THE THREE THAT ARE NOT BUILT YET ──────────────────────────────────────
+   *
+   * Wastage, Generic Extras and Move to person are named here and refuse
+   * politely, because each needs real work that has not been specced:
+   *
+   *   · WASTAGE has to take the stock OUT without selling it. The write-off
+   *     document and its reason list already exist (100_stock_adjustments), and
+   *     `recordMovement` is the one gate every quantity change goes through —
+   *     but there is no movement type for it and no line-level reason column, so
+   *     wiring it up is a decision about what a till may write off unsupervised,
+   *     not a screen.
+   *   · GENERIC EXTRAS needs an ad-hoc priced extra. Every `ChosenOption` today
+   *     is minted from a configured library option, and `pruneUnasked` strips
+   *     any answer whose group was not asked — so a free-typed extra would be
+   *     silently deleted on the next save rather than merely unsupported.
+   *   · MOVE TO PERSON has no model behind it. posSplit.ts records that a
+   *     per-seat column on a line was considered and REJECTED, on the grounds
+   *     that every screen summing a document would have to learn to group by it.
+   *     Today the unit of person-ness is a table, and "move to person" either
+   *     means a new concept or means the existing split.
+   *
+   * A named row that says "not yet" beats a missing row: a cashier who was
+   * promised these can see the till knows about them, and nobody files a bug
+   * for a button that is honest about itself.
+   */
+  function chooseLineOption(option: LineOption) {
+    const line = lineOptions
+    if (!line) return
+    setLineOptions(null)
+
+    switch (option) {
+      /* The three fields of one pad, each landing on its own. */
+      case 'discount':
+        setEditingField('discount')
+        setEditing(line)
+        return
+      case 'price':
+        setEditingField('price')
+        setEditing(line)
+        return
+      case 'quantity':
+        setEditingField('qty')
+        setEditing(line)
+        return
+      /* The note lives on the same pad, under the keys. Opened on quantity
+         because the note box is always visible there — it is not a tab. */
+      case 'message':
+        setEditingField('qty')
+        setEditing(line)
+        return
+      case 'wastage':
+        toast.info('Wastage is not set up on the till yet — write it off under Adjustments.')
+        return
+      case 'extras':
+        toast.info('Generic extras are not available yet.')
+        return
+      case 'move':
+        /* Pointed at the thing that DOES exist rather than a flat refusal: a
+           waiter moving one person's food onto their own bill is served today
+           by splitting the table, and hospitality is the only mode where the
+           gesture means anything. */
+        toast.info(
+          hospitality
+            ? 'Moving one line to a person is not available yet — use Split bill.'
+            : 'Moving a line to another bill is not available on a counter till.',
+        )
+        return
+    }
+  }
+
+  function undoLastLine() {
+    const last = state.lines[state.lines.length - 1]
+    if (!last) {
+      toast.info('Nothing to undo.')
+      return
+    }
+
+    if (undoLimit > 0 && state.undoCount >= undoLimit) {
+      toast.error(
+        undoLimit === 1
+          ? 'One undo per sale on this till. Tap the line to edit it, or void the sale.'
+          : `${undoLimit} undos per sale on this till. Tap the line to edit it, or void the sale.`,
+      )
+      return
+    }
+
+    const undoNumber = state.undoCount + 1
+    dispatch({ type: 'UNDO' })
+
+    void recordUndoAction({
+      documentId: state.documentId,
+      productId: last.productId ?? null,
+      description: last.description,
+      qty: last.qty,
+      /* Gross, before any line discount — the same shape documentMath starts from.
+         What the customer would have been asked for is the figure that makes a
+         pattern of undos worth reading. */
+      lineTotalIncl: round(last.qty * last.unitPriceIncl, 2),
+      undoNumber,
+      terminalCode: terminal?.code ?? null,
+    }).catch(() => {
+      /* Offline, or the write failed. The undo itself stands — it is local, and the
+         cashier has seen it happen. Nothing useful to say to them about a trail they
+         did not ask for, so this is silent by design rather than by omission. */
+    })
+
+    /* Said out loud on the LAST one, while the sale is still open. A cashier who
+       discovers the limit by being refused has already lost the correction they
+       were making; one who is told they have none left can tap the line instead. */
+    if (undoLimit > 0 && undoNumber === undoLimit) {
+      toast.info('That was the last undo on this sale.')
+    }
+  }
+
   /** Forget what this basket was called. Always paired with a CLEAR. */
   function clearTabIdentity() {
     setTabLabel(null)
@@ -1548,9 +2127,51 @@ export default function PosShell({
    * because there is no way to answer it on the waiter's behalf: an unnamed
    * basket cannot be found again once it leaves the screen.
    */
+  /**
+   * The Save key — the same act as Close, minus the ambiguity.
+   *
+   * Close has to ask "save, void, or carry on" when a basket has no name, because
+   * a waiter pressing Close might mean any of the three. Somebody who pressed SAVE
+   * has already answered that question, so this skips straight to naming: putting
+   * a "void it" button in front of a cashier who asked to save is offering them a
+   * way to lose the sale they were trying to keep.
+   *
+   * Everything else is the same path, deliberately — a named tab or a seated table
+   * saves silently, an empty basket does nothing.
+   */
+  function saveSale() {
+    if (state.lines.length === 0) {
+      toast.info('Add something before saving the sale.')
+      return
+    }
+    if (table || tabLabel) {
+      closeSale()
+      return
+    }
+    setNaming({ closing: true })
+  }
+
+  /**
+   * Hands this till's bill back, so the floor stops reading it as taken.
+   *
+   * Fire-and-forget, and deliberately not awaited: every caller is a waiter LEAVING,
+   * and holding the screen on a round trip to release a lock they cannot see would make
+   * going back to the floor feel broken. The claim expires on its own if this never
+   * lands (171), so the worst case is already handled.
+   *
+   * Reads `state.documentId` at CALL time — callers dispatch CLEAR immediately after,
+   * which wipes it, so a version that read it later would release nothing.
+   */
+  function releaseHeldBill() {
+    const documentId = state.documentId
+    if (!documentId) return
+    void reparkTableBillAction(documentId).catch(() => {})
+  }
+
   function closeSale() {
     if (state.lines.length === 0) {
       // Nothing to lose. Leaving is the whole intent of the key.
+      releaseHeldBill()
       clearTabIdentity()
       dispatch({ type: 'CLEAR' })
       if (hospitality) {
@@ -1563,6 +2184,7 @@ export default function PosShell({
     /* A seated table is already named by its own code, and its bill is already on
        the server via the debounce — so Close is just "go back to the floor". */
     if (table) {
+      releaseHeldBill()
       clearTabIdentity()
       dispatch({ type: 'CLEAR' })
       setTable(null)
@@ -1624,7 +2246,29 @@ export default function PosShell({
       setTabCustomer(tab.customerName ?? '')
       setTabPeople(tab.personCount)
       setTabVisitTypeId(tab.visitTypeId)
-      setTable(null)
+      /*
+       * A tab and a table are not alternatives — most of the tabs on a hospitality
+       * floor ARE tables, listed by their bill rather than by their position. So the
+       * table this bill sits on is carried onto the till when there is one.
+       *
+       * Nulling it unconditionally (which is what this did) left the till holding a
+       * bill it did not know was on a table: every gesture that acts on the table —
+       * split, the table's own label in the header, service charge — behaved as though
+       * the waiter were at a counter. Split was the visible one: pressing the key while
+       * sat in a table sent the waiter back to the floor to choose a table, and then
+       * told them no bill was on one.
+       *
+       * Matched against a FRESH read rather than the `tables` already on screen, which
+       * is re-read on mount and every twenty seconds — a table seated in between would
+       * otherwise not be found, which is the same staleness that made this bug look
+       * intermittent.
+       */
+      const floor = await listTablesAction().catch(() => null)
+      if (floor?.ok) setTables(floor.tables)
+      const onTable = (floor?.ok ? floor.tables : tables).find(
+        (t) => t.documentId === tab.documentId,
+      )
+      setTable(onTable ?? null)
       setChoosingTable(false)
       setDocDiscount(null) // a recalled basket must not inherit the last one's discount
       dispatch({
@@ -1694,6 +2338,52 @@ export default function PosShell({
       }
       setShowingSaved(false)
       toast.success('Sale recalled.')
+    })
+  }
+
+  /**
+   * Bringing a web order onto the till, to be collected and paid for.
+   *
+   * ── WHY IT REFUSES OVER A BASKET RATHER THAN MERGING ──────────────────────
+   *
+   * Two orders' lines in one basket is one invoice for two customers, and the
+   * second one to walk in pays the first one's bill. A half-scanned basket for
+   * somebody else has the same problem in a quieter form. So the till says what is
+   * in the way rather than silently combining — the cashier finishes or parks what
+   * they have and taps again.
+   *
+   * The COKE case is the opposite and is the whole point: extras are added AFTER
+   * the order lands, onto the same basket, and go out on the same invoice. That
+   * needs no special handling at all, which is why the order becomes an ordinary
+   * basket rather than something the pad has to know about.
+   */
+  function collectOrder(order: CollectableOrder) {
+    if (state.lines.length > 0) {
+      toast.error('Finish or save the sale on screen first, then bring the order up.')
+      return
+    }
+    startTransition(async () => {
+      const result = await collectOnlineOrderAction(order.id, priceStructureId)
+      if (!result.ok) {
+        toast.error(result.error)
+        /* Closed rather than left open: every refusal here means the list is out
+           of date — already invoiced, cancelled, taken at the other till — and
+           re-opening re-reads it. */
+        setShowingOrders(false)
+        return
+      }
+      setDocDiscount(null)
+      dispatch({
+        type: 'LOAD',
+        documentId: result.documentId,
+        lines: result.lines,
+        /* Same rule as a recalled sale: the NAME comes back, the account does not.
+           Credit needs a live balance, and an order placed on Tuesday is not it. */
+        customer: null,
+        customerName: result.customerName ?? '',
+      })
+      setShowingOrders(false)
+      toast.success(`${order.orderNumber} is on the till. Add anything else, then take payment.`)
     })
   }
 
@@ -1825,10 +2515,85 @@ export default function PosShell({
     setSplitting({ table, lines: bill.lines })
   }
 
+  /**
+   * Splitting the table the till is ALREADY IN.
+   *
+   * ── WHY THIS IS NOT "ARM AND GO BACK TO THE FLOOR" ────────────────────────
+   *
+   * Arming asks a waiter standing inside table six's bill to walk out to the floor and
+   * tap table six — re-choosing the thing they are already looking at. It was also
+   * unreliable in a way that read as the feature being broken: the gate counts armable
+   * bills from the OPEN TABS list, which is re-read on mount and every twenty seconds,
+   * so a table seated in between showed a floor with nothing to split on it. "No open
+   * bill is on a table" while the waiter is sat in one.
+   *
+   * So when a table is open, the key opens the split screen on THAT table and never
+   * touches the gate. Arming survives for the other case — no table open, pick one — and
+   * that path still works exactly as it did.
+   *
+   * ── THE BASKET IS PUSHED FIRST, AND THAT IS THE WHOLE SUBTLETY ────────────
+   *
+   * The split reads the bill from the SERVER, because moving lines between documents is
+   * done by line id and only the server knows them. But the till holds the basket in
+   * memory and writes it on a 900ms debounce — so anything rung up in the last second is
+   * on screen and not yet on the document. Splitting straight away would divide a bill
+   * that is missing the last round of drinks, silently.
+   *
+   * Pushing first costs one round trip on a screen that is about to do several, and it
+   * is what makes "what I can see is what I can split" true.
+   */
+  function openSplitForCurrentTable() {
+    if (!table) {
+      // No table open: fall back to the floor, which is where one gets chosen.
+      setArmedForTransfer(false)
+      setArmedForSplit(true)
+      setChoosingTable(true)
+      return
+    }
+    if (state.lines.length === 0) {
+      toast.error('There is nothing on this bill to split.')
+      return
+    }
+    if (!till.online) {
+      /* The split writes two documents in one server transaction. Offline there is no
+         way to do that, and no way to tell the waiter afterwards which half survived. */
+      toast.error('Splitting a bill needs the connection.')
+      return
+    }
+
+    startTransition(async () => {
+      const documentId = state.documentId
+      if (documentId) {
+        const pushed = await updateTableBillAction(documentId, {
+          customerName: table.code,
+          terminalId: terminal?.id ?? null,
+          terminalCode: terminal?.code ?? null,
+          priceStructureId,
+          lines: salePayloadLines(state.lines, lineSpecials, docShares),
+        }).catch(() => null)
+        if (!pushed?.ok) {
+          toast.error(pushed?.error ?? "Couldn't save this bill, so it cannot be split yet.")
+          return
+        }
+        setTables(pushed.tables)
+      }
+      await openSplit(table)
+    })
+  }
+
   /** Writes the split, then re-reads the floor so both halves show. */
   function confirmSplit(toTableId: number, moves: { lineId: number; qty: number }[]) {
     const from = splitting?.table
     if (!from) return
+    /* Read BEFORE the write, because afterwards every destination is occupied — the
+       distinction the toast draws is between a table that already had a bill and one
+       that did not, and only the pre-split floor knows which. */
+    const wasOccupied = tables.find((t) => t.id === toTableId)?.state !== 'free'
+    /* Was this split started from INSIDE the table, rather than armed from the floor?
+       That decides where the waiter is left afterwards, and — more importantly — whether
+       there is a stale basket on screen that has to be reloaded. */
+    const fromOpenTable = table?.id === from.id
+    const keptDocumentId = fromOpenTable ? state.documentId : null
     startTransition(async () => {
       const result = await splitTableAction({ fromTableId: from.id, toTableId, moves })
       if (!result.ok) {
@@ -1837,8 +2602,46 @@ export default function PosShell({
       }
       setTables(result.tables)
       setSplitting(null)
+
+      /*
+       * The till is still holding the WHOLE bill, including the lines that just moved
+       * off it. Left alone, the 900ms autosave would write that basket straight back
+       * over the document and silently undo the split — the waiter would watch the
+       * items reappear. So the kept half is re-read from the server, which is now the
+       * only place that knows which lines survived.
+       *
+       * The waiter STAYS on the table. They were serving it when they pressed the key,
+       * the kept half is still theirs, and being thrown out to the floor mid-service is
+       * how a bill gets abandoned half-finished.
+       */
+      if (keptDocumentId) {
+        const kept = await recallSaleForTillAction(keptDocumentId, priceStructureId).catch(
+          () => null,
+        )
+        if (kept?.ok) {
+          dispatch({
+            type: 'LOAD',
+            documentId: kept.documentId,
+            lines: kept.lines,
+            customer: null,
+            customerName: kept.customerName ?? '',
+          })
+        } else {
+          /* The kept half could not be re-read — rather than leave a basket on screen
+             that would overwrite the split, hand the table back and send the waiter to
+             the floor, where tapping it reloads cleanly. */
+          releaseHeldBill()
+          dispatch({ type: 'CLEAR' })
+          setTable(null)
+          setChoosingTable(true)
+        }
+      }
+
       const to = result.tables.find((t) => t.id === toTableId)
-      toast.success(`Moved to ${to?.code ?? 'the other table'}.`)
+      const where = to?.code ?? 'the other table'
+      /* Says which of the two happened: added ONTO an existing bill is the one a waiter
+         may want to check, since those lines are now mixed in with somebody else's. */
+      toast.success(wasOccupied ? `Added to ${where}'s bill.` : `Moved to ${where}.`)
     })
   }
 
@@ -1919,6 +2722,27 @@ export default function PosShell({
   const [shiftLabel, setShiftLabel] = useState<string | null>(null)
 
   /**
+   * Whether this till is OPEN FOR BUSINESS — and the gate that says so.
+   *
+   * ── WHY THE SHELL OWNS THIS ───────────────────────────────────────────────
+   *
+   * A sale rung up with no shift is a real invoice in a real drawer that no
+   * cash-up will ever account for. The chip in the header warned about that and
+   * was ignorable by design; this makes it structural instead — no shift, no
+   * sale screen. See OpenTillGate for the argument in full.
+   *
+   * `null` means "not established yet", which is NOT the same as "closed": the
+   * status read is a round trip, and gating on a not-yet-known answer would
+   * flash the closed screen on every load of a perfectly open till. So the gate
+   * renders only once the server has actually said there is no shift.
+   */
+  const [shiftStatus, setShiftStatus] = useState<{
+    mode: 'terminal' | 'user'
+    canCashup: boolean
+    open: boolean
+  } | null>(null)
+
+  /**
    * Stashes the open shift for the OFFLINE path and redraws the chip.
    *
    * KV.shift is what `currentShiftId` reads when an offline sale banks — it was
@@ -1929,22 +2753,45 @@ export default function PosShell({
   const noteShift = useCallback(
     (shiftId: number | null, userName?: string) => {
       setShiftLabel(shiftId ? `Shift · ${userName ?? 'open'}` : null)
+      setShiftStatus((s) => (s ? { ...s, open: shiftId !== null } : s))
       void kvPut(siteId, KV.shift, shiftId ? { id: shiftId } : null).catch(() => {})
     },
     [siteId],
   )
 
-  /* Seed the chip and KV.shift once the till is up — a shift somebody opened
-     from the back office must still catch this till's offline sales. */
+  /* Seed the chip, the gate and KV.shift once the till is up — a shift somebody
+     opened from the back office must still catch this till's offline sales.
+
+     Re-run when the OPERATOR changes as well as the till: in user mode the
+     shift belongs to the person, so the answer to "is a shift open" is a
+     different question for each one who signs in at this machine. */
   useEffect(() => {
     if (!till.online) return
     void tillShiftStatusAction(terminal?.id ?? null)
       .then((result) => {
-        if (!('ok' in result)) noteShift(result.shift?.id ?? null, result.shift?.userName)
+        if ('ok' in result) return
+        noteShift(result.shift?.id ?? null, result.shift?.userName)
+        setShiftStatus({
+          mode: result.mode,
+          canCashup: result.canCashup,
+          open: result.shift !== null,
+        })
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [till.online, terminal?.id])
+  }, [till.online, terminal?.id, operatorUserId])
+
+  /**
+   * Does the closed-till gate stand in front of the sale right now?
+   *
+   * OFFLINE IS NOT GATED, deliberately. A till that lost the line mid-morning
+   * cannot read or open a shift, and refusing to trade would turn a network
+   * outage into a closed shop — the exact failure the whole offline path exists
+   * to prevent. Those sales queue with whatever shift KV.shift last held, which
+   * is the one the till was already trading on.
+   */
+  const closedGate =
+    till.online && shiftStatus !== null && !shiftStatus.open ? shiftStatus : null
 
   /**
    * Send-to-kitchen: fetch the delta, PRINT, then mark — in that order, so a
@@ -2201,19 +3048,49 @@ export default function PosShell({
     () => ({
       handlers: {
         pay: () => setTendering(true),
-        clear: () => setConfirmClear(true),
-        park,
-        showSaved: () => setShowingSaved(true),
-        undo: () => {
-          const last = state.lines[state.lines.length - 1]
-          if (last) dispatch({ type: 'REMOVE', key: last.key })
+        /*
+         * The Void Sale key ASKS WHY, like every other void.
+         *
+         * It used to open the plain "Clear this sale?" confirm, which is how the
+         * one void a cashier reaches most often was also the only one that wrote
+         * no reason — the exact failure `askVoid` exists to prevent, and it made
+         * a void report quietly wrong rather than visibly empty.
+         *
+         * A RETURN keeps the old confirm. There is no reason list for goods
+         * coming back this way, and clearing one is a mode change rather than a
+         * void — the same split `onClear` makes on the pane.
+         */
+        clear: () => {
+          if (state.returning || state.lines.length === 0) setConfirmClear(true)
+          else voidSaleDraft()
         },
+        saveSale,
+        showSaved: () => setShowingSaved(true),
+        undo: undoLastLine,
         pickCustomer: () => setPickingCustomer(true),
         editLine: () => {
           const line = state.lines.find((l) => l.key === state.selectedKey)
           if (line) setEditing(line)
         },
-        openDepartment: (departmentId: number) => dispatch({ type: 'DRILL', departmentId }),
+        pickPriceType: () => {
+          /* A shop with one price type has nothing to choose between, and a dialog
+             offering a single option that is already selected is a dead end. Say what
+             is missing and where it is set up instead. */
+          if (priceStructures.length < 2) {
+            toast.info('This shop has one price type. Add more under Setup → Pricing.')
+            return
+          }
+          setPickingPriceType(true)
+        },
+        takePayment: () => setTakingPayment(true),
+        takeDeposit: () => void openDeposit(),
+        showReprints: () => setShowingReprints(true),
+        showOnlineOrders: () => setShowingOrders(true),
+        showClock: () => setShowingClock(true),
+        /* root: a quick key names the department to open outright — it is not a
+           step down from wherever the pane happens to be sitting. */
+        openDepartment: (departmentId: number) =>
+          dispatch({ type: 'DRILL', departmentId, root: true }),
         addProduct: (productId: number) => {
           /* Resolved against the till's OWN catalogue, so a product key works offline —
              which is the point of storing an id rather than a whole product on the key. */
@@ -2250,7 +3127,30 @@ export default function PosShell({
         },
         startReturn: () => dispatch({ type: 'SET_RETURNING', returning: true }),
         giftCardBalance: () => setGiftBalanceOpen(true),
-        navigate: (href: string) => router.push(href),
+        /*
+         * The two gestures that act on a whole table, reached from a key — they were
+         * once a pair of buttons on the gate's header.
+         *
+         * They differ in WHERE they start, because the two jobs differ. A split acts on
+         * the bill the waiter is looking at, so it opens on the table already open and
+         * only sends them to the floor to pick one when none is (see
+         * `openSplitForCurrentTable`). A move is about a table other than this one by
+         * definition — its whole purpose is choosing a destination — so it still arms
+         * the floor.
+         *
+         * For the arming path the order matters and is the whole subtlety: the gate is
+         * only mounted while `choosingTable`, so arming first and navigating second
+         * would set state on a screen that is not there. Arming the mode and THEN
+         * showing the gate means the banner is up on the first paint the waiter sees.
+         *
+         * Exclusive, like the buttons were: a tap on the floor can only mean one thing.
+         */
+        armSplit: openSplitForCurrentTable,
+        armTransfer: () => {
+          setArmedForSplit(false)
+          setArmedForTransfer(true)
+          setChoosingTable(true)
+        },
         say: (message: string, tone: 'info' | 'error') =>
           tone === 'error' ? toast.error(message) : toast.info(message),
       },
@@ -2266,7 +3166,12 @@ export default function PosShell({
            cashier legitimately holds, and a greyed key nobody can explain is worse than
            one that says why when pressed. */
         !['sales.discount_override', 'sales.price_override', 'sales.void'].includes(capability),
-      hospitality: false,
+      /* HOSPITALITY READ 3 OF 3 — the one the docblock at the top of this file names.
+         It was pinned to `false`, which greyed every hospitality-only key (split the
+         bill, move table, print the bill, send to kitchen) on EVERY till including a
+         restaurant one, and made a configured feature look unbuilt. The prop is the
+         only authority on which kind of till this is. */
+      hospitality,
       online: till.online,
       hasSelection: state.selectedKey !== null,
       hasLines: state.lines.length > 0,
@@ -2274,7 +3179,18 @@ export default function PosShell({
       returning: state.returning,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.lines, state.selectedKey, state.customer, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid],
+    /* `state.undoCount` is in here for the undo handler's sake: it closes over the
+       count to decide whether the allowance is spent, so a memo that did not rebuild
+       when it changed would keep refusing against the figure from two undos ago. */
+    /* `state.returning` earns its place now that the Void Sale key branches on it:
+       without it the key would keep reading the mode from whenever the memo last
+       rebuilt, and offer a reason picker for a return it thinks is still a sale. */
+    /* `table` and `state.documentId` are here for the Split key, which acts on the
+       table the till is IN. Without them the handler kept the `table` from whenever the
+       memo last rebuilt — null, from before the waiter tapped a table — so pressing
+       Split inside an open table read as "no table open", threw the waiter back to the
+       floor and told them no bill was on one. The bill was on screen the whole time. */
+    [state.lines, state.selectedKey, state.customer, state.undoCount, state.returning, state.documentId, table, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid, hospitality],
   )
 
   const customerLabel = state.customer?.name ?? (state.customerName.trim() || null)
@@ -2301,10 +3217,10 @@ export default function PosShell({
   return (
     <TileSizeContext.Provider value={tileSize.size}>
       <TillStatusBar
-        /* The bar names the SCREEN under it — except on the gate, where the card
-           below already says "Tables" and the slot carries the brand instead.
-           No basket there either, so no item pill. */
-        screenTitle={choosingTable ? null : 'Current Sale'}
+        /* The bar names the SCREEN under it — except on either gate, where the
+           card below carries its own heading and the slot takes the brand
+           instead. No basket there either, so no item pill. */
+        screenTitle={choosingTable || closedGate ? null : 'Current Sale'}
         operatorName={operatorName}
         terminalLabel={
           terminal
@@ -2319,10 +3235,13 @@ export default function PosShell({
         pendingSales={till.pending}
         failedSales={till.failed}
         catalogAgeHours={till.catalogAgeHours}
-        itemCount={choosingTable ? null : state.lines.length}
+        itemCount={choosingTable || closedGate ? null : state.lines.length}
         onShowOutbox={() => setShowingOutbox(true)}
         shiftLabel={shiftLabel}
-        onShift={() => setManagingShift(true)}
+        /* No shift chip on the closed-till gate: the whole screen under it is
+           already the answer, and a "No shift" warning beside a screen saying
+           the till is closed is the same sentence twice. */
+        onShift={closedGate ? undefined : () => setManagingShift(true)}
         /*
          * WHICH BILL IS ON SCREEN — and nothing at all when that question has no
          * answer yet. A waiter needs to know which bill they are adding to before
@@ -2334,11 +3253,21 @@ export default function PosShell({
          * and a quick sale shows nothing — "Walk-in" was a word standing in for
          * "no table", which is already what an empty slot says.
          */
-        tableLabel={choosingTable ? null : table ? table.code : tabLabel}
-        /* Undefined ON the gate: a "back to the floor" button on the floor is a
-           control that can only ever do nothing. */
+        tableLabel={choosingTable || closedGate ? null : table ? table.code : tabLabel}
+        /* Undefined ON either gate: a "back to the floor" button on the floor is
+           a control that can only ever do nothing, and one on a closed till
+           would walk past the very thing that gate exists to insist on. */
         onChangeTable={
-          hospitality && !choosingTable ? () => setChoosingTable(true) : undefined
+          hospitality && !choosingTable && !closedGate
+            ? () => {
+                /* Walking back to the floor with the bill still on screen. The basket
+                   is already on the server via the debounce, so the only thing left to
+                   do is hand the claim back — otherwise this table reads as taken until
+                   the lease expires. */
+                releaseHeldBill()
+                setChoosingTable(true)
+              }
+            : undefined
         }
         /* Hand the screen back to the PIN pad, not to the back office: this is
            where a waiter ends their shift, and the next one signs in here.
@@ -2346,6 +3275,12 @@ export default function PosShell({
            the refresh is what makes it happen now rather than on next load. */
         onExit={() => {
           startTransition(async () => {
+            /* Awaited, unlike everywhere else: signing out ends the session that owns
+               the claim, so a fire-and-forget release could be cut off by the redirect
+               and leave the table taken for the whole lease — with the one person who
+               could explain it already gone. */
+            const held = state.documentId
+            if (held) await reparkTableBillAction(held).catch(() => {})
             await tillSignOutAction()
             router.refresh()
           })
@@ -2353,12 +3288,41 @@ export default function PosShell({
       />
 
       {/*
+        ── THE TILL IS NOT OPEN ──────────────────────────────────────────────
+        In front of EVERYTHING, including the table gate: a waiter seating a party
+        onto a till with no shift is the same unreconciled sale as a cashier
+        ringing one up, only slower to discover. Sits above the hospitality branch
+        for that reason rather than inside it.
+      */}
+      {closedGate ? (
+        <OpenTillGate
+          mode={closedGate.mode}
+          operatorName={operatorName}
+          terminalId={terminal?.id ?? null}
+          terminalLabel={terminal?.code ?? null}
+          canCashup={closedGate.canCashup}
+          online={till.online}
+          onOpened={(shiftId) => {
+            noteShift(shiftId, operatorName)
+            /* Straight to the floor in hospitality, straight to the basket in
+               retail — the same place a sign-in lands, because opening the till
+               is the step BEFORE that rather than a detour off it. */
+            if (hospitality) setChoosingTable(true)
+          }}
+          onExit={() => {
+            startTransition(async () => {
+              await tillSignOutAction()
+              router.refresh()
+            })
+          }}
+        />
+      ) : /*
         ── HOSPITALITY READ 1 OF 3: the gate stands in FRONT of the till ──────
         Instead of the three columns, not beside them. A waiter picks the table before
         there is a basket to put anything in, so nothing below this needs to know
         whether one was picked.
-      */}
-      {choosingTable ? (
+      */
+      choosingTable ? (
         <TableGate
           tabs={tabs}
           tables={tables}
@@ -2374,12 +3338,38 @@ export default function PosShell({
             dispatch({ type: 'CLEAR' })
           }}
           onNewTable={() => setNaming({ closing: false })}
+          /*
+           * ALWAYS offered on a hospitality till, even with an empty tables bar.
+           *
+           * It was gated on `hasTableKeys` at first, to avoid a button that opens an
+           * empty dialog. That was wrong in practice: NOTHING has ever written to the
+           * tables section — every call site passed 'main' until this change — so the
+           * gate hid the button on every existing shop, and the feature could only be
+           * discovered by a manager who had already found a designer tab nobody has
+           * used. A control that appears only after you have done the setup it exists
+           * to advertise is a control nobody finds.
+           *
+           * So the empty case is a teaching screen instead — see the dialog, which
+           * names the bar and where to fill it. The keys are still the shop's own.
+           */
+          onShowQuickKeys={() => setShowingTableKeys(true)}
           splitting={armedForSplit}
           onToggleSplitting={setArmedForSplit}
           onSplitTable={openSplit}
           transferring={armedForTransfer}
           onToggleTransferring={setArmedForTransfer}
           onTransferTable={openTransfer}
+          /* The key armed a mode over a floor with nothing it could act on. Said here
+             rather than in the gate, which owns no toast — and said in terms of the
+             remedy, because "no configured table" is not something a waiter can fix
+             mid-service without being told where to go. */
+          onEmptyArm={(mode) =>
+            toast.info(
+              mode === 'split'
+                ? 'No open bill is on a table, so there is nothing to split. Seat it on one first.'
+                : 'No open bill is on a table, so there is nothing to move. Seat it on one first.',
+            )
+          }
           onPickTab={resumeTab}
           onPickTable={resumeTable}
         />
@@ -2387,30 +3377,63 @@ export default function PosShell({
       /* THREE FLOATING CARDS on a padded canvas, rather than three panes flush
          against each other. The gap is what separates the basket from the
          catalogue visually — without it the till reads as one undifferentiated
-         sheet, and a cashier's eye has nothing to anchor on. */
-      <div className="flex min-h-0 flex-1 gap-4 p-4">
+         sheet, and a cashier's eye has nothing to anchor on.
+
+         `px-4 pb-4`, no top: TillStatusBar carries its own py-4, so the gap
+         under the chips is already paid for. A p-4 here would stack on it. */
+      <div className="flex min-h-0 flex-1 gap-4 px-4 pb-4">
         <SalePane
           lines={state.lines}
           totals={totals}
           lineSpecials={lineSpecials}
           selectedKey={state.selectedKey}
           customerLabel={customerLabel}
+          /* What the basket looked like when it was recalled, so each line can
+             say whether it has been touched this sitting. Null on a counter
+             basket, which was recalled from nowhere. */
+          baseline={state.baseline}
+          /* The structure the basket is being priced on, named. The id is
+             already resolved above (account → group → site default); this turns
+             it into the words the line card prints. */
+          priceStructureName={
+            priceStructures.find((s) => s.id === priceStructureId)?.name ?? null
+          }
           onSelect={(key) => dispatch({ type: 'SELECT', key })}
-          onStep={(key, delta) => dispatch({ type: 'STEP', key, delta })}
-          onEdit={setEditing}
-          onRemove={(key) => dispatch({ type: 'REMOVE', key })}
+          /* − asks why before it takes anything off; ＋ goes straight through.
+             See stepLine for why one unit off is an `item` void even when it
+             empties the line. */
+          onStep={stepLine}
+          onEdit={(line) => {
+            setEditingField('qty')
+            setEditing(line)
+          }}
+          /* "More" opens the MENU, not the pad. The pad is one of the things the
+             menu leads to — see LineOptionsModal for why the rare per-line verbs
+             live a tap deeper than +, − and Void. */
+          onLineMore={setLineOptions}
+          onRemove={voidLine}
           onCustomer={() => setPickingCustomer(true)}
           /* Close SAVES in hospitality rather than clearing — see closeSale. In
              retail there is no floor to park onto, so it keeps its old meaning
              and asks before throwing the basket away. */
-          onClear={hospitality ? closeSale : () => setConfirmClear(true)}
+          /* Abandoning a SALE with lines in it is a void and asks why. A return
+             and an empty basket keep the plain confirm: there is no reason list
+             for goods coming back this way, and nothing to account for when
+             nothing was rung up. */
+          onClear={
+            hospitality
+              ? closeSale
+              : () => {
+                  if (state.returning || state.lines.length === 0) setConfirmClear(true)
+                  else voidSaleDraft()
+                }
+          }
           /* One button, two destinations. A separate "Refund" button beside Pay would sit
              unused all day next to the one key a cashier presses hundreds of times, and
              the mode is already stated on the pane — so the primary action follows the
              mode rather than competing with it. */
           onPay={() => (state.returning ? setReturning(true) : setTendering(true))}
           returning={state.returning}
-          onToggleReturning={(next) => dispatch({ type: 'SET_RETURNING', returning: next })}
           /* Hospitality parks through Close, so the two park keys are retail-only —
              see SalePane's `showParkKeys`. */
           showParkKeys={!hospitality}
@@ -2437,7 +3460,10 @@ export default function PosShell({
         <DeptRail
           departments={departments}
           activeId={state.catalog.kind === 'departments' ? state.catalog.path[0] ?? null : null}
-          onPick={(id) => dispatch({ type: 'DRILL', departmentId: id })}
+          /* root: the rail only ever lists top-level departments, so picking one
+             starts a fresh trail rather than adding to wherever the cashier
+             happened to be. */
+          onPick={(id) => dispatch({ type: 'DRILL', departmentId: id, root: true })}
         />
 
         <CatalogPane
@@ -2478,17 +3504,46 @@ export default function PosShell({
           two minutes building in front of a customer. */}
       <ConfirmModal
         open={confirmClear}
-        title="Clear this sale?"
+        title={state.returning ? 'Clear this return?' : 'Clear this sale?'}
         confirmLabel="Clear it"
         tone="danger"
         message={`${state.lines.length} line${
           state.lines.length === 1 ? '' : 's'
-        } will be removed. Nothing has been posted, so nothing is reversed.`}
+        } will be removed. Nothing has been posted, so nothing is reversed.${
+          state.returning ? ' The till goes back to selling.' : ''
+        }`}
         onClose={() => setConfirmClear(false)}
         onConfirm={() => {
-          dispatch({ type: 'CLEAR' })
+          /*
+           * Clearing a RETURN also leaves return mode, which is the opposite of what
+           * CLEAR does on its own — see the reducer, where the mode deliberately
+           * survives so a mis-keyed return can be restarted.
+           *
+           * That reasoning assumed a Sale/Return switch on the pane. There is no longer
+           * one: return mode is entered by the credit-sale quick key, and if Clear did
+           * not end it there would be no way out short of finishing a credit note the
+           * cashier never wanted. Abandoning the basket is the cashier saying they are
+           * done returning, so it is the honest place to put the exit — and the message
+           * says so rather than letting them find out at the next scan.
+           */
+          dispatch(
+            state.returning ? { type: 'SET_RETURNING', returning: false } : { type: 'CLEAR' },
+          )
           setConfirmClear(false)
         }}
+      />
+
+      {/* Why something is coming off a sale nobody has paid for. Holds the
+          removal until the reason is given — see pendingVoid. */}
+      <VoidReasonModal
+        open={pendingVoid !== null}
+        voidType={pendingVoid?.voidType ?? 'line'}
+        description={pendingVoid?.description ?? ''}
+        qty={pendingVoid?.qty ?? 0}
+        valueIncl={pendingVoid?.valueIncl ?? 0}
+        reasons={voidReasons}
+        onClose={() => setPendingVoid(null)}
+        onConfirm={confirmVoid}
       />
 
       {/* Naming a tab — opening a new one, or giving a name to a sale being
@@ -2532,10 +3587,16 @@ export default function PosShell({
               size="touch"
               onClick={() => {
                 setClosePrompt(false)
-                clearTabIdentity()
-                dispatch({ type: 'CLEAR' })
-                setTable(null)
-                setChoosingTable(true)
+                /* Asks why, then throws it away. voidSaleDraft does the CLEAR
+                   itself once a reason is given, so the rest of the teardown
+                   rides along behind it rather than running now — leaving the
+                   floor before the cashier has answered would strand them on
+                   the table gate with the prompt still open. */
+                voidSaleDraft(() => {
+                  clearTabIdentity()
+                  setTable(null)
+                  setChoosingTable(true)
+                })
               }}
             >
               <Icons.Trash size={18} />
@@ -2610,6 +3671,12 @@ export default function PosShell({
         lines={splitting?.lines ?? []}
         tables={tables}
         busy={pending}
+        /* What the chosen destination already has on it. Read when it is picked, not
+           held for every table on the floor: a waiter opens one of them. */
+        loadDestinationLines={async (tableId) => {
+          const bill = await destinationBillAction(tableId)
+          return bill?.lines ?? []
+        }}
         onConfirm={confirmSplit}
       />
 
@@ -2737,8 +3804,17 @@ export default function PosShell({
         onWalkInName={(name) => dispatch({ type: 'SET_CUSTOMER_NAME', name })}
       />
 
+      {/* The "More" menu. Each entry either opens the pad on its own field, or
+          leads to the flow that owns it — see chooseLineOption. */}
+      <LineOptionsModal
+        line={lineOptions}
+        onClose={() => setLineOptions(null)}
+        onChoose={chooseLineOption}
+      />
+
       <LineEditModal
         line={editing}
+        field={editingField}
         canOverrideDiscount={canOverrideDiscount}
         canOverridePrice={canOverridePrice}
         onClose={() => setEditing(null)}
@@ -2775,6 +3851,106 @@ export default function PosShell({
             },
           })
         }}
+      />
+
+      {/* Which of the shop's price lists the rest of this sale rings at. A mode on
+          the sale, cleared when the basket goes — not a per-line override, which is
+          still what tapping a line gives you. */}
+      <PriceTypeModal
+        open={pickingPriceType}
+        structures={priceStructures}
+        activeId={priceStructureId}
+        /* What it falls back to with no override — the account's list when one is
+           attached, else the shop's. Passed apart from `activeId` so the dialog can
+           mark the row a cashier returns to by picking it again. */
+        defaultId={state.customer?.priceStructureId ?? siteDefaultStructureId}
+        fromCustomer={state.customer?.priceStructureId != null}
+        hasLines={state.lines.length > 0}
+        onClose={() => setPickingPriceType(false)}
+        onPick={(structureId) => {
+          setPricingOverride(structureId)
+          setPickingPriceType(false)
+          const picked = priceStructures.find((s) => s.id === (structureId ?? priceStructureId))
+          /* Named out loud. The switch has no other visible consequence until the
+             next item is scanned, and a key that appears to do nothing is one a
+             cashier presses again. */
+          toast.success(
+            structureId === null
+              ? 'Back to normal prices.'
+              : `Now ringing up at ${picked?.name ?? 'the chosen price'}.`,
+          )
+        }}
+      />
+
+      {/* Starting or ending a shift. The PIN says who — not the till session,
+          because the person clocking on is usually not the one signed in. */}
+      <ClockModal
+        open={showingClock}
+        terminalId={terminal?.id ?? null}
+        onClose={() => setShowingClock(false)}
+      />
+
+      {/* Web orders waiting to be collected. Tapping one makes it the basket, so
+          anything else picked up in the shop goes on the same invoice. */}
+      <OnlineOrdersModal
+        open={showingOrders}
+        busy={pending}
+        onClose={() => setShowingOrders(false)}
+        onCollect={collectOrder}
+      />
+
+      {/* Past sales, to print one again. Opens on the till rather than sending the
+          cashier to the invoicing list in the back office. */}
+      <ReprintModal
+        open={showingReprints}
+        onClose={() => setShowingReprints(false)}
+        onPrint={(sale) => {
+          /*
+           * Through the slip ROUTE rather than the bridge, and that is deliberate.
+           *
+           * The bridge path prints from a snapshot built out of the live basket —
+           * `slipRef` — and a past sale has no such snapshot on this machine; it may
+           * have been rung up on the other till, or yesterday. The route loads the
+           * document server-side, renders the same slip component, and calls
+           * recordPrint so the copy number moves. Rebuilding a snapshot here would
+           * be a second renderer for a document that already has one, and the two
+           * would disagree the first time a slip's layout changed.
+           */
+          window.open(`/sales/${sale.id}/slip?auto=1`, '_blank')
+          setShowingReprints(false)
+        }}
+      />
+
+      {/* Money against an account, with no sale involved. Any customer, not the
+          one attached to the basket — see the modal's own header. */}
+      <AccountPaymentModal
+        open={takingPayment}
+        /* The ONLINE-filtered list. Account and loyalty are already stripped from
+           it when the line is down, and this dialog is online-only anyway. */
+        tenders={availableTenders}
+        terminalId={terminal?.id ?? null}
+        onClose={() => setTakingPayment(false)}
+      />
+
+      {/* Money held against THIS basket, unlike the dialog above. The sale stays
+          open and posts later; the deposit becomes a tender when it does. */}
+      <DepositModal
+        open={takingDeposit}
+        documentId={state.documentId}
+        /* A basket on the till is always a draft — it becomes 'saved' only when
+           parked, and a parked basket is not on screen. The server re-checks the
+           real status either way; this is what the dialog shows. */
+        status="draft"
+        totalIncl={totals.doc.totalIncl}
+        heldTotal={depositHeld}
+        hasCustomer={state.customer !== null}
+        minPct={depositMinPct}
+        allowWalkin={depositAllowWalkin}
+        tenders={availableTenders}
+        terminalId={terminal?.id ?? null}
+        online={till.online}
+        onClose={() => setTakingDeposit(false)}
+        onTaken={(held) => setDepositHeld(held)}
       />
 
       {/* A return WITH the slip: find the invoice, pick what is coming back,
@@ -3010,6 +4186,66 @@ export default function PosShell({
         onClose={() => setVoiding(false)}
         onVoid={voidSale}
       />
+
+      {/*
+        ── THE SHOP'S OWN KEYS, ON THE FLOOR ─────────────────────────────────
+        A dialog here, where the catalogue pane holds the same grid inline. The
+        gate is not a three-column till: it is one card that fills the screen, and
+        carving a permanent key rail out of it would cost tables on every service
+        to serve the handful of moments somebody needs a key.
+
+        So it opens over the floor and dismisses back to it — and the floor stays
+        visible around it, which is what stops a waiter losing their place.
+
+        The `tables` section, not `main`. Which keys belong here is a question a
+        manager already answered in the designer, and `noTables` keeps the
+        till-level ones (cash up, clock in) off it — pressing "Cash up" with six
+        tables open is precisely the mistake that flag exists to prevent.
+
+        Closes on press, before the key runs. Every key either opens a dialog of
+        its own — which would otherwise stack on this one — or acts on the floor
+        underneath; in both cases this dialog has said all it has to say, and the
+        one exception that says something back does it through a toast, which
+        paints above either way.
+      */}
+      <Modal
+        open={showingTableKeys}
+        onClose={() => setShowingTableKeys(false)}
+        title="Quick keys"
+        /* Says what the bar IS rather than promising tiles: the dialog opens on
+           every hospitality till, including one whose tables bar is still empty. */
+        description="The keys for the floor — tap one to run it."
+        size="lg"
+      >
+        <QuickKeyPanel
+          keys={keysToShow}
+          section="tables"
+          /* The dialog's own title already says "Quick keys" — see showEyebrow. */
+          showEyebrow={false}
+          /* The panel's default message names the catalogue pane's remedy ("pick a
+             department on the left"), which is not on screen here. This one names the
+             bar that is actually empty and who fills it — the floor's keys are set up
+             on their own tab, and a waiter sent to the main bar's list would be told
+             to look at keys that are not the ones missing. */
+          emptyState={
+            <EmptyState
+              icon={<Icons.Sparkles size={28} />}
+              title="No keys on the floor yet"
+              hint="A manager sets these up in Setup → Quick keys, under “Open tables” — the keys for a bill in progress, like printing it or sending it to the kitchen."
+            />
+          }
+          productNames={keyProductNames}
+          departmentNames={keyDepartmentNames}
+          isEnabled={(key) => quickKeyEnabled(key, quickKeyContext)}
+          onPress={(key) => {
+            /* Only ever a key that RUNS — a folder is opened in place by the panel
+               itself and never reaches here, which is what keeps a drill-down from
+               dismissing the dialog the waiter just opened. */
+            setShowingTableKeys(false)
+            runQuickKey(key, quickKeyContext)
+          }}
+        />
+      </Modal>
 
       {/* Tile sizing. A dialog rather than sliders on the surface: it is set once
           when a till is commissioned and then never again, and two permanent

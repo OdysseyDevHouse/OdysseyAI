@@ -604,6 +604,30 @@ export async function convertToInvoice(
       [id] as never,
     )
 
+    /*
+     * The deposit follows the quote onto the invoice (172).
+     *
+     * A quote converts by creating a NEW document, so money held against the
+     * quote would otherwise be stranded on a record nobody looks at again — and
+     * the customer would be asked to pay in full for something they had already
+     * put money down on.
+     *
+     * Moved rather than copied: it is the same money, and a copy would show as
+     * held twice. The quote keeps its document_audit trail, which is what says
+     * a deposit was taken against it and where the money went.
+     *
+     * Only rows still HELD move. An 'applied' row belongs to a sale that has
+     * already posted, and re-pointing it at a new invoice would credit that
+     * invoice with money another document has spent. Refund rows move with
+     * their deposits so the sum stays honest.
+     */
+    await tx.execute(
+      `UPDATE sale_deposits
+          SET document_id = ?
+        WHERE document_id = ? AND kind <> 'applied'`,
+      [newId, id] as never,
+    )
+
     await tx.execute(
       `INSERT INTO document_audit (document_id, action, detail, user_id, user_name)
        VALUES (?, 'converted', ?, ?, ?)`,

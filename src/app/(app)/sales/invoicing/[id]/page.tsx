@@ -9,6 +9,8 @@ import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { getNumericSetting } from '@/lib/site/settings'
 import { getTillCustomer } from '@/lib/site/tillCustomers'
 import InvoiceEditor from './InvoiceEditor'
+import { depositSummary } from '@/lib/site/deposits'
+import { DepositPanel } from '../../DepositPanel'
 import { listAttachments } from '@/lib/site/attachments'
 import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
 import { PageBody, Card, CardHeader, CardBody } from '@/components/ui'
@@ -30,7 +32,8 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
   const documentId = Number(id)
   if (!Number.isFinite(documentId) || documentId <= 0) notFound()
 
-  const [document, structures, users, tenders, cashRounding, specials] = await Promise.all([
+  const [document, structures, users, tenders, cashRounding, specials, deposits] =
+    await Promise.all([
     getDocument(site.id, documentId),
     listPriceStructures(site.id),
     // Users, not sales_reps: commission is paid to a user (047), so the
@@ -40,6 +43,9 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
     getNumericSetting(site.id, 'sales_cash_rounding'),
     // Windows unevaluated — the editor checks them against its own clock.
     liveSpecials(site.id),
+    // What is held against this invoice (172). Batched here rather than fetched
+    // by the panel, so the figures paint with the page instead of after it.
+    depositSummary(site.id, documentId),
   ])
   if (!document) notFound()
 
@@ -75,6 +81,20 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
         canOverridePrice={can(capabilities, 'sales.price_override')}
         specials={specials}
         showCost={can(capabilities, 'products.cost')}
+      />
+
+      {/* Money already paid against this invoice. Below the grid: the lines are
+          what somebody opened this screen to work on, and the deposit is what
+          they check once they know what the invoice is worth. */}
+      <DepositPanel
+        documentId={documentId}
+        docType="invoice"
+        status={document.status}
+        totalIncl={deposits.totalIncl}
+        held={deposits.held}
+        entries={deposits.entries}
+        hasCustomer={document.customerId !== null}
+        canEdit={can(capabilities, 'sales.edit') && isEditable(document.status)}
       />
 
       {/* The signed delivery note. This is the answer when a customer says the

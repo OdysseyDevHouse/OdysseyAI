@@ -5,14 +5,14 @@ import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { listSalesReasons } from '@/lib/site/salesReasons'
 import { listSaved } from '@/lib/site/salesDocuments'
 import { listPriceStructures } from '@/lib/site/lookups'
-import { getNumericSetting, getSetting } from '@/lib/site/settings'
+import { getNumericSetting, getSetting, getSettings } from '@/lib/site/settings'
 import { can, capabilitiesForRole } from '@/lib/site/permissions'
 import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
 import { liveSpecials } from '@/lib/site/specials'
 import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { listDepartments } from '@/lib/site/departments'
-import { listQuickKeys } from '@/lib/site/quickKeys'
+import { listAllQuickKeys } from '@/lib/site/quickKeys'
 import { listTables } from '@/lib/site/posTables'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
 import { listVisitTypes } from '@/lib/site/visitTypes'
@@ -78,6 +78,7 @@ export default async function PosPage() {
     visitTypes,
     serviceTiers,
     tipsTablesOnlySetting,
+    undoLimitSetting,
   ] = await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
@@ -116,8 +117,14 @@ export default async function PosPage() {
       /* The shop's own till buttons. Shipped with the page rather than fetched by the
          client: they are the DEFAULT pane, so a till that had to wait for them would
          open on an empty grid — and one that lost them when the line dropped would lose
-         the fastest way it has to sell. */
-      listQuickKeys(site.id, 'main'),
+         the fastest way it has to sell.
+
+         BOTH BARS, not just `main`. The tables bar is what the floor's Quick keys button
+         opens, and a manager who arranged one in the designer had it rendered nowhere
+         until this loaded it. Each consumer picks its own section — `topLevelKeys` takes
+         one — so the extra rows cost a shop with no tables bar nothing but the handful of
+         rows it does not have. */
+      listAllQuickKeys(site.id),
       /* The mode, and the floor. In retail the floor query returns nothing and the gate
          never mounts — one query rather than a branch, because the branch would have to
          be repeated for every consumer of the result. */
@@ -138,6 +145,10 @@ export default async function PosPage() {
          charges what it was last told — the same reasoning the specials already use. */
       listServiceTiers(site.id),
       getSetting(site.id, 'tips_tables_only'),
+      /* How many undos one basket may spend. Shipped with the page rather than read
+         when the key is pressed: the refusal has to land instantly and has to work
+         with the line down, and a limit fetched at press time would do neither. */
+      getNumericSetting(site.id, 'pos_undo_limit'),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
@@ -152,6 +163,14 @@ export default async function PosPage() {
   const keyDepartmentIds = [
     ...new Set(quickKeys.map((k) => k.departmentId).filter((id): id is number => !!id)),
   ]
+  /* The deposit rules (172), read as a pair. Both are plain strings with sane
+     defaults, so a store that has never opened the setup screen takes deposits
+     from anybody for any amount — which is what a shop that has not thought
+     about it expects to happen. */
+  const depositSettings = await getSettings(site.id, ['deposit_min_pct', 'deposit_allow_walkin'])
+  const depositMinPct = Number(depositSettings.deposit_min_pct ?? '0') || 0
+  const depositAllowWalkin = String(depositSettings.deposit_allow_walkin ?? '1') !== '0'
+
   const keyProducts = keyProductIds.length
     ? await siteQuery<{ id: number; description: string }>(
         site.id,
@@ -206,8 +225,15 @@ export default async function PosPage() {
         .filter((d) => d.isActive)
         .map((d) => ({ id: d.id, parentId: d.parentId, name: d.name, sortOrder: d.sortOrder }))}
       priceStructureId={priceStructure?.id ?? null}
+      /* The whole list, so the price-change key can offer them. Shipped with the
+         page rather than fetched when the key is pressed: a shop has a handful of
+         these and they change about never, so a round trip mid-sale would buy
+         nothing and cost the one thing a till cannot spend. */
+      priceStructures={structures}
       savedCount={saved.length}
       cashRounding={cashRounding}
+      depositMinPct={depositMinPct}
+      depositAllowWalkin={depositAllowWalkin}
       specials={specials}
       pendingPrices={pendingPrices}
       quickKeys={quickKeys}
@@ -221,6 +247,11 @@ export default async function PosPage() {
       /* Absent means ON — the careful default. A percentage appearing on takeaways the
          moment a shop configures its first band is a charge nobody agreed to. */
       tipsTablesOnly={tipsTablesOnlySetting === null || tipsTablesOnlySetting === undefined ? true : String(tipsTablesOnlySetting) !== '0'}
+      /* 0 means no limit, and so does a missing or unreadable value — the till must
+         fail OPEN here. A setting that could not be read is not a shop asking for a
+         stricter till, and refusing corrections because a query returned nothing
+         would be the wrong way round. */
+      undoLimit={Number.isFinite(undoLimitSetting) && (undoLimitSetting ?? 0) > 0 ? Number(undoLimitSetting) : 0}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
     />
   )

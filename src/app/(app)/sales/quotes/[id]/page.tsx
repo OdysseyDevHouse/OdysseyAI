@@ -11,6 +11,8 @@ import { getNumericSetting } from '@/lib/site/settings'
 import { getTillCustomer } from '@/lib/site/tillCustomers'
 import InvoiceEditor from '../../invoicing/[id]/InvoiceEditor'
 import { QuotePanel } from './QuotePanel'
+import { depositSummary } from '@/lib/site/deposits'
+import { DepositPanel } from '../../DepositPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,7 +42,8 @@ export default async function QuoteEditorPage({
   const documentId = Number(id)
   if (!Number.isFinite(documentId) || documentId <= 0) notFound()
 
-  const [document, quote, structures, users, tenders, cashRounding, specials] = await Promise.all([
+  const [document, quote, structures, users, tenders, cashRounding, specials, deposits] =
+    await Promise.all([
     getDocument(site.id, documentId),
     getQuote(site.id, documentId),
     listPriceStructures(site.id),
@@ -49,6 +52,9 @@ export default async function QuoteEditorPage({
     getNumericSetting(site.id, 'sales_cash_rounding'),
     // A quote is priced like an invoice, so it sees the same promotions.
     liveSpecials(site.id),
+    // Money held to secure this quote (172). It follows the quote onto the
+    // invoice when it converts — see convertToInvoice.
+    depositSummary(site.id, documentId),
   ])
 
   if (!document) notFound()
@@ -99,6 +105,26 @@ export default async function QuoteEditorPage({
         canOverrideDiscount={can(capabilities, 'sales.discount_override')}
       canOverridePrice={can(capabilities, 'sales.price_override')}
       showCost={can(capabilities, 'products.cost')}
+      />
+
+      {/* Money put down to secure this quote. Below the grid for the same reason
+          as on an invoice: the lines are the work, the deposit is the check.
+
+          Editable while the quote is still open — once it is accepted the
+          deposit belongs to the invoice it became, and is managed there. */}
+      <DepositPanel
+        documentId={documentId}
+        docType="quote"
+        status={document.status}
+        totalIncl={deposits.totalIncl}
+        held={deposits.held}
+        entries={deposits.entries}
+        hasCustomer={document.customerId !== null}
+        canEdit={
+          can(capabilities, 'sales.edit') &&
+          isEditable(document.status) &&
+          quote.outcome === 'open'
+        }
       />
     </>
   )

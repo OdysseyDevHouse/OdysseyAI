@@ -19,6 +19,43 @@ import type { Capability } from './site/permissions'
 export type QuickKeySection = 'main' | 'tables'
 export type QuickKeyKind = 'action' | 'product' | 'department' | 'group'
 
+/**
+ * The bars a till can have, and what each is FOR.
+ *
+ * Two, because a restaurant till answers two different questions. At the counter the
+ * cashier is building a basket, so the keys are the ones that sell and settle. With a
+ * table open the waiter is managing a bill that will not be paid for an hour, so the
+ * keys are print it, move it, split it, tip it.
+ *
+ * A retail shop only ever sees `main`. The second bar is offered on a hospitality till
+ * alone — see the designer, which hides the tab rather than showing an empty one.
+ *
+ * Kept here beside the type rather than in the designer so the label a manager arranges
+ * under and the label anything else uses cannot drift apart.
+ */
+export const QUICK_KEY_SECTIONS: readonly {
+  section: QuickKeySection
+  label: string
+  /** Reads into a sentence: "…at the end of the bar". */
+  phrase: string
+  hint: string
+  hospitalityOnly?: boolean
+}[] = [
+  {
+    section: 'main',
+    label: 'Main keys',
+    phrase: 'the main bar',
+    hint: 'What a cashier sees on the till’s catalogue pane.',
+  },
+  {
+    section: 'tables',
+    label: 'Open tables',
+    phrase: 'the tables bar',
+    hint: 'What a waiter sees with a table open — the keys for a bill in progress.',
+    hospitalityOnly: true,
+  },
+]
+
 export type QuickKeyAction = {
   slug: string
   /** What the key says when the shop has not typed its own caption. */
@@ -45,12 +82,29 @@ export type QuickKeyAction = {
   /**
    * The mirror: only meaningful on a RETAIL till.
    *
-   * Parking and recalling a basket are retail acts. On a restaurant till the same
-   * job is done by naming a table and pressing Close, and the floor lists every
-   * open tab — so a "Save sale" key there is a second way to do what Close
-   * already did, and "Saved sales" a second floor beside the gate.
+   * RECALLING a parked basket is a retail act. On a restaurant till the floor
+   * already lists every open tab, so a "Saved sales" key is a second floor beside
+   * the gate — two lists of the same bills, disagreeing the moment one is stale.
+   *
+   * Saving used to be here too. It is not any more: `save-sale` now runs the same
+   * naming-and-parking path as Close, so on a restaurant till it is that act on a
+   * key rather than a worse imitation of it. What made it retail-only was the
+   * anonymous park, and that is gone.
    */
   retailOnly?: boolean
+  /**
+   * Meaningless on the TABLES bar, even on a restaurant till.
+   *
+   * Not the same flag as `retailOnly`. That one is about the shop; this is about which
+   * bar, on the one shop that has two. Cashing up is a till-level act and a table is
+   * open — pressing it there is either refused or, worse, closes the shift under a
+   * bill somebody is still eating.
+   *
+   * Kept as a flag rather than a second catalogue so an action is declared once. The
+   * designer greys it in the rail with a reason; `quickKeyAllowedOnSection` is the
+   * single test, and the server calls the same one.
+   */
+  noTables?: boolean
   /** One line for the designer's list — what pressing it actually does. */
   hint: string
 }
@@ -86,8 +140,16 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     label: 'Save sale',
     icon: 'Save',
     capability: 'sales.till',
-    retailOnly: true,
-    hint: 'Parks the basket so the next customer can be served.',
+    /*
+     * NOT retailOnly, and it was until this key became Close.
+     *
+     * The flag was right while the key parked anonymously: on a restaurant till
+     * that is a second, worse way to do what Close already does properly. Now it
+     * IS Close — same function, same naming prompt — so it is simply the same act
+     * on a key a shop can place where it likes, which is what the whole designer
+     * is for. A waiter with Save on the tables bar saves the table.
+     */
+    hint: 'Saves the basket. Asks what to call it if it has no name yet.',
   },
   {
     slug: 'view-saved-sales',
@@ -140,6 +202,24 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     hint: 'Receipts money against a customer account.',
   },
   {
+    /*
+     * `sales.till`, NOT `cashbook.edit` like the key above it.
+     *
+     * A deposit reaches no cashbook and no ledger — the money is held against
+     * the document until the goods are handed over, so there is no receipt to
+     * post and no debtor to move. It is the same act as taking money for goods,
+     * which is what the till right already covers.
+     */
+    slug: 'take-deposit',
+    label: 'Take a deposit',
+    /* HandCoins, same as the payment key. `icon` is a plain string resolved at
+       render, so a name the icons module does not export draws nothing at all —
+       verified against icons.tsx rather than guessed. */
+    icon: 'HandCoins',
+    capability: 'sales.till',
+    hint: 'Holds money against the sale on screen.',
+  },
+  {
     slug: 'credit-sale',
     label: 'Account sale',
     icon: 'Contact',
@@ -151,6 +231,10 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     label: 'Cash up',
     icon: 'Coins',
     capability: 'sales.cashup',
+    /* Closing the shift is a till-level act. Offered while a table is open it would
+       either be refused or, worse, cash the drawer up under a bill people are still
+       eating against. */
+    noTables: true,
     hint: 'Counts the drawer and closes the shift.',
   },
   {
@@ -193,6 +277,9 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     label: 'Online orders',
     icon: 'ShoppingCart',
     capability: 'online.view',
+    /* A queue of web orders is the opposite of the bill in front of the waiter. It
+       belongs on the counter bar, where somebody is looking for the next thing to do. */
+    noTables: true,
     hint: 'Orders waiting to be picked or collected.',
   },
   {
@@ -200,6 +287,9 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     label: 'Clock in / out',
     icon: 'Clock',
     capability: 'staff.clock',
+    /* Starting or ending a shift belongs to the person, not to the table in front of
+       them. On the tables bar it is one more key between a waiter and the bill. */
+    noTables: true,
     hint: 'Starts or ends a shift on the time clock.',
   },
   /* Two this app has and the reference POS does not. A basket is a basket until
@@ -271,6 +361,58 @@ export function actionForSlug(slug: string): QuickKeyAction | null {
   return BY_SLUG.get(slug) ?? null
 }
 
+/**
+ * Whether an action makes sense on THIS KIND of till — and why not, when it does not.
+ *
+ * The mirror of `quickKeyAllowedOnSection`, which is about which BAR. This is about the
+ * shop: on a hospitality till the floor already lists every open bill, so a "Saved sales"
+ * key is a second floor beside the gate — two lists of the same tabs, disagreeing as soon
+ * as one goes stale. A retail till has no tables, so the bill and kitchen keys have
+ * nothing to act on.
+ *
+ * Returns null when it is fine, or the sentence to show. Unlike the section rule, an
+ * action refused here is HIDDEN rather than greyed: the section rule answers "which bar
+ * does this go on", which is worth telling somebody, while this one answers "does this
+ * shop have this feature at all" — and a permanently dead row for a feature the shop
+ * will never have is a line of noise in a list of twenty-five.
+ */
+export function quickKeyAllowedOnTill(
+  key: { kind: QuickKeyKind; actionSlug?: string | null },
+  hospitality: boolean,
+): string | null {
+  if (key.kind !== 'action') return null
+  const action = actionForSlug(key.actionSlug ?? '')
+  if (!action) return null
+  if (action.retailOnly && hospitality) {
+    return `${action.label} is for a counter till. With tables, the table is the parked basket.`
+  }
+  if (action.hospitalityOnly && !hospitality) {
+    return `${action.label} needs a restaurant till — this shop is set to retail.`
+  }
+  return null
+}
+
+/**
+ * Whether a key may live on a given bar — and why not, when it may not.
+ *
+ * Returns null when it is allowed, or the sentence to show. One function so the rail's
+ * greying-out, the drop refusal and the server's validation cannot disagree: a key the
+ * designer offers and the server then rejects is a bug a shop reports as "it will not
+ * save and it will not say why".
+ *
+ * Only ACTIONS are restricted. A product or a department is a way of adding to a bill,
+ * which is exactly as sensible with a table open as without one.
+ */
+export function quickKeyAllowedOnSection(
+  key: { kind: QuickKeyKind; actionSlug?: string | null },
+  section: QuickKeySection,
+): string | null {
+  if (section !== 'tables' || key.kind !== 'action') return null
+  const action = actionForSlug(key.actionSlug ?? '')
+  if (!action?.noTables) return null
+  return `${action.label} belongs on the main bar — it is a till-level action, not something to do with a table open.`
+}
+
 /* ── The slot signature ──────────────────────────────────────────────────── */
 
 export type QuickKeyTarget =
@@ -306,6 +448,61 @@ export function quickKeySig(target: QuickKeyTarget, caption = ''): string {
 
 /** The supervisor folder every till gets, by signature. Undeletable. */
 export const SUPERVISOR_GROUP_SIG = 'g:supervisor'
+
+/**
+ * The icons a shop may choose from, by kit NAME.
+ *
+ * ── A CURATED LIST, NOT EVERY GLYPH IN THE KIT ────────────────────────────
+ *
+ * The kit re-exports hundreds of lucide icons. Offering all of them would be a picker
+ * nobody can scan and a shop choosing `Atom` for a bread key. These are the ones that
+ * mean something on a till, grouped so the picker can show them under headings.
+ *
+ * Names only — never an SVG and never an emoji. A name resolves through
+ * `@/components/ui/icons`, so a restyle or an icon-set swap follows automatically;
+ * a pasted SVG would be the one key that never changes again. Several of these names
+ * ALSO have drawn art (see quickKeyArt), which wins where it exists — so picking
+ * `Coins` on a product key gets the drawn coin rather than the line glyph.
+ */
+export const QUICK_KEY_ICONS: readonly { group: string; names: readonly string[] }[] = [
+  {
+    group: 'Money',
+    names: ['Coins', 'HandCoins', 'CreditCard', 'Percent', 'Tag', 'Gem', 'Ticket', 'Gift'],
+  },
+  {
+    group: 'The sale',
+    names: [
+      'Save',
+      'Reverse',
+      'Trash',
+      'ListOrdered',
+      'Package',
+      'ShoppingCart',
+      'Send',
+      /* Also the catalogue's default for table-transfer. Every icon an action ships
+         with must appear here, or validation would reject the very name the server
+         itself wrote when the key was created. */
+      'ArrowLeftRight',
+    ],
+  },
+  {
+    group: 'People',
+    names: ['Contact', 'Users', 'ShieldCheck', 'KeyRound', 'Clock'],
+  },
+  {
+    group: 'Stock',
+    names: ['Boxes', 'PackageOpen', 'Warehouse', 'Barcode', 'Scale', 'Tags', 'Store', 'Truck'],
+  },
+  {
+    group: 'Other',
+    names: ['Printer', 'Search', 'Star', 'Heart', 'Zap', 'Sparkles', 'Shapes', 'LayoutGrid'],
+  },
+]
+
+/** Every offerable icon name, flat — for validating what a client sent. */
+export const QUICK_KEY_ICON_NAMES: ReadonlySet<string> = new Set(
+  QUICK_KEY_ICONS.flatMap((g) => g.names),
+)
 
 /**
  * What a key needs, whatever kind it is.

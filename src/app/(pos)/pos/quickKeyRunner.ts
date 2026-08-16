@@ -36,8 +36,14 @@ export type QuickKeyHandlers = {
   pay: () => void
   /** Clears the basket, with the confirm dialog. */
   clear: () => void
-  /** Parks the basket. */
-  park: () => void
+  /**
+   * Saves the basket the way Close does — but ASKS what to call it when it has no
+   * name yet, rather than parking it anonymously.
+   *
+   * Replaced `park`, which is still what happens underneath. The difference is the
+   * naming step: a basket saved without a name is one nobody can find again.
+   */
+  saveSale: () => void
   /** Opens the saved-sales list. */
   showSaved: () => void
   /** Removes the last line added. */
@@ -46,6 +52,40 @@ export type QuickKeyHandlers = {
   pickCustomer: () => void
   /** Opens the line editor on the selected line, for a price or discount change. */
   editLine: () => void
+  /**
+   * Opens the price-type list — which of the shop's price lists this sale rings at.
+   *
+   * Distinct from `editLine`, and the distinction is the point: that changes one
+   * line's figure as an exception, this changes which price list the sale follows.
+   */
+  pickPriceType: () => void
+  /**
+   * Opens the account-payment dialog — money against a debtor, outside any sale.
+   *
+   * Deliberately not `pickCustomer`: that attaches an account to the BASKET, and
+   * the account being paid here has nothing to do with what is on screen.
+   */
+  takePayment: () => void
+  /**
+   * Opens the deposit dialog — money held against the BASKET on screen.
+   *
+   * The opposite of `takePayment` in the one way that matters: this one is about
+   * the sale in front of the cashier, and the money settles it later rather than
+   * settling an account now. Saves the basket first, because a deposit is held
+   * against a document and an unsaved basket is not one.
+   */
+  takeDeposit: () => void
+  /** Opens the past-sales list, to print one again. */
+  showReprints: () => void
+  /** Opens the web-order queue, to bring one onto the till and be paid for. */
+  showOnlineOrders: () => void
+  /**
+   * Opens the clock pad — a PIN in, a shift started or ended.
+   *
+   * The PIN is the credential rather than the till session, because the person
+   * clocking on is usually not the person signed in. See ClockModal.
+   */
+  showClock: () => void
   /** Drills the catalogue into a department. */
   openDepartment: (departmentId: number) => void
   /** Adds a product by id — the till resolves it against its own catalogue. */
@@ -63,14 +103,40 @@ export type QuickKeyHandlers = {
   /** Prints the NEW lines of the open tab on the kitchen printer. */
   sendToKitchen: () => void
   /**
+   * Sends the waiter to the floor with the SPLIT mode already armed.
+   *
+   * Two steps in one handler because the gesture genuinely needs two taps: a split
+   * moves lines between two bills, and neither the key nor the basket knows which
+   * pair is meant. So the key does the part it can — open the floor, arm the mode —
+   * and the floor asks the question only it can ask.
+   *
+   * This replaced the pair of buttons that used to sit on the gate's header. The
+   * gesture is unchanged; what moved is where it is STARTED from, so a shop decides
+   * whether it is on the till at all by putting the key on a bar or leaving it off.
+   */
+  armSplit: () => void
+  /** The same, for moving a whole tab to another table. */
+  armTransfer: () => void
+  /**
    * Switches the pane into return mode. CLEARS the basket — see SET_RETURNING.
    *
    * Not "open the refund pad": there is nothing to credit until the cashier has scanned
    * what came back, so the key does what the Sale/Return toggle does.
    */
   startReturn: () => void
-  /** Navigates the browser, for the screens that live in the back office. */
-  navigate: (href: string) => void
+  /*
+   * There is deliberately no `navigate` any more.
+   *
+   * Five keys used to push the browser at a back-office screen — payments,
+   * reprints, online orders, the clock. Every one of them took the till off the
+   * display with a basket possibly half-scanned on it, and landed a cashier in a
+   * dense screen built for a manager, sometimes behind a right they do not hold.
+   * All five now open a dialog over the till.
+   *
+   * Left out rather than kept "just in case": a navigation handler in this
+   * contract is an invitation for the next key to take the easy route, and the
+   * easy route is the one that was wrong five times.
+   */
   /** Says something to the cashier. Used for every refusal. */
   say: (message: string, tone: 'info' | 'error') => void
 }
@@ -112,8 +178,21 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
   'void-sale': ({ handlers, hasLines }) =>
     hasLines ? handlers.clear() : handlers.say('There is nothing to clear.', 'info'),
 
+  /*
+   * ── SAVE IS CLOSE ───────────────────────────────────────────────────────
+   *
+   * The same act, so the same code path. A basket that already knows what it is
+   * called — a seated table, a named tab — is saved under that name with nothing
+   * asked; one that does not gets the create-table dialog, because a basket saved
+   * anonymously cannot be found again once it leaves the screen, and "saved" that
+   * loses the sale is worse than a question.
+   *
+   * It used to call `park` directly, which parked unnamed and left a cashier
+   * hunting a list of identical "Walk-in" rows for the one they meant. Two keys
+   * doing the same job differently is also two places to fix when the job changes.
+   */
   'save-sale': ({ handlers, hasLines }) =>
-    hasLines ? handlers.park() : handlers.say('Add something before saving the sale.', 'info'),
+    hasLines ? handlers.saveSale() : handlers.say('Add something before saving the sale.', 'info'),
 
   'view-saved-sales': ({ handlers }) => handlers.showSaved(),
 
@@ -137,10 +216,25 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
         ? handlers.docDiscount()
         : handlers.say('Ring something up first.', 'info'),
 
-  'price-change': ({ handlers, hasSelection }) =>
-    hasSelection
-      ? handlers.editLine()
-      : handlers.say('Tap the line whose price you want to change.', 'info'),
+  /*
+   * ── A PRICE TYPE, NOT A PRICE ───────────────────────────────────────────
+   *
+   * This used to open the line editor to override one line's figure. It now
+   * switches which of the shop's PRICE LISTS the rest of the sale rings up at —
+   * wholesale, staff, whatever the shop has set up — because that is the act a
+   * cashier at a counter actually performs. "This customer is on trade" is a
+   * decision about the sale, not about a line, and doing it through per-line
+   * overrides meant retyping a figure for every item and getting one wrong.
+   *
+   * The line override is still there and is still the right tool for a one-item
+   * exception: tap the line. That path keeps the override rights and the product's
+   * discount ceiling, which a price-list switch does not need — a shop's own
+   * wholesale price is not a departure from anything.
+   *
+   * Unconditional. There is nothing to select and no basket required: switching
+   * before the first scan is the ordinary way to use it.
+   */
+  'price-change': ({ handlers }) => handlers.pickPriceType(),
 
   'credit-sale': ({ handlers }) => handlers.pickCustomer(),
 
@@ -176,10 +270,19 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       ? handlers.reprintLastSlip()
       : handlers.say('A reprint needs the connection. The sale is safe on this till.', 'info'),
 
+  /*
+   * Opens the sale history HERE rather than pushing the browser to the invoicing
+   * list. Same reason as the payment key: leaving the till abandons whatever is on
+   * screen and lands a cashier in a back-office table built for a different job.
+   *
+   * Distinct from `reprint-last-slip` above, which needs no list at all — it prints
+   * the one this machine just did. This is for any sale, which is the harder case
+   * and the one somebody holding an old slip actually has.
+   */
   'reprint-invoice': ({ handlers, online }) =>
     online
-      ? handlers.navigate('/sales/invoicing?status=finalised')
-      : handlers.say('A reprint needs the connection.', 'info'),
+      ? handlers.showReprints()
+      : handlers.say('A reprint needs the connection — past sales live on the server.', 'info'),
 
   'price-enquiry': ({ handlers }) =>
     handlers.say('Search for the product above — the tile shows its price.', 'info'),
@@ -189,20 +292,63 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       ? handlers.giftCardBalance()
       : handlers.say('Gift card balances need the connection.', 'info'),
 
+  /*
+   * The order queue on the till, not in the back office.
+   *
+   * A web order collected in store is a counter act — the customer is standing
+   * there — so the list belongs on the screen the cashier is already using. The
+   * old navigation opened a manager's pipeline view and took the till, basket and
+   * all, off the display.
+   */
   'online-orders': ({ handlers, online }) =>
     online
-      ? handlers.navigate('/online-store/orders')
-      : handlers.say('Online orders need the connection.', 'info'),
+      ? handlers.showOnlineOrders()
+      : handlers.say('Online orders need the connection — they live on the server.', 'info'),
 
+  /*
+   * The pad on the till rather than the back office's clock page.
+   *
+   * Clocking on is something somebody does ON their way to the counter, often
+   * while another person is mid-sale on the same machine — so it has to be a
+   * dialog over the till rather than a navigation that takes the basket off
+   * screen. The PIN identifies who is clocking, which is what makes that safe:
+   * the person tapping is usually not the one signed in.
+   */
   'clock-in-out': ({ handlers, online }) =>
     online
-      ? handlers.navigate('/staff/clock')
-      : handlers.say('The time clock needs the connection.', 'info'),
+      ? handlers.showClock()
+      : handlers.say('The time clock needs the connection — hours are kept on the server.', 'info'),
 
+  /*
+   * Opens a dialog on the till rather than navigating to /cashbook.
+   *
+   * That navigation was a dead end twice over: the cashbook needs `cashbook.edit`,
+   * which a cashier does not hold, and it is a back-office screen on a machine that
+   * may have no keyboard. A customer paying their account at the counter is an
+   * ordinary counter act and belongs here.
+   *
+   * Still online-only, and that is not a limitation to remove later: a receipt moves
+   * a real balance, and taking one against a stale offline copy is how somebody pays
+   * R2,000 twice.
+   */
   'customer-payment': ({ handlers, online }) =>
     online
-      ? handlers.navigate('/cashbook')
+      ? handlers.takePayment()
       : handlers.say('Taking a payment against an account needs the connection.', 'info'),
+
+  /*
+   * A deposit against the basket on screen (172).
+   *
+   * Online-only, for a different reason than the one above. A basket parked
+   * while the line is down exists only as a uid on this till and never syncs, so
+   * money held against it would have no record anywhere else — a hole in the
+   * reconciliation rather than a feature. The dialog says so itself; this
+   * refuses earlier so the cashier is not led into it.
+   */
+  'take-deposit': ({ handlers, online }) =>
+    online
+      ? handlers.takeDeposit()
+      : handlers.say('Taking a deposit needs the connection.', 'info'),
 
   /*
    * ── VOUCHERS AND POINTS LIVE ON THE TENDER PAD ──────────────────────────
@@ -235,22 +381,24 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
   },
 
   /*
-   * Both of these SHIPPED after the unbuilt list was written, and sat in it
-   * telling cashiers a working feature did not exist — the same trap the
-   * voucher key fell into above. Like the voucher key, they cannot act on
-   * their own (a split needs a saved table, a tip belongs to a payment), so
-   * they say where the built thing lives.
+   * ── THESE TWO ARE NOW THE ONLY WAY IN ─────────────────────────────────────
+   *
+   * They used to be signposts, pointing at a pair of buttons on the table gate's
+   * header: "tap Split a bill on the floor". Those buttons are gone — a gesture
+   * every shop paid for in header space whether or not it served tables — so the
+   * keys DO the thing now instead of describing it.
+   *
+   * Still two taps, and that is the gesture rather than a shortcoming: a split
+   * moves lines between two bills and neither the key nor the basket knows which
+   * pair the waiter means. The key opens the floor with the mode armed; the floor
+   * asks which bill, because it is the only screen that can.
    */
-  'split-table': ({ handlers }) =>
-    handlers.say('Save the table, then tap “Split a bill” on the floor and pick it.', 'info'),
+  'split-table': ({ handlers }) => handlers.armSplit(),
 
   'add-tip': ({ handlers }) =>
     handlers.say('Tips are declared on the payment screen — tap Pay, then add the tip against the payment method.', 'info'),
 
-  /* Like split-table above: the gesture starts from the floor, where both tables
-     are visible — a key on the till cannot know which pair the waiter means. */
-  'table-transfer': ({ handlers }) =>
-    handlers.say('Tap “Move a table” on the floor, then pick the table that is moving.', 'info'),
+  'table-transfer': ({ handlers }) => handlers.armTransfer(),
 
   /* The bill button lives beside the basket, where the tab it prints is open. */
   'bill-print': ({ handlers, online }) =>
@@ -362,14 +510,11 @@ export function runQuickKey(key: QuickKeyRow, ctx: RunContext): void {
     return
   }
 
-  /* A parking key pressed on a restaurant till. Reachable when a shop set the key
-     up before switching to hospitality, so it explains itself rather than doing
-     something surprising to a live tab. */
+  /* A recall key pressed on a restaurant till. Reachable when a shop set the key up
+     before switching to hospitality, so it explains itself rather than opening a
+     second list of the same bills the floor is already showing. */
   if (action.retailOnly && ctx.hospitality) {
-    handlers.say(
-      'On a restaurant till, Close saves the table — and the floor lists every open one.',
-      'info',
-    )
+    handlers.say('The floor lists every open bill — tap the table to bring it back.', 'info')
     return
   }
 
@@ -423,9 +568,9 @@ export function quickKeyEnabled(
   if (!action) return false
   if (key.capability && !ctx.can(key.capability)) return false
   if (action.hospitalityOnly && !ctx.hospitality) return false
-  /* Parking keys on a restaurant till: Close already parks the tab and the gate
-     already lists every open one, so these two would be a second route to a job
-     that is done — and "Saved sales" a second floor beside the real one. */
+  /* Recalling on a restaurant till: the gate already lists every open bill, so a
+     saved-sales key is a second floor beside the real one. Saving is NOT in this
+     bucket any more — it runs the same path as Close, so it works on both. */
   if (action.retailOnly && ctx.hospitality) return false
   return true
 }
