@@ -15,6 +15,7 @@ import {
 } from '@/components/ui'
 import type { GroupMember, StoreContents } from '@/lib/storeGroups'
 import StoreCard from './StoreCard'
+import GroupStorefront, { type BranchRow } from './GroupStorefront'
 import { linkStoreAction, type LinkFormState } from './actions'
 
 /**
@@ -45,6 +46,7 @@ export default function LinkedStoresSetup({
   members,
   contents,
   available,
+  groupStorefront,
 }: {
   currentSiteId: number
   currentSiteName: string
@@ -53,6 +55,12 @@ export default function LinkedStoresSetup({
   /** What each store already holds, for the empty-store gate. */
   contents: Record<number, StoreContents | null>
   available: { id: number; code: string; name: string }[]
+  /** Null when these stores are not a group yet — there is nothing to configure. */
+  groupStorefront: {
+    enabled: boolean
+    primaryName: string | null
+    branches: BranchRow[]
+  } | null
 }) {
   const [state, formAction] = useActionState<LinkFormState, FormData>(linkStoreAction, {
     error: null,
@@ -75,6 +83,18 @@ export default function LinkedStoresSetup({
           }
         />
       </Card>
+
+      {/* Above the per-store cards because it decides what the group IS to a
+          shopper, where those decide what each store contributes to a product
+          edit. Hidden entirely until there is a group to configure. */}
+      {groupStorefront && (
+        <GroupStorefront
+          enabled={groupStorefront.enabled}
+          primaryName={groupStorefront.primaryName}
+          branches={groupStorefront.branches}
+          members={members}
+        />
+      )}
 
       {/* Every store in the group, including this one — its own settings decide
           what it contributes, so it needs to be visible and editable too. */}

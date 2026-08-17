@@ -32,6 +32,14 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
         capability: 'online.view',
       },
       {
+        href: '/online-store/trading',
+        description: 'When the shop is open, and whether it is taking orders right now.',
+        keywords: 'hours open closed holidays busy pause sold out collection times',
+        icon: 'Clock',
+        tone: 'amber',
+        capability: 'online.edit',
+      },
+      {
         href: '/online-store/statuses',
         description: 'The steps an order moves through, from paid to collected.',
         keywords: 'workflow stages pipeline packing shipped fulfilment',

@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { resolveStorefront } from '@/lib/storeRouting'
 import { publishedProducts, storefrontContext } from '@/lib/site/storefront'
 import { getPublishedLayout } from '@/lib/site/storefrontLayout'
 import WishlistView from './WishlistView'
@@ -38,12 +39,13 @@ export default async function WishlistPage({
 }) {
   const { token } = await params
 
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) notFound()
-  const context = await storefrontContext(siteId)
-  if (!context) notFound()
+  const resolved = await resolveStorefront(token)
+  if (!resolved) notFound()
+  const { context } = resolved
 
-  const layout = await getPublishedLayout(siteId)
+  // Branding is the shop front's, which for a chain is head office's — a
+  // branch does not get its own product layout.
+  const layout = await getPublishedLayout(context.catalogueSiteId)
 
   return (
     <WishlistView

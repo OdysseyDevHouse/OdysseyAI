@@ -632,6 +632,7 @@ export const SUBPAGE_LABELS = {
   '/online-store/departments': 'Departments',
   '/online-store/reviews': 'Reviews',
   '/online-store/statuses': 'Order statuses',
+  '/online-store/trading': 'Trading hours',
   '/online-store/discounts': 'Discount codes',
   '/online-store/funnel': 'Shopper funnel',
   '/online-store/builder': 'Page builder',
@@ -727,6 +728,7 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
 export const SETUP_ELSEWHERE = [
   '/online-store/setup',
   '/online-store/statuses',
+  '/online-store/trading',
   '/online-store/payments',
   '/online-store/discounts',
   '/accounting/accounts',
@@ -800,6 +802,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   /* Settings the setup hub cross-references — see SETUP_ELSEWHERE. */
   '/online-store/setup': 'domain url delivery fees shipping open closed launch go live web shop',
   '/online-store/statuses': 'workflow stages pipeline packing shipped fulfilment',
+  '/online-store/trading': 'hours open closed holidays busy pause sold out collection times',
   '/online-store/payments': 'payfast yoco ozow gateway card eft checkout',
   '/online-store/discounts': 'promo coupon voucher promotion sale code',
   '/accounting/accounts': 'chart of accounts ledger codes general ledger',

@@ -61,6 +61,8 @@ import {
   PickerResults,
   SettingGroup,
   SettingRow,
+  WeekHours,
+  type HoursRange,
   Sparkline,
   MeterBar,
   TableGlyph,
@@ -150,6 +152,7 @@ export default function StyleGuidePage() {
         <IdentitySection />
         <PickerResultsSection />
         <SettingRowSection />
+        <WeekHoursSection />
         <AccordionSection />
         <SelectableCardSection />
         <ReasonPickerSection />
@@ -448,6 +451,25 @@ function FormSection() {
           />
         </div>
       </Row>
+    </Card>
+  )
+}
+
+function WeekHoursSection() {
+  const [hours, setHours] = useState<Record<string, HoursRange[]>>({
+    '2': [['12:00', '14:30'], ['18:00', '21:30']],
+    '3': [['08:00', '17:00']],
+  })
+
+  return (
+    <Card>
+      <CardHeader
+        title="Opening times"
+        description="<WeekHours /> — a week of opening times, one row per day. A day holds a LIST of ranges, so a split lunch/dinner service is expressible; an empty day means closed. Used by reservations and by the online store's trading hours, which store the same JSON."
+      />
+      <CardBody>
+        <WeekHours hours={hours} onChange={setHours} rangeNoun="service" />
+      </CardBody>
     </Card>
   )
 }

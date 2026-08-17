@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, type ReactNode } from 'react'
 import { Icons, Input, ToastProvider } from '@/components/ui'
+import BranchBar, { type BranchState } from './BranchBar'
 import type { StorefrontDepartment } from '@/lib/site/storefront'
 import type { StorefrontTheme } from '@/lib/storefrontModel'
 import { useCart } from './CartContext'
@@ -42,6 +43,7 @@ export default function StoreChrome({
   pages,
   fontClassName,
   announce,
+  branch = null,
 
   children,
 }: {
@@ -81,6 +83,15 @@ export default function StoreChrome({
    * clock and an out-of-season strip never reaches the browser at all.
    */
   announce: { text: string; href: string } | null
+  /**
+   * The branch this storefront is currently shopping, when the shop is one of a
+   * chain sharing a storefront.
+   *
+   * NULL for a single shop — which is every shop today — and then nothing about
+   * branches renders at all: no band, no picker, none of that bundle. An
+   * existing storefront must stay pixel-identical.
+   */
+  branch?: BranchState | null
 
   children: ReactNode
 }) {
@@ -270,6 +281,11 @@ export default function StoreChrome({
               ))}
             </nav>
           )}
+
+          {/* Last thing in the header, because everything BELOW it — every
+              price, stock figure and delivery charge on the page — belongs to
+              this branch. Null for a single shop, and then nothing renders. */}
+          {branch && <BranchBar token={token} branch={branch} />}
         </header>
 
         {/* pb-28 clears the phone cart bar, which is fixed to the bottom and

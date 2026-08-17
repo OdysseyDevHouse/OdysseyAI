@@ -12,6 +12,7 @@
  */
 
 export { Button, ButtonLink, type ButtonSize, type ButtonVariant } from './Button'
+export { WeekHours, WeekHoursDay, WEEK_DAYS, type HoursRange } from './WeekHours'
 export {
   buttonClass,
   CONTROL,

@@ -1,6 +1,7 @@
 'use server'
 
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { resolveStorefront } from '@/lib/storeRouting'
 import {
   publishedProducts,
   storefrontContext,
@@ -42,10 +43,9 @@ export async function wishlistProductsAction(
   token: string,
   ids: number[],
 ): Promise<StorefrontProduct[]> {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return []
-  const context = await storefrontContext(siteId)
-  if (!context) return []
+  const resolved = await resolveStorefront(token)
+  if (!resolved) return []
+  const { context } = resolved
 
   const wanted = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))]
   if (wanted.length === 0) return []
@@ -79,16 +79,20 @@ export async function submitReviewAction(
    */
   if (input.website.trim()) return { ok: true }
 
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return { ok: false, error: 'This shop is not available.' }
-
-  const context = await storefrontContext(siteId)
-  if (!context) return { ok: false, error: 'This shop is not available.' }
+  const shop = await resolveStorefront(token)
+  if (!shop) return { ok: false, error: 'This shop is not available.' }
+  const { context } = shop
   if (!context.settings.reviewsEnabled) {
     return { ok: false, error: 'This shop is not taking reviews.' }
   }
 
-  return submitReview(siteId, {
+  /*
+   * The CATALOGUE's, not the branch's: a review is of the product, and a chain
+   * writes one product file. Filing it against the branch would scatter reviews
+   * of the same burger across nine databases, and the product page — which
+   * reads them from the catalogue — would show none of them.
+   */
+  return submitReview(context.catalogueSiteId, {
     productId: Number(input.productId),
     rating: Number(input.rating),
     title: String(input.title ?? ''),
@@ -121,15 +125,17 @@ export async function subscribeAction(
   token: string,
   input: { email: string; name?: string; consentText?: string; sourcePage?: string },
 ): Promise<SubscribeResult> {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return { ok: false, error: 'This shop is not available.' }
-
   // An OPEN shop only. A closed one serves nothing else, and a form kept open
   // across the moment it closed must not keep writing rows.
-  const context = await storefrontContext(siteId)
-  if (!context) return { ok: false, error: 'This shop is not available.' }
+  const shop = await resolveStorefront(token)
+  if (!shop) return { ok: false, error: 'This shop is not available.' }
 
-  return subscribe(siteId, {
+  /*
+   * The CATALOGUE's list. A chain has one mailing list and one shop front, and
+   * splitting subscribers by whichever branch somebody happened to be browsing
+   * would give head office nine partial lists to reconcile.
+   */
+  return subscribe(shop.context.catalogueSiteId, {
     email: input.email,
     name: input.name ?? '',
     consentText: String(input.consentText ?? '').trim() || DEFAULT_CONSENT_TEXT,

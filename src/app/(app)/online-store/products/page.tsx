@@ -5,6 +5,7 @@ import {
   getPublishCounts,
   listProductVisibility,
 } from '@/lib/site/onlineStore'
+import { soldOutToday } from '@/lib/site/branchTrading'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
@@ -74,6 +75,11 @@ export default async function OnlineProductsPage({
     getPublishCounts(siteId),
     getOnlineSettings(siteId),
   ])
+
+  // What has run out TODAY. One query for the whole shop rather than one per
+  // row, and it clears itself at midnight — see 178 on why this is a date
+  // rather than a flag somebody has to remember to unset.
+  const soldOut = await soldOutToday(siteId)
 
   const filterLabel = filterIds ? departmentPath(departments, departmentId) : null
 
@@ -209,6 +215,11 @@ export default async function OnlineProductsPage({
             // What "show/hide all" acts on: exactly the slice on screen.
             filter={{ search: q, departmentIds: filterIds, only }}
             empty={empty}
+            // A plain object, not the Map: a Map does not survive the crossing
+            // into a client component.
+            soldOut={Object.fromEntries(
+              [...soldOut.values()].map((s) => [s.productId, { until: s.until, note: s.note }]),
+            )}
           />
 
           <Pagination

@@ -1,6 +1,9 @@
 import { notFound } from 'next/navigation'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext } from '@/lib/site/storefront'
+import { resolveStoreRouting, rememberedBranch } from '@/lib/storeRouting'
+import { tradingRules } from '@/lib/site/branchTrading'
+import { collectionSlots, openState, slotLabel } from '@/lib/tradingHours'
 import { customerAccount } from '@/lib/site/customerAuth'
 import { getCustomerSession } from '@/lib/customerSession'
 import { defaultAddressFor, listCustomerAddresses } from '@/lib/site/customerAddresses'
@@ -17,12 +20,31 @@ export default async function CheckoutPage({
 }) {
   const { token } = await params
 
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) notFound()
-  const context = await storefrontContext(siteId)
+  const routing = await resolveStoreRouting(token, await rememberedBranch(token))
+  if (!routing) notFound()
+  const context = await storefrontContext(routing.catalogueSiteId, routing.branchSiteId)
   if (!context) notFound()
 
+  /*
+   * The BRANCH from here down. The account, the address book, the delivery
+   * quote and the collection times are all this shop's commitments rather than
+   * head office's — see StorefrontContext on which id answers which question.
+   */
+  const siteId = context.siteId
   const { settings } = context
+
+  /*
+   * When this shop is open, and the times it could have an order ready.
+   *
+   * Resolved HERE and handed down. A browser with a wrong clock would otherwise
+   * offer a slot the kitchen has never heard of, and the shopper would be the
+   * last to find out. placePublicOrder re-derives the same answer when the
+   * order arrives, exactly as it re-quotes the delivery fee.
+   */
+  const trading = await tradingRules(siteId)
+  const now = new Date()
+  const open = openState(trading, now)
+  const slots = collectionSlots(trading, now).slice(0, 24)
 
   /*
    * The account is resolved here, server-side, and only what the checkout
@@ -77,6 +99,19 @@ export default async function CheckoutPage({
         payOnline={settings.paymentMode === 'online'}
         allowAccount={settings.allowAccount}
         storeName={context.storeName}
+        /* The shop that will actually pack this. Equal to storeName for a single
+           store, and the branch's own name for a chain — every sentence about
+           collecting, delivering or waiting has to name the right shop. */
+        branchName={context.branchName}
+        /* Dates cross into a client component as strings, so they are formatted
+           here where the server's clock is the one that counts. */
+        collectionSlots={slots.map((s) => ({ iso: s.toISOString(), label: slotLabel(s, now) }))}
+        openState={{
+          state: open.state,
+          note: open.state === 'paused' || open.state === 'closed' ? open.note : '',
+          opensAt: open.state === 'closed' && open.opensAt ? slotLabel(open.opensAt, now) : null,
+          closesAt: open.state === 'open' ? open.closesAt : null,
+        }}
         account={
           account && {
             name: account.name,

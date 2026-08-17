@@ -19,6 +19,10 @@ import type {
   PublishMode,
 } from '@/lib/site/onlineStore'
 import { setProductVisibilityAction, setVisibilityForFilterAction } from './actions'
+// The sold-out mark is owned by the Trading hours screen, which is where the
+// rest of "what this shop is doing today" lives. Imported rather than
+// duplicated so there is one guard and one audit entry for it.
+import { setSoldOutAction } from '../trading/actions'
 
 /**
  * The product file, one switch each.
@@ -36,6 +40,7 @@ export default function ProductVisibilityList({
   departmentPaths,
   filter,
   empty,
+  soldOut = {},
 }: {
   items: ProductVisibility[]
   /** Everything the filter matches, not just this page — what bulk acts on. */
@@ -45,6 +50,16 @@ export default function ProductVisibilityList({
   departmentPaths: Record<number, string>
   filter: ProductVisibilityOptions
   empty: { title: string; hint: string; action?: React.ReactNode }
+  /**
+   * What this shop has run out of today, by product id.
+   *
+   * Separate from visibility because they answer different questions. Hiding a
+   * product is a decision about the RANGE — it is not sold online at all. Sold
+   * out is about TODAY: the kitchen has run out of prepped wings, the
+   * ingredients are still in the fridge, and tomorrow it is back. Folding them
+   * together would mean somebody had to remember to un-hide it.
+   */
+  soldOut?: Record<number, { until: string; note: string }>
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -59,6 +74,40 @@ export default function ProductVisibilityList({
    */
   const [pending, setPending] = useState<Record<number, boolean>>({})
   const visibleState = (p: ProductVisibility) => pending[p.id] ?? p.showOnline
+
+  /** Same optimistic trick for the sold-out mark. undefined = back on the menu. */
+  const [pendingSoldOut, setPendingSoldOut] = useState<Record<number, string | null>>({})
+  const soldOutUntil = (p: ProductVisibility): string | null =>
+    p.id in pendingSoldOut ? pendingSoldOut[p.id] : (soldOut[p.id]?.until ?? null)
+
+  /** Today, in the shop's own clock — what "sold out today" actually means. */
+  function todayIso(): string {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  function toggleSoldOut(product: ProductVisibility, markOff: boolean) {
+    const until = markOff ? todayIso() : ''
+    setPendingSoldOut((prev) => ({ ...prev, [product.id]: markOff ? until : null }))
+    startAction(async () => {
+      const result = await setSoldOutAction(product.id, until, markOff ? 'Back tomorrow' : '')
+      if (!result.ok) {
+        toast.error(result.error)
+        setPendingSoldOut((prev) => {
+          const next = { ...prev }
+          delete next[product.id]
+          return next
+        })
+        return
+      }
+      toast.success(
+        markOff
+          ? `${product.description} is sold out for today.`
+          : `${product.description} is back on the menu.`,
+      )
+      router.refresh()
+    })
+  }
 
   function toggle(product: ProductVisibility, next: boolean) {
     setPending((prev) => ({ ...prev, [product.id]: next }))
@@ -163,6 +212,35 @@ export default function ProductVisibilityList({
                 {publishMode === 'departments' && product.publishedByDepartment && (
                   <Badge tone="success">Shown via its department</Badge>
                 )}
+
+                {/* Only for something actually on sale online: marking a hidden
+                    product sold out says nothing to anybody. Shown as a badge
+                    once it is off, because that is the state worth spotting
+                    while scanning a menu. */}
+                {(ticked || product.publishedByDepartment) &&
+                  (soldOutUntil(product) ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => toggleSoldOut(product, false)}
+                    >
+                      {/* Neutral, not danger: a special that ran out is normal
+                          restaurant life, and six red badges make a menu look
+                          broken. */}
+                      <Badge tone="neutral">Sold out today</Badge>
+                      <span className="text-xs text-brand">Put back</span>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => toggleSoldOut(product, true)}
+                    >
+                      Mark sold out
+                    </Button>
+                  ))}
 
                 {/* ariaLabel, not label: the row already names the product, so
                     a visible label would repeat it on every line. */}

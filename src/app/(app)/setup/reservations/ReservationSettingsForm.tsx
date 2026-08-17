@@ -17,12 +17,13 @@ import {
   SettingRow,
   Switch,
   Textarea,
+  WeekHoursDay,
   useToast,
+  type HoursRange,
 } from '@/components/ui'
 import {
   DEFAULT_OPENING_HOURS,
   WEEKDAY_LABEL,
-  parseHm,
   type OpeningHours,
   type ReservationSettings,
   type TimeRange,
@@ -184,11 +185,14 @@ export default function ReservationSettingsForm({
         <CardBody>
           <div className="flex flex-col gap-3">
             {WEEKDAY_LABEL.map((label, day) => (
-              <DayRow
+              <WeekHoursDay
                 key={label}
                 label={label}
-                ranges={form.openingHours[String(day)] ?? []}
-                onChange={(ranges) => setDay(day, ranges)}
+                ranges={(form.openingHours[String(day)] ?? []) as HoursRange[]}
+                onChange={(ranges) => setDay(day, ranges as TimeRange[])}
+                rangeNoun="sitting"
+                addFirstLabel="Open this day"
+                defaultRange={['18:00', '21:00']}
               />
             ))}
           </div>
@@ -306,87 +310,3 @@ export default function ReservationSettingsForm({
  * two controls that mean the same thing is how a day ends up switched on with
  * no times in it.
  */
-function DayRow({
-  label,
-  ranges,
-  onChange,
-}: {
-  label: string
-  ranges: TimeRange[]
-  onChange: (ranges: TimeRange[]) => void
-}) {
-  function setRange(i: number, which: 0 | 1, value: string) {
-    const next = ranges.map((r, idx) =>
-      idx === i ? ((which === 0 ? [value, r[1]] : [r[0], value]) as TimeRange) : r,
-    )
-    onChange(next)
-  }
-
-  return (
-    <div className="flex flex-wrap items-start gap-3 rounded-card border border-border px-4 py-2.5">
-      <span className="w-24 shrink-0 pt-2 text-sm font-medium text-ink">{label}</span>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        {ranges.length === 0 ? (
-          <span className="pt-2 text-sm text-muted">Closed</span>
-        ) : (
-          ranges.map((r, i) => {
-            // A backwards range is dropped on save, so say so while it is still
-            // on screen rather than silently discarding the manager's typing.
-            const from = parseHm(r[0])
-            const to = parseHm(r[1])
-            const bad = from !== null && to !== null && to <= from
-            return (
-              <div key={i} className="flex items-center gap-2">
-                {/* The width lives on a wrapper, not on the Input: CONTROL sets
-                    w-full, and Tailwind resolves that by stylesheet order, so a
-                    w-32 passed to the control itself loses. */}
-                <div className="w-32 shrink-0">
-                  <Input
-                    type="time"
-                    value={r[0]}
-                    aria-label={`${label} sitting ${i + 1} first seating`}
-                    onChange={(e) => setRange(i, 0, e.target.value)}
-                  />
-                </div>
-                <span className="shrink-0 text-sm text-muted">to</span>
-                <div className="w-32 shrink-0">
-                  <Input
-                    type="time"
-                    value={r[1]}
-                    aria-label={`${label} sitting ${i + 1} last seating`}
-                    invalid={bad}
-                    onChange={(e) => setRange(i, 1, e.target.value)}
-                  />
-                </div>
-                <Button
-                  variant="danger-ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label={`Remove ${label} sitting ${i + 1}`}
-                  onClick={() => onChange(ranges.filter((_, idx) => idx !== i))}
-                >
-                  <Icons.Close size={15} />
-                </Button>
-                {bad ? (
-                  <span className="text-xs text-danger">
-                    The last seating must be after the first.
-                  </span>
-                ) : null}
-              </div>
-            )
-          })
-        )}
-      </div>
-
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => onChange([...ranges, ['18:00', '21:00']])}
-      >
-        <Icons.Plus size={15} />
-        {ranges.length === 0 ? 'Open this day' : 'Add a sitting'}
-      </Button>
-    </div>
-  )
-}
