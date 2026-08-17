@@ -2401,6 +2401,28 @@ export default function PosShell({
       return
     }
 
+    /*
+     * A QUOTE OR AN ORDER IS FINISHED BY SAVING IT, not by taking money.
+     *
+     * The same button does both jobs — see SalePane, where it reads "Save"
+     * rather than "Pay" on these — because a till has one finish key and which
+     * act that IS depends on what is being written. Opening a tender pad for a
+     * document nobody can tender against would ask a counterhand to take payment
+     * for goods that have not been handed over.
+     *
+     * Orders go through saveAsOrder, which reserves the stock. Quotes have no
+     * such step yet, so they park like any other basket and the register picks
+     * them up — the honest interim while the quote path is built.
+     */
+    if (state.docType === 'sales_order') {
+      saveAsOrder()
+      return
+    }
+    if (state.docType !== 'invoice') {
+      saveSale()
+      return
+    }
+
     if (warnOutOfStock && till.online) {
       /*
        * On-hand comes from the CATALOGUE, not the basket line, because a line
@@ -3867,6 +3889,9 @@ export default function PosShell({
              mode rather than competing with it. */
           onPay={openTender}
           returning={state.returning}
+          /* Decides whether the finish key says Pay or Save — a quote and an
+             order take no money. See SalePane. */
+          docType={state.docType}
           /* Hospitality parks through Close, so the two park keys are retail-only —
              see SalePane's `showParkKeys`. */
           showParkKeys={!hospitality}

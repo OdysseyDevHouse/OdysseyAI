@@ -43,6 +43,7 @@ export function SalePane({
   onClear,
   onPay,
   returning,
+  docType = 'invoice',
   onPark,
   onShowSaved,
   savedCount,
@@ -81,6 +82,14 @@ export function SalePane({
    * credit note posts — the pane reports it, it does not offer to change it.
    */
   returning: boolean
+  /**
+   * What KIND of document this basket will become.
+   *
+   * Decides what the finish button says and what colour it is — a quote and an
+   * order are not tendered, so "Pay" on one is an instruction that cannot be
+   * carried out. Defaulted to 'invoice' so every existing caller is unchanged.
+   */
+  docType?: 'invoice' | 'quote' | 'sales_order' | 'credit_sale'
   onPark: () => void
   onShowSaved: () => void
   /** How many baskets are parked, for the badge. */
@@ -103,6 +112,25 @@ export function SalePane({
   busy: boolean
 }) {
   const empty = lines.length === 0
+
+  /*
+   * What the big button at the bottom SAYS and IS.
+   *
+   * Three answers, because the till now builds three kinds of thing and only one
+   * of them ends in money changing hands:
+   *
+   *   · a return REFUNDS — money out, so amber (see the button below)
+   *   · a quote or an order SAVES — no tender at all, so the word is Save and
+   *     the colour is not the money-green every other total on this screen uses
+   *   · a sale PAYS, which is the ordinary case and stays exactly as it was
+   *
+   * Getting this wrong is not cosmetic. The finish button is the largest control
+   * on the till, and one that says Pay on a document nobody can pay for sends a
+   * counterhand looking for a tender pad that will never open.
+   */
+  const tendered = !returning && docType === 'invoice'
+  const finishLabel = returning ? 'Refund' : tendered ? 'Pay' : 'Save'
+  const finishTone = returning ? 'warning' : tendered ? 'success' : 'primary'
   const now = useMinuteClock()
 
   /* A FLOATING CARD, not a pane sharing a border with its neighbour. The three
@@ -347,15 +375,21 @@ export function SalePane({
             button that pays a customer OUT is the one piece of colour on the till that
             could actively mislead. Not `danger` either — a return is a normal, correct
             thing to do, and painting it as a destructive act would make cashiers
-            hesitate over something they are supposed to do cheerfully. */}
+            hesitate over something they are supposed to do cheerfully.
+
+            A QUOTE OR AN ORDER takes no money at all, so green would mislead in a
+            third way: it is the biggest, brightest control on the screen, and on a
+            document that cannot be tendered it invites the one press that will not
+            work. `primary` says "this finishes what you are doing" without claiming
+            a drawer is about to open. */}
         <Button
-          variant={returning ? 'warning' : 'success'}
+          variant={finishTone}
           size="touch-lg"
           className="flex-1 justify-between"
           disabled={empty || busy}
           onClick={onPay}
         >
-          <span>{busy ? 'Working…' : returning ? 'Refund' : 'Pay'}</span>
+          <span>{busy ? 'Working…' : finishLabel}</span>
           <span className="numeric">{formatMoney(totals.doc.totalIncl)}</span>
         </Button>
       </div>
