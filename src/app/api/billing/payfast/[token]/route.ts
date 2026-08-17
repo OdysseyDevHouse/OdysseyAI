@@ -48,6 +48,36 @@ function sourceIp(req: NextRequest): string | null {
   return req.headers.get('x-real-ip')
 }
 
+/**
+ * Skip the post-back to PayFast, for the end-to-end suite only.
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS SAFE ────────────────────────────────────
+ *
+ * Step three of the verification hands the payload back to PayFast and
+ * requires "VALID". It is the one check that cannot be simulated: a test can
+ * sign a body correctly, but PayFast has never seen the payment and rightly
+ * refuses to vouch for it. Without a way past it, nothing downstream —
+ * activation, provisioning, replay behaviour — is reachable by any test.
+ *
+ * Three conditions, ALL required, and each closes a different door:
+ *
+ *   NODE_ENV !== 'production'   never in a deployed environment
+ *   PAYFAST_SANDBOX !== 'false' never against the live gateway
+ *   ALLOW_UNVERIFIED_ITN === '1'  never on unless somebody turned it on
+ *
+ * The variable is not in .env.example and is set only by the suite's own
+ * command line, so the ordinary path — including local development — always
+ * does the real post-back. The signature is still verified either way; this
+ * skips corroboration, not authentication.
+ */
+function postBackDisabled(): boolean {
+  return (
+    process.env.NODE_ENV !== 'production' &&
+    process.env.PAYFAST_SANDBOX !== 'false' &&
+    process.env.ALLOW_UNVERIFIED_ITN === '1'
+  )
+}
+
 export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params
 
@@ -104,6 +134,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
       sourceIp(req),
       { merchantId: config.merchantId, passphrase: config.passphrase, sandbox: config.sandbox },
       expectedAmount,
+      // Empty in every real deployment — see postBackDisabled.
+      postBackDisabled() ? { postBack: async () => true } : {},
     )
 
     const status = (fields.payment_status ?? '').toUpperCase()
