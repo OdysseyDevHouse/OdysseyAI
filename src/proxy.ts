@@ -83,6 +83,22 @@ const PUBLIC_PREFIXES = [
    */
   '/portal/',
   '/api/payments/payfast/',
+  // The platform's OWN subscription callback — Odyssey collecting from a
+  // tenant, as opposed to the entry above where a tenant collects from its
+  // shoppers. PayFast posts here with no cookie and no browser.
+  //
+  // Leaving it out is the quietest way to break billing: every notification
+  // gets a 307 to the login page, PayFast treats that as a failed delivery,
+  // retries a few times and gives up. Money is taken and nothing is ever
+  // recorded, with no error on either side.
+  //
+  // It is not unguarded: the URL carries a signed token naming one billing
+  // account, and the route still requires a valid PayFast signature, a
+  // PayFast source IP and PayFast's own confirmation of the payload before it
+  // writes anything.
+  //
+  // The trailing slash matters, as it does for the routes above.
+  '/api/billing/payfast/',
   // A technician's calendar subscription. Google, Outlook and Apple all fetch it
   // on a schedule with no browser and no cookie, so behind the gate they would
   // fetch the login page for ever and render an empty calendar with no error —
