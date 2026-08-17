@@ -2,6 +2,7 @@ import { requireSite, requireModuleCapability } from '@/lib/auth'
 import { listSitesForUser } from '@/lib/sites'
 import { requireSession } from '@/lib/auth'
 import { groupForSite, membersOfGroup, storeContents } from '@/lib/storeGroups'
+import { branchPinsFor } from '@/lib/control/storeBranches'
 import { PageHeader, PageBody } from '@/components/ui'
 import LinkedStoresSetup from './LinkedStoresSetup'
 
@@ -30,6 +31,11 @@ export default async function LinkedStoresPage() {
     (s) => !members.some((m) => m.siteId === s.id),
   )
 
+  // One control-database query for every branch's pin, rather than opening each
+  // store's own database — the whole reason cp2_store_branches exists.
+  const pins = await branchPinsFor(members.map((m) => m.siteId))
+  const primary = members.find((m) => m.siteId === group?.primarySiteId) ?? null
+
   return (
     <>
       <PageHeader
@@ -48,6 +54,25 @@ export default async function LinkedStoresPage() {
             code: s.code,
             name: s.displayName,
           }))}
+          groupStorefront={
+            group
+              ? {
+                  enabled: group.onlineGroupMode,
+                  primaryName: primary?.displayName ?? null,
+                  branches: pins.map((p) => ({
+                    siteId: p.siteId,
+                    displayName: p.displayName,
+                    latitude: p.latitude,
+                    longitude: p.longitude,
+                    acceptsOnline: p.acceptsOnline,
+                    // Serialised here: a Date crossing into a client component
+                    // arrives as a string anyway, so the boundary is made
+                    // explicit rather than left to chance.
+                    syncedAt: p.syncedAt ? p.syncedAt.toISOString() : null,
+                  })),
+                }
+              : null
+          }
         />
       </PageBody>
     </>
