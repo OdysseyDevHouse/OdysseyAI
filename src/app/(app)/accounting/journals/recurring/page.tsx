@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listRecurringJournals, getRecurringJournal } from '@/lib/site/recurringJournals'
 import { listAccounts } from '@/lib/site/chartOfAccounts'
 import { PageHeader, PageBody, Icons } from '@/components/ui'
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function RecurringJournalsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
 
   const [summaries, accounts] = await Promise.all([
     listRecurringJournals(siteId),

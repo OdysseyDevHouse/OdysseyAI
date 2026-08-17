@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listBatches } from '@/lib/site/journals'
 import { listAccounts } from '@/lib/site/chartOfAccounts'
 import { today } from '@/lib/site/ledger'
@@ -51,7 +51,7 @@ export default async function JournalsPage({
   searchParams: Promise<{ from?: string; to?: string; source?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
   const params = await searchParams
 
   const to = /^\d{4}-\d{2}-\d{2}$/.test(params.to ?? '') ? params.to! : today()

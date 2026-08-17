@@ -226,6 +226,12 @@ export const NAV: NavSection[] = [
     href: '/accounting',
     built: true,
     capability: 'cashbook.view',
+    /* Deliberately NO `module` here, even though there is an Accounting module.
+       The hub also holds the cashbook, expenses and the VAT return, which are
+       part of the base package — every shop banks money and pays bills. What
+       the module sells is the double-entry layer on top, so the gating is on
+       those TILES (see accounting/catalogue.ts) rather than on this section.
+       Tagging the section would take a Starter Pack shop's bank account away. */
     keywords: 'money ledger books financials vat tax cashbook expenses debtors creditors',
     description: 'The books — ledgers, VAT, expenses and the bank',
   },

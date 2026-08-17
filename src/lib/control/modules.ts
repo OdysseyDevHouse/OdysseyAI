@@ -62,6 +62,7 @@ export const MODULE_KEYS = [
   'online_store',
   'loyalty',
   'job_cards',
+  'accounting',
 ] as const
 
 export type ModuleKey = (typeof MODULE_KEYS)[number]
@@ -94,6 +95,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   online_store: 'Online Store',
   loyalty: 'Loyalty',
   job_cards: 'Job Cards',
+  accounting: 'Accounting',
 }
 
 export type AccountStatus = 'trial' | 'active' | 'suspended' | 'closed'

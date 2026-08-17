@@ -1,5 +1,5 @@
 import { notFound, redirect } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getAsset, listCategories } from '@/lib/site/fixedAssets'
 import { PageHeader, PageBody } from '@/components/ui'
 import { AssetForm } from '../../AssetForm'
@@ -12,7 +12,7 @@ export default async function EditAssetPage({
   params: Promise<{ id: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('setup.edit')
+  const { siteId } = await requireModuleCapability('accounting', 'setup.edit')
   const { id } = await params
 
   const assetId = Number(id)

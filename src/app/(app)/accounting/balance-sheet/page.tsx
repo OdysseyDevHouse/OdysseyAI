@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { balanceSheet } from '@/lib/site/financialStatements'
 import { formatMoney } from '@/lib/decimals'
 import { today } from '@/lib/site/ledger'
@@ -41,7 +41,7 @@ export default async function BalanceSheetPage({
   searchParams: Promise<{ asAt?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
   const params = await searchParams
 
   const asAt = /^\d{4}-\d{2}-\d{2}$/.test(params.asAt ?? '') ? params.asAt! : today()

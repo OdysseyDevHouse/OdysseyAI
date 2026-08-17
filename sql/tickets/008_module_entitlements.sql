@@ -24,6 +24,28 @@
 -- product file across stores that each pay their own way. Reusing the group
 -- for billing would make those two arrangements unrepresentable.
 --
+-- The backfill below nonetheless SEEDS accounts from store groups, which is not
+-- a contradiction: a group is the best available evidence of "one operator"
+-- when the billing tables are empty, and it is only a starting point. Once the
+-- rows exist, a site moves between accounts freely and the two groupings drift
+-- apart as they should.
+--
+-- ── THE CATALOGUE ───────────────────────────────────────────────────────────
+--
+--   starter             the base package, always on, never sold separately
+--   inventory_advanced  counting, correcting, moving and tracing stock
+--   multi_branch        one product file and consolidated reporting across stores
+--   customers           accounts, statements, credit
+--   online_store        the public shop front
+--   loyalty             points, tiers and cards
+--   job_cards           jobs from request to invoice
+--   accounting          the general ledger and the financial statements
+--   pos_device          a QUANTITY, not a feature — see cp2_devices
+--
+-- These strings are persisted, so they are permanent. src/lib/control/modules.ts
+-- holds the same list as MODULE_KEYS and is the authority for the application;
+-- this seed only ensures every one of them has a price row.
+--
 -- ── NOTE ON THE SHARED DATABASE ─────────────────────────────────────────────
 --
 -- odyssey_tickets is shared with the v2 backend. Everything here is new and
@@ -213,12 +235,15 @@ INSERT INTO cp2_module_prices (module_key, unit_price, effective_from, note) VAL
   ('online_store',       0.00, '2020-01-01', 'Set the real price.'),
   ('loyalty',            0.00, '2020-01-01', 'Set the real price.'),
   ('job_cards',          0.00, '2020-01-01', 'Set the real price.'),
+  -- The double-entry layer only. The cashbook, expenses and the VAT return are
+  -- part of the base package — every shop banks money and pays bills.
+  ('accounting',         0.00, '2020-01-01', 'The general ledger and financial statements.'),
   ('pos_device',         0.00, '2020-01-01', 'Per till, per month. Set the real price.')
 ON DUPLICATE KEY UPDATE note = VALUES(note);
 
 -- ── Backfill: nobody loses anything the morning this deploys ───────────────
 --
--- This is the most important statement in the file. Every existing site gets a
+-- This is the most important part of the file. Every existing site gets a
 -- billing account and a Starter Pack row. Miss a site here and its owner signs
 -- in tomorrow to a back office with half the menu gone, indistinguishable from
 -- a bug.
@@ -226,15 +251,63 @@ ON DUPLICATE KEY UPDATE note = VALUES(note);
 -- 'suspended' is included alongside 'active' deliberately: sites.ts lets a
 -- suspended site still be opened so its owner can settle the account, and
 -- locking them out of the screen where they would do that is exactly backwards.
--- One account per site to begin with. A multi-store operator's accounts get
--- merged by hand afterwards — guessing at which stores share a payer would
--- produce one wrong debit order per guess.
 --
--- `gateway_ref` carries the site id during the backfill purely so the mapping
--- below can find the row it just created. Matching on company_name instead
--- would attach two sites to one account whenever an operator registered both
--- under the same legal name, which is common and would silently merge two
--- customers' bills. It is cleared immediately afterwards.
+-- ── WHICH SITES SHARE AN ACCOUNT ───────────────────────────────────────────
+--
+-- A site already in a cp2_store_groups group joins ONE account for that whole
+-- group; a site in no group gets its own. That is the closest thing to a
+-- statement of "these stores belong to one operator" the database already
+-- holds — linking two stores requires credentials for both, so a group is
+-- something somebody deliberately set up rather than a guess.
+--
+-- It is deliberately NOT inferred from anything softer. Matching on
+-- company_name would merge two unrelated customers who registered under the
+-- same legal name; matching on billing email would merge every store a
+-- bookkeeper administers. Both produce one wrong debit order per guess, and a
+-- wrongly merged bill is far harder to notice than a wrongly split one.
+--
+-- Grouping for BILLING and grouping for PRODUCT SHARING remain separate
+-- concepts — see the header. This only uses the latter as the starting guess
+-- for the former, and an operator who wants them different moves the site to
+-- another account afterwards, which the schema allows freely.
+--
+-- `gateway_ref` carries the group or site key during the backfill purely so the
+-- mapping below can find the row it just created. It is cleared immediately
+-- afterwards, before the payment provider ever has an opinion about it.
+
+-- One account per store GROUP, named after the group.
+INSERT INTO cp2_billing_accounts
+       (name, billing_email, billing_contact, vat_number, status, gateway, gateway_ref)
+SELECT g.name,
+       MIN(s.email), MIN(s.contact_name), MIN(s.vat_number), 'active',
+       'backfill', CONCAT('group:', g.id)
+  FROM cp2_store_groups g
+  JOIN cp2_store_group_members gm ON gm.group_id = g.id
+  JOIN cp2_sites s ON s.id = gm.site_id
+ WHERE g.status = 'active'
+   AND s.status IN ('active', 'suspended')
+   AND NOT EXISTS (
+     SELECT 1 FROM cp2_billing_account_sites bas WHERE bas.site_id = s.id
+   )
+   AND NOT EXISTS (
+     SELECT 1 FROM cp2_billing_accounts a2 WHERE a2.gateway_ref = CONCAT('group:', g.id)
+   )
+ GROUP BY g.id, g.name;
+
+INSERT INTO cp2_billing_account_sites (account_id, site_id)
+SELECT a.id, gm.site_id
+  FROM cp2_billing_accounts a
+  JOIN cp2_store_group_members gm
+    ON gm.group_id = CAST(SUBSTRING(a.gateway_ref, 7) AS UNSIGNED)
+  JOIN cp2_sites s ON s.id = gm.site_id
+ WHERE a.gateway = 'backfill'
+   AND a.gateway_ref LIKE 'group:%'
+   AND s.status IN ('active', 'suspended')
+   AND NOT EXISTS (
+     SELECT 1 FROM cp2_billing_account_sites bas WHERE bas.site_id = gm.site_id
+   );
+
+-- Then one account per remaining ungrouped site.
 INSERT INTO cp2_billing_accounts
        (name, billing_email, billing_contact, vat_number, status, gateway, gateway_ref)
 SELECT s.company_name, s.email, s.contact_name, s.vat_number, 'active',
@@ -249,6 +322,7 @@ INSERT INTO cp2_billing_account_sites (account_id, site_id)
 SELECT a.id, CAST(SUBSTRING(a.gateway_ref, 6) AS UNSIGNED)
   FROM cp2_billing_accounts a
  WHERE a.gateway = 'backfill'
+   AND a.gateway_ref LIKE 'site:%'
    AND NOT EXISTS (
      SELECT 1 FROM cp2_billing_account_sites bas
       WHERE bas.site_id = CAST(SUBSTRING(a.gateway_ref, 6) AS UNSIGNED)

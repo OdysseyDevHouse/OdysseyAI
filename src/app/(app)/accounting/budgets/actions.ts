@@ -1,13 +1,13 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import { saveBudgets, copyFromPriorYear, copyFromActuals, type BudgetEntry } from '@/lib/site/budgets'
 
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string }
 
 export async function saveBudgetsAction(entries: BudgetEntry[]): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -20,7 +20,7 @@ export async function saveBudgetsAction(entries: BudgetEntry[]): Promise<ActionR
 }
 
 export async function copyPriorYearAction(year: number): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -32,7 +32,7 @@ export async function copyPriorYearAction(year: number): Promise<ActionResult> {
 }
 
 export async function copyActualsAction(year: number, sourceYear: number): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 

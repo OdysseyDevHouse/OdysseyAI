@@ -13,6 +13,8 @@
 // would break the "one account per site" assertion in the next suite that
 // counts them.
 import { query, execute } from '../src/lib/db'
+import { MODULE_KEYS, DEVICE_MODULE_KEY, MODULE_LABELS } from '../src/lib/control/modules'
+import { MODULE_DESCRIPTIONS } from '../src/lib/control/moduleMessages'
 import { periodEnd } from '../src/lib/billing/period'
 
 let fails = 0
@@ -58,12 +60,20 @@ async function main() {
     const prices = await query<{ module_key: string; unit_price: string }>(
       'SELECT module_key, unit_price FROM cp2_module_prices ORDER BY module_key',
     )
+    /* Derived from the catalogue rather than written out again here. A ninth
+       module added to MODULE_KEYS without a price row would otherwise bill at
+       zero and nothing would say so — and a hand-kept list in a test is the
+       first thing to fall behind. */
     const keys = prices.map((p) => String(p.module_key))
-    for (const expected of [
-      'starter', 'inventory_advanced', 'multi_branch', 'customers',
-      'online_store', 'loyalty', 'job_cards', 'pos_device',
-    ]) {
+    for (const expected of [...MODULE_KEYS, DEVICE_MODULE_KEY]) {
       ok(`price book carries ${expected}`, keys.includes(expected))
+    }
+
+    /* Every module needs a name and a sentence, or the upgrade page renders a
+       blank card at whoever it just turned away. */
+    for (const key of MODULE_KEYS) {
+      ok(`${key} has a label`, Boolean(MODULE_LABELS[key]?.trim()))
+      ok(`${key} has a description`, Boolean(MODULE_DESCRIPTIONS[key]?.trim()))
     }
 
     // ── Every real site has an account and a Starter Pack ────────────────

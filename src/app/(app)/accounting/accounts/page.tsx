@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listAccounts } from '@/lib/site/chartOfAccounts'
 import { CONTROL_SOURCE_HINTS } from '@/lib/glModel'
 import { hrefBuilder } from '@/lib/searchParams'
@@ -46,7 +46,7 @@ export default async function ChartOfAccountsPage({
   searchParams: Promise<{ type?: string; q?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
   const params = await searchParams
 
   const accounts = await listAccounts(siteId, { includeInactive: true })

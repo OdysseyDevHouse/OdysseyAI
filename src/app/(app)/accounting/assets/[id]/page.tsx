@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getAsset, assetSchedule } from '@/lib/site/fixedAssets'
 import { listAccounts } from '@/lib/site/bankAccounts'
 import { formatMoney } from '@/lib/decimals'
@@ -39,7 +39,7 @@ export default async function AssetDetailPage({
   params: Promise<{ id: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
   const { id } = await params
 
   const assetId = Number(id)

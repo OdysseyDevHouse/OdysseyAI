@@ -98,14 +98,31 @@ async function main() {
   ok('the same store always mints the same link', token === (await createPublicStoreToken(SITE)))
   ok('it resolves back to the store', (await verifyPublicStoreToken(token)) === SITE)
 
-  /* The module half of the resolver. A shop front left open for a shop that
-     stopped paying is the product being given away to the public, so this
-     fails CLOSED — unlike the back office, which fails open. */
-  await execute('DELETE FROM cp2_site_modules WHERE created_by = ?', [MODULE_FIXTURE])
+  /* The module half of the resolver. A shop front left serving for a shop that
+     stopped paying is the product being given away to the public, so this fails
+     CLOSED — unlike the back office, which fails open.
+
+     Every module row for this site is cleared, not just this suite's fixture:
+     the check is "does the site hold online_store", and a row left behind by
+     any other suite would keep the shop open and make this pass for the wrong
+     reason. It did exactly that once. Whatever was there is restored below. */
+  const otherRows = await query<{ module_key: string; starts_on: string; created_by: string | null }>(
+    `SELECT module_key, starts_on, created_by FROM cp2_site_modules
+      WHERE site_id = ? AND module_key = 'online_store'`,
+    [SITE],
+  )
+  await execute("DELETE FROM cp2_site_modules WHERE site_id = ? AND module_key = 'online_store'", [SITE])
   ok(
     'a store without the Online Store module resolves to nothing',
     (await verifyPublicStoreToken(token)) === null,
   )
+  for (const r of otherRows) {
+    await execute(
+      `INSERT INTO cp2_site_modules (site_id, module_key, starts_on, created_by)
+       VALUES (?, 'online_store', ?, ?) ON DUPLICATE KEY UPDATE ends_on = NULL`,
+      [SITE, r.starts_on, r.created_by],
+    )
+  }
   await grantOnlineStore()
   ok('and resolves again once the module is back', (await verifyPublicStoreToken(token)) === SITE)
   ok('a forged token resolves to nothing', (await verifyPublicStoreToken('a.b.c')) === null)

@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { openDraft, listItems, listRuns, nextPeriod } from '@/lib/site/depreciationRuns'
 import { formatMoney } from '@/lib/decimals'
 import { monthKey } from '@/lib/assetModel'
@@ -25,7 +25,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function DepreciationPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
 
   const [draft, runs, period] = await Promise.all([
     openDraft(siteId),

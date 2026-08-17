@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import { postDraft, discardDraft } from '@/lib/site/journals'
 import {
   saveRecurringJournal,
@@ -25,7 +25,7 @@ function revalidateJournals(batchId?: number): void {
 }
 
 export async function postDraftAction(batchId: number): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -37,7 +37,7 @@ export async function postDraftAction(batchId: number): Promise<ActionResult> {
 }
 
 export async function discardDraftAction(batchId: number): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -52,7 +52,7 @@ export async function saveRecurringJournalAction(
   input: RecurringJournalInput,
   id?: number,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -67,7 +67,7 @@ export async function setRecurringActiveAction(
   id: number,
   active: boolean,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -79,7 +79,7 @@ export async function setRecurringActiveAction(
 }
 
 export async function deleteRecurringJournalAction(id: number): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -91,7 +91,7 @@ export async function deleteRecurringJournalAction(id: number): Promise<ActionRe
 }
 
 export async function generateRecurringJournalsAction(): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 

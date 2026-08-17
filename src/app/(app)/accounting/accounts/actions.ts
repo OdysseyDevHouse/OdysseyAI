@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import {
   createAccount,
   updateAccount,
@@ -26,7 +26,7 @@ export async function saveAccountAction(
   input: AccountInput,
   existingId?: number,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -43,7 +43,7 @@ export async function setAccountActiveAction(
   id: number,
   active: boolean,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -59,7 +59,7 @@ export async function setMappingAction(
   refId: number | null,
   accountId: number,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -78,7 +78,7 @@ export async function postJournalAction(input: {
   reference?: string
   lines: JournalLineInput[]
 }): Promise<ActionResult & { journalNumber?: string }> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -99,7 +99,7 @@ export async function reverseJournalAction(
   id: number,
   reason: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('reports.financial')
+  const ctx = await actorForModule('accounting', 'reports.financial')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -117,7 +117,7 @@ export async function closeYearAction(
   yearStart: string,
   yearEnd: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
