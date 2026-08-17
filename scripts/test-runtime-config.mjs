@@ -114,6 +114,19 @@ console.log('\nA decided install never re-decides')
 writeFileSync(path.join(exeDir, 'backend.txt'), 'cloud\n', 'utf8')
 check('a later marker does not flip a provisioned machine', rc.backendMode() === 'local')
 
+console.log('\nThe nightly backup has its own key')
+check('a backup key was minted', Boolean(first.env.BACKUP_ENCRYPTION_KEY))
+check(
+  'it is 32 bytes, as the push script demands',
+  Buffer.from(String(first.env.BACKUP_ENCRYPTION_KEY), 'base64').length === 32,
+)
+check(
+  'it is NOT the credential encryption key',
+  first.env.BACKUP_ENCRYPTION_KEY !== first.env.ENCRYPTION_KEY,
+)
+check('backups land outside the app directory', String(first.env.BACKUP_DIR).startsWith(userData))
+check('the backup key is stable across restarts', secondEnv.BACKUP_ENCRYPTION_KEY === first.env.BACKUP_ENCRYPTION_KEY)
+
 console.log('\nWhat support can reveal')
 const secrets = rc.revealSecrets()
 check('the database password is recoverable', secrets.dbPassword === first.env.DB_PASSWORD)
@@ -121,6 +134,9 @@ check('the root password is recoverable', typeof secrets.rootPassword === 'strin
 check('root and app passwords differ', secrets.rootPassword !== secrets.dbPassword)
 check('the encryption key is recoverable', secrets.encryptionKey === first.env.ENCRYPTION_KEY)
 check('the port is reported', Number(secrets.dbPort) === Number(first.env.DB_PORT))
+/* Without this escrowed, every nightly backup is unrecoverable — and the loss
+   is silent until the day somebody needs a restore. */
+check('the BACKUP key is recoverable', secrets.backupKey === first.env.BACKUP_ENCRYPTION_KEY)
 
 console.log('\nEach install is unique')
 const other = mkdtempSync(path.join(tmpdir(), 'odyssey-cfg2-'))

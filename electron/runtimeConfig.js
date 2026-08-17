@@ -180,6 +180,14 @@ function resolveEnv() {
     set('SITE_DB_HOST_OVERRIDE', '127.0.0.1')
     set('SESSION_SECRET', unseal(cfg.sessionSecretSealed))
     set('ENCRYPTION_KEY', unseal(cfg.encryptionKeySealed))
+    set('BACKUP_ENCRYPTION_KEY', unseal(cfg.backupKeySealed))
+    /* Backups and the offline sign-in both live beside the config rather than
+       inside the app directory, which is replaced wholesale on every update. */
+    set('BACKUP_DIR', path.join(app.getPath('userData'), 'backups'))
+    /* Which shop this machine is. Read back by resolveOfflineSite() when there
+       is no control database to ask, and verified against the lease before it
+       is trusted. */
+    set('ODYSSEY_SITE_ID', cfg.siteId)
   } else {
     // Cloud: our servers, our shared secrets, baked at build time.
     const d = resolveBuildDefaults()
@@ -320,6 +328,13 @@ function provisionLocal() {
   if (!cfg.rootPasswordSealed) cfg.rootPasswordSealed = seal(generateDbPassword())
   if (!cfg.sessionSecretSealed) cfg.sessionSecretSealed = seal(generateSecret())
   if (!cfg.encryptionKeySealed) cfg.encryptionKeySealed = seal(generateSecret())
+  /* The nightly backup is encrypted on this machine before it is uploaded, so
+     we store ciphertext we cannot read. Its own key, deliberately separate from
+     encryptionKeySealed: that one protects credentials and is shared with the
+     v2 backend, and a key used for two unrelated purposes cannot be rotated for
+     either. Escrowed like the rest — "only the shop holds the key" must not
+     mean "a dead hard drive is a dead shop". */
+  if (!cfg.backupKeySealed) cfg.backupKeySealed = seal(generateSecret())
   if (!cfg.createdAt) cfg.createdAt = new Date().toISOString()
   return writeConfig(cfg)
 }
@@ -348,7 +363,19 @@ function revealSecrets() {
     dbPassword: unseal(cfg.dbPasswordSealed),
     rootPassword: unseal(cfg.rootPasswordSealed),
     encryptionKey: unseal(cfg.encryptionKeySealed),
+    /* Without this the nightly backups are unrecoverable. It is the single
+       most important thing to escrow, and the one whose loss is silent until
+       the day somebody needs a restore. */
+    backupKey: unseal(cfg.backupKeySealed),
   }
+}
+
+/** Record which site this install serves, once it is known. */
+function setSiteId(siteId) {
+  const cfg = readConfig()
+  if (cfg.siteId === siteId) return cfg
+  cfg.siteId = siteId
+  return writeConfig(cfg)
 }
 
 /** The data directory for the bundled server. Beside the config, for the same reasons. */
@@ -364,6 +391,7 @@ module.exports = {
   backendMode,
   provisionLocal,
   setCloudBackend,
+  setSiteId,
   revealSecrets,
   dataDir,
   configPath,
