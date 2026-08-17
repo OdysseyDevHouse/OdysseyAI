@@ -87,7 +87,20 @@ function sectionForPath(pathname: string, sections: NavSection[] = NAV): string 
  * function cannot be serialised across the server/client boundary. The menu is
  * therefore rebuilt here from the same NAV the server used.
  */
-export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwner: boolean }) {
+export default function Sidebar({
+  granted,
+  isOwner,
+  modules,
+}: {
+  granted: string[]
+  isOwner: boolean
+  /**
+   * The modules this SHOP has bought, as plain strings for the same reason
+   * `granted` is. Unlike capabilities, an owner does NOT bypass these: owning
+   * the shop does not mean having paid for Loyalty.
+   */
+  modules: string[]
+}) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   /* The global search palette. The sidebar owns it because the sidebar has
@@ -103,11 +116,21 @@ export default function Sidebar({ granted, isOwner }: { granted: string[]; isOwn
      it directly rebuilt `visible` each time and re-fired every effect that
      watches it. */
   const grantedKey = granted.join(',')
+  const modulesKey = modules.join(',')
   const visible = useMemo(() => {
     const held = new Set(granted)
-    return navFor((capability) => isOwner || held.has(capability))
+    const bought = new Set(modules)
+    /* The owner bypass applies to CAPABILITIES only. A capability is something
+       an owner could grant themselves anyway, so short-circuiting it saves a
+       round trip and changes nothing. A module is something they would have to
+       BUY, and showing an owner a menu of features their shop does not have
+       would be a link to a page that turns them away. */
+    return navFor(
+      (capability) => isOwner || held.has(capability),
+      (module) => bought.has(module),
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grantedKey, isOwner])
+  }, [grantedKey, modulesKey, isOwner])
 
   /**
    * ONE open section, not a set of them.

@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listRuns } from '@/lib/site/creditControl'
 import {
   PageHeader,
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
  * though the question never came up.
  */
 export default async function RunsPage() {
-  const { siteId } = await requireCapability('customers.view')
+  const { siteId } = await requireModuleCapability('customers', 'customers.view')
   const runs = await listRuns(siteId, 50)
 
   // Plain serialisable rows — the Dates on a run never cross the boundary, and

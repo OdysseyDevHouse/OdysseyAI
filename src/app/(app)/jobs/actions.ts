@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor, actorForOrThrow } from '@/lib/auth'
+import { actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { searchCustomersForTill, type TillCustomer } from '@/lib/site/tillCustomers'
 import { listServiceAddresses, type ServiceAddress } from '@/lib/site/serviceAddresses'
@@ -225,18 +225,18 @@ function revalidateJobPath(id: number) {
  * rather than "you may not look".
  */
 export async function searchJobCustomersAction(term: string): Promise<TillCustomer[]> {
-  const ctx = await actorForOrThrow('jobs.edit')
+  const ctx = await actorForModuleOrThrow('job_cards', 'jobs.edit')
   return searchCustomersForTill(ctx.siteId, term)
 }
 
 /** The service addresses on file for a customer, for the job form's picker. */
 export async function customerAddressesAction(customerId: number): Promise<ServiceAddress[]> {
-  const ctx = await actorForOrThrow('jobs.edit')
+  const ctx = await actorForModuleOrThrow('job_cards', 'jobs.edit')
   return listServiceAddresses(ctx.siteId, customerId)
 }
 
 export async function saveJobAction(input: JobCardInput): Promise<JobSaveResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await saveJobCard(ctx.siteId, ctx.actor, input)
@@ -250,7 +250,7 @@ export async function setStatusAction(
   statusId: number,
   reason?: string,
 ): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   // jobs.invoice is the office test: the stages marked office-only are the
@@ -274,7 +274,7 @@ export async function assignOwnerAction(
   ownerUserId: number | null,
   ownerName: string,
 ): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await assignOwner(ctx.siteId, ctx.actor, jobId, ownerUserId, ownerName)
@@ -287,7 +287,7 @@ export async function saveLinesAction(
   jobId: number,
   lines: JobLineInput[],
 ): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await saveLines(ctx.siteId, ctx.actor, jobId, lines)
@@ -310,7 +310,7 @@ export async function reclassifyLineAction(
   to: BillingState,
   reason: string | null,
 ): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.bill_decide')
+  const ctx = await actorForModule('job_cards', 'jobs.bill_decide')
   if ('ok' in ctx) return ctx
 
   const result = await reclassifyLine(ctx.siteId, ctx.actor, lineId, to, reason)
@@ -320,7 +320,7 @@ export async function reclassifyLineAction(
 }
 
 export async function closeJobAction(jobId: number, reason?: string): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.close')
+  const ctx = await actorForModule('job_cards', 'jobs.close')
   if ('ok' in ctx) return ctx
 
   const result = await closeJob(ctx.siteId, ctx.actor, jobId, reason)
@@ -330,7 +330,7 @@ export async function closeJobAction(jobId: number, reason?: string): Promise<Jo
 }
 
 export async function cancelJobAction(jobId: number, reason: string): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.close')
+  const ctx = await actorForModule('job_cards', 'jobs.close')
   if ('ok' in ctx) return ctx
 
   const result = await cancelJob(ctx.siteId, ctx.actor, jobId, reason)
@@ -340,7 +340,7 @@ export async function cancelJobAction(jobId: number, reason: string): Promise<Jo
 }
 
 export async function reopenJobAction(jobId: number, reason: string): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.close')
+  const ctx = await actorForModule('job_cards', 'jobs.close')
   if ('ok' in ctx) return ctx
 
   const result = await reopenJob(ctx.siteId, ctx.actor, jobId, reason)
@@ -360,7 +360,7 @@ export async function invoiceJobAction(
   jobId: number,
   selections: InvoiceLineInput[],
 ): Promise<InvoiceJobResult> {
-  const ctx = await actorFor('jobs.invoice')
+  const ctx = await actorForModule('job_cards', 'jobs.invoice')
   if ('ok' in ctx) return ctx
 
   const result = await invoiceJob(ctx.siteId, ctx.actor, jobId, selections)
@@ -386,7 +386,7 @@ export async function moveCardAction(
   statusId: number,
   boardSlug: string,
 ): Promise<JobActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   /*
@@ -420,7 +420,7 @@ export async function saveBoardAction(input: {
   isActive: boolean
   statusIds: number[]
 }): Promise<BoardSaveResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await saveJobBoard(ctx.siteId, ctx.actor, input)
@@ -431,7 +431,7 @@ export async function saveBoardAction(input: {
 }
 
 export async function deleteBoardAction(id: number): Promise<BoardActionResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await deleteJobBoard(ctx.siteId, ctx.actor, id)
@@ -442,7 +442,7 @@ export async function deleteBoardAction(id: number): Promise<BoardActionResult> 
 }
 
 export async function saveStatusAction(input: JobStatusInput): Promise<StatusSaveResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await saveJobStatus(ctx.siteId, ctx.actor, input)
@@ -453,7 +453,7 @@ export async function saveStatusAction(input: JobStatusInput): Promise<StatusSav
 }
 
 export async function deleteStatusAction(id: number): Promise<StatusSaveResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await deleteJobStatus(ctx.siteId, ctx.actor, id)
@@ -474,7 +474,7 @@ export async function quoteJobAction(
   jobId: number,
   options: { validUntil?: string | null; notes?: string | null } = {},
 ): Promise<QuoteJobResult> {
-  const ctx = await actorFor('jobs.invoice')
+  const ctx = await actorForModule('job_cards', 'jobs.invoice')
   if ('ok' in ctx) return ctx
 
   const result = await quoteJob(ctx.siteId, ctx.actor, jobId, options)
@@ -496,7 +496,7 @@ export async function acceptQuoteAction(
   quoteId: number,
   input: { method: AcceptMethod; acceptedBy: string; reference?: string | null },
 ): Promise<AcceptResult> {
-  const ctx = await actorFor('jobs.invoice')
+  const ctx = await actorForModule('job_cards', 'jobs.invoice')
   if ('ok' in ctx) return ctx
 
   const result = await acceptQuote(ctx.siteId, ctx.actor, quoteId, input)
@@ -511,7 +511,7 @@ export async function declineQuoteAction(
   quoteId: number,
   reason: string,
 ): Promise<AcceptResult> {
-  const ctx = await actorFor('jobs.invoice')
+  const ctx = await actorForModule('job_cards', 'jobs.invoice')
   if ('ok' in ctx) return ctx
 
   const result = await declineJobQuote(ctx.siteId, ctx.actor, quoteId, reason)
@@ -535,7 +535,7 @@ export async function declineQuoteAction(
 export async function saveAppointmentAction(
   input: AppointmentInput,
 ): Promise<AppointmentSaveResult> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await saveAppointment(ctx.siteId, ctx.actor, input)
@@ -558,7 +558,7 @@ export async function setVisitStatusAction(
   status: AppointmentStatus,
   reason?: string,
 ): Promise<AppointmentActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await setAppointmentStatus(ctx.siteId, ctx.actor, appointmentId, status, reason)
@@ -572,7 +572,7 @@ export async function deleteAppointmentAction(
   jobId: number,
   appointmentId: number,
 ): Promise<AppointmentActionResult> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await deleteAppointment(ctx.siteId, ctx.actor, appointmentId)
@@ -591,7 +591,7 @@ export async function deleteAppointmentAction(
  * case, and a business that wants to narrow it has roles for that.
  */
 export async function schedulableUsersAction(): Promise<{ id: number; name: string }[]> {
-  const ctx = await actorForOrThrow('jobs.assign')
+  const ctx = await actorForModuleOrThrow('job_cards', 'jobs.assign')
   const users = await listUsers(ctx.siteId)
   return users.filter((u) => u.isActive).map((u) => ({ id: u.id, name: u.name }))
 }
@@ -608,7 +608,7 @@ export async function schedulableUsersAction(): Promise<{ id: number; name: stri
  * timesheet — and eventually in their pay.
  */
 export async function startTimerAction(jobId: number): Promise<TimerResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await startJobTimer(
@@ -624,7 +624,7 @@ export async function startTimerAction(jobId: number): Promise<TimerResult> {
 }
 
 export async function stopTimerAction(jobId: number, note?: string): Promise<StopResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await stopJobTimer(ctx.siteId, ctx.actor, jobId, ctx.actor.userId, note)
@@ -644,7 +644,7 @@ export async function addTimeAction(
   jobId: number,
   input: { userId: number; userName: string; startedAt: string; minutes: number; note?: string | null },
 ): Promise<StopResult> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await addJobTime(ctx.siteId, ctx.actor, jobId, input)
@@ -657,7 +657,7 @@ export async function deleteTimeAction(
   jobId: number,
   entryId: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await deleteJobTime(ctx.siteId, ctx.actor, jobId, entryId)
@@ -674,7 +674,7 @@ export async function deleteTimeAction(
  * Whether the claim is accepted is a separate act with its own capability below.
  */
 export async function saveTravelAction(input: TravelInput): Promise<TravelSaveResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await saveTravel(ctx.siteId, ctx.actor, input)
@@ -697,7 +697,7 @@ export async function verifyTravelAction(
   verifiedKm: number,
   note?: string | null,
 ): Promise<TravelActionResult> {
-  const ctx = await actorFor('jobs.bill_decide')
+  const ctx = await actorForModule('job_cards', 'jobs.bill_decide')
   if ('ok' in ctx) return ctx
 
   const result = await verifyTravel(ctx.siteId, ctx.actor, travelId, verifiedKm, note)
@@ -713,7 +713,7 @@ export async function deleteTravelAction(
   jobId: number,
   travelId: number,
 ): Promise<TravelActionResult> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await deleteTravel(ctx.siteId, ctx.actor, jobId, travelId)
@@ -737,7 +737,7 @@ export async function issuePartsAction(
   vanLocationId: number,
   lines: IssueLineInput[],
 ): Promise<IssueResult> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('job_cards', 'stock.transfer')
   if ('ok' in ctx) return ctx
 
   const result = await issueParts(ctx.siteId, ctx.actor, jobId, vanLocationId, lines)
@@ -752,7 +752,7 @@ export async function returnPartsAction(
   vanLocationId: number,
   lines: IssueLineInput[],
 ): Promise<IssueResult> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('job_cards', 'stock.transfer')
   if ('ok' in ctx) return ctx
 
   const result = await returnParts(ctx.siteId, ctx.actor, jobId, vanLocationId, lines)
@@ -764,7 +764,7 @@ export async function returnPartsAction(
 
 /** The vans a part can be issued to. */
 export async function vansAction(): Promise<{ id: number; code: string; name: string }[]> {
-  const ctx = await actorForOrThrow('jobs.view')
+  const ctx = await actorForModuleOrThrow('job_cards', 'jobs.view')
   const vans = await listVans(ctx.siteId)
   return vans.map((v) => ({ id: v.id, code: v.code, name: v.name }))
 }
@@ -785,7 +785,7 @@ function revalidateSeries() {
  * day's dispatching.
  */
 export async function saveSeriesAction(input: SeriesInput): Promise<SeriesResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await saveJobSeries(ctx.siteId, ctx.actor, input)
@@ -795,7 +795,7 @@ export async function saveSeriesAction(input: SeriesInput): Promise<SeriesResult
 }
 
 export async function deleteSeriesAction(id: number): Promise<SeriesActionResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await deleteJobSeries(ctx.siteId, ctx.actor, id)
@@ -818,7 +818,7 @@ export async function raiseSeriesNowAction(
   | { ok: true; created: { jobId: number; documentNumber: string | null; forDate: string }[]; skipped: { reason: string }[] }
   | { ok: false; error: string }
 > {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await generateDueJobs(ctx.siteId, ctx.actor, undefined, seriesId)
@@ -836,7 +836,7 @@ export async function raiseSeriesNowAction(
 
 /** What a schedule has raised. Fetched on demand — see RecurringClient. */
 export async function seriesRunsAction(seriesId: number): Promise<SeriesRun[]> {
-  const ctx = await actorForOrThrow('jobs.view')
+  const ctx = await actorForModuleOrThrow('job_cards', 'jobs.view')
   return seriesRuns(ctx.siteId, seriesId)
 }
 
@@ -856,7 +856,7 @@ function revalidateAssets(assetId?: number) {
  * because those are a business decision.
  */
 export async function saveAssetAction(input: AssetInput): Promise<SaveAssetResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await saveAsset(ctx.siteId, ctx.actor, input)
@@ -869,7 +869,7 @@ export async function retireAssetAction(
   id: number,
   reason: string,
 ): Promise<AssetActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await retireAsset(ctx.siteId, ctx.actor, id, reason)
@@ -879,7 +879,7 @@ export async function retireAssetAction(
 }
 
 export async function reviveAssetAction(id: number): Promise<AssetActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await reviveAsset(ctx.siteId, ctx.actor, id)
@@ -889,7 +889,7 @@ export async function reviveAssetAction(id: number): Promise<AssetActionResult> 
 }
 
 export async function deleteAssetAction(id: number): Promise<AssetActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await deleteAsset(ctx.siteId, ctx.actor, id)
@@ -900,7 +900,7 @@ export async function deleteAssetAction(id: number): Promise<AssetActionResult> 
 
 /** Kinds of equipment are a business decision, so this one is setup. */
 export async function saveAssetTypeAction(input: AssetTypeInput): Promise<AssetResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await saveAssetType(ctx.siteId, ctx.actor, input)
@@ -911,7 +911,7 @@ export async function saveAssetTypeAction(input: AssetTypeInput): Promise<AssetR
 }
 
 export async function deleteAssetTypeAction(id: number): Promise<AssetActionResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await deleteAssetType(ctx.siteId, ctx.actor, id)
@@ -932,7 +932,7 @@ export async function setJobAssetAction(
   jobId: number,
   assetId: number | null,
 ): Promise<AssetActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await setJobAsset(ctx.siteId, ctx.actor, jobId, assetId)
@@ -954,7 +954,7 @@ export async function addJobAssetAction(
   assetId: number,
   note: string | null,
 ): Promise<AssetActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await addJobAsset(ctx.siteId, ctx.actor, jobId, assetId, note)
@@ -968,7 +968,7 @@ export async function removeJobAssetAction(
   jobId: number,
   assetId: number,
 ): Promise<AssetActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await removeJobAsset(ctx.siteId, ctx.actor, jobId, assetId)
@@ -992,7 +992,7 @@ export async function removeJobAssetAction(
 export async function customerAssetsAction(customerId: number | null): Promise<
   { id: number; label: string }[]
 > {
-  const ctx = await actorForOrThrow('jobs.view')
+  const ctx = await actorForModuleOrThrow('job_cards', 'jobs.view')
 
   const [theirs, unclaimed] = await Promise.all([
     customerId === null
@@ -1019,7 +1019,7 @@ export async function customerAssetsAction(customerId: number | null): Promise<
  * other technician follows.
  */
 export async function saveHeadlineAction(input: HeadlineInput): Promise<HeadlineResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await saveHeadline(ctx.siteId, ctx.actor, input)
@@ -1030,7 +1030,7 @@ export async function saveHeadlineAction(input: HeadlineInput): Promise<Headline
 }
 
 export async function deleteHeadlineAction(id: number): Promise<ItemResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await deleteHeadline(ctx.siteId, ctx.actor, id)
@@ -1044,7 +1044,7 @@ export async function applyHeadlinesAction(
   jobId: number,
   headlineIds: number[],
 ): Promise<ApplyResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await applyHeadlines(ctx.siteId, ctx.actor, jobId, headlineIds)
@@ -1058,7 +1058,7 @@ export async function recordItemAction(
   itemId: number,
   input: { response: string | null; note: string | null; complete: boolean },
 ): Promise<ItemResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await recordItem(ctx.siteId, ctx.actor, itemId, input)
@@ -1078,7 +1078,7 @@ export async function addJobItemAction(
     isRequired: boolean
   },
 ): Promise<ItemResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await addJobItem(ctx.siteId, ctx.actor, jobId, input)
@@ -1102,7 +1102,7 @@ export async function captureEvidenceAction(
   itemId: number,
   form: FormData,
 ): Promise<ItemResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const file = form.get('file')
@@ -1146,7 +1146,7 @@ export async function requestPartAction(
   jobId: number,
   input: { description: string; qty: number; reason: string | null; jobCardLineId?: number | null },
 ): Promise<PartRequestResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await requestPart(ctx.siteId, ctx.actor, {
@@ -1173,7 +1173,7 @@ export async function decideRequestAction(
   decision: 'approved' | 'cancelled',
   note: string | null,
 ): Promise<PartRequestActionResult> {
-  const ctx = await actorFor('purchasing.edit')
+  const ctx = await actorForModule('job_cards', 'purchasing.edit')
   if ('ok' in ctx) return ctx
 
   const result = await decideRequest(ctx.siteId, ctx.actor, id, decision, note)
@@ -1203,7 +1203,7 @@ export async function signJobAction(
   party: SignoffParty,
   form: FormData,
 ): Promise<SignoffResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const file = form.get('file')
@@ -1245,7 +1245,7 @@ export async function unsignJobAction(
   jobId: number,
   party: SignoffParty,
 ): Promise<SignoffResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await unsignJob(ctx.siteId, ctx.actor, jobId, party)
@@ -1268,7 +1268,7 @@ export async function bulkUpdateJobsAction(
   change: JobBulkChange,
 ): Promise<JobBulkResult | { ok: false; error: string }> {
   const needed = change.kind === 'owner' ? 'jobs.assign' : 'jobs.edit'
-  const ctx = await actorFor(needed)
+  const ctx = await actorForModule('job_cards', needed)
   if ('ok' in ctx) return ctx
 
   const result = await bulkUpdateJobs(
@@ -1294,7 +1294,7 @@ export async function saveJobViewAction(input: {
   // jobs.view, not jobs.setup: naming a filter set over work you can already see
   // is not a configuration act, and requiring setup would mean only an
   // administrator could keep a shortlist.
-  const ctx = await actorFor('jobs.view')
+  const ctx = await actorForModule('job_cards', 'jobs.view')
   if ('ok' in ctx) return ctx
 
   const result = await saveJobView(ctx.siteId, ctx.actor, input)
@@ -1304,7 +1304,7 @@ export async function saveJobViewAction(input: {
 }
 
 export async function deleteJobViewAction(id: number): Promise<ViewActionResult> {
-  const ctx = await actorFor('jobs.view')
+  const ctx = await actorForModule('job_cards', 'jobs.view')
   if ('ok' in ctx) return ctx
 
   const result = await deleteJobView(ctx.siteId, ctx.actor, id)
@@ -1329,7 +1329,7 @@ export async function saveJobTeamAction(input: {
   isActive: boolean
   members: { userId: number; isLead: boolean }[]
 }): Promise<TeamResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await saveJobTeam(ctx.siteId, ctx.actor, input)
@@ -1340,7 +1340,7 @@ export async function saveJobTeamAction(input: {
 }
 
 export async function deleteJobTeamAction(id: number): Promise<TeamActionResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await deleteJobTeam(ctx.siteId, ctx.actor, id)
@@ -1359,7 +1359,7 @@ export async function applyTeamToJobAction(
   jobId: number,
   teamId: number,
 ): Promise<ApplyTeamResult & { ok: boolean; error?: string }> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return { ...(ctx as { ok: false; error: string }), added: 0, skipped: [] }
 
   const result = await applyTeamToJob(ctx.siteId, ctx.actor, jobId, teamId)
@@ -1388,7 +1388,7 @@ export async function takeDepositAction(
     description?: string | null
   },
 ): Promise<DepositResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
   if (!can(ctx.capabilities, 'cashbook.edit')) {
     return {
@@ -1421,7 +1421,7 @@ export async function setJobPersonAction(
   userId: number,
   role: JobRole,
 ): Promise<PeopleResult> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await setJobPerson(ctx.siteId, ctx.actor, jobId, userId, role)
@@ -1434,7 +1434,7 @@ export async function removeJobPersonAction(
   jobId: number,
   userId: number,
 ): Promise<PeopleResult> {
-  const ctx = await actorFor('jobs.assign')
+  const ctx = await actorForModule('job_cards', 'jobs.assign')
   if ('ok' in ctx) return ctx
 
   const result = await removeJobPerson(ctx.siteId, ctx.actor, jobId, userId)
@@ -1453,7 +1453,7 @@ export async function removeJobPersonAction(
 export async function toggleFollowAction(
   jobId: number,
 ): Promise<PeopleResult & { following?: boolean }> {
-  const ctx = await actorFor('jobs.view')
+  const ctx = await actorForModule('job_cards', 'jobs.view')
   if ('ok' in ctx) return ctx
 
   const result = await toggleFollow(ctx.siteId, ctx.actor, jobId)
@@ -1463,7 +1463,7 @@ export async function toggleFollowAction(
 }
 
 export async function deleteJobItemAction(jobId: number, itemId: number): Promise<ItemResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await deleteJobItem(ctx.siteId, ctx.actor, itemId)
@@ -1482,7 +1482,7 @@ export async function deleteJobItemAction(jobId: number, itemId: number): Promis
  * stop the response clock.
  */
 export async function markRespondedAction(jobId: number): Promise<SlaActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
   const result = await markResponded(ctx.siteId, ctx.actor, jobId)
@@ -1496,7 +1496,7 @@ export async function savePolicyAction(
   id: number,
   input: PolicyInput,
 ): Promise<SlaActionResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await savePolicy(ctx.siteId, ctx.actor, id, input)
@@ -1513,7 +1513,7 @@ export async function savePolicyAction(
  * what is promised is a configuration act whichever customer it is about.
  */
 export async function createPolicyAction(input: PolicyInput): Promise<SlaActionResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await createPolicy(ctx.siteId, ctx.actor, input)
@@ -1524,7 +1524,7 @@ export async function createPolicyAction(input: PolicyInput): Promise<SlaActionR
 }
 
 export async function deletePolicyAction(id: number): Promise<SlaActionResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await deletePolicy(ctx.siteId, ctx.actor, id)
@@ -1548,7 +1548,7 @@ export async function saveTradingHoursAction(input: {
   closesAt: string
   skipHolidays: boolean
 }): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   if (!isDayMask(input.days)) {
@@ -1624,7 +1624,7 @@ export async function saveJobSettingsAction(input: {
   portalAllowUploads: boolean
   portalAllowQuoteAccept: boolean
 }): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const statement = input.signatureStatement.trim()
@@ -1712,7 +1712,7 @@ export async function saveJobSettingsAction(input: {
 }
 
 export async function reorderStatusesAction(ids: number[]): Promise<StatusSaveResult> {
-  const ctx = await actorFor('jobs.setup')
+  const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
   const result = await reorderJobStatuses(ctx.siteId, ctx.actor, ids)
@@ -1734,7 +1734,7 @@ export async function setCustomValuesAction(
   entityId: number,
   values: { fieldId: number; value: string | null }[],
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
 
   // The entity is a parameter of the shared panel, so it arrives from the
@@ -1760,7 +1760,7 @@ export async function setAssetCustomValuesAction(
   entityId: number,
   values: { fieldId: number; value: string | null }[],
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
   if (entity !== 'equipment') return { ok: false, error: 'That is not an equipment field.' }
 
@@ -1773,7 +1773,7 @@ export async function setAssetCustomValuesAction(
 export async function markFeedbackSeenAction(
   jobId: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('jobs.view')
+  const ctx = await actorForModule('job_cards', 'jobs.view')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
 
   const result = await markSeen(ctx.siteId, ctx.actor, jobId)
@@ -1795,7 +1795,7 @@ export async function acceptRequestAction(
   customerId: number,
   overrides: { title?: string; description?: string | null } = {},
 ): Promise<AcceptRequestResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
 
   const result = await acceptRequest(ctx.siteId, ctx.actor, requestId, customerId, overrides)
@@ -1811,7 +1811,7 @@ export async function rejectRequestAction(
   status: 'rejected' | 'spam',
   reason: string | null,
 ): Promise<RequestActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
 
   const result = await rejectRequest(ctx.siteId, ctx.actor, requestId, status, reason)
@@ -1820,7 +1820,7 @@ export async function rejectRequestAction(
 }
 
 export async function reopenRequestAction(requestId: number): Promise<RequestActionResult> {
-  const ctx = await actorFor('jobs.edit')
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
 
   const result = await reopenRequest(ctx.siteId, ctx.actor, requestId)

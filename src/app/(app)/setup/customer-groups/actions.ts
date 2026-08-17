@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import {
   createCustomerGroup,
   updateCustomerGroup,
@@ -45,7 +45,7 @@ export async function saveCustomerGroupAction(
   input: GroupInput,
   id?: number,
 ): Promise<GroupActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('customers', 'setup.edit')
   if ('ok' in ctx) return ctx
 
   const result = id
@@ -60,7 +60,7 @@ export async function saveCustomerGroupAction(
 export async function deleteCustomerGroupAction(
   id: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('customers', 'setup.edit')
   if ('ok' in ctx) return ctx
 
   // Refuses rather than cascades when accounts still point at the group — the

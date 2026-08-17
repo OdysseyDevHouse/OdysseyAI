@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
+import { requireSiteId, actorForModule, actorForOrThrow } from '@/lib/auth'
 import {
   groupForSite,
   createGroup,
@@ -23,7 +23,7 @@ export async function linkStoreAction(
   _prev: LinkFormState,
   form: FormData,
 ): Promise<LinkFormState> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('multi_branch', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
   const targetSiteId = Number(form.get('siteId'))
@@ -75,7 +75,7 @@ export async function updateSharingAction(
   _prev: LinkFormState,
   form: FormData,
 ): Promise<LinkFormState> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('multi_branch', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
   const targetSiteId = Number(form.get('siteId'))

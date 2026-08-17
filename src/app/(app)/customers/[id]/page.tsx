@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getCustomer } from '@/lib/site/customers'
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
 import { listActivity } from '@/lib/site/activityLog'
@@ -150,7 +150,7 @@ export default async function CustomerPage({
   searchParams: Promise<{ tab?: string; saved?: string; error?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId, capabilities } = await requireCapability('customers.view')
+  const { siteId, capabilities } = await requireModuleCapability('customers', 'customers.view')
   const { id } = await params
   const { tab, saved, error } = await searchParams
 

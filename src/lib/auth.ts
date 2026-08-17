@@ -562,13 +562,15 @@ export async function requireCapability(capability: Capability): Promise<{
   siteId: number
   actor: { userId: number; userName: string }
   capabilities: CapabilitySet
+  modules: ModuleEntitlements
 }> {
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site, user, capabilities, modules } = await requireSiteUser()
   if (!can(capabilities, capability)) redirect('/not-allowed')
   return {
     siteId: site.id,
     actor: { userId: user.id, userName: user.name },
     capabilities,
+    modules,
   }
 }
 
@@ -579,6 +581,7 @@ export async function requireAnyCapability(
   siteId: number
   actor: { userId: number; userName: string }
   capabilities: CapabilitySet
+  modules: ModuleEntitlements
 }> {
   const ctx = await requireSiteUser()
   if (!capabilities.some((c) => can(ctx.capabilities, c))) redirect('/not-allowed')
@@ -586,6 +589,7 @@ export async function requireAnyCapability(
     siteId: ctx.site.id,
     actor: { userId: ctx.user.id, userName: ctx.user.name },
     capabilities: ctx.capabilities,
+    modules: ctx.modules,
   }
 }
 
@@ -609,10 +613,15 @@ export type Denied = { ok: false; error: string }
  * not what is possible.
  */
 export async function actorFor(capability: Capability): Promise<
-  | { siteId: number; actor: { userId: number; userName: string }; capabilities: CapabilitySet }
+  | {
+      siteId: number
+      actor: { userId: number; userName: string }
+      capabilities: CapabilitySet
+      modules: ModuleEntitlements
+    }
   | Denied
 > {
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site, user, capabilities, modules } = await requireSiteUser()
   if (!can(capabilities, capability)) {
     return {
       ok: false,
@@ -623,6 +632,7 @@ export async function actorFor(capability: Capability): Promise<
     siteId: site.id,
     actor: { userId: user.id, userName: user.name },
     capabilities,
+    modules,
   }
 }
 
@@ -644,10 +654,15 @@ export async function actorFor(capability: Capability): Promise<
 export async function actorForAny(
   ...capabilities: Capability[]
 ): Promise<
-  | { siteId: number; actor: { userId: number; userName: string }; capabilities: CapabilitySet }
+  | {
+      siteId: number
+      actor: { userId: number; userName: string }
+      capabilities: CapabilitySet
+      modules: ModuleEntitlements
+    }
   | Denied
 > {
-  const { site, user, capabilities: held } = await requireSiteUser()
+  const { site, user, capabilities: held, modules } = await requireSiteUser()
   if (!capabilities.some((capability) => can(held, capability))) {
     return {
       ok: false,
@@ -658,6 +673,7 @@ export async function actorForAny(
     siteId: site.id,
     actor: { userId: user.id, userName: user.name },
     capabilities: held,
+    modules,
   }
 }
 
@@ -833,8 +849,9 @@ export async function actorForOrThrow(capability: Capability): Promise<{
   siteId: number
   actor: { userId: number; userName: string }
   capabilities: CapabilitySet
+  modules: ModuleEntitlements
 }> {
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site, user, capabilities, modules } = await requireSiteUser()
   if (!can(capabilities, capability)) {
     throw new Error(`Not allowed: ${capability}`)
   }
@@ -842,6 +859,38 @@ export async function actorForOrThrow(capability: Capability): Promise<{
     siteId: site.id,
     actor: { userId: user.id, userName: user.name },
     capabilities,
+    modules,
+  }
+}
+
+/**
+ * `actorForOrThrow`, with the module asked first.
+ *
+ * For the actions that throw rather than returning a refusal — the ones whose
+ * caller already has a try/catch and turns a throw into a message. The module
+ * is checked before the capability for the same reason it is everywhere else.
+ */
+export async function actorForModuleOrThrow(
+  module: ModuleKey,
+  capability: Capability,
+): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+  capabilities: CapabilitySet
+  modules: ModuleEntitlements
+}> {
+  const { site, user, capabilities, modules } = await requireSiteUser()
+  if (!hasModule(modules, module)) {
+    throw new Error(moduleLabelFor(module, can(capabilities, 'setup.edit')))
+  }
+  if (!can(capabilities, capability)) {
+    throw new Error(`Not allowed: ${capability}`)
+  }
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
+    modules,
   }
 }
 

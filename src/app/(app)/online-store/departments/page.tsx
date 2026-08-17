@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getOnlineSettings, getPublishCounts, listDepartmentVisibility } from '@/lib/site/onlineStore'
 import { PageHeader, PageBody } from '@/components/ui'
 import DepartmentTree from './DepartmentTree'
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function OnlineDepartmentsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('online.edit')
+  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
 
   const [departments, counts, settings] = await Promise.all([
     listDepartmentVisibility(siteId),

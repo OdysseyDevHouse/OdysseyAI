@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import {
   getOnlineSettings,
   getPublishCounts,
@@ -46,7 +46,7 @@ export default async function OnlineProductsPage({
   searchParams: Promise<{ q?: string; department?: string; show?: string; page?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('online.edit')
+  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
   const params = await searchParams
   const { q, department, show } = params
 

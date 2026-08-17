@@ -1,5 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
+import { has } from '@/lib/control/modules'
 import { templatesFor, type ReportTemplate } from '@/lib/reportBuilder/templates'
 import { listSavedReports } from '@/lib/site/savedReports'
 import { listFavorites } from '@/lib/site/reportFavorites'
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic'
  * report lives on.
  */
 export default async function ReportsPage() {
-  const { siteId, actor, capabilities } = await requireCapability('reports.view')
+  const { siteId, actor, capabilities, modules } = await requireCapability('reports.view')
   const allow = (c: Parameters<typeof can>[1]) => can(capabilities, c)
 
   const [saved, favorites] = await Promise.all([
@@ -57,11 +58,16 @@ export default async function ReportsPage() {
    * to name a word shops do not use for themselves. Here they cost nothing, and
    * are found where somebody looks for a figure spanning their stores.
    *
-   * Listed whether or not this site is linked: the pages themselves show an
+   * Listed whether or not this site is LINKED: the pages themselves show an
    * empty state pointing at Setup → Linked stores, which is the honest answer
-   * and avoids a control-database read on every load of this hub.
+   * for a shop that has bought Multi-Branch but not set it up yet.
+   *
+   * But hidden entirely when the module has not been bought. That check used to
+   * be avoided here because it meant a control-database read on every load of
+   * this hub; it no longer does — `requireCapability` above has already
+   * resolved the shop's modules for this request, so asking is free.
    */
-  if (allow('dashboard.view')) {
+  if (allow('dashboard.view') && has(modules, 'multi_branch')) {
     templates.push({
       id: 'multi-store',
       name: 'Multi-store overview',

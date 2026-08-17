@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor, actorForOrThrow } from '@/lib/auth'
+import { actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import {
   postBuild,
   unbuild,
@@ -28,7 +28,7 @@ export async function postBuildAction(input: BuildInput): Promise<BuildActionRes
   // The check belongs here and not only on the screen that offered the button.
   // A server action is a public endpoint: hiding a button changes what is easy,
   // not what is possible.
-  const ctx = await actorFor('products.edit')
+  const ctx = await actorForModule('inventory_advanced', 'products.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -43,7 +43,7 @@ export async function unbuildAction(
   id: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('products.edit')
+  const ctx = await actorForModule('inventory_advanced', 'products.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -66,12 +66,12 @@ export async function previewBuildAction(
   qty: number,
   fromLocationId: number,
 ) {
-  const ctx = await actorForOrThrow('products.view')
+  const ctx = await actorForModuleOrThrow('inventory_advanced', 'products.view')
   return previewBuild(ctx.siteId, productId, qty, fromLocationId)
 }
 
 /** The product picker on the capture screen — manufactured recipes only. */
 export async function searchManufacturableAction(term: string) {
-  const ctx = await actorForOrThrow('products.view')
+  const ctx = await actorForModuleOrThrow('inventory_advanced', 'products.view')
   return listManufacturableProducts(ctx.siteId, term)
 }

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { pendingInbound } from '@/lib/site/storeTransfers'
 import { formatQty } from '@/lib/decimals'
 import {
@@ -26,7 +26,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function InboundTransfersPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('stock.transfer')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.transfer')
   const inbound = await pendingInbound(siteId)
 
   return (

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listLocations } from '@/lib/site/stockLocations'
 import { listManufacturableProducts } from '@/lib/site/manufacturing'
 import { PageHeader } from '@/components/ui'
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function NewBuildPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('products.edit')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'products.edit')
 
   const [locations, buildable] = await Promise.all([
     listLocations(siteId, false, true),

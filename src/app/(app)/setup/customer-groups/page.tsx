@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listCustomerGroups } from '@/lib/site/customerLookups'
 import { listPriceStructuresForSetup } from '@/lib/site/pricingSetup'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function CustomerGroupsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('setup.edit')
+  const { siteId } = await requireModuleCapability('customers', 'setup.edit')
 
   // Inactive groups are shown here and nowhere else: this is the screen that
   // brings one back, so hiding them would make that impossible. Every other

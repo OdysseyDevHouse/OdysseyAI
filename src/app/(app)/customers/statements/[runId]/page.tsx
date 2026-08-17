@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getRun, listItems, refreshCounts, itemPeriod } from '@/lib/site/statementRuns'
 import {
   PageHeader,
@@ -22,7 +22,7 @@ export default async function StatementRunPage({
   params: Promise<{ runId: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('customers.view')
+  const { siteId } = await requireModuleCapability('customers', 'customers.view')
   const { runId: raw } = await params
 
   const runId = Number(raw)

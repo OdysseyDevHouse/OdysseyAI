@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { saveCode, type DiscountCodeInput } from '@/lib/site/discountCodes'
 import { siteExecute } from '@/lib/siteDb'
 
@@ -20,7 +20,7 @@ export async function saveDiscountAction(
   id: number | null,
   input: DiscountCodeInput,
 ): Promise<Result> {
-  const { siteId, actor } = await requireCapability('online.edit')
+  const { siteId, actor } = await requireModuleCapability('online_store', 'online.edit')
   const result = await saveCode(siteId, id, input, actor.userName)
   if (!result.ok) return result
   revalidatePath('/online-store/discounts')
@@ -36,7 +36,7 @@ export async function saveDiscountAction(
  * history readable — the same reasoning as archiving a product.
  */
 export async function retireDiscountAction(id: number): Promise<Result> {
-  const { siteId, actor } = await requireCapability('online.edit')
+  const { siteId, actor } = await requireModuleCapability('online_store', 'online.edit')
   await siteExecute(
     siteId,
     'UPDATE discount_codes SET is_active = 0, updated_by = ? WHERE id = ?',
@@ -47,7 +47,7 @@ export async function retireDiscountAction(id: number): Promise<Result> {
 }
 
 export async function reviveDiscountAction(id: number): Promise<Result> {
-  const { siteId, actor } = await requireCapability('online.edit')
+  const { siteId, actor } = await requireModuleCapability('online_store', 'online.edit')
   await siteExecute(
     siteId,
     'UPDATE discount_codes SET is_active = 1, updated_by = ? WHERE id = ?',

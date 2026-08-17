@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, actorFor } from '@/lib/auth'
+import { requireActor, actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   deleteDeliveryZone,
@@ -22,7 +22,7 @@ import {
  */
 
 export async function saveSettingsAction(input: OnlineSettingsInput): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -63,7 +63,7 @@ export async function saveSettingsAction(input: OnlineSettingsInput): Promise<Sa
 }
 
 export async function saveZoneAction(input: ZoneInput): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await saveDeliveryZone(siteId, input)
@@ -81,7 +81,7 @@ export async function saveZoneAction(input: ZoneInput): Promise<SaveResult> {
 }
 
 export async function deleteZoneAction(id: number): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await deleteDeliveryZone(siteId, id)

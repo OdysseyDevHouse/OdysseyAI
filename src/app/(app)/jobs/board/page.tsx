@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { defaultJobBoard } from '@/lib/site/jobBoards'
 import { PageHeader, PageBody, Callout, ButtonLink } from '@/components/ui'
 
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
  * /jobs/board would resolve differently for somebody whose first board differs.
  */
 export default async function BoardIndexPage() {
-  const { siteId } = await requireCapability('jobs.view')
+  const { siteId } = await requireModuleCapability('job_cards', 'jobs.view')
   const board = await defaultJobBoard(siteId)
 
   if (board) redirect(`/jobs/board/${board.slug}`)

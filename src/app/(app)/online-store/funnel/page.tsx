@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { funnel, productFunnel } from '@/lib/site/storefrontEvents'
 import { PageBody, PageHeader } from '@/components/ui'
 import FunnelView from './FunnelView'
@@ -18,7 +18,7 @@ export default async function FunnelPage({
 }: {
   searchParams: Promise<{ days?: string }>
 }) {
-  const { siteId } = await requireCapability('online.view')
+  const { siteId } = await requireModuleCapability('online_store', 'online.view')
   const { days } = await searchParams
 
   /*

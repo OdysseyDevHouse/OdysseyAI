@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import {
   saveLoyaltySettings,
   saveTiers,
@@ -43,7 +43,7 @@ import {
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string }
 
 export async function saveSettingsAction(raw: LoyaltySettings): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.edit')
+  const ctx = await actorForModule('loyalty', 'loyalty.edit')
   if ('ok' in ctx) return ctx
 
   const cleaned = cleanSettings(raw)
@@ -60,7 +60,7 @@ export async function saveSettingsAction(raw: LoyaltySettings): Promise<ActionRe
 }
 
 export async function saveTiersAction(tiers: Partial<LoyaltyTier>[]): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.edit')
+  const ctx = await actorForModule('loyalty', 'loyalty.edit')
   if ('ok' in ctx) return ctx
 
   const saved = await saveTiers(ctx.siteId, ctx.actor, tiers)
@@ -74,7 +74,7 @@ export async function saveCardAction(
   id: number | null,
   input: CardInput,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.edit')
+  const ctx = await actorForModule('loyalty', 'loyalty.edit')
   if ('ok' in ctx) return ctx
 
   const saved = id
@@ -87,7 +87,7 @@ export async function saveCardAction(
 }
 
 export async function setCardActiveAction(id: number, isActive: boolean): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.edit')
+  const ctx = await actorForModule('loyalty', 'loyalty.edit')
   if ('ok' in ctx) return ctx
 
   await setCardActive(ctx.siteId, ctx.actor, id, isActive)
@@ -96,7 +96,7 @@ export async function setCardActiveAction(id: number, isActive: boolean): Promis
 }
 
 export async function deleteCardAction(id: number): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.edit')
+  const ctx = await actorForModule('loyalty', 'loyalty.edit')
   if ('ok' in ctx) return ctx
 
   const done = await deleteCard(ctx.siteId, ctx.actor, id)
@@ -113,7 +113,7 @@ export async function adjustPointsAction(
   points: number,
   reason: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.adjust')
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   const done = await adjustPoints(ctx.siteId, ctx.actor, customerId, points, reason)
@@ -132,7 +132,7 @@ export async function adjustWalletAction(
   amount: number,
   reason: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.adjust')
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   const done = await adjustWallet(ctx.siteId, ctx.actor, customerId, amount, reason)
@@ -148,7 +148,7 @@ export async function topUpWalletAction(
   tenderTypeId: number,
   terminalId: number | null,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.adjust')
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   const done = await topUpWallet(ctx.siteId, ctx.actor, {
@@ -169,7 +169,7 @@ export async function issueVoucherAction(
   description: string,
   validDays: number,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.adjust')
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   const done = await issueVoucher(ctx.siteId, ctx.actor, {
@@ -187,7 +187,7 @@ export async function issueVoucherAction(
 }
 
 export async function voidVoucherAction(id: number, customerId: number): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.adjust')
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   const done = await voidVoucher(ctx.siteId, ctx.actor, id)
@@ -207,7 +207,7 @@ export async function voidVoucherAction(id: number, customerId: number): Promise
  * it happens rather than discovering a cron job did it overnight.
  */
 export async function runExpiryAction(): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.adjust')
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   const points = await expirePoints(ctx.siteId, ctx.actor)
@@ -246,7 +246,7 @@ export type TillStanding = {
  * rather than an empty loyalty panel.
  */
 export async function tillStandingAction(customerId: number): Promise<TillStanding | null> {
-  const ctx = await actorFor('sales.till')
+  const ctx = await actorForModule('loyalty', 'sales.till')
   if ('ok' in ctx) return null
 
   const settings = await getLoyaltySettings(ctx.siteId)
@@ -281,7 +281,7 @@ export async function tillStandingAction(customerId: number): Promise<TillStandi
 }
 
 export async function recalcMemberAction(customerId: number): Promise<ActionResult> {
-  const ctx = await actorFor('loyalty.adjust')
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   await recalcMember(ctx.siteId, customerId)

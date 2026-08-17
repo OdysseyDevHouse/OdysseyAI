@@ -1,4 +1,4 @@
-import { requireSite, requireCapability } from '@/lib/auth'
+import { requireSite, requireModuleCapability } from '@/lib/auth'
 import { listSitesForUser } from '@/lib/sites'
 import { requireSession } from '@/lib/auth'
 import { groupForSite, membersOfGroup, storeContents } from '@/lib/storeGroups'
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function LinkedStoresPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  await requireCapability('setup.edit')
+  await requireModuleCapability('multi_branch', 'setup.edit')
   const site = await requireSite()
   const session = await requireSession()
 

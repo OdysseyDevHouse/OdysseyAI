@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
+import { holder } from '@/lib/control/modules'
 import { PageHeader, PageBody } from '@/components/ui'
 import HubView from '@/components/HubView'
 import { accountingGroupsFor } from './catalogue'
@@ -28,11 +29,11 @@ export default async function AccountingPage({
 }: {
   searchParams: Promise<{ q?: string }>
 }) {
-  const { capabilities } = await requireSiteUser()
+  const { capabilities, modules } = await requireSiteUser()
   const allow = (c: string) => can(capabilities, c as Parameters<typeof can>[1])
 
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const groups = accountingGroupsFor(allow)
+  const groups = accountingGroupsFor(allow, holder(modules))
   if (groups.length === 0) redirect('/not-allowed')
 
   const { q } = await searchParams

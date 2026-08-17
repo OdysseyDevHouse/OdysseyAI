@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor, actorForOrThrow } from '@/lib/auth'
+import { actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import { batchTrace, type Batch } from '@/lib/site/batches'
 import { postNewAdjustment } from '@/lib/site/stockAdjustments'
 
@@ -19,7 +19,7 @@ export type BatchTraceEvent = {
 export async function batchTraceAction(
   batchId: number,
 ): Promise<{ ok: true; batch: Batch; events: BatchTraceEvent[] } | { ok: false; error: string }> {
-  const ctx = await actorForOrThrow('stock.view')
+  const ctx = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   const trace = await batchTrace(ctx.siteId, batchId)
   if (!trace) return { ok: false, error: 'That lot no longer exists.' }
   return { ok: true, ...trace }
@@ -34,7 +34,7 @@ export async function writeOffBatchAction(
   batchId: number,
   note: string,
 ): Promise<{ ok: true; documentNumber: string } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
 
   const trace = await batchTrace(ctx.siteId, batchId)

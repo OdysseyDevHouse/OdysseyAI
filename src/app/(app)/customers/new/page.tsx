@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function NewCustomerPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('customers.edit')
+  const { siteId } = await requireModuleCapability('customers', 'customers.edit')
 
   const [groups, reps, categories, structures, suggestedCode] = await Promise.all([
     listCustomerGroups(siteId),

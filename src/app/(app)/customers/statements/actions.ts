@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSite, actorFor } from '@/lib/auth'
+import { requireActor, requireSite, actorForModule } from '@/lib/auth'
 import {
   createRun,
   processRun,
@@ -83,7 +83,7 @@ export async function retryRunAction(runId: number): Promise<RunResult> {
 export async function deleteRunAction(
   runId: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('customers.view')
+  const ctx = await actorForModule('customers', 'customers.view')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await deleteRun(siteId, actor, runId)

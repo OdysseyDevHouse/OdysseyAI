@@ -76,6 +76,14 @@ export type WidgetDef = {
    * a user is not offered a switch that turns on an empty box.
    */
   capability?: string
+  /**
+   * The module the shop must have BOUGHT for this widget to mean anything.
+   *
+   * Unlike `capability`, this is not merely an affordance: a job-card panel on
+   * the dashboard of a shop that never bought Job Cards is an advert dressed as
+   * data, and it would sit there reading zero for ever.
+   */
+  module?: string
 }
 
 /**
@@ -364,6 +372,7 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: 0, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
+    module: 'job_cards',
   },
   {
     /*
@@ -381,6 +390,7 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: FIFTH, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
+    module: 'job_cards',
   },
   {
     id: 'jobsInProgress',
@@ -388,6 +398,7 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: FIFTH * 2, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
+    module: 'job_cards',
   },
   {
     id: 'jobsAwaitingParts',
@@ -395,6 +406,7 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: FIFTH * 3, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
+    module: 'job_cards',
   },
   {
     /*
@@ -410,6 +422,7 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: FIFTH * 4, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.invoice',
+    module: 'job_cards',
   },
   {
     id: 'jobsByStatus',
@@ -417,6 +430,7 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: 0, y: KPI_BLOCK_H + 35 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'jobs.view',
+    module: 'job_cards',
   },
   {
     id: 'jobsByTechnician',
@@ -424,6 +438,7 @@ export const WIDGETS: WidgetDef[] = [
     default: { x: HALF, y: KPI_BLOCK_H + 35 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'jobs.view',
+    module: 'job_cards',
   },
 ]
 

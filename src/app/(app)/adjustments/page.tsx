@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listAdjustments } from '@/lib/site/stockAdjustments'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function AdjustmentsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('stock.adjust')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.adjust')
 
   const adjustments = await listAdjustments(siteId, { status: 'all', limit: 200 })
 

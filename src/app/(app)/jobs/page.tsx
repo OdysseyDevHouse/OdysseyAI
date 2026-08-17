@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listJobCards, countJobCards, jobCounts } from '@/lib/site/jobCards'
 import { listJobStatuses } from '@/lib/site/jobStatuses'
 import { unscheduledJobCount } from '@/lib/site/jobAppointments'
@@ -55,7 +55,7 @@ export default async function JobsPage({
   searchParams: Promise<Search>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId, actor, capabilities } = await requireCapability('jobs.view')
+  const { siteId, actor, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
   const params = await searchParams
 
   const state = params.state === 'closed' || params.state === 'all' ? params.state : 'open'

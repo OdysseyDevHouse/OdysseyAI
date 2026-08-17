@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listLocations } from '@/lib/site/stockLocations'
 import { PageHeader, PageBody } from '@/components/ui'
 import LocationsClient from './LocationsClient'
@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function LocationsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('setup.edit')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'setup.edit')
   const locations = await listLocations(siteId, true)
 
   return (

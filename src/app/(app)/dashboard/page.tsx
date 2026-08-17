@@ -1,5 +1,6 @@
 import { requireSiteUser } from '@/lib/auth'
 import { can, type Capability } from '@/lib/site/permissions'
+import { holder } from '@/lib/control/modules'
 import { PageHeader, PageBody, Badge, Card, Icons } from '@/components/ui'
 import { SalesDashboard } from './SalesDashboard'
 import { WIDGETS } from './widgets'
@@ -15,7 +16,7 @@ import { WIDGETS } from './widgets'
 export const dynamic = 'force-dynamic'
 
 export default async function DashboardPage() {
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site, user, capabilities, modules } = await requireSiteUser()
 
   // NOT a redirect to /not-allowed, unlike every other guarded page.
   //
@@ -34,8 +35,14 @@ export default async function DashboardPage() {
    * does not list switches that would turn on a box reading "not available".
    * A Set cannot cross the server/client boundary, so it goes as a plain array.
    */
+  const bought = holder(modules)
   const visibleWidgets = WIDGETS.filter(
-    (w) => !w.capability || can(capabilities, w.capability as Capability),
+    (w) =>
+      (!w.capability || can(capabilities, w.capability as Capability)) &&
+      /* The module half is NOT merely an affordance: a shop that never bought
+         Job Cards has no job data to read, so those panels would sit on the
+         dashboard for ever showing zero. */
+      (!w.module || bought(w.module)),
   ).map((w) => w.id)
 
   return (

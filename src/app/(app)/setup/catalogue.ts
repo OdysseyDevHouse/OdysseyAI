@@ -173,6 +173,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'ShieldCheck',
         tone: 'rose',
         capability: 'customers.credit',
+        module: 'customers',
       },
       /* Beside the credit ladder because both answer "what terms does this
          account trade on" — this one sets where a NEW account starts, that one
@@ -184,6 +185,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Users',
         tone: 'sky',
         capability: 'setup.edit',
+        module: 'customers',
       },
       {
         href: '/setup/expense-categories',
@@ -226,6 +228,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Warehouse',
         tone: 'teal',
         capability: 'setup.edit',
+        module: 'inventory_advanced',
       },
       {
         href: '/setup/adjustment-reasons',
@@ -234,6 +237,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'SlidersHorizontal',
         tone: 'teal',
         capability: 'setup.edit',
+        module: 'inventory_advanced',
       },
       {
         href: '/setup/sales-reasons',
@@ -294,6 +298,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Wrench',
         tone: 'amber',
         capability: 'jobs.setup',
+        module: 'job_cards',
       },
       {
         /* Beside job workflow, because the two are the same kind of decision
@@ -314,6 +319,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Store',
         tone: 'violet',
         capability: 'setup.edit',
+        module: 'multi_branch',
       },
     ],
   },
@@ -334,6 +340,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Settings',
         tone: 'violet',
         capability: 'loyalty.view',
+        module: 'loyalty',
       },
       {
         href: '/loyalty/tiers',
@@ -342,6 +349,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Gem',
         tone: 'amber',
         capability: 'loyalty.view',
+        module: 'loyalty',
       },
       {
         href: '/loyalty/cards',
@@ -350,6 +358,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Stamp',
         tone: 'orange',
         capability: 'loyalty.view',
+        module: 'loyalty',
       },
     ],
   },
@@ -538,6 +547,9 @@ export const SETUP_GROUPS: HubGroup[] = resolveGroups(DECLARED)
 export const SETUP_ITEMS = SETUP_GROUPS.flatMap((g) => g.items)
 
 /** The catalogue as one user sees it — empty groups dropped. */
-export function setupGroupsFor(granted: (capability: string) => boolean): HubGroup[] {
-  return groupsFor(SETUP_GROUPS, granted)
+export function setupGroupsFor(
+  granted: (capability: string) => boolean,
+  holds: (module: string) => boolean = () => true,
+): HubGroup[] {
+  return groupsFor(SETUP_GROUPS, granted, holds)
 }

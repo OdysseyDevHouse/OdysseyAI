@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getRun, listItems } from '@/lib/site/creditControl'
 import { can } from '@/lib/site/permissions'
 import { formatMoney } from '@/lib/decimals'
@@ -22,7 +22,7 @@ export default async function RunReviewPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const { siteId, capabilities } = await requireCapability('customers.view')
+  const { siteId, capabilities } = await requireModuleCapability('customers', 'customers.view')
   const { id } = await params
 
   const runId = Number(id)

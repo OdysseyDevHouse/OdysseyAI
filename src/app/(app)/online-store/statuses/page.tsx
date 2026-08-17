@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listOrderStatuses, statusOrderCounts } from '@/lib/site/onlineStore'
 import { isConfigured } from '@/lib/mail'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function StatusesPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('online.edit')
+  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
 
   const [statuses, counts] = await Promise.all([
     listOrderStatuses(siteId),

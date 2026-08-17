@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listPromises } from '@/lib/site/creditControl'
 import { Icons, PageHeader, PageBody } from '@/components/ui'
 import { PromisesClient, type PromiseRow } from './PromisesClient'
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function PromisesPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('customers.view')
+  const { siteId } = await requireModuleCapability('customers', 'customers.view')
 
   const promises = await listPromises(siteId, { limit: 300 })
 

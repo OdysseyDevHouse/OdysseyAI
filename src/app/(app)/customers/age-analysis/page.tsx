@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { customerAging, type AgingBasis } from '@/lib/site/aging'
 import { listCustomerGroups, listSalesReps } from '@/lib/site/customerLookups'
 import { formatMoney } from '@/lib/decimals'
@@ -60,7 +60,7 @@ export default async function AgeAnalysisPage({
   searchParams: Promise<Search>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('customers.view')
+  const { siteId } = await requireModuleCapability('customers', 'customers.view')
   const params = await searchParams
 
   const asAt = /^\d{4}-\d{2}-\d{2}$/.test(params.asAt ?? '') ? params.asAt! : today()

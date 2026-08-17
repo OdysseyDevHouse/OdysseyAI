@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listJobStatuses, missingRoles } from '@/lib/site/jobStatuses'
 import { listJobBoards, statusesOffEveryBoard, boardStatusIds } from '@/lib/site/jobBoards'
 import { listSlaPolicies, untargetedJobCount } from '@/lib/site/jobSla'
@@ -40,7 +40,7 @@ export const dynamic = 'force-dynamic'
  * so both are reported here with the counts that make them actionable.
  */
 export default async function JobWorkflowPage() {
-  const { siteId } = await requireCapability('jobs.setup')
+  const { siteId } = await requireModuleCapability('job_cards', 'jobs.setup')
 
   const [
     statuses,

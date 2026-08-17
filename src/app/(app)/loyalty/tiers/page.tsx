@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listTiers } from '@/lib/site/loyalty'
 import { PageHeader, PageBody, LinkTabs } from '@/components/ui'
@@ -8,7 +8,7 @@ import { LOYALTY_TABS } from '../tabs'
 export const dynamic = 'force-dynamic'
 
 export default async function TiersPage() {
-  const { siteId, capabilities } = await requireCapability('loyalty.view')
+  const { siteId, capabilities } = await requireModuleCapability('loyalty', 'loyalty.view')
   const tiers = await listTiers(siteId)
 
   return (

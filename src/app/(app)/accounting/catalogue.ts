@@ -110,6 +110,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Bell',
         tone: 'rose',
         capability: 'customers.view',
+        module: 'customers',
       },
       {
         href: '/accounting/interest',
@@ -118,6 +119,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Percent',
         tone: 'amber',
         capability: 'customers.credit',
+        module: 'customers',
       },
       {
         href: '/accounting/write-offs',
@@ -126,6 +128,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Reverse',
         tone: 'rose',
         capability: 'customers.credit',
+        module: 'customers',
       },
     ],
   },
@@ -262,6 +265,9 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
 export const ACCOUNTING_GROUPS: HubGroup[] = resolveGroups(DECLARED)
 
 /** The catalogue as one user sees it — empty groups dropped. */
-export function accountingGroupsFor(granted: (capability: string) => boolean): HubGroup[] {
-  return groupsFor(ACCOUNTING_GROUPS, granted)
+export function accountingGroupsFor(
+  granted: (capability: string) => boolean,
+  holds: (module: string) => boolean = () => true,
+): HubGroup[] {
+  return groupsFor(ACCOUNTING_GROUPS, granted, holds)
 }

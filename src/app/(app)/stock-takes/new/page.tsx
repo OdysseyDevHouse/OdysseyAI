@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listLocations } from '@/lib/site/stockLocations'
 import { listDepartments } from '@/lib/site/departments'
 import { listSuppliers } from '@/lib/site/suppliers'
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function NewStockTakePage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('stock.adjust')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.adjust')
 
   const [locations, departments, suppliers] = await Promise.all([
     listLocations(siteId, false, true),

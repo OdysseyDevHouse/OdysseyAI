@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor, actorForOrThrow } from '@/lib/auth'
+import { actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import {
   postNewAdjustment,
   saveAdjustment,
@@ -35,7 +35,7 @@ function revalidateStock() {
 export async function postNewAdjustmentAction(
   input: AdjustmentInput,
 ): Promise<AdjustmentActionResult> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -51,7 +51,7 @@ export async function saveDraftAdjustmentAction(
   input: AdjustmentInput,
   id?: number,
 ): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -64,7 +64,7 @@ export async function saveDraftAdjustmentAction(
 }
 
 export async function postAdjustmentAction(id: number): Promise<AdjustmentActionResult> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -79,7 +79,7 @@ export async function cancelAdjustmentAction(
   id: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -93,7 +93,7 @@ export async function cancelAdjustmentAction(
 export async function deleteAdjustmentAction(
   id: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
 
   const result = await deleteAdjustment(ctx.siteId, id)
@@ -106,7 +106,7 @@ export async function deleteAdjustmentAction(
 /* ── Lookups for the capture screen ──────────────────────────────────────── */
 
 export async function searchProductsForAdjustmentAction(term: string) {
-  const { siteId } = await actorForOrThrow('stock.view')
+  const { siteId } = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   return searchForTill(siteId, term, null)
 }
 
@@ -118,7 +118,7 @@ export async function searchProductsForAdjustmentAction(term: string) {
  * across the action boundary, and the caller rebuilds one anyway.
  */
 export async function pilesForAdjustmentAction(locationId: number, productIds: number[]) {
-  const { siteId } = await actorForOrThrow('stock.view')
+  const { siteId } = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   const piles = await pilesFor(siteId, locationId, productIds)
   return [...piles.values()]
 }
@@ -131,7 +131,7 @@ export async function pilesForAdjustmentAction(locationId: number, productIds: n
  * adjusted.
  */
 export async function serialsInLocationAction(productId: number, locationId: number) {
-  const { siteId } = await actorForOrThrow('stock.view')
+  const { siteId } = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   const units = await availableSerials(siteId, productId, locationId)
   return units.map((s) => ({ id: s.id, serial: s.serial }))
 }
@@ -142,7 +142,7 @@ export async function saveReasonAction(
   input: ReasonInput,
   id?: number,
 ): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('inventory_advanced', 'setup.edit')
   if ('ok' in ctx) return ctx
 
   const result = await saveReason(ctx.siteId, input, id)
@@ -156,7 +156,7 @@ export async function saveReasonAction(
 export async function deleteReasonAction(
   id: number,
 ): Promise<{ ok: true; retired: boolean } | { ok: false; error: string }> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('inventory_advanced', 'setup.edit')
   if ('ok' in ctx) return ctx
 
   const result = await deleteReason(ctx.siteId, id)

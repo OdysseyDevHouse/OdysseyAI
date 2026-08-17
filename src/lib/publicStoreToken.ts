@@ -1,5 +1,6 @@
 import 'server-only'
 import { SignJWT, jwtVerify } from 'jose'
+import { entitlementsForSite, has as hasModule } from './control/modules'
 
 /**
  * The public storefront link token.
@@ -38,13 +39,44 @@ export async function createPublicStoreToken(siteId: number): Promise<string> {
     .sign(secret())
 }
 
-/** Resolve a storefront token back to its siteId, or null when it is invalid. */
+/**
+ * Resolve a storefront token back to its siteId, or null when it is invalid —
+ * or when the shop's plan no longer includes the Online Store.
+ *
+ * ── WHY THE MODULE CHECK IS HERE AND NOT IN A PAGE GUARD ────────────────────
+ *
+ * The storefront is served OUTSIDE the (app) route group. `requireSiteUser()`
+ * never runs for it, so none of the back-office module guards apply — a visitor
+ * is not signed in at all. This function is the one place every storefront
+ * route resolves its store through, which makes it the only chokepoint that can
+ * close the shop when the module lapses.
+ *
+ * ── AND WHY THIS ONE FAILS CLOSED ───────────────────────────────────────────
+ *
+ * The back-office entitlement read fails OPEN, because hiding half the menu
+ * during a database blip looks like the application breaking. The opposite is
+ * true here: a public shop front is either open for business or it is not, and
+ * serving one for a shop that stopped paying is giving the product away to
+ * members of the public. A storefront that is briefly unreachable reads as a
+ * site being down, which is an ordinary thing for a website to be.
+ */
 export async function verifyPublicStoreToken(token: string): Promise<number | null> {
+  let siteId: number
   try {
     const { payload } = await jwtVerify(token, secret(), { audience: AUDIENCE })
-    const siteId = Number(payload.siteId)
-    return Number.isInteger(siteId) && siteId > 0 ? siteId : null
+    const parsed = Number(payload.siteId)
+    if (!Number.isInteger(parsed) || parsed <= 0) return null
+    siteId = parsed
   } catch {
+    return null
+  }
+
+  try {
+    const entitlements = await entitlementsForSite(siteId)
+    return hasModule(entitlements, 'online_store') ? siteId : null
+  } catch {
+    // See the docblock: closed, not open.
+    console.error('[modules] could not verify the storefront module; closing the shop front')
     return null
   }
 }

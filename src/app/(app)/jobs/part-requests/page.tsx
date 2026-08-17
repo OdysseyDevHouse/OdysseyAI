@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { requestQueue, REQUEST_STATUSES, type RequestStatus } from '@/lib/site/jobPartRequests'
 import { PageHeader, PageBody, LinkSegmentedControl } from '@/components/ui'
@@ -28,7 +28,7 @@ export default async function PartRequestsPage({
 }: {
   searchParams: Promise<{ show?: string }>
 }) {
-  const { siteId, capabilities } = await requireCapability('jobs.view')
+  const { siteId, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
   const { show } = await searchParams
 
   /*

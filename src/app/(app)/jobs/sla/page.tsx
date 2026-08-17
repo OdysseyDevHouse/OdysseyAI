@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { slaCounts, slaWorklist, tradingHours, untargetedJobCount } from '@/lib/site/jobSla'
 import { parseClock } from '@/lib/jobStatusModel'
@@ -65,7 +65,7 @@ export default async function SlaPage({
 }: {
   searchParams: Promise<{ tab?: string }>
 }) {
-  const { siteId, capabilities } = await requireCapability('jobs.view')
+  const { siteId, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
   const { tab: rawTab } = await searchParams
   const tab = toTab(rawTab)
 

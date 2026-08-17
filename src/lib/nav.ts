@@ -65,6 +65,14 @@ export type NavItem = {
    * link is still a URL anyone can type.
    */
   capability?: string
+  /**
+   * The module the shop must have BOUGHT for this to exist. Omitted means it is
+   * part of the base package everybody gets.
+   *
+   * A different question from `capability`, which asks what this PERSON may do.
+   * Both are filtered here, and — as above — neither is the security boundary.
+   */
+  module?: string
   /** Words someone might search for that are not in the label. */
   keywords?: string
   /**
@@ -90,6 +98,8 @@ export type NavSection = {
   items?: NavItem[]
   built?: boolean
   capability?: string
+  /** As on NavItem — the module the shop must hold for this to exist. */
+  module?: string
   /** As on NavItem — one line for the search palette, never for the menu. */
   description?: string
   /**
@@ -153,20 +163,25 @@ export const NAV: NavSection[] = [
          which price types exist, what VAT applies — which is a different job. */
       { label: 'Price changes', href: '/pricing-schedules', icon: CalendarClock, built: true, capability: 'products.edit', description: 'New prices approved now to take effect later' },
       { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view', description: 'The questions a till asks when an item is sold' },
-      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, built: true, capability: 'products.edit', description: 'Build stock from a recipe of other stock' },
+      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, built: true, capability: 'products.edit', module: 'inventory_advanced', description: 'Build stock from a recipe of other stock' },
     ],
   },
   {
     label: 'Stock',
     icon: PackageOpen,
     items: [
+      /* Purchasing and Suppliers deliberately carry NO module. A shop that
+         cannot order and receive stock cannot trade, so putting goods-received
+         behind an add-on would make the Starter Pack unusable for any retailer.
+         What Advanced Inventory sells is the control ON TOP of that: counting,
+         correcting, moving and tracing. */
       { label: 'Purchasing', href: '/purchasing', icon: PackageOpen, built: true, capability: 'purchasing.view', description: 'Order stock and receive it against the order' },
-      { label: 'Transfers', href: '/transfers', icon: ArrowLeftRight, built: true, capability: 'stock.transfer', description: 'Move stock between locations or stores' },
-      { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, built: true, capability: 'stock.adjust', description: 'Count what is on the shelf and correct the books' },
+      { label: 'Transfers', href: '/transfers', icon: ArrowLeftRight, built: true, capability: 'stock.transfer', module: 'inventory_advanced', description: 'Move stock between locations or stores' },
+      { label: 'Stock Takes', href: '/stock-takes', icon: ClipboardList, built: true, capability: 'stock.adjust', module: 'inventory_advanced', description: 'Count what is on the shelf and correct the books' },
       /* Sits beside stock takes because it answers the same question from the
          other end: a count discovers a variance, an adjustment declares one. */
-      { label: 'Adjustments', href: '/adjustments', icon: SlidersHorizontal, built: true, capability: 'stock.adjust', keywords: 'write off write-off shrinkage damage breakage wastage expired spoiled scrap', description: 'Write stock on or off with a reason, without counting the location' },
-      { label: 'Batches', href: '/batches', icon: Boxes, built: true, capability: 'stock.view', keywords: 'lot expiry expiring fefo recall trace batch', description: 'Which lots are on the shelf, what is expiring, and where each went' },
+      { label: 'Adjustments', href: '/adjustments', icon: SlidersHorizontal, built: true, capability: 'stock.adjust', module: 'inventory_advanced', keywords: 'write off write-off shrinkage damage breakage wastage expired spoiled scrap', description: 'Write stock on or off with a reason, without counting the location' },
+      { label: 'Batches', href: '/batches', icon: Boxes, built: true, capability: 'stock.view', module: 'inventory_advanced', keywords: 'lot expiry expiring fefo recall trace batch', description: 'Which lots are on the shelf, what is expiring, and where each went' },
       /* A supplier exists in this app because stock comes from one. Their age
          analysis and remittances are money questions and sit in that hub. */
       { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view', description: 'Who the shop buys from, and what it owes them' },
@@ -176,17 +191,22 @@ export const NAV: NavSection[] = [
     label: 'Customers',
     icon: Contact,
     items: [
-      { label: 'Customers', href: '/customers', icon: Contact, built: true, capability: 'customers.view', description: 'Accounts, contact details and history' },
-      { label: 'Age analysis', href: '/customers/age-analysis', icon: BarChart, built: true, capability: 'customers.view', description: 'Who owes what, and how overdue it is' },
+      /* The section itself carries no module: gift cards are part of the base
+         package, so the heading survives even when Customers and Loyalty are
+         both switched off. */
+      { label: 'Customers', href: '/customers', icon: Contact, built: true, capability: 'customers.view', module: 'customers', description: 'Accounts, contact details and history' },
+      { label: 'Age analysis', href: '/customers/age-analysis', icon: BarChart, built: true, capability: 'customers.view', module: 'customers', description: 'Who owes what, and how overdue it is' },
       /* Directly after the age analysis: that screen says what is overdue,
          this one is where somebody does something about it. */
-      { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view', description: 'Chase overdue accounts and record the outcome' },
-      { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view', description: 'What a customer undertook to pay, and by when' },
-      { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view', description: 'Send account statements out to customers' },
+      { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view', module: 'customers', description: 'Chase overdue accounts and record the outcome' },
+      { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view', module: 'customers', description: 'What a customer undertook to pay, and by when' },
+      { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view', module: 'customers', description: 'Send account statements out to customers' },
       /* The members list, which is the loyalty screen anybody actually opens.
          The programme, its tiers and the punch cards decide how it WORKS and
          are set once, so they are in the setup hub. */
-      { label: 'Loyalty', href: '/loyalty', icon: Gem, built: true, capability: 'loyalty.view', description: 'Members, their points and what they have earned' },
+      { label: 'Loyalty', href: '/loyalty', icon: Gem, built: true, capability: 'loyalty.view', module: 'loyalty', description: 'Members, their points and what they have earned' },
+      /* Stored value, not a points programme — a shop that wants gift cards
+         rarely wants loyalty, so this stays in the base package. */
       { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', description: 'Sell, check and manage stored-value cards' },
     ],
   },
@@ -267,6 +287,7 @@ export const NAV: NavSection[] = [
     href: '/online-store',
     built: true,
     capability: 'online.view',
+    module: 'online_store',
     keywords: 'web shop ecommerce storefront online orders discounts pages checkout',
     description: 'The public shop — orders, pages and what it sells',
   },
@@ -303,6 +324,10 @@ export const NAV: NavSection[] = [
   {
     label: 'Job cards',
     icon: Wrench,
+    /* On the SECTION, not on each of its ten items: job cards are one purchase,
+       so a shop that has not bought them should see no heading at all rather
+       than an empty one. */
+    module: 'job_cards',
     items: [
       {
         /* FIRST in the section, because it is the screen a technician opens and
@@ -461,19 +486,34 @@ export const NAV: NavSection[] = [
  * opens onto nothing reads as a broken menu rather than a restricted one.
  * Sections with no children at all (the unbuilt ones) are left alone.
  */
-export function navFor(granted: (capability: string) => boolean): NavSection[] {
+export function navFor(
+  granted: (capability: string) => boolean,
+  /**
+   * Whether the shop holds a module. Defaults to "yes to everything", so a
+   * caller that predates module gating keeps its old behaviour rather than
+   * silently losing half its menu.
+   */
+  holds: (module: string) => boolean = () => true,
+): NavSection[] {
   const visible: NavSection[] = []
+  const allowed = (entry: { capability?: string; module?: string }) =>
+    (!entry.capability || granted(entry.capability)) && (!entry.module || holds(entry.module))
 
   for (const section of NAV) {
     if (section.href) {
-      if (!section.capability || granted(section.capability)) visible.push(section)
+      if (allowed(section)) visible.push(section)
       continue
     }
     if (!section.items?.length) {
       visible.push(section)
       continue
     }
-    const items = section.items.filter((item) => !item.capability || granted(item.capability))
+    /* A section carrying its own module hides wholesale — Job cards is one
+       purchase, not ten independent ones, so filtering it item by item would
+       leave an empty heading behind. */
+    if (section.module && !holds(section.module)) continue
+
+    const items = section.items.filter(allowed)
     if (items.length) visible.push({ ...section, items })
   }
 

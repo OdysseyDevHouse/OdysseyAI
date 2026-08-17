@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { myWork } from '@/lib/site/jobMyWork'
 import { createCalendarToken } from '@/lib/calendarToken'
 import { storedDate } from '@/lib/jobStatusModel'
@@ -78,7 +78,7 @@ function dayLabel(value: string): string {
 }
 
 export default async function MyWorkPage() {
-  const { siteId, actor } = await requireCapability('jobs.view')
+  const { siteId, actor } = await requireModuleCapability('job_cards', 'jobs.view')
   const work = await myWork(siteId, actor.userId)
 
   /*

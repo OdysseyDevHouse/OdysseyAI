@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { getLoyaltySettings, listMembers, listTiers, getLiability } from '@/lib/site/loyalty'
 import { PageHeader, PageBody, StatStrip, StatTile, Callout, LinkTabs } from '@/components/ui'
@@ -19,7 +19,7 @@ function when(date: Date | null): string {
 
 export default async function LoyaltyPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId, capabilities } = await requireCapability('loyalty.view')
+  const { siteId, capabilities } = await requireModuleCapability('loyalty', 'loyalty.view')
 
   const [settings, members, tiers, liability] = await Promise.all([
     getLoyaltySettings(siteId),

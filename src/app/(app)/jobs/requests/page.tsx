@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listRequests, intakeSettings, type RequestStatus } from '@/lib/site/jobIntake'
 import { createPublicIntakeToken } from '@/lib/publicIntakeToken'
 import { PageHeader, PageBody, Callout, TextLink } from '@/components/ui'
@@ -27,7 +27,7 @@ export default async function RequestsPage({
 }: {
   searchParams: Promise<{ status?: string }>
 }) {
-  const { siteId } = await requireCapability('jobs.edit')
+  const { siteId } = await requireModuleCapability('job_cards', 'jobs.edit')
   const { status } = await searchParams
 
   const valid: (RequestStatus | 'all')[] = ['new', 'accepted', 'rejected', 'spam', 'all']

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { requireSiteUser } from '@/lib/auth'
+import { requireModule } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { PageHeader, PageBody } from '@/components/ui'
 import HubView from '@/components/HubView'
@@ -24,10 +24,12 @@ export default async function OnlineStorePage({
 }: {
   searchParams: Promise<{ q?: string }>
 }) {
-  const { capabilities } = await requireSiteUser()
+  /* The whole hub is behind the module, so this is one check rather than a
+     `module` on each of its twelve tiles. A hidden menu entry is not a
+     boundary — this URL is typeable. */
+  const { capabilities } = await requireModule('online_store')
   const allow = (c: string) => can(capabilities, c as Parameters<typeof can>[1])
 
-  // A hidden menu entry is not a boundary — this URL is typeable.
   const groups = onlineStoreGroupsFor(allow)
   if (groups.length === 0) redirect('/not-allowed')
 

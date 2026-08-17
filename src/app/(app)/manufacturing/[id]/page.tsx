@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getBuild } from '@/lib/site/manufacturing'
 import { formatMoney, formatQty } from '@/lib/decimals'
 import {
@@ -24,7 +24,7 @@ export default async function BuildPage({ params }: { params: Promise<{ id: stri
   if (!Number.isFinite(buildId) || buildId <= 0) notFound()
 
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('products.edit')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'products.edit')
   const build = await getBuild(siteId, buildId)
   if (!build) notFound()
 

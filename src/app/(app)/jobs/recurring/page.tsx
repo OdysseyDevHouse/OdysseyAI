@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listJobSeries, seriesDueCount } from '@/lib/site/jobSeries'
 import { listHeadlines } from '@/lib/site/jobHeadlines'
@@ -37,7 +37,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function RecurringJobsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId, capabilities } = await requireCapability('jobs.view')
+  const { siteId, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
 
   const [series, dueCount, headlines, customers] = await Promise.all([
     listJobSeries(siteId, { includeInactive: true }),

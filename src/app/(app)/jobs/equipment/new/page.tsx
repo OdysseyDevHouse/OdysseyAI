@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listAssetTypes } from '@/lib/site/jobAssets'
 import { listCustomers } from '@/lib/site/customers'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
  * task means it gets written on the back of a hand instead.
  */
 export default async function NewEquipmentPage() {
-  const { siteId } = await requireCapability('jobs.edit')
+  const { siteId } = await requireModuleCapability('job_cards', 'jobs.edit')
 
   const [types, customers] = await Promise.all([
     listAssetTypes(siteId, false),

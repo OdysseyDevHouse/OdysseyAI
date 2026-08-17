@@ -88,6 +88,14 @@ export type DeclaredItem<Href extends SubpageHref = SubpageHref> = {
    */
   tone: CategoryTone
   capability: string
+  /**
+   * The module the shop must have BOUGHT for this tile to exist. Omitted means
+   * it is part of the base package.
+   *
+   * As with the menu, this hides the tile only — the screen behind it guards
+   * itself, because a hidden tile is still a URL.
+   */
+  module?: string
 }
 
 /** A screen as the hub renders it, with its name resolved. */
@@ -140,9 +148,17 @@ export function resolveGroups<Href extends SubpageHref>(
 export function groupsFor(
   groups: HubGroup[],
   granted: (capability: string) => boolean,
+  /**
+   * Whether the shop holds a module. Permissive by default, so a hub that has
+   * not been taught about modules keeps rendering every tile rather than
+   * silently emptying itself.
+   */
+  holds: (module: string) => boolean = () => true,
 ): HubGroup[] {
   return groups.flatMap((group) => {
-    const items = group.items.filter((item) => granted(item.capability))
+    const items = group.items.filter(
+      (item) => granted(item.capability) && (!item.module || holds(item.module)),
+    )
     return items.length ? [{ ...group, items }] : []
   })
 }

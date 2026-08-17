@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   deleteOrderStatus,
@@ -25,7 +25,7 @@ import {
  */
 
 export async function saveStatusAction(input: OrderStatusInput): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -45,7 +45,7 @@ export async function saveStatusAction(input: OrderStatusInput): Promise<SaveRes
 }
 
 export async function deleteStatusAction(id: number, name: string): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -66,7 +66,7 @@ export async function deleteStatusAction(id: number, name: string): Promise<Save
 }
 
 export async function reorderStatusesAction(ids: number[]): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
 
   const result = await reorderOrderStatuses(ctx.siteId, ids)

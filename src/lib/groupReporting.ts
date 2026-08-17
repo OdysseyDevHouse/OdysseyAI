@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { groupForSite, membersOfGroup, linkedStores, type StoreGroup } from './storeGroups'
 import { getSiteForUser } from './sites'
+import { entitlementsForSite, allHold, has as hasModule } from './control/modules'
 import { getUserByControlId } from './site/users'
 import {
   capabilitiesForRole,
@@ -57,7 +58,13 @@ export type GroupSite = {
 export type ExcludedSite = {
   siteId: number
   name: string
-  reason: 'no-access' | 'no-permission'
+  /**
+   * `no-module` is the store's own decision, not this user's: it is in the
+   * group but has not bought Multi-Branch, so it neither contributes to a
+   * consolidated figure nor receives one. Kept distinct from the two access
+   * reasons because granting somebody a role would not fix it.
+   */
+  reason: 'no-access' | 'no-permission' | 'no-module'
 }
 
 export type GroupScope = {
@@ -82,7 +89,20 @@ export async function groupScopeFor(
   const group = await groupForSite(currentSiteId)
   if (!group) return null
 
+  /* The CALLING site must hold Multi-Branch to consolidate at all. Without it
+     there is no group view to show, which is the same answer as belonging to no
+     group — and the screens already render their empty state for that. */
+  const ownEntitlements = await entitlementsForSite(currentSiteId)
+  if (!hasModule(ownEntitlements, 'multi_branch')) return null
+
   const members = (await membersOfGroup(group.id)).filter((m) => m.hasDatabase)
+  /* Which members hold it too. A store that declined Multi-Branch is listed as
+     excluded rather than silently dropped: a total that quietly omits a branch
+     is worse than one that says which branch it left out and why. */
+  const entitledMembers = await allHold(
+    members.map((m) => m.siteId),
+    'multi_branch',
+  )
   const sites: GroupSite[] = []
   const excluded: ExcludedSite[] = []
 
@@ -98,6 +118,13 @@ export async function groupScopeFor(
     // would only disagree with the page guard that let the user in.
     if (member.siteId === currentSiteId) {
       sites.push(entry)
+      continue
+    }
+
+    // The store's own decision, checked before this user's access: a branch
+    // that has not bought Multi-Branch is out regardless of who is asking.
+    if (!entitledMembers.has(member.siteId)) {
+      excluded.push({ siteId: member.siteId, name: member.displayName, reason: 'no-module' })
       continue
     }
 

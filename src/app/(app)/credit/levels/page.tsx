@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listLevels } from '@/lib/site/creditControl'
 import { PageHeader, PageBody } from '@/components/ui'
 import { LevelsClient, type LevelRow } from './LevelsClient'
@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic'
  * being able to buy.
  */
 export default async function LevelsPage() {
-  const { siteId } = await requireCapability('customers.credit')
+  const { siteId } = await requireModuleCapability('customers', 'customers.credit')
 
   const levels = await listLevels(siteId)
 

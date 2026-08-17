@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   createPage,
@@ -26,7 +26,7 @@ import {
  */
 
 export async function createPageAction(input: NewPageInput): Promise<CreateResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -49,7 +49,7 @@ export async function savePageSettingsAction(
   pageId: number,
   input: PageSettingsInput,
 ): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -86,7 +86,7 @@ export async function savePageSettingsAction(
 }
 
 export async function deletePageAction(pageId: number): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -106,7 +106,7 @@ export async function deletePageAction(pageId: number): Promise<SaveResult> {
 }
 
 export async function reorderPagesAction(ids: number[]): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
   // Not audited: reordering a nav is cosmetic and reversible, and a log entry

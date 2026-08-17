@@ -5,7 +5,7 @@ import { toStatementCycle } from '@/lib/statementCycles'
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
+import { requireActor, actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import { setValues } from '@/lib/site/customFields'
 import type { CustomFieldEntity } from '@/lib/customFieldModel'
 import {
@@ -94,7 +94,7 @@ export async function saveCustomerAction(
   _prev: CustomerFormState,
   form: FormData,
 ): Promise<CustomerFormState> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const idRaw = String(form.get('id') ?? '').trim()
@@ -111,7 +111,7 @@ export async function saveCustomerAction(
 }
 
 export async function deleteCustomerAction(form: FormData): Promise<void> {
-  const ctx = await actorForOrThrow('customers.edit')
+  const ctx = await actorForModuleOrThrow('customers', 'customers.edit')
   const { siteId, actor } = ctx
   const id = Number(form.get('id'))
   if (!Number.isFinite(id) || id <= 0) redirect('/customers')
@@ -138,7 +138,7 @@ export async function bulkUpdateCustomersAction(
   ids: number[],
   change: BulkChange,
 ): Promise<BulkResult> {
-  const ctx = await actorForOrThrow('customers.edit')
+  const ctx = await actorForModuleOrThrow('customers', 'customers.edit')
   const { siteId, actor } = ctx
   const result = await bulkUpdateCustomers(siteId, actor, ids, change)
   revalidatePath('/customers')
@@ -154,7 +154,7 @@ export async function saveCustomerAddressAction(
   input: CustomerAddressInput,
   id?: number,
 ): Promise<AddressActionResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -169,7 +169,7 @@ export async function deleteCustomerAddressAction(
   customerId: number,
   id: number,
 ): Promise<AddressActionResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -191,7 +191,7 @@ export async function setCustomerCustomValuesAction(
   entityId: number,
   values: { fieldId: number; value: string | null }[],
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
   // Pinned, as on the job: the shared panel passes the entity from the client,
   // so trusting it here would let a customers.edit holder write job fields.

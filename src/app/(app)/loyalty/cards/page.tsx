@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listCards } from '@/lib/site/loyaltyCards'
 import { siteQuery } from '@/lib/siteDb'
@@ -9,7 +9,7 @@ import { LOYALTY_TABS } from '../tabs'
 export const dynamic = 'force-dynamic'
 
 export default async function CardsPage() {
-  const { siteId, capabilities } = await requireCapability('loyalty.view')
+  const { siteId, capabilities } = await requireModuleCapability('loyalty', 'loyalty.view')
 
   const [cards, departments, products] = await Promise.all([
     listCards(siteId),

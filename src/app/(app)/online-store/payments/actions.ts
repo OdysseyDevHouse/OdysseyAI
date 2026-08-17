@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, actorFor } from '@/lib/auth'
+import { requireActor, actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import { saveGateway, type GatewayInput, type SaveResult } from '@/lib/site/payments'
 
@@ -14,7 +14,7 @@ import { saveGateway, type GatewayInput, type SaveResult } from '@/lib/site/paym
  * from them, is a decision someone may have to answer for.
  */
 export async function saveGatewayAction(input: GatewayInput): Promise<SaveResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('online_store', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 

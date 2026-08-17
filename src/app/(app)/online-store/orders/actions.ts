@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, actorFor } from '@/lib/auth'
+import { requireActor, actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   acceptOrder,
@@ -22,7 +22,7 @@ import {
  */
 
 export async function acceptOrderAction(orderId: number): Promise<AcceptResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await acceptOrder(siteId, orderId, actor)
@@ -47,7 +47,7 @@ export async function acceptOrderAction(orderId: number): Promise<AcceptResult> 
 }
 
 export async function moveOrderAction(orderId: number, statusId: number): Promise<ActionResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await moveOrderStatus(siteId, orderId, statusId)
@@ -65,7 +65,7 @@ export async function moveOrderAction(orderId: number, statusId: number): Promis
 }
 
 export async function cancelOrderAction(orderId: number, reason: string): Promise<ActionResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await cancelOrder(siteId, orderId, reason)
@@ -86,7 +86,7 @@ export async function archiveOrderAction(
   orderId: number,
   archived: boolean,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await archiveOrder(siteId, orderId, archived)

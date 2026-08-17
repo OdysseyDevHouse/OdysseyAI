@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getAdjustment } from '@/lib/site/stockAdjustments'
 import { formatMoney, formatQty } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader, Icons } from '@/components/ui'
@@ -14,7 +14,7 @@ export default async function AdjustmentPage({ params }: { params: Promise<{ id:
   if (!Number.isFinite(adjustmentId) || adjustmentId <= 0) notFound()
 
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('stock.adjust')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.adjust')
   const adjustment = await getAdjustment(siteId, adjustmentId)
   if (!adjustment) notFound()
 

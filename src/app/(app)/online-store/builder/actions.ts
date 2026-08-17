@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, actorFor } from '@/lib/auth'
+import { requireActor, actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   publishedProducts,
@@ -58,7 +58,7 @@ export async function searchProductsAction(
 ): Promise<StorefrontProduct[]> {
   // A picker is inside the admin, so the online.edit capability is the gate —
   // NOT the store being open. Building the page before opening is the point.
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   // Denied. Return nothing rather than throwing: this is a search-as-you-type
   // and an empty list is the honest answer for someone not allowed to look.
   if ('ok' in ctx) return []
@@ -87,7 +87,7 @@ export async function browseProductsAction(options: {
   departmentId?: number | null
   limit?: number
 }): Promise<BrowseResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return { products: [], publishesNothing: false }
   const { siteId } = ctx
   const context = await storefrontContext(siteId)
@@ -155,7 +155,7 @@ export async function saveDraftAction(pageId: number, sections: unknown): Promis
 }
 
 export async function saveThemeAction(theme: Partial<StorefrontTheme>): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await saveTheme(siteId, theme)
@@ -173,7 +173,7 @@ export async function saveThemeAction(theme: Partial<StorefrontTheme>): Promise<
 }
 
 export async function publishDraftAction(pageId: number): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const id = await pageWithin(siteId, pageId)
@@ -215,7 +215,7 @@ export async function previewLinkAction(
   pageId: number,
   sections: unknown,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
 
@@ -256,7 +256,7 @@ export async function restoreVersionAction(
   pageId: number,
   versionId: number,
 ): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -290,7 +290,7 @@ export async function schedulePublishAction(
   at: string,
   sections: unknown,
 ): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -315,7 +315,7 @@ export async function schedulePublishAction(
 
 /** Keep a section to use on another page. */
 export async function saveSectionAction(name: string, section: unknown): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const result = await saveSection(ctx.siteId, name, section)
   if (result.ok) revalidatePath('/online-store/builder')
@@ -323,7 +323,7 @@ export async function saveSectionAction(name: string, section: unknown): Promise
 }
 
 export async function deleteSavedSectionAction(id: number): Promise<SaveResult> {
-  const ctx = await actorFor('online.edit')
+  const ctx = await actorForModule('online_store', 'online.edit')
   if ('ok' in ctx) return ctx
   const result = await deleteSavedSection(ctx.siteId, Number(id))
   if (result.ok) revalidatePath('/online-store/builder')

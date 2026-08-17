@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listPositionsPage, creditSummary, listPromises, listRuns } from '@/lib/site/creditControl'
 import { RISK_LABELS } from '@/lib/creditModel'
 import { formatMoney } from '@/lib/decimals'
@@ -49,7 +49,7 @@ export default async function CreditPage({
   searchParams: Promise<{ risk?: string; page?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('customers.view')
+  const { siteId } = await requireModuleCapability('customers', 'customers.view')
   const params = await searchParams
   const page = pageFrom(params.page)
 

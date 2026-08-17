@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
+import { has } from '@/lib/control/modules'
 import {
   groupScopeFor,
   departmentsByStore,
@@ -51,7 +52,11 @@ export default async function MultiStoreMixPage({
 }: {
   searchParams: Promise<{ view?: string; period?: string; from?: string; to?: string }>
 }) {
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site, user, capabilities, modules } = await requireSiteUser()
+  /* Module before capability: "your shop has not bought Multi-Branch" and
+     "your role does not include this" are fixed by different people. */
+  if (!has(modules, 'multi_branch')) redirect('/upgrade?module=multi_branch')
+
   // A hidden menu entry is not a boundary — this URL is typeable.
   if (!can(capabilities, 'reports.view')) redirect('/not-allowed')
   if (user.controlUserId === null) redirect('/not-allowed')

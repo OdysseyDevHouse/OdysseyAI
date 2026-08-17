@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSite, requireCapability } from '@/lib/auth'
+import { requireSite, requireModuleCapability } from '@/lib/auth'
 import { buildStatement, type StatementFormat } from '@/lib/statements/render'
 import { PageHeader, PageBody, Card, ButtonLink, Menu, MenuItem, Icons, LinkTabs } from '@/components/ui'
 import { StatementDocument } from '@/components/statements/StatementDocument'
@@ -32,7 +32,7 @@ export default async function StatementPage({
   searchParams: Promise<{ format?: string; from?: string; to?: string; period?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  await requireCapability('customers.view')
+  await requireModuleCapability('customers', 'customers.view')
   const site = await requireSite()
   const { id } = await params
   const { format: formatRaw, from, to, period: periodKey } = await searchParams

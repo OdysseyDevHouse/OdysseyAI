@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listRuns } from '@/lib/site/statementRuns'
 import { statementCandidates } from '@/lib/statements/render'
 import { isConfigured } from '@/lib/mail'
@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function StatementsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('customers.view')
+  const { siteId } = await requireModuleCapability('customers', 'customers.view')
 
   const [runs, candidates] = await Promise.all([
     listRuns(siteId),

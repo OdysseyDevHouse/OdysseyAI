@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getOnlineSettings, listDepartmentVisibility } from '@/lib/site/onlineStore'
 import { listPages } from '@/lib/site/storefrontPages'
 import { listStorefrontImages } from '@/lib/site/storefrontImages'
@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function PagesPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('online.edit')
+  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
 
   const [pages, settings, departments, token, images] = await Promise.all([
     listPages(siteId),

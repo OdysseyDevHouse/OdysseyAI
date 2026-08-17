@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getGateway } from '@/lib/site/payments'
 import { getOnlineSettings } from '@/lib/site/onlineStore'
 import { encryptionKeyConfigured } from '@/lib/crypto/secrets'
@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function PaymentsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('online.edit')
+  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
 
   const [gateway, settings] = await Promise.all([getGateway(siteId), getOnlineSettings(siteId)])
 

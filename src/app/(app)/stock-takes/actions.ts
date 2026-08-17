@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor, actorForOrThrow } from '@/lib/auth'
+import { actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import {
   createStockTake,
   recountStockTake,
@@ -28,7 +28,7 @@ export async function generateCycleCountsAction(): Promise<
   | { ok: true; generated: number; skipped: { name: string; reason: string }[] }
   | { ok: false; error: string }
 > {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { generateDueCycleCounts } = await import('@/lib/site/cycleCounts')
   const outcome = await generateDueCycleCounts(ctx.siteId, ctx.actor)
@@ -44,7 +44,7 @@ export async function saveCycleProgrammeAction(
   id: number | null,
   input: import('@/lib/site/cycleCounts').SaveProgrammeInput,
 ): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { saveCycleProgramme } = await import('@/lib/site/cycleCounts')
   const result = await saveCycleProgramme(ctx.siteId, ctx.actor, id, input)
@@ -55,7 +55,7 @@ export async function saveCycleProgrammeAction(
 export async function deleteCycleProgrammeAction(
   id: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { deleteCycleProgramme } = await import('@/lib/site/cycleCounts')
   await deleteCycleProgramme(ctx.siteId, ctx.actor, id)
@@ -64,7 +64,7 @@ export async function deleteCycleProgrammeAction(
 }
 
 export async function createStockTakeAction(input: StockTakeInput) {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await createStockTake(siteId, actor, input)
@@ -80,7 +80,7 @@ export async function createStockTakeAction(input: StockTakeInput) {
  * like filling in a form.
  */
 export async function saveCountsAction(takeId: number, entries: CountEntry[]) {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   // Deliberately no revalidatePath: this fires constantly while someone counts,
@@ -96,7 +96,7 @@ export async function saveCountsAction(takeId: number, entries: CountEntry[]) {
  * forty product codes, and skipping it is how a bad count becomes the books.
  */
 export async function recountStockTakeAction(takeId: number) {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await recountStockTake(siteId, actor, takeId)
@@ -105,7 +105,7 @@ export async function recountStockTakeAction(takeId: number) {
 }
 
 export async function freezeStockTakeAction(takeId: number) {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await freezeStockTake(siteId, actor, takeId)
@@ -114,7 +114,7 @@ export async function freezeStockTakeAction(takeId: number) {
 }
 
 export async function postStockTakeAction(takeId: number) {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await postStockTake(siteId, actor, takeId)
@@ -123,7 +123,7 @@ export async function postStockTakeAction(takeId: number) {
 }
 
 export async function cancelStockTakeAction(takeId: number, reason: string) {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await cancelStockTake(siteId, actor, takeId, reason)
@@ -132,7 +132,7 @@ export async function cancelStockTakeAction(takeId: number, reason: string) {
 }
 
 export async function deleteStockTakeAction(takeId: number) {
-  const ctx = await actorFor('stock.adjust')
+  const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
   const result = await deleteStockTake(siteId, takeId)
@@ -142,6 +142,6 @@ export async function deleteStockTakeAction(takeId: number) {
 
 /** Product search, for adding a line to a manual sheet. */
 export async function searchProductsForCountAction(term: string) {
-  const ctx = await actorForOrThrow('stock.view')
+  const ctx = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   return searchForTill(ctx.siteId, term, null)
 }

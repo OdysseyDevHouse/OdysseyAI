@@ -22,7 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Site access, the local user record and their permissions, all re-read per
   // request rather than trusted from the token — so access revoked upstream or
   // a role changed on the permissions screen takes effect on the next load.
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site, user, capabilities, modules } = await requireSiteUser()
 
   const sites = await listSitesForUser(session.userId)
 
@@ -32,7 +32,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar granted={[...capabilities.granted]} isOwner={capabilities.isOwner} />
+      <Sidebar
+        granted={[...capabilities.granted]}
+        isOwner={capabilities.isOwner}
+        modules={[...modules.held]}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           sites={sites.map((s) => ({

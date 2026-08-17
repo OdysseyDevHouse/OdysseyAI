@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getJobCard } from '@/lib/site/jobCards'
 import { PageHeader, PageBody } from '@/components/ui'
 import { isJobPriority, isJobSource, type JobPriority, type JobSource } from '@/lib/jobStatusModel'
@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic'
  * unanswerable.
  */
 export default async function EditJobPage({ params }: { params: Promise<{ id: string }> }) {
-  const { siteId } = await requireCapability('jobs.edit')
+  const { siteId } = await requireModuleCapability('job_cards', 'jobs.edit')
   const { id } = await params
 
   const jobId = Number(id)

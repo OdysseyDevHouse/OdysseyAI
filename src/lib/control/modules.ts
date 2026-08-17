@@ -125,6 +125,18 @@ export function hasAny(e: ModuleEntitlements, keys: readonly ModuleKey[]): boole
   return keys.some((k) => e.held.has(k))
 }
 
+/**
+ * The predicate the menu and the hub catalogues take.
+ *
+ * Accepts a plain string because a NavItem's `module` field is typed `string`,
+ * not `ModuleKey` — nav.ts must not import from the control database to
+ * describe a menu. An unrecognised key answers false, so a typo hides the entry
+ * rather than quietly granting it.
+ */
+export function holder(e: ModuleEntitlements): (module: string) => boolean {
+  return (module: string) => (e.held as ReadonlySet<string>).has(module)
+}
+
 /** Today, as the APP's date. See the note on the query below. */
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)

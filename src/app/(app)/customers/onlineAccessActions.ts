@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
 import {
   setCustomerLogin,
@@ -26,7 +26,7 @@ export async function setOnlineAccessAction(
   email: string,
   password: string,
 ): Promise<SaveResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -50,7 +50,7 @@ export async function setOnlineAccessActiveAction(
   customerId: number,
   active: boolean,
 ): Promise<SaveResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 

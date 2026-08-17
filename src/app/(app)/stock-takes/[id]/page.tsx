@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getStockTake } from '@/lib/site/stockTakes'
 import { formatQty } from '@/lib/decimals'
 import { PageHeader, PageBody, Callout, Card, CardHeader, Icons } from '@/components/ui'
@@ -21,7 +21,7 @@ export default async function StockTakePage({ params }: { params: Promise<{ id: 
   if (!Number.isFinite(takeId) || takeId <= 0) notFound()
 
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('stock.adjust')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.adjust')
   const take = await getStockTake(siteId, takeId)
   if (!take) notFound()
 

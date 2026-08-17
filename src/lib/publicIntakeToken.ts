@@ -1,5 +1,6 @@
 import 'server-only'
 import { SignJWT, jwtVerify } from 'jose'
+import { entitlementsForSite, has as hasModule } from './control/modules'
 
 /**
  * The public "request a job" link token.
@@ -39,14 +40,35 @@ export async function createPublicIntakeToken(siteId: number): Promise<string> {
     .sign(secret())
 }
 
-/** The site this link belongs to, or null for every kind of failure. */
+/**
+ * The site this link belongs to, or null for every kind of failure — including
+ * a shop whose plan no longer includes Job Cards.
+ *
+ * The module check lives here for the same reason it lives in
+ * publicStoreToken.ts: this form is served outside the (app) route group, so no
+ * back-office guard ever runs for it, and this is the single point every
+ * intake route resolves its site through.
+ *
+ * Fails CLOSED, also for the same reason — a public form that files work into a
+ * shop that no longer pays for the job-card module is the product being used
+ * for free by whoever has the link.
+ */
 export async function verifyPublicIntakeToken(token: string): Promise<number | null> {
+  let siteId: number
   try {
     const { payload } = await jwtVerify(token, secret(), { audience: AUDIENCE })
-    const siteId = Number(payload.siteId)
-    if (!Number.isInteger(siteId) || siteId <= 0) return null
-    return siteId
+    const parsed = Number(payload.siteId)
+    if (!Number.isInteger(parsed) || parsed <= 0) return null
+    siteId = parsed
   } catch {
+    return null
+  }
+
+  try {
+    const entitlements = await entitlementsForSite(siteId)
+    return hasModule(entitlements, 'job_cards') ? siteId : null
+  } catch {
+    console.error('[modules] could not verify the job-cards module; closing the intake form')
     return null
   }
 }

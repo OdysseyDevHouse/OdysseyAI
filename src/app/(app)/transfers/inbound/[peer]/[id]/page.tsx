@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getInbound } from '@/lib/site/storeTransfers'
 import { listLocations } from '@/lib/site/stockLocations'
 import { PageHeader } from '@/components/ui'
@@ -19,7 +19,7 @@ export default async function ReceiveInboundPage({
   if (!Number.isFinite(transferId) || transferId <= 0) notFound()
 
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('stock.transfer')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.transfer')
 
   // getInbound refuses a store this one is not linked to, so a typed URL cannot
   // read another business's documents.

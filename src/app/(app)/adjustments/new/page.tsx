@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listLocations } from '@/lib/site/stockLocations'
 import { listReasons } from '@/lib/site/stockAdjustments'
 import { PageHeader, PageBody, Card, EmptyState, Icons, PrimaryLink } from '@/components/ui'
@@ -7,7 +7,7 @@ import NewAdjustmentScreen from './NewAdjustmentScreen'
 export const dynamic = 'force-dynamic'
 
 export default async function NewAdjustmentPage() {
-  const { siteId } = await requireCapability('stock.adjust')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.adjust')
 
   const [locations, reasons] = await Promise.all([
     listLocations(siteId, false, true),

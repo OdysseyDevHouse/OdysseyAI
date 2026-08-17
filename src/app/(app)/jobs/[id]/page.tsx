@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { getJobCard } from '@/lib/site/jobCards'
 import { listJobStatuses } from '@/lib/site/jobStatuses'
@@ -116,7 +116,7 @@ export default async function JobPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ tab?: string }>
 }) {
-  const { siteId, actor, capabilities } = await requireCapability('jobs.view')
+  const { siteId, actor, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
   const { id } = await params
   const { tab: rawTab } = await searchParams
 

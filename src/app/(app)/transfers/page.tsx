@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listTransfers } from '@/lib/site/stockTransfers'
 import { listLocations } from '@/lib/site/stockLocations'
 import { eligibleStores, pendingInbound } from '@/lib/site/storeTransfers'
@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function TransfersPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('stock.transfer')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'stock.transfer')
 
   const [transfers, locations, stores] = await Promise.all([
     listTransfers(siteId, { status: 'all', direction: 'all', limit: 200 }),

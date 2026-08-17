@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listCodes, codeStats } from '@/lib/site/discountCodes'
 import { listDepartments } from '@/lib/site/departments'
 import { PageBody, PageHeader } from '@/components/ui'
@@ -16,7 +16,7 @@ import DiscountsTable from './DiscountsTable'
 export const dynamic = 'force-dynamic'
 
 export default async function DiscountsPage() {
-  const { siteId } = await requireCapability('online.edit')
+  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
 
   const [codes, departments] = await Promise.all([
     listCodes(siteId).catch(() => []),

@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getSetting } from '@/lib/site/settings'
 import { missingRoles } from '@/lib/site/jobStatuses'
 import { PageHeader, PageBody, Callout } from '@/components/ui'
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
  * worse than being told before typing anything.
  */
 export default async function NewJobPage() {
-  const { siteId } = await requireCapability('jobs.edit')
+  const { siteId } = await requireModuleCapability('job_cards', 'jobs.edit')
 
   const [defaultPriority, missing] = await Promise.all([
     getSetting(siteId, 'job_default_priority'),

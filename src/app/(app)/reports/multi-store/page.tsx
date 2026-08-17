@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
+import { has } from '@/lib/control/modules'
 import {
   groupScopeFor,
   groupDashboard,
@@ -8,6 +9,7 @@ import {
   percentChange,
   marginPct,
   storeExceptions,
+  type ExcludedSite,
   type GroupDashboardRow,
   type SiteResult,
 } from '@/lib/groupReporting'
@@ -57,8 +59,24 @@ export const dynamic = 'force-dynamic'
  * A store whose database cannot be read renders an error chip in its row —
  * one broken store must never blank the other four.
  */
+/**
+ * Why a store is missing from the totals.
+ *
+ * A lookup rather than a ternary: there are three reasons now, and each sends
+ * the reader somewhere different — two to store access, one to the bill.
+ */
+const EXCLUSION_REASONS: Record<ExcludedSite['reason'], string> = {
+  'no-access': 'you do not have access to this store',
+  'no-permission': 'your role at this store does not include the dashboard',
+  'no-module': 'this store’s plan does not include Multi-Branch',
+}
+
 export default async function MultiStoreOverviewPage() {
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site, user, capabilities, modules } = await requireSiteUser()
+  /* Module before capability: "your shop has not bought Multi-Branch" and
+     "your role does not include this" are fixed by different people. */
+  if (!has(modules, 'multi_branch')) redirect('/upgrade?module=multi_branch')
+
   // A hidden menu entry is not a boundary — this URL is typeable.
   if (!can(capabilities, 'dashboard.view')) redirect('/not-allowed')
   if (user.controlUserId === null) redirect('/not-allowed')
@@ -301,11 +319,7 @@ export default async function MultiStoreOverviewPage() {
               <p className="text-sm text-muted">
                 Not shown:{' '}
                 {scope.excluded
-                  .map((e) =>
-                    e.reason === 'no-access'
-                      ? `${e.name} (you do not have access to this store)`
-                      : `${e.name} (your role at this store does not include the dashboard)`,
-                  )
+                  .map((e) => `${e.name} (${EXCLUSION_REASONS[e.reason]})`)
                   .join('; ')}
                 . Store access is granted per store, under each store&apos;s own users and roles.
               </p>

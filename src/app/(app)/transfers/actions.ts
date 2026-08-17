@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireSiteId, requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
+import { requireSiteId, requireActor, actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import { postTransfer, voidTransfer, type TransferInput } from '@/lib/site/stockTransfers'
 import {
   dispatchToStore,
@@ -31,7 +31,7 @@ function revalidateStock() {
 }
 
 export async function postTransferAction(input: TransferInput): Promise<TransferActionResult> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('inventory_advanced', 'stock.transfer')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await postTransfer(siteId, actor, input)
@@ -45,7 +45,7 @@ export async function voidTransferAction(
   id: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('inventory_advanced', 'stock.transfer')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await voidTransfer(siteId, actor, id, reason)
@@ -63,7 +63,7 @@ export type DispatchActionResult =
 
 /** Sends stock to another store: out of the room, onto the truck. */
 export async function dispatchToStoreAction(input: DispatchInput): Promise<DispatchActionResult> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('inventory_advanced', 'stock.transfer')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -82,7 +82,7 @@ export async function dispatchToStoreAction(input: DispatchInput): Promise<Dispa
  * is genuinely on the shelf and the receipt must not read as a failure.
  */
 export async function receiveFromStoreAction(input: ReceiveInput): Promise<DispatchActionResult> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('inventory_advanced', 'stock.transfer')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -99,7 +99,7 @@ export async function cancelDispatchAction(
   id: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('inventory_advanced', 'stock.transfer')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -121,7 +121,7 @@ export async function settleDispatchAction(
   id: number,
   peerSiteId: number,
 ): Promise<{ ok: true; settled: boolean } | { ok: false; error: string }> {
-  const ctx = await actorFor('stock.transfer')
+  const ctx = await actorForModule('inventory_advanced', 'stock.transfer')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -154,7 +154,7 @@ export async function settleDispatchAction(
 
 /** Product search for the transfer screen. */
 export async function searchProductsForTransferAction(term: string) {
-  const ctx = await actorForOrThrow('stock.view')
+  const ctx = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   const { siteId } = ctx
   return searchForTill(siteId, term, null)
 }
@@ -167,7 +167,7 @@ export async function searchProductsForTransferAction(term: string) {
  * being typed is what stops it being attempted.
  */
 export async function locationStockAction(productId: number) {
-  const ctx = await actorForOrThrow('stock.view')
+  const ctx = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   const { siteId } = ctx
   return locationStockFor(siteId, productId)
 }
@@ -180,7 +180,7 @@ export async function locationStockAction(productId: number) {
  * only the ones in the room the stock is leaving.
  */
 export async function serialsInLocationAction(productId: number, locationId: number) {
-  const ctx = await actorForOrThrow('stock.view')
+  const ctx = await actorForModuleOrThrow('inventory_advanced', 'stock.view')
   const { siteId } = ctx
   const units = await availableSerials(siteId, productId, locationId)
   return units.map((s) => ({ id: s.id, serial: s.serial }))

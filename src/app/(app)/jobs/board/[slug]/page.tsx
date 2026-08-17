@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { getJobBoard, listJobBoards, boardColumns, statusesOffEveryBoard } from '@/lib/site/jobBoards'
 import { hrefBuilder } from '@/lib/searchParams'
@@ -45,7 +45,7 @@ export default async function BoardPage({
   params: Promise<{ slug: string }>
   searchParams: Promise<Search>
 }) {
-  const { siteId, actor, capabilities } = await requireCapability('jobs.view')
+  const { siteId, actor, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
   const { slug } = await params
   const query = await searchParams
 

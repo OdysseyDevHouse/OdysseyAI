@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import { send, isConfigured } from '@/lib/mail'
 import { getSmsProvider } from '@/lib/site/sms'
 import {
@@ -44,7 +44,7 @@ export async function buildRunAction(input: {
   asAt?: string
   customerIds?: number[]
 }): Promise<ActionResult & { runId?: number }> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -71,7 +71,7 @@ export async function buildRunAction(input: {
  * hundred bounced addresses rather than one missing setting.
  */
 export async function releaseRunAction(runId: number): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -115,7 +115,7 @@ export async function releaseRunAction(runId: number): Promise<ActionResult> {
 }
 
 export async function cancelRunAction(runId: number): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
 
   const result = await cancelRun(ctx.siteId, ctx.actor, runId)
@@ -127,7 +127,7 @@ export async function cancelRunAction(runId: number): Promise<ActionResult> {
 }
 
 export async function excludeItemAction(itemId: number, reason: string): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
 
   const result = await excludeItem(ctx.siteId, ctx.actor, itemId, reason)
@@ -155,7 +155,7 @@ export async function saveLevelAction(
     isActive: boolean
   },
 ): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
 
   const result = await saveLevel(ctx.siteId, ctx.actor, id, {
@@ -170,7 +170,7 @@ export async function saveLevelAction(
 }
 
 export async function deleteLevelAction(id: number): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
 
   const result = await deleteLevel(ctx.siteId, ctx.actor, id)
@@ -192,7 +192,7 @@ export async function createPromiseAction(input: {
   // Whoever is on the phone records the promise. Deliberately not gated behind
   // customers.credit: a promise the collector cannot write down is a promise
   // that gets lost, which is the exact failure this module exists to fix.
-  const ctx = await actorFor('customers.view')
+  const ctx = await actorForModule('customers', 'customers.view')
   if ('ok' in ctx) return ctx
 
   const result = await createPromise(ctx.siteId, ctx.actor, input)
@@ -209,7 +209,7 @@ export async function resolvePromiseAction(
   outcome: 'kept' | 'broken' | 'cancelled',
   receivedAmount?: number,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('customers.view')
+  const ctx = await actorForModule('customers', 'customers.view')
   if ('ok' in ctx) return ctx
 
   const result = await resolvePromise(ctx.siteId, ctx.actor, promiseId, outcome, receivedAmount)
@@ -229,7 +229,7 @@ export async function resolvePromiseAction(
 }
 
 export async function sweepPromisesAction(): Promise<ActionResult> {
-  const ctx = await actorFor('customers.view')
+  const ctx = await actorForModule('customers', 'customers.view')
   if ('ok' in ctx) return ctx
 
   const broken = await sweepPromises(ctx.siteId, ctx.actor)
@@ -253,7 +253,7 @@ export async function logContactAction(input: {
   detail?: string
   contactDate?: string
 }): Promise<ActionResult> {
-  const ctx = await actorFor('customers.view')
+  const ctx = await actorForModule('customers', 'customers.view')
   if ('ok' in ctx) return ctx
 
   const result = await logContact(ctx.siteId, ctx.actor, input)
@@ -271,7 +271,7 @@ export async function pauseChasingAction(
   until: string,
   reason: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
 
   const result = await pauseChasing(ctx.siteId, ctx.actor, customerId, until, reason)
@@ -283,7 +283,7 @@ export async function pauseChasingAction(
 }
 
 export async function resumeChasingAction(customerId: number): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
 
   await resumeChasing(ctx.siteId, ctx.actor, customerId)
@@ -296,7 +296,7 @@ export async function holdAccountAction(
   customerId: number,
   reason: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
   if (!reason.trim()) return { ok: false, error: 'Say why the account is being held.' }
 
@@ -310,7 +310,7 @@ export async function releaseAccountAction(
   customerId: number,
   reason: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('customers.credit')
+  const ctx = await actorForModule('customers', 'customers.credit')
   if ('ok' in ctx) return ctx
 
   await releaseAccount(ctx.siteId, ctx.actor, customerId, reason)

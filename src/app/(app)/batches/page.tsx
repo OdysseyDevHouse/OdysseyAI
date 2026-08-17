@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listBatches, type BatchListOptions } from '@/lib/site/batches'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -17,7 +17,7 @@ export default async function BatchesPage({
 }: {
   searchParams: Promise<{ q?: string; filter?: string; days?: string }>
 }) {
-  const { siteId, capabilities } = await requireCapability('stock.view')
+  const { siteId, capabilities } = await requireModuleCapability('inventory_advanced', 'stock.view')
   const params = await searchParams
 
   const filter = (['all', 'open', 'expiring', 'expired', 'untracked'] as const).includes(

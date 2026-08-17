@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { templatesFor } from '@/lib/reportBuilder/templates'
 import { listFavorites } from '@/lib/site/reportFavorites'
@@ -39,7 +39,7 @@ export const dynamic = 'force-dynamic'
  * full catalogue, including everything saved, stays one click away at /reports.
  */
 export default async function JobReportsPage() {
-  const { siteId, actor, capabilities } = await requireCapability('jobs.view')
+  const { siteId, actor, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
 
   /*
    * Gated on reports.view as well as jobs.view.

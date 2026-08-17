@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listBuilds, listManufacturableProducts } from '@/lib/site/manufacturing'
 import { formatMoney, formatQty } from '@/lib/decimals'
 import {
@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function ManufacturingPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('products.edit')
+  const { siteId } = await requireModuleCapability('inventory_advanced', 'products.edit')
 
   const [{ items }, buildable] = await Promise.all([
     listBuilds(siteId, { limit: 200 }),

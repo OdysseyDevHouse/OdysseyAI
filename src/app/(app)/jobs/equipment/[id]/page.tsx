@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { getAsset, assetHistory } from '@/lib/site/jobAssets'
 import { listActivity } from '@/lib/site/activityLog'
@@ -46,7 +46,7 @@ export default async function EquipmentDetailPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const { siteId, capabilities } = await requireCapability('jobs.view')
+  const { siteId, capabilities } = await requireModuleCapability('job_cards', 'jobs.view')
   const { id } = await params
 
   const assetId = Number(id)

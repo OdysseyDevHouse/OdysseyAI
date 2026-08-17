@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne, execute } from './db'
 import { siteQueryOne } from './siteDb'
+import { entitlementsForSite, allHold, has as hasModule } from './control/modules'
 
 /**
  * Linked stores.
@@ -146,15 +147,42 @@ export async function membersOfGroup(groupId: number): Promise<GroupMember[]> {
  * product screen behaves exactly as it always has. Sites with no active
  * database are excluded: they cannot be written to, and silently failing
  * halfway through a fan-out is worse than not attempting it.
+ *
+ * ── THIS FUNCTION IS THE MULTI-BRANCH BOUNDARY ──────────────────────────────
+ *
+ * Product fan-out, inter-store transfers, the linked-store panel on the product
+ * screen and every group report reach the other stores THROUGH here. So the
+ * module is checked once, in this function, rather than at each of those call
+ * sites — a guard repeated eight times is a guard that will be missed on the
+ * ninth. Anything that grows its own member list later bypasses this, which is
+ * why it must not.
+ *
+ * ── BOTH ENDS MUST HOLD IT ──────────────────────────────────────────────────
+ *
+ * The caller's own entitlement is checked first, then the member list is
+ * filtered to those stores that also hold it. A store that declined
+ * Multi-Branch neither sends a product edit nor receives one — which is the
+ * honest reading of "declining it disables cross-store sharing", and the only
+ * one that cannot be worked around by editing from the other end.
  */
 export async function linkedStores(siteId: number): Promise<GroupMember[]> {
   const group = await groupForSite(siteId)
   if (!group) return []
+
+  const entitlements = await entitlementsForSite(siteId)
+  if (!hasModule(entitlements, 'multi_branch')) return []
+
   const members = await membersOfGroup(group.id)
   // A store with sharing switched off belongs to the group but exchanges
   // nothing, so it is excluded here — this is the list the product screen fans
   // out to and reads from.
-  return members.filter((m) => m.hasDatabase && m.sharesProducts)
+  const sharing = members.filter((m) => m.hasDatabase && m.sharesProducts)
+
+  const entitled = await allHold(
+    sharing.map((m) => m.siteId),
+    'multi_branch',
+  )
+  return sharing.filter((m) => entitled.has(m.siteId))
 }
 
 /**

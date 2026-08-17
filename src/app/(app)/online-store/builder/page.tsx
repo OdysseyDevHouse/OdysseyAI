@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getTheme } from '@/lib/site/storefrontLayout'
 import {
   getPageLayout,
@@ -43,7 +43,7 @@ export default async function BuilderPage({
   searchParams: Promise<{ page?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('online.edit')
+  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
   const { page: wanted } = await searchParams
 
   const [theme, settings, departments, token, storeName, pages, specials, subscribers] =

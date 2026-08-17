@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, actorFor } from '@/lib/auth'
+import { requireActor, actorForModule } from '@/lib/auth'
 import {
   postTransaction,
   allocate,
@@ -35,7 +35,7 @@ export async function postTransactionAction(input: {
   vatRatePct?: number
   autoAllocate?: boolean
 }): Promise<LedgerActionResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -67,7 +67,7 @@ export async function allocateAction(
   creditId: number,
   amount: number,
 ): Promise<LedgerActionResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await allocate(siteId, actor, debitId, creditId, amount)
@@ -82,7 +82,7 @@ export async function unallocateAction(
   debitId: number,
   creditId: number,
 ): Promise<LedgerActionResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await unallocate(siteId, actor, debitId, creditId)
@@ -96,7 +96,7 @@ export async function autoAllocateAction(
   customerId: number,
   creditId: number,
 ): Promise<LedgerActionResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await autoAllocate(siteId, actor, creditId)
@@ -117,7 +117,7 @@ export async function reverseTransactionAction(
   transactionId: number,
   reason: string,
 ): Promise<LedgerActionResult> {
-  const ctx = await actorFor('customers.edit')
+  const ctx = await actorForModule('customers', 'customers.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await reverseTransaction(siteId, actor, transactionId, reason)
