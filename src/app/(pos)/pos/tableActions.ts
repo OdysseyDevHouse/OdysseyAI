@@ -10,6 +10,11 @@ import {
   type PosTable,
 } from '@/lib/site/posTables'
 import {
+  listReservations,
+  setReservationStatus,
+  setReservationTable,
+} from '@/lib/site/reservations'
+import {
   splitTableBill,
   splitBillOntoDocument,
   transferTableBill,
@@ -448,4 +453,97 @@ export async function tablePaidAction(documentId: number): Promise<TablesResult>
 
   await freeTableForDocument(siteId, documentId)
   return { ok: true, tables: await listTables(siteId) }
+}
+
+/* ── Reservations, as the floor sees them ──────────────────────────────────
+ *
+ * Bookings have lived in a back-office queue that the floor does not have open.
+ * "Seat now" there was a status change in a browser tab — it did not touch the
+ * floor plan, open a bill, or tell the till anything at all.
+ *
+ * These two actions put tonight's book where the waiter is standing. They are
+ * deliberately thin: the reservations module owns the state machine and refuses
+ * an illegal move itself, so nothing here re-implements a rule.
+ */
+
+/** One booking, as a till tile draws it. */
+export type TillBooking = {
+  id: number
+  reference: string
+  contactName: string
+  contactPhone: string
+  partySize: number
+  /** ISO wall-clock, so the tile can show a time and how near it is. */
+  reservedFor: string
+  tableName: string
+  status: 'confirmed' | 'seated'
+  note: string
+}
+
+/**
+ * Tonight's bookings, for the floor.
+ *
+ * TODAY ONLY, and only the two states a waiter can act on: a confirmed party
+ * still to arrive, and one already seated (so the gate can show which table is
+ * spoken for). Pending requests are excluded on purpose — nobody has promised
+ * those a table yet, and a waiter is not the person who decides.
+ *
+ * Returns an empty list rather than refusing when the shop does not take
+ * bookings: the gate asks unconditionally, and a retail till or a restaurant
+ * with reservations switched off should simply see nothing.
+ */
+export async function tillBookingsAction(): Promise<TillBooking[]> {
+  const { siteId } = await actorForOrThrow('sales.till')
+
+  const today = new Date()
+  const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate(),
+  ).padStart(2, '0')}`
+
+  const rows = await listReservations(siteId, {
+    fromDate: key,
+    toDate: key,
+    statuses: ['confirmed', 'seated'],
+    limit: 200,
+  })
+
+  return rows.map((r) => ({
+    id: r.id,
+    reference: r.reference,
+    contactName: r.contactName,
+    contactPhone: r.contactPhone,
+    partySize: r.partySize,
+    reservedFor: r.reservedFor,
+    tableName: r.tableName,
+    status: r.status === 'seated' ? 'seated' : 'confirmed',
+    note: r.customerNote,
+  }))
+}
+
+/**
+ * The party has arrived — mark the booking seated.
+ *
+ * Does NOT open the bill. Seating and ringing up are two acts: a waiter seats a
+ * party, hands them menus, and comes back when they have chosen. Opening a table
+ * here would create an empty bill on the floor for a party that has ordered
+ * nothing, which is exactly what `openTableAction` refuses to do for a walk-in.
+ *
+ * The table is set first when the gate names one, so a booking seated onto a
+ * different table than it was pencilled against records where the party actually
+ * went rather than where somebody once meant to put them.
+ */
+export async function seatBookingAction(
+  reservationId: number,
+  tableName?: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const denied = await actorFor('sales.till')
+  if ('ok' in denied) return denied
+  const { siteId, actor } = await withTillOperator(denied)
+
+  if (tableName !== undefined) {
+    const placed = await setReservationTable(siteId, reservationId, tableName, actor)
+    if (!placed.ok) return placed
+  }
+
+  return setReservationStatus(siteId, reservationId, 'seated', actor)
 }

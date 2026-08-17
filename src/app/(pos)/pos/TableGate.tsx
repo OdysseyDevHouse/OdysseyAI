@@ -20,6 +20,7 @@ import { formatMoney } from '@/lib/decimals'
 import { seatLayout } from '@/lib/site/floorGeometry'
 import { useFloorViewport } from '@/lib/site/useFloorViewport'
 import type { OpenTab } from './actions'
+import type { TillBooking } from './tableActions'
 import type { PosTable, TableState } from '@/lib/site/posTables'
 import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import type { VisitType } from '@/lib/site/visitTypes'
@@ -159,6 +160,8 @@ export function TableGate({
   onShowQuickKeys,
   onPickTab,
   onPickTable,
+  bookings = [],
+  onSeatBooking,
 }: {
   /** Every bill open in the shop, newest first. */
   tabs: readonly OpenTab[]
@@ -214,6 +217,18 @@ export function TableGate({
   onPickTab: (tab: OpenTab) => void
   /** Seat or resume a table from the drawn floor plan. */
   onPickTable: (table: PosTable) => void
+  /**
+   * Tonight's bookings — confirmed parties still to arrive, and seated ones.
+   *
+   * Empty on a retail till and on a shop with reservations switched off, which
+   * hides the strip entirely rather than showing an empty heading.
+   */
+  bookings?: readonly TillBooking[]
+  /**
+   * Mark a party arrived. Undefined leaves the tiles readable but inert, which
+   * is what a shop whose staff may see the book but not work it should get.
+   */
+  onSeatBooking?: (booking: TillBooking) => void
 }) {
   /* ── Finding a table ──────────────────────────────────────────────────────
      A busy floor holds more tables than fit on a screen, so a waiter needs to
@@ -348,6 +363,10 @@ export function TableGate({
      this shop" is a fact about the shop, and a number that moved as somebody
      typed in the search box would answer a different question each keystroke. */
   const open = tabs.length
+  /* Who has not walked in yet. A seated booking stays ON the strip — it is how a
+     waiter sees which table is spoken for — but it is not somebody to watch the
+     door for, so the count above says only what is still coming. */
+  const arriving = bookings.filter((b) => b.status === 'confirmed')
 
   const hasPlan = rooms.some((room) =>
     tables.some((t) => t.roomId === room.id && t.x !== null),
@@ -523,6 +542,47 @@ export function TableGate({
               >
                 Cancel
               </Button>
+            </div>
+          </div>
+        )}
+
+        {/*
+          ── TONIGHT'S BOOK, WHERE THE WAITER IS STANDING ────────────────────
+
+          Bookings have lived in a back-office queue that the floor does not have
+          open, so "who is coming at seven" was a question only somebody at a
+          desk could answer — and "Seat now" there told the till nothing.
+
+          A STRIP, not a segment or a tab. A booking is not another kind of open
+          table, it is a thing about to become one, and burying it behind a
+          filter would mean nobody looks until they already know to. It scrolls
+          sideways because a busy Saturday has more bookings than fit and the
+          floor below is the more important half of this screen.
+
+          Hidden entirely when there is nothing booked — a retail till, a shop
+          with reservations switched off, or a quiet Tuesday all pay nothing for
+          a feature they are not using.
+        */}
+        {bookings.length > 0 && (
+          <div className="px-6 pb-4">
+            <div className="mb-2 flex items-center gap-2">
+              <Icons.CalendarClock size={16} className="text-muted" />
+              <span className="text-[13px] font-semibold text-ink">Booked tonight</span>
+              <span className="text-[13px] text-muted">
+                {arriving.length === 0
+                  ? 'everyone seated'
+                  : `${arriving.length} still to arrive`}
+              </span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {bookings.map((b) => (
+                <BookingCard
+                  key={b.id}
+                  booking={b}
+                  busy={busy}
+                  onSeat={onSeatBooking ? () => onSeatBooking(b) : undefined}
+                />
+              ))}
             </div>
           </div>
         )}
@@ -996,6 +1056,74 @@ function HeroTile({
  * them, at the price of fewer tabs per screen. "Hide total" buys that back on a till
  * that would rather see more of the floor.
  */
+/**
+ * One booking on the floor's strip.
+ *
+ * ── WHAT A WAITER NEEDS OFF THIS TILE ─────────────────────────────────────
+ *
+ * The time, the name, the size of the party, and where they are going. In that
+ * order, because that is the order the questions arrive in: is this the next one
+ * due, whose is it, will they fit, and which table did we say.
+ *
+ * The phone number and the note are deliberately NOT here. They matter when
+ * somebody has not arrived and you are ringing them, which is a back-office job
+ * on a screen with room for it — a tile carrying everything is a tile nobody can
+ * read across a busy room.
+ */
+function BookingCard({
+  booking,
+  busy,
+  onSeat,
+}: {
+  booking: TillBooking
+  busy: boolean
+  onSeat?: () => void
+}) {
+  const seated = booking.status === 'seated'
+  /* HH:MM off the wall-clock string, not through a Date. The value is already
+     local time as the shop wrote it, and parsing it would invite a timezone to
+     move a 19:00 booking an hour either way. */
+  const time = booking.reservedFor.slice(11, 16)
+
+  return (
+    <div
+      className={`flex w-[190px] shrink-0 flex-col gap-1.5 rounded-card border p-3 ${
+        seated ? 'border-border bg-surface-2' : 'border-brand bg-brand-soft'
+      }`}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className={`text-[17px] font-bold ${seated ? 'text-muted' : 'text-ink'}`}>
+          {time}
+        </span>
+        <span className="text-[13px] text-muted">
+          {booking.partySize} {booking.partySize === 1 ? 'guest' : 'guests'}
+        </span>
+      </div>
+
+      <span className="truncate text-[14px] font-semibold text-ink">{booking.contactName}</span>
+
+      <span className="truncate text-[12px] text-muted">
+        {booking.tableName ? `Table ${booking.tableName}` : 'No table yet'}
+      </span>
+
+      {seated ? (
+        /* Not a button. A seated party is a statement about the floor, and a
+           control here would offer to do again the one thing already done. */
+        <span className="mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold text-success">
+          <Icons.StatusSuccess size={14} />
+          Seated
+        </span>
+      ) : (
+        onSeat && (
+          <Button variant="secondary" size="sm" className="mt-0.5" disabled={busy} onClick={onSeat}>
+            Seat them
+          </Button>
+        )
+      )}
+    </div>
+  )
+}
+
 function TabCard({
   tab,
   tableState,

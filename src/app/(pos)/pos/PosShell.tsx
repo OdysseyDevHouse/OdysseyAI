@@ -134,6 +134,9 @@ import {
   openTableAction,
   updateTableBillAction,
   reparkTableBillAction,
+  tillBookingsAction,
+  seatBookingAction,
+  type TillBooking,
   voidTableBillAction,
   askForBillAction,
   tablePaidAction,
@@ -458,6 +461,11 @@ export default function PosShell({
      collapse to null so a points lookup can never block a sale. The effect that reads
      it sits with the rest of the loyalty code. */
   const [loyalty, setLoyalty] = useState<TillStanding | null>(null)
+
+  /* Tonight's bookings, shown on the gate so the floor can see who is coming.
+     Empty on a retail till and on a shop that does not take bookings, which
+     hides the strip entirely. */
+  const [bookings, setBookings] = useState<TillBooking[]>([])
 
   /* ── The floor ──────────────────────────────────────────────────────────
      Only in hospitality. In retail `tables` is empty, the gate never mounts, and this
@@ -3210,12 +3218,39 @@ export default function PosShell({
       .catch(() => {})
   }, [])
 
+  /**
+   * Tonight's bookings, for the gate's strip.
+   *
+   * Its own call rather than riding with the tables, because it fails
+   * differently: a shop with reservations switched off returns an empty list,
+   * which is a normal answer and not a reason to leave the floor unrefreshed.
+   * Failures are swallowed for the same reason the floor's are — a booking
+   * strip that could not load must not stop a waiter seating anybody.
+   */
+  const refreshBookings = useCallback(() => {
+    if (!hospitality) return
+    void tillBookingsAction()
+      .then(setBookings)
+      .catch(() => {})
+  }, [hospitality])
+
   useEffect(() => {
     if (!hospitality) return
     refreshTables()
     const timer = setInterval(refreshTables, 20_000)
     return () => clearInterval(timer)
   }, [hospitality, refreshTables])
+
+  /* Bookings change far more slowly than the floor does — a party arrives every
+     few minutes at best, where a bill changes every time somebody rings up a
+     drink. Two minutes rather than twenty seconds, so a quiet Tuesday is not
+     asking the server for a list that has not moved. */
+  useEffect(() => {
+    if (!hospitality) return
+    refreshBookings()
+    const timer = setInterval(refreshBookings, 120_000)
+    return () => clearInterval(timer)
+  }, [hospitality, refreshBookings])
 
   /**
    * ── THE BASKET, KEPT WHERE A POWER CUT CANNOT REACH IT ────────────────────
@@ -3779,6 +3814,22 @@ export default function PosShell({
       */
       choosingTable ? (
         <TableGate
+          bookings={bookings}
+          /* Seating is a floor act, so the person on the floor does it. The
+             booking is marked seated against whichever table it was pencilled
+             against; the bill opens when they order, exactly as a walk-in's
+             does. */
+          onSeatBooking={(booking) => {
+            startTransition(async () => {
+              const result = await seatBookingAction(booking.id, booking.tableName || undefined)
+              if (!result.ok) {
+                toast.error(result.error)
+                return
+              }
+              toast.success(`${booking.contactName} seated.`)
+              void refreshBookings()
+            })
+          }}
           tabs={tabs}
           tables={tables}
           rooms={floorRooms}
