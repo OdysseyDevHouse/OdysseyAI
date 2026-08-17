@@ -471,10 +471,27 @@ installs have the same one.
 
 ## Support tasks
 
-**Reveal a customer's database password.** Setup → Tills, on the site. Never
-give it to the customer — it is what keeps them out of their own takings, and a
-shop owner who can edit sales rows directly is a shop whose figures mean
+**The screen to open first: Setup → Site & databases.** For a site that holds
+its own data it leads with a verdict — locked, drifting, replica behind,
+healthy — and the detail sits under it. The verdict is ordered by severity, so
+a machine that is both locked and behind on replication names the lock, which
+is the thing stopping the shop trading.
+
+An unreachable shop is *not* an error there. From head office the shop's own
+database is normally unreachable — that is the premise — so the lease section
+says so plainly rather than showing red.
+
+**Reveal a customer's database password.** Same screen, on the machine's row.
+It requires a written reason, records it in `cp2_credential_reveals` before the
+password is returned, and shows the last reads directly under the button.
+
+Never give it to the customer — it is what keeps them out of their own takings,
+and a shop owner who can edit sales rows directly is a shop whose figures mean
 nothing.
+
+Worth knowing: `setup.edit` guards it because that is the strongest gate this
+product has (there is no platform-administrator role). **The real control is
+the log, not the permission.**
 
 **A machine that will not start.** Check `%LOCALAPPDATA%\...\runtime-config.json`
 exists and `mariadb\data\mysql` is present. If the data directory is missing but
@@ -499,6 +516,7 @@ npm run test:backup-push         # encryption round-trip, tampering, refusals
 npm run test:replication         # server id, replication account, tunnel backoff
 npm run test:ws-frame            # framing, against Node's own WebSocket client
 npm run test:replica-host        # auth, path traversal, streamed upload
+npm run test:local-backend-status # the support verdict, and its severity order
 ```
 
-All nine run with no database and no browser.
+All ten run with no database and no browser — 247 checks in total.
