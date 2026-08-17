@@ -32,6 +32,29 @@
 export const TILL_HREF = '/pos'
 
 /**
+ * The till, opened to write a PARTICULAR kind of document.
+ *
+ * ── WHY THE BACK OFFICE NEEDS THIS ────────────────────────────────────────
+ *
+ * "New order at the till" used to be a bare link to `/pos`. It handed over
+ * nothing, so somebody who pressed it arrived at an ordinary counter screen
+ * with no indication of what to do next — and until recently the till could not
+ * raise an order at all, so the button led nowhere twice over.
+ *
+ * With a doc type on the URL the till opens already writing one, which is what
+ * the button always claimed to do.
+ *
+ * ── WHY THE VALUE IS THE STORED ONE ───────────────────────────────────────
+ *
+ * `sales_order`, not `order`. The till validates this against the same list the
+ * database stores, so a prettier word here would need a translation table at
+ * both ends — and the first person to add a fifth type would update one of them.
+ */
+export function tillHrefFor(docType: 'quote' | 'sales_order' | 'invoice' | 'credit_sale'): string {
+  return docType === 'invoice' ? TILL_HREF : `${TILL_HREF}?new=${docType}`
+}
+
+/**
  * The name of the till's tab/window.
  *
  * NAMED, not `_blank`, and that difference is the whole behaviour: a named

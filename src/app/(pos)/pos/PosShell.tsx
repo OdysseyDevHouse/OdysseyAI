@@ -37,6 +37,8 @@ import {
   readDraft as readLocalDraft,
   clearDraft as clearLocalDraft,
   draftDocType,
+  DRAFT_DOC_LABELS,
+  type DraftDocType,
 } from '@/lib/posOffline/draftOffline'
 import type { LocalDraft } from '@/lib/posOffline/db'
 import { offlineBlockedProduct, offlineBlockedTender } from '@/lib/offlineCapability'
@@ -234,6 +236,7 @@ export default function PosShell({
   quickKeyDepartmentNames,
   hospitality,
   invoicing,
+  startAs,
   initialTables,
   floorRooms,
   floorFeatures,
@@ -307,6 +310,14 @@ export default function PosShell({
    * See lib/posMode for why this picks a layout rather than adding branches.
    */
   invoicing: boolean
+  /**
+   * What this till should OPEN as, when somebody arrived meaning to make one.
+   *
+   * The back office links in with ?new=sales_order, so "New order" lands on a
+   * till already writing an order. Applied once, after sign-in — see the effect
+   * below for why it cannot simply be the reducer's initial state.
+   */
+  startAs: DraftDocType
   /** The floor. Empty in retail, where the gate never mounts. */
   initialTables: PosTable[]
   /** The DRAWN floor, if a manager built one. Empty means the gate uses the grid. */
@@ -413,7 +424,25 @@ export default function PosShell({
    */
   const [recoverable, setRecoverable] = useState<LocalDraft | null>(null)
   /** True once the recovery read has answered — see the writer effect. */
+  /**
+   * True once the recovery read has answered.
+   *
+   * STATE and not a ref, and the difference is load-bearing. Two effects wait on
+   * this, and a ref mutating inside a promise re-renders nothing — so the one
+   * that applies `startAs` checked it on mount, found it false, and never ran
+   * again. A "New order" link opened an ordinary invoice till and nothing said
+   * why. The writer below survived that only because its own dependencies change
+   * constantly.
+   *
+   * The ref beside it is what the WRITER reads synchronously in its timeout,
+   * where a stale closure would be the same bug in the other direction.
+   */
+  const [draftCheckDone, setDraftCheckDone] = useState(false)
   const draftChecked = useRef(false)
+  const markDraftChecked = () => {
+    draftChecked.current = true
+    setDraftCheckDone(true)
+  }
 
   /* The shop's own buttons, from IndexedDB, when the page's props arrive empty —
      a reload with no network gets no props, and the key grid is the default pane.
@@ -3199,7 +3228,7 @@ export default function PosShell({
    */
   useEffect(() => {
     if (state.lines.length > 0) {
-      draftChecked.current = true
+      markDraftChecked()
       return
     }
     let cancelled = false
@@ -3208,7 +3237,7 @@ export default function PosShell({
         if (!cancelled && draft && draft.lines.length > 0) setRecoverable(draft)
       })
       .finally(() => {
-        draftChecked.current = true
+        markDraftChecked()
       })
     return () => {
       cancelled = true
@@ -3218,6 +3247,43 @@ export default function PosShell({
        not wanted. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId])
+
+  /*
+   * The till was opened to make something specific — start it as that.
+   *
+   * ── WHY AN EFFECT AND NOT THE REDUCER'S INITIAL STATE ─────────────────────
+   *
+   * Because it must not win over a recovered basket. Both this and the recovery
+   * read fire on mount, and a till that had been switched off mid-quotation and
+   * was then opened from the back office's "New order" would otherwise throw the
+   * unfinished quote away before anybody was asked about it. So this waits for
+   * the same `draftChecked` gate the writer uses, and stands down entirely if
+   * there is a basket on screen or one waiting to be offered back.
+   *
+   * ── AND WHY IT RUNS ONCE ──────────────────────────────────────────────────
+   *
+   * The intent belongs to the ARRIVAL, not to the URL. A cashier who lands here
+   * from "New order", finishes it, and carries on serving customers is at an
+   * ordinary till — re-applying the type on every basket would have the URL
+   * quietly deciding what the next twelve sales are, long after the person who
+   * clicked that button has gone.
+   */
+  const startApplied = useRef(false)
+  useEffect(() => {
+    if (startApplied.current) return
+    if (!draftCheckDone) return
+    if (startAs === 'invoice') {
+      startApplied.current = true
+      return
+    }
+    // A basket in hand, or one about to be offered back, outranks a URL.
+    if (state.lines.length > 0 || recoverable) return
+
+    startApplied.current = true
+    dispatch({ type: 'SET_DOC_TYPE', docType: startAs })
+    toast.info(`Starting a ${DRAFT_DOC_LABELS[startAs].toLowerCase()}.`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startAs, recoverable, state.lines.length, draftCheckDone])
 
   useEffect(() => {
     /*
@@ -3568,7 +3634,26 @@ export default function PosShell({
         /* The bar names the SCREEN under it — except on either gate, where the
            card below carries its own heading and the slot takes the brand
            instead. No basket there either, so no item pill. */
-        screenTitle={choosingTable || closedGate ? null : 'Current Sale'}
+        /*
+         * The heading NAMES what is being built, not just "a sale".
+         *
+         * A till writing a quote looks identical to one writing an invoice —
+         * same basket, same prices, same Pay button — and the only thing that
+         * differed was a toast that had faded by the time anybody looked. So
+         * somebody could be three minutes into an order believing it was a sale,
+         * and find out when it did not take money.
+         *
+         * Invoice stays "Current Sale": it is the ordinary case, that is what a
+         * cashier calls it, and a till that announced "Invoice" all day would be
+         * naming the paperwork instead of the job.
+         */
+        screenTitle={
+          choosingTable || closedGate
+            ? null
+            : state.docType === 'invoice'
+              ? 'Current Sale'
+              : DRAFT_DOC_LABELS[state.docType]
+        }
         operatorName={operatorName}
         terminalLabel={
           terminal

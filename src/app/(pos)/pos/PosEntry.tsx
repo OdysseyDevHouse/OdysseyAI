@@ -7,6 +7,7 @@ import { checkDeviceAction, type DeviceState } from './deviceActions'
 import PosGate from './PosGate'
 import PosNotLicensed from './PosNotLicensed'
 import PosShell from './PosShell'
+import type { DraftDocType } from '@/lib/posOffline/draftOffline'
 import type { Special } from '@/lib/specialsEngine'
 import type { PendingSchedule } from '@/lib/priceSchedules'
 import type { TenderType } from '@/lib/site/tenderTypes'
@@ -67,6 +68,7 @@ export default function PosEntry({
   quickKeyDepartmentNames,
   hospitality,
   invoicing,
+  startAs,
   initialTables,
   floorRooms,
   floorFeatures,
@@ -118,6 +120,8 @@ export default function PosEntry({
   hospitality: boolean
   /** True on a trade counter — see PosShell. */
   invoicing: boolean
+  /** What the till should open as, when the back office asked. See PosShell. */
+  startAs: DraftDocType
   initialTables: PosTable[]
   /** The drawn floor. Relayed unchanged — this component owns sign-in, not the floor. */
   floorRooms: FloorRoom[]
@@ -270,6 +274,7 @@ export default function PosEntry({
       quickKeyDepartmentNames={quickKeyDepartmentNames}
       hospitality={hospitality}
       invoicing={invoicing}
+      startAs={startAs}
       initialTables={initialTables}
       floorRooms={floorRooms}
       floorFeatures={floorFeatures}

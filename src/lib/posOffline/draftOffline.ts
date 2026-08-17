@@ -62,6 +62,22 @@ export function draftDocType(value: unknown): DraftDocType {
     : 'invoice'
 }
 
+/**
+ * What each type is called on the till.
+ *
+ * Restated here for the same reason the list is: `salesDocuments` owns the
+ * canonical labels but is `server-only`, and a client component needs these at
+ * runtime rather than as types. Kept word-for-word identical to DOC_LABELS —
+ * a till calling something a "Sales order" while the register that lists it
+ * says "Order" is two names for one thing.
+ */
+export const DRAFT_DOC_LABELS: Record<DraftDocType, string> = {
+  quote: 'Quote',
+  sales_order: 'Sales order',
+  invoice: 'Invoice',
+  credit_sale: 'Credit sale',
+}
+
 export type DraftInput = {
   documentId: number | null
   docType: string
