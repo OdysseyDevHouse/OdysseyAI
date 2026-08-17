@@ -17,8 +17,17 @@ import type { LicenceRefusal } from '@/lib/control/devices'
 /** How long a successful check buys. The rule the customer agreed to. */
 export const LEASE_DAYS = 7
 
-/** How long an offline unlock buys. Longer, because it is a real interruption. */
-export const UNLOCK_GRANT_DAYS = 14
+/**
+ * How long an offline unlock buys. Longer than a check, because it is a real
+ * interruption rather than a routine renewal.
+ *
+ * Re-exported from unlockCode, which is where it has to live: that file is
+ * shared by both ends of the telephone call and must load anywhere, so it
+ * cannot depend on this one (which imports the `server-only` module
+ * catalogue). One definition, reachable from both.
+ */
+export { UNLOCK_GRANT_DAYS } from './unlockCode'
+import { UNLOCK_GRANT_DAYS } from './unlockCode'
 
 const DAY_MS = 86_400_000
 

@@ -89,8 +89,22 @@ const GROUP_SIZE = 3
  */
 const SEP = '\u0000'
 
-/** How long a granted unlock runs. Long enough to get an engineer out, short
- *  enough that a site living on unlocks shows up in the grants report fast. */
+/**
+ * How long a granted unlock runs.
+ *
+ * THE definition — leaseRules re-exports this one rather than declaring its
+ * own. It briefly existed in both files: they agreed, but nothing made them,
+ * and two copies drifting apart would mean the code an agent reads out promises
+ * a fortnight while the machine grants something else, with no error to say so.
+ *
+ * It lives HERE rather than in leaseRules because this file must stay free of
+ * dependencies — it is shared by both ends of the unlock and has to run
+ * anywhere. leaseRules imports the module catalogue, which is `server-only`, so
+ * pointing this file at that one makes it unloadable in a plain script.
+ *
+ * Long enough to get an engineer out, short enough that a site living on
+ * unlocks shows up in the grants report quickly.
+ */
 export const UNLOCK_GRANT_DAYS = 14
 
 export type UnlockChallengeInput = {
