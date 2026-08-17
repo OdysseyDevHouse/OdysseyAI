@@ -513,6 +513,7 @@ export const SUBPAGE_LABELS = {
   // what somebody in a shop calls the thing. The keyword search still has
   // "terminals" on the tile, so looking for either finds it.
   '/setup/terminals': 'Tills',
+  '/setup/billing': 'Plan & billing',
   '/setup/numbering': 'Numbering',
   '/setup/quick-keys': 'Quick keys',
   '/setup/menu-designer': 'Menu designer',
@@ -721,6 +722,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/tender-types': 'cash card eft payment methods vouchers',
   '/setup/tips': 'tips gratuity service charge tiers waiter pool',
   '/setup/terminals': 'terminals registers pos devices',
+  '/setup/billing': 'plan subscription modules upgrade downgrade invoice licence price cost add-on account debit order',
   '/setup/numbering': 'sequences document numbers prefix autocode',
   '/setup/quick-keys': 'buttons tiles favourites shortcuts till pos grid',
   /* No "arrange": every substring of a keyword matches, and it would make this

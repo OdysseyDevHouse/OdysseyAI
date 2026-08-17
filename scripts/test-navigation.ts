@@ -414,6 +414,7 @@ function routesUnder(dir: string, prefix = ''): string[] {
  */
 const UNLINKED: Record<string, string> = {
   '/not-allowed': 'the redirect target for a failed capability check',
+  '/upgrade': 'the redirect target for a failed MODULE check — the plan-level twin of /not-allowed',
   '/purchasing/receive': 'an action reached from a purchase order, not a destination',
   '/purchasing/suggest': 'reached from the purchasing hub’s own "What to order"',
   '/customers/new': 'reached from the customer list',

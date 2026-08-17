@@ -496,6 +496,15 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/billing',
+        description: 'The modules this store pays for, and what the account is charged.',
+        keywords:
+          'plan subscription modules upgrade downgrade invoice licence licences price cost add-on billing account debit order',
+        icon: 'CreditCard',
+        tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/sms',
         description: 'The provider that sends text messages, and the reminders that use it.',
         keywords: 'sms text message smsportal reminders dunning notify phone mobile',
