@@ -50,6 +50,7 @@ import {
   finaliseSaleAction,
   createCreditNoteAction,
   saveSaleAction,
+  saveAsOrderAction,
   saveForLaterAction,
   discardSaleAction,
   voidSaleAction,
@@ -2302,6 +2303,64 @@ export default function PosShell({
   }
 
   /**
+   * Writes the basket as a SALES ORDER instead of ringing it up.
+   *
+   * The same lines at the same prices for the same customer — an order is an
+   * invoice at an earlier moment in its life, so nothing about the basket has to
+   * change. What differs is what happens to it: nothing posts, no number is
+   * issued, no money is taken, and the stock is RESERVED rather than moved,
+   * which is what stops the next person through the door buying it.
+   *
+   * The customer is checked here rather than only in the action, because the
+   * useful thing to do about a missing one is open the picker — a cashier told
+   * "attach a customer" still has to find the button. The action re-checks: it is
+   * a public endpoint and this screen is not a boundary.
+   */
+  function saveAsOrder() {
+    if (state.lines.length === 0) {
+      toast.info('Add something before saving it as an order.')
+      return
+    }
+    if (!state.customer) {
+      toast.info('An order is a promise to someone — attach the customer first.')
+      setPickingCustomer(true)
+      return
+    }
+
+    startTransition(async () => {
+      let saved: Awaited<ReturnType<typeof saveAsOrderAction>>
+      try {
+        saved = await saveAsOrderAction(state.documentId, {
+          customerId: state.customer?.id ?? null,
+          customerName: state.customer?.name ?? null,
+          customerVatNo: state.customer?.vatNumber ?? null,
+          customerPhone: state.customer?.phone ?? null,
+          reference: (tabLabel ?? '').trim() || null,
+          terminalId: terminal?.id ?? null,
+          terminalCode: terminal?.code ?? null,
+          priceStructureId,
+          lines: salePayloadLines(state.lines, lineSpecials, docShares),
+        })
+      } catch {
+        /* No local fallback, unlike park. An order RESERVES stock, and a till that
+           cannot see what anybody else has reserved cannot make that promise — so
+           the honest answer is that it did not happen. The quick key refuses
+           offline for the same reason; this catches the line dropping mid-save. */
+        toast.error('The order was not saved — it needs the connection to reserve stock.')
+        return
+      }
+      if (!saved.ok) {
+        toast.error(saved.error)
+        return
+      }
+
+      toast.success(`Order saved for ${state.customer?.name ?? 'the customer'}.`)
+      dispatch({ type: 'CLEAR' })
+      router.refresh()
+    })
+  }
+
+  /**
    * Hands this till's bill back, so the floor stops reading it as taken.
    *
    * Fire-and-forget, and deliberately not awaited: every caller is a waiter LEAVING,
@@ -3163,6 +3222,7 @@ export default function PosShell({
           else voidSaleDraft()
         },
         saveSale,
+        saveAsOrder,
         showSaved: () => setShowingSaved(true),
         undo: undoLastLine,
         pickCustomer: () => setPickingCustomer(true),

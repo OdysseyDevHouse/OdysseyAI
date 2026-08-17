@@ -44,6 +44,18 @@ export type QuickKeyHandlers = {
    * naming step: a basket saved without a name is one nobody can find again.
    */
   saveSale: () => void
+  /**
+   * Writes the basket as a SALES ORDER rather than an invoice.
+   *
+   * The same lines, the same prices, the same customer — an order is an invoice
+   * at an earlier moment in its life, which is why this is one call rather than a
+   * second basket. What differs is that nothing is tendered and stock is reserved
+   * rather than moved: the goods are promised, not handed over.
+   *
+   * Needs a customer, and the handler says so rather than refusing flatly. An
+   * order is a promise, and a promise to "Walk-in" cannot be delivered against.
+   */
+  saveAsOrder: () => void
   /** Opens the saved-sales list. */
   showSaved: () => void
   /** Removes the last line added. */
@@ -197,6 +209,31 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
    */
   'save-sale': ({ handlers, hasLines }) =>
     hasLines ? handlers.saveSale() : handlers.say('Add something before saving the sale.', 'info'),
+
+  /*
+   * ── SAVE AS ORDER ───────────────────────────────────────────────────────
+   *
+   * Needs the CONNECTION, and that is a decision rather than an oversight. An
+   * order reserves stock, and a reservation made on a till that cannot see what
+   * anybody else has reserved is a promise the shop may not be able to keep. An
+   * invoice offline is safe because the goods leave the counter in the customer's
+   * hands; an order offline is a claim on stock that might already be gone.
+   *
+   * The customer check lives in the handler rather than here: the shell knows
+   * whether one is attached, and the useful reply is "attach the customer first"
+   * rather than a flat no.
+   */
+  'save-as-order': ({ handlers, hasLines, online }) => {
+    if (!hasLines) {
+      handlers.say('Add something before saving it as an order.', 'info')
+      return
+    }
+    if (!online) {
+      handlers.say('An order reserves stock, so it needs the connection.', 'info')
+      return
+    }
+    handlers.saveAsOrder()
+  },
 
   'view-saved-sales': ({ handlers }) => handlers.showSaved(),
 
@@ -441,13 +478,15 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
  */
 const NOT_WIRED: Record<string, string> = {
   /*
-   * These two still say "the desk till", and unlike the voucher and points keys that is
-   * still TRUE in substance — orders and lay-bys were never ported. But the desk till
-   * itself is gone (phase 7), so the wording points at a screen that no longer exists.
-   * Reworded to name the back office, which is where /sales/orders and /sales/laybys
-   * actually live.
+   * `save-as-order` used to sit here, pointing at the back office. It is now in RUN
+   * — the till writes the order itself — and its entry was removed the moment that
+   * landed, per the rule stated below: an entry left behind lies to a cashier about
+   * a feature that works.
+   *
+   * Lay-bys stay. A lay-by is a payment schedule against stock held over weeks, and
+   * the deposit taken to open one is money changing hands — so it is a bigger thing
+   * than a doc type on the basket, and the back office is still where it is done.
    */
-  'save-as-order': 'Turning a basket into an order is done from Orders in the back office.',
   'save-as-layby': 'Starting a lay-by is done from Lay-bys in the back office.',
 }
 

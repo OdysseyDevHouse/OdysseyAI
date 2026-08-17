@@ -251,8 +251,20 @@ export async function saveAsOrderAction(
   },
   details?: { deliveryDate?: string | null; customerOrderNo?: string | null },
 ): Promise<SaleResult> {
-  const ctx = await actorFor('sales.edit')
-  if ('ok' in ctx) return ctx
+  const denied = await actorFor('sales.edit')
+  if ('ok' in denied) return denied
+  /*
+   * The PIN operator where there is one, not the browser session.
+   *
+   * This used to resolve the browser user alone, which was harmless while only
+   * the back office called it — one person, their own session. The till calls it
+   * now, and on a shared counter machine the browser user is whoever opened it
+   * that morning. `sales_document_lines.sales_rep_user_id` is what commission
+   * pays on, so without this every order raised at a shared till would pay the
+   * wrong person. Falls back to the browser session off the till, which is what
+   * the back office wants.
+   */
+  const ctx = await withTillOperator(denied)
   const { siteId, actor } = ctx
 
   if (!input.customerId) {
@@ -265,7 +277,7 @@ export async function saveAsOrderAction(
   const result = await saveDraft(
     siteId,
     actor,
-    { docType: 'sales_order', ...input, lines: attributeTo(input.lines, actor.userId) },
+    { ...input, docType: 'sales_order', lines: attributeTo(input.lines, actor.userId) },
     documentId ?? undefined,
   )
   if (!result.ok) return { ok: false, error: result.error }
