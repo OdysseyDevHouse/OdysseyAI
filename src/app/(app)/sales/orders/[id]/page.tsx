@@ -20,8 +20,6 @@ import {
   CardHeader,
   Callout,
   EmptyState,
-  StatTile,
-  StatStrip,
   Badge,
   Icons,
   TABLE,
@@ -42,19 +40,6 @@ const TONE: Record<FulfilmentStatus, 'success' | 'warning' | 'danger' | 'neutral
   cancelled: 'neutral',
 }
 
-/**
- * The same states, in the vocabulary a stat tile speaks.
- *
- * A tile has no `brand` or `neutral`, so this is not the badge map with a
- * different name — an OPEN order is the ordinary case and takes no colour at
- * all, where the badge paints it brand to stand out in a header.
- */
-const TILE_TONE: Record<FulfilmentStatus, 'default' | 'success' | 'warning' | 'danger'> = {
-  open: 'default',
-  part_delivered: 'warning',
-  delivered: 'success',
-  cancelled: 'default',
-}
 
 export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
@@ -143,6 +128,25 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
       )}
 
       <PageBody>
+        {/*
+          WHAT THIS ORDER IS, on the one screen that no longer says it.
+
+          An editable order takes its heading from the editor, which knows about
+          documents and not about fulfilment — so "Open" or "Part delivered"
+          would otherwise appear nowhere. A thin line rather than a tile: it is
+          one fact, and it was only ever a badge in the header before the stat
+          strip briefly carried it.
+        */}
+        {editable && (
+          <div className="flex items-center gap-2">
+            <Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>
+            {order.details?.deliveryDate && (
+              <span className="text-sm text-muted">
+                Deliver by {order.details.deliveryDate}
+              </span>
+            )}
+          </div>
+        )}
         {/* A cancelled order is a closed fact, not a problem — neutral. */}
         {status === 'cancelled' && (
           <Callout tone="neutral" icon={<Icons.Ban size={18} />} title="This order was cancelled.">
@@ -159,39 +163,23 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           </Callout>
         )}
 
-        <StatStrip columns={4}>
-          {/* The fulfilment state rides here now that the page's own header is
-              gone on an editable order. It belongs with these figures anyway —
-              "Open", "Part delivered" and "Delivered" are a summary of exactly
-              what the four tiles below spell out. */}
-          <StatTile
-            label="Ordered"
-            value={String(order.qtyOrdered)}
-            hint={`${FULFILMENT_LABELS[status]} · ${formatMoney(order.document.totalIncl)}`}
-            tone={TILE_TONE[status]}
-            icon={<Icons.ListOrdered size={16} />}
-          />
-          <StatTile
-            label="Delivered"
-            value={String(order.qtyDelivered)}
-            hint={`${order.deliveries.length} invoice${order.deliveries.length === 1 ? '' : 's'}`}
-            tone={order.qtyDelivered > 0 ? 'positive' : 'default'}
-            icon={<Icons.Truck size={16} />}
-          />
-          <StatTile
-            label="Outstanding"
-            value={String(order.qtyOutstanding)}
-            hint={order.qtyOutstanding > 0 ? 'Still promised' : 'Nothing left'}
-            tone={order.qtyOutstanding > 0 ? 'warning' : 'default'}
-            icon={<Icons.Clock size={16} />}
-          />
-          <StatTile
-            label="Deliver by"
-            value={order.details?.deliveryDate ?? '—'}
-            hint={order.details?.customerOrderNo ? `Their ref ${order.details.customerOrderNo}` : 'No date set'}
-            icon={<Icons.Calendar size={16} />}
-          />
-        </StatStrip>
+        {/*
+          ── NO STAT STRIP HERE ──────────────────────────────────────────────
+
+          A document screen is for working ON the document. Four tiles counting
+          what this one order has delivered are a dashboard, and on a new order
+          they are four zeros sitting above the thing somebody actually came to
+          do.
+
+          Those figures belong on the REGISTER, which is where a manager asks
+          "what is outstanding across everything" — and that screen already
+          carries them.
+
+          What is genuinely per-document and still needed is below: the delivery
+          panel, which lists each line with its ordered, delivered, outstanding
+          and available quantities. That is the same information at the
+          resolution somebody delivering actually works at.
+        */}
 
         {/*
           ── THE LINES, WHILE THEY ARE STILL THE SHOP'S TO CHANGE ────────────
