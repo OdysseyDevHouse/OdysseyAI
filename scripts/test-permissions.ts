@@ -43,6 +43,22 @@ const GUARD =
   /requireCapability|requireAnyCapability|actorFor|actorForOrThrow|siteIdForCapability|can\(\s*(capabilities|ctx\.capabilities)/
 
 /**
+ * Is this file actually a server-actions module?
+ *
+ * `'use server'` is a DIRECTIVE: it only counts at the top of the file, before
+ * any statement, and comments and blank lines may precede it. So the check
+ * strips those and looks at what comes first — rather than searching the whole
+ * text, which cannot tell an endpoint from a paragraph about endpoints.
+ */
+function isServerActionFile(src: string): boolean {
+  const withoutComments = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .trim()
+  return /^(['"])use server\1\s*;?/.test(withoutComments)
+}
+
+/**
  * Pages that are deliberately open.
  *
  * /not-allowed is where every refused guard redirects TO — guarding it would
@@ -187,7 +203,20 @@ async function main() {
   for (const f of actionFiles) {
     if (OPEN_ACTIONS.has(f)) continue
     const src = await readFile(path.join(ROOT, f), 'utf8')
-    if (!src.includes("'use server'")) continue
+    /*
+     * The DIRECTIVE, not the words.
+     *
+     * `'use server'` only does anything at the very top of a file, before any
+     * statement. Matching the string anywhere counted a module that merely
+     * MENTIONS it in prose — cashup/declare/visible.ts is a pure filter whose
+     * docblock explains why it is deliberately not an actions file, and it was
+     * reported as an unguarded endpoint for saying so.
+     *
+     * That is not a harmless false positive. This check is the one that finds a
+     * genuinely open action, and a permanent red line beside it is how the real
+     * one gets waved past.
+     */
+    if (!isServerActionFile(src)) continue
     actionFileCount++
     // A file-level helper (setup/users, commission) counts — what matters is
     // that a capability is consulted, not which spelling was used.

@@ -33,7 +33,21 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
    the ones that are not suites. Derived rather than hand-listed so a new suite
    is picked up by adding its script, which is the only place anybody thinks to
    add it. */
-const SKIP = new Set(['test'])
+const SKIP = new Set([
+  'test',
+  /*
+   * Needs `npm run dev` on :4100 and a real browser, so it fails on a machine
+   * that simply has not started the server — a red line that says nothing about
+   * the code, which is how everyone learns to ignore the output.
+   *
+   * Its own docblock asks to be left out of the chain for exactly this reason,
+   * and the first version of this runner swept it in anyway by taking every
+   * `test:*` script. Run it alongside when a change touches the builder:
+   *
+   *   npm run test:builder-ui
+   */
+  'test:builder-ui',
+])
 const suites = Object.keys(pkg.scripts)
   .filter((k) => k.startsWith('test:') && !SKIP.has(k))
   .filter((k) => (only ? k.includes(only) : true))
