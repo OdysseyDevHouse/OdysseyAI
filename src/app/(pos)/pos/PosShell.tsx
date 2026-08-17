@@ -364,6 +364,150 @@ export default function PosShell({
   const priceStructureId =
     pricingOverride ?? state.customer?.priceStructureId ?? siteDefaultStructureId
 
+  /*
+   * ── RECEIPTED RETURNS AND EXCHANGE ─────────────────────────────────────────
+   * The modal finds the invoice and picks quantities; the server re-reads every
+   * price from it. A refund posts the credit note immediately; an exchange
+   * HOLDS the credit while the cashier rings the replacement, then one action
+   * posts both documents netted through the EXCHANGE tender.
+   */
+  const [receiptReturn, setReceiptReturn] = useState(false)
+  const [exchangeCredit, setExchangeCredit] = useState<ReceiptReturnPick | null>(null)
+
+  /* The shop's own buttons, from IndexedDB, when the page's props arrive empty —
+     a reload with no network gets no props, and the key grid is the default pane.
+     The effect that fills this sits with the rest of the quick-key code. */
+  const [heldKeys, setHeldKeys] = useState<{
+    keys: QuickKeyRow[]
+    productNames: Record<number, string>
+    departmentNames: Record<number, string>
+  } | null>(null)
+
+  /* The attached account's loyalty standing — points, tier, what a voucher is worth.
+     Re-read whenever the customer changes AND whenever the tender pad opens; failures
+     collapse to null so a points lookup can never block a sale. The effect that reads
+     it sits with the rest of the loyalty code. */
+  const [loyalty, setLoyalty] = useState<TillStanding | null>(null)
+
+  /* ── The floor ──────────────────────────────────────────────────────────
+     Only in hospitality. In retail `tables` is empty, the gate never mounts, and this
+     costs one unused state slot rather than a branch through the rest of the file. */
+  const [tables, setTables] = useState<PosTable[]>(initialTables)
+  /** The table this basket belongs to, or null for a walk-in. */
+  const [table, setTable] = useState<PosTable | null>(null)
+
+  /* ── Open tabs ────────────────────────────────────────────────────────────
+     Every bill running in the SHOP, which is what the gate lists. Distinct from
+     `tables` above: that is the shop's furniture (and the drawn floor plan),
+     this is the trade. A tab is a `sales_documents` row parked with a label a
+     waiter typed — see `listOpenTabsAction`. */
+  const [tabs, setTabs] = useState<OpenTab[]>([])
+
+  /**
+   * What this basket is CALLED, and who is on it.
+   *
+   * Held here rather than derived from the basket because the label is decided
+   * BEFORE anything is rung up — a waiter names the tab, then starts adding to
+   * it — and because Close has to know whether the sale already has a name to
+   * park under, or needs to ask for one.
+   *
+   * Null label means an unnamed sale: a quick sale, or a walk-in that has not
+   * been given a table. That is precisely the case Close prompts about.
+   */
+  const [tabLabel, setTabLabel] = useState<string | null>(null)
+  const [tabCustomer, setTabCustomer] = useState('')
+  const [tabPeople, setTabPeople] = useState<number | null>(null)
+  const [tabVisitTypeId, setTabVisitTypeId] = useState<number | null>(null)
+
+  /** The Create-new-table dialog. `closing` means Close asked for the name. */
+  const [naming, setNaming] = useState<null | { closing: boolean }>(null)
+  /** Close was tapped on an unnamed sale: save it, void it, or carry on. */
+  const [closePrompt, setClosePrompt] = useState(false)
+
+  /** True while the waiter is choosing — the gate stands in front of the till. */
+  const [choosingTable, setChoosingTable] = useState(hospitality)
+  /** The gate's split mode is armed — the next table tap opens the split screen. */
+  const [armedForSplit, setArmedForSplit] = useState(false)
+  /** The gate's move mode is armed — the next table tap picks the tab to move. */
+  const [armedForTransfer, setArmedForTransfer] = useState(false)
+  /** The table whose whole tab is moving. Null when the picker is closed. */
+  const [transferring, setTransferring] = useState<PosTable | null>(null)
+  /** True while the hospitality autosave is writing this tab to the server. */
+  const [tableSaving, setTableSaving] = useState(false)
+
+  /**
+   * The bill being split. Null when the split screen is closed.
+   *
+   * Keyed on the DOCUMENT, not the table: a split's source may be a free-text tab with
+   * no table row at all, and the destination is now a document too (see posSplit.ts).
+   * `label` is only what the screen calls it — a table code, or the tab's name.
+   */
+  const [splitting, setSplitting] = useState<{
+    documentId: number
+    label: string
+    lines: SplitLine[]
+  } | null>(null)
+
+  /*
+   * ── SUPERVISOR OVERRIDES ──────────────────────────────────────────────────
+   * One pad, launched from wherever a refusal happened. On approval:
+   * online, the minted token rides the NEXT save/finalise/void call and is
+   * consumed there; offline, the authorisation is queued and rides the sale's
+   * payload, where the sync re-derives the manager's right. Both refs clear
+   * when the basket does — an approval must not outlive the sale it was for.
+   */
+  const [override, setOverride] = useState<{
+    capability: Capability
+    actionLabel: string
+    amount?: number
+    documentId?: number | null
+    onAuthorised: (auth: { userId: number; name: string; token: string }) => void
+  } | null>(null)
+  const overrideTokenRef = useRef<string | null>(null)
+  const offlineOverridesRef = useRef<NonNullable<OfflineSale['overrides']>>([])
+
+  /* ── THE SHIFT ────────────────────────────────────────────────────────────
+     What a cash-up counts against, and the gate that refuses to trade without
+     one. Declared here with the rest of the shell's state; the effect that
+     seeds it and the gate derived from it stay beside the code they serve. */
+
+  /** The shift modal — float, payouts, and the blind cash-up count. */
+  const [managingShift, setManagingShift] = useState(false)
+  /**
+   * The detailed cash-up — denominations, every tender, banking.
+   *
+   * Separate state from `managingShift` because they are different acts: that
+   * one is the drawer's controls (float in, payout, drop), this is the count a
+   * supervisor signs. The cashup quick key opens THIS; the drawer controls
+   * still reach it via their own button, so neither hides the other.
+   */
+  const [declaringCashup, setDeclaringCashup] = useState(false)
+  /** "Shift open · Ruth" for the header chip, or null when none is open. */
+  const [shiftLabel, setShiftLabel] = useState<string | null>(null)
+  /** The open shift's id — what the declaration counts against. */
+  const [shiftId, setShiftId] = useState<number | null>(null)
+
+  /**
+   * Whether this till is OPEN FOR BUSINESS — and the gate that says so.
+   *
+   * ── WHY THE SHELL OWNS THIS ───────────────────────────────────────────────
+   *
+   * A sale rung up with no shift is a real invoice in a real drawer that no
+   * cash-up will ever account for. The chip in the header warned about that and
+   * was ignorable by design; this makes it structural instead — no shift, no
+   * sale screen. See OpenTillGate for the argument in full.
+   *
+   * `null` means "not established yet", which is NOT the same as "closed": the
+   * status read is a round trip, and gating on a not-yet-known answer would
+   * flash the closed screen on every load of a perfectly open till. So the gate
+   * renders only once the server has actually said there is no shift.
+   */
+  const [shiftStatus, setShiftStatus] = useState<{
+    mode: 'terminal' | 'user'
+    canCashup: boolean
+    open: boolean
+  } | null>(null)
+
   const [pending, startTransition] = useTransition()
   const [results, setResults] = useState<TillProduct[]>([])
   const [searching, setSearching] = useState(false)
@@ -811,6 +955,19 @@ export default function PosShell({
     () => serviceChargeFor(totals.doc.totalIncl, serviceTiers),
     [totals.doc.totalIncl, serviceTiers],
   )
+
+  /**
+   * The service charge actually applying to THIS bill.
+   *
+   * `tips_tables_only` defaults on, and on a retail till `table` is always null — so the
+   * charge is zero and the pad never mentions it, which is what keeps the feature invisible
+   * to a shop that does not serve tables.
+   *
+   * Derived, so it sits with the totals chain it reads rather than up in the state
+   * block: `table` is state and hoisted, but `serviceChargeForTotal` is a memo over
+   * the basket and cannot move above it.
+   */
+  const serviceCharge = tipsTablesOnly && !table ? 0 : serviceChargeForTotal
 
   /* ── Search ───────────────────────────────────────────────────────────
      Debounced at 180ms: a scanner types a whole barcode in milliseconds, and
@@ -1348,16 +1505,6 @@ export default function PosShell({
    * against the actual sale. Making that work here needs the invoice on screen first, and
    * pretending otherwise would credit the same invoice twice.
    */
-  /*
-   * ── RECEIPTED RETURNS AND EXCHANGE ─────────────────────────────────────────
-   * The modal finds the invoice and picks quantities; the server re-reads every
-   * price from it. A refund posts the credit note immediately; an exchange
-   * HOLDS the credit while the cashier rings the replacement, then one action
-   * posts both documents netted through the EXCHANGE tender.
-   */
-  const [receiptReturn, setReceiptReturn] = useState(false)
-  const [exchangeCredit, setExchangeCredit] = useState<ReceiptReturnPick | null>(null)
-
   /** Runs a receipted-return action, chaining to the supervisor pad on refusal. */
   function runReceiptedRefund(pick: ReceiptReturnPick, refundTenderTypeId: number, token?: string) {
     startTransition(async () => {
@@ -2423,9 +2570,7 @@ export default function PosShell({
 
      Failures collapse to null — loyalty must never be able to block a sale, and a till
      that refused to take cash because a points lookup timed out would be worse than one
-     with no loyalty at all. */
-  const [loyalty, setLoyalty] = useState<TillStanding | null>(null)
-
+     with no loyalty at all. The state itself is declared with the rest of the shell's. */
   useEffect(() => {
     const customerId = state.customer?.id
     if (!customerId || !till.online) {
@@ -2446,66 +2591,6 @@ export default function PosShell({
     /* `tendering` is a dependency on purpose: opening the pad re-reads the balance, which
        is the moment it matters most. */
   }, [state.customer?.id, tendering, till.online])
-
-  /* ── The floor ──────────────────────────────────────────────────────────
-     Only in hospitality. In retail `tables` is empty, the gate never mounts, and this
-     costs one unused state slot rather than a branch through the rest of the file. */
-  const [tables, setTables] = useState<PosTable[]>(initialTables)
-  /** The table this basket belongs to, or null for a walk-in. */
-  const [table, setTable] = useState<PosTable | null>(null)
-
-  /* ── Open tabs ────────────────────────────────────────────────────────────
-     Every bill running in the SHOP, which is what the gate lists. Distinct from
-     `tables` above: that is the shop's furniture (and the drawn floor plan),
-     this is the trade. A tab is a `sales_documents` row parked with a label a
-     waiter typed — see `listOpenTabsAction`. */
-  const [tabs, setTabs] = useState<OpenTab[]>([])
-
-  /**
-   * What this basket is CALLED, and who is on it.
-   *
-   * Held here rather than derived from the basket because the label is decided
-   * BEFORE anything is rung up — a waiter names the tab, then starts adding to
-   * it — and because Close has to know whether the sale already has a name to
-   * park under, or needs to ask for one.
-   *
-   * Null label means an unnamed sale: a quick sale, or a walk-in that has not
-   * been given a table. That is precisely the case Close prompts about.
-   */
-  const [tabLabel, setTabLabel] = useState<string | null>(null)
-  const [tabCustomer, setTabCustomer] = useState('')
-  const [tabPeople, setTabPeople] = useState<number | null>(null)
-  const [tabVisitTypeId, setTabVisitTypeId] = useState<number | null>(null)
-
-  /** The Create-new-table dialog. `closing` means Close asked for the name. */
-  const [naming, setNaming] = useState<null | { closing: boolean }>(null)
-  /** Close was tapped on an unnamed sale: save it, void it, or carry on. */
-  const [closePrompt, setClosePrompt] = useState(false)
-
-  /**
-   * The service charge actually applying to THIS bill.
-   *
-   * `tips_tables_only` defaults on, and on a retail till `table` is always null — so the
-   * charge is zero and the pad never mentions it, which is what keeps the feature invisible
-   * to a shop that does not serve tables.
-   */
-  const serviceCharge = tipsTablesOnly && !table ? 0 : serviceChargeForTotal
-  /** True while the waiter is choosing — the gate stands in front of the till. */
-  const [choosingTable, setChoosingTable] = useState(hospitality)
-  /** The gate's split mode is armed — the next table tap opens the split screen. */
-  const [armedForSplit, setArmedForSplit] = useState(false)
-  /**
-   * The bill being split. Null when the split screen is closed.
-   *
-   * Keyed on the DOCUMENT, not the table: a split's source may be a free-text tab with
-   * no table row at all, and the destination is now a document too (see posSplit.ts).
-   * `label` is only what the screen calls it — a table code, or the tab's name.
-   */
-  const [splitting, setSplitting] = useState<{
-    documentId: number
-    label: string
-    lines: SplitLine[]
-  } | null>(null)
 
   /**
    * Opens the split screen for a table.
@@ -2758,67 +2843,12 @@ export default function PosShell({
     })
   }
 
-  /*
-   * ── SUPERVISOR OVERRIDES ──────────────────────────────────────────────────
-   * One pad, launched from wherever a refusal happened. On approval:
-   * online, the minted token rides the NEXT save/finalise/void call and is
-   * consumed there; offline, the authorisation is queued and rides the sale's
-   * payload, where the sync re-derives the manager's right. Both refs clear
-   * when the basket does — an approval must not outlive the sale it was for.
-   */
-  const [override, setOverride] = useState<{
-    capability: Capability
-    actionLabel: string
-    amount?: number
-    documentId?: number | null
-    onAuthorised: (auth: { userId: number; name: string; token: string }) => void
-  } | null>(null)
-  const overrideTokenRef = useRef<string | null>(null)
-  const offlineOverridesRef = useRef<NonNullable<OfflineSale['overrides']>>([])
-
   /** Takes (and clears) the pending token — an approval covers ONE action. */
   function spendOverrideToken(): string | undefined {
     const token = overrideTokenRef.current ?? undefined
     overrideTokenRef.current = null
     return token
   }
-
-  /** The shift modal — float, payouts, and the blind cash-up count. */
-  const [managingShift, setManagingShift] = useState(false)
-  /**
-   * The detailed cash-up — denominations, every tender, banking.
-   *
-   * Separate state from `managingShift` because they are different acts: that
-   * one is the drawer's controls (float in, payout, drop), this is the count a
-   * supervisor signs. The cashup quick key opens THIS; the drawer controls
-   * still reach it via their own button, so neither hides the other.
-   */
-  const [declaringCashup, setDeclaringCashup] = useState(false)
-  /** "Shift open · Ruth" for the header chip, or null when none is open. */
-  const [shiftLabel, setShiftLabel] = useState<string | null>(null)
-  /** The open shift's id — what the declaration counts against. */
-  const [shiftId, setShiftId] = useState<number | null>(null)
-
-  /**
-   * Whether this till is OPEN FOR BUSINESS — and the gate that says so.
-   *
-   * ── WHY THE SHELL OWNS THIS ───────────────────────────────────────────────
-   *
-   * A sale rung up with no shift is a real invoice in a real drawer that no
-   * cash-up will ever account for. The chip in the header warned about that and
-   * was ignorable by design; this makes it structural instead — no shift, no
-   * sale screen. See OpenTillGate for the argument in full.
-   *
-   * `null` means "not established yet", which is NOT the same as "closed": the
-   * status read is a round trip, and gating on a not-yet-known answer would
-   * flash the closed screen on every load of a perfectly open till. So the gate
-   * renders only once the server has actually said there is no shift.
-   */
-  const [shiftStatus, setShiftStatus] = useState<{
-    mode: 'terminal' | 'user'
-    canCashup: boolean
-    open: boolean
-  } | null>(null)
 
   /**
    * Stashes the open shift for the OFFLINE path and redraws the chip.
@@ -2919,11 +2949,6 @@ export default function PosShell({
     })
   }
 
-  /** The gate's move mode is armed — the next table tap picks the tab to move. */
-  const [armedForTransfer, setArmedForTransfer] = useState(false)
-  /** The table whose whole tab is moving. Null when the picker is closed. */
-  const [transferring, setTransferring] = useState<PosTable | null>(null)
-
   /** Arms the destination picker for a seated table. Disarms the mode either way. */
   function openTransfer(fromTable: PosTable) {
     setArmedForTransfer(false)
@@ -2993,7 +3018,6 @@ export default function PosShell({
    * otherwise be eight round trips, and the basket on screen is already correct — this
    * is about making it survivable, not about making it visible.
    */
-  const [tableSaving, setTableSaving] = useState(false)
   const tableLines = salePayloadLines(state.lines, lineSpecials, docShares)
 
   useEffect(() => {
@@ -3094,13 +3118,8 @@ export default function PosShell({
      the grid is needed for the first paint. But a RELOAD with no network gets no props,
      and the key grid is the default pane: the till would open on an empty screen at
      exactly the moment a cashier can least afford to hunt by department. So the stored
-     copy takes over whenever the props arrive empty. */
-  const [heldKeys, setHeldKeys] = useState<{
-    keys: QuickKeyRow[]
-    productNames: Record<number, string>
-    departmentNames: Record<number, string>
-  } | null>(null)
-
+     copy takes over whenever the props arrive empty. The state is declared with the
+     rest of the shell's; this is the effect that fills it. */
   useEffect(() => {
     if (quickKeys.length > 0) return
     let cancelled = false
