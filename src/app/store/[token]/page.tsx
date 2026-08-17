@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { resolveStorefront } from '@/lib/storeRouting'
 import {
   publishedProducts,
   resolveSectionContent,
@@ -34,10 +35,11 @@ export default async function StorePage({
   const { token } = await params
   const query = await searchParams
 
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) notFound()
-  const context = await storefrontContext(siteId)
-  if (!context) notFound()
+  const shop = await resolveStorefront(token)
+  if (!shop) notFound()
+  const { context } = shop
+  // The BRANCH. Every stock figure on this page is one shop's promise.
+  const siteId = context.siteId
 
   const { settings } = context
   const departmentId = Number(query.department)

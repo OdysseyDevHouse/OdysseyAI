@@ -4,7 +4,7 @@ import { cookies, headers } from 'next/headers'
 import { SHOP_SESSION_COOKIE } from '@/lib/shopSession'
 import { recordEvent } from '@/lib/site/storefrontEvents'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
-import { resolveStoreRouting, rememberedBranch } from '@/lib/storeRouting'
+import { resolveStoreRouting, rememberedBranch, resolveStorefront } from '@/lib/storeRouting'
 import { createOrderTrackToken } from '@/lib/orderTrackToken'
 import { getCustomerSession } from '@/lib/customerSession'
 import { createCallbackToken } from '@/lib/callbackToken'
@@ -156,11 +156,16 @@ export async function previewDiscountAction(
   lines: { productId: number; qty: number }[],
   deliveryFeeIncl: number,
 ): Promise<DiscountPreview> {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return { ok: false, error: 'This shop is no longer available.' }
-
-  const context = await storefrontContext(siteId)
-  if (!context) return { ok: false, error: 'This shop is closed at the moment.' }
+  /*
+   * Routed, because the code is REDEEMED at the branch — validateCode runs
+   * inside the branch's own transaction when the order is placed. A preview
+   * resolved against head office would show a discount the branch has never
+   * heard of, and refuse it at the button.
+   */
+  const shop = await resolveStorefront(token)
+  if (!shop) return { ok: false, error: 'This shop is no longer available.' }
+  const { context } = shop
+  const siteId = context.siteId
 
   const wanted = (Array.isArray(lines) ? lines : [])
     .map((l) => ({ productId: Number(l.productId), qty: Number(l.qty) }))
@@ -227,10 +232,14 @@ export async function previewGiftCardAction(
   token: string,
   code: string,
 ): Promise<GiftCardPreview> {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return { ok: false, error: 'This shop is no longer available.' }
-  const context = await storefrontContext(siteId)
-  if (!context) return { ok: false, error: 'This shop is closed at the moment.' }
+  /*
+   * Routed for the same reason as the discount preview: the card is SPENT at
+   * the branch, inside finaliseDocument. Previewing it against head office
+   * would promise a balance the branch cannot honour.
+   */
+  const shop = await resolveStorefront(token)
+  if (!shop) return { ok: false, error: 'This shop is no longer available.' }
+  const siteId = shop.context.siteId
 
   const { findGiftCard, giftCardRefusal, formatGiftCardCode, normaliseGiftCardCode } =
     await import('@/lib/site/giftCards')

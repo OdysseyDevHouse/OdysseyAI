@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { resolveStorefront } from '@/lib/storeRouting'
 import {
   catalogueFacets,
   publishedDepartments,
@@ -43,10 +44,9 @@ export const dynamic = 'force-dynamic'
 const MAX_PRODUCTS = 120
 
 async function resolve(token: string, departmentId: string) {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return null
-  const context = await storefrontContext(siteId)
-  if (!context) return null
+  const resolved = await resolveStorefront(token)
+  if (!resolved) return null
+  const { context } = resolved
 
   const id = Number(departmentId)
   if (!Number.isInteger(id) || id <= 0) return null

@@ -5,6 +5,7 @@ import { groupForSite, membersOfGroup } from './storeGroups'
 import { branchPinsFor, type BranchPin } from './control/storeBranches'
 import { allHold } from './control/modules'
 import { branchCookieName, parseBranchCookie } from './branchChoice'
+import type { StorefrontContext } from './site/storefront'
 
 /**
  * Which shop a storefront URL is talking to — and, for a chain, which branch.
@@ -80,6 +81,37 @@ export async function rememberedBranch(token: string): Promise<number | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * The one way a storefront route should resolve its shop.
+ *
+ * ── WHY THIS EXISTS RATHER THAN TWO LINES AT EACH CALL SITE ─────────────────
+ *
+ * Before it there were 22 routes doing `verifyPublicStoreToken` then
+ * `storefrontContext(siteId)`, and every one of them was correct for a single
+ * shop and wrong for a chain: they read the token's site and never asked which
+ * branch the shopper had chosen, so the home page showed head office's stock
+ * while the bar above it said "Shopping at Claremont".
+ *
+ * The bug was invisible one call site at a time and obvious across all of them,
+ * which is exactly the kind that comes back. Now there is one function to get
+ * right, and scripts/check-storefront-routing.mjs fails the build if a route
+ * goes back to resolving its own.
+ *
+ * Returns null when the token does not resolve or the shop is closed — callers
+ * 404 on that, keeping a bad token and a closed shop indistinguishable.
+ */
+export async function resolveStorefront(token: string): Promise<{
+  context: StorefrontContext
+  routing: StoreRouting
+} | null> {
+  const routing = await resolveStoreRouting(token, await rememberedBranch(token))
+  if (!routing) return null
+
+  const { storefrontContext } = await import('./site/storefront')
+  const context = await storefrontContext(routing.catalogueSiteId, routing.branchSiteId)
+  return context ? { context, routing } : null
 }
 
 /** What a single shop resolves to. Also the fallback for every refusal below. */

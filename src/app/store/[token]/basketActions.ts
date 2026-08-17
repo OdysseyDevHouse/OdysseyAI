@@ -1,6 +1,7 @@
 'use server'
 
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { resolveStorefront } from '@/lib/storeRouting'
 import { getCustomerSession } from '@/lib/customerSession'
 import { getOnlineSettings } from '@/lib/site/onlineStore'
 import { saveBasket } from '@/lib/site/savedBaskets'
@@ -45,7 +46,13 @@ export async function saveBasketAction(
     return { ok: false, error: "This shop isn't saving baskets at the moment." }
   }
 
-  const context = await storefrontContext(siteId)
+  /*
+   * Routed: a saved basket is priced for a reminder email, and those prices
+   * have to be the ones the shopper would actually be charged — the branch's,
+   * not head office's.
+   */
+  const routed = await resolveStorefront(token)
+  const context = routed?.context
   if (!context) return { ok: false, error: 'This shop is closed at the moment.' }
 
   const lines = (Array.isArray(input.lines) ? input.lines : [])
