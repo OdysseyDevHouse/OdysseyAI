@@ -42,6 +42,20 @@ const TONE: Record<FulfilmentStatus, 'success' | 'warning' | 'danger' | 'neutral
   cancelled: 'neutral',
 }
 
+/**
+ * The same states, in the vocabulary a stat tile speaks.
+ *
+ * A tile has no `brand` or `neutral`, so this is not the badge map with a
+ * different name — an OPEN order is the ordinary case and takes no colour at
+ * all, where the badge paints it brand to stand out in a header.
+ */
+const TILE_TONE: Record<FulfilmentStatus, 'default' | 'success' | 'warning' | 'danger'> = {
+  open: 'default',
+  part_delivered: 'warning',
+  delivered: 'success',
+  cancelled: 'default',
+}
+
 export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { site, user, capabilities } = await requireSiteUser()
@@ -103,13 +117,30 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
 
   return (
     <>
-      <PageHeader
-        title={order.document.documentNumber ?? `Order #${order.document.id}`}
-        subtitle={`${order.document.customerName ?? 'Walk-in'} · ${order.document.documentDate}`}
-        backHref="/sales/orders"
-        backLabel="Sales orders"
-        action={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
-      />
+      {/*
+        ── ONE HEADING, AND THE EDITOR OWNS IT ─────────────────────────────
+
+        This page used to carry its own PageHeader, which was right while it
+        was a read-only screen. The editor brings one too — so an order opened
+        with the grid on it showed "Order #31" twice, each with its own back
+        arrow, reading as an order inside an order.
+
+        The quotes screen has never had this problem because it has no header
+        of its own: the editor names the document, and QuotePanel is a card
+        below it. This now does the same.
+
+        A DELIVERED order has no editor, so it would have no heading at all —
+        hence the fallback below rather than simply deleting this.
+      */}
+      {!editable && (
+        <PageHeader
+          title={order.document.documentNumber ?? `Order #${order.document.id}`}
+          subtitle={`${order.document.customerName ?? 'Walk-in'} · ${order.document.documentDate}`}
+          backHref="/sales/orders"
+          backLabel="Sales orders"
+          action={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
+        />
+      )}
 
       <PageBody>
         {/* A cancelled order is a closed fact, not a problem — neutral. */}
@@ -129,10 +160,15 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
         )}
 
         <StatStrip columns={4}>
+          {/* The fulfilment state rides here now that the page's own header is
+              gone on an editable order. It belongs with these figures anyway —
+              "Open", "Part delivered" and "Delivered" are a summary of exactly
+              what the four tiles below spell out. */}
           <StatTile
             label="Ordered"
             value={String(order.qtyOrdered)}
-            hint={formatMoney(order.document.totalIncl)}
+            hint={`${FULFILMENT_LABELS[status]} · ${formatMoney(order.document.totalIncl)}`}
+            tone={TILE_TONE[status]}
             icon={<Icons.ListOrdered size={16} />}
           />
           <StatTile
