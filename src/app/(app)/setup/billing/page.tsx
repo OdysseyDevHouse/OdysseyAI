@@ -9,6 +9,8 @@ import {
   MODULE_KEYS,
 } from '@/lib/control/modules'
 import { nextBillingDate, safeBillingDay } from '@/lib/billing/period'
+import { subscriptionForAccount, paymentsForAccount } from '@/lib/control/subscriptions'
+import { platformPayFastStatus } from '@/lib/payfast/platformConfig'
 import { PageHeader, PageBody, Card, CardBody, Callout } from '@/components/ui'
 import BillingClient from './BillingClient'
 
@@ -61,11 +63,17 @@ export default async function BillingPage() {
   const hiddenStoreCount = account ? accountSites.length - visibleSites.length : 0
 
   const visibleIds = visibleSites.map((s) => s.siteId)
-  const [holdings, prices, devices] = await Promise.all([
+  const [holdings, prices, devices, subscription, payments] = await Promise.all([
     holdingsForSites(visibleIds),
     currentPrices(),
     deviceOrdersFor(visibleIds),
+    account ? subscriptionForAccount(account.id) : Promise.resolve(null),
+    account ? paymentsForAccount(account.id, 12) : Promise.resolve([]),
   ])
+
+  /* Asked rather than assumed, so the screen can say "not set up yet" instead
+     of offering a Subscribe button that throws when pressed. */
+  const payfast = platformPayFastStatus()
 
   const today = new Date().toISOString().slice(0, 10)
   const billingDay = safeBillingDay(account?.billingDay ?? 1)
@@ -115,10 +123,31 @@ export default async function BillingPage() {
             holdings={holdings}
             prices={prices}
             devices={devices}
-            /* Stands in for the payment gateway until it exists — see
-               confirmPaymentAction. Gated on the same capability as the rest of
-               the screen, so it is not a wider door than the one already open. */
-            canConfirmPayment
+            /* The manual confirm survives ONLY while PayFast is unconfigured.
+               Once the gateway is set up the callback provisions licences by
+               itself, and leaving a button that does the same thing without a
+               payment would be a way to licence tills for free. */
+            canConfirmPayment={!payfast.ok}
+            payfastReady={payfast.ok}
+            payfastProblems={payfast.ok ? [] : payfast.missing}
+            subscription={
+              subscription
+                ? {
+                    status: subscription.status,
+                    amountIncl: subscription.amountIncl,
+                    lastPaidOn: subscription.lastPaidOn,
+                    synced: subscription.syncedAt !== null,
+                  }
+                : null
+            }
+            payments={payments.map((p) => ({
+              id: p.id,
+              amountGross: p.amountGross,
+              paymentStatus: p.paymentStatus,
+              verified: p.verified,
+              rejectReason: p.rejectReason,
+              receivedAt: p.receivedAt ? p.receivedAt.toISOString() : null,
+            }))}
           />
         ) : (
           <Card>

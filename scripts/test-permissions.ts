@@ -141,6 +141,13 @@ const OPEN_ROUTES = new Set([
   // rather than nothing — a biller running wide open would let anyone bill
   // every customer in the system.
   'src/app/api/contracts/tick/route.ts',
+  // Platform billing's heartbeat — the annual increase and the sweep that makes
+  // PayFast agree with the price held locally. Same reasoning again:
+  // BILLING_CRON_SECRET compared by timingSafeEqual, refusing everything when
+  // that is unset. It fails closed for a sharper reason than most — a
+  // price-raising job that ran for anyone who found the URL would let a
+  // stranger increase every customer's subscription.
+  'src/app/api/billing/tick/route.ts',
   /*
    * Three more cron heartbeats, all on the same reasoning as the two above: a scheduled
    * price change, a stale-basket sweep and a storefront publish each run with nobody

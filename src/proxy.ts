@@ -131,6 +131,16 @@ const PUBLIC_PREFIXES = [
   // which nobody would notice until a customer mentioned they had not been
   // billed for a month.
   '/api/contracts/tick',
+  // Platform billing's heartbeat — the annual increase, and the sweep that
+  // makes PayFast agree with the price we hold locally. Same reasoning and the
+  // same protection as the ticks either side: BILLING_CRON_SECRET, compared in
+  // constant time, with the route refusing everything when it is not set.
+  //
+  // Its failure is quieter than most. Behind a cookie gate the sweep would 307
+  // to the login page, and an account whose amount PayFast never accepted would
+  // keep being debited the old figure indefinitely — the money keeps arriving,
+  // just the wrong amount of it, which no error surfaces anywhere.
+  '/api/billing/tick',
   // The abandoned-basket sweep. Same reasoning and the same protection as the
   // two ticks above: BASKET_CRON_SECRET, compared in constant time, with the
   // route refusing every request when it is not set. Behind a cookie gate it

@@ -20,6 +20,7 @@ import { quoteFor, storeLines, changePreview, type Holding, type PriceBook } fro
 import { MODULE_CARDS, FREE_DEVICES_PER_STORE } from '@/lib/billing/catalogue'
 import { periodEnd, formatPeriodDate } from '@/lib/billing/period'
 import { applyModuleChangesAction, setDevicesAction, confirmPaymentAction, type BillingChange } from './actions'
+import { startSubscriptionAction, cancelSubscriptionAction } from './subscribeActions'
 
 /**
  * The plan, and the controls that change it.
@@ -56,6 +57,24 @@ type Props = {
   prices: PriceBook
   devices: DeviceRow[]
   canConfirmPayment: boolean
+  payfastReady: boolean
+  /** Why card payments are unavailable, named so somebody can fix it. */
+  payfastProblems: string[]
+  subscription: {
+    status: string
+    amountIncl: number
+    lastPaidOn: string | null
+    /** False when PayFast has not yet accepted the current price. */
+    synced: boolean
+  } | null
+  payments: {
+    id: number
+    amountGross: number
+    paymentStatus: string
+    verified: boolean
+    rejectReason: string | null
+    receivedAt: string | null
+  }[]
 }
 
 type Pending = { siteId: number; moduleKey: string; want: boolean }
@@ -67,6 +86,7 @@ export default function BillingClient(props: Props) {
     accountName, accountStatus, billingContact, billingEmail,
     billingDay, nextBillingOn, today, sites, hiddenStoreCount,
     holdings, prices, devices, canConfirmPayment,
+    payfastReady, payfastProblems, subscription, payments,
   } = props
 
   const [pending, setPending] = useState<Pending[]>([])
@@ -76,7 +96,51 @@ export default function BillingClient(props: Props) {
     () => Object.fromEntries(devices.map((d) => [d.siteId, d.requested])),
   )
   const [saving, startSaving] = useTransition()
+  const [subscribing, startSubscribing] = useTransition()
   const toast = useToast()
+
+  /**
+   * Hand the browser off to PayFast.
+   *
+   * A full-page form POST, not a fetch: PayFast's process URL is a browser
+   * destination, and the whole point of a hosted checkout is that the card
+   * details never touch this application. The fields are already signed by the
+   * server — the passphrase never leaves it.
+   */
+  function subscribe() {
+    startSubscribing(async () => {
+      const result = await startSubscriptionAction()
+      if ('ok' in result && result.ok === false) {
+        toast.error(result.error)
+        return
+      }
+
+      const form = document.createElement('form')
+      form.method = 'POST'
+      form.action = result.form.action
+      // In iteration order, matching exactly what was signed.
+      for (const [name, value] of Object.entries(result.form.fields)) {
+        const input = document.createElement('input')
+        input.type = 'hidden'
+        input.name = name
+        input.value = value
+        form.appendChild(input)
+      }
+      document.body.appendChild(form)
+      form.submit()
+    })
+  }
+
+  function cancelDebitOrder() {
+    startSubscribing(async () => {
+      const result = await cancelSubscriptionAction()
+      if ('ok' in result && result.ok === false) {
+        toast.error(result.error)
+        return
+      }
+      toast.success('The debit order has been cancelled.')
+    })
+  }
 
   const heldNow = useMemo(() => {
     const s = new Set<string>()
@@ -506,6 +570,115 @@ export default function BillingClient(props: Props) {
         ) : null}
       </Card>
 
+      {/* ── The debit order ──────────────────────────────────────────────── */}
+      <Card>
+        <CardBody className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-ink">Debit order</span>
+              {subscription ? <Badge tone={debitTone(subscription.status)}>{debitLabel(subscription.status)}</Badge> : null}
+            </div>
+
+            {!payfastReady ? (
+              <span className="text-sm text-muted">
+                Card payments are not set up yet
+                {payfastProblems.length ? `: ${payfastProblems[0]}` : '.'}
+              </span>
+            ) : subscription && subscription.status === 'active' ? (
+              <>
+                <span className="numeric text-sm text-muted">
+                  {formatMoney(subscription.amountIncl)} a month
+                  {subscription.lastPaidOn
+                    ? ` · last paid ${formatPeriodDate(subscription.lastPaidOn)}`
+                    : ''}
+                </span>
+                {/* A price PayFast has not accepted yet is worth saying out
+                    loud: the customer's plan changed and their bank has not
+                    heard about it, which is otherwise entirely invisible. */}
+                {!subscription.synced ? (
+                  <span className="text-sm text-warning-ink">
+                    The new amount takes effect on the next collection.
+                  </span>
+                ) : null}
+              </>
+            ) : subscription && subscription.status === 'past_due' ? (
+              <span className="text-sm text-danger-ink">
+                The last collection did not go through. PayFast will try again.
+              </span>
+            ) : (
+              <span className="text-sm text-muted">
+                Pay {formatMoney(quote.total)} a month automatically, from{' '}
+                {formatPeriodDate(nextBillingOn)}.
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {payfastReady && (!subscription || subscription.status === 'none' || subscription.status === 'cancelled') ? (
+              <Button variant="primary" onClick={subscribe} disabled={subscribing || dirty}>
+                {subscribing ? 'Opening PayFast…' : 'Set up the debit order'}
+              </Button>
+            ) : null}
+
+            {payfastReady && subscription?.status === 'active' ? (
+              <Button variant="secondary" onClick={cancelDebitOrder} disabled={subscribing}>
+                Cancel the debit order
+              </Button>
+            ) : null}
+          </div>
+        </CardBody>
+
+        {/* Toggling the plan while a checkout is being set up would sign a form
+            for a price that is about to change. */}
+        {dirty && payfastReady && !subscription?.status.startsWith('act') ? (
+          <CardBody className="border-t border-border">
+            <p className="text-sm text-muted">
+              Apply your plan changes first — the debit order is set up for whatever the plan
+              comes to.
+            </p>
+          </CardBody>
+        ) : null}
+      </Card>
+
+      {/* ── What has actually been collected ─────────────────────────────── */}
+      {payments.length > 0 ? (
+        <Card>
+          <CardBody className="border-b border-border">
+            <h2 className="font-medium text-ink">Payments</h2>
+            <p className="text-sm text-muted">
+              What PayFast has collected, and anything it tried to send that we refused.
+            </p>
+          </CardBody>
+          <div className="flex flex-col">
+            {payments.map((p) => (
+              <div
+                key={p.id}
+                className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4 last:border-0"
+              >
+                <div className="flex flex-col">
+                  <span className="text-sm text-ink-2">
+                    {p.receivedAt ? formatPeriodDate(p.receivedAt.slice(0, 10)) : '—'}
+                  </span>
+                  {/* A refused payload is shown, not hidden. It is the evidence
+                      when somebody says they paid and nothing happened. */}
+                  {!p.verified ? (
+                    <span className="text-sm text-danger-ink">
+                      Refused — {p.rejectReason ?? 'did not verify'}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge tone={p.verified && p.paymentStatus === 'COMPLETE' ? 'success' : 'warning'}>
+                    {p.verified ? p.paymentStatus : 'Not verified'}
+                  </Badge>
+                  <span className="numeric text-sm text-ink">{formatMoney(p.amountGross)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       {/* ── The account, and what happens next ───────────────────────────── */}
       <Card>
         <CardBody className="flex flex-wrap items-center justify-between gap-4">
@@ -644,6 +817,25 @@ export default function BillingClient(props: Props) {
       </Modal>
     </div>
   )
+}
+
+/** A debit order's state, in words a shop owner uses. */
+function debitLabel(status: string): string {
+  switch (status) {
+    case 'active': return 'Active'
+    case 'pending': return 'Awaiting first payment'
+    case 'past_due': return 'Payment failed'
+    case 'paused': return 'Paused'
+    case 'cancelled': return 'Cancelled'
+    default: return 'Not set up'
+  }
+}
+
+function debitTone(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (status === 'active') return 'success'
+  if (status === 'past_due') return 'danger'
+  if (status === 'pending' || status === 'paused') return 'warning'
+  return 'neutral'
 }
 
 function ordinal(n: number): string {
