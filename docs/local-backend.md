@@ -286,6 +286,56 @@ A lagging replica is **labelled, not refused**: `stalenessNote()` produces
 figures can work; one with nothing cannot, and a silently stale number is worse
 than either.
 
+### The cloud side: one long-running process
+
+```
+node --env-file=.env server/replicaHost.mjs     # or: npm run replica:host
+```
+
+**Not part of the Next app**, and cannot be. It does two things a route handler
+cannot: an HTTP upgrade to WebSocket (Next never exposes the raw socket), and
+streaming a several-hundred-megabyte body to disk without buffering it.
+
+It authenticates a shop against `cp2_local_backends` — the same credential the
+machine escrowed at first contact, so there is no second secret to keep in step
+— then moves bytes. It never speaks the MySQL replication protocol and never
+holds a backup key, so **it cannot read a customer's data**. That is what makes
+it safe to run on the edge of the network.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | Unauthenticated, names nothing. For a load balancer. |
+| `PUT /backup/{folder}/{file}` | Takes a nightly archive, streamed to disk |
+| `Upgrade:` on any path | The replication tunnel |
+
+The archive path is derived from the **authenticated** identity, never from
+anything the client sent, so no request can write into another site's folder.
+Folder and file names are checked against an allowlist rather than sanitised —
+stripping `../` is whack-a-mole; an allowlist is not.
+
+The WebSocket framing is hand-rolled (`server/wsFrame.mjs`) rather than taken
+from `ws`. This is not a general WebSocket server: it accepts binary frames
+from one known client and forwards them. Against a dependency on the one
+process that terminates connections from every shop, a few dozen lines of a
+well-specified protocol is the smaller thing to own. It is verified against
+Node's own conformant client, including 2MB across many TCP reads and 400
+coalesced frames — the case a naive parser passes small and corrupts under load.
+
+### Provisioning a replica
+
+```
+node --env-file=.env scripts/replica-provision.mjs <siteId> [--device <serial>] [--dry-run]
+```
+
+Creates the database and its two accounts — an **applier** that writes (applying
+a binary log is writing) and a **reader** with `SELECT` and nothing else — then
+records the row. It refuses a cloud site, refuses a site with no local install
+on record, and refuses to re-provision over an existing replica.
+
+It deliberately stops there and prints what to run next. Seeding needs a dump
+taken at a known binlog position, and that dump has to travel from the shop on
+the shop's line — it never pretends to have done the half that needs them.
+
 ### A replica is not a backup
 
 If a bug deletes rows on the shop's machine, replication **faithfully deletes
@@ -389,6 +439,8 @@ npm run test:runtime-config      # provisioning, never rotating, per-install uni
 npm run test:offline-backoffice  # the offline credential
 npm run test:backup-push         # encryption round-trip, tampering, refusals
 npm run test:replication         # server id, replication account, tunnel backoff
+npm run test:ws-frame            # framing, against Node's own WebSocket client
+npm run test:replica-host        # auth, path traversal, streamed upload
 ```
 
-All seven run with no database and no browser.
+All nine run with no database and no browser.
