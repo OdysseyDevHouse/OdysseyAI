@@ -5,11 +5,9 @@ import {
   currentPrices,
   holdingsForSites,
   sitesForAccount,
+  deviceOrdersFor,
   MODULE_KEYS,
-  MODULE_LABELS,
 } from '@/lib/control/modules'
-import { billableDeviceCount } from '@/lib/control/devices'
-import { MODULE_DESCRIPTIONS } from '@/lib/control/moduleMessages'
 import { nextBillingDate, safeBillingDay } from '@/lib/billing/period'
 import { PageHeader, PageBody, Card, CardBody, Callout } from '@/components/ui'
 import BillingClient from './BillingClient'
@@ -63,16 +61,11 @@ export default async function BillingPage() {
   const hiddenStoreCount = account ? accountSites.length - visibleSites.length : 0
 
   const visibleIds = visibleSites.map((s) => s.siteId)
-  const [holdings, prices, deviceCounts] = await Promise.all([
+  const [holdings, prices, devices] = await Promise.all([
     holdingsForSites(visibleIds),
     currentPrices(),
-    Promise.all(visibleIds.map((id) => billableDeviceCount(id))),
+    deviceOrdersFor(visibleIds),
   ])
-
-  const devicesBySite: Record<number, number> = {}
-  visibleIds.forEach((id, i) => {
-    devicesBySite[id] = deviceCounts[i] ?? 0
-  })
 
   const today = new Date().toISOString().slice(0, 10)
   const billingDay = safeBillingDay(account?.billingDay ?? 1)
@@ -114,7 +107,6 @@ export default async function BillingPage() {
             accountStatus={account.status}
             billingContact={account.billingContact}
             billingEmail={account.billingEmail}
-            vatNumber={account.vatNumber}
             billingDay={billingDay}
             nextBillingOn={nextBillingDate(today, billingDay)}
             today={today}
@@ -122,10 +114,11 @@ export default async function BillingPage() {
             hiddenStoreCount={hiddenStoreCount}
             holdings={holdings}
             prices={prices}
-            devicesBySite={devicesBySite}
-            moduleKeys={[...MODULE_KEYS]}
-            moduleLabels={MODULE_LABELS}
-            moduleDescriptions={MODULE_DESCRIPTIONS}
+            devices={devices}
+            /* Stands in for the payment gateway until it exists — see
+               confirmPaymentAction. Gated on the same capability as the rest of
+               the screen, so it is not a wider door than the one already open. */
+            canConfirmPayment
           />
         ) : (
           <Card>

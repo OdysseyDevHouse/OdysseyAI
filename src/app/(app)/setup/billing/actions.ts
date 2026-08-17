@@ -7,6 +7,8 @@ import {
   accountForSite,
   addModule,
   scheduleRemoval,
+  setRequestedDevices,
+  provisionDevices,
   sitesForAccount,
   BASE_MODULE,
   DEVICE_MODULE_KEY,
@@ -106,4 +108,86 @@ export async function applyModuleChangesAction(
 
 function isModuleKey(value: string): value is ModuleKey {
   return (MODULE_KEYS as readonly string[]).includes(value)
+}
+
+/**
+ * Record how many till licences a store is buying.
+ *
+ * This does NOT create a licence. It records the order; payment confirms it;
+ * `confirmPaymentAction` below provisions. Anything else would let a shop
+ * licence tills for free by dragging a stepper.
+ */
+export async function setDevicesAction(
+  siteId: number,
+  requested: number,
+): Promise<{ ok: true } | Denied> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const guard = await editableSite(ctx.siteId, siteId)
+  if (guard) return guard
+
+  const session = await requireSession()
+  const result = await setRequestedDevices(siteId, requested, {
+    name: ctx.actor.userName,
+    email: session.email,
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/setup/billing')
+  return { ok: true }
+}
+
+/**
+ * Payment has cleared — turn the order into licences that may trade.
+ *
+ * A stand-in for the payment gateway's webhook. When PayFast (or whatever
+ * replaces it) lands, it calls `provisionDevices` directly and this action goes
+ * away; nothing else changes, because the provisioning rule lives in
+ * control/modules.ts rather than here.
+ */
+export async function confirmPaymentAction(
+  siteId: number,
+): Promise<{ ok: true; created: number; released: number } | Denied> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const guard = await editableSite(ctx.siteId, siteId)
+  if (guard) return guard
+
+  const session = await requireSession()
+  const result = await provisionDevices(siteId, {
+    name: ctx.actor.userName,
+    email: session.email,
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/setup/billing')
+  revalidatePath('/setup/terminals')
+  return { ok: true, created: result.created, released: result.released }
+}
+
+/**
+ * Is `target` a store the caller may bill for?
+ *
+ * Re-derived from the account and from the sites this user may open — never
+ * taken from the payload. Returns a refusal, or null when the site is fine.
+ * Shared by both actions above so the check cannot be present in one and
+ * forgotten in the other.
+ */
+async function editableSite(callerSiteId: number, target: number): Promise<Denied | null> {
+  const session = await requireSession()
+  const account = await accountForSite(callerSiteId)
+  if (!account) return { ok: false, error: 'This store is not attached to a billing account yet.' }
+
+  const [onAccount, permitted] = await Promise.all([
+    sitesForAccount(account.id),
+    listSitesForUser(session.userId),
+  ])
+  const permittedIds = new Set(permitted.map((s) => s.id))
+  const editable = new Set(onAccount.map((s) => s.siteId).filter((id) => permittedIds.has(id)))
+
+  return editable.has(target)
+    ? null
+    : { ok: false, error: 'That store is not on this billing account.' }
 }

@@ -5,7 +5,8 @@
 // loses a module they cancelled; the money half decides what the client shows
 // and what the server writes — which have to be the same number.
 import { periodEnd, nextBillingDate, safeBillingDay } from '../src/lib/billing/period'
-import { quoteFor, changePreview, type Holding, type PriceBook } from '../src/lib/billing/pricing'
+import { quoteFor, storeLines, changePreview, type Holding, type PriceBook } from '../src/lib/billing/pricing'
+import { multiStoreDiscountRate } from '../src/lib/billing/catalogue'
 import { round } from '../src/lib/decimals'
 
 let fails = 0
@@ -86,10 +87,15 @@ function main() {
     { siteId: 1, moduleKey: 'loyalty', quantity: 1, agreedPrice: null, endsOn: null },
   ]
 
+  // ── The first till at each store is included ──────────────────────────
   const q1 = quoteFor(oneStore, { 1: 1 }, book, 15)
-  ok('one store, base + loyalty + 1 till', q1.subtotal === 399 + 149 + 249, String(q1.subtotal))
+  ok('one store, base + loyalty, first till free', q1.subtotal === 399 + 149, String(q1.subtotal))
+  ok('a single store gets no discount', q1.discountRate === 0, String(q1.discountRate))
   ok('VAT is added on top of the subtotal', q1.vat === round(q1.subtotal * 0.15), `${q1.vat}`)
   ok('total is subtotal + VAT', q1.total === round(q1.subtotal + q1.vat), String(q1.total))
+
+  const q1b = quoteFor(oneStore, { 1: 3 }, book, 15)
+  ok('only tills beyond the first are charged', q1b.subtotal === 399 + 149 + 249 * 2, String(q1b.subtotal))
 
   // Per-site pricing: the whole point of the per-site decision.
   const twoStores: Holding[] = [
@@ -97,8 +103,49 @@ function main() {
     { siteId: 1, moduleKey: 'loyalty', quantity: 1, agreedPrice: null, endsOn: null },
     { siteId: 2, moduleKey: 'starter', quantity: 1, agreedPrice: null, endsOn: null },
   ]
+  // 2 stores: modules 399+149+399, tills (2-1)+(1-1) = 1 x 249. Then 15% off.
   const q2 = quoteFor(twoStores, { 1: 2, 2: 1 }, book, 15)
-  ok('a module on one store is billed once', q2.subtotal === 399 + 149 + 399 + 249 * 3, String(q2.subtotal))
+  ok('a module on one store is billed once', q2.subtotal === 399 + 149 + 399 + 249, String(q2.subtotal))
+  ok('two stores discount at 15%', q2.discountRate === 0.15, String(q2.discountRate))
+  ok('the discount comes off the subtotal', q2.discountAmount === round(q2.subtotal * 0.15), String(q2.discountAmount))
+  ok(
+    'VAT is charged on the DISCOUNTED figure, not the gross',
+    q2.vat === round((q2.subtotal - q2.discountAmount) * 0.15),
+    String(q2.vat),
+  )
+  ok(
+    'total is subtotal less discount plus VAT',
+    q2.total === round(q2.subtotal - q2.discountAmount + q2.vat),
+    String(q2.total),
+  )
+
+  // ── The discount ladder ───────────────────────────────────────────────
+  ok('1 store  -> 0%', multiStoreDiscountRate(1) === 0)
+  ok('2 stores -> 15%', multiStoreDiscountRate(2) === 0.15)
+  ok('3 stores -> 17%', multiStoreDiscountRate(3) === 0.17)
+  ok('4 stores -> 19%', multiStoreDiscountRate(4) === 0.19)
+  ok('5 stores -> 22%', multiStoreDiscountRate(5) === 0.22)
+  ok('12 stores still 22% — the ladder tops out', multiStoreDiscountRate(12) === 0.22)
+  ok('0 or negative is treated as one store', multiStoreDiscountRate(0) === 0 && multiStoreDiscountRate(-3) === 0)
+
+  /* The rate follows the ACCOUNT, not how many stores the caller can see. A
+     manager with access to 2 of a 5-store group must still be quoted 22%, or
+     the screen shows a different price to different people. */
+  const q2c = quoteFor(twoStores, { 1: 2, 2: 1 }, book, 15, 5)
+  ok('the store count can be overridden for the account', q2c.discountRate === 0.22, String(q2c.discountRate))
+
+  // ── The summary table ─────────────────────────────────────────────────
+  const lines = storeLines([1, 2], twoStores, { 1: 2, 2: 1 }, book)
+  ok('one row per store', lines.length === 2)
+  ok('store 1 modules are its own', lines[0].moduleTotal === 399 + 149, String(lines[0].moduleTotal))
+  ok('store 1 has one extra till', lines[0].extraDevices === 1 && lines[0].deviceTotal === 249)
+  ok('store 2 has none', lines[1].extraDevices === 0 && lines[1].deviceTotal === 0)
+  ok('a store total is modules + devices', lines[0].lineTotal === 399 + 149 + 249, String(lines[0].lineTotal))
+  ok(
+    'the store rows sum to the subtotal',
+    round(lines.reduce((s, l) => s + l.lineTotal, 0)) === q2.subtotal,
+    `${lines.reduce((s, l) => s + l.lineTotal, 0)} vs ${q2.subtotal}`,
+  )
 
   // Grandfathering: the agreed rate beats the book, and says so.
   const grandfathered: Holding[] = [
@@ -139,9 +186,11 @@ function main() {
   ok('next-period total carries VAT too', q5.nextPeriodTotal === round(399 * 1.15), String(q5.nextPeriodTotal))
 
   // ── Till licences ──────────────────────────────────────────────────────
-  const q6 = quoteFor([], { 1: 3, 2: 0 }, book, 15)
-  ok('tills bill per licence', q6.subtotal === 249 * 3, String(q6.subtotal))
-  ok('a store with no tills adds no line', !q6.lines.some((l) => l.siteId === 2))
+  // One store here, so no discount muddies the figure: 3 tills, first included.
+  const q6 = quoteFor([], { 1: 3 }, book, 15)
+  ok('tills bill per licence beyond the first', q6.subtotal === 249 * 2, String(q6.subtotal))
+  const q6b = quoteFor([], { 1: 1 }, book, 15)
+  ok('a store with one till adds no line at all', q6b.lines.length === 0, String(q6b.lines.length))
 
   // ── Rounding: the client and the server must land on the same cent ─────
   // Per-line rounding then summing, never sum-then-round.
