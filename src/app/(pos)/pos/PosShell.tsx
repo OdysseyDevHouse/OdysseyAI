@@ -30,6 +30,13 @@ import {
   listParkedOffline,
 } from '@/lib/posOffline/parkOffline'
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
+import {
+  saveDraft as saveLocalDraft,
+  readDraft as readLocalDraft,
+  clearDraft as clearLocalDraft,
+  draftDocType,
+} from '@/lib/posOffline/draftOffline'
+import type { LocalDraft } from '@/lib/posOffline/db'
 import { offlineBlockedProduct, offlineBlockedTender } from '@/lib/offlineCapability'
 import type { Special } from '@/lib/specialsEngine'
 import {
@@ -374,6 +381,20 @@ export default function PosShell({
    */
   const [receiptReturn, setReceiptReturn] = useState(false)
   const [exchangeCredit, setExchangeCredit] = useState<ReceiptReturnPick | null>(null)
+
+  /**
+   * A basket left behind by a session that ended badly.
+   *
+   * Null means nothing to recover, which is the ordinary case — a till that was
+   * closed properly cleared its draft on the way out. A row here means the last
+   * session did NOT end properly: a power cut, a crash, a machine switched off
+   * at the wall. Offered back rather than restored silently, because the cashier
+   * standing there may be a different person on a different day, and a basket
+   * that appeared by itself would be rung up without anybody deciding to.
+   */
+  const [recoverable, setRecoverable] = useState<LocalDraft | null>(null)
+  /** True once the recovery read has answered — see the writer effect. */
+  const draftChecked = useRef(false)
 
   /* The shop's own buttons, from IndexedDB, when the page's props arrive empty —
      a reload with no network gets no props, and the key grid is the default pane.
@@ -3064,6 +3085,89 @@ export default function PosShell({
   }, [hospitality, refreshTables])
 
   /**
+   * ── THE BASKET, KEPT WHERE A POWER CUT CANNOT REACH IT ────────────────────
+   *
+   * One effect over `state.lines`, rather than a call at each of the ten places
+   * the basket changes. That is deliberate and it is the same discipline the
+   * last-sale receipt uses a few hundred lines up: a rule enforced in one place
+   * cannot be forgotten by the eleventh caller, and there WILL be an eleventh.
+   *
+   * Every CLEAR empties the lines, so the empty case — which deletes the row
+   * rather than storing a basket with nothing in it — covers paid, parked,
+   * cleared and voided without knowing which happened. The draft simply tracks
+   * what is on screen.
+   *
+   * Debounced, because this fires per keystroke on a quantity edit and a write
+   * per character is wasted work on a machine that may be slow. 400ms is well
+   * inside the gap between a scan and the next one, so in practice a cashier
+   * never outruns it — and if they do, the previous write already holds
+   * everything but the last line.
+   *
+   * NOT the server, deliberately. This is the change that lets a trade counter
+   * keep a long quotation safe without a round trip per line, and it works
+   * identically with no network at all — which is the whole point.
+   */
+  /*
+   * Is there a basket to hand back?
+   *
+   * Asked ONCE, on mount, and only about a basket that is not already on screen.
+   * The empty check matters: this effect and the writer below both run on the
+   * first render, and a till that recalled a saved sale before this resolved
+   * would be offered the draft of the sale it is already holding.
+   */
+  useEffect(() => {
+    if (state.lines.length > 0) {
+      draftChecked.current = true
+      return
+    }
+    let cancelled = false
+    void readLocalDraft(siteId)
+      .then((draft) => {
+        if (!cancelled && draft && draft.lines.length > 0) setRecoverable(draft)
+      })
+      .finally(() => {
+        draftChecked.current = true
+      })
+    return () => {
+      cancelled = true
+    }
+    /* Mount only. Re-running when the basket empties would offer the draft back
+       the instant a sale is finalised, which is the one moment it is certainly
+       not wanted. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteId])
+
+  useEffect(() => {
+    /*
+     * Hold off until the read above has answered.
+     *
+     * Both effects run on mount, and this one's empty-basket case DELETES the
+     * draft. Without this guard a till would wipe the very basket it was about
+     * to offer back — the reader is async, the writer is on a timer, and which
+     * of them lands first is not something to leave to chance.
+     */
+    if (!draftChecked.current) return
+    const timer = setTimeout(() => {
+      void saveLocalDraft(siteId, {
+        documentId: state.documentId,
+        docType: state.docType,
+        customerId: state.customer?.id ?? null,
+        customerName: state.customer?.name || state.customerName,
+        customerVatNo: state.customer?.vatNumber ?? null,
+        customerPhone: state.customer?.phone ?? null,
+        priceStructureId,
+        returning: state.returning,
+        lines: state.lines,
+        totalIncl: totals.doc.totalIncl,
+      })
+    }, 400)
+    return () => clearTimeout(timer)
+    /* Keyed on the LINES rather than on the payload, which is rebuilt every
+       render — depending on that would fire this on every unrelated keystroke. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteId, state.lines, state.documentId, state.docType, state.customer, state.returning])
+
+  /**
    * Writes the basket to the table's bill.
    *
    * ── WHY A TABLE'S BASKET IS SAVED AND A COUNTER'S IS NOT ──────────────────
@@ -3686,6 +3790,51 @@ export default function PosShell({
             state.returning ? { type: 'SET_RETURNING', returning: false } : { type: 'CLEAR' },
           )
           setConfirmClear(false)
+        }}
+      />
+
+      {/*
+        A basket the last session did not finish.
+        Asked rather than restored: the person standing here may not be the one
+        who built it, and a basket that appeared by itself would get rung up
+        without anybody deciding to. Discarding is safe — nothing was posted.
+      */}
+      <ConfirmModal
+        open={recoverable !== null}
+        title="Pick up where the till left off?"
+        confirmLabel="Restore it"
+        cancelLabel="Start fresh"
+        message={
+          recoverable
+            ? `This till was switched off with ${recoverable.itemCount} line${
+                recoverable.itemCount === 1 ? '' : 's'
+              } on screen, worth ${formatMoney(recoverable.totalIncl)}${
+                recoverable.customerName ? ` for ${recoverable.customerName}` : ''
+              }. Nothing was paid for and nothing was posted.`
+            : ''
+        }
+        onClose={() => {
+          /* Declined. The draft goes, or the next load would ask again about a
+             basket somebody has already said they do not want. */
+          setRecoverable(null)
+          void clearLocalDraft(siteId)
+        }}
+        onConfirm={() => {
+          const draft = recoverable
+          if (!draft) return
+          dispatch({
+            type: 'LOAD',
+            documentId: draft.documentId,
+            lines: draft.lines as BasketLine[],
+            customerName: draft.customerName,
+            docType: draftDocType(draft.docType),
+          })
+          setRecoverable(null)
+          /* The customer is NOT restored, only their name.
+             A TillCustomer carries a credit limit and a balance, and the ones
+             cached on a basket from yesterday are not today's. The name keeps
+             the cashier oriented; re-attaching re-reads the account. */
+          toast.info('Basket restored. Re-attach the customer if this is an account sale.')
         }}
       />
 

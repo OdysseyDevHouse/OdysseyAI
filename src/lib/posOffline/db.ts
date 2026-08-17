@@ -67,11 +67,64 @@ export type LocalParkedSale = {
   totalIncl: number
 }
 
+/**
+ * The basket CURRENTLY ON SCREEN, written as it is built.
+ *
+ * ── WHY THIS IS NEITHER THE OUTBOX NOR A PARKED BASKET ────────────────────
+ *
+ * The outbox holds sales that HAPPENED — money changed hands, and the row is the
+ * only record of it until it syncs, which is why nothing may ever delete one.
+ * `parked` holds baskets a cashier deliberately set aside. This holds neither: it
+ * is the half-built basket somebody is standing at the till adding to right now.
+ *
+ * Its whole job is surviving what nobody chose — a power cut, a browser crash, a
+ * machine somebody switched off at the wall. A cashier who parks a basket has
+ * made a decision; a cashier whose PC dies mid-quotation has not, and thirty
+ * lines of a hardware order is a genuinely bad afternoon to lose.
+ *
+ * ── WHY IT IS DELETED RATHER THAN KEPT ────────────────────────────────────
+ *
+ * Written on every line change and removed the moment the basket becomes
+ * something else — paid, parked, or cleared. So exactly one draft exists per
+ * till at a time, and finding one at startup means the last session ended
+ * badly. That is the signal to offer it back.
+ *
+ * Unlike everything else in this file it MAY be deleted freely, and must be:
+ * a draft that outlived its basket would be offered back to the next customer.
+ */
+export type LocalDraft = {
+  /**
+   * One row per till, so the key is a constant rather than a uid.
+   *
+   * A till has one basket on screen. Keying by uid would accumulate a row per
+   * abandoned basket, and "which of these seven is the live one" has no answer.
+   */
+  key: string
+  /** When it was last written — what the recovery prompt shows. */
+  savedAt: string
+  /** The server document this basket came from, if it was recalled from one. */
+  documentId: number | null
+  /** What kind of document it will become. See SaleState.docType. */
+  docType: string
+  customerId: number | null
+  customerName: string
+  customerVatNo: string | null
+  customerPhone: string | null
+  priceStructureId: number | null
+  /** Whether this basket is a return rather than a sale. */
+  returning: boolean
+  /** The basket itself, exactly as the reducer holds it. */
+  lines: unknown[]
+  itemCount: number
+  totalIncl: number
+}
+
 export class PosDatabase extends Dexie {
   products!: Table<TillProduct, number>
   outbox!: Table<OutboxSale, string>
   parked!: Table<LocalParkedSale, string>
   returns!: Table<OutboxReturn, string>
+  drafts!: Table<LocalDraft, string>
   kv!: Table<KvRow, string>
 
   constructor(siteId: number) {
@@ -157,6 +210,27 @@ export class PosDatabase extends Dexie {
       outbox: 'saleUid, status, takenAt',
       parked: 'uid, parkedAt',
       returns: 'returnUid, status, takenAt',
+      kv: 'key',
+    })
+
+    /*
+     * Version 5 — the in-progress basket (see LocalDraft).
+     *
+     * Keyed on `key` alone with no secondary index, because there is never more
+     * than one row: a till has one basket on screen, and the read is always
+     * "give me the draft", never a query. An index over a single-row table is
+     * cost with no benefit.
+     *
+     * Additive, and `outbox` and `returns` are untouched. The version-2
+     * invariant still stands and always will: a pending row is real money and
+     * no schema change may drop one.
+     */
+    this.version(5).stores({
+      products: 'id, code, barcode, *barcodes, departmentId',
+      outbox: 'saleUid, status, takenAt',
+      parked: 'uid, parkedAt',
+      returns: 'returnUid, status, takenAt',
+      drafts: 'key',
       kv: 'key',
     })
   }
