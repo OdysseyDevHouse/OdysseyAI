@@ -13,6 +13,11 @@ import {
 import { accountCanCover, customerAccount } from './customerAuth'
 import { validateCode, redeemCode } from './discountCodes'
 import { placeHolds, heldQtyFor } from './stockHolds'
+import {
+  branchProductsByCode,
+  missingAtBranchMessage,
+  translateToBranch,
+} from './branchCatalogue'
 import { liveSpecials, specialPriceFor } from './specials'
 import { storefrontImagesByIds, type StorefrontImage } from './storefrontImages'
 import { recentApprovedReviews, type ProductReview } from './productReviews'
@@ -159,6 +164,16 @@ export type StorefrontContext = {
   settings: OnlineSettings
   /** The shop's own name, for the page title and the header. */
   storeName: string
+  /**
+   * What to CALL the branch when speaking about it — "Claremont doesn't carry
+   * that", "ready in 20 minutes at Claremont".
+   *
+   * Equal to storeName for a single shop. Separate from it because storeName is
+   * the name of the SHOP FRONT, which for a chain is head office's, and telling
+   * a shopper that head office does not stock something when it is the branch
+   * that does not is a confusing lie about the wrong shop.
+   */
+  branchName: string
 }
 
 /**
@@ -371,11 +386,23 @@ export async function storefrontContext(
      * common case must be the one that needs no thought — a single shop passes
      * one id and gets a context whose two ids agree.
      */
+    /*
+     * The branch's own name, read only when it IS a different shop — a single
+     * store must not pay for a second control-database lookup to be told its
+     * own name again. Falls back to the shop front's name if that read comes
+     * back empty, so a sentence never ends up naming nothing.
+     */
+    const branchName =
+      branchSiteId && branchSiteId !== siteId
+        ? (await publicSiteName(branchSiteId)) || storeName
+        : storeName
+
     return {
       siteId: branchSiteId ?? siteId,
       catalogueSiteId: siteId,
       settings: { ...settings, priceStructureId },
       storeName,
+      branchName,
     }
   } catch {
     // An unreachable database must not leak a stack trace to the public.
@@ -1411,8 +1438,14 @@ export async function placePublicOrder(
    * Empty when the shop has holding switched off, so nothing is queried at all
    * in that case.
    */
+  /*
+   * Not read for a group storefront: the ids in the basket are the catalogue's
+   * and the holds are the branch's, so the lookup would silently miss every
+   * time and report nothing held. Skipped outright rather than run and ignored,
+   * so nobody later mistakes an empty map for "nothing is spoken for".
+   */
   const alreadyHeld =
-    settings.holdMinutes > 0
+    settings.holdMinutes > 0 && !isGroupStorefront(context)
       ? await heldQtyFor(siteId, input.lines.map((l) => Number(l.productId)))
       : new Map<number, number>()
 
@@ -1443,7 +1476,17 @@ export async function placePublicOrder(
      * filled before either checked out. Without this, holds hide stock from
      * the next shopper while still letting them order it.
      */
-    if (settings.holdMinutes > 0) {
+    /*
+     * Skipped for a group storefront, because the figures being compared are the
+     * wrong shop's: product.stockRaw is the CATALOGUE's stock and the holds were
+     * read from the branch. Judging one against the other would refuse orders a
+     * branch could fill and accept ones it could not.
+     *
+     * The branch's own stock is checked below, after the codes are translated,
+     * and it warns rather than refuses — a chain's branch accepts or declines
+     * an order it cannot fill, which is what an order being a request means.
+     */
+    if (settings.holdMinutes > 0 && !isGroupStorefront(context)) {
       const spokenFor = alreadyHeld.get(product.id) ?? 0
       const free = round(product.stockRaw - spokenFor, 3)
       if (free < qty) {
@@ -1474,6 +1517,34 @@ export async function placePublicOrder(
     return {
       ok: false,
       error: `Orders start at R${settings.minOrderIncl.toFixed(2)}. Please add a little more.`,
+    }
+  }
+
+  /*
+   * ── Onto the branch's own product ids ───────────────────────────────────
+   *
+   * Everything above priced against the CATALOGUE. Everything below writes into
+   * the BRANCH, where online_order_lines.product_id and online_stock_holds
+   * .product_id are foreign keys into that branch's own products table.
+   *
+   * Ids do not travel between databases; codes do. Translated once, here, so
+   * that every write after this point is an ordinary single-site order — which
+   * is exactly why acceptOrder needs no knowledge of any of this.
+   *
+   * A no-op for a single shop: the map is not built and the ids are already the
+   * ones being written.
+   */
+  if (isGroupStorefront(context)) {
+    const branchProducts = await branchProductsByCode(
+      context.siteId,
+      priced.map((p) => p.code),
+    )
+    const translated = translateToBranch(priced, branchProducts)
+    if (!translated.ok) {
+      return { ok: false, error: missingAtBranchMessage(translated.missing, context.branchName) }
+    }
+    for (let i = 0; i < priced.length; i++) {
+      priced[i].productId = translated.lines[i].branchProductId
     }
   }
 
