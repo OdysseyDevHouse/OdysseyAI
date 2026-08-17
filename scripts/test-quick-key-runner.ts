@@ -33,23 +33,52 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
-/** Records which handler fired, and with what. */
+/**
+ * Records which handler fired, and with what.
+ *
+ * ── WHY A PROXY RATHER THAN A LIST ────────────────────────────────────────
+ *
+ * This used to be a hand-written object of a dozen stubs, cast with
+ * `as unknown as QuickKeyHandlers` — and that cast is what let it rot. The
+ * runner's contract grew to nearly thirty handlers; the stub stayed at twelve.
+ * Every key added since resolved to `undefined` here, so pressing one threw
+ * "handlers.saveSale is not a function" and the whole file died on its first
+ * assertion. It reported no failures because it never reached one.
+ *
+ * A proxy answers for EVERY name by construction, so the next handler added to
+ * the runner needs no change here and cannot silently go untested. Which is the
+ * property the cast was pretending to have.
+ */
 function recorder() {
   const calls: { name: string; arg?: unknown }[] = []
-  const handlers: QuickKeyHandlers = {
-    say: (message: string, tone?: string) => calls.push({ name: 'say', arg: { message, tone } }),
-    navigate: (to: string) => calls.push({ name: 'navigate', arg: to }),
-    addProduct: (id: number) => calls.push({ name: 'addProduct', arg: id }),
-    openDepartment: (id: number) => calls.push({ name: 'openDepartment', arg: id }),
-    editLine: () => calls.push({ name: 'editLine' }),
-    clear: () => calls.push({ name: 'clear' }),
-    park: () => calls.push({ name: 'park' }),
-    pickCustomer: () => calls.push({ name: 'pickCustomer' }),
-    showSaved: () => calls.push({ name: 'showSaved' }),
-    showOutbox: () => calls.push({ name: 'showOutbox' }),
-    startReturn: () => calls.push({ name: 'startReturn' }),
-    undo: () => calls.push({ name: 'undo' }),
-  } as unknown as QuickKeyHandlers
+  const handlers = new Proxy(
+    {},
+    {
+      get: (_target, prop: string) => {
+        /* Anything the runner might legitimately probe rather than CALL. A
+           promise-returning stub would change control flow, so keep it simple:
+           only functions are handed back. */
+        return (...args: unknown[]) => {
+          /* `say` keeps its SHAPED record — the assertions below read
+             `arg.message`, and it is the one handler whose payload they inspect
+             rather than merely counting. Everything else records its first
+             argument, which is all any of them takes. */
+          calls.push({
+            name: prop,
+            arg:
+              prop === 'say'
+                ? { message: args[0], tone: args[1] }
+                : args.length <= 1
+                  ? args[0]
+                  : args,
+          })
+          /* Nothing in the runner reads a handler's return value, so undefined
+             is the honest answer for all of them. */
+          return undefined
+        }
+      },
+    },
+  ) as QuickKeyHandlers
   return { calls, handlers }
 }
 
