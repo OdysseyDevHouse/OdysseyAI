@@ -29,6 +29,7 @@
     "test:replication": "node scripts/test-replication.mjs",
     "test:ws-frame": "node scripts/test-ws-frame.mjs",
     "test:replica-host": "node scripts/test-replica-host.mjs",
+    "test:local-backend-status": "tsx --conditions=react-server scripts/test-local-backend-status.ts",
     "replica:host": "node --env-file=.env server/replicaHost.mjs",
     "test:stock-warning": "tsx scripts/test-stock-warning.ts",
     "test:navigation": "tsx scripts/test-navigation.ts",
