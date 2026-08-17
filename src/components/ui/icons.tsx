@@ -143,6 +143,10 @@ export {
   Info,
   Boxes,
   LayoutGrid,
+  // The till's way between its modules — see ModuleMenu. Named for what it
+  // opens rather than what it looks like, so a future redesign of the glyph
+  // does not leave every call site named after three lines.
+  Menu,
   Coins,
   Banknote,
   // the bank itself, as opposed to the money in it — the cashbook's own glyph

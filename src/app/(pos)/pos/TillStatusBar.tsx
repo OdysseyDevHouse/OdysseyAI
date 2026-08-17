@@ -31,6 +31,7 @@ export function TillStatusBar({
   onShift,
   tableLabel,
   onChangeTable,
+  onOpenModules,
   onExit,
 }: {
   /**
@@ -104,6 +105,11 @@ export function TillStatusBar({
   tableLabel: string | null
   /** Back to the floor. Undefined in retail, where there is no floor to go back to. */
   onChangeTable?: () => void
+  /**
+   * Opens the module menu. Absent on a shop with one module, where the menu
+   * could only ever show a single row.
+   */
+  onOpenModules?: () => void
   onExit: () => void
 }) {
   /* Past a few hours the prices on this till and the prices on the shelf edge may
@@ -131,6 +137,27 @@ export function TillStatusBar({
      cannot drift the way a convention three files have to remember does. */
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-2.5 px-4 py-4">
+      {/* FIRST, before the screen's own name: the way to a different screen.
+          "Where am I" precedes "what am I looking at", and this is the only
+          control on the bar that leaves the module rather than acting within
+          it. Absent on a shop with one module, where it could only ever open a
+          menu with a single row on it. */}
+      {/* data-kit-ok, for the same reason the logout chip below is: this row is
+          built from 46px chips, and a kit Button brings its own height that
+          would leave the one control on the left standing proud of every one on
+          the right. */}
+      {onOpenModules && (
+        <button
+          type="button"
+          data-kit-ok
+          onClick={onOpenModules}
+          aria-label="Go to another part of the till"
+          title="Go to"
+          className={`${CHIP_BASE} border-border bg-surface px-3 text-ink-2 hover:border-brand/40 hover:bg-brand-soft hover:text-brand`}
+        >
+          <Icons.Menu size={20} />
+        </button>
+      )}
       {/* WHAT THIS SCREEN IS, then what is on it. The screen's own name rather
           than the shop's: the cashier knows which shop they are standing in, and
           the one thing the top-left of a till should answer is "what am I looking

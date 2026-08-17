@@ -32,6 +32,12 @@ import {
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
 import { stockShortfalls, stockWarning } from '@/lib/stockWarning'
 import TradeEntryPane from './TradeEntryPane'
+import ModuleMenu, {
+  MODULE_DOC_TYPES,
+  MODULE_PHRASES,
+  moduleForDocType,
+  type TillModule,
+} from './ModuleMenu'
 import {
   saveDraft as saveLocalDraft,
   readDraft as readLocalDraft,
@@ -598,6 +604,23 @@ export default function PosShell({
   const [pickingCustomer, setPickingCustomer] = useState(false)
   const [showingSaved, setShowingSaved] = useState(false)
   const [showingOutbox, setShowingOutbox] = useState(false)
+  /**
+   * The module menu is open.
+   *
+   * Only its OPENNESS is state. Which module the till is on is not — that is
+   * `state.docType`, which the basket has carried all along. A second variable
+   * saying the same thing is a second variable to get out of step with the
+   * first, and the one that would be wrong is the one nothing renders from.
+   */
+  const [showingModules, setShowingModules] = useState(false)
+  /**
+   * A module switch waiting on "your basket will be cleared" — see pickModule.
+   *
+   * Holds the MODULE rather than the doc type it maps to, so the question names
+   * the thing the cashier actually pressed. Storing the doc type had the dialog
+   * ask about "an invoice" when the row said "Point of sale".
+   */
+  const [switchingTo, setSwitchingTo] = useState<TillModule | null>(null)
   const [sizingTiles, setSizingTiles] = useState(false)
   /** The floor's quick-key dialog. The gate has no pane to draw them in. */
   const [showingTableKeys, setShowingTableKeys] = useState(false)
@@ -3352,9 +3375,42 @@ export default function PosShell({
 
     startApplied.current = true
     dispatch({ type: 'SET_DOC_TYPE', docType: startAs })
-    toast.info(`Starting a ${DRAFT_DOC_LABELS[startAs].toLowerCase()}.`)
+    /* Phrased by MODULE, which carries its own article — the old wording built
+       "a " + the label and so announced "Starting a sales order." */
+    toast.info(`Starting ${MODULE_PHRASES[moduleForDocType(startAs)]}.`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startAs, recoverable, state.lines.length, draftCheckDone])
+
+  /**
+   * Moves the till to another module.
+   *
+   * ── WHY THIS ASKS ─────────────────────────────────────────────────────────
+   *
+   * SET_DOC_TYPE clears the basket, and that is correct rather than incidental:
+   * what has been rung up so far was rung up as one kind of document, and the
+   * prices, discounts and promises attached to it are not automatically true of
+   * another. See the reducer.
+   *
+   * But a menu that binned six lines the instant somebody tapped the wrong row
+   * would make this the most dangerous control on the screen — and it sits at
+   * the top-left, where a thumb rests. So a basket with anything in it earns a
+   * question first. An EMPTY basket switches straight through: there is nothing
+   * to lose and nothing to warn about, which is the overwhelming majority of
+   * taps.
+   */
+  const pickModule = useCallback(
+    (module: TillModule) => {
+      const next = MODULE_DOC_TYPES[module]
+      if (next === state.docType) return
+      if (state.lines.length > 0) {
+        setSwitchingTo(module)
+        return
+      }
+      dispatch({ type: 'SET_DOC_TYPE', docType: next })
+      toast.info(`Starting ${MODULE_PHRASES[module]}.`)
+    },
+    [state.docType, state.lines.length, toast],
+  )
 
   useEffect(() => {
     /*
@@ -3761,6 +3817,12 @@ export default function PosShell({
         /* Undefined ON either gate: a "back to the floor" button on the floor is
            a control that can only ever do nothing, and one on a closed till
            would walk past the very thing that gate exists to insist on. */
+        /* Not on either gate. The closed till is a screen whose whole purpose is
+           to insist on a shift before anything else happens, and the floor is a
+           choice of TABLE — a cashier who switched to quotes from there would
+           land on a trading screen belonging to no bill. Both gates lead to the
+           sale screen, where this is waiting. */
+        onOpenModules={choosingTable || closedGate ? undefined : () => setShowingModules(true)}
         onChangeTable={
           hospitality && !choosingTable && !closedGate
             ? () => {
@@ -4071,6 +4133,41 @@ export default function PosShell({
         )}
       </div>
       )}
+
+      {/* The way between the till's modules. Lays OVER the trading screen rather
+          than replacing it, so the basket and the catalogue stay mounted
+          underneath — see ModuleMenu for why that matters. */}
+      <ModuleMenu
+        open={showingModules}
+        current={moduleForDocType(state.docType)}
+        /* Every module this build has. The list is filtered by what a shop has
+           switched on the day there is a setting to switch; until then, showing
+           all three is honest — all three work. */
+        available={['sale', 'quotes', 'orders']}
+        onPick={pickModule}
+        onClose={() => setShowingModules(false)}
+      />
+
+      {/* Only ever raised by a switch with a basket in hand — an empty one goes
+          straight through. Worded as what will HAPPEN to the lines rather than
+          as "are you sure", because the cost is the thing being decided. */}
+      <ConfirmModal
+        open={switchingTo !== null}
+        title={switchingTo ? `Start ${MODULE_PHRASES[switchingTo]}?` : ''}
+        confirmLabel={switchingTo ? `Yes, start ${MODULE_PHRASES[switchingTo]}` : ''}
+        tone="danger"
+        message={`The ${state.lines.length} line${
+          state.lines.length === 1 ? '' : 's'
+        } on screen will be cleared. Nothing has been posted, so nothing is reversed — but they will have to be rung up again.`}
+        onClose={() => setSwitchingTo(null)}
+        onConfirm={() => {
+          if (switchingTo) {
+            dispatch({ type: 'SET_DOC_TYPE', docType: MODULE_DOC_TYPES[switchingTo] })
+            toast.info(`Starting ${MODULE_PHRASES[switchingTo]}.`)
+          }
+          setSwitchingTo(null)
+        }}
+      />
 
       {/* Confirmed rather than immediate. Close is a 72px key beside Pay, and an
           accidental brush of it must not silently bin a basket somebody has spent
