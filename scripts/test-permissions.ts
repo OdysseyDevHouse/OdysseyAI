@@ -122,6 +122,13 @@ const OPEN_ROUTES = new Set([
   'src/app/api/health/route.ts', // Electron's startup probe, before any session
   'src/app/api/auth/signout/route.ts', // signing out cannot require being signed in
   'src/app/api/payments/payfast/[token]/route.ts', // PayFast's server-to-server callback
+  /* The platform's own PayFast callback — Odyssey collecting from a tenant,
+     where the route above is a tenant collecting from its shoppers. PayFast
+     posts with no cookie and no session, so a capability check is impossible.
+     It is guarded instead by a signed account-scoped token in the URL, plus a
+     valid PayFast signature, a PayFast source IP and PayFast's own
+     confirmation of the payload before anything is written. */
+  'src/app/api/billing/payfast/[token]/route.ts',
   // Cron's heartbeat for scheduled reports. There is nobody signed in at 07:00,
   // so it proves itself with REPORT_CRON_SECRET compared by timingSafeEqual,
   // and refuses everything when that is unset. A capability check would be the

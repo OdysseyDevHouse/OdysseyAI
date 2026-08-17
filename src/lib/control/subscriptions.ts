@@ -43,6 +43,12 @@ export type Subscription = {
 
 const SELECT_SUB = `
   SELECT id, account_id, pf_token, m_payment_id, status, amount_incl, pending_amount,
+         -- Selected because startCheckoutAttempt compares it against the clock
+         -- to decide whether an attempt is still in flight. Leaving it out made
+         -- that check read undefined, so every second checkout minted a fresh
+         -- reference and the race this function exists to close stayed open --
+         -- with the row lock and the timestamps all working perfectly.
+         pending_started_at,
          currency, billing_date, next_billing_on, last_paid_on, synced_at,
          escalation_percent, anniversary_on, last_escalated_on
     FROM cp2_billing_subscriptions`
@@ -98,6 +104,30 @@ export type CheckoutAttempt =
 const ATTEMPT_WINDOW_MINUTES = 15
 
 /**
+ * A DATETIME from the driver as epoch milliseconds.
+ *
+ * ── THE COLUMN IS WRITTEN WITH UTC_TIMESTAMP(), NOT NOW() ──────────────────
+ *
+ * The pool connects with `timezone: 'Z'`, so it reads every DATETIME back as
+ * UTC. `NOW()` writes the database server's LOCAL time, which on a UTC+2 host
+ * comes back looking two hours in the future — an "age" of minus two hours,
+ * and any freshness window silently always true.
+ *
+ * That is why `pending_started_at` is written with `UTC_TIMESTAMP()` while the
+ * rest of the control database still uses NOW(): this is the only column here
+ * whose value is compared against `Date.now()` in JavaScript, so it is the only
+ * one where the skew is a bug rather than a cosmetic offset.
+ */
+function startedAtMs(value: unknown): number | null {
+  if (value instanceof Date) return value.getTime()
+  if (typeof value === 'string') {
+    const ms = Date.parse(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`)
+    return Number.isNaN(ms) ? null : ms
+  }
+  return null
+}
+
+/**
  * Claim a checkout attempt for this account.
  *
  * ── THE ROW LOCK IS THE POINT ──────────────────────────────────────────────
@@ -126,6 +156,11 @@ export async function startCheckoutAttempt(
   }
 
   return transaction(async (tx) => {
+    /* FOR UPDATE serialises two checkouts on this row: the second waits, and
+       its locking read then sees what the first actually committed rather than
+       a snapshot from before it. That is what stops both minting a reference
+       and the second overwriting the first — which in the previous system left
+       the first customer's payment carrying a reference that matched nothing. */
     const [rows] = await tx.execute(`${SELECT_SUB} WHERE account_id = ? FOR UPDATE`, [accountId])
     const existing = (rows as Row[])[0]
     if (!existing) {
@@ -144,13 +179,21 @@ export async function startCheckoutAttempt(
       }
     }
 
-    // A second click inside the window reuses the attempt in flight.
-    const startedAt = existing.pending_started_at as Date | null
+    /* A second click inside the window reuses the attempt in flight, so both
+       form posts converge on one payment instead of racing.
+
+       `pending_started_at` is read through `startedAtMs` rather than as a Date:
+       the driver hands DATETIME back as a string or a Date depending on the
+       column and the pool's settings, and calling .getTime() on a string
+       throws inside this condition — which JavaScript then swallows as a
+       falsy `fresh`, silently minting a second reference. That was a real bug
+       here, and it looked exactly like the row lock not working. */
+    const startedAt = startedAtMs(existing.pending_started_at)
     const fresh =
       sub.status === 'pending' &&
       sub.mPaymentId &&
-      startedAt &&
-      Date.now() - startedAt.getTime() < ATTEMPT_WINDOW_MINUTES * 60_000
+      startedAt !== null &&
+      Date.now() - startedAt < ATTEMPT_WINDOW_MINUTES * 60_000
 
     if (fresh && sub.mPaymentId) {
       return { ok: true as const, reference: sub.mPaymentId, amountIncl: sub.pendingAmount ?? amountIncl }
@@ -159,7 +202,7 @@ export async function startCheckoutAttempt(
     const reference = randomUUID()
     const [result] = await tx.execute(
       `UPDATE cp2_billing_subscriptions
-          SET m_payment_id = ?, pending_amount = ?, pending_started_at = NOW(), status = 'pending'
+          SET m_payment_id = ?, pending_amount = ?, pending_started_at = UTC_TIMESTAMP(), status = 'pending'
         WHERE account_id = ? AND status IN ('none','pending','cancelled')`,
       [reference, amountIncl.toFixed(2), accountId],
     )

@@ -147,6 +147,7 @@
     "test:storefront": "tsx --conditions=react-server --env-file=.env scripts/test-storefront.ts",
     "test:payments": "tsx --conditions=react-server --env-file=.env scripts/test-payments.ts",
     "test:payfast-subscription": "tsx --conditions=react-server --env-file=.env scripts/test-payfast-subscription.ts",
+    "test:billing-subscription": "tsx --conditions=react-server --env-file=.env scripts/test-billing-subscription.ts",
     "test:builder": "tsx --conditions=react-server --env-file=.env scripts/test-builder.ts",
     "test:builder-ui": "node --env-file=.env scripts/test-builder-ui.mjs",
     "test:report-templates": "tsx --conditions=react-server --env-file=.env scripts/test-report-templates.ts",

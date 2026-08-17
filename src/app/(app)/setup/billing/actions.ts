@@ -16,6 +16,7 @@ import {
   type ModuleKey,
 } from '@/lib/control/modules'
 import { safeBillingDay } from '@/lib/billing/period'
+import { syncSubscriptionAmount } from './subscribeActions'
 
 export type BillingChange = { siteId: number; moduleKey: string; want: boolean }
 
@@ -102,6 +103,16 @@ export async function applyModuleChangesAction(
     }
   }
 
+  /* Tell PayFast what to collect from now on.
+     Deliberately not awaited for its success: the plan change is already
+     recorded and the entitlements already granted, so a gateway that is slow
+     or down must not fail the customer's edit. `syncSubscriptionAmount`
+     persists the new figure locally either way and leaves `synced_at` NULL for
+     the reconciliation sweep to retry. */
+  await syncSubscriptionAmount(account.id).catch((error) => {
+    console.error('[payfast-sub] amount sync failed after a plan change', { accountId: account.id, error })
+  })
+
   revalidatePath('/setup/billing')
   return { ok: true, applied }
 }
@@ -133,6 +144,17 @@ export async function setDevicesAction(
     email: session.email,
   })
   if (!result.ok) return { ok: false, error: result.error }
+
+  // A till count change moves the monthly figure, so PayFast has to hear it.
+  const account = await accountForSite(ctx.siteId)
+  if (account) {
+    await syncSubscriptionAmount(account.id).catch((error) => {
+      console.error('[payfast-sub] amount sync failed after a till change', {
+        accountId: account.id,
+        error,
+      })
+    })
+  }
 
   revalidatePath('/setup/billing')
   return { ok: true }
