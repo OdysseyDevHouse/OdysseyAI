@@ -13,6 +13,8 @@ import {
 import { accountCanCover, customerAccount } from './customerAuth'
 import { validateCode, redeemCode } from './discountCodes'
 import { placeHolds, heldQtyFor } from './stockHolds'
+import { soldOutToday, tradingRules } from './branchTrading'
+import { openState } from '../tradingHours'
 import {
   branchProductsByCode,
   missingAtBranchMessage,
@@ -1413,6 +1415,29 @@ export async function placePublicOrder(
     return { ok: false, error: 'Please enter the delivery address.' }
   }
 
+  /*
+   * ── Is this shop taking orders at all? ──────────────────────────────────
+   *
+   * The checkout disables its button when the queue is stopped, but a disabled
+   * button is a courtesy and this is the rule. A stale tab, a resubmitted form
+   * and a script all arrive here.
+   *
+   * Only a PAUSED shop refuses. Closed does not: "order for tomorrow at 08:15"
+   * is the normal path at half past ten at night, and refusing it would turn
+   * away exactly the trade this is for. A shop with no hours set is never
+   * either — see tradingHours.
+   */
+  const trading = await tradingRules(siteId)
+  const nowState = openState(trading, new Date())
+  if (nowState.state === 'paused') {
+    return {
+      ok: false,
+      error: nowState.note
+        ? `${context.branchName} isn't taking orders right now — ${nowState.note}`
+        : `${context.branchName} isn't taking orders at the moment.`,
+    }
+  }
+
   // Price from the CATALOGUE. Anything the basket claimed is discarded, and a
   // product the store does not publish is not orderable at any price.
   const ids = [...new Set(input.lines.map((l) => Number(l.productId)).filter(Number.isInteger))]
@@ -1545,6 +1570,35 @@ export async function placePublicOrder(
     }
     for (let i = 0; i < priced.length; i++) {
       priced[i].productId = translated.lines[i].branchProductId
+    }
+  }
+
+  /*
+   * ── Sold out for today ──────────────────────────────────────────────────
+   *
+   * The ONE thing that blocks an order outright, and deliberately so. Elsewhere
+   * a shortage is a warning and the branch decides — because the shop might
+   * have the goods in the back, or be able to make more. This is different:
+   * staff have said, explicitly and by hand, that they have run out today.
+   * "We'll confirm your order" is then a promise about something already known
+   * to be false.
+   *
+   * Read after the translation so the ids are the branch's own, which is where
+   * the mark lives — the Claremont kitchen running out says nothing about
+   * Sea Point.
+   */
+  const soldOut = await soldOutToday(siteId)
+  if (soldOut.size > 0) {
+    const gone = priced.filter((p) => soldOut.has(p.productId))
+    if (gone.length > 0) {
+      const names = gone.map((g) => g.description).slice(0, 3).join(', ')
+      const note = soldOut.get(gone[0].productId)?.note
+      return {
+        ok: false,
+        error: note
+          ? `${names} — ${note}. Please remove ${gone.length === 1 ? 'it' : 'them'} to continue.`
+          : `${names} ${gone.length === 1 ? 'is' : 'are'} sold out today. Please remove ${gone.length === 1 ? 'it' : 'them'} to continue.`,
+      }
     }
   }
 

@@ -148,6 +148,8 @@
     "test:store-branches": "tsx --conditions=react-server --env-file=.env scripts/test-store-branches.ts",
     "test:branch-routing": "tsx --conditions=react-server --env-file=.env scripts/test-branch-routing.ts",
     "test:multistore-orders": "tsx --conditions=react-server --env-file=.env scripts/test-multistore-orders.ts",
+    "test:trading-hours": "tsx --conditions=react-server --env-file=.env scripts/test-trading-hours.ts",
+    "test:branch-trading": "tsx --conditions=react-server --env-file=.env scripts/test-branch-trading.ts",
     "verify:branch-pick": "node --env-file=.env.local scripts/verify-branch-pick.mjs",
     "test:payments": "tsx --conditions=react-server --env-file=.env scripts/test-payments.ts",
     "test:builder": "tsx --conditions=react-server --env-file=.env scripts/test-builder.ts",
