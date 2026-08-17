@@ -18,6 +18,8 @@
     "build:desktop": "cross-env APP_MODE=desktop NEXT_PUBLIC_APP_MODE=desktop next build",
     "dist": "npm run build:desktop && electron-builder --win --publish never",
     "test:math": "tsx scripts/test-document-math.ts",
+    "test:billing-periods": "tsx scripts/test-billing-periods.ts",
+    "test:modules": "tsx --conditions=react-server --env-file=.env scripts/test-modules.ts",
     "test:stock-warning": "tsx scripts/test-stock-warning.ts",
     "test:navigation": "tsx scripts/test-navigation.ts",
     "probe:page-score": "tsx scripts/probe-page-score.ts",

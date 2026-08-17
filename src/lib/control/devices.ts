@@ -157,6 +157,26 @@ export async function freeSpots(siteId: number): Promise<LicenceSpot[]> {
   return rows.filter((r) => entitlement(r).ok).map(toSpot)
 }
 
+/**
+ * How many till licences this site is billed for.
+ *
+ * ── ONE NUMBER, NOT TWO ─────────────────────────────────────────────────────
+ *
+ * This counts the SAME rows, through the SAME `entitlement()` predicate, that
+ * decide whether a till may trade. There is deliberately no stored "billed
+ * device count" anywhere: the moment the billed figure and the enforced figure
+ * are two separate numbers, they drift, and a shop ends up paying for two tills
+ * while trading from five — which is exactly what the previous system did.
+ *
+ * The consequence worth knowing: the only way to change this number is to
+ * provision or retire a licence, which is why the billing screen shows it
+ * read-only and links to the tills screen rather than offering a stepper.
+ */
+export async function billableDeviceCount(siteId: number): Promise<number> {
+  const rows = await query<Row>(`${SELECT_DEVICE} WHERE site_id = ?`, [siteId])
+  return rows.filter((r) => entitlement(r).ok).length
+}
+
 /** Every licence row for the site, claimed or not — for the setup screen. */
 export async function listLicences(siteId: number): Promise<LicenceSpot[]> {
   const rows = await query<Row>(`${SELECT_DEVICE} WHERE site_id = ? ORDER BY device_name, id`, [
