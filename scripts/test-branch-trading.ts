@@ -16,7 +16,7 @@ import {
   tradingExceptions,
   tradingRules,
 } from '../src/lib/site/branchTrading'
-import { openState, isoDate } from '../src/lib/tradingHours'
+import { collectionSlots, openState, isoDate } from '../src/lib/tradingHours'
 import { storefrontContext, placePublicOrder, publishedProducts } from '../src/lib/site/storefront'
 
 const SITE = 2 // Smash Burger Joint — the one with a real online store.
@@ -175,6 +175,75 @@ async function main() {
       await siteExecute(SITE, 'DELETE FROM online_stock_holds WHERE order_id = ?', [after.orderId])
       await siteExecute(SITE, 'DELETE FROM online_order_lines WHERE order_id = ?', [after.orderId])
       await siteExecute(SITE, 'DELETE FROM online_orders WHERE id = ?', [after.orderId])
+    }
+  }
+
+  console.log('\n— The collection time is re-derived, not trusted —')
+  // Hours the shop actually keeps, so there are real slots to accept and real
+  // times to refuse.
+  await siteExecute(
+    SITE,
+    `UPDATE online_store_settings
+        SET trading_hours = ?, accepting_orders = 1, accepting_note = ''
+      WHERE id = 1`,
+    [JSON.stringify({ '0': [['08:00', '20:00']], '1': [['08:00', '20:00']], '2': [['08:00', '20:00']],
+                      '3': [['08:00', '20:00']], '4': [['08:00', '20:00']], '5': [['08:00', '20:00']],
+                      '6': [['08:00', '20:00']] })],
+  )
+  const slotRules = await tradingRules(SITE)
+  const offered = collectionSlots(slotRules, new Date())
+  ok('the shop offers times', offered.length > 0, String(offered.length))
+
+  const slotCtx = await storefrontContext(SITE)
+  const slotCatalogue = slotCtx ? await publishedProducts(slotCtx, { limit: 1 }) : []
+  if (!slotCtx || slotCatalogue.length === 0) {
+    console.log('SKIP  nothing publishable to order with')
+  } else {
+    const line = { productId: slotCatalogue[0].id, qty: 1 }
+    const shopper = {
+      fulfilment: 'collect' as const,
+      contactName: 'Trading Hours Test',
+      contactPhone: '0210000000',
+      contactEmail: '',
+    }
+
+    // A time the shop never offered — the stale-tab case, and a payload naming
+    // any time it likes. Both arrive here identically.
+    const madeUp = new Date()
+    madeUp.setDate(madeUp.getDate() + 1)
+    madeUp.setHours(3, 7, 0, 0)
+    const refused = await placePublicOrder(slotCtx, {
+      ...shopper,
+      lines: [line],
+      requestedFor: madeUp.toISOString(),
+    })
+    ok('a time outside trading hours is refused', !refused.ok,
+      !refused.ok ? refused.error : 'accepted')
+
+    const accepted = await placePublicOrder(slotCtx, {
+      ...shopper,
+      lines: [line],
+      requestedFor: offered[0].toISOString(),
+    })
+    ok('a real slot is accepted', accepted.ok, accepted.ok ? accepted.orderNumber : accepted.error)
+    if (accepted.ok) {
+      const stored = await siteQueryOne<{ requested_for: Date | null }>(
+        SITE,
+        'SELECT requested_for FROM online_orders WHERE id = ?',
+        [accepted.orderId],
+      )
+      ok('and is written to the order', stored?.requested_for !== null, String(stored?.requested_for))
+      await siteExecute(SITE, 'DELETE FROM online_stock_holds WHERE order_id = ?', [accepted.orderId])
+      await siteExecute(SITE, 'DELETE FROM online_order_lines WHERE order_id = ?', [accepted.orderId])
+      await siteExecute(SITE, 'DELETE FROM online_orders WHERE id = ?', [accepted.orderId])
+    }
+
+    const asap = await placePublicOrder(slotCtx, { ...shopper, lines: [line], requestedFor: '' })
+    ok('as-soon-as-possible is always fine', asap.ok, asap.ok ? '' : asap.error)
+    if (asap.ok) {
+      await siteExecute(SITE, 'DELETE FROM online_stock_holds WHERE order_id = ?', [asap.orderId])
+      await siteExecute(SITE, 'DELETE FROM online_order_lines WHERE order_id = ?', [asap.orderId])
+      await siteExecute(SITE, 'DELETE FROM online_orders WHERE id = ?', [asap.orderId])
     }
   }
 

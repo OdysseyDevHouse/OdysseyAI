@@ -55,6 +55,9 @@ export default function Checkout({
   payOnline,
   allowAccount,
   storeName,
+  branchName,
+  collectionSlots = [],
+  openState = { state: 'open', note: '', opensAt: null, closesAt: null },
   account,
 }: {
   token: string
@@ -67,6 +70,35 @@ export default function Checkout({
   /** Whether this shop offers account orders at all. */
   allowAccount: boolean
   storeName: string
+  /**
+   * The shop that will pack this order. Equal to storeName for a single store.
+   *
+   * Every sentence about collecting, delivering or waiting names this rather
+   * than the shop front: for a chain the front is head office, and telling
+   * somebody to collect from head office would send them to the wrong address.
+   */
+  branchName: string
+  /**
+   * Times this shop could have the order ready, soonest first.
+   *
+   * Empty when the shop has set no trading hours — which is every shop until it
+   * does — and the checkout then shows the plain lead-time sentence it always
+   * has. Formatted server-side because the server's clock is the one the
+   * kitchen runs on.
+   */
+  collectionSlots?: { iso: string; label: string }[]
+  /**
+   * Open, closed, or not taking orders at all.
+   *
+   * Closed is NOT an error: ordering for tomorrow morning at half past ten at
+   * night is the normal path. Only `paused` stops the order.
+   */
+  openState?: {
+    state: 'open' | 'closed' | 'paused'
+    note: string
+    opensAt: string | null
+    closesAt: string | null
+  }
   /**
    * The signed-in customer, or null when nobody is signed in.
    *
@@ -99,6 +131,8 @@ export default function Checkout({
   const [fulfilment, setFulfilment] = useState<'collect' | 'deliver'>(
     collectEnabled ? 'collect' : 'deliver',
   )
+  /** '' means as soon as possible, which is what most people want. */
+  const [slot, setSlot] = useState('')
   /*
    * Prefilled for a signed-in customer, and EDITABLE.
    *
@@ -286,6 +320,10 @@ export default function Checkout({
         customerNote,
         lines: cart.lines.map((l) => ({ productId: l.productId, qty: l.qty })),
         payOnAccount: chargingAccount,
+        // The collection time, when one was chosen. A REQUEST like the others:
+        // the server re-derives the shop's real slots and refuses one that is
+        // no longer offered, exactly as it re-quotes the delivery fee.
+        requestedFor: slot,
         // Only a request, like payOnAccount: the server re-validates it and
         // decides what it is worth.
         discountCode: discount?.code ?? '',
@@ -385,10 +423,32 @@ export default function Checkout({
               />
             )}
 
-            {fulfilment === 'collect' && (
+            {fulfilment === 'collect' && collectionSlots.length === 0 && (
               <p className="text-sm text-muted">
-                Ready in about {leadTimeMinutes} minutes once the shop confirms.
+                Ready in about {leadTimeMinutes} minutes once {branchName} confirms.
               </p>
+            )}
+
+            {/* The times this shop could actually have it ready. Generated on
+                the server from its trading hours, so a device with a wrong
+                clock cannot offer one the kitchen has never heard of. */}
+            {fulfilment === 'collect' && collectionSlots.length > 0 && (
+              <Field
+                label="When would you like it?"
+                hint={`${branchName} needs about ${leadTimeMinutes} minutes.`}
+              >
+                <Select value={slot} onChange={(e) => setSlot(e.target.value)}>
+                  {/* Soonest first, and the default — most people want it now. */}
+                  <option value="">
+                    As soon as possible ({collectionSlots[0].label})
+                  </option>
+                  {collectionSlots.map((s) => (
+                    <option key={s.iso} value={s.iso}>
+                      {s.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
             )}
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -892,6 +952,31 @@ export default function Checkout({
               </p>
             )}
 
+            {/* Closed is not an error and does not stop anything: ordering for
+                tomorrow morning at half past ten at night is the normal path,
+                and refusing it would turn away exactly the trade this is for. */}
+            {openState.state === 'closed' && (
+              <p className="mt-3 rounded-control bg-warning-soft px-3 py-2 text-sm text-warning-ink">
+                {branchName} is closed right now
+                {openState.note ? ` — ${openState.note}` : ''}. You can still order
+                {openState.opensAt ? ` for ${openState.opensAt}` : ' for later'}.
+              </p>
+            )}
+
+            {/* Not taking orders IS a stop. The button below is disabled too,
+                but that is a courtesy — placePublicOrder refuses this whatever
+                the browser does. */}
+            {openState.state === 'paused' && (
+              <p
+                role="alert"
+                className="mt-3 rounded-control bg-danger-soft px-3 py-2 text-sm text-danger"
+              >
+                {branchName} isn&rsquo;t taking orders at the moment
+                {openState.note ? ` — ${openState.note}` : ''}. Please try again shortly, or
+                choose another store.
+              </p>
+            )}
+
             {error && (
               <p
                 role="alert"
@@ -905,7 +990,7 @@ export default function Checkout({
               variant="primary"
               className="mt-3 w-full"
               onClick={placeOrder}
-              disabled={placing || belowMinimum}
+              disabled={placing || belowMinimum || openState.state === 'paused'}
             >
               {placing
                 ? 'Please wait…'

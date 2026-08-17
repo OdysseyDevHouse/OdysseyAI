@@ -4,6 +4,7 @@ import { cookies, headers } from 'next/headers'
 import { SHOP_SESSION_COOKIE } from '@/lib/shopSession'
 import { recordEvent } from '@/lib/site/storefrontEvents'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { resolveStoreRouting, rememberedBranch } from '@/lib/storeRouting'
 import { createOrderTrackToken } from '@/lib/orderTrackToken'
 import { getCustomerSession } from '@/lib/customerSession'
 import { createCallbackToken } from '@/lib/callbackToken'
@@ -46,10 +47,16 @@ export async function quoteDeliveryAction(
   postcode: string,
   goodsTotal: number,
 ): Promise<QuoteResult> {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return { ok: false, error: 'This shop is no longer available.' }
+  /*
+   * Routed, because delivery is one SHOP's promise to drive to one address for
+   * one price. Claremont charging R35 to a suburb Wynberg charges R50 for is
+   * the normal case; quoting from head office's zone list would undercharge or
+   * refuse half the branches.
+   */
+  const routing = await resolveStoreRouting(token, await rememberedBranch(token))
+  if (!routing) return { ok: false, error: 'This shop is no longer available.' }
 
-  const context = await storefrontContext(siteId)
+  const context = await storefrontContext(routing.catalogueSiteId, routing.branchSiteId)
   if (!context) return { ok: false, error: 'This shop is closed at the moment.' }
   if (!context.settings.deliverEnabled) {
     return { ok: false, error: "This shop isn't delivering at the moment." }
@@ -58,7 +65,7 @@ export async function quoteDeliveryAction(
   // The total is only used to decide free-delivery and minimum thresholds, and
   // it is recomputed from the catalogue when the order is actually placed.
   const quote = await quoteDeliveryFor(
-    siteId,
+    context.siteId,
     { suburb, postcode },
     Math.max(0, Number(goodsTotal) || 0),
   )
@@ -66,7 +73,11 @@ export async function quoteDeliveryAction(
   return {
     ok: true,
     fee: quote.fee,
-    reason: quote.reason,
+    // Named, so a shopper comparing branches can see WHOSE fee this is.
+    reason:
+      context.branchName !== context.storeName && quote.zone
+        ? `From ${context.branchName}: ${quote.reason}`
+        : quote.reason,
     deliverable: quote.zone !== null && !quote.belowMinimum,
   }
 }
@@ -292,8 +303,17 @@ export async function placeOrderAction(
   token: string,
   input: Omit<PublicOrderInput, 'lines'> & { lines: BasketLine[] },
 ): Promise<PlaceResult> {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return { ok: false, error: 'This shop is no longer available.' }
+  /*
+   * Routed, not merely verified. For a chain this resolves to TWO shops — head
+   * office's catalogue and the branch that will pack the order — and the branch
+   * is where every write below lands. A bare verifyPublicStoreToken here would
+   * price from the right shop and bill the wrong one.
+   */
+  const routing = await resolveStoreRouting(token, await rememberedBranch(token))
+  if (!routing) return { ok: false, error: 'This shop is no longer available.' }
+  const context = await storefrontContext(routing.catalogueSiteId, routing.branchSiteId)
+  if (!context) return { ok: false, error: "This store isn't taking online orders." }
+  const siteId = context.siteId
 
   // Only ids and quantities are carried across. Anything else the basket
   // claimed — a price, a description — is dropped here rather than trusted to
@@ -314,7 +334,7 @@ export async function placeOrderAction(
    */
   const session = await getCustomerSession(siteId)
 
-  const result = await placePublicOrder(siteId, {
+  const result = await placePublicOrder(context, {
     ...input,
     lines,
     customerId: session?.customerId ?? null,
@@ -323,8 +343,6 @@ export async function placeOrderAction(
     payOnAccount: input.payOnAccount === true,
   })
   if (!result.ok) return result
-
-  const context = await storefrontContext(siteId)
 
   /*
    * An account order NEVER goes to the gateway, even at a pay-online shop.

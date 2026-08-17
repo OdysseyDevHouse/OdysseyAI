@@ -14,7 +14,7 @@ import { accountCanCover, customerAccount } from './customerAuth'
 import { validateCode, redeemCode } from './discountCodes'
 import { placeHolds, heldQtyFor } from './stockHolds'
 import { soldOutToday, tradingRules } from './branchTrading'
-import { openState } from '../tradingHours'
+import { isOfferedSlot, openState } from '../tradingHours'
 import {
   branchProductsByCode,
   missingAtBranchMessage,
@@ -1332,6 +1332,16 @@ export type PublicOrderInput = {
    * the shared engine deliberately leaves it to the staff-mediated till.
    */
   voucherCode?: string
+  /**
+   * The collection time the shopper picked, as an ISO string. '' or absent
+   * means as soon as possible.
+   *
+   * A REQUEST, like every other field here. The shop's real slots are
+   * re-derived from its trading hours when the order arrives and a time that is
+   * no longer offered is refused — a stale tab whose shop has since closed
+   * early must not book a slot the kitchen never had.
+   */
+  requestedFor?: string
 }
 
 export type PlaceOrderResult =
@@ -1428,7 +1438,8 @@ export async function placePublicOrder(
    * either — see tradingHours.
    */
   const trading = await tradingRules(siteId)
-  const nowState = openState(trading, new Date())
+  const placedAt = new Date()
+  const nowState = openState(trading, placedAt)
   if (nowState.state === 'paused') {
     return {
       ok: false,
@@ -1436,6 +1447,33 @@ export async function placePublicOrder(
         ? `${context.branchName} isn't taking orders right now — ${nowState.note}`
         : `${context.branchName} isn't taking orders at the moment.`,
     }
+  }
+
+  /*
+   * The collection time, re-derived rather than trusted.
+   *
+   * The browser was handed a list of slots when the page rendered; this decides
+   * whether the one it sends back is still real. A tab left open through the
+   * shop closing early, or a payload naming any time at all, is refused here —
+   * the same posture as the delivery fee, which is also never taken from the
+   * browser.
+   *
+   * An empty value is "as soon as possible" and is always fine.
+   */
+  let requestedFor: Date | null = null
+  const wanted = (input.requestedFor ?? '').trim()
+  if (wanted) {
+    const at = new Date(wanted)
+    if (Number.isNaN(at.getTime())) {
+      return { ok: false, error: 'Please choose a collection time.' }
+    }
+    if (!isOfferedSlot(trading, at, placedAt)) {
+      return {
+        ok: false,
+        error: `${context.branchName} can no longer do that time. Please pick another.`,
+      }
+    }
+    requestedFor = at
   }
 
   // Price from the CATALOGUE. Anything the basket claimed is discarded, and a
@@ -1780,8 +1818,8 @@ export async function placePublicOrder(
             delivery_line1, delivery_line2, delivery_suburb, delivery_postcode, delivery_notes,
             delivery_fee_incl, zone_id, total_incl, customer_note,
             customer_id, pay_on_account,
-            discount_code_id, discount_code, discount_incl, voucher_code)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            discount_code_id, discount_code, discount_incl, voucher_code, requested_for)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           orderNumber,
           startStatus.id,
@@ -1811,6 +1849,12 @@ export async function placePublicOrder(
           discountApplied?.code ?? '',
           discountIncl.toFixed(4),
           voucherCode,
+          /*
+           * NULL is "as soon as possible", which is what this column has always
+           * meant and what every order placed before slots existed carries.
+           * Written as a Date; the pool's timezone handling does the rest.
+           */
+          requestedFor,
         ],
       )
 
