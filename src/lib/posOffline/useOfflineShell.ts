@@ -36,7 +36,28 @@ export type OfflineShellState = {
   updateWaiting: boolean
 }
 
-export function useOfflineShell(enabled = true): OfflineShellState {
+/**
+ * Which shell to register.
+ *
+ * ── WHY THIS IS A PARAMETER RATHER THAN A SECOND HOOK ─────────────────────
+ *
+ * The invoicing window needs exactly this, scoped to /invoicing instead of
+ * /pos. Everything above — the secure-context check, the reason strings, the
+ * race against `ready` that stopped the till reporting "Online only" while
+ * offline worked perfectly — applies unchanged, and a copy would be 140 lines
+ * of subtle reasoning maintained in two places until the day they disagreed.
+ *
+ * The DEFAULT is the till's, so every existing caller is untouched.
+ */
+export type ShellTarget = { script: string; scope: string }
+
+export const POS_SHELL: ShellTarget = { script: '/pos-sw.js', scope: '/pos' }
+export const INVOICING_SHELL: ShellTarget = {
+  script: '/invoicing-sw.js',
+  scope: '/invoicing',
+}
+
+export function useOfflineShell(enabled = true, target: ShellTarget = POS_SHELL): OfflineShellState {
   const [state, setState] = useState<OfflineShellState>({
     ready: false,
     reason: null,
@@ -55,7 +76,10 @@ export function useOfflineShell(enabled = true): OfflineShellState {
         ready: false,
         // Named precisely, because the fix is a deployment change and somebody has
         // to know which one.
-        reason: 'Offline needs HTTPS or localhost. This till is on plain HTTP.',
+        /* "This machine", not "this till" — the invoicing window registers
+           through here too, and a counter told their TILL is on plain HTTP
+           would go looking at the wrong screen. */
+        reason: 'Offline needs HTTPS or localhost. This machine is on plain HTTP.',
         updateWaiting: false,
       })
       return
@@ -64,9 +88,11 @@ export function useOfflineShell(enabled = true): OfflineShellState {
     let cancelled = false
 
     navigator.serviceWorker
-      // Scoped to /pos so it never intercepts the back office. Registering at the
-      // root would put a cache in front of every screen in the app.
-      .register('/pos-sw.js', { scope: '/pos' })
+      /* SCOPED, so it never intercepts the back office. Registering at the root
+         would put a cache in front of every screen in the app — and the till and
+         the invoicing window each own their own scope, so neither can serve the
+         other's shell. */
+      .register(target.script, { scope: target.scope })
       .then(async (registration) => {
         if (cancelled) return
 
@@ -112,7 +138,7 @@ export function useOfflineShell(enabled = true): OfflineShellState {
     return () => {
       cancelled = true
     }
-  }, [enabled])
+  }, [enabled, target.script, target.scope])
 
   return state
 }

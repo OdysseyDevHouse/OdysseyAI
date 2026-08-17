@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { Button, CategoryTile, Icons, TouchRow, type CategoryTone } from '@/components/ui'
+import { useOfflineShell, INVOICING_SHELL } from '@/lib/posOffline/useOfflineShell'
 
 /**
  * The four screens this window holds, in the order a counter reaches for them.
@@ -95,6 +96,39 @@ export default function InvoicingChrome({
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
 
+  /*
+   * THE OFFLINE SHELL, registered here because this component wraps every
+   * screen in the window and is the only thing guaranteed to mount on all of
+   * them.
+   *
+   * Without it, cutting the line and moving between screens dropped the
+   * operator onto the browser's own error page — the application gone, and with
+   * it any suggestion of what had happened. See public/invoicing-sw.js.
+   */
+  const shell = useOfflineShell(true, INVOICING_SHELL)
+
+  /*
+   * WHETHER THE LINE IS UP.
+   *
+   * `navigator.onLine` is a weak signal — it means an interface is up, not that
+   * the server answers — but it is the honest one to show a counter, and it is
+   * what the till's own chip falls back to. Watched here rather than assumed,
+   * because the whole point of this window is that somebody standing at it
+   * knows whether their work is reaching the server.
+   */
+  const [online, setOnline] = useState(true)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const report = () => setOnline(navigator.onLine)
+    report()
+    window.addEventListener('online', report)
+    window.addEventListener('offline', report)
+    return () => {
+      window.removeEventListener('online', report)
+      window.removeEventListener('offline', report)
+    }
+  }, [])
+
   /* Escape closes it, as everywhere else in the product. A panel whose only exit
      is a precise tap on the backdrop is one somebody gets stuck in. */
   useEffect(() => {
@@ -162,6 +196,41 @@ export default function InvoicingChrome({
         </span>
 
         <span className="ml-auto flex items-center gap-2.5">
+          {/*
+            THE CONNECTION, stated rather than left to be discovered.
+
+            Shown only when it is WRONG — a green "Online" chip on every screen
+            all day is a chip nobody reads, and the one moment it matters is the
+            moment it changes. Two different problems, two different chips:
+
+              Offline      the line is down right now
+              Online only  this machine cannot work offline AT ALL (no HTTPS,
+                           no service worker) — a deployment fact somebody has
+                           to fix, and one worth knowing BEFORE the line drops
+                           rather than at the counter with a customer waiting
+
+            The till's status bar makes the same distinction, and conflating
+            them once cost a run of this session's verifier.
+          */}
+          {!online && (
+            <span
+              data-kit-ok
+              className="flex h-control items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3 text-[13px] font-medium text-warning-ink"
+            >
+              <Icons.Offline size={16} />
+              Offline
+            </span>
+          )}
+          {online && shell.reason && (
+            <span
+              data-kit-ok
+              title={shell.reason}
+              className="flex h-control items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-muted"
+            >
+              <Icons.Offline size={16} />
+              Online only
+            </span>
+          )}
           <span className="hidden text-[13px] text-muted sm:inline">{siteName}</span>
           {/* The one way out, named rather than drawn. An operator who opened
               this window from the back office still has that window; this is

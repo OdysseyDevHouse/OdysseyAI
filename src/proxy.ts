@@ -280,10 +280,12 @@ export const config = {
   matcher: [
     // Everything except Next internals, the health probe the Electron shell
     // waits on, and static files.
-    /* `pos-sw.js` and `pos-manifest.json` are excluded because a service-worker
-       SCRIPT that answers 307 does not register — and it fails SILENTLY. The till
-       would simply have no offline shell, with nothing in the UI to say why, and
-       the symptom would only appear the next time the network dropped. */
-    '/((?!_next/static|_next/image|favicon.ico|api/health|pos-sw\\.js|pos-manifest\\.json|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)',
+    /* The service-worker SCRIPTS and manifests are excluded because a worker
+       script that answers 307 does not register — and it fails SILENTLY. The
+       screen would simply have no offline shell, with nothing in the UI to say
+       why, and the symptom would only appear the next time the network dropped.
+       `invoicing-sw.js` is here for the same reason `pos-sw.js` is: the
+       invoicing window has its own shell, scoped to /invoicing. */
+    '/((?!_next/static|_next/image|favicon.ico|api/health|pos-sw\\.js|pos-manifest\\.json|invoicing-sw\\.js|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)',
   ],
 }
