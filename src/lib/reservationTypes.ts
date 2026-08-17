@@ -259,6 +259,17 @@ export type Reservation = {
   cancelReason: string
   seatedAt: string | null
   documentId: number | null
+  /**
+   * What the party at this table is spending, while they are still spending it.
+   *
+   * Null until a seated booking's table takes its first order, and null again
+   * once the bill is settled — a paid table is a party who has gone, and a
+   * figure beside them would read as money still on the floor. Only the queue
+   * uses it; nothing decides anything by it.
+   */
+  billTotal: number | null
+  /** The bill's number, once it has one. Null while it is an unposted draft. */
+  billNumber: string | null
   createdAt: string
   userName: string
 }

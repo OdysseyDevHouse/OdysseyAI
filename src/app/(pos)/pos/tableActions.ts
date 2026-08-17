@@ -10,6 +10,7 @@ import {
   type PosTable,
 } from '@/lib/site/posTables'
 import {
+  linkSeatedBookingToBill,
   listReservations,
   setReservationStatus,
   setReservationTable,
@@ -127,6 +128,23 @@ export async function openTableAction(
       error: `${seated.error} The order is safe in Saved sales.`,
     }
   }
+
+  /*
+   * If a booking is sitting at this table, point it at the bill.
+   *
+   * THIS is the moment: a booking is seated when the party walks in, but a bill
+   * only exists once they order, so the two facts arrive minutes apart and this
+   * is the later one. The queue can then show what the table is spending, which
+   * is what `setReservationStatus`'s docblock has promised since the feature
+   * shipped and nothing has ever delivered.
+   *
+   * Fail-soft and unawaited in spirit: a booking that could not be linked is a
+   * missing figure on a back-office list, and refusing a real sale to protect a
+   * cross-reference would be the wrong trade by a wide margin.
+   */
+  await linkSeatedBookingToBill(siteId, input.customerName?.trim() ?? '', draft.id).catch(
+    () => {},
+  )
 
   return { ok: true, documentId: draft.id, tables: await listTables(siteId) }
 }

@@ -20,6 +20,7 @@ import {
   useToast,
   type Column,
 } from '@/components/ui'
+import { formatMoney } from '@/lib/decimals'
 import {
   SOURCE_LABEL,
   STATUS_LABEL,
@@ -216,6 +217,27 @@ export default function ReservationsQueue({
           {STATUS_LABEL[r.status]}
         </Badge>
       ),
+    },
+    {
+      /*
+       * What the table is spending, for a party still eating.
+       *
+       * Blank for everyone else, and that is most rows: a booking still to
+       * arrive has no bill, and a settled one is a party who has gone — a
+       * figure beside either would be answering a question nobody asked.
+       */
+      key: 'bill',
+      header: 'Bill',
+      numeric: true,
+      width: 'w-28',
+      sortable: true,
+      sortValue: (r) => r.billTotal ?? -1,
+      cell: (r) =>
+        r.billTotal === null ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <span className="font-medium tabular-nums text-ink">{formatMoney(r.billTotal)}</span>
+        ),
     },
     {
       key: 'source',

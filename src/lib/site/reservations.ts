@@ -252,6 +252,12 @@ function mapRow(r: Row): Reservation {
     cancelReason: (r.cancel_reason as string) ?? '',
     seatedAt: wallClock(r.seated_at),
     documentId: r.document_id === null ? null : Number(r.document_id),
+    /* Only present on the list query, which joins the bill. getReservation reads
+       the row alone, so these are null there — and nothing that calls it wants a
+       running total. */
+    billTotal:
+      r.bill_total === null || r.bill_total === undefined ? null : Number(r.bill_total),
+    billNumber: (r.bill_number as string | null) ?? null,
     createdAt: wallClock(r.created_at) ?? '',
     userName: (r.user_name as string) ?? '',
   }
@@ -264,6 +270,54 @@ export async function getReservation(
 ): Promise<Reservation | null> {
   const row = await siteQueryOne<Row>(siteId, 'SELECT * FROM reservations WHERE id = ?', [id])
   return row ? mapRow(row) : null
+}
+
+/**
+ * Points a seated booking at the bill its party is running up.
+ *
+ * ── WHY THIS IS FOUND BY TABLE AND NOT PASSED BY THE CALLER ───────────────
+ *
+ * The till does not know which booking it is serving. A waiter seats the
+ * Naidoo party on T01 from the gate, walks away, comes back when they have
+ * chosen, and rings up a round — and that last act is the first time a bill
+ * exists. Nothing in the basket remembers a booking, and threading one through
+ * the whole till so it could be handed back here would be a lot of plumbing to
+ * carry a fact the table already implies.
+ *
+ * So the booking is found the way a human would find it: the party sitting at
+ * this table, right now.
+ *
+ * ── AND WHY IT NEVER FAILS LOUDLY ─────────────────────────────────────────
+ *
+ * Returns quietly when there is no seated booking on that table, which is the
+ * ORDINARY case — a walk-in, a shop that takes no bookings, a party seated
+ * before this existed. The caller opens tables for a living and must not have a
+ * sale refused because a booking lookup found nothing to link.
+ */
+export async function linkSeatedBookingToBill(
+  siteId: number,
+  tableName: string,
+  documentId: number,
+): Promise<void> {
+  const name = tableName.trim()
+  if (!name || !documentId) return
+
+  /* The most recently seated one, and only if it has no bill yet. A table that
+     turns twice in an evening has two seated bookings against it in the day's
+     book, and the party sitting there now is the later one — while a booking
+     that already points at a document is a party whose bill was linked and then
+     settled, which this must not steal. */
+  await siteExecute(
+    siteId,
+    `UPDATE reservations
+        SET document_id = ?
+      WHERE table_name = ?
+        AND status = 'seated'
+        AND document_id IS NULL
+      ORDER BY seated_at DESC
+      LIMIT 1`,
+    [documentId, name],
+  )
 }
 
 export type ReservationListFilter = {
@@ -291,20 +345,23 @@ export async function listReservations(
   const where: string[] = []
   const params: unknown[] = []
 
+  /* Qualified with `r.` throughout, because the query below joins the bill and
+     `status` exists on both tables. An unqualified one would be ambiguous — and
+     worse, could silently start filtering on the wrong table's column. */
   if (filter.fromDate) {
-    where.push('reserved_for >= ?')
+    where.push('r.reserved_for >= ?')
     params.push(`${filter.fromDate} 00:00:00`)
   }
   if (filter.toDate) {
-    where.push('reserved_for <= ?')
+    where.push('r.reserved_for <= ?')
     params.push(`${filter.toDate} 23:59:59`)
   }
   if (filter.statuses?.length) {
-    where.push(`status IN (${filter.statuses.map(() => '?').join(', ')})`)
+    where.push(`r.status IN (${filter.statuses.map(() => '?').join(', ')})`)
     params.push(...filter.statuses)
   }
   if (filter.search?.trim()) {
-    where.push('(contact_name LIKE ? OR contact_phone LIKE ? OR reference LIKE ?)')
+    where.push('(r.contact_name LIKE ? OR r.contact_phone LIKE ? OR r.reference LIKE ?)')
     const like = `%${filter.search.trim()}%`
     params.push(like, like, like)
   }
@@ -312,11 +369,29 @@ export async function listReservations(
   // Interpolated, not bound: LIMIT is one of the placeholders mysql2 refuses in
   // a prepared statement, so it is clamped to a number instead.
   const limit = clamp(filter.limit ?? 500, 1, 1000, 500)
+  /*
+   * The bill comes with the booking, where there is one.
+   *
+   * A LEFT JOIN rather than a second query per row: a busy Saturday's book is
+   * hundreds of rows and asking the database once per party for a total nobody
+   * may look at is how a list screen becomes slow.
+   *
+   * Only what is UNPAID shows a running figure. A finalised bill is a party who
+   * has settled and gone, and "R840" beside them would read as money still on
+   * the table — so the join narrows to the statuses that mean "still eating",
+   * and a settled booking simply carries its number without a total.
+   */
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT * FROM reservations
+    `SELECT r.*,
+            d.document_number AS bill_number,
+            CASE WHEN d.status IN ('draft', 'saved') THEN d.total_incl ELSE NULL END
+              AS bill_total,
+            d.status AS bill_status
+       FROM reservations r
+       LEFT JOIN sales_documents d ON d.id = r.document_id
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY reserved_for ASC, id ASC
+      ORDER BY r.reserved_for ASC, r.id ASC
       LIMIT ${limit}`,
     params,
   )
@@ -444,6 +519,8 @@ export async function submitReservation(
         cancelReason: '',
         seatedAt: null,
         documentId: null,
+        billTotal: null,
+        billNumber: null,
         createdAt: '',
         userName: '',
       },
