@@ -152,19 +152,41 @@ async function noteContact(siteId, serial, patch = {}) {
 
 // ── The HTTP surface ────────────────────────────────────────────────────────
 
+/**
+ * The path, with any reverse-proxy prefix removed.
+ *
+ * In production this sits behind nginx at a location like `/replica/`, so a
+ * request the shop sent to `/replica/backup/...` arrives here still carrying
+ * that prefix. Matching on the bare path would then 404 everything in
+ * production while passing every test — the worst shape of bug, because it only
+ * appears once it is deployed.
+ *
+ * Rather than requiring nginx to rewrite (which is easy to forget, and silent
+ * when forgotten), the suffix is what matters: find where the part we own
+ * begins and ignore whatever routed the request to us.
+ */
+function ownPath(pathname) {
+  for (const known of ['/backup/', '/health']) {
+    const at = pathname.indexOf(known)
+    if (at >= 0) return pathname.slice(at)
+  }
+  return pathname
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+  const pathname = ownPath(url.pathname)
 
   /* Unauthenticated on purpose, like the app's own /api/health: a load
      balancer must be able to ask, and the answer names nothing. */
-  if (url.pathname === '/health') {
+  if (pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ ok: true, tunnels: tunnels.size }))
     return
   }
 
-  if (req.method === 'PUT' && url.pathname.startsWith('/backup/')) {
-    await receiveBackup(req, res, url)
+  if (req.method === 'PUT' && pathname.startsWith('/backup/')) {
+    await receiveBackup(req, res, pathname)
     return
   }
 
@@ -182,7 +204,7 @@ const server = createServer(async (req, res) => {
  * tested — PUT /backup/{folder}/{file}, bearer token, x-odyssey-sha256 of the
  * PLAINTEXT, and envelope.json last. This must not deviate from it.
  */
-async function receiveBackup(req, res, url) {
+async function receiveBackup(req, res, pathname) {
   const who = await authenticate(req.headers)
   if (!who) {
     res.writeHead(401, { 'content-type': 'application/json' })
@@ -190,7 +212,7 @@ async function receiveBackup(req, res, url) {
     return
   }
 
-  const parts = url.pathname.split('/').filter(Boolean) // ['backup', folder, file]
+  const parts = pathname.split('/').filter(Boolean) // ['backup', folder, file]
   if (parts.length !== 3) {
     res.writeHead(400, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ error: 'Expected /backup/{folder}/{file}' }))

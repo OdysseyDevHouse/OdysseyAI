@@ -321,6 +321,64 @@ well-specified protocol is the smaller thing to own. It is verified against
 Node's own conformant client, including 2MB across many TCP reads and 400
 coalesced frames — the case a naive parser passes small and corrupts under load.
 
+### Nothing needs port 3306 open to the internet
+
+Worth stating plainly, because the obvious reading of "replication" implies the
+opposite and the answer decides whether any of this is possible.
+
+Classic MySQL replication has the replica dial the master on 3306. That would
+need the shop's database reachable from the internet, which it is not and must
+never be — and it would need our own 3306 open, which it also is not.
+
+This does neither:
+
+```
+Hardware store PC                        Cloud server
+─────────────────                        ────────────
+MariaDB :33xxx                           replicaHost  (HTTPS/WSS, behind nginx)
+   ↑ 127.0.0.1 only                           ↓ localhost / private network
+   └── tunnel client ──► outbound HTTPS ─────►└── MariaDB :3306
+```
+
+The shop **dials out** over ordinary HTTPS, which every domestic router permits
+— no port forwarding, no static address, and CGNAT is not a problem. On our
+side `replicaHost` reaches MariaDB over localhost or the private network,
+exactly as the Next app already does. **3306 stays firewalled from the internet
+at both ends.**
+
+So it *is* a web service, in the only sense that matters: everything crossing
+the internet is HTTPS on 443, indistinguishable from other web traffic. What it
+is not is a service that parses rows and re-writes them with SQL — it forwards
+opaque bytes, which is why it needs no per-table code and why deletes come
+across correctly.
+
+### nginx must pass the upgrade through
+
+Two lines, and without them the tunnel fails with a confusing `400`:
+
+```nginx
+location /replica/ {
+    proxy_pass http://127.0.0.1:4200;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+
+    # nginx defaults to 60s. Replication idles between writes, so a quiet shop
+    # overnight would have its tunnel dropped every minute and redialled.
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+
+    # The nightly archive is hundreds of megabytes and is streamed, so nginx
+    # must not try to buffer it to a temporary file first.
+    proxy_request_buffering off;
+    client_max_body_size 0;
+}
+```
+
+Then set `ODYSSEY_REPLICATION_URL` on the shop's machine to
+`wss://your-host/replica/` and `BACKUP_PUSH_URL` to
+`https://your-host/replica/backup`.
+
 ### Provisioning a replica
 
 ```

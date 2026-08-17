@@ -54,16 +54,29 @@ function authenticate(headers) {
   return { siteId, serial }
 }
 
+/* Kept identical to replicaHost.mjs — see the note there. In production this
+   sits behind nginx at a location like /replica/, so the prefix arrives with
+   the request and matching on the bare path would 404 everything in production
+   while passing every test here. */
+function ownPath(pathname) {
+  for (const known of ['/backup/', '/health']) {
+    const at = pathname.indexOf(known)
+    if (at >= 0) return pathname.slice(at)
+  }
+  return pathname
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost')
+  const pathname = ownPath(url.pathname)
 
-  if (url.pathname === '/health') {
+  if (pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ ok: true, tunnels: 0 }))
     return
   }
 
-  if (req.method !== 'PUT' || !url.pathname.startsWith('/backup/')) {
+  if (req.method !== 'PUT' || !pathname.startsWith('/backup/')) {
     res.writeHead(404, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ error: 'Not found' }))
     return
@@ -76,7 +89,7 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  const parts = url.pathname.split('/').filter(Boolean)
+  const parts = pathname.split('/').filter(Boolean)
   if (parts.length !== 3) {
     res.writeHead(400, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ error: 'Expected /backup/{folder}/{file}' }))
@@ -229,10 +242,45 @@ console.log('\nSites cannot reach each other')
   check('and site 8 has no directory at all', !existsSync(path.join(ARCHIVE_DIR, '8')))
 }
 
+console.log('\nBehind a reverse proxy, which is how it actually runs')
+{
+  /* nginx at `location /replica/` passes the prefix through. Matching on the
+     bare path would 404 every request in production while every other test
+     here still passed — the worst shape of bug, because it only appears once
+     it is deployed. */
+  const res = await fetch(`${base}/replica/backup/2026-08-18T0200/site-7.sql.gz.enc`, {
+    method: 'PUT',
+    headers: goodHeaders,
+    body: 'proxied',
+  })
+  check('a prefixed upload is accepted', res.status === 200)
+  check(
+    'and lands in the same place as an unprefixed one',
+    existsSync(path.join(ARCHIVE_DIR, String(SITE), SERIAL, '2026-08-18T0200', 'site-7.sql.gz.enc')),
+  )
+  check(
+    'the prefix does not become part of the stored path',
+    !existsSync(path.join(ARCHIVE_DIR, String(SITE), SERIAL, 'replica')),
+  )
+
+  const health = await fetch(`${base}/replica/health`)
+  check('health answers through the proxy too', health.status === 200)
+
+  /* A deeper mount, because /replica/ is a convention rather than a rule. */
+  const deep = await fetch(`${base}/services/odyssey/replica/backup/2026-08-18T0200/x.enc`, {
+    method: 'PUT',
+    headers: goodHeaders,
+    body: 'deep',
+  })
+  check('any mount point works', deep.status === 200)
+}
+
 console.log('\nUnknown routes say nothing useful')
 {
   const res = await fetch(`${base}/admin`, { method: 'GET' })
   check('a stray GET is a plain 404', res.status === 404)
+  const traversalish = await fetch(`${base}/backup/`, { method: 'PUT', headers: goodHeaders, body: 'x' })
+  check('a bare /backup/ is refused', traversalish.status === 400)
 }
 
 server.close()
