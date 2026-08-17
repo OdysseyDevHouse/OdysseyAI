@@ -35,6 +35,7 @@ import TradeEntryPane from './TradeEntryPane'
 import ModuleMenu, {
   MODULE_DOC_TYPES,
   MODULE_PHRASES,
+  LIST_ONLY_MODULES,
   moduleForDocType,
   type TillModule,
 } from './ModuleMenu'
@@ -107,6 +108,8 @@ import { QuotesModal } from './QuotesModal'
 import { recallQuoteForTillAction, type TillQuote } from './quoteActions'
 import { OrdersModal } from './OrdersModal'
 import { collectOrderForTillAction, type TillOrder } from './orderActions'
+import { LaybysModal } from './LaybysModal'
+import { takeLaybyPaymentAction, collectLaybyAction, type TillLayby } from './laybyActions'
 import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
@@ -635,6 +638,15 @@ export default function PosShell({
   const [showingQuotes, setShowingQuotes] = useState(false)
   /** Orders waiting to be collected. Opened from the order module's own key. */
   const [showingTillOrders, setShowingTillOrders] = useState(false)
+  /**
+   * The shop's lay-bys.
+   *
+   * Opened straight from the MODULE MENU, unlike quotes and orders which live
+   * on the recall key. Those two are "find an existing one of what I am
+   * writing"; a lay-by is not something the basket can be, so there is no
+   * module to be in and no key of its own to put it on.
+   */
+  const [showingLaybys, setShowingLaybys] = useState(false)
   const [sizingTiles, setSizingTiles] = useState(false)
   /** The floor's quick-key dialog. The gate has no pane to draw them in. */
   const [showingTableKeys, setShowingTableKeys] = useState(false)
@@ -2976,6 +2988,70 @@ export default function PosShell({
   }
 
   /**
+   * Taking an instalment against a lay-by.
+   *
+   * ── NO BASKET GUARD, AND THAT IS THE POINT ────────────────────────────────
+   *
+   * Every other list on this till refuses over a basket, because pulling a
+   * document onto the screen would collide with what is already there. This one
+   * touches no basket at all: the money goes to `layby_payments` and the drawer,
+   * and the half-rung sale behind the dialog is still exactly as it was. A
+   * cashier interrupted mid-sale by somebody paying off their lay-by is an
+   * ordinary counter moment, not a conflict.
+   *
+   * ── AND IT DOES NOT COMPLETE ──────────────────────────────────────────────
+   *
+   * Even when the last instalment clears the balance. Paying up and collecting
+   * are days apart as often as not, and invoicing goods still on the shelf is
+   * the one mistake this flow could make that a customer would notice.
+   */
+  function payLayby(
+    layby: TillLayby,
+    input: { amount: number; tenderTypeId: number; reference: string | null },
+  ) {
+    startTransition(async () => {
+      const result = await takeLaybyPaymentAction(layby.id, {
+        ...input,
+        terminalId: terminal?.id ?? null,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setShowingLaybys(false)
+      toast.success(
+        result.settled
+          ? `${result.laybyNumber ?? 'That lay-by'} is paid up. Hand the goods over when they collect.`
+          : `${formatMoney(result.outstanding)} still to pay on ${result.laybyNumber ?? 'that lay-by'}.`,
+      )
+      /* The drawer has moved, and the till's own chrome reads from the shift —
+         see the cash-up work on why lay-by money is part of the expected cash. */
+      router.refresh()
+    })
+  }
+
+  /**
+   * Handing lay-by goods over — the moment it becomes a sale.
+   *
+   * The invoice is raised, the VAT is declared and the stock moves, all through
+   * the ordinary finalise path. Nothing lands on the basket: the sale is
+   * complete when this returns, so putting it on screen would invite a cashier
+   * to take payment for something already paid for.
+   */
+  function collectLayby(layby: TillLayby) {
+    startTransition(async () => {
+      const result = await collectLaybyAction(layby.id)
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setShowingLaybys(false)
+      toast.success(`${result.documentNumber} raised. The goods are the customer's.`)
+      router.refresh()
+    })
+  }
+
+  /**
    * Reversing the sale just taken.
    *
    * Stock goes back, the payment is reversed, and the document keeps its number as
@@ -3580,6 +3656,18 @@ export default function PosShell({
    */
   const pickModule = useCallback(
     (module: TillModule) => {
+      /*
+       * A LIST-ONLY MODULE CHANGES NOTHING. Lay-bys are not a kind of document
+       * the basket can be — they live in their own table — so picking that row
+       * opens the list and leaves whatever is on screen exactly where it is.
+       * Routing it through SET_DOC_TYPE would clear a half-rung sale to show a
+       * list and then hand back an identical empty till.
+       */
+      if (LIST_ONLY_MODULES.includes(module)) {
+        if (module === 'laybys') setShowingLaybys(true)
+        return
+      }
+
       const next = MODULE_DOC_TYPES[module]
       if (next === state.docType) return
       if (state.lines.length > 0) {
@@ -4340,8 +4428,8 @@ export default function PosShell({
         current={moduleForDocType(state.docType)}
         /* Every module this build has. The list is filtered by what a shop has
            switched on the day there is a setting to switch; until then, showing
-           all three is honest — all three work. */
-        available={['sale', 'quotes', 'orders']}
+           all four is honest — all four work. */
+        available={['sale', 'quotes', 'orders', 'laybys']}
         onPick={pickModule}
         onClose={() => setShowingModules(false)}
       />
@@ -4353,6 +4441,16 @@ export default function PosShell({
         open={showingQuotes}
         onClose={() => setShowingQuotes(false)}
         onRecall={recallQuote}
+        busy={pending}
+      />
+
+      {/* The shop's lay-bys, from the module menu rather than a pane key —
+          a lay-by is not something the basket can be. */}
+      <LaybysModal
+        open={showingLaybys}
+        onClose={() => setShowingLaybys(false)}
+        onPay={payLayby}
+        onCollect={collectLayby}
         busy={pending}
       />
 

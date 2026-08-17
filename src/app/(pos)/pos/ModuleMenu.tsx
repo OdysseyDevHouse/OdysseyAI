@@ -18,7 +18,7 @@ import type { DraftDocType } from '@/lib/posOffline/draftOffline'
  * the first time anything set one without the other — a recovered draft, a
  * cleared return, an arrival from "New order".
  */
-export type TillModule = 'sale' | 'quotes' | 'orders'
+export type TillModule = 'sale' | 'quotes' | 'orders' | 'laybys'
 
 /**
  * The document each module writes.
@@ -26,12 +26,29 @@ export type TillModule = 'sale' | 'quotes' | 'orders'
  * A credit sale has no module of its own on purpose: returning is a MODE the
  * till drops into from the refund key and comes back out of, not a place a
  * cashier navigates to and stands in.
+ *
+ * LAY-BYS map to `invoice`, which looks wrong and is not. A lay-by is not a
+ * sales document at all — it lives in its own table with its own payments —
+ * and the till never builds one in the basket. Picking that module opens a
+ * LIST and leaves the basket alone, so the doc type here only says what the
+ * basket underneath goes on being: an ordinary sale, untouched.
  */
 export const MODULE_DOC_TYPES: Record<TillModule, DraftDocType> = {
   sale: 'invoice',
   quotes: 'quote',
   orders: 'sales_order',
+  laybys: 'invoice',
 }
+
+/**
+ * Modules that open a list instead of changing what the basket is.
+ *
+ * Every other module answers "what kind of document am I writing". Lay-bys
+ * answers "where is the customer's lay-by" — the basket is not involved, so
+ * picking it must not clear one. Without this the module menu would bin a
+ * half-rung sale to show a list and then hand back an identical empty till.
+ */
+export const LIST_ONLY_MODULES: readonly TillModule[] = ['laybys']
 
 /**
  * What to call a module in a sentence.
@@ -48,9 +65,21 @@ export const MODULE_PHRASES: Record<TillModule, string> = {
   sale: 'a sale',
   quotes: 'a quote',
   orders: 'an order',
+  /* Never actually used in the "start a…" question — lay-bys open a list and
+     leave the basket alone, so that question is never asked of them. Present
+     because the record must be total, and a missing key here would be a crash
+     rather than a wrong word. */
+  laybys: 'a lay-by',
 }
 
-/** The inverse, for reading the current module off the basket. */
+/**
+ * The inverse, for reading the current module off the basket.
+ *
+ * NEVER returns `laybys`, and cannot: that module shares the invoice doc type
+ * because it does not change the basket at all. The till is "on" lay-bys only
+ * while their list is open, which is a dialog rather than a mode — so the tick
+ * in the menu belongs to whatever the basket is underneath, which is the truth.
+ */
 export function moduleForDocType(docType: DraftDocType): TillModule {
   if (docType === 'quote') return 'quotes'
   if (docType === 'sales_order') return 'orders'
@@ -65,11 +94,11 @@ export function moduleForDocType(docType: DraftDocType): TillModule {
  * Ordered by how often a counter reaches for them, not alphabetically: selling
  * is what a till is FOR, and everything else is something you go and do.
  *
- * NO LAY-BYS HERE YET. They are built — in the back office — but the till
- * cannot take a payment against one until the cash-up counts that money, and
- * lay-by takings are currently shown on the declaration while being left out of
- * the expected cash they are counted against. A row here now would be a button
- * that opens nothing, which is the exact complaint that started this work.
+ * LAY-BYS WERE HELD BACK until the cash-up counted their money. They were built
+ * in the back office all along, but a till taking payments against one would
+ * have made every drawer read over by exactly them — the declaration showed
+ * lay-by takings while the expected cash excluded them. That is fixed, so the
+ * row is here.
  */
 export const MODULES: {
   key: TillModule
@@ -104,6 +133,13 @@ export const MODULES: {
     hint: 'Promised now, delivered later',
     icon: 'ListOrdered',
     tone: 'sky',
+  },
+  {
+    key: 'laybys',
+    label: 'Lay-bys',
+    hint: 'Take a payment or hand goods over',
+    icon: 'Package',
+    tone: 'amber',
   },
 ]
 

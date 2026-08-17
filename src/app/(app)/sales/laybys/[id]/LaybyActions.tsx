@@ -58,6 +58,22 @@ export default function LaybyActions({
   const [amount, setAmount] = useState(outstanding)
   const [tenderId, setTenderId] = useState<number | null>(tenders[0]?.id ?? null)
   const [reference, setReference] = useState('')
+
+  /**
+   * What settles a lay-by, as opposed to what PAYS an instalment.
+   *
+   * They are different questions and used to share one answer. Handing the
+   * goods over reused whatever was last chosen in the payment dialog —
+   * defaulted to the first active tender, which is Cash — so confirming it
+   * wrote a cash tender for the whole lay-by value on a day no cash arrived.
+   * The instalments are already in the drawer and already counted; that would
+   * have counted every rand of them a second time.
+   *
+   * A non-drawer tender is the honest record: the money was taken earlier.
+   * `completeLayby` refuses anything else, so this picks the same thing rather
+   * than sending somebody into a refusal.
+   */
+  const settlementTender = tenders.find((t) => !t.countsAsDrawerCash) ?? null
   const [reason, setReason] = useState('')
   const [waiver, setWaiver] = useState<FeeWaiverReason | ''>('')
   const [pending, startTransition] = useTransition()
@@ -89,9 +105,14 @@ export default function LaybyActions({
   }
 
   function complete() {
-    if (!tenderId) return
+    if (!settlementTender) {
+      toast.error(
+        'This shop has no non-cash payment method to settle against. Add one under Setup → Tenders.',
+      )
+      return
+    }
     startTransition(async () => {
-      const result = await completeLaybyAction(laybyId, tenderId)
+      const result = await completeLaybyAction(laybyId, settlementTender.id)
       if (!result.ok) {
         toast.error(result.error)
         return
@@ -226,7 +247,7 @@ export default function LaybyActions({
         confirmLabel="Invoice and release"
         tone="primary"
         busy={pending}
-        message="This is the moment it becomes a sale: an invoice is raised, the VAT is declared and the stock finally moves. Only do this once the customer has the goods in their hands."
+        message={`This is the moment it becomes a sale: an invoice is raised, the VAT is declared and the stock finally moves. It is recorded as "${settlementTender?.name ?? 'already paid'}" because the money was taken over the previous instalments, not today. Only do this once the customer has the goods in their hands.`}
       />
 
       <Modal
