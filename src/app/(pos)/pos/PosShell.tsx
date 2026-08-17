@@ -3874,10 +3874,24 @@ export default function PosShell({
         without anybody deciding to. Discarding is safe — nothing was posted.
       */}
       <ConfirmModal
-        open={recoverable !== null}
+        /*
+         * Not while a gate is up.
+         *
+         * A recovered draft is a COUNTER basket, and both gates stand in front
+         * of the sale screen for their own reasons — no shift open, or no table
+         * chosen yet. Asking about a basket there interrupts a waiter picking a
+         * table with a question about something else entirely, and worse, the
+         * answer restores a basket onto a screen that is not showing. It waits
+         * until there is a sale to restore it INTO.
+         */
+        open={recoverable !== null && !closedGate && !choosingTable}
         title="Pick up where the till left off?"
         confirmLabel="Restore it"
         cancelLabel="Start fresh"
+        /* PRIMARY, not the default danger. Restoring is the safe action here —
+           it is Start fresh that throws work away — and a red confirm button
+           tells a cashier the opposite of what is true. */
+        tone="primary"
         message={
           recoverable
             ? `This till was switched off with ${recoverable.itemCount} line${
