@@ -243,20 +243,33 @@ async function main() {
     survivor?.section ?? '',
   )
 
-  /* And the room's features went with it — a wall has no existence without its room, so
-     that FK cascades where the tables' does not. */
+  /*
+   * And the room's features went WITH it.
+   *
+   * This assertion used to expect them to survive, because retiring a room used
+   * to flag it inactive. It deletes now, and that was a fix rather than a
+   * preference: `uq_room_name` is a plain UNIQUE index that sees retired rows,
+   * so an inactive room kept its name reserved forever while every screen
+   * filtered it out — a manager who removed "Main" and tried to make a new one
+   * was told the name was taken, next to a page saying there were no rooms. See
+   * retireRoom for the full reasoning.
+   *
+   * A wall has no existence without its room, so `pos_floor_features` cascades
+   * where `pos_tables.room_id` deliberately does not — a table is a physical
+   * thing that may have a live bill on it.
+   */
   const orphanFeatures = await siteQueryOne<any>(
     SITE,
     'SELECT COUNT(*) AS n FROM pos_floor_features WHERE room_id = ?',
     [room.id],
   )
   ok(
-    'the room keeps its features while retired, since it is deactivated not deleted',
-    toNum(orphanFeatures?.n) === 2,
+    '*** retiring a room takes its features with it ***',
+    toNum(orphanFeatures?.n) === 0,
     String(orphanFeatures?.n),
   )
   ok(
-    '  but they no longer list, because the room is inactive',
+    '  so none of them list any more',
     (await listFeatures(SITE)).every((f) => f.roomId !== room.id),
   )
 

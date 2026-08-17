@@ -734,6 +734,82 @@ async function main() {
     await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id]).catch(() => null)
   }
 
+  /*
+   * ── AND THE PRODUCTS THIS RUN MADE ──────────────────────────────────────
+   *
+   * Every run of this test has left two behind since it was written, and they
+   * are not inert: reconcileStock is asserted by OTHER suites, so a "Split test
+   * beer" left in a state where its stock and its movements disagree fails
+   * test:credit-notes, which has never heard of it.
+   *
+   * ── WHAT ACTUALLY GOES WRONG, WHICH IS NOT WHAT IT LOOKS LIKE ───────────
+   *
+   * The products are created with stock_on_hand 500 and a matching `opening`
+   * movement, so on their own they reconcile perfectly. Drift appears when a
+   * run DIES PART-WAY: a sale moved the stock, the movement row never landed,
+   * and the pair are left disagreeing forever.
+   *
+   * So the sweep is not "delete the litter" — most of these cannot be deleted
+   * and should not be, because a finalised document and a real stock movement
+   * point at them, and removing the row would break a posted record to tidy up
+   * a test. It is "make stored agree with movements again", which is what
+   * reconcileStock is asking of every product in the shop.
+   */
+  const strays = await siteQuery<{ id: number; refs: number }>(
+    SITE,
+    `SELECT p.id,
+            (SELECT COUNT(*) FROM sales_document_lines l WHERE l.product_id = p.id)
+          + (SELECT COUNT(*) FROM stock_movements m WHERE m.product_id = p.id) AS refs
+       FROM products p
+      WHERE p.code LIKE 'SPB%' OR p.code LIKE 'SPS%'`,
+  )
+  let removed = 0
+  for (const p of strays) {
+    /* Unreferenced ones can simply go — nothing posted points at them. */
+    if (Number(p.refs) === 0) {
+      await siteExecute(SITE, 'DELETE FROM products WHERE id = ?', [p.id]).catch(() => null)
+      removed++
+    }
+  }
+  /* The rest keep their rows and get their arithmetic put right. */
+  const repaired = await siteExecute(
+    SITE,
+    `UPDATE products p
+        SET p.stock_on_hand = COALESCE(
+              (SELECT SUM(m.qty_change) FROM stock_movements m WHERE m.product_id = p.id), 0)
+      WHERE (p.code LIKE 'SPB%' OR p.code LIKE 'SPS%')
+        AND p.stock_on_hand <> COALESCE(
+              (SELECT SUM(m.qty_change) FROM stock_movements m WHERE m.product_id = p.id), 0)`,
+  )
+  if (removed || repaired.affectedRows) {
+    console.log(
+      `      (removed ${removed} unused product(s), repaired stock on ${repaired.affectedRows})`,
+    )
+  }
+
+  /*
+   * Proved, not assumed — and proved against the SAME sum reconcileStock uses.
+   *
+   * An earlier version of this check asserted stock_on_hand was zero, which
+   * passed while making the drift worse: zeroing a product whose movements say
+   * 500 simply moves the disagreement from +500 to −500.
+   */
+  const drifting = await siteQuery<{ code: string; stored: number; computed: number }>(
+    SITE,
+    `SELECT p.code, p.stock_on_hand AS stored,
+            COALESCE((SELECT SUM(m.qty_change) FROM stock_movements m WHERE m.product_id = p.id), 0)
+              AS computed
+       FROM products p
+      WHERE (p.code LIKE 'SPB%' OR p.code LIKE 'SPS%')
+        AND p.stock_on_hand <> COALESCE(
+              (SELECT SUM(m.qty_change) FROM stock_movements m WHERE m.product_id = p.id), 0)`,
+  )
+  ok(
+    '*** the test leaves no stock drift behind ***',
+    drifting.length === 0,
+    drifting.length ? JSON.stringify(drifting.slice(0, 3)) : '',
+  )
+
   console.log(fails === 0 ? '\nAll split checks passed.' : `\n${fails} FAILURE(S)`)
   process.exit(fails === 0 ? 0 : 1)
 }

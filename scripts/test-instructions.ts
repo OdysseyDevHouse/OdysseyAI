@@ -447,6 +447,88 @@ async function main() {
     await siteExecute(SITE, 'DELETE FROM products WHERE id = ?', [id]).catch(() => {})
   }
 
+  /*
+   * ── WHAT THE SWALLOWED DELETE LEFT BEHIND ───────────────────────────────
+   *
+   * Those deletes are allowed to fail, for the good reason stated above — and
+   * the failures were invisible, so nobody knew the SERIAL fixture had been
+   * surviving every run since this test was written.
+   *
+   * That one is not inert. It is a serial-tracked product carrying stock 10
+   * with no serial rows to account for it, which is precisely what
+   * `reconcileSerials` exists to catch — and reconcileSerials is asserted by
+   * test:void, a suite that has never heard of an instructions fixture and was
+   * failing on five of them.
+   *
+   * A serial product's stock IS its units: no units means no stock. Zeroing the
+   * count is not tidying the evidence away, it is the honest figure — and it
+   * costs nothing on a row that only exists because a test made it.
+   *
+   * ── AND IT IS THE PER-LOCATION PILE THAT MATTERS ─────────────────────────
+   *
+   * `reconcileSerials` compares `product_location_stock` against the units in
+   * that same room — NOT `products.stock_on_hand`. Zeroing the header figure
+   * looked like it worked and changed nothing the check reads, which is its own
+   * small lesson about fixing the number you can see rather than the one being
+   * asserted on.
+   */
+  const stranded = await siteQuery<{ id: number; code: string }>(
+    SITE,
+    `SELECT DISTINCT p.id, p.code
+       FROM products p
+       JOIN product_location_stock pls ON pls.product_id = p.id
+      WHERE p.code LIKE 'INS%'
+        AND p.product_type = 'serial'
+        AND pls.stock_on_hand <> 0
+        AND NOT EXISTS (
+              SELECT 1 FROM product_serials s
+               WHERE s.product_id = p.id AND s.status = 'in_stock')`,
+  )
+  for (const p of stranded) {
+    /*
+     * The MOVEMENTS go too, and they have to.
+     *
+     * Zeroing the piles alone flips the problem rather than fixing it:
+     * reconcileStock compares stored stock against the sum of movements, so a
+     * product left with a +10 opening movement and a zeroed pile drifts by −10
+     * instead of +10, and test:posting starts failing where test:void used to.
+     * Both were tried here, in that order.
+     *
+     * Removing them is safe for exactly these rows and no others: an INS serial
+     * fixture with no units has nothing posted against it — no sale, no GRV,
+     * nothing a person could look up — so its movement history describes stock
+     * that never really existed.
+     */
+    await siteExecute(SITE, `DELETE FROM stock_movements WHERE product_id = ?`, [p.id])
+    await siteExecute(SITE, `UPDATE product_location_stock SET stock_on_hand = 0 WHERE product_id = ?`, [p.id])
+    await siteExecute(SITE, `UPDATE products SET stock_on_hand = 0 WHERE id = ?`, [p.id])
+  }
+  if (stranded.length) {
+    console.log(`      (zeroed stock on ${stranded.length} serial fixture(s) with no units)`)
+  }
+
+  /* Proved against the SAME comparison reconcileSerials makes — the swallowed
+     delete above is the whole reason this needs checking rather than trusting,
+     and the first attempt asserted on the wrong table and passed while fixing
+     nothing. */
+  const left = await siteQuery<{ code: string }>(
+    SITE,
+    `SELECT DISTINCT p.code
+       FROM products p
+       JOIN product_location_stock pls ON pls.product_id = p.id
+      WHERE p.code LIKE 'INS%'
+        AND p.product_type = 'serial'
+        AND pls.stock_on_hand <> 0
+        AND NOT EXISTS (
+              SELECT 1 FROM product_serials s
+               WHERE s.product_id = p.id AND s.status = 'in_stock')`,
+  )
+  ok(
+    '*** no serial fixture is left claiming stock it has no units for ***',
+    left.length === 0,
+    left.length ? JSON.stringify(left.map((l) => l.code)) : '',
+  )
+
   console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAILURE(S)`)
   process.exit(fails === 0 ? 0 : 1)
 }
