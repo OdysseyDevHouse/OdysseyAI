@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Starting OdysseyAI</title>
+    <!--
+      The first thing a customer sees, and on a fresh local install it is on
+      screen for the best part of a minute while MariaDB initialises its data
+      directory and the migrations run.
+
+      Deliberately self-contained: no fonts, no images, no stylesheet. It loads
+      from disk before the Next server exists, so anything it referenced over
+      http would simply not resolve. The colour is the same #0f1216 the
+      BrowserWindow paints, so there is no flash between the two.
+
+      This is NOT part of the design system, and cannot be — the kit lives in
+      the app bundle that has not started yet. Kept to a shape that reads as
+      ours without pretending to be a real screen.
+    -->
+    <style>
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0f1216;
+        color: #e8ecf1;
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+        overflow: hidden;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 28px;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      .mark {
+        font-size: 30px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+      .mark span { opacity: 0.55; font-weight: 400; }
+      .bar {
+        width: 260px;
+        height: 3px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.10);
+        overflow: hidden;
+        position: relative;
+      }
+      /* An indeterminate sweep, not a percentage: the steps take wildly
+         different times on different machines and a progress bar that stalls
+         at 80% reads as broken. */
+      .bar::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        width: 40%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, transparent, #4f8ef7, transparent);
+        animation: sweep 1.5s ease-in-out infinite;
+      }
+      @keyframes sweep {
+        0%   { transform: translateX(-100%); }
+        100% { transform: translateX(250%); }
+      }
+      .status {
+        font-size: 13px;
+        color: rgba(232, 236, 241, 0.62);
+        min-height: 19px;
+        max-width: 420px;
+        line-height: 1.45;
+      }
+      .note {
+        position: absolute;
+        bottom: 22px;
+        font-size: 11.5px;
+        color: rgba(232, 236, 241, 0.34);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bar::after { animation-duration: 3s; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="mark">Odyssey<span>AI</span></div>
+      <div class="bar" role="progressbar" aria-label="Starting"></div>
+      <div class="status" id="status">Starting…</div>
+      <div class="note" id="note"></div>
+    </div>
+    <script>
+      // Called from the main process via executeJavaScript as each step runs.
+      // Guarded because a message can arrive before this script has parsed.
+      window.setStatus = function (message) {
+        var el = document.getElementById('status')
+        if (el) el.textContent = String(message || '')
+        // First run does real work; say so, so nobody force-quits at 40 seconds.
+        var note = document.getElementById('note')
+        if (note && /prepar|initialis|initializ|migrat/i.test(String(message))) {
+          note.textContent = 'Setting up for the first time. This only happens once.'
+        }
+      }
+    </script>
+  </body>
+</html>

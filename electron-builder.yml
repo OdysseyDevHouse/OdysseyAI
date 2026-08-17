@@ -23,6 +23,19 @@ extraResources:
     to: app/package.json
   - from: next.config.mjs
     to: app/next.config.mjs
+  # The shop's own database server, for a LOCAL-backend install.
+  #
+  # electron-builder skips a `from` that does not exist, so a cloud-only build
+  # simply needs nothing in vendor/ — there is no `optional` flag in a FileSet
+  # (the schema rejects unknown keys) and none is needed. A local build that
+  # somehow shipped without it reports a clear error at startup rather than
+  # crashing: see localDb.isBundled().
+  #
+  # Populate vendor/mariadb from the official portable ZIP — see
+  # docs/local-backend.md. Deliberately NOT committed: ~200MB of third-party
+  # binaries with their own release cadence.
+  - from: vendor/mariadb
+    to: mariadb
 
 win:
   target:
