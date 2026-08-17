@@ -13,6 +13,13 @@ import {
   Icons,
   SettingRow,
 } from '@/components/ui'
+import LocalBackendPanel, { type LocalBackendPanelProps } from './LocalBackendPanel'
+import {
+  localBackendStatus,
+  listCredentialReveals,
+  overallVerdict,
+} from '@/lib/licence/localBackendStatus'
+import { daysSinceCheck } from '@/lib/licence/leaseRules'
 
 /**
  * Site details and database health.
@@ -40,6 +47,65 @@ function purposeLabel(purpose: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
 
+/**
+ * Gather the local-backend picture, flattened for the client boundary.
+ *
+ * Dates become ISO strings here rather than in the panel: a Date does not
+ * survive the server/client boundary intact, and the alternative — passing
+ * numbers and formatting them in three places — is how two screens end up
+ * disagreeing about what "last seen" means.
+ *
+ * Returns null for a cloud site, which is most of them, so the panel is not
+ * rendered at all rather than rendered empty.
+ */
+async function buildLocalBackendView(siteId: number): Promise<LocalBackendPanelProps | null> {
+  const status = await localBackendStatus(siteId)
+  if (status.machines.length === 0 && !status.replica) return null
+
+  const reveals = await listCredentialReveals(siteId)
+  const iso = (d: Date | null) => (d ? d.toISOString() : null)
+
+  return {
+    verdict: overallVerdict(status),
+    machines: status.machines.map((m) => ({
+      deviceSerial: m.deviceSerial,
+      dbPort: m.dbPort,
+      dbName: m.dbName,
+      escrowedAt: iso(m.escrowedAt),
+      lastSeenAt: iso(m.lastSeenAt),
+      hasEscrowedPassword: m.hasEscrowedPassword,
+      hasUnlockSecret: m.hasUnlockSecret,
+      unlockCount: m.unlockCount,
+      lastUnlockAt: iso(m.lastUnlockAt),
+    })),
+    lease: status.lease
+      ? {
+          licenceStatus: status.lease.licenceStatus,
+          checkedAt: iso(status.lease.checkedAt),
+          expiresAt: iso(status.lease.expiresAt),
+          daysSilent: daysSinceCheck(status.lease),
+          unlockCounter: status.lease.unlockCounter,
+        }
+      : null,
+    replica: status.replica
+      ? {
+          status: status.replica.status,
+          secondsBehind: status.replica.secondsBehind,
+          lastContactAt: iso(status.replica.lastContactAt),
+          lastError: status.replica.lastError,
+          databaseName: status.replica.databaseName,
+        }
+      : null,
+    reveals: reveals.map((r) => ({
+      deviceSerial: r.deviceSerial,
+      credential: r.credential,
+      revealedByName: r.revealedByName,
+      reason: r.reason,
+      createdAt: iso(r.createdAt),
+    })),
+  }
+}
+
 export default async function SiteDatabasesPage() {
   // Server hostnames, database names and usernames are on this page — worth a
   // stronger gate than "has a session".
@@ -53,6 +119,12 @@ export default async function SiteDatabasesPage() {
 
   const databases = await listSiteDatabases(site.id)
   const probes = await Promise.all(databases.map((d) => probeSiteDatabase(site.id, d.purpose)))
+
+  /* Only a shop that keeps its own data has any of this. A cloud site reads
+     nothing here and renders nothing — localBackendStatus() answers "no
+     machines" from a single indexed query, so it costs one round trip to find
+     that out rather than a branch somebody has to maintain. */
+  const localBackend = await buildLocalBackendView(site.id)
 
   const details: [string, string | null][] = [
     ['Site code', site.code],
@@ -86,6 +158,16 @@ export default async function SiteDatabasesPage() {
           </div>
         }
       />
+
+      {/* ABOVE the two columns, and only for a shop that holds its own data.
+          It is the answer to "why can this shop not X", and a support call
+          starts there — the site details and the connection list are what
+          somebody reads next, not first. */}
+      {localBackend && (
+        <div className="px-6 pt-5">
+          <LocalBackendPanel {...localBackend} />
+        </div>
+      )}
 
       <PageBody className="lg:flex-row lg:items-start">
         <Card className="flex-1">

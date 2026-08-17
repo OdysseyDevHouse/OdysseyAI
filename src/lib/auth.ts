@@ -102,14 +102,38 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   const normalised = email.trim().toLowerCase()
   if (!normalised || !password) return generic
 
-  const user = await queryOne<UserRow>(
-    `SELECT id, email, password_hash, full_name, status, must_change_password,
-            failed_attempts, locked_until
-       FROM cp2_users
-      WHERE email = ?
-      LIMIT 1`,
-    [normalised],
-  )
+  let user: UserRow | null
+  try {
+    user = await queryOne<UserRow>(
+      `SELECT id, email, password_hash, full_name, status, must_change_password,
+              failed_attempts, locked_until
+         FROM cp2_users
+        WHERE email = ?
+        LIMIT 1`,
+      [normalised],
+    )
+  } catch (err) {
+    /*
+     * ── THE CONTROL DATABASE IS UNREACHABLE ────────────────────────────────
+     *
+     * On a cloud install this is fatal and should be: the app has nothing to
+     * show without it, and pretending otherwise would only move the failure a
+     * screen later.
+     *
+     * On a LOCAL backend it is the ordinary state of a shop whose line is
+     * down, and everything the user came for — the stock, the prices, the
+     * day's takings — is on the machine in front of them. Only the password
+     * check was ever remote. Letting that one call lock them out of their own
+     * data would make a local backend meaningless.
+     *
+     * The fallback verifies against a credential minted the last time this
+     * person signed in HERE, online. It cannot invent a user, and it cannot
+     * outlive the lease window. See lib/licence/offlineSignIn.ts.
+     */
+    const offline = await trySignInOffline(normalised, password)
+    if (offline) return offline
+    throw err
+  }
   if (!user) {
     await recordSignInSafe({ userId: null, email: normalised, event: 'failed' })
     return generic
@@ -152,7 +176,120 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     return { ok: true, needsTotp: true }
   }
 
-  return finishSignIn(user, normalised)
+  /* The one moment the password exists in memory alongside a confirmed
+     identity. On a desktop install that is when the offline credential is
+     minted — see rememberForOffline, which is the ONLY writer of one and is
+     what keeps offline sign-in unable to admit anybody control has not
+     already accepted here. */
+  const result = await finishSignIn(user, normalised)
+  if (result.ok && 'siteId' in result) void rememberOfflineCredential(result.siteId, user.id, password)
+  return result
+}
+
+/**
+ * Mint this user's offline credential after a successful online sign-in.
+ *
+ * Fire-and-forget, and silent on failure: a user who has just authenticated
+ * upstream must never be refused because a convenience for next time could not
+ * be written. Does nothing at all off the desktop build.
+ */
+async function rememberOfflineCredential(
+  siteId: number | null,
+  controlUserId: number,
+  password: string,
+): Promise<void> {
+  if (process.env.APP_MODE !== 'desktop' || siteId === null) return
+  try {
+    const { getUserByControlId } = await import('./site/users')
+    const localUser = await getUserByControlId(siteId, controlUserId)
+    if (!localUser) return
+    const { rememberForOffline } = await import('./licence/offlineSignIn')
+    await rememberForOffline(siteId, localUser.id, password)
+  } catch {
+    /* Nothing to do — the sign-in already succeeded. */
+  }
+}
+
+/**
+ * Sign in with no control database, on a local backend only.
+ *
+ * ── WHAT IT WILL AND WILL NOT DO ────────────────────────────────────────────
+ *
+ * It verifies the password against a verifier minted the last time this person
+ * signed in ON THIS MACHINE, online. That is the whole of its authority. It
+ * cannot invent a user, cannot admit somebody who has never signed in here, and
+ * refuses a verifier older than the lease window — because a password changed
+ * upstream while the machine was offline would otherwise keep working forever.
+ *
+ * Returns null when this is not a situation it should handle: a cloud install,
+ * an unconfigured key, or a user with no local record. The caller then rethrows
+ * the original database error, which is the honest outcome.
+ *
+ * ── WHAT IS DIFFERENT ABOUT THE SESSION IT MINTS ────────────────────────────
+ *
+ * No claimSession: the one-live-session registry lives in the control database,
+ * so there is nothing to claim against. That is a real, deliberate reduction —
+ * while a machine is offline, the same account could in principle be signed in
+ * here and elsewhere. It is bounded by the same seven days as everything else,
+ * and the alternative is a shop that cannot open.
+ */
+async function trySignInOffline(
+  normalisedEmail: string,
+  password: string,
+): Promise<SignInResult | null> {
+  if (process.env.APP_MODE !== 'desktop') return null
+
+  try {
+    const { resolveOfflineSite } = await import('./licence/offlineSite')
+    const site = await resolveOfflineSite()
+    if (!site) return null
+
+    const { findLocalUserByEmail, verifyOffline } = await import('./licence/offlineSignIn')
+    const localUser = await findLocalUserByEmail(site.siteId, normalisedEmail)
+    /* Back-office users only — the lookup itself filters on user_type. A
+       POS-only user has no business here, and their PIN is a different
+       credential checked on a different screen. */
+    if (!localUser || !localUser.controlUserId || !localUser.isActive) return null
+
+    const result = await verifyOffline(site.siteId, localUser.id, password)
+
+    if (!result.ok) {
+      if (result.reason === 'locked') {
+        return { ok: false, error: 'This account is temporarily locked. Try again shortly.' }
+      }
+      if (result.reason === 'stale') {
+        return {
+          ok: false,
+          error:
+            'This machine has been offline too long to sign in on its own. Reconnect it to the internet and try again.',
+        }
+      }
+      /* 'wrong' and 'no-verifier' both answer generically. Saying "you have
+         never signed in on this machine" would tell an attacker which accounts
+         are worth attacking here. */
+      return { ok: false, error: 'Incorrect email or password.' }
+    }
+
+    const sid = randomUUID()
+    const token = await createSessionToken({
+      userId: localUser.controlUserId,
+      email: normalisedEmail,
+      name: localUser.name || normalisedEmail,
+      siteId: site.siteId,
+      /* Never forced offline: the change-password screen writes to the control
+         database, so sending them there would be sending them to a wall. */
+      mustChangePassword: false,
+      sid,
+    })
+    await setSessionCookie(token)
+
+    return { ok: true, siteId: site.siteId, mustChangePassword: false, choices: [] }
+  } catch {
+    /* Anything unexpected: fall back to the caller's rethrow, so the failure is
+       reported as what it is — a database that could not be reached — rather
+       than as a wrong password. */
+    return null
+  }
 }
 
 /**
@@ -254,6 +391,16 @@ export async function completeTotpSignIn(code: string): Promise<SignInResult> {
   }
 
   await clearPendingTotpCookie()
+  /* No offline credential is minted here, and cannot be: this half of a 2FA
+     sign-in never sees the password — signIn() verified it and handed over
+     before the code was entered.
+
+     The consequence, stated plainly: a user with 2FA enabled on a desktop
+     install gets no offline sign-in. That is the right way round. Their second
+     factor is a live check against a secret in the control database, so
+     admitting them offline would silently drop the very factor they turned on,
+     and a machine that quietly downgrades somebody's security because the line
+     is down is worse than one that asks them to wait. */
   return finishSignIn(user, user.email)
 }
 
