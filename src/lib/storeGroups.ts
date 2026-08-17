@@ -23,6 +23,14 @@ export type StoreGroup = {
   name: string
   primarySiteId: number | null
   status: 'active' | 'inactive'
+  /**
+   * Whether the primary's storefront serves the whole group: one online shop, a
+   * branch picker, and every order routed to the branch that will pack it.
+   *
+   * Off means each store keeps its own separate storefront, which is what all of
+   * them have today.
+   */
+  onlineGroupMode: boolean
 }
 
 export type GroupMember = {
@@ -64,6 +72,7 @@ type GroupRow = RowDataPacket & {
   name: string
   primary_site_id: number | null
   status: 'active' | 'inactive'
+  online_group_mode?: number
 }
 
 type MemberRow = RowDataPacket & {
@@ -85,6 +94,9 @@ function mapGroup(r: GroupRow): StoreGroup {
     name: String(r.name),
     primarySiteId: r.primary_site_id === null ? null : Number(r.primary_site_id),
     status: r.status,
+    // Absent on a control database that has not run 009 yet. Off is the correct
+    // reading of "this column does not exist": nobody has switched it on.
+    onlineGroupMode: Boolean(r.online_group_mode),
   }
 }
 
@@ -105,7 +117,7 @@ function mapMember(r: MemberRow): GroupMember {
 /** The group a site belongs to, if any. A site belongs to at most one. */
 export async function groupForSite(siteId: number): Promise<StoreGroup | null> {
   const row = await queryOne<GroupRow>(
-    `SELECT g.id, g.name, g.primary_site_id, g.status
+    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode
        FROM cp2_store_groups g
        JOIN cp2_store_group_members m ON m.group_id = g.id
       WHERE m.site_id = ? AND g.status = 'active'
@@ -218,7 +230,7 @@ export async function storeContents(siteId: number): Promise<StoreContents> {
 export async function listGroups(): Promise<StoreGroup[]> {
   return (
     await query<GroupRow>(
-      `SELECT id, name, primary_site_id, status FROM cp2_store_groups ORDER BY name ASC`,
+      `SELECT id, name, primary_site_id, status, online_group_mode FROM cp2_store_groups ORDER BY name ASC`,
     )
   ).map(mapGroup)
 }
@@ -239,6 +251,75 @@ export async function deleteGroup(groupId: number): Promise<void> {
   // Members cascade. Each store's own data is untouched — unlinking is not
   // destructive, it only stops future edits fanning out.
   await execute('DELETE FROM cp2_store_groups WHERE id = ?', [groupId])
+}
+
+/**
+ * Switches the group's shared storefront on or off.
+ *
+ * ── WHAT THIS REFUSES, AND WHY IT REFUSES RATHER THAN WARNS ─────────────────
+ *
+ * Turning it ON makes one shop's catalogue public on behalf of nine others, so
+ * the preconditions are checked here rather than only in the screen — the same
+ * posture as setMemberSharing, and for the same reason: no future caller should
+ * be able to bypass them.
+ *
+ *   no primary          — there is no shop whose catalogue would be served, so
+ *                         "the group storefront" names nothing.
+ *   primary's shop off  — its online_store_settings.is_enabled is 0, so the
+ *                         storefront it would serve is a 404. Switching this on
+ *                         would look like it worked and produce a dead link.
+ *
+ * Unpinned branches are deliberately NOT a refusal. The picker lists them by
+ * name and they are perfectly orderable; only distance sorting needs a pin. A
+ * group should be able to switch this on and pin its shops afterwards.
+ *
+ * Turning it OFF is never refused. Each store simply goes back to its own
+ * storefront, which is where it started.
+ */
+export async function setGroupOnlineMode(
+  groupId: number,
+  on: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (on) {
+    const group = await queryOne<GroupRow>(
+      'SELECT id, name, primary_site_id, status, online_group_mode FROM cp2_store_groups WHERE id = ?',
+      [groupId],
+    )
+    if (!group) return { ok: false, error: 'That store group no longer exists.' }
+
+    const primarySiteId = group.primary_site_id === null ? null : Number(group.primary_site_id)
+    if (!primarySiteId) {
+      return {
+        ok: false,
+        error: 'Choose which store owns the shared product file before turning this on.',
+      }
+    }
+
+    // Read the primary's own settings. Guarded: a site whose database is
+    // unreachable must produce a refusal that says so, not a stack trace.
+    let primaryShopOn = false
+    try {
+      const row = await siteQueryOne<RowDataPacket & { is_enabled: number }>(
+        primarySiteId,
+        'SELECT is_enabled FROM online_store_settings WHERE id = 1',
+      )
+      primaryShopOn = Boolean(row?.is_enabled)
+    } catch {
+      return { ok: false, error: 'The main store’s online shop settings could not be read.' }
+    }
+    if (!primaryShopOn) {
+      return {
+        ok: false,
+        error: 'Switch the main store’s online shop on first — that is the shop this serves.',
+      }
+    }
+  }
+
+  await execute('UPDATE cp2_store_groups SET online_group_mode = ? WHERE id = ?', [
+    on ? 1 : 0,
+    groupId,
+  ])
+  return { ok: true }
 }
 
 /** Adds a site to a group, moving it if it already belongs to another. */
