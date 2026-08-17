@@ -30,6 +30,7 @@ import {
   listParkedOffline,
 } from '@/lib/posOffline/parkOffline'
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
+import { stockShortfalls, stockWarning } from '@/lib/stockWarning'
 import {
   saveDraft as saveLocalDraft,
   readDraft as readLocalDraft,
@@ -237,6 +238,7 @@ export default function PosShell({
   visitTypes = [],
   serviceTiers,
   tipsTablesOnly,
+  warnOutOfStock,
   undoLimit,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
@@ -312,6 +314,13 @@ export default function PosShell({
   serviceTiers: ServiceTier[]
   /** Whether a service charge applies only to a table's bill. Defaults on. */
   tipsTablesOnly: boolean
+  /**
+   * Whether the tender pad warns when the basket outruns the shelf.
+   *
+   * Off for a shop that does not track stock, which is many of them — see
+   * pos_warn_out_of_stock in settings.ts for why that is the default.
+   */
+  warnOutOfStock: boolean
   /**
    * How many undos one basket may spend. 0 means no limit.
    *
@@ -2324,6 +2333,69 @@ export default function PosShell({
   }
 
   /**
+   * Opens the tender pad, after saying anything worth saying about stock.
+   *
+   * ── WHY THE CHECK IS HERE AND NOT AT THE LINE ─────────────────────────────
+   *
+   * Stock moves between somebody starting a sale and paying for it — another
+   * till sells the last one, a delivery lands, a return comes back. Checking as
+   * lines are added answers the question at its least useful moment. This is the
+   * last point before money changes hands, so it is the honest one.
+   *
+   * ── IT WARNS, IT DOES NOT REFUSE ──────────────────────────────────────────
+   *
+   * A shop selling something it cannot hand over right now usually knows: the
+   * customer collects tomorrow, the delivery is in the yard, the count is out
+   * and everyone knows it. Blocking the sale would have the till argue with a
+   * cashier who has more information than it does. So the pad opens either way
+   * and the warning rides above it.
+   *
+   * ── SKIPPED OFFLINE, DELIBERATELY ─────────────────────────────────────────
+   *
+   * A disconnected till cannot know what other tills have sold. A warning from a
+   * cached figure is a guess dressed as a fact, and the honest thing is silence.
+   * The stock movement still posts when the sale syncs.
+   */
+  function openTender() {
+    if (state.returning) {
+      setReturning(true)
+      return
+    }
+
+    if (warnOutOfStock && till.online) {
+      /*
+       * On-hand comes from the CATALOGUE, not the basket line, because a line
+       * records what was charged rather than what is on the shelf. Lines whose
+       * product is not in the till's current results resolve to null, which the
+       * rule reads as "unknown" and stays quiet about — the right answer for a
+       * product nobody has looked up this session.
+       */
+      const held = new Map<number, TillProduct>()
+      for (const p of [...results, ...browse.products]) held.set(p.id, p)
+
+      const shortfalls = stockShortfalls(
+        state.lines.map((l) => {
+          const product = l.productId === null ? undefined : held.get(l.productId)
+          return {
+            productId: l.productId,
+            description: l.description,
+            qty: l.qty,
+            onHand: product ? product.availableQty : null,
+            /* Only these two have a shelf to run out of. A service, a gift card
+               or a buyout has no stock to be short of, and warning about one
+               would be noise a cashier learns to dismiss. */
+            tracked: l.productType === 'normal' || l.productType === 'returnable',
+          }
+        }),
+      )
+      const warning = stockWarning(shortfalls)
+      if (warning) toast.info(warning)
+    }
+
+    setTendering(true)
+  }
+
+  /**
    * Writes the basket as a SALES ORDER instead of ringing it up.
    *
    * The same lines at the same prices for the same customer — an order is an
@@ -3308,7 +3380,9 @@ export default function PosShell({
   const quickKeyContext = useMemo(
     () => ({
       handlers: {
-        pay: () => setTendering(true),
+        /* Through the same door as the Pay button, so the stock warning cannot
+           be walked around by pressing a quick key instead. */
+        pay: openTender,
         /*
          * The Void Sale key ASKS WHY, like every other void.
          *
@@ -3696,7 +3770,7 @@ export default function PosShell({
              unused all day next to the one key a cashier presses hundreds of times, and
              the mode is already stated on the pane — so the primary action follows the
              mode rather than competing with it. */
-          onPay={() => (state.returning ? setReturning(true) : setTendering(true))}
+          onPay={openTender}
           returning={state.returning}
           /* Hospitality parks through Close, so the two park keys are retail-only —
              see SalePane's `showParkKeys`. */

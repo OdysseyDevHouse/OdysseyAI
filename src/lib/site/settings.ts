@@ -148,6 +148,37 @@ export const SETTING_DEFAULTS = {
    */
   tips_tables_only: '1',
   /**
+   * Warn at the tender pad when the basket holds more than the shop has.
+   *
+   * ── WHY THIS IS A SETTING AND NOT A RULE ──────────────────────────────────
+   *
+   * Plenty of shops do not track stock at all — the counts in the system are
+   * approximate, nobody reconciles them, and a till that argued about them would
+   * be wrong several times a day in front of customers. For those shops this is
+   * noise, and noise at the payment step is worse than useless: it teaches
+   * cashiers to dismiss warnings without reading them.
+   *
+   * OFF by default, so no existing shop suddenly starts being questioned about
+   * figures it has never maintained.
+   *
+   * ── WHY AT THE TENDER AND NOT AT THE LINE ─────────────────────────────────
+   *
+   * Stock moves between somebody starting a sale and paying for it: another till
+   * sells the last one, a delivery lands, a return comes back. Checking as lines
+   * are added answers the question at the least useful moment — the answer is
+   * stalest exactly when it matters most. The last moment before money changes
+   * hands is the honest one.
+   *
+   * ── AND WHY IT NEVER APPLIES OFFLINE ──────────────────────────────────────
+   *
+   * A disconnected till cannot know what anybody else has sold. Warning from a
+   * cached figure would be a guess presented as a fact, and refusing the sale
+   * would stop the shop trading over a number the till cannot verify. So the
+   * check is skipped entirely offline and the stock movement posts at sync —
+   * see the till's finalise path.
+   */
+  pos_warn_out_of_stock: '0',
+  /**
    * Lay-by cancellation fee, as a percentage of the FULL price.
    *
    * Defaults to zero deliberately. Section 62 of the Consumer Protection Act
@@ -924,6 +955,7 @@ export function validateSetting(key: SettingKey, value: string): string | null {
        future reader that compared to '1', which is the kind of disagreement that surfaces
        months later as a service charge on a takeaway. */
     case 'tips_tables_only':
+    case 'pos_warn_out_of_stock':
       return value === '1' || value === '0' ? null : 'That setting must be 1 or 0.'
 
     case 'cashup_mode':

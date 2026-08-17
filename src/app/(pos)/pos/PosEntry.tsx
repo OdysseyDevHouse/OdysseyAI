@@ -72,6 +72,7 @@ export default function PosEntry({
   visitTypes = [],
   serviceTiers,
   tipsTablesOnly,
+  warnOutOfStock,
   undoLimit,
 }: {
   siteId: number
@@ -123,6 +124,8 @@ export default function PosEntry({
   /** Tips config. Relayed unchanged — this component owns sign-in, not pricing. */
   serviceTiers: ServiceTier[]
   tipsTablesOnly: boolean
+  /** Whether the tender pad warns when the basket outruns the shelf. */
+  warnOutOfStock: boolean
   /** How many undos a basket may spend. 0 is no limit. Relayed unchanged. */
   undoLimit: number
 }) {
@@ -269,6 +272,7 @@ export default function PosEntry({
       visitTypes={visitTypes}
       serviceTiers={serviceTiers}
       tipsTablesOnly={tipsTablesOnly}
+      warnOutOfStock={warnOutOfStock}
       undoLimit={undoLimit}
     />
   )

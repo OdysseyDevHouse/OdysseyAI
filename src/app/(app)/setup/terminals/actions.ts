@@ -180,3 +180,33 @@ export async function setUndoLimitAction(limit: number): Promise<TerminalActionR
     message: limit === 0 ? 'Undo is now unlimited.' : `Cashiers may undo ${limit} times per sale.`,
   }
 }
+
+/**
+ * Whether the till says anything when a basket outruns the shelf.
+ *
+ * ── WHY THIS IS OPTIONAL AT ALL ───────────────────────────────────────────
+ *
+ * A shop that does not maintain its counts would be questioned several times a
+ * day about figures nobody has ever reconciled. That does not make the shop
+ * careless — plenty of trades genuinely do not track stock — but it does make
+ * the warning noise, and noise at the payment step is worse than silence: a
+ * cashier who dismisses a warning fifty times stops reading the fifty-first.
+ *
+ * Shop-wide rather than per till, like the undo limit and for the same reason:
+ * "do we care about stock" has one answer per business.
+ */
+export async function setWarnOutOfStockAction(on: boolean): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setSetting(ctx.siteId, 'pos_warn_out_of_stock', on ? '1' : '0')
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/setup/terminals')
+  return {
+    ok: true,
+    message: on
+      ? 'The till will warn when a sale outruns stock on hand.'
+      : 'The till will no longer mention stock at the payment step.',
+  }
+}

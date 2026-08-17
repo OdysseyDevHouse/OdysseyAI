@@ -2,10 +2,11 @@ import { requireCapability } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listLicences } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
-import { getNumericSetting } from '@/lib/site/settings'
+import { getNumericSetting, getSetting } from '@/lib/site/settings'
 import TerminalsClient from './TerminalsClient'
 import LicencesPanel from './LicencesPanel'
 import UndoLimitPanel from './UndoLimitPanel'
+import StockWarningPanel from './StockWarningPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +22,10 @@ export default async function TerminalsPage() {
      Absent or unreadable means no limit, matching what the POS itself does with a
      setting it cannot read: fail open rather than start refusing corrections. */
   const undoLimit = await getNumericSetting(siteId, 'pos_undo_limit')
+  /* Absent means OFF — the opposite default to most flags here, because a shop
+     that does not maintain its counts would be questioned about them all day.
+     See pos_warn_out_of_stock in settings.ts. */
+  const warnOutOfStock = (await getSetting(siteId, 'pos_warn_out_of_stock')) === '1'
 
   return (
     <>
@@ -39,6 +44,7 @@ export default async function TerminalsPage() {
               Number.isFinite(undoLimit) && (undoLimit ?? 0) > 0 ? Number(undoLimit) : 0
             }
           />
+          <StockWarningPanel warnOutOfStock={warnOutOfStock} />
           {/* BELOW the tills, because a manager comes here to add a till far
               more often than to release a licence — and the licence list is the
               one they need when something is already wrong. */}

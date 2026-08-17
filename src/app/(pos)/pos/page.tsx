@@ -79,6 +79,7 @@ export default async function PosPage() {
     serviceTiers,
     tipsTablesOnlySetting,
     undoLimitSetting,
+    warnOutOfStockSetting,
   ] = await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
@@ -149,6 +150,11 @@ export default async function PosPage() {
          when the key is pressed: the refusal has to land instantly and has to work
          with the line down, and a limit fetched at press time would do neither. */
       getNumericSetting(site.id, 'pos_undo_limit'),
+      /* Whether the tender pad says anything about stock. Shipped with the page
+         for the same reason as the undo limit: the warning has to appear at the
+         moment Pay is pressed, and a setting fetched then would be one more
+         round trip standing between a cashier and a customer's money. */
+      getSetting(site.id, 'pos_warn_out_of_stock'),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
@@ -247,6 +253,10 @@ export default async function PosPage() {
       /* Absent means ON — the careful default. A percentage appearing on takeaways the
          moment a shop configures its first band is a charge nobody agreed to. */
       tipsTablesOnly={tipsTablesOnlySetting === null || tipsTablesOnlySetting === undefined ? true : String(tipsTablesOnlySetting) !== '0'}
+      /* Absent means OFF, the opposite default to tips above and deliberately so:
+         plenty of shops do not track stock, and a warning about figures nobody
+         maintains teaches cashiers to dismiss warnings without reading them. */
+      warnOutOfStock={String(warnOutOfStockSetting ?? '0') === '1'}
       /* 0 means no limit, and so does a missing or unreadable value — the till must
          fail OPEN here. A setting that could not be read is not a shop asking for a
          stricter till, and refusing corrections because a query returned nothing
