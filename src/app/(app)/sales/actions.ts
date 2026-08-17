@@ -21,7 +21,9 @@ import {
   discardDocument,
   getDocument,
   attributeTo,
+  toDocType,
   type LineInput,
+  type SalesDocType,
 } from '@/lib/site/salesDocuments'
 import { requireLicensedDevice } from '@/lib/control/requireDevice'
 import { finaliseDocument, voidDocument, recordPrint } from '@/lib/site/salesPosting'
@@ -145,6 +147,15 @@ export async function saveSaleAction(
     terminalId?: number | null
     terminalCode?: string | null
     priceStructureId?: number | null
+    /**
+     * What KIND of document this basket is.
+     *
+     * Absent means `invoice`, which is what the till has always written and what
+     * every existing caller means — a quote and an order are the same lines at an
+     * earlier moment in their life, so the basket does not change shape, only this.
+     * The value is validated below rather than trusted: it arrives from a client.
+     */
+    docType?: SalesDocType
     lines: LineInput[]
   },
   /** A supervisor's authorisation for a price/discount beyond the operator's rights. */
@@ -170,10 +181,16 @@ export async function saveSaleAction(
   )
   if (refused) return { ok: false, error: refused }
 
+  /* Validated, not trusted: `docType` arrives from a client, and an unrecognised
+     value must not reach saveDraft as a doc type nobody posts. Absent is the
+     ordinary case and means an invoice. */
+  const docType = input.docType ? toDocType(input.docType) : 'invoice'
+  if (!docType) return { ok: false, error: 'That is not a document type this till can save.' }
+
   const result = await saveDraft(
     siteId,
     actor,
-    { docType: 'invoice', ...input, lines: attributeTo(input.lines, actor.userId) },
+    { ...input, docType, lines: attributeTo(input.lines, actor.userId) },
     documentId ?? undefined,
   )
   if (!result.ok) return { ok: false, error: result.error }
@@ -376,10 +393,15 @@ export async function finaliseSaleAction(
   )
   if (refusedPrice) return { ok: false, error: refusedPrice }
 
+  /* INVOICE, deliberately, and not a parameter like the draft path's.
+     This is the action that takes money, and the other document types are
+     precisely the ones no money is taken against: a quote is an offer and an
+     order is a promise. Either becomes an invoice when it is delivered and
+     paid for, and that conversion is where the doc type changes — not here. */
   const saved = await saveDraft(
     siteId,
     actor,
-    { docType: 'invoice', ...sale, lines: attributeTo(sale.lines, actor.userId) },
+    { ...sale, docType: 'invoice', lines: attributeTo(sale.lines, actor.userId) },
     documentId ?? undefined,
   )
   if (!saved.ok) return { ok: false, error: saved.error }
