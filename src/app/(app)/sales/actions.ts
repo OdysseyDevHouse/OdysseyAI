@@ -25,6 +25,7 @@ import {
   type LineInput,
   type SalesDocType,
 } from '@/lib/site/salesDocuments'
+import { defaultValidUntil, setValidUntil } from '@/lib/site/quotes'
 import { requireLicensedDevice } from '@/lib/control/requireDevice'
 import { finaliseDocument, voidDocument, recordPrint } from '@/lib/site/salesPosting'
 import { setOrderDetails } from '@/lib/site/salesOrders'
@@ -194,6 +195,28 @@ export async function saveSaleAction(
     documentId ?? undefined,
   )
   if (!result.ok) return { ok: false, error: result.error }
+
+  /*
+   * A QUOTE GETS ITS VALIDITY, wherever it was captured.
+   *
+   * The back office sets this when it creates a blank quote, so a quote made
+   * there expires as the shop intends. One saved from the till had no such
+   * step — it would arrive in the register as a draft that never expires, which
+   * is a promise the shop did not mean to make.
+   *
+   * Set here rather than in the till so EVERY caller gets it.
+   *
+   * `!documentId` is what makes it a CREATE-only step, and it is load-bearing:
+   * `setValidUntil` overwrites unconditionally, so without the guard every save
+   * of an open quote would push its expiry another thirty days out and a quote
+   * could be kept alive forever by editing it. A date somebody changed by hand
+   * is theirs to keep, too.
+   */
+  if (docType === 'quote' && !documentId) {
+    const validUntil = await defaultValidUntil(siteId)
+    if (validUntil) await setValidUntil(siteId, actor, result.id, validUntil)
+  }
+
   return { ok: true, documentId: result.id }
 }
 

@@ -1832,6 +1832,10 @@ export default function PosShell({
             terminalId: terminal?.id ?? null,
             terminalCode: terminal?.code ?? null,
             priceStructureId,
+            /* What this basket IS. Without it a deposit taken against a quote
+               silently rewrote the document as an invoice — see park() below,
+               which had the same omission. */
+            docType: state.docType,
             lines: salePayloadLines(state.lines, lineSpecials, docShares),
           },
           /* Peeked, not spent — the same approval must still cover the finalise. */
@@ -1892,6 +1896,16 @@ export default function PosShell({
           terminalId: terminal?.id ?? null,
           terminalCode: terminal?.code ?? null,
           priceStructureId,
+          /*
+           * WHAT THIS BASKET IS.
+           *
+           * The basket has carried a doc type since the till learned to write
+           * more than invoices, and this call never sent it — so a quote parked
+           * at the till was written as an INVOICE, landed in Saved sales, and
+           * never appeared in the quote register at all. The action has always
+           * accepted the field; nothing passed it.
+           */
+          docType: state.docType,
           lines: salePayloadLines(state.lines, lineSpecials, docShares),
         },
         /* PEEKED, not spent: the same approval must still cover the finalise —
