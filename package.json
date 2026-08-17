@@ -24,6 +24,7 @@
     "test:unlock-exchange": "tsx scripts/test-unlock-exchange.ts",
     "test:lease": "tsx --conditions=react-server scripts/test-lease.ts",
     "test:runtime-config": "node scripts/test-runtime-config.mjs",
+    "test:offline-backoffice": "tsx scripts/test-offline-backoffice.ts",
     "test:stock-warning": "tsx scripts/test-stock-warning.ts",
     "test:navigation": "tsx scripts/test-navigation.ts",
     "probe:page-score": "tsx scripts/probe-page-score.ts",
