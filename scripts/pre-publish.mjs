@@ -165,7 +165,31 @@ async function gateStatic() {
 
   line('\n> design system (scripts/check-ui-kit.mjs)')
   const files = await tsxFiles(path.join(root, 'src'))
-  const ui = await run('node', ['scripts/check-ui-kit.mjs', ...files], { quiet: true })
+  /*
+   * In BATCHES, because Windows caps a command line at 32,767 characters and
+   * this project passed 49,808 — every source file named in one spawn. The gate
+   * did not fail, it threw ENAMETOOLONG and took the whole run with it, so
+   * nobody on Windows could complete a pre-publish check at all.
+   *
+   * 150 keeps the longest plausible path list well inside the cap. The findings
+   * from every batch are concatenated, so the report reads exactly as it did
+   * when this was one call.
+   */
+  const BATCH = 150
+  let uiCode = 0
+  let uiOutput = ''
+  let uiMs = 0
+  for (let i = 0; i < files.length; i += BATCH) {
+    const part = await run('node', ['scripts/check-ui-kit.mjs', ...files.slice(i, i + BATCH)], {
+      quiet: true,
+    })
+    uiMs += part.ms
+    if (part.code !== 0) {
+      uiCode = part.code
+      uiOutput += part.output
+    }
+  }
+  const ui = { code: uiCode, output: uiOutput, ms: uiMs }
   // check-ui-kit exits 2 with findings on stderr; 0 means clean.
   line(ui.code === 0 ? `  clean — ${files.length} file(s) (${secs(ui.ms)})` : `  FINDINGS (${secs(ui.ms)})\n${tail(ui.output, 40)}`)
   checks.push({ name: 'design system', ok: ui.code === 0, ms: ui.ms, output: ui.output })
