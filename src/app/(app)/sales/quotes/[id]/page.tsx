@@ -73,22 +73,6 @@ export default async function QuoteEditorPage({
 
   return (
     <>
-      <QuotePanel
-        quote={{
-          id: quote.id,
-          documentNumber: quote.documentNumber,
-          state: quote.state,
-          validUntil: quote.validUntil,
-          daysRemaining: quote.daysRemaining,
-          outcome: quote.outcome,
-          lostReason: quote.lostReason,
-          convertedToId: quote.convertedToId,
-          convertedToNumber: quote.convertedToNumber,
-          totalIncl: quote.totalIncl,
-        }}
-        canEdit={can(capabilities, 'sales.edit')}
-      />
-
       <InvoiceEditor
         document={document}
         structures={structures}
@@ -105,6 +89,38 @@ export default async function QuoteEditorPage({
         canOverrideDiscount={can(capabilities, 'sales.discount_override')}
       canOverridePrice={can(capabilities, 'sales.price_override')}
       showCost={can(capabilities, 'products.cost')}
+      />
+
+      {/*
+        ── VALIDITY AND OUTCOME, BELOW THE DOCUMENT ────────────────────────
+
+        This used to render FIRST, which put "Valid until" in a card above the
+        quote's own heading and back arrow — so the first thing on the screen
+        was a detail about the document, before the document had been named.
+
+        It belongs after the lines for the same reason the deposit panel does:
+        the lines are the work, and validity, outcome and conversion are what
+        you decide once you have read them.
+
+        No wrapper: QuotePanel already carries its own `px-6`, matching the
+        editor's PageBody above it. Adding another would indent it past the
+        grid, which is the double-padding that made the order screen look
+        squashed.
+      */}
+      <QuotePanel
+        quote={{
+          id: quote.id,
+          documentNumber: quote.documentNumber,
+          state: quote.state,
+          validUntil: quote.validUntil,
+          daysRemaining: quote.daysRemaining,
+          outcome: quote.outcome,
+          lostReason: quote.lostReason,
+          convertedToId: quote.convertedToId,
+          convertedToNumber: quote.convertedToNumber,
+          totalIncl: quote.totalIncl,
+        }}
+        canEdit={can(capabilities, 'sales.edit')}
       />
 
       {/* Money put down to secure this quote. Below the grid for the same reason

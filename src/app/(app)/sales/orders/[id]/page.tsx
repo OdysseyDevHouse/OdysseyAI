@@ -117,13 +117,25 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
         A DELIVERED order has no editor, so it would have no heading at all —
         hence the fallback below rather than simply deleting this.
       */}
-      <PageHeader
-        title={order.document.documentNumber ?? `Order #${order.document.id}`}
-        subtitle={`${order.document.customerName ?? 'Walk-in'} · ${order.document.documentDate}`}
-        backHref="/sales/orders"
-        backLabel="Sales orders"
-        action={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
-      />
+      {/*
+        The page draws its own header ONLY when there is no editor to draw one.
+        A delivered order is past editing, so the grid is gone and this is the
+        only thing that would name the document.
+
+        While it IS editable the editor owns the heading, and takes the
+        fulfilment badge as `extraStatus` so all four — Open, Draft, Save
+        (draft), Save order — sit on one line beside the title, rather than a
+        lone pill floating above it.
+      */}
+      {!editable && (
+        <PageHeader
+          title={order.document.documentNumber ?? `Order #${order.document.id}`}
+          subtitle={`${order.document.customerName ?? 'Walk-in'} · ${order.document.documentDate}`}
+          backHref="/sales/orders"
+          backLabel="Sales orders"
+          action={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
+        />
+      )}
 
       {/*
         ── THE LINES, WHILE THEY ARE STILL THE SHOP'S TO CHANGE ──────────────
@@ -153,7 +165,10 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           specials={specials}
           customer={customer}
           editable
-          hideHeader
+          /* The fulfilment state, on the same line as the document's own. Two
+             questions, two badges: "has any of this gone out" and "has it been
+             saved". */
+          extraStatus={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
           canOverrideDiscount={can(capabilities, 'sales.discount_override')}
           canOverridePrice={can(capabilities, 'sales.price_override')}
           showCost={can(capabilities, 'products.cost')}

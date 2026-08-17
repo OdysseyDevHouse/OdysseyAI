@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
@@ -133,7 +133,7 @@ export default function InvoiceEditor({
   canOverridePrice,
   showCost,
   specials,
-  hideHeader = false,
+  extraStatus = null,
 }: {
   document: SalesDocument
   structures: PriceStructure[]
@@ -155,17 +155,18 @@ export default function InvoiceEditor({
   /** Whether this person may see cost and margin. */
   showCost: boolean
   /**
-   * Draw the grid WITHOUT its own page header.
+   * An extra badge for the header row, from the screen that owns the document.
    *
-   * For a screen that already has one — the order screen, which needs a heading
-   * of its own because a DELIVERED order has no editor at all and would
-   * otherwise be untitled. Two headers stacked read as a document opened inside
-   * itself, which is exactly how it looked.
+   * An order has TWO states and they answer different questions: `Draft` is
+   * "has this been saved", which the editor knows, and `Open` is "has any of it
+   * been delivered", which only the order screen does. Both belong on the same
+   * line as the title — a status floating on its own above a heading reads as
+   * something that fell off.
    *
-   * The save controls move down beside the totals when this is set, so hiding
-   * the header never hides the way to save.
+   * Rendered first, so the fulfilment state leads and the document state sits
+   * beside the buttons that change it.
    */
-  hideHeader?: boolean
+  extraStatus?: ReactNode
 }) {
   const toast = useToast()
   const router = useRouter()
@@ -604,14 +605,19 @@ export default function InvoiceEditor({
   const title = document.documentNumber ?? `${noun} #${document.id}`
 
   /*
-   * The status pill and the two save controls.
+   * Everything that sits at the right of the header: the owning screen's status
+   * where there is one, this document's own, and the two save controls.
    *
-   * Extracted because they belong in the header on most screens and BESIDE THE
-   * GRID on a screen that supplies its own — see `hideHeader`. Written once so
-   * the three-way branch below cannot drift between the two positions.
+   * One row, because they are one thought — what this document IS and what you
+   * can do about it. An order shows all four: Open, Draft, Save (draft), Save
+   * order.
    */
   const actions = (
     <>
+      {/* The owning screen's own state first — see `extraStatus`. On an order
+          that is "Open" or "Part delivered", which is a different question from
+          the "Draft" beside it. */}
+      {extraStatus}
       <Badge tone={STATUS_TONE[document.status]}>{STATUS_LABELS[document.status]}</Badge>
       {editable && (
         <>
@@ -647,22 +653,17 @@ export default function InvoiceEditor({
 
   return (
     <>
-      {!hideHeader && (
-        <PageHeader
-          title={title}
-          subtitle={`${customerName || 'No customer'} · ${documentDate}`}
-          /* Back to the register this document belongs to. It always said
-             "invoicing", which sent somebody editing a quote to the wrong list. */
-          backHref={isQuote ? '/sales/quotes' : isOrder ? '/sales/orders' : '/sales/invoicing'}
-          backLabel={isQuote ? 'Back to quotes' : isOrder ? 'Back to orders' : 'Back to invoicing'}
-          action={actions}
-        />
-      )}
+      <PageHeader
+        title={title}
+        subtitle={`${customerName || 'No customer'} · ${documentDate}`}
+        /* Back to the register this document belongs to. It always said
+           "invoicing", which sent somebody editing a quote to the wrong list. */
+        backHref={isQuote ? '/sales/quotes' : isOrder ? '/sales/orders' : '/sales/invoicing'}
+        backLabel={isQuote ? 'Back to quotes' : isOrder ? 'Back to orders' : 'Back to invoicing'}
+        action={actions}
+      />
 
       <PageBody>
-        {/* Hiding the header must not hide the way to save, so the controls
-            come with the grid on a screen that has its own heading. */}
-        {hideHeader && <div className="flex items-center justify-end gap-2">{actions}</div>}
         <CustomerBar
           customerId={customerId}
           customerName={customerName}

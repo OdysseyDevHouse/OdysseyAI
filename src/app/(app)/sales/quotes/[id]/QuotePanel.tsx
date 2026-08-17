@@ -42,10 +42,16 @@ type Quote = {
 /**
  * Everything a quote has that an invoice does not.
  *
- * Sits ABOVE the shared editor rather than inside it: validity, outcome and
+ * Sits BESIDE the shared editor rather than inside it: validity, outcome and
  * conversion are the three things that make a quote a quote, and keeping them
- * out of the grid is what lets one editor serve both documents without growing
+ * out of the grid is what lets one editor serve every document without growing
  * conditionals through its middle.
+ *
+ * Below it, specifically. This rendered first for a long time, which put
+ * "Valid until" in a card above the quote's own heading and back arrow — the
+ * first thing on the screen was a detail about a document that had not been
+ * named yet. The lines are the work; validity and outcome are what you decide
+ * once you have read them, which is also why the deposit panel sits down there.
  */
 export function QuotePanel({ quote, canEdit }: { quote: Quote; canEdit: boolean }) {
   const router = useRouter()
