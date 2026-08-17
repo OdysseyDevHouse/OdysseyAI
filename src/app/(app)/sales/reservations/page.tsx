@@ -3,6 +3,7 @@ import { can } from '@/lib/site/permissions'
 import { Badge, Icons, PageBody, PageHeader, StatStrip, StatTile } from '@/components/ui'
 import { createPublicReserveToken } from '@/lib/publicReserveToken'
 import { getReservationSettings, listReservations } from '@/lib/site/reservations'
+import { listTables } from '@/lib/site/posTables'
 import { dateKey, dayLabel, dayOf } from '@/lib/reservationTypes'
 import ReservationsQueue from './ReservationsQueue'
 
@@ -25,11 +26,24 @@ export default async function ReservationsPage() {
   const from = new Date(today)
   from.setDate(from.getDate() - 7)
 
-  const [reservations, settings, reserveToken] = await Promise.all([
+  const [reservations, settings, reserveToken, tables] = await Promise.all([
     listReservations(siteId, { fromDate: dateKey(from) }),
     getReservationSettings(siteId),
     // Deterministic, so the link on a menu printed last month still resolves.
     createPublicReserveToken(siteId),
+    /*
+     * The floor plan, so a booking can be put on a table that EXISTS.
+     *
+     * The table on a booking has always been free text with a hint claiming it
+     * was "matched by name to your floor plan and the till" — and nothing
+     * performed that match, so "Patio 3" against a plan that says "P3" linked
+     * to nothing and said nothing.
+     *
+     * Sent as a list to pick from rather than as a validator, because a shop
+     * that has never drawn a floor plan must still be able to write a name on a
+     * booking. The list is an offer, not a gate.
+     */
+    listTables(siteId),
   ])
 
   const todayKey = dateKey(today)
@@ -108,6 +122,16 @@ export default async function ReservationsPage() {
           /* A path, not a URL: the server has no reliable view of the public
              origin behind a proxy, so the browser adds it. */
           reservePath={`/reserve/${reserveToken}`}
+          /*
+           * NARROWED, not the whole table row. A PosTable carries the live
+           * document on it, its coordinates on the drawn plan and its bill-asked
+           * timestamp — none of which this screen has any use for, and the first
+           * two of which would put the floor's live trading state into a booking
+           * diary that nobody expects to hold it.
+           */
+          tables={tables
+            .filter((t) => t.isActive)
+            .map((t) => ({ code: t.code, name: t.name, section: t.section, seats: t.seats }))}
         />
       </PageBody>
     </>

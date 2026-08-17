@@ -13,6 +13,7 @@ import {
   Input,
   Modal,
   SegmentedControl,
+  Select,
   TableToolbar,
   Textarea,
   ToolbarSearch,
@@ -57,12 +58,21 @@ export default function ReservationsQueue({
   onlineEnabled,
   canEdit,
   reservePath,
+  tables,
 }: {
   reservations: Reservation[]
   maxPartySize: number
   onlineEnabled: boolean
   canEdit: boolean
   reservePath: string
+  /**
+   * The shop's floor plan, for putting a booking on a table that exists.
+   *
+   * Empty on a shop that has never drawn one, and that case still has to work:
+   * the table field falls back to free text, which is what it has always been.
+   * A picker that offered nothing would be worse than a box.
+   */
+  tables: { code: string; name: string; section: string; seats: number }[]
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -338,6 +348,7 @@ export default function ReservationsQueue({
           reservation={detail}
           busy={busy}
           canEdit={canEdit}
+          tables={tables}
           onClose={() => setDetail(null)}
           onStatus={(status, reason) =>
             run(
@@ -360,6 +371,7 @@ export default function ReservationsQueue({
         open={addOpen}
         busy={busy}
         maxPartySize={maxPartySize}
+        tables={tables}
         onClose={() => setAddOpen(false)}
         onSave={(input) =>
           run(() => createReservationAction(input), 'Booking added.', () => setAddOpen(false))
@@ -375,6 +387,7 @@ function DetailModal({
   reservation,
   busy,
   canEdit,
+  tables,
   onClose,
   onStatus,
   onTable,
@@ -382,11 +395,23 @@ function DetailModal({
   reservation: Reservation
   busy: boolean
   canEdit: boolean
+  tables: { code: string; name: string; section: string; seats: number }[]
   onClose: () => void
   onStatus: (status: ReservationStatus, reason?: string) => void
   onTable: (tableName: string) => void
 }) {
   const [table, setTable] = useState(reservation.tableName)
+  /*
+   * A name on the booking that the floor plan does not have.
+   *
+   * Real and worth saying out loud: bookings taken over the phone before a plan
+   * was drawn, or typed as "Patio 3" when the plan says "P3". The old screen
+   * claimed these were matched to the till and they never were — so the honest
+   * thing is to keep the name, keep it selectable, and say plainly that the till
+   * will not find it.
+   */
+  const unknownTable =
+    table.trim() !== '' && !tables.some((t) => t.code === table)
   const [reason, setReason] = useState('')
   const next = allowedNext(reservation.status)
 
@@ -488,15 +513,51 @@ function DetailModal({
           <div className="flex items-end gap-2">
             <Field
               label="Table"
-              hint="Matched by name to your floor plan and the till."
+              /*
+               * The hint now depends on whether it can be TRUE.
+               *
+               * It used to say "matched by name to your floor plan and the till"
+               * on every shop, including ones with no floor plan at all — and
+               * nothing performed the match anyway. With a plan, the picker makes
+               * the sentence true by construction. Without one, saying it would
+               * be a claim about a thing that does not exist.
+               */
+              hint={
+                tables.length > 0
+                  ? unknownTable
+                    ? `“${table}” is not on your floor plan — the till will not link to it.`
+                    : 'Picked from your floor plan, so the till knows this table.'
+                  : 'Free text — draw a floor plan under Setup → Tables to pick from it.'
+              }
               className="flex-1"
             >
-              <Input
-                value={table}
-                onChange={(e) => setTable(e.target.value)}
-                placeholder="e.g. 12"
-                maxLength={50}
-              />
+              {tables.length > 0 ? (
+                <Select value={table} onChange={(e) => setTable(e.target.value)}>
+                  <option value="">No table yet</option>
+                  {/* The party size is the reason a host is choosing at all, so
+                      the seat count sits on every option rather than in a hint
+                      nobody reads while deciding. */}
+                  {tables.map((t) => (
+                    <option key={t.code} value={t.code}>
+                      {t.code}
+                      {t.name && t.name !== t.code ? ` — ${t.name}` : ''}
+                      {t.seats > 0 ? ` · seats ${t.seats}` : ''}
+                      {t.section ? ` · ${t.section}` : ''}
+                    </option>
+                  ))}
+                  {/* A booking made before the plan existed, or typed over the
+                      phone, keeps its name rather than being silently blanked
+                      the moment somebody opens this dialog. */}
+                  {unknownTable && <option value={table}>{table} (not on the plan)</option>}
+                </Select>
+              ) : (
+                <Input
+                  value={table}
+                  onChange={(e) => setTable(e.target.value)}
+                  placeholder="e.g. 12"
+                  maxLength={50}
+                />
+              )}
             </Field>
             <Button
               variant="secondary"
@@ -572,12 +633,14 @@ function AddModal({
   open,
   busy,
   maxPartySize,
+  tables,
   onClose,
   onSave,
 }: {
   open: boolean
   busy: boolean
   maxPartySize: number
+  tables: { code: string; name: string; section: string; seats: number }[]
   onClose: () => void
   onSave: (input: {
     contactName: string
@@ -683,8 +746,25 @@ function AddModal({
               maxLength={190}
             />
           </Field>
+          {/* Same choice as the detail dialog: the floor plan where there is
+              one, free text where there is not. A host taking a booking over
+              the phone should not be able to invent a table that will not
+              be there when the party arrives. */}
           <Field label="Table" hint="Optional.">
-            <Input value={table} onChange={(e) => setTable(e.target.value)} maxLength={50} />
+            {tables.length > 0 ? (
+              <Select value={table} onChange={(e) => setTable(e.target.value)}>
+                <option value="">Decide on the night</option>
+                {tables.map((t) => (
+                  <option key={t.code} value={t.code}>
+                    {t.code}
+                    {t.name && t.name !== t.code ? ` — ${t.name}` : ''}
+                    {t.seats > 0 ? ` · seats ${t.seats}` : ''}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Input value={table} onChange={(e) => setTable(e.target.value)} maxLength={50} />
+            )}
           </Field>
         </div>
 
