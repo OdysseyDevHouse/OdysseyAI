@@ -255,6 +255,37 @@ dials, authenticates, forwards bytes, notices drops, and redials with capped
 exponential backoff plus jitter, so an outage that hits the whole estate does not
 produce a thundering herd when it clears.
 
+### How reports reach it
+
+`cp2_reporting_replicas`, **not** a row in `cp2_site_databases`. That table
+already supports several databases per site through its `purpose` column, and
+adding `purpose = 'reporting'` would have been three lines — it was rejected
+deliberately.
+
+Everything that reads `cp2_site_databases` does so to **write** as well: it is
+the connection the till posts sales through and every server action mutates. A
+replica must never be written to. Keeping it in a separate table means
+`siteQuery()` *cannot* resolve to a replica, because `sitePool()` does not look
+there. The separation is the safety property; a shared table with a flag would
+have relied on every caller remembering to check it.
+
+The report engine has exactly one place it reads rows
+([`run.ts`](src/lib/reportBuilder/run.ts)), so redirecting it is one seam:
+
+```ts
+const read = options.reader ?? (await reportSourceFor(siteId)).reader
+```
+
+Resolved inside the engine rather than at the six call sites, so no caller has
+to remember. `reportSourceFor()` returns the site's own database for a cloud
+site and the replica for a local one — and reports, exports, the API, scheduled
+sends and the AI path all inherit it with no change.
+
+A lagging replica is **labelled, not refused**: `stalenessNote()` produces
+"Figures are about 20 minutes behind the shop." A head office with clearly-dated
+figures can work; one with nothing cannot, and a silently stale number is worse
+than either.
+
 ### A replica is not a backup
 
 If a bug deletes rows on the shop's machine, replication **faithfully deletes
