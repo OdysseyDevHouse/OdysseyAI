@@ -128,11 +128,49 @@ export type StorefrontDepartment = {
 // on it — the same reasoning as storefrontLayout re-exporting the model.
 export type { StorefrontImage }
 
+/**
+ * Which store a storefront request is talking to — and, for a group, which two.
+ *
+ * ── WHY THERE ARE TWO SITE IDS ──────────────────────────────────────────────
+ *
+ * A chain of ten shops runs ONE storefront, but an order placed on it has to
+ * land in the branch that will actually pack it — not at head office. Those are
+ * two different databases, so a single siteId cannot express the request:
+ *
+ *   catalogueSiteId — where the PRODUCTS come from. The group's primary store,
+ *                     which owns the product file, the branding and the pages.
+ *   siteId          — the BRANCH. Its stock, its delivery zones, its order
+ *                     queue, its sale. Everything that is a commitment by a
+ *                     particular shop to a particular customer.
+ *
+ * For a shop that is not in a group — which is every shop today — the two are
+ * equal and every query behaves exactly as it did before. That equality is the
+ * property to preserve: `catalogueSiteId` is never null and never optional, so
+ * no caller has to remember which one it wanted.
+ *
+ * The rule for choosing between them: if it decides what a shopper can SEE, it
+ * is the catalogue; if it decides what the shop OWES them, it is the branch.
+ */
 export type StorefrontContext = {
+  /** The BRANCH. Stock, holds, orders, delivery zones, the sale. */
   siteId: number
+  /** Where the catalogue, settings, branding and pages come from. */
+  catalogueSiteId: number
   settings: OnlineSettings
   /** The shop's own name, for the page title and the header. */
   storeName: string
+}
+
+/**
+ * True when this context is a group storefront — the catalogue and the branch
+ * are different shops.
+ *
+ * Worth a named helper rather than an inline comparison: `a !== b` at a call
+ * site says nothing about why the two might differ, and the answer decides
+ * whether a stock figure is a promise or a guess.
+ */
+export function isGroupStorefront(context: StorefrontContext): boolean {
+  return context.catalogueSiteId !== context.siteId
 }
 
 /* ── The published catalogue ──────────────────────────────────────────────── */
@@ -269,8 +307,23 @@ const PRODUCT_JOINS = `
  * Null means "there is no shop here" and the route must 404 — an off store and
  * a bad token are deliberately indistinguishable from outside, so a closed
  * shop's link cannot be used to confirm the store exists.
+ *
+ * `branchSiteId` names the shop that will FULFIL the order, when that is not the
+ * shop whose catalogue is being browsed. Omitted — which is every call today —
+ * the branch is the catalogue, and the returned context is exactly what it has
+ * always been.
+ *
+ * The settings read here are deliberately the CATALOGUE's: publish mode, price
+ * structure and branding are what the group's primary store decided, and a
+ * branch does not get to publish a different product file. Settings that are a
+ * branch's own commitment — its delivery zones, its lead time, whether it is
+ * taking orders at all — are read from `siteId` at the point they are used, not
+ * bundled in here where a caller could mistake one for the other.
  */
-export async function storefrontContext(siteId: number): Promise<StorefrontContext | null> {
+export async function storefrontContext(
+  siteId: number,
+  branchSiteId?: number,
+): Promise<StorefrontContext | null> {
   try {
     const settings = await getOnlineSettings(siteId)
     if (!settings.isEnabled) return null
@@ -312,7 +365,18 @@ export async function storefrontContext(siteId: number): Promise<StorefrontConte
       // No request scope, or the session store is unreachable — store default.
     }
 
-    return { siteId, settings: { ...settings, priceStructureId }, storeName }
+    /*
+     * The argument is the CATALOGUE; the branch is the argument again unless a
+     * caller named one. Written this way round because the overwhelmingly
+     * common case must be the one that needs no thought — a single shop passes
+     * one id and gets a context whose two ids agree.
+     */
+    return {
+      siteId: branchSiteId ?? siteId,
+      catalogueSiteId: siteId,
+      settings: { ...settings, priceStructureId },
+      storeName,
+    }
   } catch {
     // An unreachable database must not leak a stack trace to the public.
     return null
@@ -402,7 +466,7 @@ export async function publishedProducts(
   const offset = Math.max(options.offset ?? 0, 0)
 
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT ${PRODUCT_COLUMNS}
      ${PRODUCT_JOINS}
       WHERE ${where.join(' AND ')}
@@ -411,7 +475,7 @@ export async function publishedProducts(
     params,
   )
 
-  return withSpecials(context.siteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+  return withSpecials(context.catalogueSiteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
 }
 
 /**
@@ -437,7 +501,7 @@ export async function catalogueFacets(
   params.push(departmentId)
 
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT br.name AS brand, COUNT(*) AS n,
             MIN(pp.selling_price_incl) AS min_price, MAX(pp.selling_price_incl) AS max_price
      ${PRODUCT_JOINS}
@@ -491,7 +555,7 @@ export async function siblingsOf(
   if (!product.variantOf) return []
 
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT ${PRODUCT_COLUMNS}
      ${PRODUCT_JOINS}
       WHERE ${SELLABLE}
@@ -502,7 +566,7 @@ export async function siblingsOf(
   )
 
   return withSpecials(
-    context.siteId,
+    context.catalogueSiteId,
     rows.map((r) => mapStorefrontProduct(r, context.settings)),
   )
 }
@@ -513,7 +577,7 @@ export async function publishedProduct(
   productId: number,
 ): Promise<StorefrontProduct | null> {
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT ${PRODUCT_COLUMNS}
      ${PRODUCT_JOINS}
       WHERE p.id = ? AND ${SELLABLE} AND ${publishFilter(context.settings.publishMode)}`,
@@ -521,7 +585,7 @@ export async function publishedProduct(
   )
   const r = rows[0]
   if (!r) return null
-  const [priced] = await withSpecials(context.siteId, [mapStorefrontProduct(r, context.settings)])
+  const [priced] = await withSpecials(context.catalogueSiteId, [mapStorefrontProduct(r, context.settings)])
   return priced ?? null
 }
 
@@ -530,7 +594,7 @@ export async function publishedDepartments(
   context: StorefrontContext,
 ): Promise<StorefrontDepartment[]> {
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT dep.id, dep.name, dep.online_image_id, dep.color, COUNT(*) AS product_count
        FROM products p
        JOIN product_prices pp
@@ -571,7 +635,7 @@ export async function newestProducts(
 ): Promise<StorefrontProduct[]> {
   const capped = Math.min(Math.max(limit, 1), 24)
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT ${PRODUCT_COLUMNS}
      ${PRODUCT_JOINS}
       WHERE ${SELLABLE} AND ${publishFilter(context.settings.publishMode)}
@@ -579,7 +643,7 @@ export async function newestProducts(
       LIMIT ${capped}`,
     [context.settings.priceStructureId],
   )
-  return withSpecials(context.siteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+  return withSpecials(context.catalogueSiteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
 }
 
 /**
@@ -616,7 +680,7 @@ export async function productsOnSpecial(
 
   // No live specials means no query at all — the common case for most shops
   // on most days.
-  const specials = await liveSpecials(context.siteId)
+  const specials = await liveSpecials(context.catalogueSiteId)
   if (specials.length === 0) return []
 
   const candidates = await publishedProducts(context, { limit: SPECIALS_SCAN_LIMIT })
@@ -670,7 +734,7 @@ export async function popularProducts(
   const capped = Math.min(Math.max(limit, 1), 24)
 
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT l.product_id, SUM(l.qty) AS sold
        FROM sales_document_lines l
        JOIN sales_documents d ON d.id = l.document_id
@@ -850,7 +914,7 @@ export async function boughtTogether(
   const capped = Math.min(Math.max(limit, 1), 24)
 
   const rows = await siteQuery<Row>(
-    context.siteId,
+    context.catalogueSiteId,
     `SELECT b.product_id, COUNT(DISTINCT d.id) AS baskets
        FROM sales_document_lines a
        JOIN sales_documents d ON d.id = a.document_id
@@ -953,7 +1017,7 @@ export async function resolveSectionContent(
           : [],
   )
   const images = await storefrontImagesByIds(
-    context.siteId,
+    context.catalogueSiteId,
     imageIds.filter((id): id is number => typeof id === 'number' && id > 0),
   )
 
@@ -981,7 +1045,7 @@ export async function resolveSectionContent(
 
       if (section.kind === 'reviews') {
         return {
-          reviews: await recentApprovedReviews(context.siteId, {
+          reviews: await recentApprovedReviews(context.catalogueSiteId, {
             limit: section.maxItems ?? 6,
             minRating: section.minRating ?? 4,
             departmentId: section.departmentId ?? null,
@@ -999,7 +1063,7 @@ export async function resolveSectionContent(
          * the front page still says Friday.
          */
         if (!section.specialId) return {}
-        const special = (await liveSpecials(context.siteId)).find(
+        const special = (await liveSpecials(context.catalogueSiteId)).find(
           (s) => s.id === section.specialId,
         )
         return { specialEndsAt: special?.endsAt ?? '' }
@@ -1176,13 +1240,21 @@ export function quoteDelivery(
   }
 }
 
-/** Quote against the store's CURRENT zones. What checkout actually calls. */
+/**
+ * Quote against the store's CURRENT zones. What checkout actually calls.
+ *
+ * `siteId` here is the BRANCH, never the catalogue. Delivery is a promise by
+ * one shop to drive to one address for one price — Claremont charging R35 to a
+ * suburb Wynberg charges R50 for is the normal case, not a misconfiguration.
+ * Quoting from the group's primary would price every branch off head office's
+ * zone list and quietly undercharge or refuse half of them.
+ */
 export async function quoteDeliveryFor(
-  siteId: number,
+  branchSiteId: number,
   address: { suburb: string; postcode: string },
   goodsTotal: number,
 ): Promise<DeliveryQuote> {
-  return quoteDelivery(await listDeliveryZones(siteId, true), address, goodsTotal)
+  return quoteDelivery(await listDeliveryZones(branchSiteId, true), address, goodsTotal)
 }
 
 /* ── Placing an order ─────────────────────────────────────────────────────── */
@@ -1267,9 +1339,15 @@ async function nextOrderNumber(siteId: number): Promise<string> {
  * quantities and contact details; it does not contribute prices, the delivery
  * fee, or the total. A payload claiming a R1.00 television is priced at the
  * catalogue's figure and the shopper is charged that.
+ *
+ * Takes either a siteId or an already-resolved context. The context form is
+ * what a group storefront uses: it is the only way to say "price this from head
+ * office's product file, but write the order into the branch" — a bare siteId
+ * cannot express two stores. The caller has usually resolved the context
+ * already, so passing it also saves re-reading the settings.
  */
 export async function placePublicOrder(
-  siteId: number,
+  store: number | StorefrontContext,
   input: PublicOrderInput,
 ): Promise<PlaceOrderResult> {
   const name = input.contactName.trim()
@@ -1284,8 +1362,18 @@ export async function placePublicOrder(
     return { ok: false, error: "That's too many items for one order." }
   }
 
-  const context = await storefrontContext(siteId)
+  const context = typeof store === 'number' ? await storefrontContext(store) : store
   if (!context) return { ok: false, error: "This store isn't taking online orders." }
+
+  /*
+   * From here on `siteId` is the BRANCH — the shop that will pack this order,
+   * take the money and owe the customer. Every write below is its own: the
+   * holds, the account check, the order number, the transaction, the webhook.
+   *
+   * Catalogue reads go through `context`, which carries the primary's id. The
+   * two are the same store for every shop that is not in a group.
+   */
+  const siteId = context.siteId
 
   const { settings } = context
   if (input.fulfilment === 'collect' && !settings.collectEnabled) {
