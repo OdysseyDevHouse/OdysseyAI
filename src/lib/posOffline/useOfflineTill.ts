@@ -148,6 +148,40 @@ export function useOfflineTill(siteId: number, enabled = true): OfflineTill {
     }))
   }, [siteId])
 
+  /*
+   * ── WHETHER THE LINE IS UP, EVEN WHERE OFFLINE TRADING IS NOT ────────────
+   *
+   * Everything below this is gated on `enabled`, which is right for the sync
+   * engine and the catalog: a machine that cannot store anything locally has
+   * nothing to queue and nothing to hold.
+   *
+   * But `online` is not about offline TRADING. It is about whether the server
+   * can be reached at all, and a till that cannot reach it still needs to know
+   * — every server-bound key on this screen reads this flag to decide whether
+   * to refuse. On an "Online only" machine none of them could ever fire,
+   * because `online` was seeded true and nothing outside the disabled branch
+   * ever set it false. A cashier there got a raw server error instead of a
+   * sentence, which is the exact failure those refusals exist to prevent.
+   *
+   * `navigator.onLine` is a weak signal — it means "an interface is up", not
+   * "the server answers" — so where the sync engine IS running its own result
+   * still wins, because a failed flush is proof of the stronger fact. This only
+   * fills the gap where nothing else was watching.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const report = () => setState((s) => ({ ...s, online: navigator.onLine }))
+    report()
+
+    window.addEventListener('online', report)
+    window.addEventListener('offline', report)
+    return () => {
+      window.removeEventListener('online', report)
+      window.removeEventListener('offline', report)
+    }
+  }, [])
+
   /* ── The sync engine, started once ────────────────────────────────────── */
 
   useEffect(() => {

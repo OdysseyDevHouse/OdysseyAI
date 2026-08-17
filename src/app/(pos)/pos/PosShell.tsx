@@ -2896,7 +2896,37 @@ export default function PosShell({
    * — `convertToInvoice` in the back office, or switching this basket to Point
    * of sale — not a side effect of looking at one.
    */
+  /**
+   * Opens the shop's quotes, or says why it cannot.
+   *
+   * A function rather than an inline setter because there are two ways in — the
+   * pane's recall key and a quick key — and a guard written at one of them is a
+   * guard the other does not have. Same for the order list below.
+   */
+  function openQuoteList() {
+    if (!till.online) {
+      toast.info('Quotes need the connection — they live on the server.')
+      return
+    }
+    setShowingQuotes(true)
+  }
+
+  function openOrderList() {
+    if (!till.online) {
+      toast.info('Sales orders need the connection — they live on the server.')
+      return
+    }
+    setShowingTillOrders(true)
+  }
+
   function recallQuote(quote: TillQuote) {
+    /* Quotes live on the server and are claimed there, so an offline till can
+       neither read one nor stop another till opening the same one. Said in the
+       house phrasing every other server-bound key uses. */
+    if (!till.online) {
+      toast.info('Quotes need the connection — they live on the server.')
+      return
+    }
     if (state.lines.length > 0) {
       toast.error('Finish or save the sale on screen first, then bring the quote up.')
       return
@@ -2959,6 +2989,14 @@ export default function PosShell({
    * AND lose the basket it could not merge into.
    */
   function collectTillOrder(order: TillOrder) {
+    /* Handing an order over MOVES STOCK and raises an invoice. A till that
+       cannot see what other tills have delivered could hand over goods already
+       collected somewhere else — the same reasoning that keeps saveAsOrder
+       online-only, and the reason this refuses rather than queues. */
+    if (!till.online) {
+      toast.info('Handing an order over needs the connection — the goods move on the server.')
+      return
+    }
     if (state.lines.length > 0) {
       toast.error('Finish or save the sale on screen first, then hand the order over.')
       return
@@ -3026,6 +3064,19 @@ export default function PosShell({
     layby: TillLayby,
     input: { amount: number; tenderTypeId: number; reference: string | null },
   ) {
+    /*
+     * Online only, and not merely because the row lives on the server.
+     *
+     * A lay-by balance is shared: the customer may have paid R200 off at the
+     * other till an hour ago. An offline payment would be taken against a
+     * balance this machine last saw, and `paymentRefusal` — which stops
+     * somebody overpaying — would be judging a stale figure. Queuing it would
+     * mean money accepted now and refused later, with the customer gone.
+     */
+    if (!till.online) {
+      toast.info('A lay-by payment needs the connection — the balance is kept on the server.')
+      return
+    }
     startTransition(async () => {
       const result = await takeLaybyPaymentAction(layby.id, {
         ...input,
@@ -3057,6 +3108,20 @@ export default function PosShell({
    * it and losing the basket.
    */
   function openStartLayby() {
+    /*
+     * Refused BEFORE the dialog opens, not inside it.
+     *
+     * A lay-by takes a LAY number from the shared sequence the moment it is
+     * created, and the customer walks out holding a document that refers to it
+     * — a till inventing one offline would hand out a number another machine
+     * may already have used. The quick key says the same thing; this is the
+     * other route in, and letting somebody fill the dialog in first only to be
+     * refused at the end would waste their time in front of a customer.
+     */
+    if (!till.online) {
+      toast.info('A lay-by needs the connection — it takes a number from the server.')
+      return
+    }
     if (state.lines.length === 0) {
       toast.info('Ring the goods up first, then put them aside.')
       return
@@ -3131,6 +3196,13 @@ export default function PosShell({
    * to take payment for something already paid for.
    */
   function collectLayby(layby: TillLayby) {
+    /* This is a finalise: an invoice is numbered, VAT is declared and stock
+       moves. None of that can happen on a machine that cannot reach the
+       sequence — see the same rule on the quick key. */
+    if (!till.online) {
+      toast.info('Handing the goods over needs the connection — it raises an invoice.')
+      return
+    }
     startTransition(async () => {
       const result = await collectLaybyAction(layby.id)
       if (!result.ok) {
@@ -3756,6 +3828,13 @@ export default function PosShell({
        * list and then hand back an identical empty till.
        */
       if (LIST_ONLY_MODULES.includes(module)) {
+        /* An offline list would render its empty state — "No lay-bys on the
+           go" — which reads as a fact about the shop rather than about the
+           line. Refused at the door, like every other server-bound list. */
+        if (!till.online) {
+          toast.info('Lay-bys need the connection — they live on the server.')
+          return
+        }
         if (module === 'laybys') setShowingLaybys(true)
         return
       }
@@ -3769,7 +3848,12 @@ export default function PosShell({
       dispatch({ type: 'SET_DOC_TYPE', docType: next })
       toast.info(`Starting ${MODULE_PHRASES[module]}.`)
     },
-    [state.docType, state.lines.length, toast],
+    /* `till.online` is load-bearing here, not incidental: without it this
+       callback closes over the value from mount — which is optimistically
+       true — and the offline refusal below can never fire. Found by driving
+       it: the quote guard worked (a plain function, re-created each render)
+       while this one silently opened the list. */
+    [state.docType, state.lines.length, toast, till.online],
   )
 
   useEffect(() => {
@@ -3965,7 +4049,7 @@ export default function PosShell({
         saveSale,
         saveAsOrder,
         showSaved: () => setShowingSaved(true),
-        showQuotes: () => setShowingQuotes(true),
+        showQuotes: openQuoteList,
         undo: undoLastLine,
         pickCustomer: () => setPickingCustomer(true),
         editLine: () => {
@@ -4401,8 +4485,8 @@ export default function PosShell({
           onShowSaved={() => setShowingSaved(true)}
           /* Both take over that same key on their own module — the pane decides,
              because it is the one that knows which module is showing. */
-          onShowQuotes={() => setShowingQuotes(true)}
-          onShowOrders={() => setShowingTillOrders(true)}
+          onShowQuotes={openQuoteList}
+          onShowOrders={openOrderList}
           savedCount={savedTally}
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
