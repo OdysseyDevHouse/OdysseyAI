@@ -79,6 +79,24 @@ export interface RunOptions {
   limit?: number
   /** Resolve relative periods against this instant (a scheduled send uses its due time). */
   now?: Date
+  /**
+   * Where to read the rows from. Defaults to the site's own database.
+   *
+   * A local-backend site keeps its data on the shop's machine, so head-office
+   * reporting has nothing to read there. Passing a reader that points at that
+   * site's cloud REPLICA runs the identical SQL against the identical schema —
+   * the replica is a byte-for-byte copy — without this engine knowing anything
+   * about replication.
+   *
+   * A FUNCTION rather than a purpose string, deliberately: it keeps replicas
+   * unreachable through siteDb.ts. Reporting supplies its own reader; nothing
+   * here can resolve one by name, so no existing caller can land on a replica
+   * by accident.
+   *
+   * It must be READ-ONLY. The engine only ever SELECTs, and a replica that
+   * could be written to would silently diverge from the shop.
+   */
+  reader?: (siteId: number, sql: string, params: unknown[]) => Promise<RowDataPacket[]>
 }
 
 export interface ReportResult {
@@ -157,14 +175,34 @@ export async function runBuilderSpec(
     .filter(Boolean)
     .join('\n')
 
-  const raw = await siteQuery<RowDataPacket>(
+  /* WHERE the rows come from.
+   *
+   * A cloud site has one database and this reads it. A local-backend site keeps
+   * its data on the shop's machine, which head office cannot reach — so it
+   * reads that site's cloud REPLICA instead. The SQL above is identical either
+   * way, because the replica is a byte-for-byte copy of the same schema.
+   *
+   * Resolved HERE rather than at the six places that call this engine, so no
+   * caller has to remember. A caller that already knows better may still pass
+   * `reader` — the multi-site path does, to avoid re-resolving per store.
+   *
+   * The resolver is imported lazily so this module keeps working in a script
+   * or a test that has no control database to ask. */
+  const read =
+    options.reader ??
+    (await import('../reporting/reportSource')
+      .then((m) => m.reportSourceFor(siteId))
+      .then((s) => s.reader)
+      .catch(() => (s: number, q: string, p: unknown[]) => siteQuery<RowDataPacket>(s, q, p)))
+
+  const raw = await read(
     siteId,
     `SET STATEMENT max_statement_time=${STATEMENT_TIMEOUT_SECONDS} FOR ${sql}`,
     where.params,
   ).catch(async (err: unknown) => {
     // MariaDB understands SET STATEMENT; MySQL does not. Fall back rather than
     // making the whole feature depend on which one the site runs.
-    if (isSyntaxError(err)) return siteQuery<RowDataPacket>(siteId, sql, where.params)
+    if (isSyntaxError(err)) return read(siteId, sql, where.params)
     throw err
   })
 

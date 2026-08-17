@@ -5,6 +5,9 @@
 const { app, BrowserWindow, shell, dialog } = require('electron')
 const path = require('node:path')
 const http = require('node:http')
+const runtimeConfig = require('./runtimeConfig')
+const localDb = require('./localDb')
+const replicationTunnel = require('./replicationTunnel')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
@@ -53,6 +56,65 @@ function waitForServer(url, timeoutMs = 60000) {
   })
 }
 
+/**
+ * Everything that must be true before the Next server may start.
+ *
+ * ── ORDER MATTERS HERE ──────────────────────────────────────────────────────
+ *
+ * The Next server reads its database settings off process.env the moment it
+ * handles a request, and src/lib/crypto/secrets.ts THROWS when ENCRYPTION_KEY
+ * is missing. So the environment has to be complete before prepare(), and on a
+ * local install the database has to be listening before the first query — not
+ * merely installed.
+ *
+ * A packaged build had none of this: main.js never loaded a .env, so `npm run
+ * dist` produced an app that could not open a connection at all.
+ */
+async function prepareRuntime(onProgress) {
+  const { env, mode } = runtimeConfig.resolveEnv()
+  Object.assign(process.env, env)
+
+  if (mode !== 'local') return { mode }
+
+  /* A local backend brings its own server up. Provisioning is idempotent and
+     cheap after the first run: an existing data directory is detected and
+     started, never re-initialised, because re-initialising is indistinguishable
+     from erasing the shop's trading history. */
+  const secrets = runtimeConfig.revealSecrets()
+  await localDb.ensureRunning({
+    port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    controlDbName: process.env.DB_NAME,
+    /* Only used on a first run, to take away root's passwordless access once
+       the app's own user exists. Escrowed to the control panel so support can
+       still get in without the customer ever holding it. */
+    rootPassword: secrets.rootPassword,
+    /* The cloud replica's account. Applied on every start rather than only the
+       first, so a password rotated from the control panel takes effect when
+       the shop next opens. */
+    replicationUser: secrets.replicationUser,
+    replicationPassword: secrets.replicationPassword,
+    onProgress,
+  })
+
+  /* The cloud replica reads the binary log back down a connection the SHOP
+     opens, because nothing on the internet can dial into a PC behind a
+     domestic router. Started after the database is up and deliberately not
+     awaited: a shop whose line is down must still open, and the tunnel's only
+     correct response to that is to keep trying quietly in the background. */
+  const cfg = runtimeConfig.readConfig()
+  replicationTunnel.start({
+    url: cfg.replicationUrl || process.env.ODYSSEY_REPLICATION_URL || '',
+    token: secrets.replicationPassword,
+    siteId: cfg.siteId ?? null,
+    deviceSerial: cfg.deviceSerial ?? null,
+    dbPort: Number(process.env.DB_PORT),
+  })
+
+  return { mode }
+}
+
 async function startNextServer() {
   // Packaged: run Next's own server against the prebuilt .next output. app.asar
   // is read-only, so the build must already exist — `npm run dist` handles that.
@@ -85,7 +147,11 @@ async function createWindow() {
     },
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow.show())
+  /* Belt and braces. createWindow() shows the window itself as soon as the
+     splash is loaded, because a first-run database init takes long enough that
+     waiting for the app proper would look like a hang. This stays for the path
+     where that never happens. */
+  mainWindow.once('ready-to-show', () => mainWindow?.show())
 
   /*
    * Where a `window.open` goes.
@@ -148,6 +214,21 @@ async function createWindow() {
 
   let url
   try {
+    /* First run on a local backend initialises a database — tens of seconds of
+       work with nothing on screen. Show the window early and narrate it, or the
+       customer's first experience of the product is a machine that appears to
+       have hung. */
+    mainWindow.show()
+    await mainWindow.loadFile(path.join(__dirname, 'starting.html'))
+
+    await prepareRuntime((message) => {
+      /* Best-effort: a progress line that cannot be delivered must never be the
+         thing that stops the app from starting. */
+      mainWindow?.webContents
+        ?.executeJavaScript(`window.setStatus?.(${JSON.stringify(String(message))})`)
+        .catch(() => {})
+    })
+
     url = DEV_URL || (await startNextServer())
     await waitForServer(`${url}/api/health`)
   } catch (err) {
@@ -180,7 +261,34 @@ if (!app.requestSingleInstanceLock()) {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
-  app.on('before-quit', () => {
+  /*
+   * Shut the database down politely.
+   *
+   * InnoDB survives a hard kill, but it recovers on the next start, and
+   * recovery is slow and alarming — the customer experiences it as the app
+   * taking a minute to open after a power cut. `before-quit` is asynchronous
+   * here, so the quit is held until the server is down or the timeout passes.
+   */
+  let shuttingDown = false
+  app.on('before-quit', async (event) => {
     if (nextServer) nextServer.close()
+
+    if (shuttingDown || runtimeConfig.backendMode() !== 'local') return
+    event.preventDefault()
+    shuttingDown = true
+    /* The tunnel first: it holds a socket to the server we are about to stop,
+       and closing it politely saves the far end from reading a truncated
+       stream and treating it as an error worth alerting on. */
+    try {
+      replicationTunnel.stop()
+    } catch (err) {
+      console.error('[replication] shutdown failed', err)
+    }
+    try {
+      await localDb.stop(Number(process.env.DB_PORT))
+    } catch (err) {
+      console.error('[mariadb] shutdown failed', err)
+    }
+    app.quit()
   })
 }

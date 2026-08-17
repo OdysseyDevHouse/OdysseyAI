@@ -115,6 +115,18 @@ export type ModuleEntitlements = {
    * otherwise a persistent free upgrade that nobody finds out about.
    */
   readonly degraded: boolean
+  /**
+   * These entitlements came from the machine's own LEASE, not from the control
+   * database — a local-backend desktop install carrying on through an outage
+   * with what it was last told.
+   *
+   * Distinct from `degraded`, which is the unbounded guess. A leased result is
+   * a remembered fact with a known age and a known expiry: it says no to a
+   * module the shop never bought, and it stops entirely when the lease runs
+   * out. Screens use it to show "last checked on Tuesday" rather than
+   * pretending the answer is live.
+   */
+  readonly leased?: boolean
 }
 
 /** The one predicate. */
@@ -242,7 +254,7 @@ export const entitlementsForSite = cache(async (siteId: number): Promise<ModuleE
     // Every site has the base, including one whose row predates this feature.
     held.add(BASE_MODULE)
 
-    return {
+    const result: ModuleEntitlements = {
       held,
       endingOn,
       deviceCount: await billableDeviceCount(siteId),
@@ -250,12 +262,109 @@ export const entitlementsForSite = cache(async (siteId: number): Promise<ModuleE
       accountStatus,
       degraded: false,
     }
+
+    /* A real answer, so record it. This is the ONLY thing that renews a lease,
+       and it is deliberately fire-and-forget: a shop must never be stopped by
+       a failure to write down something it already knows. */
+    void recordLease(siteId, result)
+
+    return result
   } catch (err) {
-    // See the docblock: the back office stays whole, and we say so out loud.
+    /* ── THE CONTROL DATABASE IS UNREACHABLE ──────────────────────────────
+       On a cloud install this is a blip of seconds and the docblock above
+       applies: allow everything rather than let the back office eat half of
+       itself mid-task.
+       A local-backend desktop install is the other case. There this is the
+       ordinary state of a machine with no internet, it lasts as long as the
+       line is down, and failing open forever is not degradation — it is an
+       unlicensed product that works perfectly. If that machine holds a lease,
+       it trades on what it was last told, until the lease runs out. */
+    const leased = await leasedEntitlements(siteId)
+    if (leased) return leased
+
+    // No lease: the original trade, unchanged, said out loud.
     console.error('[modules] could not read entitlements; allowing everything', err)
     return degradedResult()
   }
 })
+
+/**
+ * Write the lease, if this machine keeps one.
+ *
+ * Imported lazily because lease.ts imports this module's types, and a static
+ * cycle between them would be resolved differently by the server and the
+ * bundler. Also keeps the lease off the critical path of a cloud request that
+ * will never read one.
+ */
+async function recordLease(siteId: number, e: ModuleEntitlements): Promise<void> {
+  if (!keepsLease()) return
+  try {
+    const { writeLease } = await import('@/lib/licence/lease')
+    const { deviceSerialForLease, licenceStatusForLease } = await import('@/lib/licence/leaseSubject')
+    await writeLease({
+      siteId,
+      deviceSerial: await deviceSerialForLease(siteId),
+      licenceStatus: await licenceStatusForLease(siteId),
+      held: e.held,
+      endingOn: e.endingOn,
+      accountStatus: e.accountStatus,
+    })
+  } catch {
+    /* Never let bookkeeping break a request that already succeeded. A missed
+       write costs a lease that expires earlier than it might have, which is
+       the safe direction to be wrong in. */
+  }
+}
+
+/**
+ * What the lease says, when the control database cannot answer.
+ *
+ * Returns null when there is no lease to read — a cloud install, a site that
+ * has not run migration 178, or a machine that has never once made contact —
+ * and the caller then falls back to the historical fail-open.
+ */
+async function leasedEntitlements(siteId: number): Promise<ModuleEntitlements | null> {
+  if (!keepsLease()) return null
+  try {
+    const { readLease, leaseState } = await import('@/lib/licence/lease')
+    const lease = await readLease(siteId)
+    const state = leaseState(lease)
+
+    /* Expired is NOT handled here. An out-of-lease machine must be stopped at
+       the gate, with a screen that explains itself and offers the unlock — not
+       by silently having every module vanish, which is precisely the "the app
+       ate itself" failure the fail-open exists to prevent. The gate reads the
+       same lease and blocks; entitlements stay permissive so that the screens
+       it does allow through still render. */
+    if (state.status !== 'current') return null
+
+    return {
+      held: state.lease.held,
+      endingOn: state.lease.endingOn,
+      /* Not carried on the lease: device COUNT is a billing input, and a stale
+         one would misprice an invoice. Nothing gates on it, so zero is honest
+         here in a way a remembered number would not be. */
+      deviceCount: 0,
+      accountId: null,
+      accountStatus: state.lease.accountStatus,
+      degraded: false,
+      leased: true,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Does this installation keep a lease at all?
+ *
+ * Only a desktop build does. A cloud install reaches the control database over
+ * the same network as everything else it needs, so a lease there would be a
+ * table that is written on every request and read on none.
+ */
+function keepsLease(): boolean {
+  return process.env.APP_MODE === 'desktop'
+}
 
 function isModuleKey(key: string): key is ModuleKey {
   return (MODULE_KEYS as readonly string[]).includes(key)
@@ -268,6 +377,23 @@ function isModuleKey(key: string): key is ModuleKey {
  * operation rather than about the caller. Multi-Branch needs it on BOTH sites:
  * a store that declined the module must neither send a product edit nor receive
  * one, or "declined" would only mean "declined in one direction".
+ *
+ * ── NO LEASE HERE, DELIBERATELY ─────────────────────────────────────────────
+ *
+ * entitlementsForSite() falls back to the machine's lease when the control
+ * database is unreachable. This cannot, and should not try.
+ *
+ * A lease records what ONE machine was told about ITS OWN site. It says nothing
+ * about a sibling store, and a desktop install holds no database but its own —
+ * so there is nothing local to consult about the other end of a cross-store
+ * operation.
+ *
+ * That leaves the historical fail-open below, and it is the right answer for a
+ * different reason than it is elsewhere: cross-store work already requires
+ * reaching the OTHER site's database, which a machine that cannot reach the
+ * control database almost certainly cannot reach either. The operation fails on
+ * its own merits a moment later, with an error about the store it could not
+ * reach rather than a misleading one about a module nobody withdrew.
  */
 export async function allHold(siteIds: number[], key: ModuleKey): Promise<Set<number>> {
   if (siteIds.length === 0) return new Set()

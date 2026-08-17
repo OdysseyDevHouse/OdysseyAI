@@ -99,6 +99,19 @@ const OPEN_PAGES = new Set([
 const OPEN_ACTIONS = new Set([
   'src/app/(app)/security/actions.ts',
   'src/app/(app)/notifications/actions.ts',
+  /* The telephone unlock, redeemed on a machine that has locked itself after a
+     week offline. requireSession, deliberately no capability.
+
+     The code IS the authority: it is machine-specific, single-use, time-boxed,
+     and it only exists because a supervisor on the control panel already
+     decided to issue it — that decision IS gated, on setup.edit, in
+     setup/terminals/unlockActions.ts.
+
+     A capability here would gate the same act twice and strand the shop the
+     second time: the person typing it in is whoever answered the phone at
+     07:00 on a Sunday, and a rule that only a manager may unlock means a
+     cashier with support on the line still cannot open the till. */
+  'src/app/(app)/leaseActions.ts',
 ])
 
 /**
