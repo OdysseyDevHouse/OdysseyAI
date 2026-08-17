@@ -51,6 +51,7 @@ export {
 } from './Field'
 export { FileInput } from './FileInput'
 export { Slider } from './Slider'
+export { Stepper } from './Stepper'
 
 export { Card, CardHeader, CardBody, CardFooter } from './Card'
 export { SettingRow, SettingGroup } from './SettingRow'

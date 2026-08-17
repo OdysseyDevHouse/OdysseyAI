@@ -83,6 +83,7 @@ import {
   TouchRow,
   ProductTile,
   Slider,
+  Stepper,
   SwatchPicker,
   tileClass,
   ToolbarSearch,
@@ -277,6 +278,7 @@ function FormSection() {
   // as 0.00 and stays that way on every machine.
   const [price, setPrice] = useState(0)
   const [tileWidth, setTileWidth] = useState(200)
+  const [deviceCount, setDeviceCount] = useState(2)
 
   return (
     <Card>
@@ -388,6 +390,24 @@ function FormSection() {
           </Field>
         </div>
       </Row>
+      <Row>
+        <Spec
+          name="<Stepper />"
+          note="A small whole number adjusted by one or two — tills on a licence, seats on a plan. Anything that could be any value is a NumberInput."
+        />
+        <div className="flex flex-wrap items-center gap-4">
+          <Field label="Devices at this store">
+            <Stepper value={deviceCount} onChange={setDeviceCount} min={1} max={99} label="Devices" />
+          </Field>
+          <Field label="At its floor">
+            <Stepper value={1} onChange={() => {}} min={1} max={9} label="At the minimum" />
+          </Field>
+          <Field label="Disabled">
+            <Stepper value={3} onChange={() => {}} min={1} max={9} label="Disabled" disabled />
+          </Field>
+        </div>
+      </Row>
+
       <Row>
         <Spec name="<Switch />" note="On/off settings — e.g. a flag" />
         <Switch
