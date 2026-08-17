@@ -26,6 +26,7 @@ import {
   saveDraft,
   saveForLaterDocument,
   releaseDocument,
+  CLAIMABLE_STATUSES,
   cancelUnpostedDocument,
   getDocument,
   attributeTo,
@@ -287,8 +288,12 @@ export async function reparkTableBillAction(documentId: number): Promise<void> {
   const doc = await getDocument(ctx.siteId, documentId)
   /* Only ever an unposted bill going back to the shelf. A document that was finalised or
      cancelled while the waiter held it must keep that status — re-parking a paid invoice
-     would put it back on the floor as an open bill and invite it to be paid twice. */
-  if (!doc || (doc.status !== 'draft' && doc.status !== 'saved')) return
+     would put it back on the floor as an open bill and invite it to be paid twice.
+     ISSUED is in the set because the till can now hold a quote, which is never
+     `saved`; without it a recalled quote kept its claim forever, and a terminal
+     claim does not expire. `releaseDocument` leaves an issued document's status
+     alone and only sheds the claim — see it for why. */
+  if (!doc || !(CLAIMABLE_STATUSES as readonly string[]).includes(doc.status)) return
 
   await releaseDocument(ctx.siteId, documentId)
 }

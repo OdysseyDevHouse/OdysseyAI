@@ -5,7 +5,7 @@ import { Badge, DataTable, Icons, Menu, MenuItem, type Column } from '@/componen
 import { formatMoney } from '@/lib/decimals'
 // The pure model, NOT lib/site/quotes — importing the server module from a
 // client component pulls the database layer into the browser bundle.
-import { QUOTE_STATE_LABELS, type QuoteState } from '@/lib/quotesModel'
+import { QUOTE_STATE_LABELS, QUOTE_STATE_TONES, type QuoteState } from '@/lib/quotesModel'
 
 /**
  * The quote register table.
@@ -50,19 +50,11 @@ export function QuotesTable({ rows }: { rows: QuoteTableRow[] }) {
     {
       key: 'state',
       header: 'State',
+      /* Tone from the shared model, not decided here: the till shows the same
+         states, and a quote that reads green on one screen and grey on the
+         other is two answers to one question. */
       cell: (q) => (
-        <Badge
-          dot
-          tone={
-            q.state === 'accepted'
-              ? 'success'
-              : q.state === 'expired'
-                ? 'danger'
-                : q.state === 'declined' || q.state === 'cancelled'
-                  ? 'default'
-                  : 'warning'
-          }
-        >
+        <Badge dot tone={QUOTE_STATE_TONES[q.state]}>
           {QUOTE_STATE_LABELS[q.state]}
         </Badge>
       ),

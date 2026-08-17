@@ -103,6 +103,8 @@ import { ReprintModal } from './ReprintModal'
 import { OnlineOrdersModal } from './OnlineOrdersModal'
 import { ClockModal } from './ClockModal'
 import { collectOnlineOrderAction, type CollectableOrder } from './onlineOrderActions'
+import { QuotesModal } from './QuotesModal'
+import { recallQuoteForTillAction, type TillQuote } from './quoteActions'
 import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
@@ -621,6 +623,14 @@ export default function PosShell({
    * ask about "an invoice" when the row said "Point of sale".
    */
   const [switchingTo, setSwitchingTo] = useState<TillModule | null>(null)
+  /**
+   * The shop's quotes, to find the one a customer is holding.
+   *
+   * Opened from the quote module's own screen rather than from the module menu:
+   * the menu says WHICH KIND of document this basket is, and finding an
+   * existing one is a different question from starting a new one.
+   */
+  const [showingQuotes, setShowingQuotes] = useState(false)
   const [sizingTiles, setSizingTiles] = useState(false)
   /** The floor's quick-key dialog. The gate has no pane to draw them in. */
   const [showingTableKeys, setShowingTableKeys] = useState(false)
@@ -1963,6 +1973,24 @@ export default function PosShell({
         return
       }
       toast.success(reference ? `${reference} saved.` : 'Sale saved.')
+      /*
+       * HAND THE CLAIM BACK.
+       *
+       * Harmless on an invoice, which is why nothing needed it before: a parked
+       * sale lands in `saved` and the saved-sales list reclaims one freely. It
+       * matters on a QUOTE. A terminal claim never expires by design, so a quote
+       * finished here would stay locked to this till forever and no other
+       * counter could ever open it again without a supervisor.
+       *
+       * Keyed on `saved.documentId` rather than through releaseHeldBill: that
+       * one reads `state.documentId`, which is null for a basket that has just
+       * been written for the first time — it would release nothing on exactly
+       * the case that creates the document.
+       *
+       * Not awaited, like every other release: the claim is invisible to the
+       * cashier and holding the screen on it would make saving feel slow.
+       */
+      void reparkTableBillAction(saved.documentId).catch(() => {})
       dispatch({ type: 'CLEAR' })
       // Counted optimistically rather than waiting for the server: the badge is
       // a hint, and the modal corrects it from the real query the moment it opens.
@@ -1970,9 +1998,14 @@ export default function PosShell({
 
       /* Back to the floor, with the tab's identity dropped so the next sale does
          not inherit this one's name. In hospitality the gate IS where a waiter
-         goes next; in retail there is no gate and the till simply empties. */
+         goes next; in retail there is no gate and the till simply empties.
+
+         NOT ON A QUOTE. Somebody writing quotes is working through a queue of
+         them at a counter, and being thrown out to the table plan after each one
+         means walking back in through the gate and the module menu to write the
+         next. The till stays where it is, empty and ready for the next quote. */
       clearTabIdentity()
-      if (hospitality) {
+      if (hospitality && state.docType !== 'quote') {
         setTable(null)
         setChoosingTable(true)
         refreshTables()
@@ -2409,6 +2442,24 @@ export default function PosShell({
       toast.info('Add something before saving the sale.')
       return
     }
+    /*
+     * A QUOTE IS NOT A TABLE'S BILL, so it never asks for a table.
+     *
+     * The naming dialog below is the hospitality path: an unnamed basket at a
+     * restaurant till belongs to a table or a tab, and Save asks which. A quote
+     * belongs to a CUSTOMER — it may be printed and carried out of the building
+     * — and putting "Create new table · pick a table number" in front of
+     * somebody saving one asks a question with no sensible answer. Which is
+     * exactly what it did: found by driving the screen, where the save key on a
+     * quote opened the table pad.
+     *
+     * Parked directly instead. The quote already carries the customer name it
+     * was recalled or rung up with, which is the identity that matters here.
+     */
+    if (state.docType === 'quote') {
+      park()
+      return
+    }
     if (table || tabLabel) {
       closeSale()
       return
@@ -2792,6 +2843,70 @@ export default function PosShell({
       })
       setShowingOrders(false)
       toast.success(`${order.orderNumber} is on the till. Add anything else, then take payment.`)
+    })
+  }
+
+  /**
+   * Bringing an existing quote onto the till.
+   *
+   * ── WHY IT REFUSES OVER A BASKET ──────────────────────────────────────────
+   *
+   * Same rule as a web order, for the same reason: two documents' lines in one
+   * basket is one sale for two customers. The till says what is in the way and
+   * the cashier finishes or saves first.
+   *
+   * ── WHAT IT DOES *NOT* DO ─────────────────────────────────────────────────
+   *
+   * It does not convert the quote. The basket comes back with the quote's
+   * document id and the till stays in the quote module, so saving writes back
+   * to the SAME quote. Turning it into an invoice is a decision somebody makes
+   * — `convertToInvoice` in the back office, or switching this basket to Point
+   * of sale — not a side effect of looking at one.
+   */
+  function recallQuote(quote: TillQuote) {
+    if (state.lines.length > 0) {
+      toast.error('Finish or save the sale on screen first, then bring the quote up.')
+      return
+    }
+    startTransition(async () => {
+      const result = await recallQuoteForTillAction(quote.id, priceStructureId, terminal?.id ?? null)
+      if (!result.ok) {
+        toast.error(result.error)
+        /* Closed rather than left open: every refusal here means the list is out
+           of date — accepted elsewhere, cancelled, open on another till — and
+           re-opening re-reads it. */
+        setShowingQuotes(false)
+        return
+      }
+      setDocDiscount(null)
+      dispatch({
+        type: 'LOAD',
+        documentId: result.documentId,
+        lines: result.lines,
+        /*
+         * SAYS IT IS A QUOTE, and this line is the whole of it.
+         *
+         * LOAD defaults an absent docType to `invoice` — right for a parked
+         * basket, and it silently overwrote the till's quote mode here: the
+         * lines landed and the header flipped to "Current Sale". Saving would
+         * then have written a SECOND document and left the customer's quote
+         * untouched, with both screens looking correct.
+         *
+         * Dispatching SET_DOC_TYPE first does NOT fix it — that action clears
+         * the basket, and LOAD runs after and re-imposes the default anyway. The
+         * type has to travel WITH the lines.
+         */
+        docType: 'quote',
+        /* The NAME comes back, the account does not — same rule as a recalled
+           sale. Credit needs a live balance, and a quote written last week is
+           not it; re-attaching is a deliberate act on the customer key. */
+        customer: null,
+        customerName: result.customerName ?? '',
+      })
+      setShowingQuotes(false)
+      toast.success(
+        `${quote.documentNumber ?? 'That quote'} is on the till. Take payment to invoice it.`,
+      )
     })
   }
 
@@ -3605,6 +3720,7 @@ export default function PosShell({
         saveSale,
         saveAsOrder,
         showSaved: () => setShowingSaved(true),
+        showQuotes: () => setShowingQuotes(true),
         undo: undoLastLine,
         pickCustomer: () => setPickingCustomer(true),
         editLine: () => {
@@ -4019,11 +4135,24 @@ export default function PosShell({
           /* Decides whether the finish key says Pay or Save — a quote and an
              order take no money. See SalePane. */
           docType={state.docType}
-          /* Hospitality parks through Close, so the two park keys are retail-only —
-             see SalePane's `showParkKeys`. */
-          showParkKeys={!hospitality}
+          /*
+           * Hospitality parks through Close, so the two park keys are retail-only
+           * — see SalePane's `showParkKeys`.
+           *
+           * EXCEPT ON A QUOTE. That rule is about PARKING: a waiter's basket
+           * belongs to a table and Close is how it gets there, so a Save key
+           * beside it would be a second answer to a question the floor already
+           * answers. A quote is not a table's bill and never becomes one, so
+           * none of that applies — and hiding the row there left a hospitality
+           * till switched to Quotes with no way to reach the shop's quotes at
+           * all. Found by driving it: the key was simply absent.
+           */
+          showParkKeys={!hospitality || state.docType === 'quote'}
           onPark={park}
           onShowSaved={() => setShowingSaved(true)}
+          /* Takes over that same key while the till is on quotes — the pane
+             decides, because it is the one that knows which module is showing. */
+          onShowQuotes={() => setShowingQuotes(true)}
           savedCount={savedTally}
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
@@ -4146,6 +4275,16 @@ export default function PosShell({
         available={['sale', 'quotes', 'orders']}
         onPick={pickModule}
         onClose={() => setShowingModules(false)}
+      />
+
+      {/* The shop's quotes. Reached from the quote screen's own key rather than
+          from the module menu: the menu answers "what kind of document is this
+          basket", and finding an existing one is a different question. */}
+      <QuotesModal
+        open={showingQuotes}
+        onClose={() => setShowingQuotes(false)}
+        onRecall={recallQuote}
+        busy={pending}
       />
 
       {/* Only ever raised by a switch with a basket in hand — an empty one goes

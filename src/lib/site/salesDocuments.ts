@@ -1054,6 +1054,34 @@ export async function saveForLaterDocument(siteId: number, id: number): Promise<
  */
 export const CLAIM_LEASE_MINUTES = 15
 
+/**
+ * The statuses a document may be HELD in.
+ *
+ * ── WHY THIS IS A SET AND NOT `'saved'` ───────────────────────────────────
+ *
+ * The claim was built for parked baskets, which are always `saved`, and the
+ * status was written into the predicate as a literal in three places. Then the
+ * till learned to open quotes — and quotes are never `saved`. They are `draft`
+ * while being written and `issued` once sent, so every attempt to open one at a
+ * till was refused with "That sale is not saved", a message about a concept the
+ * cashier had not used. Found by driving the screen: the list worked, the tap
+ * worked, and the basket stayed empty.
+ *
+ * What belongs here is anything a person can still EDIT, because that is what
+ * the claim protects — two tills writing over each other's changes.
+ *
+ * What must never be here is `finalised` or `cancelled`. Those are closed: the
+ * money is taken or the document is dead, and a claim on one would suggest it
+ * could still be worked on. `issued` IS claimable — an issued quote can be
+ * recalled, re-priced and re-sent, which is an ordinary thing to do to one.
+ */
+export const CLAIMABLE_STATUSES = ['draft', 'saved', 'issued'] as const
+
+/* Inlined into the SQL rather than parameterised: these are our own literals,
+   never user input, and keeping the count of `?` placeholders stable across
+   three predicates is worth more than the uniformity. */
+const CLAIMABLE_SQL = CLAIMABLE_STATUSES.map((s) => `'${s}'`).join(',')
+
 /** Who is holding a bill, for the message that refuses somebody else. */
 export type DocumentClaim = {
   terminalId: number | null
@@ -1100,7 +1128,11 @@ export async function claimDocument(
 ): Promise<SaveResult> {
   const doc = await getDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
-  if (doc.status !== 'saved') return { ok: false, error: 'That sale is not saved.' }
+  /* See CLAIMABLE_STATUSES. This insisted on `saved`, which is right for a
+     parked basket and refused every quote — they are never saved. */
+  if (!(CLAIMABLE_STATUSES as readonly string[]).includes(doc.status)) {
+    return { ok: false, error: 'That document can no longer be worked on.' }
+  }
 
   /*
    * An UNCLAIMED terminal cannot hold a claim, so it falls back to the old
@@ -1114,7 +1146,7 @@ export async function claimDocument(
       `UPDATE sales_documents
           SET claimed_by = ?, claimed_at = UTC_TIMESTAMP()
         WHERE id = ?
-          AND status = 'saved'
+          AND status IN (${CLAIMABLE_SQL})
           AND claimed_terminal_id IS NULL
           AND (claimed_at IS NULL
                OR claimed_by = ?
@@ -1142,7 +1174,7 @@ export async function claimDocument(
     `UPDATE sales_documents
         SET claimed_terminal_id = ?, claimed_by = ?, claimed_at = UTC_TIMESTAMP()
       WHERE id = ?
-        AND status = 'saved'
+        AND status IN (${CLAIMABLE_SQL})
         AND (claimed_terminal_id = ?
              OR (claimed_terminal_id IS NULL
                  AND (claimed_at IS NULL
@@ -1216,13 +1248,19 @@ export async function overrideClaim(
 ): Promise<SaveResult> {
   const doc = await getDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
-  if (doc.status !== 'saved') return { ok: false, error: 'That sale is not saved.' }
+  /* Matches claimDocument. A supervisor breaking the claim on a quote somebody
+     left open at the other till is the same act as breaking it on a parked
+     basket, and a set that differed between the two would leave a document
+     claimable but never releasable. */
+  if (!(CLAIMABLE_STATUSES as readonly string[]).includes(doc.status)) {
+    return { ok: false, error: 'That document can no longer be worked on.' }
+  }
 
   await siteExecute(
     siteId,
     `UPDATE sales_documents
         SET claimed_terminal_id = ?, claimed_by = ?, claimed_at = UTC_TIMESTAMP()
-      WHERE id = ? AND status = 'saved'`,
+      WHERE id = ? AND status IN (${CLAIMABLE_SQL})`,
     [terminalId, userId, id],
   )
   return { ok: true, id }
@@ -1235,20 +1273,35 @@ export async function overrideClaim(
  * the OLD scheme — that one recorded a claim by moving the document to `draft`, and a
  * till still running the previous build can leave one behind mid-upgrade. Cheap, and it
  * means a mixed fleet cannot strand a table.
+ *
+ * ── EXCEPT ON AN ISSUED DOCUMENT, WHICH KEEPS ITS STATUS ──────────────────
+ *
+ * That repair is about BASKETS, which are `draft` or `saved` and belong on the
+ * shelf either way. An issued quote is a different thing: it has been sent to a
+ * customer, and `issued` is the record of that having happened. Once the till
+ * could claim one — quotes are never `saved`, so it had to — a release that
+ * rewrote the status would quietly demote a sent quote to an unsent one, and
+ * the register would then show it as never having gone out.
+ *
+ * So the repair applies where it was aimed and nowhere else.
  */
 export async function releaseDocument(siteId: number, id: number): Promise<SaveResult> {
   const doc = await getDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
-  /* Only an unposted document goes back on the shelf. A finalised or cancelled one has
+  /* Only a claimable document goes back on the shelf. A finalised or cancelled one has
      its own status for good reason, and a released claim must never resurrect it. */
-  if (doc.status !== 'draft' && doc.status !== 'saved') {
+  if (!(CLAIMABLE_STATUSES as readonly string[]).includes(doc.status)) {
     return { ok: false, error: `A ${doc.status} sale cannot be parked.` }
   }
+
+  /* A basket goes back to `saved` — see above. Anything else keeps what it is,
+     and only sheds the claim. */
+  const restore = doc.status === 'issued' ? '' : `status = 'saved', `
 
   await siteExecute(
     siteId,
     `UPDATE sales_documents
-        SET status = 'saved', claimed_by = NULL, claimed_at = NULL,
+        SET ${restore}claimed_by = NULL, claimed_at = NULL,
             claimed_terminal_id = NULL
       WHERE id = ?`,
     [id],
