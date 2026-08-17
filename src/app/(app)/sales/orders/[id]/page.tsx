@@ -117,36 +117,52 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
         A DELIVERED order has no editor, so it would have no heading at all —
         hence the fallback below rather than simply deleting this.
       */}
-      {!editable && (
-        <PageHeader
-          title={order.document.documentNumber ?? `Order #${order.document.id}`}
-          subtitle={`${order.document.customerName ?? 'Walk-in'} · ${order.document.documentDate}`}
-          backHref="/sales/orders"
-          backLabel="Sales orders"
-          action={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
+      <PageHeader
+        title={order.document.documentNumber ?? `Order #${order.document.id}`}
+        subtitle={`${order.document.customerName ?? 'Walk-in'} · ${order.document.documentDate}`}
+        backHref="/sales/orders"
+        backLabel="Sales orders"
+        action={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
+      />
+
+      {/*
+        ── THE LINES, WHILE THEY ARE STILL THE SHOP'S TO CHANGE ──────────────
+
+        Captured on the same editor as an invoice and a quote, because it is the
+        same document at an earlier moment.
+
+        RENDERED OUTSIDE PageBody, and that is not a detail. The editor brings
+        its own PageHeader and its own PageBody — so wrapping it in a second one
+        padded its content twice, leaving the customer bar and the grid visibly
+        narrower than the delivery panel below them, and dropped a page header
+        inside a body where it read as a card title rather than a heading.
+
+        `editorOnly` is what stops it drawing a SECOND heading under this
+        page's. The quotes screen solves the same collision by having no header
+        of its own; an order needs one, because a delivered order has no editor
+        at all and would otherwise be untitled.
+      */}
+      {editable && (
+        <InvoiceEditor
+          document={order.document}
+          structures={structures}
+          reps={reps}
+          defaultRepUserId={defaultUserId}
+          tenders={tenders}
+          cashRounding={cashRounding}
+          specials={specials}
+          customer={customer}
+          editable
+          hideHeader
+          canOverrideDiscount={can(capabilities, 'sales.discount_override')}
+          canOverridePrice={can(capabilities, 'sales.price_override')}
+          showCost={can(capabilities, 'products.cost')}
         />
       )}
 
-      <PageBody>
-        {/*
-          WHAT THIS ORDER IS, on the one screen that no longer says it.
-
-          An editable order takes its heading from the editor, which knows about
-          documents and not about fulfilment — so "Open" or "Part delivered"
-          would otherwise appear nowhere. A thin line rather than a tile: it is
-          one fact, and it was only ever a badge in the header before the stat
-          strip briefly carried it.
-        */}
-        {editable && (
-          <div className="flex items-center gap-2">
-            <Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>
-            {order.details?.deliveryDate && (
-              <span className="text-sm text-muted">
-                Deliver by {order.details.deliveryDate}
-              </span>
-            )}
-          </div>
-        )}
+      {/* The gutter matches the editor's own PageBody above, so the delivery
+          panel lines up with the grid rather than sitting wider than it. */}
+      <div className="flex flex-col gap-5 px-6 pb-10">
         {/* A cancelled order is a closed fact, not a problem — neutral. */}
         {status === 'cancelled' && (
           <Callout tone="neutral" icon={<Icons.Ban size={18} />} title="This order was cancelled.">
@@ -180,39 +196,6 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           and available quantities. That is the same information at the
           resolution somebody delivering actually works at.
         */}
-
-        {/*
-          ── THE LINES, WHILE THEY ARE STILL THE SHOP'S TO CHANGE ────────────
-
-          An order is captured on the same editor as an invoice and a quote,
-          because it is the same document at an earlier moment — see the quotes
-          screen, which does exactly this.
-
-          It appears only while NOTHING HAS BEEN DELIVERED. Once a delivery has
-          gone out, stock has moved and an invoice exists against these lines;
-          editing them then would change what a customer has already been given
-          — the same class of mistake as editing a posted invoice. The panel
-          below is what an order in that state needs, and it stays either way.
-
-          `setOrderDetails` refuses a delivered or cancelled order server-side,
-          so this is the screen agreeing with a rule rather than inventing one.
-        */}
-        {editable && (
-          <InvoiceEditor
-            document={order.document}
-            structures={structures}
-            reps={reps}
-            defaultRepUserId={defaultUserId}
-            tenders={tenders}
-            cashRounding={cashRounding}
-            specials={specials}
-            customer={customer}
-            editable
-            canOverrideDiscount={can(capabilities, 'sales.discount_override')}
-            canOverridePrice={can(capabilities, 'sales.price_override')}
-            showCost={can(capabilities, 'products.cost')}
-          />
-        )}
 
         <DeliverPanel
           documentId={order.document.id}
@@ -281,7 +264,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
         </Card>
-      </PageBody>
+      </div>
     </>
   )
 }

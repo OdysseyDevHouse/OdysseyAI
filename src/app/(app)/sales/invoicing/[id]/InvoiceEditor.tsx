@@ -133,6 +133,7 @@ export default function InvoiceEditor({
   canOverridePrice,
   showCost,
   specials,
+  hideHeader = false,
 }: {
   document: SalesDocument
   structures: PriceStructure[]
@@ -153,6 +154,18 @@ export default function InvoiceEditor({
   specials: Special[]
   /** Whether this person may see cost and margin. */
   showCost: boolean
+  /**
+   * Draw the grid WITHOUT its own page header.
+   *
+   * For a screen that already has one — the order screen, which needs a heading
+   * of its own because a DELIVERED order has no editor at all and would
+   * otherwise be untitled. Two headers stacked read as a document opened inside
+   * itself, which is exactly how it looked.
+   *
+   * The save controls move down beside the totals when this is set, so hiding
+   * the header never hides the way to save.
+   */
+  hideHeader?: boolean
 }) {
   const toast = useToast()
   const router = useRouter()
@@ -590,61 +603,66 @@ export default function InvoiceEditor({
   const noun = isQuote ? 'Quote' : isOrder ? 'Order' : 'Invoice'
   const title = document.documentNumber ?? `${noun} #${document.id}`
 
+  /*
+   * The status pill and the two save controls.
+   *
+   * Extracted because they belong in the header on most screens and BESIDE THE
+   * GRID on a screen that supplies its own — see `hideHeader`. Written once so
+   * the three-way branch below cannot drift between the two positions.
+   */
+  const actions = (
+    <>
+      <Badge tone={STATUS_TONE[document.status]}>{STATUS_LABELS[document.status]}</Badge>
+      {editable && (
+        <>
+          <Button variant="secondary" onClick={save} disabled={pending || lines.length === 0}>
+            <Icons.Save size={16} />
+            Save (draft)
+          </Button>
+          {/* A quote takes no payment — it is an offer, not a sale — and an
+              order takes none either, because the goods have not gone anywhere
+              yet. Only an invoice opens the tender pad. Everything above this
+              point is identical for all three, which is the whole reason one
+              editor serves them. */}
+          {isQuote ? (
+            <Button onClick={issueQuote} disabled={pending || lines.length === 0}>
+              <Icons.Check size={16} />
+              Issue quote
+            </Button>
+          ) : isOrder ? (
+            <Button onClick={save} disabled={pending || lines.length === 0}>
+              <Icons.Check size={16} />
+              Save order
+            </Button>
+          ) : (
+            <Button onClick={takePayment} disabled={pending || lines.length === 0}>
+              <Icons.Check size={16} />
+              Finalise
+            </Button>
+          )}
+        </>
+      )}
+    </>
+  )
+
   return (
     <>
-      <PageHeader
-        title={title}
-        subtitle={`${customerName || 'No customer'} · ${documentDate}`}
-        /* Back to the register this document belongs to. It always said
-           "invoicing", which sent somebody editing a quote to the wrong list. */
-        backHref={isQuote ? '/sales/quotes' : isOrder ? '/sales/orders' : '/sales/invoicing'}
-        backLabel={isQuote ? 'Back to quotes' : isOrder ? 'Back to orders' : 'Back to invoicing'}
-        action={
-          <>
-            <Badge tone={STATUS_TONE[document.status]}>{STATUS_LABELS[document.status]}</Badge>
-            {editable && (
-              <>
-                <Button
-                  variant="secondary"
-                  onClick={save}
-                  disabled={pending || lines.length === 0}
-                >
-                  <Icons.Save size={16} />
-                  Save (draft)
-                </Button>
-                {/* A quote takes no payment — it is an offer, not a sale. So
-                    the primary action issues it to the customer instead of
-                    opening the tender pad. Everything above this point is
-                    identical for both, which is the whole reason one editor
-                    serves both. */}
-                {isQuote ? (
-                  <Button onClick={issueQuote} disabled={pending || lines.length === 0}>
-                    <Icons.Check size={16} />
-                    Issue quote
-                  </Button>
-                ) : isOrder ? (
-                  /* An order is finished by SAVING it. Nothing is tendered —
-                     the goods have not gone anywhere yet — and the delivery
-                     panel above is where it is worked from afterwards. Offering
-                     "Finalise" here would open a tender pad for money nobody is
-                     taking. */
-                  <Button onClick={save} disabled={pending || lines.length === 0}>
-                    <Icons.Check size={16} />
-                    Save order
-                  </Button>
-                ) : (
-                  <Button onClick={takePayment} disabled={pending || lines.length === 0}>
-                    <Icons.Check size={16} />
-                    Finalise
-                  </Button>
-                )}
-              </>
-            )}
-          </>
-        }
-      />
+      {!hideHeader && (
+        <PageHeader
+          title={title}
+          subtitle={`${customerName || 'No customer'} · ${documentDate}`}
+          /* Back to the register this document belongs to. It always said
+             "invoicing", which sent somebody editing a quote to the wrong list. */
+          backHref={isQuote ? '/sales/quotes' : isOrder ? '/sales/orders' : '/sales/invoicing'}
+          backLabel={isQuote ? 'Back to quotes' : isOrder ? 'Back to orders' : 'Back to invoicing'}
+          action={actions}
+        />
+      )}
 
       <PageBody>
+        {/* Hiding the header must not hide the way to save, so the controls
+            come with the grid on a screen that has its own heading. */}
+        {hideHeader && <div className="flex items-center justify-end gap-2">{actions}</div>}
         <CustomerBar
           customerId={customerId}
           customerName={customerName}
