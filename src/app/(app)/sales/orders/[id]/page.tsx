@@ -1,8 +1,17 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
-import { requireCapability } from '@/lib/auth'
+import { notFound, redirect } from 'next/navigation'
+import { requireSiteUser } from '@/lib/auth'
 import { getOrder, FULFILMENT_LABELS, type FulfilmentStatus } from '@/lib/site/salesOrders'
 import { availableToSell } from '@/lib/site/stockMovements'
+import { isEditable } from '@/lib/site/salesDocuments'
+import { liveSpecials } from '@/lib/site/specials'
+import { listPriceStructures, repsForLines } from '@/lib/site/lookups'
+import { listUsers } from '@/lib/site/users'
+import { can } from '@/lib/site/permissions'
+import { listTenderTypes } from '@/lib/site/tenderTypes'
+import { getNumericSetting } from '@/lib/site/settings'
+import { getTillCustomer } from '@/lib/site/tillCustomers'
+import InvoiceEditor from '../../invoicing/[id]/InvoiceEditor'
 import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
@@ -35,7 +44,9 @@ const TONE: Record<FulfilmentStatus, 'success' | 'warning' | 'danger' | 'neutral
 
 export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('sales.view')
+  const { site, user, capabilities } = await requireSiteUser()
+  if (!can(capabilities, 'sales.view')) redirect('/not-allowed')
+  const siteId = site.id
   const { id: raw } = await params
 
   const id = Number(raw)
@@ -46,9 +57,49 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
 
   const status = order.details?.fulfilmentStatus ?? 'open'
   const productIds = order.lines.map((l) => l.productId).filter((p): p is number => p !== null)
-  const availability = await availableToSell(siteId, productIds)
+
+  /*
+   * Everything the shared editor needs, alongside the order's own figures.
+   *
+   * Loaded unconditionally rather than behind the `editable` check below: the
+   * queries are the same handful the invoicing and quotes screens already make,
+   * and branching a Promise.all to save them on a delivered order would trade a
+   * few milliseconds for a second code path.
+   */
+  const [availability, structures, users, tenders, cashRounding, specials] = await Promise.all([
+    availableToSell(siteId, productIds),
+    listPriceStructures(siteId),
+    listUsers(siteId),
+    listTenderTypes(siteId),
+    getNumericSetting(siteId, 'sales_cash_rounding'),
+    // An order is priced like an invoice, so it sees the same promotions.
+    liveSpecials(siteId),
+  ])
 
   const canDeliver = status === 'open' || status === 'part_delivered'
+
+  /*
+   * Editable while nothing has gone out and the shop still owns the promise.
+   *
+   * Three conditions, and each is a different reason to stop: the document
+   * itself must be unposted, the order must not be delivered or cancelled —
+   * the same pair `setOrderDetails` refuses — and NOTHING may have been
+   * delivered yet, because a part-delivered order has invoices against these
+   * lines and stock that has already left.
+   */
+  const editable =
+    isEditable(order.document.status) &&
+    status !== 'delivered' &&
+    status !== 'cancelled' &&
+    order.qtyDelivered === 0 &&
+    can(capabilities, 'sales.edit')
+
+  // Whoever is capturing is pre-selected on every new line, as on an invoice.
+  const { reps, defaultUserId } = repsForLines(users, user.id)
+
+  const customer = order.document.customerId
+    ? await getTillCustomer(siteId, order.document.customerId)
+    : null
 
   return (
     <>
@@ -105,6 +156,39 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             icon={<Icons.Calendar size={16} />}
           />
         </StatStrip>
+
+        {/*
+          ── THE LINES, WHILE THEY ARE STILL THE SHOP'S TO CHANGE ────────────
+
+          An order is captured on the same editor as an invoice and a quote,
+          because it is the same document at an earlier moment — see the quotes
+          screen, which does exactly this.
+
+          It appears only while NOTHING HAS BEEN DELIVERED. Once a delivery has
+          gone out, stock has moved and an invoice exists against these lines;
+          editing them then would change what a customer has already been given
+          — the same class of mistake as editing a posted invoice. The panel
+          below is what an order in that state needs, and it stays either way.
+
+          `setOrderDetails` refuses a delivered or cancelled order server-side,
+          so this is the screen agreeing with a rule rather than inventing one.
+        */}
+        {editable && (
+          <InvoiceEditor
+            document={order.document}
+            structures={structures}
+            reps={reps}
+            defaultRepUserId={defaultUserId}
+            tenders={tenders}
+            cashRounding={cashRounding}
+            specials={specials}
+            customer={customer}
+            editable
+            canOverrideDiscount={can(capabilities, 'sales.discount_override')}
+            canOverridePrice={can(capabilities, 'sales.price_override')}
+            showCost={can(capabilities, 'products.cost')}
+          />
+        )}
 
         <DeliverPanel
           documentId={order.document.id}

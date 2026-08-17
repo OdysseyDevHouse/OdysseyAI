@@ -10,6 +10,7 @@ import {
   type DeliveryLineInput,
   type OrderDetailsInput,
 } from '@/lib/site/salesOrders'
+import { createBlankDocument } from '@/lib/site/salesDocuments'
 
 /**
  * Order actions.
@@ -20,6 +21,35 @@ import {
  */
 
 type ActionResult = { ok: true; message: string; invoiceId?: number } | { ok: false; error: string }
+
+/**
+ * Starts a blank sales order, for the capture screen to fill in.
+ *
+ * The same shape invoicing uses, and for the same reason: the editor needs a
+ * document id to hang lines off, so the row exists before the screen opens.
+ * `createBlankDocument` rather than `saveDraft` because that one rightly
+ * refuses an empty document — see the quotes action, which spent its whole life
+ * failing silently on exactly that.
+ *
+ * No order DETAILS are written here. A delivery date, a customer order number
+ * and whether it reserves stock are all decisions somebody makes while
+ * capturing, and `setOrderDetails` refuses an order with no lines anyway — so
+ * they belong to the first save rather than to the moment the button is
+ * pressed.
+ */
+export async function newOrderAction(): Promise<
+  { ok: true; documentId: number } | { ok: false; error: string }
+> {
+  const ctx = await actorFor('sales.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const draft = await createBlankDocument(siteId, actor, 'sales_order')
+  if (!draft.ok) return { ok: false, error: draft.error }
+
+  revalidatePath('/sales/orders')
+  return { ok: true, documentId: draft.id }
+}
 
 export async function saveDetailsAction(
   documentId: number,

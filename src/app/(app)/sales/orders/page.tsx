@@ -23,7 +23,7 @@ import {
   Icons,
 } from '@/components/ui'
 import OrdersTable, { type OrderTableRow } from './OrdersTable'
-import { tillHrefFor, tillLinkProps } from '@/lib/openTill'
+import NewOrderButton from './NewOrderButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -113,10 +113,7 @@ export default async function OrdersPage({
         icon={<Icons.ListOrdered size={18} />}
         subtitle={`${total} order${total === 1 ? '' : 's'}`}
         action={
-          <PrimaryLink href={tillHrefFor('sales_order')} {...tillLinkProps}>
-            <Icons.Plus size={15} />
-            New order
-          </PrimaryLink>
+          <NewOrderButton />
         }
       />
 
@@ -228,10 +225,7 @@ export default async function OrdersPage({
                       title: 'No sales orders',
                       hint: 'Raise one when a customer commits to buy something you will deliver later.',
                       action: (
-                        <PrimaryLink href={tillHrefFor('sales_order')} {...tillLinkProps}>
-                          <Icons.Plus size={15} />
-                          New order
-                        </PrimaryLink>
+                        <NewOrderButton />
                       ),
                     }
             }

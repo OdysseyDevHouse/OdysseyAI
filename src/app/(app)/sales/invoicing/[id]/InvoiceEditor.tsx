@@ -570,8 +570,24 @@ export default function InvoiceEditor({
 
   /* ── Render ──────────────────────────────────────────────────────────── */
 
+  /*
+   * ── WHAT THIS DOCUMENT IS CALLED, AND HOW IT ENDS ─────────────────────
+   *
+   * Three kinds now share this editor, and only one of them takes money. A
+   * quote is an offer, an order is a promise, an invoice is the sale — same
+   * lines, same prices, same grid, three different last steps:
+   *
+   *   quote    → Issue quote      (sent to the customer)
+   *   order    → Save order       (delivered later, from its own screen)
+   *   invoice  → Finalise         (opens the tender pad)
+   *
+   * Written as a lookup rather than a chain of ternaries because there is now
+   * a third, and a fourth would go the same way — DOC_TYPES already has
+   * credit_sale in it.
+   */
   const isQuote = document.docType === 'quote'
-  const noun = isQuote ? 'Quote' : 'Invoice'
+  const isOrder = document.docType === 'sales_order'
+  const noun = isQuote ? 'Quote' : isOrder ? 'Order' : 'Invoice'
   const title = document.documentNumber ?? `${noun} #${document.id}`
 
   return (
@@ -579,8 +595,10 @@ export default function InvoiceEditor({
       <PageHeader
         title={title}
         subtitle={`${customerName || 'No customer'} · ${documentDate}`}
-        backHref="/sales/invoicing"
-        backLabel="Back to invoicing"
+        /* Back to the register this document belongs to. It always said
+           "invoicing", which sent somebody editing a quote to the wrong list. */
+        backHref={isQuote ? '/sales/quotes' : isOrder ? '/sales/orders' : '/sales/invoicing'}
+        backLabel={isQuote ? 'Back to quotes' : isOrder ? 'Back to orders' : 'Back to invoicing'}
         action={
           <>
             <Badge tone={STATUS_TONE[document.status]}>{STATUS_LABELS[document.status]}</Badge>
@@ -603,6 +621,16 @@ export default function InvoiceEditor({
                   <Button onClick={issueQuote} disabled={pending || lines.length === 0}>
                     <Icons.Check size={16} />
                     Issue quote
+                  </Button>
+                ) : isOrder ? (
+                  /* An order is finished by SAVING it. Nothing is tendered —
+                     the goods have not gone anywhere yet — and the delivery
+                     panel above is where it is worked from afterwards. Offering
+                     "Finalise" here would open a tender pad for money nobody is
+                     taking. */
+                  <Button onClick={save} disabled={pending || lines.length === 0}>
+                    <Icons.Check size={16} />
+                    Save order
                   </Button>
                 ) : (
                   <Button onClick={takePayment} disabled={pending || lines.length === 0}>
@@ -652,7 +680,12 @@ export default function InvoiceEditor({
                 </Select>
               </Field>
 
-              <Field label="Invoice order number" className="w-56">
+              {/* The CUSTOMER's own reference — their purchase-order number, their job
+                  number, whatever they quote back at you. "Invoice order number"
+                  read oddly on a quote, and templating the noun in produced
+                  "Order order number" on an order. It is one thing whatever the
+                  document is, so it is named for what it IS. */}
+              <Field label="Customer reference" className="w-56">
                 <Input
                   value={reference}
                   disabled={!editable}
@@ -661,7 +694,7 @@ export default function InvoiceEditor({
                 />
               </Field>
 
-              <Field label="Invoice date" className="w-44">
+              <Field label={`${noun} date`} className="w-44">
                 <Input
                   type="date"
                   value={documentDate}
