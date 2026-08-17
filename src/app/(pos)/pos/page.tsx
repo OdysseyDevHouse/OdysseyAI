@@ -100,6 +100,7 @@ export default async function PosPage({
     tipsTablesOnlySetting,
     undoLimitSetting,
     warnOutOfStockSetting,
+    laybyDefaultDays,
   ] = await Promise.all([
       listTerminals(site.id, false),
       listTenderTypes(site.id),
@@ -175,6 +176,11 @@ export default async function PosPage({
          moment Pay is pressed, and a setting fetched then would be one more
          round trip standing between a cashier and a customer's money. */
       getSetting(site.id, 'pos_warn_out_of_stock'),
+      /* How long the shop gives somebody to pay a lay-by off. Shipped rather
+         than fetched when the dialog opens, for the same reason as the two
+         above: it is a default in a field, and a round trip to fill one in is a
+         round trip a cashier waits through with a customer in front of them. */
+      getNumericSetting(site.id, 'layby_default_days'),
     ])
 
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
@@ -284,6 +290,22 @@ export default async function PosPage({
          plenty of shops do not track stock, and a warning about figures nobody
          maintains teaches cashiers to dismiss warnings without reading them. */
       warnOutOfStock={String(warnOutOfStockSetting ?? '0') === '1'}
+      /*
+       * The date the lay-by dialog opens with, computed HERE rather than in the
+       * browser.
+       *
+       * A till's own clock can be wrong — that is the whole reason documents are
+       * dated by the server — and a due date is a promise to a customer about
+       * when their goods stop being held. Zero or a missing setting means the
+       * shop sets no term, which is a legitimate answer and arrives as null.
+       */
+      laybyDueDate={
+        Number.isFinite(laybyDefaultDays) && (laybyDefaultDays ?? 0) > 0
+          ? new Date(Date.now() + Number(laybyDefaultDays) * 86_400_000)
+              .toISOString()
+              .slice(0, 10)
+          : null
+      }
       /* 0 means no limit, and so does a missing or unreadable value — the till must
          fail OPEN here. A setting that could not be read is not a shop asking for a
          stricter till, and refusing corrections because a query returned nothing

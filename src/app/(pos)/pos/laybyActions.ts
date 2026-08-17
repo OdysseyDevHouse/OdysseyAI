@@ -1,7 +1,14 @@
 'use server'
 
 import { actorFor, actorForOrThrow, withTillOperator } from '@/lib/auth'
-import { listLaybys, getLayby, takePayment, completeLayby } from '@/lib/site/laybys'
+import {
+  listLaybys,
+  getLayby,
+  takePayment,
+  completeLayby,
+  createLayby,
+  type LaybyLineInput,
+} from '@/lib/site/laybys'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 
 /**
@@ -162,6 +169,84 @@ export async function takeLaybyPaymentAction(
     outstanding: result.outstanding,
     settled: result.settled,
     laybyNumber: layby?.laybyNumber ?? null,
+  }
+}
+
+export type StartResult =
+  | { ok: true; laybyId: number; laybyNumber: string; outstanding: number }
+  | Denied
+
+/**
+ * Turns the basket into a lay-by.
+ *
+ * ── THE OTHER HALF OF THE COUNTER'S JOB ───────────────────────────────────
+ *
+ * Somebody picks four things off the shelf, cannot pay for them today, and
+ * asks the shop to put them aside. The cashier has already rung them up — the
+ * basket IS the lay-by, and asking them to key it again on another screen is
+ * the whole reason this exists.
+ *
+ * Worth noting what this replaces: nothing. `createLaybyAction` existed in the
+ * back office with no caller, so until now the product had no way to create a
+ * lay-by at all — the ones on a shop's system got there by import. This is the
+ * first screen that opens one.
+ *
+ * ── A DEPOSIT IS OPTIONAL, AND THAT IS DELIBERATE ─────────────────────────
+ *
+ * The law does not require one and some shops do not take one. Where a deposit
+ * IS taken it goes through the same `layby_payments` row an instalment does,
+ * banks into this till's shift, and is counted by the cash-up — so a lay-by
+ * opened with R500 down leaves the drawer expecting R500 more, which is what
+ * the cash-up work made true.
+ *
+ * ── NO STOCK MOVES ────────────────────────────────────────────────────────
+ *
+ * `createLayby` writes no movement, no ledger entry and no VAT: the goods are
+ * still the shop's and the money is still the customer's until collection. The
+ * till does not need to know that, which is the point of calling the engine
+ * rather than writing rows here.
+ */
+export async function startLaybyAction(input: {
+  customerId: number
+  lines: LaybyLineInput[]
+  deposit?: { amount: number; tenderTypeId: number } | null
+  dueDate?: string | null
+  terminalId?: number | null
+}): Promise<StartResult> {
+  const base = await actorFor('sales.till')
+  if ('ok' in base) return base
+  const { siteId, actor } = await withTillOperator(base)
+
+  if (input.lines.length === 0) return { ok: false, error: 'Add at least one item to put aside.' }
+
+  let deposit: { amount: number; tenderTypeId: number; tenderName: string } | undefined
+  if (input.deposit && input.deposit.amount > 0) {
+    const tenders = await listTenderTypes(siteId)
+    const tender = tenders.find((t) => t.id === input.deposit!.tenderTypeId && t.isActive)
+    if (!tender) return { ok: false, error: 'Choose how the deposit is being paid.' }
+    if (tender.postsToDebtor) {
+      return {
+        ok: false,
+        error: 'A lay-by deposit cannot go on account — that moves the debt rather than paying it.',
+      }
+    }
+    deposit = { amount: input.deposit.amount, tenderTypeId: tender.id, tenderName: tender.name }
+  }
+
+  const result = await createLayby(siteId, actor, {
+    customerId: input.customerId,
+    lines: input.lines,
+    deposit,
+    dueDate: input.dueDate ?? null,
+    terminalId: input.terminalId ?? null,
+  })
+  if (!result.ok) return result
+
+  return {
+    ok: true,
+    laybyId: result.laybyId,
+    laybyNumber: result.laybyNumber,
+    outstanding: result.outstanding,
   }
 }
 

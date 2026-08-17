@@ -92,6 +92,14 @@ export type QuickKeyHandlers = {
   /** Opens the web-order queue, to bring one onto the till and be paid for. */
   showOnlineOrders: () => void
   /**
+   * Puts the BASKET aside as a lay-by.
+   *
+   * Distinct from the lay-by list in the module menu, which finds an existing
+   * one to pay against. This one turns what is on screen into a new one, which
+   * is why it is a basket key rather than a way to another screen.
+   */
+  startLayby: () => void
+  /**
    * Opens the clock pad — a PIN in, a shift started or ended.
    *
    * The PIN is the credential rather than the till session, because the person
@@ -356,6 +364,20 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
     online
       ? handlers.showOnlineOrders()
       : handlers.say('Online orders need the connection — they live on the server.', 'info'),
+
+  /*
+   * The basket, put aside for somebody to pay off.
+   *
+   * ONLINE ONLY, like the order queue and for a stronger reason: a lay-by
+   * issues a LAY number from the shared sequence the moment it opens, and the
+   * customer walks out holding a document that refers to it. A till that
+   * invented one offline would hand out a number another till may already have
+   * used, against goods no other machine knows are spoken for.
+   */
+  'start-layby': ({ handlers, online }) =>
+    online
+      ? handlers.startLayby()
+      : handlers.say('A lay-by needs the connection — it takes a number from the server.', 'info'),
 
   /*
    * The pad on the till rather than the back office's clock page.

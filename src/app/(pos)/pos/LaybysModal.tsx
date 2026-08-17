@@ -44,6 +44,8 @@ export function LaybysModal({
   onClose,
   onPay,
   onCollect,
+  onStartNew,
+  basketLines,
   busy,
 }: {
   open: boolean
@@ -52,6 +54,17 @@ export function LaybysModal({
   onPay: (layby: TillLayby, input: { amount: number; tenderTypeId: number; reference: string | null }) => void
   /** Hands the goods over — raises the invoice and moves the stock. */
   onCollect: (layby: TillLayby) => void
+  /**
+   * Turns the basket on screen into a NEW lay-by.
+   *
+   * Here as well as on its own quick key, because a quick key is something a
+   * shop has to configure and a shop that has configured none would have no way
+   * to reach this at all. The list is where somebody already goes to think
+   * about lay-bys, so "start one" belongs beside "find one".
+   */
+  onStartNew: () => void
+  /** How many lines are in the basket — nothing to put aside means no button. */
+  basketLines: number
   busy: boolean
 }) {
   const [laybys, setLaybys] = useState<TillLayby[]>([])
@@ -166,9 +179,21 @@ export function LaybysModal({
             </div>
           </div>
         ) : (
-          <Button variant="secondary" size="touch" onClick={onClose}>
-            Close
-          </Button>
+          <div className="flex w-full items-center justify-between gap-2">
+            <Button variant="secondary" size="touch" onClick={onClose}>
+              Close
+            </Button>
+            {/* Only with something to put aside. A "start one" button over an
+                empty basket opens a dialog that can only say "ring the goods up
+                first", which is a refusal a cashier should not have to trigger
+                to learn. */}
+            {basketLines > 0 && (
+              <Button variant="primary" size="touch" disabled={busy} onClick={onStartNew}>
+                <Icons.Plus size={18} />
+                Put this basket aside
+              </Button>
+            )}
+          </div>
         )
       }
     >

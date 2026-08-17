@@ -109,7 +109,13 @@ import { recallQuoteForTillAction, type TillQuote } from './quoteActions'
 import { OrdersModal } from './OrdersModal'
 import { collectOrderForTillAction, type TillOrder } from './orderActions'
 import { LaybysModal } from './LaybysModal'
-import { takeLaybyPaymentAction, collectLaybyAction, type TillLayby } from './laybyActions'
+import { StartLaybyModal } from './StartLaybyModal'
+import {
+  takeLaybyPaymentAction,
+  collectLaybyAction,
+  startLaybyAction,
+  type TillLayby,
+} from './laybyActions'
 import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
@@ -260,6 +266,7 @@ export default function PosShell({
   serviceTiers,
   tipsTablesOnly,
   warnOutOfStock,
+  laybyDueDate = null,
   undoLimit,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
@@ -358,6 +365,14 @@ export default function PosShell({
    * pos_warn_out_of_stock in settings.ts for why that is the default.
    */
   warnOutOfStock: boolean
+  /**
+   * What the lay-by dialog's "collected by" field opens with — today plus the
+   * shop's `layby_default_days`, computed on the SERVER.
+   *
+   * A till's own clock can be wrong, and a due date is a promise to a customer
+   * about when their goods stop being held. Null means the shop sets no term.
+   */
+  laybyDueDate?: string | null
   /**
    * How many undos one basket may spend. 0 means no limit.
    *
@@ -647,6 +662,8 @@ export default function PosShell({
    * module to be in and no key of its own to put it on.
    */
   const [showingLaybys, setShowingLaybys] = useState(false)
+  /** Turning the basket on screen into a new lay-by. */
+  const [startingLayby, setStartingLayby] = useState(false)
   const [sizingTiles, setSizingTiles] = useState(false)
   /** The floor's quick-key dialog. The gate has no pane to draw them in. */
   const [showingTableKeys, setShowingTableKeys] = useState(false)
@@ -3031,6 +3048,81 @@ export default function PosShell({
   }
 
   /**
+   * Opens the "put this aside" dialog against the basket on screen.
+   *
+   * The refusals are here rather than in the dialog because they are about
+   * whether the question can be ASKED at all — an empty basket has nothing to
+   * put aside, and a return is money going the other way. The dialog itself
+   * handles the missing customer, because that one is fixable without closing
+   * it and losing the basket.
+   */
+  function openStartLayby() {
+    if (state.lines.length === 0) {
+      toast.info('Ring the goods up first, then put them aside.')
+      return
+    }
+    if (state.returning) {
+      toast.info('A return cannot become a lay-by — finish the refund first.')
+      return
+    }
+    setStartingLayby(true)
+  }
+
+  /**
+   * Turns the basket into a lay-by.
+   *
+   * ── THE BASKET IS CLEARED, NOT SAVED ──────────────────────────────────────
+   *
+   * A lay-by is not a sales document and never becomes the one on screen: the
+   * goods are recorded in `laybys` with their own number, and the till goes
+   * back to empty ready for the next customer. Leaving the lines up would
+   * invite somebody to take payment for goods that are now on a shelf with a
+   * name on them.
+   *
+   * ── AND THE DEPOSIT IS THE SAME MONEY AS AN INSTALMENT ────────────────────
+   *
+   * It writes a `layby_payments` row, banks into this till's shift, and is
+   * counted by the cash-up — so opening one with R500 down leaves the drawer
+   * expecting R500 more. That is only true since the cash-up learned to count
+   * off-ledger money; before it, this key would have made the drawer read over.
+   */
+  function startLayby(input: {
+    deposit: { amount: number; tenderTypeId: number } | null
+    dueDate: string | null
+  }) {
+    const customerId = state.customer?.id
+    if (!customerId) {
+      toast.error('Attach the customer first — a lay-by is held for a named person.')
+      return
+    }
+
+    startTransition(async () => {
+      const result = await startLaybyAction({
+        customerId,
+        lines: salePayloadLines(state.lines, lineSpecials, docShares),
+        deposit: input.deposit,
+        dueDate: input.dueDate,
+        terminalId: terminal?.id ?? null,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setStartingLayby(false)
+      setDocDiscount(null)
+      dispatch({ type: 'CLEAR' })
+      toast.success(
+        `${result.laybyNumber} opened for ${state.customer?.name ?? 'the customer'}. ${formatMoney(
+          result.outstanding,
+        )} still to pay.`,
+      )
+      /* The drawer has moved if a deposit was taken, and the lay-by list the
+         module menu opens is now one longer. */
+      router.refresh()
+    })
+  }
+
+  /**
    * Handing lay-by goods over — the moment it becomes a sale.
    *
    * The invoice is raised, the VAT is declared and the stock moves, all through
@@ -3894,6 +3986,7 @@ export default function PosShell({
         takeDeposit: () => void openDeposit(),
         showReprints: () => setShowingReprints(true),
         showOnlineOrders: () => setShowingOrders(true),
+        startLayby: openStartLayby,
         showClock: () => setShowingClock(true),
         /* root: a quick key names the department to open outright — it is not a
            step down from wherever the pane happens to be sitting. */
@@ -4444,6 +4537,19 @@ export default function PosShell({
         busy={pending}
       />
 
+      {/* Turning the basket into a NEW lay-by — the opposite direction from the
+          list below, which finds an existing one to pay against. */}
+      <StartLaybyModal
+        open={startingLayby}
+        onClose={() => setStartingLayby(false)}
+        onStart={startLayby}
+        customerName={state.customer?.name ?? null}
+        totalIncl={totals.doc.totalIncl}
+        lineCount={state.lines.length}
+        defaultDueDate={laybyDueDate}
+        busy={pending}
+      />
+
       {/* The shop's lay-bys, from the module menu rather than a pane key —
           a lay-by is not something the basket can be. */}
       <LaybysModal
@@ -4451,6 +4557,12 @@ export default function PosShell({
         onClose={() => setShowingLaybys(false)}
         onPay={payLayby}
         onCollect={collectLayby}
+        /* Closes the list on the way, so the two dialogs never stack. */
+        onStartNew={() => {
+          setShowingLaybys(false)
+          openStartLayby()
+        }}
+        basketLines={state.lines.length}
         busy={pending}
       />
 
