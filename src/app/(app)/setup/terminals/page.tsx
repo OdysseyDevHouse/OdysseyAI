@@ -9,6 +9,8 @@ import LicencesPanel from './LicencesPanel'
 import UndoLimitPanel from './UndoLimitPanel'
 import StockWarningPanel from './StockWarningPanel'
 import PosModePanel from './PosModePanel'
+import UnlockPanel from './UnlockPanel'
+import { siteHasLocalBackend } from '@/lib/licence/grantUnlock'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,6 +33,11 @@ export default async function TerminalsPage() {
   /* Which of the three tills this shop runs. Anything unreadable resolves to
      retail, which is the answer that trades — see lib/posMode. */
   const posMode = toPosMode(await getSetting(siteId, 'pos_mode'))
+  /* The telephone unlock only means anything where a machine holds its own
+     database and can therefore be cut off from us. Hidden entirely for a cloud
+     site rather than shown and refused: a panel that can never do anything is a
+     panel somebody will one day ring up about. */
+  const hasLocalBackend = await siteHasLocalBackend(siteId)
 
   return (
     <>
@@ -57,6 +64,9 @@ export default async function TerminalsPage() {
               more often than to release a licence — and the licence list is the
               one they need when something is already wrong. */}
           <LicencesPanel licences={licences} terminals={terminals} />
+          {/* Last, and only where it applies: this is the panel somebody opens
+              with a customer already on the phone, not one they browse. */}
+          {hasLocalBackend && <UnlockPanel />}
         </div>
       </PageBody>
     </>
