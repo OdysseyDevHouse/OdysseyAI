@@ -20,6 +20,8 @@
     "test:math": "tsx scripts/test-document-math.ts",
     "test:billing-periods": "tsx scripts/test-billing-periods.ts",
     "test:modules": "tsx --conditions=react-server --env-file=.env scripts/test-modules.ts",
+    "test:unlock-code": "tsx scripts/test-unlock-code.ts",
+    "test:lease": "tsx --conditions=react-server scripts/test-lease.ts",
     "test:stock-warning": "tsx scripts/test-stock-warning.ts",
     "test:navigation": "tsx scripts/test-navigation.ts",
     "probe:page-score": "tsx scripts/probe-page-score.ts",
