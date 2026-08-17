@@ -134,6 +134,15 @@ export default function FloorDesigner({
     height: number
   } | null>(null)
   const [addingTable, setAddingTable] = useState(false)
+  /**
+   * Table ids held by Ctrl+C, waiting for Ctrl+V.
+   *
+   * Deliberately NOT the system clipboard. A floor plan's "copy" means "these tables",
+   * which has no sensible text representation, and writing to the real clipboard would
+   * also stamp on whatever the user had copied from somewhere else — a table code they
+   * were about to paste into the name field, for instance.
+   */
+  const [clipboard, setClipboard] = useState<number[]>([])
   /** The scrolling viewport, so "show off-screen" can scroll it. */
   const viewportRef = useRef<HTMLDivElement | null>(null)
 
@@ -539,6 +548,67 @@ export default function FloorDesigner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKeys, toast])
 
+  /**
+   * Copy the selection to the clipboard.
+   *
+   * ── WHY THIS IS NOT JUST ANOTHER NAME FOR Ctrl+D ──────────────────────────
+   *
+   * Ctrl+D duplicates immediately and forgets. Copy REMEMBERS, so one copy can be pasted
+   * five times to lay out a bank of identical tables — which is the whole reason to want
+   * copy/paste on a floor plan rather than the duplicate that was already here.
+   *
+   * The clipboard holds ids, not geometry. What gets pasted is read fresh from the tables
+   * at paste time, so copying a table and then resizing it before pasting gives you the
+   * NEW size — which is what "paste this table" means to anyone who did not write it.
+   * The ids are validated on paste, because a copied table can be taken off the plan or
+   * retired in between.
+   */
+  const copySelection = useCallback(() => {
+    const ids = selectedKeys.filter((k) => k.startsWith('t')).map((k) => Number(k.slice(1)))
+    if (ids.length === 0) {
+      toast.info('Select a table first.')
+      return
+    }
+    setClipboard(ids)
+    toast.success(ids.length === 1 ? 'Table copied.' : `${ids.length} tables copied.`)
+  }, [selectedKeys, toast])
+
+  /**
+   * Paste whatever was copied, as new tables beside the originals.
+   *
+   * Runs through `duplicateTablesAction` — the same server call Ctrl+D uses — because the
+   * hard part is identical: a code is UNIQUE, so only the server can pick a free name
+   * without racing every other till. Paste is copy's memory plus that call, not a second
+   * implementation of it.
+   */
+  const pasteClipboard = useCallback(() => {
+    if (clipboard.length === 0) {
+      toast.info('Nothing copied yet — select a table and press Ctrl+C.')
+      return
+    }
+    /* Anything since removed from the plan or retired is dropped rather than failing the
+       whole paste: pasting four when one has gone should give three and say so. */
+    const live = clipboard.filter((id) => {
+      const placement = draft.get(id)
+      return Boolean(placement && placement.roomId !== null && placement.x !== null)
+    })
+    if (live.length === 0) {
+      setClipboard([])
+      toast.info('Those tables are no longer on the plan.')
+      return
+    }
+    startTransition(async () => {
+      const result = await duplicateTablesAction(live)
+      if (!apply(result)) return
+      const made = result.made ?? 0
+      setSelectedKeys([])
+      toast.success(made === 1 ? 'Table pasted.' : `${made} tables pasted.`)
+    })
+    /* `apply` is redefined every render but only reads state it is given; leaving it out
+       keeps this callback stable for the key handler that depends on it. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipboard, draft, toast])
+
   /** Take the selected tables off the plan — they go back to the tray, not the bin. */
   const unplaceSelection = useCallback(() => {
     const ids = selectedKeys.filter((k) => k.startsWith('t')).map((k) => Number(k.slice(1)))
@@ -605,6 +675,18 @@ export default function FloorDesigner({
         duplicateSelection()
         return
       }
+      /* Ctrl+C / Ctrl+V. Safe to claim: the guard above has already bowed out if a text
+         field has focus, so copying a table code out of the name box still works. */
+      if (mod && e.key.toLowerCase() === 'c') {
+        e.preventDefault()
+        copySelection()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'v') {
+        e.preventDefault()
+        pasteClipboard()
+        return
+      }
       if (mod && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         const keys = [
@@ -656,6 +738,8 @@ export default function FloorDesigner({
     nudge,
     unplaceSelection,
     duplicateSelection,
+    copySelection,
+    pasteClipboard,
     addingTable,
     addingRoom,
     editingRoom,
@@ -1068,6 +1152,35 @@ export default function FloorDesigner({
                       Everything that acts on a selection, in one place. Appears only
                       when something is selected: a panel of permanently-disabled
                       controls teaches nothing and takes the room the floor wants. */}
+                  {/* Paste stands on its own, because a clipboard outlives a selection:
+                      copy a table, click empty floor to deselect, and Paste must still be
+                      reachable. Shown only when there IS something to paste. */}
+                  {clipboard.length > 0 && selectedKeys.length === 0 && (
+                    <PanelSection
+                      title="Clipboard"
+                      note={
+                        clipboard.length === 1
+                          ? '1 table copied'
+                          : `${clipboard.length} tables copied`
+                      }
+                      action={
+                        <Button variant="ghost" size="sm" onClick={() => setClipboard([])}>
+                          Clear
+                        </Button>
+                      }
+                    >
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={pending}
+                        onClick={pasteClipboard}
+                      >
+                        <Icons.Plus size={14} />
+                        Paste (Ctrl+V)
+                      </Button>
+                    </PanelSection>
+                  )}
+
                   {selectedKeys.length > 0 && (
                     <PanelSection
                       title="Selected items"
@@ -1181,14 +1294,33 @@ export default function FloorDesigner({
                           </PanelGroup>
 
                           <PanelGroup label="Tables">
+                            {/* Copy and Paste rather than the old single "Copy" that
+                                duplicated on the spot: with Ctrl+C/Ctrl+V bound, a button
+                                labelled Copy that did something else would be a trap.
+                                Duplicate still exists on Ctrl+D for a one-shot. */}
                             <Button
                               variant="secondary"
                               size="sm"
                               disabled={pending}
-                              onClick={duplicateSelection}
+                              title="Copy the selection (Ctrl+C)"
+                              onClick={copySelection}
                             >
                               <Icons.Copy size={14} />
                               Copy
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={pending || clipboard.length === 0}
+                              title={
+                                clipboard.length === 0
+                                  ? 'Copy a table first (Ctrl+C)'
+                                  : `Paste ${clipboard.length} copied (Ctrl+V)`
+                              }
+                              onClick={pasteClipboard}
+                            >
+                              <Icons.Plus size={14} />
+                              Paste
                             </Button>
                             <Button
                               variant="danger-ghost"
@@ -1270,8 +1402,9 @@ export default function FloorDesigner({
                    no on-screen control: the gestures. Ctrl+drag especially — a plain drag
                    selects, so nobody discovers it by trying. */
                 <span>
-                  Drag to move · corner to resize · ⟳ to rotate · arrows nudge · Ctrl+drag
-                  moves the floor · Ctrl+scroll or pinch zooms
+                  Drag to move · corner to resize · ⟳ to rotate · arrows nudge · Ctrl+C /
+                  Ctrl+V copies and pastes · Ctrl+drag moves the floor · Ctrl+scroll or
+                  pinch zooms
                 </span>
               ) : (
                 <span>

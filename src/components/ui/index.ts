@@ -68,6 +68,7 @@ export {
 export { SwatchPicker } from './SwatchPicker'
 export { Badge, type BadgeTone } from './Badge'
 export { Callout, type CalloutTone } from './Callout'
+export { Tooltip } from './Tooltip'
 export { SettingsHint } from './SettingsHint'
 export {
   CategoryTile,

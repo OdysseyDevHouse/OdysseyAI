@@ -114,27 +114,317 @@ function spec(s: Partial<CustomReportSpec> & Pick<CustomReportSpec, 'source'>): 
 export const TEMPLATES: ReportTemplate[] = [
   /* ── Sales ───────────────────────────────────────────────────────────────── */
   /*
+   * ── Invoice history ──────────────────────────────────────────────────────
+   *
+   * FIRST IN THE CATEGORY, deliberately. Every other Sales report answers a
+   * question about the period in aggregate; this one answers "what did we
+   * actually issue", which is the thing a shop reaches for most and the one it
+   * goes looking for by name. The hub preserves this array's order, so being
+   * first here is what puts it first on the screen.
+   *
+   * TWO GRAINS, ONE REPORT. The document list and the line-by-line list were
+   * two tiles whose descriptions differed only in the word "line" — and having
+   * opened one, seeing the same period at the other grain meant going back to
+   * the catalogue. They are one tile with the grain switched on the report.
+   *
+   * Each grain keeps its own spec, as `sales-by`'s cuts do and for the same
+   * reason: the document grain runs on `sales`, where one row IS one document,
+   * and the line grain on `saleLines`, which carries cost and so can show
+   * margin. Sharing a source would make one of the two lie about what it is
+   * counting.
+   */
+  {
+    id: 'invoice-history',
+    name: 'Invoice history',
+    description:
+      'Every document raised in the period — as a list of documents with their totals, or line by line with cost and margin.',
+    category: 'Sales',
+    permission: 'reports.view',
+    /* Must match the first cut — the report renders before anyone has chosen. */
+    spec: spec({
+      source: 'sales',
+      columns: [
+        { field: 'documentNumber' },
+        { field: 'documentDate' },
+        { field: 'docType' },
+        { field: 'status' },
+        { field: 'customerName' },
+        { field: 'accountCode' },
+        { field: 'userName' },
+        { field: 'terminalCode' },
+        { field: 'reference' },
+        { field: 'subtotalExcl' },
+        { field: 'vatTotal' },
+        { field: 'discountTotal' },
+        { field: 'roundingAdj' },
+        { field: 'totalIncl' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+      sort: { key: 'documentDate', dir: 'desc' },
+    }),
+    variants: [
+      {
+        key: 'document',
+        label: 'Documents',
+        name: 'Invoice history',
+        description: 'Every document raised in the period, with its total and who served.',
+        /* Was its own tile, 'Invoice list'. The id is kept resolvable because a
+           shop's favourites, saved columns, 06:00 schedules and the public API
+           all name it — see the note on ReportTemplate.variants. */
+        legacyId: 'invoice-list',
+        spec: spec({
+          source: 'sales',
+          /* The columns the v2 invoice history carried. A store that only wants a
+             total and a name hides the rest — which is now a thing it can do. */
+          columns: [
+            { field: 'documentNumber' },
+            { field: 'documentDate' },
+            { field: 'docType' },
+            { field: 'status' },
+            { field: 'customerName' },
+            { field: 'accountCode' },
+            { field: 'userName' },
+            { field: 'terminalCode' },
+            /* The customer's own order number, which is what `reference` holds. */
+            { field: 'reference' },
+            { field: 'subtotalExcl' },
+            { field: 'vatTotal' },
+            { field: 'discountTotal' },
+            { field: 'roundingAdj' },
+            { field: 'totalIncl' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'documentDate', dir: 'desc' },
+        }),
+      },
+      {
+        key: 'detail',
+        label: 'Detail',
+        name: 'Invoice detail history',
+        description: 'Every line on every document — the line-by-line twin of the invoice history.',
+        legacyId: 'invoice-detail-list',
+        spec: spec({
+          source: 'saleLines',
+          /* The widest report in the catalogue, deliberately: v2's detailed history
+             was the one people exported and pivoted, so it carries the identity,
+             the money and the margin rather than making each a separate report.
+             Cost and GP drop out for a role without products.cost. */
+          columns: [
+            { field: 'documentDate' },
+            { field: 'documentNumber' },
+            { field: 'customerName' },
+            { field: 'accountCode' },
+            { field: 'userName' },
+            { field: 'terminalCode' },
+            { field: 'productCode' },
+            { field: 'description' },
+            { field: 'lineDepartment' },
+            { field: 'qty' },
+            { field: 'unitPriceIncl' },
+            { field: 'vatRatePct' },
+            { field: 'discountPct' },
+            { field: 'discountIncl' },
+            { field: 'lineTotalExcl' },
+            { field: 'lineVat' },
+            { field: 'lineTotalIncl' },
+            { field: 'unitCostExcl' },
+            { field: 'lineCostExcl' },
+            { field: 'grossProfit' },
+          ],
+          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+          sort: { key: 'documentDate', dir: 'desc' },
+        }),
+      },
+    ],
+  },
+  {
+    id: 'cashup-history',
+    name: 'Cash-up history',
+    description: 'Every shift closed in the period, with its drawer variance.',
+    /* Sales, not Operations: a cash-up is what the till TOOK, so whoever
+       reaches for it is reading the day's takings rather than auditing how the
+       shop ran. It joins Drawer variance by person, filed under Sales for the
+       same reason. The per-tender breakdowns and the till-void reports stay in
+       Operations — those ask whether the counting and the keying were done
+       properly, which is a different question. */
+    category: 'Sales',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'shifts',
+      columns: [
+        { field: 'openedAt' },
+        { field: 'terminalCode' },
+        { field: 'userName' },
+        { field: 'expectedTotal' },
+        { field: 'countedTotal' },
+        { field: 'variance' },
+      ],
+      sort: { key: 'openedAt', dir: 'desc' },
+    }),
+  },
+  /*
+   * ── The performance reports ──────────────────────────────────────────────
+   *
+   * Product, department, cashier and till are FOUR TILES, each under its own
+   * name, as v2 had them. They were briefly cuts of a single "Sales by…" tile;
+   * they are separate again because that is how people look for them — someone
+   * wanting "Product performance" searches the catalogue for that phrase, and a
+   * cut hidden inside another report is not findable by its own name.
+   *
+   * EACH KEEPS ITS ORIGINAL ID, and must. 'sales-by-product' and its siblings
+   * are in `report_favorites`, `report_columns`, `report_group_by` and
+   * `report_schedules` on every live site, and are documented keys of the public
+   * POST /api/v1/reports/run. Reusing them means a shop's saved column choices,
+   * starred reports and 06:00 emails all carry straight over: only the NAME on
+   * the tile changed. A tidier '…-performance' id would have orphaned every one
+   * of those.
+   *
+   * WHY EACH HAS ITS OWN SPEC RATHER THAN ONE SHARED SHAPE: product and
+   * department run on `saleLines`, which carries cost and so can show gross
+   * profit. Cashier and till run on `sales`, where one row IS one basket, so
+   * `__rows` is a basket count and `totalIncl avg` a real average basket. Moving
+   * those two onto saleLines to share a spec would silently turn both into LINE
+   * counts — the wrong answer to the question they ask. The cost of that is that
+   * cashier and till can never show margin; see the note on each.
+   */
+  {
+    id: 'sales-by-product',
+    name: 'Product performance',
+    description: 'What sold, how much of it, and what it made. The top-sellers list.',
+    category: 'Sales',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'saleLines',
+      /* Department is a GROUP field, not a column: on a summarised report an
+         unaggregated text column takes defaultAgg, which for text is `count` —
+         it would have rendered "Count department" showing a row count. Grouping
+         by it is also free, since a product sits in one department. */
+      groupFields: ['lineDepartment', 'productCode', 'description'],
+      /* v2's Product performance, which carried the department, the cost and
+         the VAT beside the margin.
+         Stock on hand is NOT here. It is a live per-product figure, so summing
+         it multiplies the shop's stock by how often the product sold, and the
+         `max` that fixes the arithmetic labels the column "Highest stock on
+         hand now" — accurate and daft for a number that is the same on every
+         row. A store that wants it beside sales adds it as a grouping, where it
+         adds no rows and keeps its own name. stock-on-hand answers it plainly. */
+      columns: [
+        { field: 'qty', agg: 'sum' },
+        { field: 'lineCostExcl', agg: 'sum' },
+        { field: 'lineTotalExcl', agg: 'sum' },
+        { field: 'lineVat', agg: 'sum' },
+        { field: 'lineTotalIncl', agg: 'sum' },
+        { field: 'discountIncl', agg: 'sum' },
+        { field: 'grossProfit', agg: 'sum' },
+        { field: 'grossProfitPct', agg: 'avg' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+      sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'sales-by-department',
+    name: 'Department performance',
+    description: 'Which parts of the business are earning, and at what margin.',
+    category: 'Sales',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'saleLines',
+      groupFields: ['lineDepartment'],
+      /* Cost and excl. selling added, as v2's Department performance carried
+         them. Its "Turnover %" — each department's share of the total — has no
+         equivalent: a percent-of-grand-total column is not something the spec
+         model can express, and it is a known gap rather than an oversight. */
+      columns: [
+        { field: 'qty', agg: 'sum' },
+        { field: 'lineCostExcl', agg: 'sum' },
+        { field: 'lineTotalExcl', agg: 'sum' },
+        { field: 'lineTotalIncl', agg: 'sum' },
+        { field: 'grossProfit', agg: 'sum' },
+        { field: 'grossProfitPct', agg: 'avg' },
+      ],
+      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
+      sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
+      chartType: 'pie',
+    }),
+  },
+  {
+    id: 'sales-by-cashier',
+    name: 'Cashier performance',
+    description: 'Turnover, basket count and average basket for each person serving.',
+    category: 'Sales',
+    permission: 'reports.view',
+    spec: spec({
+      source: 'sales',
+      groupFields: ['userName'],
+      /* Deliberately still on `sales` rather than `saleLines`, though that
+         source has no cost and so this report can never show margin.
+         `__rows` here is a BASKET count and `totalIncl avg` a real average
+         basket; on saleLines both would silently become line counts, which is
+         the wrong answer to the question this report asks.
+         v2's "Clerk performance" was a different report — one row per clerk AND
+         product — and would be a separate template rather than this one bent out
+         of shape. */
+      columns: [
+        { field: '__rows' },
+        { field: 'totalIncl', agg: 'sum' },
+        { field: 'totalIncl', agg: 'avg' },
+        { field: 'subtotalExcl', agg: 'sum' },
+        { field: 'vatTotal', agg: 'sum' },
+        { field: 'discountTotal', agg: 'sum' },
+      ],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        { field: 'docType', op: 'eq', value: 'invoice' },
+      ],
+      sort: { key: 'totalIncl_sum', dir: 'desc' },
+    }),
+  },
+  {
+    id: 'sales-by-till',
+    name: 'Till performance',
+    description:
+      'Turnover, basket count and average basket for each till — which lanes carry the shop.',
+    category: 'Sales',
+    permission: 'reports.view',
+    /* On `sales` for the same reason as the cashier report above: one row is one
+       basket, so the count and the average are basket figures. No margin here
+       either, and for the same reason. */
+    spec: spec({
+      source: 'sales',
+      groupFields: ['terminalCode'],
+      columns: [
+        { field: '__rows' },
+        { field: 'totalIncl', agg: 'sum' },
+        { field: 'totalIncl', agg: 'avg' },
+      ],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        { field: 'docType', op: 'eq', value: 'invoice' },
+      ],
+      sort: { key: 'totalIncl_sum', dir: 'desc' },
+    }),
+  },
+  /*
    * ── Sales by … ───────────────────────────────────────────────────────────
    *
-   * SIX REPORTS THAT WERE ONE QUESTION. Day, product, department, cashier,
-   * month and till were six catalogue tiles differing only in what they cut the
-   * period by, so finding the right one meant reading six near-identical
-   * descriptions — and having found it, seeing the same figures by another cut
-   * meant going back to the catalogue and opening a different report.
+   * The two TIME cuts, kept as one tile. Product, department, cashier and till
+   * left to become the performance reports above; day and month stayed because
+   * neither has a "performance" name to go under, and they genuinely are one
+   * question at two grains — "how did trade move over time, and at what margin".
    *
-   * They are one tile now, with the cut chosen ON the report. Each cut keeps its
-   * own spec rather than sharing one with a swapped group field: see the note on
-   * ReportTemplate.variants for why collapsing sales/saleLines into a single
-   * source would quietly turn basket counts into line counts.
+   * Both run on `saleLines`, so both carry gross profit. That is what separates
+   * them from `turnover-by`, which answers the same shape of question on the
+   * basket grain (basket count, average basket) and cannot show margin at all.
    *
    * The first variant is the default cut and MUST match `spec` below — the
    * report has to render before anyone has chosen anything.
    */
   {
     id: 'sales-by',
-    name: 'Sales by day, product, department, cashier, month or till',
+    name: 'Sales by day or month',
     description:
-      'What was sold over the period, cut whichever way answers the question — by trading day, by product, by department, by the person serving, by month, or by till.',
+      'What was sold over the period and what it made, by trading day or by month.',
     category: 'Sales',
     permission: 'reports.view',
     spec: spec({
@@ -174,99 +464,6 @@ export const TEMPLATES: ReportTemplate[] = [
         }),
       },
       {
-        key: 'product',
-        label: 'Product',
-        name: 'Sales by product',
-        description: 'What sold, how much of it, and what it made. The top-sellers list.',
-        legacyId: 'sales-by-product',
-        spec: spec({
-          source: 'saleLines',
-          /* Department is a GROUP field, not a column: on a summarised report an
-             unaggregated text column takes defaultAgg, which for text is `count` —
-             it would have rendered "Count department" showing a row count. Grouping
-             by it is also free, since a product sits in one department. */
-          groupFields: ['lineDepartment', 'productCode', 'description'],
-          /* v2's Product performance, which carried the department, the cost and
-             the VAT beside the margin.
-             Stock on hand is NOT here. It is a live per-product figure, so summing
-             it multiplies the shop's stock by how often the product sold, and the
-             `max` that fixes the arithmetic labels the column "Highest stock on
-             hand now" — accurate and daft for a number that is the same on every
-             row. A store that wants it beside sales adds it as a grouping, where it
-             adds no rows and keeps its own name. stock-on-hand answers it plainly. */
-          columns: [
-            { field: 'qty', agg: 'sum' },
-            { field: 'lineCostExcl', agg: 'sum' },
-            { field: 'lineTotalExcl', agg: 'sum' },
-            { field: 'lineVat', agg: 'sum' },
-            { field: 'lineTotalIncl', agg: 'sum' },
-            { field: 'discountIncl', agg: 'sum' },
-            { field: 'grossProfit', agg: 'sum' },
-            { field: 'grossProfitPct', agg: 'avg' },
-          ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
-        }),
-      },
-      {
-        key: 'department',
-        label: 'Department',
-        name: 'Sales by department',
-        description: 'Which parts of the business are earning, and at what margin.',
-        legacyId: 'sales-by-department',
-        spec: spec({
-          source: 'saleLines',
-          groupFields: ['lineDepartment'],
-          /* Cost and excl. selling added, as v2's Department performance carried
-             them. Its "Turnover %" — each department's share of the total — has no
-             equivalent: a percent-of-grand-total column is not something the spec
-             model can express, and it is a known gap rather than an oversight. */
-          columns: [
-            { field: 'qty', agg: 'sum' },
-            { field: 'lineCostExcl', agg: 'sum' },
-            { field: 'lineTotalExcl', agg: 'sum' },
-            { field: 'lineTotalIncl', agg: 'sum' },
-            { field: 'grossProfit', agg: 'sum' },
-            { field: 'grossProfitPct', agg: 'avg' },
-          ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
-          chartType: 'pie',
-        }),
-      },
-      {
-        key: 'cashier',
-        label: 'Cashier',
-        name: 'Sales by cashier',
-        description: 'Turnover, basket count and average basket for each person serving.',
-        legacyId: 'sales-by-cashier',
-        spec: spec({
-          source: 'sales',
-          groupFields: ['userName'],
-          /* Deliberately still on `sales` rather than `saleLines`, though that
-             source has no cost and so this report can never show margin.
-             `__rows` here is a BASKET count and `totalIncl avg` a real average
-             basket; on saleLines both would silently become line counts, which is
-             the wrong answer to the question this report asks.
-             v2's "Clerk performance" was a different report — one row per clerk AND
-             product — and is added separately as products-sold-per-clerk rather
-             than by bending this one out of shape. */
-          columns: [
-            { field: '__rows' },
-            { field: 'totalIncl', agg: 'sum' },
-            { field: 'totalIncl', agg: 'avg' },
-            { field: 'subtotalExcl', agg: 'sum' },
-            { field: 'vatTotal', agg: 'sum' },
-            { field: 'discountTotal', agg: 'sum' },
-          ],
-          filters: [
-            { field: 'status', op: 'eq', value: 'finalised' },
-            { field: 'docType', op: 'eq', value: 'invoice' },
-          ],
-          sort: { key: 'totalIncl_sum', dir: 'desc' },
-        }),
-      },
-      {
         key: 'month',
         label: 'Month',
         name: 'Sales by month',
@@ -292,28 +489,6 @@ export const TEMPLATES: ReportTemplate[] = [
           filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
           sort: { key: 'month', dir: 'asc' },
           chartType: 'line',
-        }),
-      },
-      {
-        key: 'till',
-        label: 'Till',
-        name: 'Sales by till',
-        description:
-          'Turnover, basket count and average basket for each till — which lanes carry the shop.',
-        legacyId: 'sales-by-till',
-        spec: spec({
-          source: 'sales',
-          groupFields: ['terminalCode'],
-          columns: [
-            { field: '__rows' },
-            { field: 'totalIncl', agg: 'sum' },
-            { field: 'totalIncl', agg: 'avg' },
-          ],
-          filters: [
-            { field: 'status', op: 'eq', value: 'finalised' },
-            { field: 'docType', op: 'eq', value: 'invoice' },
-          ],
-          sort: { key: 'totalIncl_sum', dir: 'desc' },
         }),
       },
     ],
@@ -475,75 +650,9 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: 'day', dir: 'asc' },
     }),
   },
-  {
-    id: 'invoice-list',
-    name: 'Invoice list',
-    description: 'Every document raised in the period, with its total and who served.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'sales',
-      /* The columns the v2 invoice history carried. A store that only wants a
-         total and a name hides the rest — which is now a thing it can do. */
-      columns: [
-        { field: 'documentNumber' },
-        { field: 'documentDate' },
-        { field: 'docType' },
-        { field: 'status' },
-        { field: 'customerName' },
-        { field: 'accountCode' },
-        { field: 'userName' },
-        { field: 'terminalCode' },
-        /* The customer's own order number, which is what `reference` holds. */
-        { field: 'reference' },
-        { field: 'subtotalExcl' },
-        { field: 'vatTotal' },
-        { field: 'discountTotal' },
-        { field: 'roundingAdj' },
-        { field: 'totalIncl' },
-      ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'documentDate', dir: 'desc' },
-    }),
-  },
-  {
-    id: 'invoice-detail-list',
-    name: 'Invoice detail list',
-    description: 'Every line on every document — the line-by-line twin of the invoice list.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'saleLines',
-      /* The widest report in the catalogue, deliberately: v2's detailed history
-         was the one people exported and pivoted, so it carries the identity,
-         the money and the margin rather than making each a separate report.
-         Cost and GP drop out for a role without products.cost. */
-      columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'customerName' },
-        { field: 'accountCode' },
-        { field: 'userName' },
-        { field: 'terminalCode' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'lineDepartment' },
-        { field: 'qty' },
-        { field: 'unitPriceIncl' },
-        { field: 'vatRatePct' },
-        { field: 'discountPct' },
-        { field: 'discountIncl' },
-        { field: 'lineTotalExcl' },
-        { field: 'lineVat' },
-        { field: 'lineTotalIncl' },
-        { field: 'unitCostExcl' },
-        { field: 'lineCostExcl' },
-        { field: 'grossProfit' },
-      ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'documentDate', dir: 'desc' },
-    }),
-  },
+  /* Invoice history and its detail cut used to sit here as two tiles. They are
+     one report now — the first tile under Sales — with the grain chosen ON it.
+     See the entry at the top of this category; both ids still resolve. */
   /* Sales by month and Sales by till used to sit here. They are cuts of
      `sales-by` now — see its variants. Both ids still resolve. */
   {
@@ -1090,8 +1199,13 @@ export const TEMPLATES: ReportTemplate[] = [
   },
   {
     id: 'sales-by-customer',
-    name: 'Sales by customer',
+    name: 'Customer performance',
     description: 'Who buys the most — turnover and basket count per account.',
+    /* Named to sit with the other four performance reports, but filed under
+       Customers rather than Sales: someone reading it is asking about an
+       ACCOUNT, and the rest of what they want — its balance, its ageing, its
+       ledger — is here. On `sales`, so the count is a basket count and there is
+       no margin, exactly as for cashier and till. */
     category: 'Customers',
     permission: 'reports.view',
     spec: spec({
@@ -1669,32 +1783,11 @@ export const TEMPLATES: ReportTemplate[] = [
   },
 
   /* ── Operations ──────────────────────────────────────────────────────────── */
-  {
-    id: 'cashup-history',
-    name: 'Cash-up history',
-    description: 'Every shift closed in the period, with its drawer variance.',
-    /* Sales, not Operations, though it is declared here among the shift
-       reports — a cash-up is what the till TOOK, so whoever reaches for it is
-       reading the day's takings rather than auditing how the shop ran. It joins
-       Drawer variance by person, which was already filed under Sales for the
-       same reason. The per-tender breakdowns and the till-void reports below
-       stay in Operations: those ask whether the counting and the keying were
-       done properly, which is a different question. */
-    category: 'Sales',
-    permission: 'sales.cashup',
-    spec: spec({
-      source: 'shifts',
-      columns: [
-        { field: 'openedAt' },
-        { field: 'terminalCode' },
-        { field: 'userName' },
-        { field: 'expectedTotal' },
-        { field: 'countedTotal' },
-        { field: 'variance' },
-      ],
-      sort: { key: 'openedAt', dir: 'desc' },
-    }),
-  },
+  /* Cash-up history used to be declared here, among the shift reports. It has
+     always been category 'Sales' — see the note on it — and is now declared up
+     there too, second under Sales, so that reading this array in order matches
+     the order the hub renders. The per-tender breakdowns and the till-void
+     reports below stay in Operations. */
   {
     id: 'cash-variance-by-user',
     name: 'Drawer variance by person',

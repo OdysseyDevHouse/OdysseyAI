@@ -172,7 +172,7 @@ export const TABLE_TOTAL_ROW = 'border-t-2 border-border bg-surface-2 font-mediu
 
 /* ── Modals ──────────────────────────────────────────────────────────────── */
 
-export type ModalSize = 'sm' | 'md' | 'lg' | 'xl'
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full'
 
 /**
  * The dialog panel itself.
@@ -193,6 +193,16 @@ export const MODAL_SIZE: Record<ModalSize, string> = {
   /* For a dialog whose content is a grid rather than a form — the bulk options
      catalogue, where a third column at 3xl clips the longer action names. */
   xl: 'max-w-5xl',
+  /*
+   * The whole screen, for a dialog that IS a workspace rather than a question.
+   *
+   * The till's cash-up is the case this exists for: a denomination grid, a
+   * numpad, every tender and a dozen counter tiles have to be readable at once,
+   * because a cashier counting a drawer works across all three at the same time.
+   * Capped at 1600px so the panels do not stretch into unreadable bands on a
+   * back-office widescreen.
+   */
+  full: 'max-w-[1600px]',
 }
 
 /* ── Form controls ───────────────────────────────────────────────────────── */
