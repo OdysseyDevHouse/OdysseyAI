@@ -277,11 +277,114 @@ export type ShiftPosition = {
   /** Non-sale drawer movements: payouts, pay-ins, drops. Signed. */
   movementsTotal: number
   tenders: TenderPosition[]
-  /** Float + cash tenders + movements — what the drawer should hold. */
+  /**
+   * Cash that reached the drawer without a sale posting. Signed.
+   *
+   * Lay-by deposits and instalments, deposits taken against a document, and
+   * loyalty wallet top-ups — money over the counter, in the
+   * drawer, with no `sales_tenders` row to find it by. See `offLedgerCash`.
+   */
+  offLedgerTotal: number
+  /** Float + cash tenders + movements + off-ledger — what the drawer should hold. */
   expectedCash: number
   /** Everything taken, including card and account. */
   takingsTotal: number
   salesCount: number
+}
+
+/**
+ * Cash taken through the drawer that no sale accounts for.
+ *
+ * ── THE PROBLEM THIS EXISTS TO FIX ────────────────────────────────────────
+ *
+ * `expectedCash` was derived from `sales_tenders` alone, which is every rand
+ * that arrived as part of a POSTED SALE and nothing else. Four other things put
+ * real money in a real drawer:
+ *
+ *   · a lay-by deposit or instalment      layby_payments
+ *   · a deposit against a sale or quote   sale_deposits
+ *   · a loyalty wallet topped up          loyalty_wallet
+ *
+ * None of them posts a sale at the moment the money is handed over — that is
+ * the entire point of each: the customer is paying now for something that
+ * completes later. Every one of them already stamps the shift it banked into,
+ * and the declaration screen already SHOWS them.
+ *
+ * GIFT CARDS ARE NOT HERE, and that is a finding rather than an omission. An
+ * activation carries a `document_id`: a card is SOLD ON A SALE, so its money
+ * is already a `sales_tenders` row and counting it here would report the same
+ * note twice. The table has no `tender_type_id` at all, which is the shape
+ * saying the same thing — there is no tender to attribute because the sale
+ * owns it.
+ *
+ * What it did not do was count them. So a shift that took a R500 lay-by
+ * deposit showed "Lay-by deposits R500" on the declaration and an expected
+ * cash figure that excluded it — the drawer read R500 OVER, and the cashier
+ * was asked to explain a surplus the screen had just told them about. Worse,
+ * the honest response ("bank the surplus") would take money out that the
+ * lay-by is owed.
+ *
+ * ── WHAT IS COUNTED, AND WHAT IS NOT ──────────────────────────────────────
+ *
+ * `counts_as_drawer_cash` decides, exactly as it does for sales tenders — a
+ * lay-by paid by card is on the bank statement, not in the drawer, and
+ * counting it would break the till in the opposite direction. Every table here
+ * carries a tender type, so the same join answers the same question.
+ *
+ * Directions are chosen by what the DRAWER did, not by what the ledger did:
+ *
+ *   · deposits and instalments      IN
+ *   · deposits refunded             OUT
+ *   · loyalty top-ups               IN
+ *   · wallet SPENT                  excluded — that is a tender on a sale,
+ *                                   already in sales_tenders, and counting it
+ *                                   here would report the same money twice
+ *   · deposits APPLIED to a sale    excluded — no cash moves, the money is
+ *                                   already in the drawer from when it was
+ *                                   taken, and the sale posting now records
+ *                                   its own tender
+ *
+ * The exclusions matter more than the inclusions. Each one is a path where the
+ * same note would otherwise be counted on both its way in and its way out.
+ *
+ */
+export async function offLedgerCash(siteId: number, shiftId: number): Promise<number> {
+  /* One query per source rather than a union: the three tables agree on nothing
+     but `shift_id` and `tender_type_id`, and a union would need every column
+     list padded to match. Read in parallel, so this costs one round trip. */
+  const [laybys, deposits, loyalty] = await Promise.all([
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT COALESCE(SUM(p.amount), 0) AS total
+         FROM layby_payments p
+         JOIN tender_types tt ON tt.id = p.tender_type_id
+        WHERE p.shift_id = ? AND tt.counts_as_drawer_cash = 1
+          AND p.kind IN ('deposit', 'instalment')`,
+      [shiftId],
+    ),
+    siteQueryOne<Row>(
+      siteId,
+      /* Refunds are stored with a negative amount, so summing both kinds gives
+         the net without a CASE — see deposits.ts. */
+      `SELECT COALESCE(SUM(d.amount), 0) AS total
+         FROM sale_deposits d
+         JOIN tender_types tt ON tt.id = d.tender_type_id
+        WHERE d.shift_id = ? AND tt.counts_as_drawer_cash = 1
+          AND d.kind IN ('deposit', 'refund')`,
+      [shiftId],
+    ),
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT COALESCE(SUM(w.amount), 0) AS total
+         FROM loyalty_wallet w
+         JOIN tender_types tt ON tt.id = w.tender_type_id
+        WHERE w.shift_id = ? AND tt.counts_as_drawer_cash = 1
+          AND w.entry_type = 'topup'`,
+      [shiftId],
+    ),
+  ])
+
+  return round(toNum(laybys?.total) + toNum(deposits?.total) + toNum(loyalty?.total), 2)
 }
 
 /**
@@ -296,7 +399,7 @@ export async function shiftPosition(siteId: number, shiftId: number): Promise<Sh
   const shift = await getShift(siteId, shiftId)
   if (!shift) return null
 
-  const [tenderRows, movementRow, salesRow] = await Promise.all([
+  const [tenderRows, movementRow, salesRow, offLedger] = await Promise.all([
     siteQuery<Row>(
       siteId,
       `SELECT t.tender_type_id, t.tender_code, t.tender_name,
@@ -324,6 +427,7 @@ export async function shiftPosition(siteId: number, shiftId: number): Promise<Sh
       "SELECT COUNT(*) AS n FROM sales_documents WHERE shift_id = ? AND status = 'finalised'",
       [shiftId],
     ),
+    offLedgerCash(siteId, shiftId),
   ])
 
   const tenders: TenderPosition[] = tenderRows.map((r) => ({
@@ -345,7 +449,12 @@ export async function shiftPosition(siteId: number, shiftId: number): Promise<Sh
     openingFloat: shift.openingFloat,
     movementsTotal,
     tenders,
-    expectedCash: round(shift.openingFloat + cashTaken + movementsTotal, 2),
+    offLedgerTotal: offLedger,
+    /* Off-ledger cash is IN this figure — see offLedgerCash for why leaving it
+       out made every shift that took a lay-by deposit read over by exactly it.
+       NOT in `takingsTotal` below, which answers "what did this shift SELL":
+       a lay-by deposit is money held against goods nobody has bought yet. */
+    expectedCash: round(shift.openingFloat + cashTaken + movementsTotal + offLedger, 2),
     takingsTotal: tenders.reduce((sum, t) => round(sum + t.expected, 2), 0),
     salesCount: Number(salesRow?.n ?? 0),
   }
@@ -453,12 +562,35 @@ export async function closeShift(
 
   const countedBy = new Map(counted.map((c) => [c.tenderTypeId, round(c.amount, 2)]))
 
-  // The drawer holds the float plus the cash taken; card and EFT are settled by
-  // the bank, so they are compared to what was rung up rather than counted.
+  /*
+   * The drawer holds the float plus the cash taken; card and EFT are settled by
+   * the bank, so they are compared to what was rung up rather than counted.
+   *
+   * ── THE DRAWER-WIDE FIGURES GO ON ONE ROW ─────────────────────────────────
+   *
+   * The float, the movements and the off-ledger cash belong to the DRAWER, not
+   * to any one tender. They used to be added to every drawer-cash tender, which
+   * was invisible while a shop had exactly one — and would have counted the
+   * float twice the day somebody added a second cash-like tender. So they land
+   * once, on the first such row, which is the one a cashier counts notes into.
+   *
+   * Off-ledger cash is here for the same reason it is in `expectedCash`: a
+   * lay-by deposit is real money in the drawer, and a close that ignored it
+   * would report the shift over by exactly that amount and refuse to close
+   * without an explanation for a surplus that is not one.
+   */
+  const drawerExtras = round(
+    position.openingFloat + position.movementsTotal + position.offLedgerTotal,
+    2,
+  )
+
+  let drawerExtrasApplied = false
   const rows = position.tenders.map((tender) => {
-    const expected = tender.countsAsDrawerCash
-      ? round(tender.expected + position.openingFloat + position.movementsTotal, 2)
-      : tender.expected
+    let expected = tender.expected
+    if (tender.countsAsDrawerCash && !drawerExtrasApplied) {
+      drawerExtrasApplied = true
+      expected = round(expected + drawerExtras, 2)
+    }
     const countedAmount = countedBy.get(tender.tenderTypeId) ?? 0
     return {
       ...tender,
@@ -467,6 +599,43 @@ export async function closeShift(
       variance: round(countedAmount - expected, 2),
     }
   })
+
+  /*
+   * A DRAWER WITH NO CASH SALE STILL HAS A DRAWER.
+   *
+   * `position.tenders` only has rows for tenders something was actually rung up
+   * on, so a shift that opened with a float and took a single lay-by deposit —
+   * or took nothing at all — produced no cash row, and the float and the
+   * off-ledger cash landed nowhere. The shift closed expecting R0.00 against a
+   * drawer holding the float, and reported the float itself as a surplus.
+   *
+   * Latent before this: without off-ledger cash the only way in was a shift
+   * with a float and no cash sale, which a busy till never is. Counting lay-by
+   * money makes it ordinary — a counter that takes one deposit and nothing else
+   * is a normal morning — so the row is synthesised rather than left missing.
+   */
+  if (!drawerExtrasApplied && drawerExtras !== 0) {
+    const cashType = await siteQueryOne<Row>(
+      siteId,
+      `SELECT id, code, name FROM tender_types
+        WHERE counts_as_drawer_cash = 1 AND is_active = 1
+        ORDER BY position LIMIT 1`,
+    )
+    if (cashType) {
+      const tenderTypeId = Number(cashType.id)
+      const countedAmount = countedBy.get(tenderTypeId) ?? 0
+      rows.push({
+        tenderTypeId,
+        tenderCode: String(cashType.code),
+        tenderName: String(cashType.name),
+        countsAsDrawerCash: true,
+        transactionCount: 0,
+        expected: drawerExtras,
+        counted: countedAmount,
+        variance: round(countedAmount - drawerExtras, 2),
+      })
+    }
+  }
 
   const expectedTotal = rows.reduce((sum, r) => round(sum + r.expected, 2), 0)
   const countedTotal = rows.reduce((sum, r) => round(sum + r.counted, 2), 0)

@@ -178,7 +178,8 @@
     "test:session-eviction": "node --env-file=.env --env-file=.env.local scripts/test-session-eviction.mjs",
     "test:pos-split": "tsx --conditions=react-server --env-file=.env scripts/test-pos-split.ts",
     "test:rich-paste": "tsx scripts/test-rich-paste.ts",
-    "test:imports": "tsx --conditions=react-server --env-file=.env scripts/test-imports.ts"
+    "test:imports": "tsx --conditions=react-server --env-file=.env scripts/test-imports.ts",
+    "test:offledger-cash": "tsx --conditions=react-server --env-file=.env scripts/test-offledger-cash.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

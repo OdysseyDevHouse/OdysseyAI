@@ -145,6 +145,15 @@ export type DeclarationView = {
   giftCardSold: number
   giftCardRedeemed: number
   loyaltyWallet: number
+  /**
+   * How much of `expectedCash` came from the figures above rather than sales.
+   *
+   * Shown so a cashier can see that the money they took for a lay-by IS part of
+   * what they are counting against — before this was counted at all, the screen
+   * listed a R500 deposit and then expected a drawer without it, and the
+   * variance that produced looked like a theft rather than an omission.
+   */
+  offLedgerCash: number
 
   bankDeclared: number
   bankExpected: number
@@ -393,6 +402,11 @@ export async function declarationView(
     giftCardSold: toNum(giftCards?.sold),
     giftCardRedeemed: toNum(giftCards?.redeemed),
     loyaltyWallet: toNum(loyalty?.topups),
+    /* From the position, not re-summed here: the figures above are every one of
+       these events, and this is only the CASH among them. Adding the displayed
+       numbers up would count a lay-by paid by card as though it were in the
+       drawer. */
+    offLedgerCash: position.offLedgerTotal,
 
     bankDeclared: toNum(header?.bank_declared),
     /* What the drawer can actually send: counted cash less the float that has to
