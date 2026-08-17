@@ -11,7 +11,7 @@ import {
   setValidUntil,
   defaultValidUntil,
 } from '@/lib/site/quotes'
-import { saveDraft } from '@/lib/site/salesDocuments'
+import { createBlankDocument } from '@/lib/site/salesDocuments'
 
 /**
  * Quote actions.
@@ -40,11 +40,16 @@ export async function newQuoteAction(): Promise<void> {
   if ('ok' in ctx) return
   const { siteId, actor } = ctx
 
-  const draft = await saveDraft(siteId, actor, {
-    docType: 'quote',
-    customerName: '',
-    lines: [],
-  })
+  /*
+   * A BLANK document, not a saveDraft with no lines.
+   *
+   * saveDraft refuses an empty document — correctly, since a save with nothing
+   * in the basket is a mistake — so this used to fail on every press and return
+   * here silently. The button did nothing, said nothing, and had done so since
+   * it was written. Invoicing worked only because it already used the blank
+   * path; quotes never got one.
+   */
+  const draft = await createBlankDocument(siteId, actor, 'quote')
   if (!draft.ok) return
 
   const validUntil = await defaultValidUntil(siteId)

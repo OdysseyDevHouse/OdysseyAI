@@ -785,30 +785,56 @@ export function computeTotals(lines: readonly LineInput[]) {
 }
 
 /**
- * An empty invoice, for a capture screen that opens before anything is keyed.
+ * An empty document, for a capture screen that opens before anything is keyed.
  *
  * Separate from saveDraft because that rightly refuses a document with no
- * lines — a SAVE with an empty basket is a mistake, whereas a NEW invoice is
- * empty by definition. Written straight out rather than routed through the
- * validator, so the "at least one line" rule stays intact for every save that
- * follows this one.
+ * lines — a SAVE with an empty basket is a mistake, whereas a NEW one is empty
+ * by definition. Written straight out rather than routed through the validator,
+ * so the "at least one line" rule stays intact for every save that follows.
+ *
+ * ── WHY IT TAKES A DOC TYPE ───────────────────────────────────────────────
+ *
+ * It used to hardcode 'invoice', which is why Invoicing had a working New
+ * button and Quotes did not: `newQuoteAction` called saveDraft with no lines,
+ * was correctly refused, and returned silently — so "New quotation" did
+ * nothing at all, with no error to explain it.
+ *
+ * A quote, an order and an invoice are the same document at different moments,
+ * and all three are captured on the same editor. One function, one shape.
  */
-export async function createBlankInvoice(
+export async function createBlankDocument(
   siteId: number,
   actor: { userId: number; userName: string },
+  docType: SalesDocType = 'invoice',
 ): Promise<SaveResult> {
+  if (!DOC_TYPES.includes(docType)) {
+    return { ok: false, error: 'That is not a document type this shop writes.' }
+  }
+
   const result = await siteExecute(
     siteId,
     `INSERT INTO sales_documents
        (doc_type, status, document_date, user_id, user_name, origin,
         subtotal_excl, vat_total, discount_total, total_incl)
-     VALUES ('invoice','draft',?,?,?,'back_office',0,0,0,0)`,
-    [todayIso(), actor.userId, actor.userName.slice(0, 120)],
+     VALUES (?,'draft',?,?,?,'back_office',0,0,0,0)`,
+    [docType, todayIso(), actor.userId, actor.userName.slice(0, 120)],
   )
 
   return result.insertId
     ? { ok: true, id: result.insertId }
-    : { ok: false, error: 'Could not start a new invoice.' }
+    : { ok: false, error: `Could not start a new ${DOC_LABELS[docType].toLowerCase()}.` }
+}
+
+/**
+ * The invoice-shaped call, kept so existing callers are undisturbed.
+ *
+ * @deprecated Prefer `createBlankDocument`, which says which kind it is making.
+ */
+export async function createBlankInvoice(
+  siteId: number,
+  actor: { userId: number; userName: string },
+): Promise<SaveResult> {
+  return createBlankDocument(siteId, actor, 'invoice')
 }
 
 /**
