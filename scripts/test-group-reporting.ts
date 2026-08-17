@@ -32,10 +32,43 @@ import {
   type SiteResult,
 } from '../src/lib/groupReporting'
 import { incomeStatement, type IncomeStatement } from '../src/lib/site/financialStatements'
-import { groupForSite, linkedStores } from '../src/lib/storeGroups'
+import { groupForSite, membersOfGroup, linkedStores } from '../src/lib/storeGroups'
+import { execute } from '../src/lib/db'
 
 const SITE = 1
 const CONTROL_USER = 1
+
+/** Marks the rows this suite created, so cleanup can find exactly those. */
+const FIXTURE = 'test-group-reporting'
+
+/**
+ * Give every site in the group the Multi-Branch module.
+ *
+ * Rows are stamped `created_by = FIXTURE` and deleted afterwards. A row left
+ * behind would be a module this machine appears to have bought — which the
+ * billing screen would then show and the next suite would count.
+ */
+async function grantMultiBranch(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10)
+  const group = await groupForSite(SITE)
+  const siteIds = group
+    ? (await membersOfGroup(group.id)).map((m) => m.siteId)
+    : [SITE]
+
+  for (const siteId of siteIds) {
+    await execute(
+      `INSERT INTO cp2_site_modules (site_id, module_key, starts_on, created_by)
+       VALUES (?, 'multi_branch', ?, ?)
+       ON DUPLICATE KEY UPDATE ends_on = NULL`,
+      [siteId, today, FIXTURE],
+    )
+  }
+}
+
+async function revokeMultiBranch(): Promise<void> {
+  await execute('DELETE FROM cp2_site_modules WHERE created_by = ?', [FIXTURE])
+}
+
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
   if (!cond) fails++
@@ -82,6 +115,12 @@ function synthetic(
 
 async function main() {
   /* ── 1. Scope ────────────────────────────────────────────────────────── */
+
+  /* Cross-store reporting is behind the Multi-Branch module, on the calling
+     site AND on each member — see linkedStores() in storeGroups.ts. Granted
+     here for the duration and removed in the finally block below, so this suite
+     tests the REPORTING and not whatever this machine happens to have bought. */
+  await grantMultiBranch()
 
   const group = await groupForSite(SITE)
   if (!group) {
@@ -550,10 +589,16 @@ async function main() {
     bsGhost.failures.some((f) => f.siteId === 999) && bsGhost.sites.length === 2)
 
   console.log(fails === 0 ? '\nAll group-reporting checks passed.' : `\n${fails} FAILED`)
-  process.exit(fails === 0 ? 0 : 1)
+  // No process.exit here — the finally below has cleanup to do first.
 }
 
-main().catch((e) => {
-  console.error(e)
-  process.exit(1)
-})
+main()
+  .catch((e) => {
+    console.error(e)
+    fails++
+  })
+  .finally(async () => {
+    // Always, including after a throw: a leaked module row outlives this run.
+    await revokeMultiBranch().catch(() => {})
+    process.exit(fails === 0 ? 0 : 1)
+  })

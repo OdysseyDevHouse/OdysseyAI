@@ -38,9 +38,19 @@ async function walk(dir: string, match: (name: string) => boolean): Promise<stri
 
 const rel = (f: string) => path.relative(ROOT, f).replace(/\\/g, '/')
 
-/** Anything that consults a capability, however it is spelled. */
+/**
+ * Anything that consults a capability, however it is spelled.
+ *
+ * The `requireModuleCapability` / `actorForModule` / `actorForModuleOrThrow`
+ * forms ask a module FIRST and then the same capability — see
+ * src/lib/control/modules.ts — so they satisfy this check too. `actorFor` and
+ * `requireCapability` are listed with the module variants explicitly rather
+ * than relying on a prefix match, because `requireModuleCapability` does not
+ * start with `requireCapability`, and a silent non-match here would report a
+ * properly guarded page as unguarded.
+ */
 const GUARD =
-  /requireCapability|requireAnyCapability|actorFor|actorForOrThrow|siteIdForCapability|can\(\s*(capabilities|ctx\.capabilities)/
+  /requireCapability|requireModuleCapability|requireAnyCapability|requireModule\b|actorFor|actorForModule|actorForOrThrow|actorForModuleOrThrow|siteIdForCapability|can\(\s*(capabilities|ctx\.capabilities)/
 
 /**
  * Is this file actually a server-actions module?
@@ -324,6 +334,15 @@ async function main() {
     const src = await readFile(path.join(ROOT, f), 'utf8')
     for (const m of src.matchAll(
       /(?:requireCapability|actorFor|actorForOrThrow|siteIdForCapability)\(\s*'([a-z_]+\.[a-z_]+)'/g,
+    )) {
+      used.add(m[1])
+    }
+    /* The module-gated forms take the module first and the capability second:
+       requireModuleCapability('loyalty', 'loyalty.view'). Without this, every
+       capability used only behind a module would look unreferenced and this
+       suite would ask for it to be deleted. */
+    for (const m of src.matchAll(
+      /(?:requireModuleCapability|actorForModule|actorForModuleOrThrow)\(\s*'[a-z_]+',\s*'([a-z_]+\.[a-z_]+)'/g,
     )) {
       used.add(m[1])
     }
