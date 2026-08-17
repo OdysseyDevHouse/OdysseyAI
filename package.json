@@ -26,6 +26,7 @@
     "test:runtime-config": "node scripts/test-runtime-config.mjs",
     "test:offline-backoffice": "tsx scripts/test-offline-backoffice.ts",
     "test:backup-push": "node scripts/test-backup-push.mjs",
+    "test:replication": "node scripts/test-replication.mjs",
     "test:stock-warning": "tsx scripts/test-stock-warning.ts",
     "test:navigation": "tsx scripts/test-navigation.ts",
     "probe:page-score": "tsx scripts/probe-page-score.ts",

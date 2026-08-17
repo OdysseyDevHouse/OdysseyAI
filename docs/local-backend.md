@@ -192,6 +192,93 @@ Two deliberate consequences:
 
 ---
 
+## The cloud replica
+
+A live, queryable copy of each shop's database on our servers — for head-office
+reporting and for support to see real data without asking a customer to read
+figures down the phone.
+
+**This is MariaDB's own replication, not an application sync**, and the reason
+is worth keeping written down because "just ship changed rows" looks simpler
+every time somebody re-reads this.
+
+The schema has **no delete tracking**: no `deleted_at`, no tombstones anywhere
+across 238 tables, and deletes cascade widely. Only 58% of tables have
+`updated_at`, and the missing ones include `sales_document_lines` and
+`stock_movements`. A watermark-based sync would copy every insert and update
+faithfully and **never once see a delete** — so a voided sale's lines would
+vanish locally and live forever in the cloud. The replica would drift quietly,
+and a reporting database that is silently wrong is worse than none, because
+people trust it.
+
+The alternative to fix that — full-key reconciliation across ~200 mutable tables,
+nightly, over a shop's ADSL line — is not viable.
+
+The binary log has none of these problems. It records every change the server
+actually made, deletes included, needs no `updated_at`, no triggers, and no
+per-table code.
+
+### How it is configured
+
+On the shop's server (`electron/localDb.js`):
+
+```
+--log-bin=odyssey-bin
+--binlog-format=ROW      # not STATEMENT: ships row images, not SQL to re-run
+--server-id=<site id>    # unique per shop, so the far end is unambiguous
+--expire-logs-days=7     # matches the lease; a machine offline longer is locked
+--max-binlog-size=64M
+--sync-binlog=1          # a power cut must not lose the tail of the log
+```
+
+`ROW` format matters: `STATEMENT` replays the SQL, so anything
+non-deterministic (`NOW()`, an `UPDATE ... LIMIT` without `ORDER BY`) can produce
+different rows on the replica. `ROW` makes it a copy rather than a re-enactment.
+
+The replica connects as `odyssey_repl`, which holds **`REPLICATION SLAVE` and
+nothing else** — it cannot `SELECT` a table, write, or read the schema. That is
+deliberate: it is the one account reachable from outside the shop.
+
+### The tunnel
+
+Replication normally has the replica dial the master. That cannot work here — the
+master is a PC behind a domestic router, on a dynamic address, often behind
+carrier-grade NAT. Nothing can reach it, and configuring a shopkeeper's router is
+not an installation step.
+
+So the direction is inverted: **the shop dials out to us** over a WebSocket
+(`electron/replicationTunnel.js`), and the replica reads back down it. The shop's
+server stays bound to `127.0.0.1` throughout.
+
+The tunnel knows nothing about replication — no binlog positions, no SQL. It
+dials, authenticates, forwards bytes, notices drops, and redials with capped
+exponential backoff plus jitter, so an outage that hits the whole estate does not
+produce a thundering herd when it clears.
+
+### A replica is not a backup
+
+If a bug deletes rows on the shop's machine, replication **faithfully deletes
+them in the cloud too**. That is what replication is for. The encrypted nightly
+archive below is the point-in-time copy, and it is the only thing that survives
+operator error or corruption. Both are needed; they do different jobs.
+
+### What is not replicated
+
+Credentials and device-bound state, which are meaningless or actively wrong off
+the machine: `offline_signin` and `user_offline_verifiers` (device-bound
+verifiers), `users.pin_hash`, `api_keys`, `webhook_endpoints.secret`,
+`tender_integrations.secrets_enc`, `payment_gateways` keys, `licence_lease`
+(carries `device_serial` precisely so a copied database cannot present another
+machine's lease), `document_sequences` (per-terminal counters — replicating them
+causes duplicate document numbers), and the `offline_*_claims` idempotency
+ledgers.
+
+Filtered at the **replica**, with `replicate-ignore-table`, rather than at the
+shop: the shop's binlog must stay complete, because it is also what a
+point-in-time restore replays.
+
+---
+
 ## Backups
 
 `backup.mjs` makes the nightly dump and uploads tarball. `backup-push.mjs` sends
@@ -270,6 +357,7 @@ npm run test:lease               # the boundary, the warning, the parsing
 npm run test:runtime-config      # provisioning, never rotating, per-install uniqueness
 npm run test:offline-backoffice  # the offline credential
 npm run test:backup-push         # encryption round-trip, tampering, refusals
+npm run test:replication         # server id, replication account, tunnel backoff
 ```
 
-All six run with no database and no browser.
+All seven run with no database and no browser.

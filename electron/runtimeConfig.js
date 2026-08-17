@@ -335,6 +335,12 @@ function provisionLocal() {
      either. Escrowed like the rest — "only the shop holds the key" must not
      mean "a dead hard drive is a dead shop". */
   if (!cfg.backupKeySealed) cfg.backupKeySealed = seal(generateSecret())
+  /* The account the cloud replica streams the binary log with. Its own
+     credential, because it is the one account reachable from outside the shop
+     — everything else on that server is bound to loopback — and it must be
+     revocable without disturbing the app's own connection. */
+  if (!cfg.replicationUser) cfg.replicationUser = 'odyssey_repl'
+  if (!cfg.replicationPasswordSealed) cfg.replicationPasswordSealed = seal(generateDbPassword())
   if (!cfg.createdAt) cfg.createdAt = new Date().toISOString()
   return writeConfig(cfg)
 }
@@ -367,6 +373,9 @@ function revealSecrets() {
        most important thing to escrow, and the one whose loss is silent until
        the day somebody needs a restore. */
     backupKey: unseal(cfg.backupKeySealed),
+    /* Needed to re-point a replica after a reinstall. */
+    replicationUser: cfg.replicationUser || null,
+    replicationPassword: unseal(cfg.replicationPasswordSealed),
   }
 }
 

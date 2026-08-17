@@ -7,6 +7,7 @@ const path = require('node:path')
 const http = require('node:http')
 const runtimeConfig = require('./runtimeConfig')
 const localDb = require('./localDb')
+const replicationTunnel = require('./replicationTunnel')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
@@ -79,6 +80,7 @@ async function prepareRuntime(onProgress) {
      cheap after the first run: an existing data directory is detected and
      started, never re-initialised, because re-initialising is indistinguishable
      from erasing the shop's trading history. */
+  const secrets = runtimeConfig.revealSecrets()
   await localDb.ensureRunning({
     port: Number(process.env.DB_PORT),
     user: process.env.DB_USER,
@@ -87,8 +89,27 @@ async function prepareRuntime(onProgress) {
     /* Only used on a first run, to take away root's passwordless access once
        the app's own user exists. Escrowed to the control panel so support can
        still get in without the customer ever holding it. */
-    rootPassword: runtimeConfig.revealSecrets().rootPassword,
+    rootPassword: secrets.rootPassword,
+    /* The cloud replica's account. Applied on every start rather than only the
+       first, so a password rotated from the control panel takes effect when
+       the shop next opens. */
+    replicationUser: secrets.replicationUser,
+    replicationPassword: secrets.replicationPassword,
     onProgress,
+  })
+
+  /* The cloud replica reads the binary log back down a connection the SHOP
+     opens, because nothing on the internet can dial into a PC behind a
+     domestic router. Started after the database is up and deliberately not
+     awaited: a shop whose line is down must still open, and the tunnel's only
+     correct response to that is to keep trying quietly in the background. */
+  const cfg = runtimeConfig.readConfig()
+  replicationTunnel.start({
+    url: cfg.replicationUrl || process.env.ODYSSEY_REPLICATION_URL || '',
+    token: secrets.replicationPassword,
+    siteId: cfg.siteId ?? null,
+    deviceSerial: cfg.deviceSerial ?? null,
+    dbPort: Number(process.env.DB_PORT),
   })
 
   return { mode }
@@ -255,6 +276,14 @@ if (!app.requestSingleInstanceLock()) {
     if (shuttingDown || runtimeConfig.backendMode() !== 'local') return
     event.preventDefault()
     shuttingDown = true
+    /* The tunnel first: it holds a socket to the server we are about to stop,
+       and closing it politely saves the far end from reading a truncated
+       stream and treating it as an error worth alerting on. */
+    try {
+      replicationTunnel.stop()
+    } catch (err) {
+      console.error('[replication] shutdown failed', err)
+    }
     try {
       await localDb.stop(Number(process.env.DB_PORT))
     } catch (err) {

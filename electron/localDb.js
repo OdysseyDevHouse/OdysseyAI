@@ -54,6 +54,23 @@ function dataDir() {
   return path.join(app.getPath('userData'), 'mariadb', 'data')
 }
 
+/**
+ * This server's replication id.
+ *
+ * Must be unique across every server taking part in replication, which for us
+ * means unique per shop. The site id already is exactly that, so it is used
+ * directly rather than inventing a second numbering nobody can cross-reference
+ * when a replica misbehaves.
+ *
+ * Falls back to 1 when the machine has not been told its site yet. Such a
+ * machine has nothing to replicate to — it has never reached the control panel
+ * — so the collision it could theoretically cause cannot occur in practice.
+ */
+function serverId() {
+  const raw = Number(process.env.ODYSSEY_SITE_ID)
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1
+}
+
 /** Is the bundled server present at all? */
 function isBundled() {
   try {
@@ -176,6 +193,50 @@ async function start(port, onProgress) {
     // The app's pools set timezone 'Z' per connection; make the server agree
     // so a DATETIME written by a migration matches one written by the app.
     '--default-time-zone=+00:00',
+
+    /* ── THE BINARY LOG, WHICH IS HOW THE CLOUD COPY STAYS HONEST ──────────
+     *
+     * The shop's data is mirrored to a replica we can query. The obvious way
+     * to build that is an application-level sync — ship rows changed since a
+     * watermark — and it does not work here: the schema has no delete
+     * tracking at all (no tombstones, no deleted_at, and deletes cascade), so
+     * a watermark replicator would copy every insert and update faithfully
+     * and never once see a delete. The replica would drift quietly, and a
+     * reporting database that is silently wrong is worse than none because
+     * people trust it.
+     *
+     * The binary log has none of that problem. It is a record of every change
+     * the server actually made, deletes included, and replicating from it is
+     * what the database is designed to do. It also needs no updated_at, no
+     * triggers and no per-table code across 238 tables.
+     *
+     * ROW format, deliberately: STATEMENT format replays the SQL, so anything
+     * non-deterministic (NOW(), UUID(), an UPDATE with a LIMIT and no ORDER
+     * BY) can produce different rows on the replica. ROW ships the actual
+     * before/after images, so the replica is a copy rather than a
+     * re-enactment.
+     */
+    '--log-bin=odyssey-bin',
+    '--binlog-format=ROW',
+    /* A server id unique per shop. Taken from the site id, which is exactly
+       the number that is unique across our estate — two machines sharing one
+       would make replication ambiguous at the far end. Falls back to 1 on a
+       machine that has not been told its site yet, which cannot replicate
+       anyway. */
+    `--server-id=${serverId()}`,
+    /* How long the shop keeps its own binlog. Seven days matches the licence
+       lease on purpose: a machine offline longer than this is locked and has
+       stopped trading, so there is nothing newer to ship. It also bounds the
+       disk a counter PC gives up — binlogs grow forever otherwise, and a full
+       disk stops the shop. */
+    '--expire-logs-days=7',
+    /* Cap a single binlog file so rotation is frequent and each file is a
+       reasonable unit to ship or discard. */
+    '--max-binlog-size=64M',
+    /* Durability: flush the binlog every commit. Slower, and correct — the
+       alternative loses the tail of the log on a power cut, which on a till
+       means the cloud copy is missing sales the shop believes it made. */
+    '--sync-binlog=1',
   ]
 
   serverProcess = spawn(serverExe(), args, {
@@ -233,6 +294,40 @@ async function ensureUserAndDb(port, user, password, controlDbName, onProgress) 
 }
 
 /**
+ * The account the cloud replica reads the binary log with.
+ *
+ * ── WHY A SEPARATE USER, AND WHY IT CAN DO SO LITTLE ────────────────────────
+ *
+ * REPLICATION SLAVE is the whole of its rights: it may stream the binary log
+ * and nothing else. It cannot SELECT a table, cannot write, cannot see the
+ * schema. That matters because this is the ONE account reachable from outside
+ * the shop — everything else on this server is bound to loopback — so it is
+ * the account an attacker would find. Streaming the log is still a serious
+ * capability, which is why the tunnel it arrives over is authenticated
+ * separately; but it is bounded, and it cannot be turned into a shell on the
+ * shop's data.
+ *
+ * The password is generated on this machine like every other, sealed with
+ * DPAPI, and escrowed — support needs it to re-point a replica after a
+ * reinstall, and nobody should be able to reconstruct it from anything else.
+ */
+async function ensureReplicationUser(port, user, password) {
+  if (!user || !password) return
+
+  const sql = [
+    `CREATE USER IF NOT EXISTS '${user}'@'%' IDENTIFIED BY '${password}';`,
+    `ALTER USER '${user}'@'%' IDENTIFIED BY '${password}';`,
+    /* Deliberately NOT REPLICATION CLIENT: that adds SHOW MASTER STATUS and
+       server-variable visibility, which the replica does not need to stream a
+       log it is already positioned in. */
+    `GRANT REPLICATION SLAVE ON *.* TO '${user}'@'%';`,
+    `FLUSH PRIVILEGES;`,
+  ].join('\n')
+
+  await run(clientExe(), ['--protocol=TCP', '-h', '127.0.0.1', '-P', String(port), '-u', 'root', '-e', sql])
+}
+
+/**
  * Take away root's passwordless loopback access.
  *
  * Run after the app's user exists, so a failure cannot strand the database. The
@@ -260,7 +355,16 @@ async function secureRoot(port, rootPassword) {
  *
  * The one entry point main.js calls. Safe to call on every start.
  */
-async function ensureRunning({ port, user, password, controlDbName, rootPassword, onProgress }) {
+async function ensureRunning({
+  port,
+  user,
+  password,
+  controlDbName,
+  rootPassword,
+  replicationUser,
+  replicationPassword,
+  onProgress,
+}) {
   if (!isBundled()) {
     throw new Error(
       'This installation is set to use a local database, but the database server was not included in the build.',
@@ -281,6 +385,10 @@ async function ensureRunning({ port, user, password, controlDbName, rootPassword
 
   await start(port, onProgress)
   await ensureUserAndDb(port, user, password, controlDbName, onProgress)
+  /* Every start, not only the first: the password can be rotated from the
+     control panel, and the statement is an ALTER as well as a CREATE so a
+     rotation takes effect the next time the shop opens. */
+  await ensureReplicationUser(port, replicationUser, replicationPassword)
   if (fresh && rootPassword) await secureRoot(port, rootPassword)
 
   return { started: true, initialised: fresh }
@@ -330,4 +438,6 @@ module.exports = {
   dataDir,
   binDir,
   portInUse,
+  serverId,
+  ensureReplicationUser,
 }
