@@ -1020,13 +1020,24 @@ export async function saveForLaterDocument(siteId: number, id: number): Promise<
 }
 
 /**
- * How long a claim survives without being renewed. See 171_document_claim.sql for
- * why a claim is a lease at all, and why this number.
+ * How long a claim made by a USER survives without being renewed.
+ *
+ * Legacy. Applies only to claims taken before 177, which recorded a user and no
+ * terminal — see that migration for why those age out rather than being
+ * converted. A terminal claim does not expire at all.
  */
 export const CLAIM_LEASE_MINUTES = 15
 
+/** Who is holding a bill, for the message that refuses somebody else. */
+export type DocumentClaim = {
+  terminalId: number | null
+  terminalCode: string | null
+  userName: string | null
+  claimedAt: Date | null
+}
+
 /**
- * Takes a document for one till, refusing it to every other.
+ * Takes a document for one TILL, refusing it to every other.
  *
  * ── THE RACE IS DECIDED BY THE UPDATE, NOT BY THE READ ────────────────────
  *
@@ -1036,34 +1047,158 @@ export const CLAIM_LEASE_MINUTES = 15
  * predicate and reports zero rows changed. Reading first and then writing would leave a
  * window between the two where both saw it free.
  *
- * A claim older than the lease is treated as absent — that is what stops a till that
- * died holding one from stranding the bill forever. Re-claiming by the SAME user always
- * succeeds and renews the lease, so a waiter who reloads gets their own bill back
- * rather than being locked out of it by their own stale claim.
+ * ── THE SAME TILL ALWAYS GETS ITS OWN BILL BACK ───────────────────────────
+ *
+ * `claimed_terminal_id = ?` in the predicate is what makes a reclaim free. A till
+ * that reloads, crashes, or is switched off and on again is holding its own claim,
+ * and must not be locked out of a bill by itself — which is what a user-owned
+ * claim did to the next person to sign in at that machine.
+ *
+ * Note it does NOT check who is signed in. The terminal owns the claim, so the
+ * night shift resumes what the day shift left on that till without a supervisor.
+ * What they may DO with it is still their own capabilities, and the sale is
+ * attributed to whoever finalises it.
+ *
+ * ── AND NOBODY ELSE GETS IT WITHOUT A DECISION ────────────────────────────
+ *
+ * A claim held by another terminal does not expire, because a till that is merely
+ * OFFLINE looks exactly like one that is dead and is probably still adding to the
+ * bill. Breaking it is a supervisor's call — see `overrideClaim` — made by
+ * somebody who can see whether that machine is actually off.
  */
 export async function claimDocument(
   siteId: number,
   id: number,
+  userId: number,
+  terminalId: number | null,
+): Promise<SaveResult> {
+  const doc = await getDocument(siteId, id)
+  if (!doc) return { ok: false, error: 'That sale no longer exists.' }
+  if (doc.status !== 'saved') return { ok: false, error: 'That sale is not saved.' }
+
+  /*
+   * An UNCLAIMED terminal cannot hold a claim, so it falls back to the old
+   * user-owned rule with its lease. That is the back office and any machine
+   * nobody has linked to a till — neither is a shop floor with two people
+   * reaching for one bill, and giving them no claim at all would be worse.
+   */
+  if (terminalId === null) {
+    const claimed = await siteExecute(
+      siteId,
+      `UPDATE sales_documents
+          SET claimed_by = ?, claimed_at = UTC_TIMESTAMP()
+        WHERE id = ?
+          AND status = 'saved'
+          AND claimed_terminal_id IS NULL
+          AND (claimed_at IS NULL
+               OR claimed_by = ?
+               OR claimed_at < UTC_TIMESTAMP() - INTERVAL ? MINUTE)`,
+      [userId, id, userId, CLAIM_LEASE_MINUTES],
+    )
+    if (claimed.affectedRows === 0) return { ok: false, error: 'That sale has already been taken.' }
+    return { ok: true, id }
+  }
+
+  /*
+   * Three ways a till may take this bill, and no fourth:
+   *
+   *   · nothing holds it, and no legacy user claim is still inside its lease
+   *   · THIS terminal already holds it — a reload must not lock a till out of
+   *     its own bill
+   *   · a pre-177 user claim has aged out, which is how the last of those drain
+   *     away (see the migration on why they are not converted)
+   *
+   * A claim held by ANOTHER terminal matches none of them and never ages out.
+   * Only overrideClaim breaks that, and only a supervisor reaches it.
+   */
+  const claimed = await siteExecute(
+    siteId,
+    `UPDATE sales_documents
+        SET claimed_terminal_id = ?, claimed_by = ?, claimed_at = UTC_TIMESTAMP()
+      WHERE id = ?
+        AND status = 'saved'
+        AND (claimed_terminal_id = ?
+             OR (claimed_terminal_id IS NULL
+                 AND (claimed_at IS NULL
+                      OR claimed_by = ?
+                      OR claimed_at < UTC_TIMESTAMP() - INTERVAL ? MINUTE)))`,
+    [terminalId, userId, id, terminalId, userId, CLAIM_LEASE_MINUTES],
+  )
+  if (claimed.affectedRows === 0) {
+    return { ok: false, error: 'That sale is open on another till.' }
+  }
+  return { ok: true, id }
+}
+
+/**
+ * Who is holding this bill — for the message that refuses somebody else.
+ *
+ * A lock that says only "no" gets worked around; one that says which till has
+ * it and since when is one a supervisor can act on. Returns null when nothing
+ * holds it.
+ */
+export async function documentClaim(
+  siteId: number,
+  id: number,
+): Promise<DocumentClaim | null> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT d.claimed_terminal_id, d.claimed_at, t.code AS terminal_code, u.name AS user_name
+       FROM sales_documents d
+       LEFT JOIN terminals t ON t.id = d.claimed_terminal_id
+       LEFT JOIN users u ON u.id = d.claimed_by
+      WHERE d.id = ?`,
+    [id],
+  )
+  if (!row || (!row.claimed_terminal_id && !row.claimed_at)) return null
+  return {
+    terminalId: row.claimed_terminal_id ? Number(row.claimed_terminal_id) : null,
+    terminalCode: row.terminal_code ? String(row.terminal_code) : null,
+    userName: row.user_name ? String(row.user_name) : null,
+    claimedAt: (row.claimed_at as Date | null) ?? null,
+  }
+}
+
+/**
+ * Breaks another till's claim, on a supervisor's authority.
+ *
+ * ── WHY THIS EXISTS AT ALL ────────────────────────────────────────────────
+ *
+ * A terminal claim does not expire (177), which closes the hole where a till
+ * that was merely offline had its bill taken out from under it. That leaves the
+ * opposite hole: a till that is genuinely dead — the power supply went, somebody
+ * took it away — holds its bill forever, and a table nobody can serve is not an
+ * acceptable resting state for a shop.
+ *
+ * A person can tell those apart by looking at the floor. A timeout cannot. So
+ * the override is a deliberate act by somebody with the right, recorded, rather
+ * than a rule that fires on a clock.
+ *
+ * ── WHAT THE OTHER TILL LOSES ─────────────────────────────────────────────
+ *
+ * Whatever it did while holding the claim. It comes back to find the bill taken,
+ * and its own copy is discarded rather than merged: merging two divergent
+ * baskets needs somebody to decide which of two prices for the same line is
+ * right, and doing that silently is how a shop ends up billing the wrong figure.
+ * Losing is predictable and visible; merging is neither.
+ */
+export async function overrideClaim(
+  siteId: number,
+  id: number,
+  terminalId: number | null,
   userId: number,
 ): Promise<SaveResult> {
   const doc = await getDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
   if (doc.status !== 'saved') return { ok: false, error: 'That sale is not saved.' }
 
-  const claimed = await siteExecute(
+  await siteExecute(
     siteId,
     `UPDATE sales_documents
-        SET claimed_by = ?, claimed_at = UTC_TIMESTAMP()
-      WHERE id = ?
-        AND status = 'saved'
-        AND (claimed_at IS NULL
-             OR claimed_by = ?
-             OR claimed_at < UTC_TIMESTAMP() - INTERVAL ? MINUTE)`,
-    [userId, id, userId, CLAIM_LEASE_MINUTES],
+        SET claimed_terminal_id = ?, claimed_by = ?, claimed_at = UTC_TIMESTAMP()
+      WHERE id = ? AND status = 'saved'`,
+    [terminalId, userId, id],
   )
-  if (claimed.affectedRows === 0) {
-    return { ok: false, error: 'That sale has already been taken.' }
-  }
   return { ok: true, id }
 }
 
@@ -1087,7 +1222,8 @@ export async function releaseDocument(siteId: number, id: number): Promise<SaveR
   await siteExecute(
     siteId,
     `UPDATE sales_documents
-        SET status = 'saved', claimed_by = NULL, claimed_at = NULL
+        SET status = 'saved', claimed_by = NULL, claimed_at = NULL,
+            claimed_terminal_id = NULL
       WHERE id = ?`,
     [id],
   )
@@ -1162,7 +1298,8 @@ export async function cancelUnpostedDocument(siteId: number, id: number): Promis
   await siteExecute(
     siteId,
     `UPDATE sales_documents
-        SET status = 'cancelled', claimed_by = NULL, claimed_at = NULL
+        SET status = 'cancelled', claimed_by = NULL, claimed_at = NULL,
+            claimed_terminal_id = NULL
       WHERE id = ?`,
     [id],
   )

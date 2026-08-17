@@ -578,7 +578,10 @@ async function main() {
     await seatTable(SITE, sourceTable, held.id)
 
     /* The waiter opens the table. This is what the till does on resume. */
-    const claim = await claimDocument(SITE, held.id, ACTOR.userId)
+    /* Terminal-owned since 177, so this is the till the waiter is standing at
+       rather than the waiter themselves. */
+    const TILL = 9101
+    const claim = await claimDocument(SITE, held.id, ACTOR.userId, TILL)
     ok('a waiter can claim a table bill', claim.ok, claim.ok ? '' : claim.error)
 
     const whileHeld = (await listTables(SITE)).find((t) => t.id === sourceTable)
@@ -620,7 +623,7 @@ async function main() {
     /* The till re-reads the kept half straight after the split, or its stale basket
        would overwrite the document and undo the move. That is a SAME-USER re-claim,
        which must succeed or a waiter is locked out of their own table. */
-    const reread = await claimDocument(SITE, held.id, ACTOR.userId)
+    const reread = await claimDocument(SITE, held.id, ACTOR.userId, TILL)
     ok('*** the waiter can re-read the kept half ***', reread.ok, reread.ok ? '' : reread.error)
     const keptLines = (await billLinesForSplit(SITE, sourceTable))!.lines
     ok('  and it carries only what stayed', keptLines.length === 1, String(keptLines.length))

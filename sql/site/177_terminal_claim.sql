@@ -1,0 +1,74 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- A claim belongs to the TILL, not to the person standing at it.
+--
+-- 171 gave a document a claim so two tills could not pull the same bill onto
+-- two screens. It records WHO claimed it — `claimed_by`, a user id — and
+-- expires after fifteen minutes so a till that died cannot strand a table
+-- forever.
+--
+-- Both of those are now wrong for the shop this till runs in, and for the same
+-- underlying reason: the thing that holds a bill open is a machine, not a
+-- person.
+--
+-- ── WHY THE TERMINAL, AND NOT THE USER ───────────────────────────────────
+--
+-- A waiter opens table 12 on the bar till, gets pulled away, and the night
+-- shift takes over that same machine. Under a user claim the new person cannot
+-- resume the bill their own till is holding — they are refused by a claim
+-- belonging to somebody who has gone home, and must wait out the lease or find
+-- a supervisor. That is a machine refusing to give back what it is itself
+-- holding.
+--
+-- The terminal is the honest owner. A bill is open ON A TILL: that is what a
+-- floor means when it says table 12 is being worked. Who is signed in decides
+-- what they may DO with it — and the sale is still attributed to whoever
+-- finalises it, which is unchanged.
+--
+-- ── WHY THE LEASE HAD TO GO ──────────────────────────────────────────────
+--
+-- A lease exists so a dead till cannot strand a bill. It assumes silence means
+-- death. That assumption breaks the moment a till is allowed to keep trading
+-- with no network: a terminal working offline is silent and ALIVE, and it is
+-- very probably still adding to the bill it holds. Expiring its claim would let
+-- a second till pick up the same bill, and the two would have to be reconciled
+-- when the first came back — which is exactly the collision the claim exists to
+-- prevent, arriving later and harder.
+--
+-- So a claim now persists. From the server's side "offline and working" and
+-- "dead" look identical, and it cannot tell them apart — so it stops guessing.
+--
+-- ── WHAT REPLACES THE LEASE ──────────────────────────────────────────────
+--
+-- A supervisor. A claim held by a till that is genuinely not coming back is
+-- broken by a person who can see the shop floor and knows that machine is off,
+-- which is a judgement no timeout can make. `claimed_at` stays so the override
+-- dialog can say WHICH till has held it and for HOW LONG — a lock people can
+-- see the reason for is one they trust rather than work around.
+--
+-- The cost, stated plainly: a till that dies now holds its bill until somebody
+-- overrides it, where before it held it for fifteen minutes. That is a worse
+-- automatic outcome traded for a correct one, because the fifteen-minute
+-- release was about to start firing on tills that were merely offline.
+-- ─────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE sales_documents
+  ADD COLUMN IF NOT EXISTS claimed_terminal_id INT UNSIGNED NULL;
+
+-- Same reasoning as 171's index: claims are taken by a conditional UPDATE whose
+-- predicate decides the race, and that predicate must not scan the table.
+CREATE INDEX IF NOT EXISTS ix_sales_documents_claim_terminal
+  ON sales_documents (claimed_terminal_id);
+
+-- ── EXISTING CLAIMS ──────────────────────────────────────────────────────
+--
+-- Left alone, deliberately. A live claim under the OLD scheme has a user id and
+-- no terminal, and there is no honest way to infer which machine it was made
+-- on — a user id does not name a till.
+--
+-- Guessing would be worse than not knowing: attributing a claim to the wrong
+-- terminal would let that till silently take a bill another one is editing,
+-- which is precisely the collision this column exists to stop. So old claims
+-- keep working under 171's rule — `claimed_by` with its fifteen-minute lease —
+-- and simply age out within the quarter hour after this migration runs.
+--
+-- After that every claim is a terminal claim.

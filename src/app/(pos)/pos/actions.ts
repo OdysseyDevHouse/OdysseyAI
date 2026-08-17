@@ -6,6 +6,7 @@ import {
   listOpenTabs,
   getDocument,
   claimDocument,
+  documentClaim,
   listDocuments,
 } from '@/lib/site/salesDocuments'
 import { basketLinesForDocument, type RecalledLine } from './recalledLines'
@@ -193,6 +194,15 @@ export type { RecalledLine } from './recalledLines'
 export async function recallSaleForTillAction(
   documentId: number,
   priceStructureId: number | null,
+  /**
+   * Which till is asking.
+   *
+   * The claim belongs to the TERMINAL (177), so this is what decides whether a
+   * bill can be resumed: the same till always gets its own back, and any other
+   * is refused until a supervisor overrides. Null is an unclaimed machine, which
+   * falls back to the older user-owned claim — see claimDocument.
+   */
+  terminalId?: number | null,
 ): Promise<RecalledSale> {
   const { siteId, actor } = await withTillOperator(await actorForOrThrow('sales.till'))
 
@@ -211,8 +221,25 @@ export async function recallSaleForTillAction(
   // occupancy is read from: a resumed table used to read as FREE, its bill invisible to
   // the floor and the split screen, and stranded outright if the till never came back.
   // See 171_document_claim.sql.
-  const claimed = await claimDocument(siteId, documentId, actor.userId)
-  if (!claimed.ok) return { ok: false, error: claimed.error }
+  const claimed = await claimDocument(siteId, documentId, actor.userId, terminalId ?? null)
+  if (!claimed.ok) {
+    /* Say WHICH till is holding it. "That sale is open on another till" sends
+       somebody hunting; naming the machine and how long it has held the bill is
+       what lets them go and look, or fetch a supervisor. */
+    const holder = await documentClaim(siteId, documentId)
+    if (holder?.terminalCode) {
+      const since = holder.claimedAt
+        ? ` since ${holder.claimedAt.toISOString().slice(11, 16)}`
+        : ''
+      return {
+        ok: false,
+        error: `That sale is open on ${holder.terminalCode}${since}${
+          holder.userName ? ` (${holder.userName})` : ''
+        }.`,
+      }
+    }
+    return { ok: false, error: claimed.error }
+  }
 
   return {
     ok: true,

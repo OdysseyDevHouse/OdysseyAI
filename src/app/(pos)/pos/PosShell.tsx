@@ -2462,7 +2462,7 @@ export default function PosShell({
   /** Put an open tab back on screen. */
   function resumeTab(tab: OpenTab) {
     startTransition(async () => {
-      const result = await recallSaleForTillAction(tab.documentId, priceStructureId)
+      const result = await recallSaleForTillAction(tab.documentId, priceStructureId, terminal?.id ?? null)
       if (!result.ok) {
         toast.error(result.error)
         // Another till took it while this waiter was looking. Re-read rather
@@ -2541,7 +2541,7 @@ export default function PosShell({
   /** Putting a parked basket back on screen. */
   function recall(documentId: number) {
     startTransition(async () => {
-      const result = await recallSaleForTillAction(documentId, priceStructureId)
+      const result = await recallSaleForTillAction(documentId, priceStructureId, terminal?.id ?? null)
       if (!result.ok) {
         toast.error(result.error)
         // The list is now stale — another till took it — so close and let the
@@ -2844,7 +2844,7 @@ export default function PosShell({
        * how a bill gets abandoned half-finished.
        */
       if (keptDocumentId) {
-        const kept = await recallSaleForTillAction(keptDocumentId, priceStructureId).catch(
+        const kept = await recallSaleForTillAction(keptDocumentId, priceStructureId, terminal?.id ?? null).catch(
           () => null,
         )
         if (kept?.ok) {
@@ -3252,7 +3252,7 @@ export default function PosShell({
       return
     }
     startTransition(async () => {
-      const result = await recallSaleForTillAction(picked.documentId!, priceStructureId)
+      const result = await recallSaleForTillAction(picked.documentId!, priceStructureId, terminal?.id ?? null)
       if (!result.ok) {
         toast.error(result.error)
         /* The floor is stale — somebody settled it while this waiter was looking. Re-read

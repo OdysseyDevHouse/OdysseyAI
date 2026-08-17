@@ -35,6 +35,8 @@ import {
   saveDraft,
   saveForLaterDocument,
   claimDocument,
+  documentClaim,
+  overrideClaim,
   releaseDocument,
   cancelUnpostedDocument,
   getDocument,
@@ -232,7 +234,7 @@ async function main() {
      waiter is holding the bill on their till at the moment they void it. Without
      this the claim assertion below would be checking a column that was already
      NULL and would pass no matter what the cancel did. */
-  const heldForVoid = await claimDocument(SITE, voidedBill, 1)
+  const heldForVoid = await claimDocument(SITE, voidedBill, 1, 9003)
   ok('  and claimed by the till voiding it', heldForVoid.ok, heldForVoid.ok ? '' : heldForVoid.error)
 
   const cancelled = await cancelUnpostedDocument(SITE, voidedBill)
@@ -312,7 +314,12 @@ async function main() {
   const claimBill = await openBasket(120)
   await seatTable(SITE, claimTable.id, claimBill)
 
-  const taken = await claimDocument(SITE, claimBill, 1)
+  /* Claims belong to the TERMINAL now (177), so these are terminal ids, not
+     user ids. TILL_A and TILL_B stand for two machines on one floor. */
+  const TILL_A = 9001
+  const TILL_B = 9002
+
+  const taken = await claimDocument(SITE, claimBill, 1, TILL_A)
   ok('a waiter can claim a table bill', taken.ok, taken.ok ? '' : taken.error)
 
   const whileHeld = (await listTables(SITE)).find((t) => t.id === claimTable.id)
@@ -324,27 +331,53 @@ async function main() {
   ok('  and its money is still on it', Number(whileHeld?.totalIncl) === 120, String(whileHeld?.totalIncl))
 
   /* The whole reason the claim exists: a SECOND till must be refused. */
-  const stolenClaim = await claimDocument(SITE, claimBill, 2)
+  const stolenClaim = await claimDocument(SITE, claimBill, 2, TILL_B)
   ok(
     '*** a second till cannot take a held bill ***',
     !stolenClaim.ok,
     stolenClaim.ok ? '' : stolenClaim.error,
   )
 
-  /* Its own holder re-claiming is a reload, not a conflict — refusing that would lock a
+  /* Its own TILL re-claiming is a reload, not a conflict — refusing that would lock a
      waiter out of the bill with their own stale claim. */
-  const again = await claimDocument(SITE, claimBill, 1)
-  ok('  but its own holder may re-claim it', again.ok, again.ok ? '' : again.error)
+  const again = await claimDocument(SITE, claimBill, 1, TILL_A)
+  ok('  but its own till may re-claim it', again.ok, again.ok ? '' : again.error)
 
-  /* A claim older than the lease is dead, which is what stops a crashed till stranding
-     a table forever. Aged directly rather than waiting fifteen minutes. */
+  /* ── THE CHANGE 177 MAKES ────────────────────────────────────────────────
+     The claim follows the MACHINE, not the person. A different operator signing
+     in at the same till resumes what the last one left — the night shift picking
+     up the day shift's table, which a user-owned claim refused. */
+  const differentPerson = await claimDocument(SITE, claimBill, 2, TILL_A)
+  ok(
+    '*** a different operator on the SAME till may resume it ***',
+    differentPerson.ok,
+    differentPerson.ok ? '' : differentPerson.error,
+  )
+
+  /* And a terminal claim does NOT age out. A till that is merely offline looks
+     exactly like one that is dead, and expiring its claim would hand the bill to
+     a second till while the first is still adding to it. */
   await siteExecute(
     SITE,
     'UPDATE sales_documents SET claimed_at = UTC_TIMESTAMP() - INTERVAL ? MINUTE WHERE id = ?',
-    [CLAIM_LEASE_MINUTES + 1, claimBill],
+    [CLAIM_LEASE_MINUTES + 60, claimBill],
   )
-  const afterLapse = await claimDocument(SITE, claimBill, 2)
-  ok('*** a lapsed claim can be taken by another till ***', afterLapse.ok, afterLapse.ok ? '' : afterLapse.error)
+  const afterLongSilence = await claimDocument(SITE, claimBill, 2, TILL_B)
+  ok(
+    '*** an OLD terminal claim still holds — silence is not death ***',
+    !afterLongSilence.ok,
+    afterLongSilence.ok ? 'it was taken' : afterLongSilence.error,
+  )
+
+  /* Which is why there is an override: a till that is genuinely gone must not
+     hold a table forever, and only a person can tell those two apart. */
+  const holder = await documentClaim(SITE, claimBill)
+  ok('  and the refusal can name who holds it', holder?.terminalId === TILL_A, JSON.stringify(holder))
+
+  const forced = await overrideClaim(SITE, claimBill, TILL_B, 2)
+  ok('*** a supervisor can break it ***', forced.ok, forced.ok ? '' : forced.error)
+  const afterForce = await documentClaim(SITE, claimBill)
+  ok('  and the bill moves to the new till', afterForce?.terminalId === TILL_B, JSON.stringify(afterForce))
 
   const released = await releaseDocument(SITE, claimBill)
   ok('releasing hands it back', released.ok, released.ok ? '' : released.error)
@@ -354,7 +387,8 @@ async function main() {
     afterRelease?.status === 'saved',
     String(afterRelease?.status),
   )
-  const freeAgain = await claimDocument(SITE, claimBill, 2)
+  ok('  with no claim left on it', (await documentClaim(SITE, claimBill)) === null)
+  const freeAgain = await claimDocument(SITE, claimBill, 2, TILL_B)
   ok('  so anyone may claim it again', freeAgain.ok, freeAgain.ok ? '' : freeAgain.error)
 
   await freeTable(SITE, claimTable.id)
