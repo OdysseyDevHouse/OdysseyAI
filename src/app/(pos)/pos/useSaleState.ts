@@ -14,6 +14,7 @@ import { captureBaseline, type SessionBaseline } from '@/lib/lineSession'
 import type { ChosenOption } from '@/lib/instructionRules'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
+import type { SalesDocType } from '@/lib/site/salesDocuments'
 
 /**
  * Everything the till knows about the sale in front of it, in one reducer.
@@ -81,6 +82,24 @@ export type SaleState = {
    */
   returning: boolean
   /**
+   * WHAT KIND of document this basket will be saved as.
+   *
+   * Separate from `returning` rather than folded into it, and the distinction is
+   * real: `returning` says which DIRECTION the goods are going, and carries rules
+   * with it — specials are suppressed, the sign is flipped at posting. `docType`
+   * says what the paperwork IS. A return is always a credit sale, but a sale can
+   * be an invoice, a quote or an order without anything about the basket changing.
+   *
+   * 'invoice' is the resting state and what every till wrote before this existed,
+   * so a basket that never mentions it behaves exactly as it always did.
+   *
+   * The lines do not care. A quote line and an invoice line are the same line —
+   * see BasketLine, which has no idea what document it is destined for. What this
+   * changes is where the basket goes when it is saved, and whether it is tendered
+   * at all: a quote is an offer and an order is a promise, so neither takes money.
+   */
+  docType: SalesDocType
+  /**
    * How many lines have been undone on THIS basket.
    *
    * State on the sale rather than a ref beside it, for the same reason everything
@@ -118,6 +137,7 @@ export const initialSaleState: SaleState = {
   catalog: { kind: 'keys' },
   query: '',
   returning: false,
+  docType: 'invoice',
   undoCount: 0,
   baseline: null,
 }
@@ -201,6 +221,15 @@ export type SaleAction =
    */
   | { type: 'SET_RETURNING'; returning: boolean }
   /**
+   * Start a basket of a different KIND — a quote rather than an invoice.
+   *
+   * Clears, like SET_RETURNING and for the same reason: the lines cannot follow
+   * the change across, because what a cashier has rung up so far was rung up as
+   * one kind of document and the prices, discounts and promises attached to it
+   * are not automatically true of another.
+   */
+  | { type: 'SET_DOC_TYPE'; docType: SalesDocType }
+  /**
    * The basket now has a server document, without changing anything in it.
    *
    * For a table's first item: the bill is created on the server, and the reducer has to
@@ -225,6 +254,15 @@ export type SaleAction =
       customer?: TillCustomer | null
       /** The name on the parked document, kept even when the account is not. */
       customerName?: string
+      /**
+       * What the recalled document IS.
+       *
+       * Absent means invoice, which is what every parked basket was before other
+       * types could be saved. Carried rather than inherited: LOAD replaces the sale
+       * in place, so without this a till that had just written a quote would recall
+       * somebody's parked invoice and still believe it was holding a quote.
+       */
+      docType?: SalesDocType
     }
 
 export function saleReducer(state: SaleState, action: SaleAction): SaleState {
@@ -349,6 +387,10 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
          * that should do it.
          */
         returning: state.returning,
+        /* Survives for the same reason the mode does: a till put into quote mode
+           stays there when a mis-keyed quote is cleared. Leaving is an explicit
+           SET_DOC_TYPE, which is the only thing that should do it. */
+        docType: state.docType,
       }
 
     case 'SET_RETURNING':
@@ -359,6 +401,18 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
         ...initialSaleState,
         catalog: state.catalog.kind === 'search' ? { kind: 'keys' } : state.catalog,
         returning: action.returning,
+        /* A return is a credit sale, whatever the till was writing before it.
+           Coming back OUT of return mode lands on an invoice rather than on
+           whatever was set two baskets ago, which is the least surprising place
+           for a cashier to find themselves. */
+        docType: 'invoice',
+      }
+
+    case 'SET_DOC_TYPE':
+      return {
+        ...initialSaleState,
+        catalog: state.catalog.kind === 'search' ? { kind: 'keys' } : state.catalog,
+        docType: action.docType,
       }
 
     case 'SET_CUSTOMER':
@@ -434,6 +488,9 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
          * too would make every recalled basket anonymous.
          */
         customerName: action.customer ? '' : (action.customerName ?? '').trim(),
+        /* The recalled document's own kind, not whatever this till was last set
+           to. Absent means invoice — see the action. */
+        docType: action.docType ?? 'invoice',
         selectedKey: null,
         /*
          * A recalled basket brings back its lines, not the last basket's spent undos.
