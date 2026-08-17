@@ -40,6 +40,9 @@ function product(
     id: nextId++,
     code: `C${nextId}`,
     description,
+    // On the menu. These fixtures are about how variants tile, not about what
+    // a kitchen has run out of.
+    soldOutNote: null,
     departmentId: 1,
     departmentName: 'Clothing',
     priceIncl,

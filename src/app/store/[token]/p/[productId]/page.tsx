@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+import { resolveStoreRouting, rememberedBranch } from '@/lib/storeRouting'
+import { stockAcrossBranches } from '@/lib/site/branchCatalogue'
 import {
   axisLabelsFor,
   publishedProduct,
@@ -35,15 +37,17 @@ import ReviewForm from './ReviewForm'
 export const dynamic = 'force-dynamic'
 
 async function resolve(token: string, productId: string) {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return null
-  const context = await storefrontContext(siteId)
+  // Routed, not merely verified: the price comes from the catalogue and the
+  // stock from the branch, and only resolveStoreRouting knows which is which.
+  const routing = await resolveStoreRouting(token, await rememberedBranch(token))
+  if (!routing) return null
+  const context = await storefrontContext(routing.catalogueSiteId, routing.branchSiteId)
   if (!context) return null
   const id = Number(productId)
   if (!Number.isInteger(id) || id <= 0) return null
   const product = await publishedProduct(context, id)
   if (!product) return null
-  return { context, product }
+  return { context, product, routing }
 }
 
 export async function generateMetadata({
@@ -87,8 +91,16 @@ export default async function ProductPage({
   const found = await resolve(token, productId)
   if (!found) notFound()
 
-  const { context, product } = found
-  const { settings, siteId } = context
+  const { context, product, routing } = found
+  const { settings } = context
+  /*
+   * Reviews and pictures belong to the product, which belongs to the CATALOGUE:
+   * a chain writes one product file, and a review of the Classic Smash is a
+   * review of the Classic Smash whichever branch is packing it. Reading them
+   * from the branch would give nine shops nine sets of photographs of the same
+   * burger, most of them empty.
+   */
+  const siteId = context.catalogueSiteId
 
   // Only APPROVED reviews, and only when the shop has switched them on.
   const [reviews, images, related] = await Promise.all([
@@ -103,6 +115,29 @@ export default async function ProductPage({
 
   // Never suggest the thing already being looked at.
   const alsoLike = related.filter((p) => p.id !== product.id).slice(0, 5)
+
+  /*
+   * ── Where else a shopper could get this ─────────────────────────────────
+   *
+   * ONLY when the branch they are on cannot supply it. Somebody looking at
+   * something that is in stock in front of them does not need a list of other
+   * shops, and showing one is an invitation to leave.
+   *
+   * One database per branch, so it is capped and it happens here — never on a
+   * grid, where it would be one fan-out per tile.
+   */
+  const cannotSupply = !product.inStock || product.soldOutNote !== null
+  const elsewhere =
+    routing.isGroup && cannotSupply
+      ? await stockAcrossBranches(
+          routing.branches.filter((b) => b.siteId !== context.siteId).map((b) => b.siteId),
+          product.code,
+          4,
+        )
+      : []
+  const alsoAt = elsewhere
+    .map((e) => routing.branches.find((b) => b.siteId === e.siteId)?.displayName ?? '')
+    .filter(Boolean)
 
   /*
    * The layout the shop arranged for its product pages, if it made one.
@@ -195,6 +230,9 @@ export default async function ProductPage({
         reviewCount={reviews.count}
         siblings={siblings}
         axisLabels={axisLabels}
+        // Names only, and only when this branch cannot supply it. Empty for a
+        // single shop, and the detail then renders nothing about branches.
+        alsoAt={alsoAt}
       />
 
       {settings.reviewsEnabled && (

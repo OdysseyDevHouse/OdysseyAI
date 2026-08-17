@@ -57,6 +57,18 @@ export type StorefrontProduct = {
   /** Whether the shop has any on the shelf. */
   inStock: boolean
   /**
+   * Set when staff have marked this off for today — see 178.
+   *
+   * NOT the same as being out of stock, and the shop says so differently. Out
+   * of stock is a number that reached zero and might be wrong; this is a person
+   * saying "we have run out", which is the one thing the storefront treats as
+   * certain enough to refuse an order over.
+   *
+   * The BRANCH's answer: the Claremont kitchen running out of wings says
+   * nothing about Sea Point. Null when it is on the menu.
+   */
+  soldOutNote: string | null
+  /**
    * How many are left, or null when the shop does not publish stock levels.
    *
    * Gated on the store's `showStock` setting rather than always sent, because
@@ -504,7 +516,7 @@ export async function publishedProducts(
     params,
   )
 
-  return withSpecials(context.catalogueSiteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+  return withSpecials(context, rows.map((r) => mapStorefrontProduct(r, context.settings)))
 }
 
 /**
@@ -595,7 +607,7 @@ export async function siblingsOf(
   )
 
   return withSpecials(
-    context.catalogueSiteId,
+    context,
     rows.map((r) => mapStorefrontProduct(r, context.settings)),
   )
 }
@@ -614,7 +626,7 @@ export async function publishedProduct(
   )
   const r = rows[0]
   if (!r) return null
-  const [priced] = await withSpecials(context.catalogueSiteId, [mapStorefrontProduct(r, context.settings)])
+  const [priced] = await withSpecials(context, [mapStorefrontProduct(r, context.settings)])
   return priced ?? null
 }
 
@@ -672,7 +684,7 @@ export async function newestProducts(
       LIMIT ${capped}`,
     [context.settings.priceStructureId],
   )
-  return withSpecials(context.catalogueSiteId, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+  return withSpecials(context, rows.map((r) => mapStorefrontProduct(r, context.settings)))
 }
 
 /**
@@ -814,16 +826,38 @@ export async function popularProducts(
  * is no second place where a special price is worked out.
  */
 async function withSpecials(
-  siteId: number,
+  context: StorefrontContext,
   products: StorefrontProduct[],
 ): Promise<StorefrontProduct[]> {
   if (products.length === 0) return products
 
-  const specials = await liveSpecials(siteId)
-  if (specials.length === 0) return products
+  /*
+   * Two reads from two shops, in parallel and once for the whole list.
+   *
+   * Specials are the CATALOGUE's — a chain runs one promotion, not nine. What
+   * has run out today is the BRANCH's, because that is a fact about one
+   * kitchen. Getting these the wrong way round would advertise head office's
+   * sold-out list to every branch in the group.
+   */
+  const [specials, soldOut] = await Promise.all([
+    liveSpecials(context.catalogueSiteId),
+    soldOutToday(context.siteId),
+  ])
+
+  const marked =
+    soldOut.size === 0
+      ? products
+      : products.map((product) => {
+          const off = soldOut.get(product.id)
+          if (!off) return product
+          return { ...product, soldOutNote: off.note || 'Sold out today' }
+        })
+
+  if (specials.length === 0) return marked
+  const priced = marked
 
   const now = new Date()
-  return products.map((product) => {
+  return priced.map((product) => {
     const deal = specialPriceFor(
       {
         productId: product.id,
@@ -881,6 +915,9 @@ function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProdu
     // Filled in by `withSpecials` after the query returns — specials are
     // loaded once per request rather than once per product.
     wasPriceIncl: null,
+    // Likewise: one read of what the BRANCH has run out of, applied to the
+    // whole list rather than queried per product.
+    soldOutNote: null,
     imageId: r.image_id === null || r.image_id === undefined ? null : Number(r.image_id),
     // Falls back to the product's own name: an <img> with no alt is invisible
     // to a screen reader, and "" would announce nothing at all.

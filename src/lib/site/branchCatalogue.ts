@@ -79,6 +79,66 @@ export async function branchProductsByCode(
   return out
 }
 
+export type BranchStock = {
+  siteId: number
+  /** True when that shop has it on the shelf and has not marked it off today. */
+  available: boolean
+}
+
+/**
+ * Which other branches have this product.
+ *
+ * ── WHY THIS IS ONLY EVER CALLED FROM A PRODUCT PAGE ────────────────────────
+ *
+ * It opens one database per branch. On a product page that is one round trip's
+ * latency for a question a shopper is actually asking; on a 120-tile grid it
+ * would be 120 of them, so the grid must never call this. The cap below is the
+ * second guard: a forty-branch group fans out to the nearest few, not to forty.
+ *
+ * Advisory, and deliberately so. It answers "is it worth switching shops",
+ * which tolerates being a minute stale — the branch re-checks everything when
+ * the order actually arrives. Nothing here decides a price or blocks an order.
+ */
+export async function stockAcrossBranches(
+  branchSiteIds: readonly number[],
+  code: string,
+  limit = 5,
+): Promise<BranchStock[]> {
+  const ids = [...new Set(branchSiteIds.filter((id) => Number.isInteger(id) && id > 0))].slice(
+    0,
+    Math.max(0, limit),
+  )
+  if (ids.length === 0 || !code.trim()) return []
+
+  const results = await Promise.all(
+    ids.map(async (siteId) => {
+      try {
+        const rows = await siteQuery<ProductRow>(
+          siteId,
+          `SELECT p.id, p.code, p.description, p.stock_on_hand
+             FROM products p
+             LEFT JOIN online_product_availability a
+               ON a.product_id = p.id AND a.unavailable_until >= CURDATE()
+            WHERE UPPER(p.code) = ? AND p.is_archived = 0 AND a.product_id IS NULL
+            LIMIT 1`,
+          [key(code)],
+        )
+        const row = rows[0]
+        return { siteId, available: !!row && Number(row.stock_on_hand ?? 0) > 0 }
+      } catch {
+        /*
+         * A branch whose database is unreachable is reported as NOT having it,
+         * never as having it. Sending a shopper across town to a shop that
+         * cannot confirm the stock is worse than staying quiet about it.
+         */
+        return { siteId, available: false }
+      }
+    }),
+  )
+
+  return results.filter((r) => r.available)
+}
+
 export type TranslatedLine<T> = T & { branchProductId: number }
 
 export type TranslationResult<T> =

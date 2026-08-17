@@ -153,6 +153,7 @@
     "verify:branch-pick": "node --env-file=.env.local scripts/verify-branch-pick.mjs",
     "verify:checkout-slots": "node --env-file=.env.local scripts/verify-checkout-slots.mjs",
     "verify:sold-out": "node --env-file=.env.local scripts/verify-sold-out.mjs",
+    "verify:shop-soldout": "node --env-file=.env scripts/verify-shop-soldout.mjs",
     "test:payments": "tsx --conditions=react-server --env-file=.env scripts/test-payments.ts",
     "test:builder": "tsx --conditions=react-server --env-file=.env scripts/test-builder.ts",
     "test:builder-ui": "node --env-file=.env scripts/test-builder-ui.mjs",

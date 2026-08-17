@@ -31,6 +31,16 @@ export type StockState = 'out' | 'low' | 'ok'
  * that hides its stock still wants its products orderable.
  */
 export function stockState(product: StorefrontProduct, showStock: boolean): StockState {
+  /*
+   * A staff mark beats every stock figure, and beats `showStock` too.
+   *
+   * Somebody has said by hand that the kitchen has run out. That is more
+   * reliable than a number — the ingredients may well still be in the fridge —
+   * and it is the one case the shop refuses an order over. So a shop that hides
+   * its stock levels must still say this, or the shopper finds out only when
+   * the checkout button rejects them.
+   */
+  if (product.soldOutNote) return 'out'
   if (!showStock) return 'ok'
   if (!product.inStock) return 'out'
   if (product.stockOnHand !== null && product.stockOnHand <= LOW_STOCK_AT) return 'low'
@@ -47,6 +57,13 @@ export function StockBadge({
 }) {
   const state = stockState(product, showStock)
   if (state === 'ok') return null
+  /*
+   * Neutral, not danger, when staff marked it off. A special that ran out is
+   * ordinary restaurant life and comes back tomorrow; six red badges make a
+   * menu look broken. Danger stays for a product the shop genuinely has none of
+   * and no date for.
+   */
+  if (product.soldOutNote) return <Badge tone="neutral">{product.soldOutNote}</Badge>
   if (state === 'out') return <Badge tone="danger">Sold out</Badge>
   return <Badge tone="warning">Only {product.stockOnHand} left</Badge>
 }
@@ -269,7 +286,9 @@ export function AddControl({
         className={compact ? '' : 'w-full'}
         aria-label={`${product.description} is sold out`}
       >
-        Sold out
+        {/* The staff note when there is one — "Back tomorrow" tells a shopper
+            to come back, where a bare "Sold out" tells them to go elsewhere. */}
+        {product.soldOutNote || 'Sold out'}
       </Button>
     )
   }

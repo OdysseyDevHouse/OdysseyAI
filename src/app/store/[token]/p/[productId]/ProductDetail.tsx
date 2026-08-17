@@ -42,6 +42,7 @@ export default function ProductDetail({
   reviewCount,
   siblings = [],
   axisLabels = [],
+  alsoAt = [],
 }: {
   token: string
   product: StorefrontProduct
@@ -53,6 +54,14 @@ export default function ProductDetail({
   /** Every variant in this product's group, or empty when it stands alone. */
   siblings?: StorefrontProduct[]
   axisLabels?: { position: number; label: string }[]
+  /**
+   * Other branches of this chain that have it, by name.
+   *
+   * Empty for a single shop, and empty when the chosen branch CAN supply it —
+   * the page does not even look the question up in that case, because somebody
+   * holding a product that is in stock does not need a list of other shops.
+   */
+  alsoAt?: string[]
 }) {
   const [shown, setShown] = useState(0)
   const cart = useCart()
@@ -217,7 +226,30 @@ export default function ProductDetail({
               Three states, three colours: "Only 3 left" under a green tick
               reads as reassurance, when the whole point of saying it is to
               tell someone to decide now. */}
-          {showStock && (
+          {/* A staff mark is shown even when the shop hides its stock levels:
+              it is the one thing the checkout will refuse the order over, and
+              finding that out at the button is the worst place to find it. Kept
+              muted rather than danger — it is back tomorrow. */}
+          {product.soldOutNote && (
+            <p className="mt-2 flex items-center gap-1.5 text-sm font-medium text-ink-2">
+              <Icons.Clock size={16} className="text-muted" />
+              {product.soldOutNote}
+            </p>
+          )}
+
+          {/* Only reaches here when this branch cannot supply it — the page
+              does not look up other shops otherwise. Named rather than
+              distance-sorted: the shopper already chose this branch, so the
+              useful fact is WHICH other one has it, not how far. */}
+          {alsoAt.length > 0 && (
+            <p className="mt-2 text-sm text-muted">
+              Also at {alsoAt.slice(0, 3).join(', ')}
+              {alsoAt.length > 3 ? ` and ${alsoAt.length - 3} more` : ''} — change your store
+              above to order from there.
+            </p>
+          )}
+
+          {showStock && !product.soldOutNote && (
             <p
               className={`mt-2 flex items-center gap-1.5 text-sm font-medium ${
                 state === 'out' ? 'text-danger' : state === 'low' ? 'text-warning' : 'text-success'
