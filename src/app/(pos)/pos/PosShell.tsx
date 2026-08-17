@@ -105,6 +105,8 @@ import { ClockModal } from './ClockModal'
 import { collectOnlineOrderAction, type CollectableOrder } from './onlineOrderActions'
 import { QuotesModal } from './QuotesModal'
 import { recallQuoteForTillAction, type TillQuote } from './quoteActions'
+import { OrdersModal } from './OrdersModal'
+import { collectOrderForTillAction, type TillOrder } from './orderActions'
 import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
@@ -631,6 +633,8 @@ export default function PosShell({
    * existing one is a different question from starting a new one.
    */
   const [showingQuotes, setShowingQuotes] = useState(false)
+  /** Orders waiting to be collected. Opened from the order module's own key. */
+  const [showingTillOrders, setShowingTillOrders] = useState(false)
   const [sizingTiles, setSizingTiles] = useState(false)
   /** The floor's quick-key dialog. The gate has no pane to draw them in. */
   const [showingTableKeys, setShowingTableKeys] = useState(false)
@@ -2911,6 +2915,67 @@ export default function PosShell({
   }
 
   /**
+   * Handing an order over at the counter.
+   *
+   * ── THIS IS THE ONE LIST TAP THAT MOVES STOCK ─────────────────────────────
+   *
+   * A recalled quote puts a price on screen and nothing has happened. This
+   * DELIVERS: the goods are recorded as gone, the order's outstanding
+   * quantities drop, and a linked invoice comes back to be paid for. None of
+   * that is undone by clearing the basket — the delivery is its own event, and
+   * reversing it is a credit note in the back office.
+   *
+   * Which is why the basket guard matters more here than anywhere else: firing
+   * this with somebody else's half-rung sale on screen would deliver an order
+   * AND lose the basket it could not merge into.
+   */
+  function collectTillOrder(order: TillOrder) {
+    if (state.lines.length > 0) {
+      toast.error('Finish or save the sale on screen first, then hand the order over.')
+      return
+    }
+    startTransition(async () => {
+      const result = await collectOrderForTillAction(
+        order.id,
+        priceStructureId,
+        terminal?.id ?? null,
+        terminal?.code ?? null,
+      )
+      if (!result.ok) {
+        toast.error(result.error)
+        /* Closed rather than left open: every refusal means the list is stale —
+           collected at the other till, cancelled, nothing outstanding — and
+           re-opening re-reads it. */
+        setShowingTillOrders(false)
+        return
+      }
+      setDocDiscount(null)
+      dispatch({
+        type: 'LOAD',
+        documentId: result.documentId,
+        lines: result.lines,
+        /*
+         * AN INVOICE, and deliberately so — the one place the basket's type
+         * changes on the way in.
+         *
+         * What came back is the DELIVERY invoice, not the order. The order is
+         * still an order and its fulfilment status has already moved; what is
+         * on the till is a sale to be tendered, and calling it anything else
+         * would put a Save key where Pay belongs and leave the goods handed
+         * over with nothing collected for them.
+         */
+        docType: 'invoice',
+        customer: null,
+        customerName: result.customerName ?? '',
+      })
+      setShowingTillOrders(false)
+      toast.success(
+        `${order.documentNumber ?? 'That order'} is on the till. Take payment to finish it.`,
+      )
+    })
+  }
+
+  /**
    * Reversing the sale just taken.
    *
    * Stock goes back, the payment is reversed, and the document keeps its number as
@@ -4139,20 +4204,24 @@ export default function PosShell({
            * Hospitality parks through Close, so the two park keys are retail-only
            * — see SalePane's `showParkKeys`.
            *
-           * EXCEPT ON A QUOTE. That rule is about PARKING: a waiter's basket
-           * belongs to a table and Close is how it gets there, so a Save key
-           * beside it would be a second answer to a question the floor already
-           * answers. A quote is not a table's bill and never becomes one, so
-           * none of that applies — and hiding the row there left a hospitality
-           * till switched to Quotes with no way to reach the shop's quotes at
-           * all. Found by driving it: the key was simply absent.
+           * EXCEPT ON A QUOTE OR AN ORDER. That rule is about PARKING: a
+           * waiter's basket belongs to a table and Close is how it gets there,
+           * so a Save key beside it would be a second answer to a question the
+           * floor already answers. Neither a quote nor an order is a table's
+           * bill or ever becomes one, so none of that applies — and hiding the
+           * row there left a hospitality till switched to Quotes with no way to
+           * reach the shop's quotes at all. Found by driving it: the key was
+           * simply absent.
            */
-          showParkKeys={!hospitality || state.docType === 'quote'}
+          showParkKeys={
+            !hospitality || state.docType === 'quote' || state.docType === 'sales_order'
+          }
           onPark={park}
           onShowSaved={() => setShowingSaved(true)}
-          /* Takes over that same key while the till is on quotes — the pane
-             decides, because it is the one that knows which module is showing. */
+          /* Both take over that same key on their own module — the pane decides,
+             because it is the one that knows which module is showing. */
           onShowQuotes={() => setShowingQuotes(true)}
+          onShowOrders={() => setShowingTillOrders(true)}
           savedCount={savedTally}
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
@@ -4284,6 +4353,14 @@ export default function PosShell({
         open={showingQuotes}
         onClose={() => setShowingQuotes(false)}
         onRecall={recallQuote}
+        busy={pending}
+      />
+
+      {/* Orders waiting to go out. Tapping one DELIVERS it — see OrdersModal. */}
+      <OrdersModal
+        open={showingTillOrders}
+        onClose={() => setShowingTillOrders(false)}
+        onCollect={collectTillOrder}
         busy={pending}
       />
 

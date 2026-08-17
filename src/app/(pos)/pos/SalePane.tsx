@@ -47,6 +47,7 @@ export function SalePane({
   onPark,
   onShowSaved,
   onShowQuotes,
+  onShowOrders,
   savedCount,
   onDocDiscount,
   onFindReceipt,
@@ -101,6 +102,8 @@ export function SalePane({
    * compiling; absent, the key stays the parked-basket list it has always been.
    */
   onShowQuotes?: () => void
+  /** Opens the orders waiting to go out. Takes the same key on an order. */
+  onShowOrders?: () => void
   /** How many baskets are parked, for the badge. */
   savedCount: number
   /** Opens the whole-sale discount dialog. Undefined leaves the row inert. */
@@ -140,6 +143,23 @@ export function SalePane({
   const tendered = !returning && docType === 'invoice'
   const finishLabel = returning ? 'Refund' : tendered ? 'Pay' : 'Save'
   const finishTone = returning ? 'warning' : tendered ? 'success' : 'primary'
+
+  /**
+   * What the recall key IS on this screen.
+   *
+   * Resolved once, here, rather than as three conditionals inside the button —
+   * the label, the glyph and the handler have to agree, and a key reading
+   * "Quotes" that opened the parked baskets is a worse bug than one that is
+   * merely absent. Falling back to Saved keeps a screen that has not been given
+   * the newer handlers working exactly as it always did.
+   */
+  const recall =
+    docType === 'quote' && onShowQuotes
+      ? { label: 'Quotes', Icon: Icons.FileText, onClick: onShowQuotes }
+      : docType === 'sales_order' && onShowOrders
+        ? { label: 'Orders', Icon: Icons.ListOrdered, onClick: onShowOrders }
+        : { label: 'Saved', Icon: Icons.Archive, onClick: onShowSaved }
+
   const now = useMinuteClock()
 
   /* A FLOATING CARD, not a pane sharing a border with its neighbour. The three
@@ -348,33 +368,25 @@ export function SalePane({
             THE RECALL KEY ANSWERS THE MODULE'S OWN QUESTION.
 
             On a sale it opens the parked baskets. On a quote it opens the
-            shop's quotes, because "find an existing one" is the same question
-            and parked baskets are not the answer to it — a cashier in the quote
+            shop's quotes; on an order, the orders waiting to go out. "Find an
+            existing one" is the same question in all three, and parked baskets
+            are not the answer to it in two of them — a cashier in the quote
             module reaching for a quote must not be handed a list of half-rung
             sales instead.
 
-            One key rather than two: a second button that is dead on every
-            screen but one is a button cashiers learn to ignore.
+            One key rather than three: buttons that are dead on every screen but
+            one are buttons cashiers learn to ignore.
           */}
           <Button
             variant="ghost"
             size="touch"
             className="flex-1"
             disabled={busy}
-            onClick={docType === 'quote' && onShowQuotes ? onShowQuotes : onShowSaved}
+            onClick={recall.onClick}
           >
-            {docType === 'quote' && onShowQuotes ? (
-              <>
-                <Icons.FileText size={18} />
-                Quotes
-              </>
-            ) : (
-              <>
-                <Icons.Archive size={18} />
-                Saved
-                {savedCount > 0 && <Badge tone="brand">{savedCount}</Badge>}
-              </>
-            )}
+            <recall.Icon size={18} />
+            {recall.label}
+            {recall.label === 'Saved' && savedCount > 0 && <Badge tone="brand">{savedCount}</Badge>}
           </Button>
         </div>
       )}
