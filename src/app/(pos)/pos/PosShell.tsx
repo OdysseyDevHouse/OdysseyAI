@@ -266,6 +266,7 @@ export default function PosShell({
   serviceTiers,
   tipsTablesOnly,
   warnOutOfStock,
+  offlineAccountSales = false,
   laybyDueDate = null,
   undoLimit,
 }: {
@@ -365,6 +366,14 @@ export default function PosShell({
    * pos_warn_out_of_stock in settings.ts for why that is the default.
    */
   warnOutOfStock: boolean
+  /**
+   * Whether a disconnected till may still sell ON ACCOUNT.
+   *
+   * The shop's own decision — see pos_offline_account_sales for why this is a
+   * setting rather than a rule. Defaults false so an existing store behaves
+   * exactly as it did: account sales refused when the line is down.
+   */
+  offlineAccountSales?: boolean
   /**
    * What the lay-by dialog's "collected by" field opens with — today plus the
    * shop's `layby_default_days`, computed on the SERVER.
@@ -4197,8 +4206,16 @@ export default function PosShell({
    * of what a shop takes.
    */
   const availableTenders = useMemo(
-    () => (till.online ? tenders : tenders.filter((t) => offlineBlockedTender(t) === null)),
-    [tenders, till.online],
+    () =>
+      till.online
+        ? tenders
+        : tenders.filter(
+            (t) => offlineBlockedTender(t, { allowAccount: offlineAccountSales }) === null,
+          ),
+    /* `offlineAccountSales` is the shop's own answer to whether a disconnected
+       till may still sell on account — see pos_offline_account_sales. Off by
+       default, so this list is unchanged for a shop that has not chosen. */
+    [tenders, till.online, offlineAccountSales],
   )
 
   return (

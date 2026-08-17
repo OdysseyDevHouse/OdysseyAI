@@ -8,6 +8,7 @@ import TerminalsClient from './TerminalsClient'
 import LicencesPanel from './LicencesPanel'
 import UndoLimitPanel from './UndoLimitPanel'
 import StockWarningPanel from './StockWarningPanel'
+import OfflineAccountPanel from './OfflineAccountPanel'
 import PosModePanel from './PosModePanel'
 
 export const dynamic = 'force-dynamic'
@@ -28,6 +29,10 @@ export default async function TerminalsPage() {
      that does not maintain its counts would be questioned about them all day.
      See pos_warn_out_of_stock in settings.ts. */
   const warnOutOfStock = (await getSetting(siteId, 'pos_warn_out_of_stock')) === '1'
+  /* Absent means OFF, and that default is load-bearing: turning this on means a
+     till may extend credit against a limit it cannot check, which nobody should
+     inherit by upgrade. See pos_offline_account_sales. */
+  const offlineAccountSales = (await getSetting(siteId, 'pos_offline_account_sales')) === '1'
   /* Which of the three tills this shop runs. Anything unreadable resolves to
      retail, which is the answer that trades — see lib/posMode. */
   const posMode = toPosMode(await getSetting(siteId, 'pos_mode'))
@@ -53,6 +58,9 @@ export default async function TerminalsPage() {
             }
           />
           <StockWarningPanel warnOutOfStock={warnOutOfStock} />
+          {/* Beside the stock warning because both answer "what does the till do
+              when it cannot be sure" — one about counts, one about credit. */}
+          <OfflineAccountPanel offlineAccountSales={offlineAccountSales} />
           {/* BELOW the tills, because a manager comes here to add a till far
               more often than to release a licence — and the licence list is the
               one they need when something is already wrong. */}

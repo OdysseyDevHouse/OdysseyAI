@@ -52,12 +52,32 @@ export function operatorCan(capabilities: readonly string[], capability: string)
  * takings. The reason is returned as a sentence so the key can say it rather than
  * simply vanishing — a tender that disappears when the network drops leaves the
  * cashier wondering whether the store has the facility at all.
+ *
+ * ── THE ACCOUNT RULE IS THE SHOP'S TO SET ─────────────────────────────────
+ *
+ * The other two are not negotiable: there is no safe offline behaviour for a
+ * gift card two tills can drain, or for a redemption whose only failure mode is
+ * a rollback. An account sale is different in kind — the risk is CREDIT, which
+ * is a commercial judgement a shop makes about its own customers rather than a
+ * correctness problem software can settle.
+ *
+ * A trade counter whose server has died can serve every cash customer and none
+ * of its regulars, which for some shops is the right answer and for others is
+ * absurd. So `allowAccount` carries the owner's decision — see
+ * `pos_offline_account_sales`, which defaults to OFF so nothing changes for a
+ * shop that has not thought about it.
+ *
+ * Passed IN rather than read here: this module is pure and runs in the browser,
+ * where there is no site to read a setting from.
  */
-export function offlineBlockedTender(tender: {
-  postsToDebtor: boolean
-  integrationKey: string | null
-}): string | null {
-  if (tender.postsToDebtor) return 'Account sales need the network'
+export function offlineBlockedTender(
+  tender: {
+    postsToDebtor: boolean
+    integrationKey: string | null
+  },
+  options: { allowAccount?: boolean } = {},
+): string | null {
+  if (tender.postsToDebtor && !options.allowAccount) return 'Account sales need the network'
   if (tender.integrationKey === 'loyalty') return 'Loyalty needs the network'
   // A gift card's balance lives only on the server, and the FOR UPDATE that
   // stops two tills draining one card has no offline equivalent.

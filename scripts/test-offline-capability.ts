@@ -70,6 +70,54 @@ function main() {
     // that silently vanishes leaves the cashier wondering whether the store even
     // has the facility.
     ok('and it says why', /network/i.test(blocked ?? ''), String(blocked))
+
+    /*
+     * ── AND THE SHOP CAN DECIDE OTHERWISE ─────────────────────────────────
+     *
+     * A trade counter whose server has died can serve every cash customer and
+     * none of its regulars — which for some shops is right and for others means
+     * they have effectively closed. That is a credit judgement about their own
+     * customers, not something this function can settle, so it is a setting.
+     *
+     * OFF is the default and the omitted-option case, which is what keeps every
+     * existing shop behaving exactly as it did.
+     */
+    ok(
+      'the default is still to refuse',
+      offlineBlockedTender(account, {}) !== null,
+      String(offlineBlockedTender(account, {})),
+    )
+    ok(
+      '*** a shop that allows it may sell on account offline ***',
+      offlineBlockedTender(account, { allowAccount: true }) === null,
+      String(offlineBlockedTender(account, { allowAccount: true })),
+    )
+    ok(
+      '  and allowAccount: false is the same as not asking',
+      offlineBlockedTender(account, { allowAccount: false }) === blocked,
+    )
+  }
+
+  {
+    /*
+     * THE SETTING IS ABOUT CREDIT, AND ONLY CREDIT.
+     *
+     * Loyalty and gift cards stay refused whatever a shop has chosen. Their
+     * balances can be drained from two tills at once and the guard that stops
+     * that is a database lock — a correctness problem, where the account rule is
+     * a commercial one. A setting that loosened these too would look like the
+     * same decision and be a different one.
+     */
+    const points = { postsToDebtor: false, integrationKey: 'loyalty' }
+    const giftCard = { postsToDebtor: false, integrationKey: 'gift_card' }
+    ok(
+      '*** allowing account sales does NOT unlock loyalty ***',
+      offlineBlockedTender(points, { allowAccount: true }) !== null,
+    )
+    ok(
+      '*** nor gift cards ***',
+      offlineBlockedTender(giftCard, { allowAccount: true }) !== null,
+    )
   }
 
   {

@@ -100,6 +100,7 @@ export default async function PosPage({
     tipsTablesOnlySetting,
     undoLimitSetting,
     warnOutOfStockSetting,
+    offlineAccountSetting,
     laybyDefaultDays,
   ] = await Promise.all([
       listTerminals(site.id, false),
@@ -176,6 +177,10 @@ export default async function PosPage({
          moment Pay is pressed, and a setting fetched then would be one more
          round trip standing between a cashier and a customer's money. */
       getSetting(site.id, 'pos_warn_out_of_stock'),
+      /* Whether a disconnected till may still sell on account. Shipped with the
+         page for the same reason the others are: the tender pad has to know at
+         the moment the line drops, which is the moment a fetch cannot help. */
+      getSetting(site.id, 'pos_offline_account_sales'),
       /* How long the shop gives somebody to pay a lay-by off. Shipped rather
          than fetched when the dialog opens, for the same reason as the two
          above: it is a default in a field, and a round trip to fill one in is a
@@ -290,6 +295,9 @@ export default async function PosPage({
          plenty of shops do not track stock, and a warning about figures nobody
          maintains teaches cashiers to dismiss warnings without reading them. */
       warnOutOfStock={String(warnOutOfStockSetting ?? '0') === '1'}
+      /* Absent means OFF — an existing shop keeps refusing account sales offline
+         until an owner decides otherwise. See pos_offline_account_sales. */
+      offlineAccountSales={String(offlineAccountSetting ?? '0') === '1'}
       /*
        * The date the lay-by dialog opens with, computed HERE rather than in the
        * browser.
