@@ -76,7 +76,7 @@ function isServerActionFile(src: string): boolean {
  */
 const OPEN_PAGES = new Set([
   'src/app/(app)/not-allowed/page.tsx',
-  /* A pure redirect to /sales/invoicing, kept because /sales is on printed
+  /* A pure redirect to /invoicing, kept because /sales is on printed
      references and bookmarks. It reads NOTHING — no query, no siteId, no
      document — so there is nothing here to guard; it only rewrites the query
      string and redirects. The capability lives where the data is: the target

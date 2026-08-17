@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
         })
       : null,
     allowed('sales.view')
-      ? section('documents', 'Documents', `/sales/invoicing?status=all&q=${q}`, async () => {
+      ? section('documents', 'Documents', `/invoicing?status=all&q=${q}`, async () => {
           const { items } = await listDocuments(site.id, { search: term, limit: PER_SECTION })
           return items.map((d) => ({
             key: `document-${d.id}`,

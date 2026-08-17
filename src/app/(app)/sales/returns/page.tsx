@@ -22,7 +22,7 @@ export default async function ReturnsPage() {
       <PageHeader
         title="Return without a receipt"
         subtitle="For goods coming back when the customer has no invoice"
-        backHref="/sales/invoicing?status=all"
+        backHref="/invoicing?status=all"
         backLabel="Invoicing"
       />
 

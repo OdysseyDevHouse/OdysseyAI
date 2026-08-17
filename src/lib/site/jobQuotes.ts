@@ -23,7 +23,7 @@ import {
  * `doc_type = 'quote'` with a `job_card_id`, and that is the whole of it. 048
  * argued a quote needed no new table because a quote IS a sales document — same
  * lines, same VAT, same documentMath — and nothing about a job quote disturbs
- * that. The quote register at /sales/quotes lists these alongside counter quotes
+ * that. The quote register at /invoicing/quotes lists these alongside counter quotes
  * and the conversion-rate figure counts them, for free.
  *
  * ── WHY REVISIONS ARE NEW DOCUMENTS ────────────────────────────────────────

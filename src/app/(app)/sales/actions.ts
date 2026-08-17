@@ -312,7 +312,7 @@ export async function saveAsOrderAction(
   })
   if (!attached.ok) return { ok: false, error: attached.error }
 
-  revalidatePath('/sales/orders')
+  revalidatePath('/invoicing/orders')
   return { ok: true, documentId: result.id }
 }
 
@@ -329,7 +329,7 @@ export async function saveForLaterAction(documentId: number): Promise<SaleResult
   const result = await saveForLaterDocument(siteId, documentId)
   if (!result.ok) return { ok: false, error: result.error }
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   return { ok: true, documentId: result.id }
 }
 
@@ -349,7 +349,7 @@ export async function discardSaleAction(
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
   const result = await discardDocument(siteId, documentId)
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   return result
 }
 
@@ -452,7 +452,7 @@ export async function finaliseSaleAction(
   })
   if (!posted.ok) return { ok: false, error: posted.error }
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   revalidatePath('/products')
   return posted
 }
@@ -483,7 +483,7 @@ export async function voidSaleAction(
   const result = await voidDocument(siteId, actor, documentId, reason)
   if (!result.ok) return { ok: false, error: result.error }
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   revalidatePath(`/sales/${documentId}`)
   revalidatePath('/products')
   return { ok: true }
@@ -518,7 +518,7 @@ export async function createCreditNoteAction(
   const result = await createCreditNote(site.id, { userId: user.id, userName: user.name }, input)
   if (!result.ok) return result
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   revalidatePath(`/sales/${input.invoiceId ?? ''}`)
   revalidatePath('/products')
   if (input.customerId) revalidatePath(`/customers/${input.customerId}`)
@@ -582,7 +582,7 @@ export async function creditWholeSaleAction(
   })
   if (!result.ok) return result
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   revalidatePath(`/sales/${invoiceId}`)
   revalidatePath('/products')
 

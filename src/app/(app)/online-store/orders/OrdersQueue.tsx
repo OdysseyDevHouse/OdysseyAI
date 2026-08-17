@@ -238,7 +238,7 @@ export default function OrdersQueue({
           )}
           {o.documentId && !o.documentNumber && (
             <Link
-              href={`/sales/invoicing/${o.documentId}`}
+              href={`/invoicing/${o.documentId}`}
               className="text-xs font-medium text-brand hover:underline"
             >
               Draft

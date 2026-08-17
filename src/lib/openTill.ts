@@ -86,3 +86,57 @@ export const TILL_TARGET = 'odyssey-pos'
 export const tillLinkProps = {
   target: TILL_TARGET,
 } as const
+
+/* ── The invoicing window ──────────────────────────────────────────────────── */
+
+/**
+ * The trade counter's screens, in their own window.
+ *
+ * ── WHY THIS IS THE SAME IDEA AS THE TILL ─────────────────────────────────
+ *
+ * Invoicing, quotes, orders and lay-bys are what a trade counter does all day,
+ * and the person running them is standing in front of a customer — not a
+ * manager dipping into a screen. So they get what the POS gets: their own
+ * window, their own chrome, and no navigation rail to wander off into.
+ *
+ * The reason that matters most is the one the layout documents: when a shop's
+ * server dies, this window has to keep working, and a sidebar full of screens
+ * that cannot survive that is a way for an operator to land on a dead page
+ * mid-document.
+ *
+ * ── AND A SECOND NAMED TARGET, NOT `_blank` ───────────────────────────────
+ *
+ * Same rule as the till's, for a milder reason. Two invoicing windows do not
+ * corrupt anything — there is no shared device id here — but two copies of the
+ * same register, one showing a document the other has since changed, is a
+ * confusion nobody needs. Named, so pressing Invoicing twice focuses the window
+ * already open.
+ *
+ * DISTINCT from TILL_TARGET on purpose: a shop runs both at once, and sharing
+ * one name would mean opening invoicing threw away the till, basket included.
+ */
+export const INVOICING_HREF = '/invoicing'
+export const INVOICING_TARGET = 'odyssey-invoicing'
+
+export const invoicingLinkProps = {
+  target: INVOICING_TARGET,
+} as const
+
+/**
+ * Every href that belongs to the invoicing window.
+ *
+ * The sidebar asks this rather than testing one path, because four rows lead in
+ * there and a check written against one of them leaves the other three opening
+ * inside the back office — which is exactly the wandering this whole change
+ * exists to stop.
+ */
+const INVOICING_HREFS = new Set<string>([
+  INVOICING_HREF,
+  `${INVOICING_HREF}/quotes`,
+  `${INVOICING_HREF}/orders`,
+  `${INVOICING_HREF}/laybys`,
+])
+
+export function opensInInvoicingWindow(href: string): boolean {
+  return INVOICING_HREFS.has(href)
+}

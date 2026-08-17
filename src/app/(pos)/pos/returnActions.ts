@@ -243,7 +243,7 @@ export async function tillCreditNoteAction(
   })
   if (!result.ok) return result
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   revalidatePath('/products')
   return result
 }
@@ -412,7 +412,7 @@ export async function tillExchangeAction(
     }
   }
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   revalidatePath('/products')
   return {
     ok: true,

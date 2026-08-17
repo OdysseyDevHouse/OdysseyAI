@@ -89,7 +89,7 @@ export async function createNoReceiptReturnAction(input: {
 
   if (!result.ok) return result
 
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   revalidatePath('/reports')
 
   return result

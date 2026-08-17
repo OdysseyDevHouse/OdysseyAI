@@ -366,7 +366,7 @@ export async function invoiceJobAction(
   const result = await invoiceJob(ctx.siteId, ctx.actor, jobId, selections)
   if (!result.ok) return result
   revalidateJobs(jobId)
-  revalidatePath('/sales/invoicing')
+  revalidatePath('/invoicing')
   return result
 }
 
@@ -480,7 +480,7 @@ export async function quoteJobAction(
   const result = await quoteJob(ctx.siteId, ctx.actor, jobId, options)
   if (!result.ok) return result
   revalidateJobs(jobId)
-  revalidatePath('/sales/quotes')
+  revalidatePath('/invoicing/quotes')
   return result
 }
 
@@ -502,7 +502,7 @@ export async function acceptQuoteAction(
   const result = await acceptQuote(ctx.siteId, ctx.actor, quoteId, input)
   if (!result.ok) return result
   revalidateJobs(jobId)
-  revalidatePath('/sales/quotes')
+  revalidatePath('/invoicing/quotes')
   return result
 }
 
@@ -517,7 +517,7 @@ export async function declineQuoteAction(
   const result = await declineJobQuote(ctx.siteId, ctx.actor, quoteId, reason)
   if (!result.ok) return result
   revalidateJobs(jobId)
-  revalidatePath('/sales/quotes')
+  revalidatePath('/invoicing/quotes')
   return result
 }
 

@@ -21,7 +21,7 @@ import { listPastSalesAction, type PastSaleRow } from './actions'
  *
  * ── WHY THIS DOES NOT NAVIGATE TO THE BACK OFFICE ─────────────────────────
  *
- * The reprint key used to push the browser to /sales/invoicing. That takes the
+ * The reprint key used to push the browser to the invoice register. That takes the
  * till off the screen it exists to be — with a basket possibly half-scanned
  * behind it — and lands a cashier in a dense back-office list with filters,
  * pagination and columns about margin. Everything they needed was "find the sale,

@@ -341,7 +341,7 @@ export default function JobDetail({
       toast.success(`Draft invoice raised for ${formatMoney(result.totalIncl)}.`)
       setBilling(false)
       setPicked({})
-      router.push(`/sales/invoicing/${result.invoiceId}`)
+      router.push(`/invoicing/${result.invoiceId}`)
     })
   }
 
@@ -798,7 +798,7 @@ export default function JobDetail({
                 {job.documents.map((doc) => (
                   <tr key={doc.id}>
                     <td className={TABLE_TD}>
-                      <TextLink href={`/sales/invoicing/${doc.id}`}>
+                      <TextLink href={`/invoicing/${doc.id}`}>
                         {doc.documentNumber ?? 'Draft'}
                       </TextLink>
                     </td>
@@ -914,7 +914,7 @@ export default function JobDetail({
                       <tr key={quote.id}>
                         <td className={TABLE_TD}>
                           <div className="flex items-center gap-2">
-                            <TextLink href={`/sales/invoicing/${quote.id}`}>
+                            <TextLink href={`/invoicing/${quote.id}`}>
                               {quote.documentNumber ?? 'Draft'}
                             </TextLink>
                             {quote.revision > 1 && (
