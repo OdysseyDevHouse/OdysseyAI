@@ -47,6 +47,21 @@ const SKIP = new Set([
    *   npm run test:builder-ui
    */
   'test:builder-ui',
+  /*
+   * Needs a running server AND `ALLOW_UNVERIFIED_ITN=1`, because the PayFast
+   * post-back is the one verification step a test cannot simulate — PayFast
+   * has never seen the payment and correctly refuses to vouch for it.
+   *
+   * In the chain it would fail on any machine that has not started a server
+   * that way, which is a red line saying nothing about the code. The state
+   * machine underneath it IS covered by `test:billing-subscription`, which
+   * needs nothing but the database. Run this one when a change touches the
+   * callback:
+   *
+   *   ALLOW_UNVERIFIED_ITN=1 npm run dev
+   *   npm run test:billing-itn-route
+   */
+  'test:billing-itn-route',
 ])
 const suites = Object.keys(pkg.scripts)
   .filter((k) => k.startsWith('test:') && !SKIP.has(k))

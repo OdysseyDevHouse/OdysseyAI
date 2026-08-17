@@ -515,6 +515,21 @@ export type CompleteResult =
  * been in the drawer all along, and the cash-ups that counted it were right.
  * The invoice records it as paid so the customer's account is not left owing
  * for goods they have paid for in full.
+ *
+ * ── AND THAT IS WHY THE TENDER MUST NOT BE DRAWER CASH ────────────────────
+ *
+ * Settling with CASH would write a cash tender for the whole lay-by value on
+ * the day the goods go out, and `expectedCash` counts cash tenders. The
+ * instalments are already counted — they are real money that went into the
+ * drawer weeks ago, and the cash-up now sees them. Recording the settlement as
+ * cash too would count every rand of that lay-by a second time and leave the
+ * drawer reading over by the whole amount.
+ *
+ * `DEPOSIT` — "Deposit paid", `counts_as_drawer_cash = 0` — is the tender that
+ * says "this was settled by money already taken". So the caller's choice is
+ * validated rather than trusted: the back office offers a picker defaulted to
+ * the first active tender, which is Cash, and nothing stopped somebody
+ * confirming it.
  */
 export async function completeLayby(
   siteId: number,
@@ -526,6 +541,23 @@ export async function completeLayby(
   if (!layby) return { ok: false, error: 'That lay-by no longer exists.' }
   if (layby.status === 'completed') return { ok: false, error: 'This lay-by is already completed.' }
   if (layby.status !== 'open') return { ok: false, error: `A ${layby.status} lay-by cannot be completed.` }
+
+  /* Refused here, at the boundary, rather than by hiding the option on one
+     screen: the till reaches this too, and a rule about money belongs where
+     every caller passes through. */
+  const settlement = await siteQueryOne<Row>(
+    siteId,
+    'SELECT counts_as_drawer_cash FROM tender_types WHERE id = ? LIMIT 1',
+    [tenderTypeId],
+  )
+  if (!settlement) return { ok: false, error: 'That payment method no longer exists.' }
+  if (settlement.counts_as_drawer_cash) {
+    return {
+      ok: false,
+      error:
+        'Settle a lay-by with a method that does not add to the drawer — the instalments are already counted. Use "Deposit paid".',
+    }
+  }
   if (!isSettled(layby)) {
     return {
       ok: false,

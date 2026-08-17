@@ -5,12 +5,12 @@ import {
   currentPrices,
   holdingsForSites,
   sitesForAccount,
+  deviceOrdersFor,
   MODULE_KEYS,
-  MODULE_LABELS,
 } from '@/lib/control/modules'
-import { billableDeviceCount } from '@/lib/control/devices'
-import { MODULE_DESCRIPTIONS } from '@/lib/control/moduleMessages'
 import { nextBillingDate, safeBillingDay } from '@/lib/billing/period'
+import { subscriptionForAccount, paymentsForAccount } from '@/lib/control/subscriptions'
+import { platformPayFastStatus } from '@/lib/payfast/platformConfig'
 import { PageHeader, PageBody, Card, CardBody, Callout } from '@/components/ui'
 import BillingClient from './BillingClient'
 
@@ -63,16 +63,17 @@ export default async function BillingPage() {
   const hiddenStoreCount = account ? accountSites.length - visibleSites.length : 0
 
   const visibleIds = visibleSites.map((s) => s.siteId)
-  const [holdings, prices, deviceCounts] = await Promise.all([
+  const [holdings, prices, devices, subscription, payments] = await Promise.all([
     holdingsForSites(visibleIds),
     currentPrices(),
-    Promise.all(visibleIds.map((id) => billableDeviceCount(id))),
+    deviceOrdersFor(visibleIds),
+    account ? subscriptionForAccount(account.id) : Promise.resolve(null),
+    account ? paymentsForAccount(account.id, 12) : Promise.resolve([]),
   ])
 
-  const devicesBySite: Record<number, number> = {}
-  visibleIds.forEach((id, i) => {
-    devicesBySite[id] = deviceCounts[i] ?? 0
-  })
+  /* Asked rather than assumed, so the screen can say "not set up yet" instead
+     of offering a Subscribe button that throws when pressed. */
+  const payfast = platformPayFastStatus()
 
   const today = new Date().toISOString().slice(0, 10)
   const billingDay = safeBillingDay(account?.billingDay ?? 1)
@@ -114,7 +115,6 @@ export default async function BillingPage() {
             accountStatus={account.status}
             billingContact={account.billingContact}
             billingEmail={account.billingEmail}
-            vatNumber={account.vatNumber}
             billingDay={billingDay}
             nextBillingOn={nextBillingDate(today, billingDay)}
             today={today}
@@ -122,10 +122,32 @@ export default async function BillingPage() {
             hiddenStoreCount={hiddenStoreCount}
             holdings={holdings}
             prices={prices}
-            devicesBySite={devicesBySite}
-            moduleKeys={[...MODULE_KEYS]}
-            moduleLabels={MODULE_LABELS}
-            moduleDescriptions={MODULE_DESCRIPTIONS}
+            devices={devices}
+            /* The manual confirm survives ONLY while PayFast is unconfigured.
+               Once the gateway is set up the callback provisions licences by
+               itself, and leaving a button that does the same thing without a
+               payment would be a way to licence tills for free. */
+            canConfirmPayment={!payfast.ok}
+            payfastReady={payfast.ok}
+            payfastProblems={payfast.ok ? [] : payfast.missing}
+            subscription={
+              subscription
+                ? {
+                    status: subscription.status,
+                    amountIncl: subscription.amountIncl,
+                    lastPaidOn: subscription.lastPaidOn,
+                    synced: subscription.syncedAt !== null,
+                  }
+                : null
+            }
+            payments={payments.map((p) => ({
+              id: p.id,
+              amountGross: p.amountGross,
+              paymentStatus: p.paymentStatus,
+              verified: p.verified,
+              rejectReason: p.rejectReason,
+              receivedAt: p.receivedAt ? p.receivedAt.toISOString() : null,
+            }))}
           />
         ) : (
           <Card>

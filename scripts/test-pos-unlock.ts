@@ -17,6 +17,7 @@ import { activeSiteIds } from '../src/lib/sites'
 import { siteQuery, siteQueryOne } from '../src/lib/siteDb'
 import { signInWithPin, listUsers } from '../src/lib/site/users'
 import { capabilitiesForRole, can } from '../src/lib/site/permissions'
+import { claimTerminal } from '../src/lib/site/terminals'
 
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -142,8 +143,11 @@ async function main() {
 
   /* ── Terminals are per-site, so a device cannot span two ─────────────── */
 
+  /* Hoisted out of the block below, because the claim-refusal check that
+     follows borrows a REAL claimed device from it — a made-up id would pass by
+     being free and prove nothing. */
+  const perSite = new Map<string, number[]>()
   {
-    const perSite = new Map<string, number[]>()
     for (const siteId of sites) {
       const rows = await siteQuery<{ device_id: string }>(
         siteId,
@@ -163,6 +167,65 @@ async function main() {
       shared.length === 0,
       shared.map(([d, ids]) => `${d.slice(0, 8)}…@${ids.join('+')}`).join(', '),
     )
+  }
+
+  /* ── And the claim path REFUSES to create one ─────────────────────────── */
+
+  /*
+   * The check above finds drift; this one proves it cannot be made.
+   *
+   * `terminals.device_id` is UNIQUE, which stops one machine holding two
+   * registers in ONE shop and says nothing about two shops — they are two
+   * databases. That gap is how a real dev box ended up claimed at both sites,
+   * where `siteForDevice` would have unlocked a PIN into whichever was listed
+   * first.
+   *
+   * Asserted against a device that IS claimed somewhere, borrowed from the map
+   * built above rather than invented: a made-up id would pass by being free and
+   * prove nothing.
+   */
+  {
+    const claimed = [...perSite.entries()].find(([, ids]) => ids.length === 1)
+    if (!claimed) {
+      /* Not a silent skip — the assertion below is the point of this block, and
+         a run with no claimed device anywhere has not exercised it. */
+      console.log('**SKIPPED**  no claimed device on any site, so the cross-site refusal')
+      console.log('             could not be exercised.')
+    } else {
+      const [deviceId, [holderSite]] = claimed
+      const otherSite = sites.find((s) => s !== holderSite)
+      if (otherSite === undefined) {
+        console.log('**SKIPPED**  only one active site, so there is no "elsewhere" to refuse.')
+      } else {
+        const target = await siteQueryOne<{ id: number; code: string }>(
+          otherSite,
+          'SELECT id, code FROM terminals WHERE device_id IS NULL AND is_active = 1 LIMIT 1',
+        ).catch(() => null)
+        if (!target) {
+          console.log(`**SKIPPED**  site ${otherSite} has no free till to attempt a claim on.`)
+        } else {
+          const attempt = await claimTerminal(otherSite, Number(target.id), deviceId)
+          ok(
+            '*** a machine claimed at one shop cannot be claimed at another ***',
+            !attempt.ok,
+            attempt.ok ? 'the claim SUCCEEDED — a PIN could now unlock the wrong site' : '',
+          )
+          ok(
+            '  and the refusal names where it is already registered',
+            !attempt.ok && /already registered as/i.test(attempt.error),
+            attempt.ok ? '' : attempt.error,
+          )
+          /* Nothing to undo: a refused claim writes nothing. Asserted, because a
+             guard that refused AND wrote would be the worst of both. */
+          const after = await siteQueryOne<{ n: number }>(
+            otherSite,
+            'SELECT COUNT(*) AS n FROM terminals WHERE device_id = ?',
+            [deviceId],
+          )
+          ok('  and it wrote nothing', Number(after?.n ?? 0) === 0, String(after?.n))
+        }
+      }
+    }
   }
 
   console.log(fails === 0 ? '\nAll unlock checks passed.' : `\n${fails} check(s) failed.`)

@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { cashFlowStatement, type CashFlowGroup } from '@/lib/site/cashFlowStatement'
 import { formatMoney } from '@/lib/decimals'
 import { today } from '@/lib/site/ledger'
@@ -41,7 +41,7 @@ export default async function CashFlowPage({
   searchParams: Promise<{ from?: string; to?: string; period?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
   const params = await searchParams
 
   const now = today()

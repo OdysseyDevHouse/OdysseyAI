@@ -85,7 +85,7 @@ export const ATTACHMENT_TARGETS = {
     label: 'Sales document',
     read: 'sales.view',
     write: 'sales.edit',
-    href: (id: number) => `/sales/invoicing/${id}`,
+    href: (id: number) => `/invoicing/${id}`,
   },
   /** Correspondence behind a manual ledger correction. */
   journal: {

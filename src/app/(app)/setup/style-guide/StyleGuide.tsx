@@ -12,6 +12,7 @@ import {
   BulkOptionsDialog,
   Button,
   Callout,
+  Tooltip,
   SettingsHint,
   Card,
   CardBody,
@@ -85,6 +86,7 @@ import {
   TouchRow,
   ProductTile,
   Slider,
+  Stepper,
   SwatchPicker,
   tileClass,
   ToolbarSearch,
@@ -143,6 +145,7 @@ export default function StyleGuidePage() {
         <BadgeSection />
         <SectionTitleSection />
         <CalloutSection />
+        <TooltipSection />
         <SettingsHintSection />
         <StatsSection />
         <SummarySection />
@@ -280,6 +283,7 @@ function FormSection() {
   // as 0.00 and stays that way on every machine.
   const [price, setPrice] = useState(0)
   const [tileWidth, setTileWidth] = useState(200)
+  const [deviceCount, setDeviceCount] = useState(2)
 
   return (
     <Card>
@@ -391,6 +395,24 @@ function FormSection() {
           </Field>
         </div>
       </Row>
+      <Row>
+        <Spec
+          name="<Stepper />"
+          note="A small whole number adjusted by one or two — tills on a licence, seats on a plan. Anything that could be any value is a NumberInput."
+        />
+        <div className="flex flex-wrap items-center gap-4">
+          <Field label="Devices at this store">
+            <Stepper value={deviceCount} onChange={setDeviceCount} min={1} max={99} label="Devices" />
+          </Field>
+          <Field label="At its floor">
+            <Stepper value={1} onChange={() => {}} min={1} max={9} label="At the minimum" />
+          </Field>
+          <Field label="Disabled">
+            <Stepper value={3} onChange={() => {}} min={1} max={9} label="Disabled" disabled />
+          </Field>
+        </div>
+      </Row>
+
       <Row>
         <Spec name="<Switch />" note="On/off settings — e.g. a flag" />
         <Switch
@@ -817,6 +839,63 @@ function CalloutSection() {
         <Callout tone="brand">
           Posting is blocked until the February period is reopened.
         </Callout>
+      </CardBody>
+    </Card>
+  )
+}
+
+function TooltipSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Tooltip"
+        description="<Tooltip label side align trigger> — the full text of something that had to be clipped. Appears immediately on hover, unlike the browser's title= which waits about a second and cannot be styled. Pure CSS, so it costs no hydration on a screen rendering hundreds of them. Use trigger=&quot;card&quot; when an overlay link covers the text and would otherwise swallow the hover."
+      />
+      <CardBody className="flex flex-col gap-4">
+        <div className="max-w-sm">
+          <Tooltip
+            label="Every document raised in the period — as a list of documents with their totals, or line by line with cost and margin."
+            side="bottom"
+            align="start"
+          >
+            <span className="block truncate text-xs text-muted">
+              Every document raised in the period — as a list of documents with their totals, or
+              line by line with cost and margin.
+            </span>
+          </Tooltip>
+          <p className="mt-2 text-xs text-faint">
+            Clipped to one line; hover it for the rest.
+          </p>
+        </div>
+        <div className="flex items-center gap-6 pt-6">
+          <Tooltip label="Opens above — the default.">
+            <span className="text-sm text-ink-2 underline decoration-dotted">side=&quot;top&quot;</span>
+          </Tooltip>
+          <Tooltip label="Opens below, for anything near the top of the screen." side="bottom">
+            <span className="text-sm text-ink-2 underline decoration-dotted">
+              side=&quot;bottom&quot;
+            </span>
+          </Tooltip>
+        </div>
+        {/* The hub-tile case: an overlay link covers the text, so the tooltip
+            has to react to the CARD's hover rather than the text's. */}
+        <div className="group relative max-w-sm rounded-card border border-border bg-surface px-4 py-3.5 hover:border-border-strong">
+          <a href="#tooltip" className="block outline-none after:absolute after:inset-0">
+            <span className="block text-sm font-semibold text-ink">A tile with an overlay link</span>
+            <Tooltip
+              label="The whole card is clickable, so this text never receives :hover itself — trigger=&quot;card&quot; is what makes the tooltip appear anyway."
+              side="bottom"
+              align="start"
+              trigger="card"
+              className="mt-0.5"
+            >
+              <span className="block truncate text-xs text-muted">
+                The whole card is clickable, so this text never receives :hover itself —
+                trigger=&quot;card&quot; is what makes the tooltip appear anyway.
+              </span>
+            </Tooltip>
+          </a>
+        </div>
       </CardBody>
     </Card>
   )
@@ -1481,6 +1560,7 @@ function ModalSection() {
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [filling, setFilling] = useState(false)
+  const [board, setBoard] = useState(false)
   const toast = useToast()
 
   return (
@@ -1509,6 +1589,15 @@ function ModalSection() {
         />
         <Button variant="secondary" onClick={() => setFilling(true)}>
           Open filling modal
+        </Button>
+      </Row>
+      <Row>
+        <Spec
+          name={'<Modal size="full">'}
+          note="A dialog that is a WORKSPACE rather than a question — the till's cash-up, where a denomination grid, a numpad and a dozen totals must all be readable at once. Capped at 1600px so the columns do not stretch into unreadable bands on a widescreen. Reach for it rarely: most dialogs ask one thing."
+        />
+        <Button variant="secondary" onClick={() => setBoard(true)}>
+          Open full-width modal
         </Button>
       </Row>
 
@@ -1542,6 +1631,40 @@ function ModalSection() {
           <Field label="Credit limit">
             <CurrencyInput defaultValue={10000} />
           </Field>
+        </div>
+      </Modal>
+
+      <Modal
+        open={board}
+        onClose={() => setBoard(false)}
+        title="A board, not a form"
+        description="Three columns of panels read across at once — what size=&quot;full&quot; is for."
+        size="full"
+        footer={
+          <Button variant="secondary" onClick={() => setBoard(false)}>
+            Close
+          </Button>
+        }
+      >
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)_minmax(0,1fr)]">
+          {['The count', 'What was taken', 'What it comes to'].map((title, col) => (
+            <div key={title} className="flex flex-col gap-4">
+              {Array.from({ length: col === 0 ? 1 : 2 }, (_, i) => (
+                <section key={i} className="rounded-card border border-border bg-surface p-4">
+                  <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+                    <span className="numeric flex h-5 w-5 shrink-0 items-center justify-center rounded-pill bg-brand-soft text-xs font-bold text-brand">
+                      {col + i + 1}
+                    </span>
+                    {i === 0 ? title : 'Totals'}
+                  </h3>
+                  <p className="text-sm text-muted">
+                    A numbered panel. The number is the shared vocabulary when a cash-up is
+                    read out loud over the phone.
+                  </p>
+                </section>
+              ))}
+            </div>
+          ))}
         </div>
       </Modal>
 

@@ -139,7 +139,7 @@ try {
   )
   await new Promise((r) => setTimeout(r, 2500))
 
-  await send('Page.navigate', { url: `${BASE}/sales/invoicing/${documentId}` }, sessionId)
+  await send('Page.navigate', { url: `${BASE}/invoicing/${documentId}` }, sessionId)
   await new Promise((r) => setTimeout(r, 3000))
 
   const m = await evaluate(

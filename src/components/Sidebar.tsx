@@ -14,7 +14,12 @@ import {
   type NavItem,
   type NavSection,
 } from '@/lib/nav'
-import { TILL_HREF, tillLinkProps } from '@/lib/openTill'
+import {
+  TILL_HREF,
+  tillLinkProps,
+  invoicingLinkProps,
+  opensInInvoicingWindow,
+} from '@/lib/openTill'
 
 const STORAGE_KEY = 'odyssey.sidebar'
 
@@ -561,9 +566,11 @@ function ChildLink({
       href={item.href}
       onClick={onNavigate}
       aria-current={itemActive ? 'page' : undefined}
-      /* The till opens beside the back office rather than replacing it — see
-         lib/openTill.ts. Spread LAST so it cannot be undone above. */
+      /* The till and the invoicing window both open BESIDE the back office
+         rather than replacing it — see lib/openTill.ts for why each gets its
+         own named target. Spread LAST so it cannot be undone above. */
       {...(item.href === TILL_HREF ? tillLinkProps : {})}
+      {...(opensInInvoicingWindow(item.href) ? invoicingLinkProps : {})}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm transition ${
         itemActive ? 'font-medium text-brand' : 'text-muted hover:bg-surface-2 hover:text-ink'
       }`}

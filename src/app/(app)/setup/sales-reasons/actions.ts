@@ -27,7 +27,7 @@ function revalidateReasonScreens(kind: ReasonKind) {
   revalidatePath('/setup/sales-reasons')
   revalidatePath('/pos')
   if (kind === 'void') {
-    revalidatePath('/sales/invoicing')
+    revalidatePath('/invoicing')
   } else {
     revalidatePath('/sales/returns')
   }

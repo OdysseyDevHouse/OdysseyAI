@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { actorFor } from '@/lib/auth'
+import { actorForModule } from '@/lib/auth'
 import {
   createAsset,
   updateAsset,
@@ -35,7 +35,7 @@ export async function saveAssetAction(
   input: AssetInput,
   existingId?: number,
 ): Promise<ActionResult & { id?: number }> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -56,7 +56,7 @@ export async function disposeAssetAction(
   id: number,
   input: { disposedOn: string; proceeds: number; reason: string; bankAccountId?: number | null },
 ): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -84,7 +84,7 @@ export async function createFromExpenseAction(
     serialNumber?: string | null
   }[],
 ): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -105,7 +105,7 @@ export async function createFromExpenseAction(
 export async function proposeDepreciationAction(
   periodMonth: string,
 ): Promise<ActionResult & { runId?: number }> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -121,7 +121,7 @@ export async function proposeDepreciationAction(
 }
 
 export async function postDepreciationAction(runId: number): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -140,7 +140,7 @@ export async function postDepreciationAction(runId: number): Promise<ActionResul
 }
 
 export async function cancelDepreciationAction(runId: number): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
@@ -155,7 +155,7 @@ export async function excludeDepreciationItemAction(
   itemId: number,
   reason: string,
 ): Promise<ActionResult> {
-  const ctx = await actorFor('setup.edit')
+  const ctx = await actorForModule('accounting', 'setup.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 

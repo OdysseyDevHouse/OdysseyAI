@@ -169,7 +169,7 @@ try {
   )
   await new Promise((r) => setTimeout(r, 2500))
 
-  await goto(sessionId, `${BASE}/sales/quotes/${quoteId}`)
+  await goto(sessionId, `${BASE}/invoicing/quotes/${quoteId}`)
 
   const found = await evaluate(
     sessionId,

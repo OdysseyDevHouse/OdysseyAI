@@ -316,9 +316,30 @@ export default function DeclarationClient({
               description="What the card machine's own slip says, and the rest."
             />
             <CardBody className="flex flex-col gap-3">
+              {/*
+                "Nothing was taken" is only true if nothing was taken.
+
+                `view.tenders` is built from sales tenders alone, so a shift that
+                took a lay-by deposit and rang up no sale showed this sentence
+                beside a drawer holding the deposit — telling a cashier to expect
+                the float when the right answer was the float plus R500. The
+                off-ledger figure is exactly that money, so it decides which
+                sentence is honest.
+              */}
               {view.tenders.length === 0 && (
                 <p className="text-sm text-muted">
-                  Nothing was taken on this shift. Signing off records the float only.
+                  {view.offLedgerCash !== 0 ? (
+                    <>
+                      No sale was rung up on this shift, but{' '}
+                      <span className="numeric font-semibold text-ink">
+                        {formatMoney(view.offLedgerCash)}
+                      </span>{' '}
+                      came in against lay-bys and deposits. Count the drawer for the float and
+                      that.
+                    </>
+                  ) : (
+                    'Nothing was taken on this shift. Signing off records the float only.'
+                  )}
                 </p>
               )}
               {view.tenders.map((tender) => {
@@ -508,7 +529,7 @@ export default function DeclarationClient({
               <Card>
                 <CardHeader
                   title="Deposits & instalments"
-                  description="Money taken against something that is not a sale today."
+                  description="Money taken against something that is not a sale today. The cash among it is part of what the drawer is counted against."
                 />
                 <CardBody>
                   <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
@@ -524,6 +545,24 @@ export default function DeclarationClient({
                     ) : null}
                     <Figure label="Loyalty top-ups" value={view.loyaltyWallet} />
                   </dl>
+                  {/*
+                    HOW MUCH OF THIS IS IN THE DRAWER, stated rather than left to
+                    be worked out. The figures above are every one of these
+                    events; only the ones paid in CASH are money a cashier is
+                    counting, and a lay-by settled by card sits in the same list
+                    while belonging on the bank statement instead.
+
+                    Rendered only when there is some, so an ordinary shift that
+                    took none is not given a line reading R0.00 to think about.
+                  */}
+                  {view.offLedgerCash !== 0 && (
+                    <p className="mt-3 border-t border-border pt-3 text-[13px] text-muted">
+                      <span className="numeric font-semibold text-ink">
+                        {formatMoney(view.offLedgerCash)}
+                      </span>{' '}
+                      of this was cash, and is counted in the expected drawer above.
+                    </p>
+                  )}
                 </CardBody>
               </Card>
 

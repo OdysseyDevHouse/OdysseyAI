@@ -53,7 +53,7 @@ export async function saveLaybySettingsAction(input: {
   }
 
   revalidatePath('/setup/laybys')
-  revalidatePath('/sales/laybys')
+  revalidatePath('/invoicing/laybys')
 
   return { ok: true, message: 'Lay-by terms saved.' }
 }

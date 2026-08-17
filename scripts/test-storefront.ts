@@ -13,6 +13,7 @@
  *   npm run test:storefront
  */
 import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
+import { execute, query } from '../src/lib/db'
 import { createPublicStoreToken, verifyPublicStoreToken } from '../src/lib/publicStoreToken'
 import {
   getOnlineSettings,
@@ -46,7 +47,29 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
+/** Marks the rows this suite created, so cleanup finds exactly those. */
+const MODULE_FIXTURE = 'test-storefront'
+
+/**
+ * The storefront is behind the Online Store module, checked inside
+ * verifyPublicStoreToken(): the shop front is served outside the (app) route
+ * group, so that resolver is the only place able to close it.
+ *
+ * Granted for the run and removed in cleanup, so this suite tests the
+ * STOREFRONT rather than whatever this machine happens to have bought.
+ */
+async function grantOnlineStore() {
+  await execute(
+    `INSERT INTO cp2_site_modules (site_id, module_key, starts_on, created_by)
+     VALUES (?, 'online_store', ?, ?)
+     ON DUPLICATE KEY UPDATE ends_on = NULL`,
+    [SITE, new Date().toISOString().slice(0, 10), MODULE_FIXTURE],
+  )
+}
+
 async function cleanup() {
+  await execute('DELETE FROM cp2_site_modules WHERE created_by = ?', [MODULE_FIXTURE])
+
   const orders = await siteQuery<{ id: number }>(
     SITE,
     `SELECT id FROM online_orders WHERE contact_name = ?`,
@@ -62,6 +85,7 @@ const shopper = { contactName: TAG, contactPhone: '0820000000', contactEmail: ''
 
 async function main() {
   await cleanup()
+  await grantOnlineStore()
 
   const original = await getOnlineSettings(SITE)
   const { updatedAt: _a, updatedBy: _b, ...base } = original
@@ -73,6 +97,34 @@ async function main() {
   const token = await createPublicStoreToken(SITE)
   ok('the same store always mints the same link', token === (await createPublicStoreToken(SITE)))
   ok('it resolves back to the store', (await verifyPublicStoreToken(token)) === SITE)
+
+  /* The module half of the resolver. A shop front left serving for a shop that
+     stopped paying is the product being given away to the public, so this fails
+     CLOSED — unlike the back office, which fails open.
+
+     Every module row for this site is cleared, not just this suite's fixture:
+     the check is "does the site hold online_store", and a row left behind by
+     any other suite would keep the shop open and make this pass for the wrong
+     reason. It did exactly that once. Whatever was there is restored below. */
+  const otherRows = await query<{ module_key: string; starts_on: string; created_by: string | null }>(
+    `SELECT module_key, starts_on, created_by FROM cp2_site_modules
+      WHERE site_id = ? AND module_key = 'online_store'`,
+    [SITE],
+  )
+  await execute("DELETE FROM cp2_site_modules WHERE site_id = ? AND module_key = 'online_store'", [SITE])
+  ok(
+    'a store without the Online Store module resolves to nothing',
+    (await verifyPublicStoreToken(token)) === null,
+  )
+  for (const r of otherRows) {
+    await execute(
+      `INSERT INTO cp2_site_modules (site_id, module_key, starts_on, created_by)
+       VALUES (?, 'online_store', ?, ?) ON DUPLICATE KEY UPDATE ends_on = NULL`,
+      [SITE, r.starts_on, r.created_by],
+    )
+  }
+  await grantOnlineStore()
+  ok('and resolves again once the module is back', (await verifyPublicStoreToken(token)) === SITE)
   ok('a forged token resolves to nothing', (await verifyPublicStoreToken('a.b.c')) === null)
   ok('an empty token resolves to nothing', (await verifyPublicStoreToken('')) === null)
 
@@ -507,6 +559,14 @@ async function main() {
   const after = await getOnlineSettings(SITE)
   ok('settings restored', after.isEnabled === original.isEnabled)
   ok('test orders removed', (await siteQuery(SITE, `SELECT id FROM online_orders WHERE contact_name = ?`, [TAG])).length === 0)
+
+  // The module row this suite granted itself must not outlive it: the billing
+  // screen would show it as bought, and the next suite would count it.
+  await execute('DELETE FROM cp2_site_modules WHERE created_by = ?', [MODULE_FIXTURE])
+  ok(
+    'the fixture module row is cleaned up',
+    (await query<{ id: number }>('SELECT id FROM cp2_site_modules WHERE created_by = ?', [MODULE_FIXTURE])).length === 0,
+  )
 
   console.log(`\n${fails === 0 ? 'All storefront checks passed.' : `${fails} FAILED.`}`)
   process.exit(fails === 0 ? 0 : 1)

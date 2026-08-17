@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { listCategories } from '@/lib/site/fixedAssets'
 import { getExpense } from '@/lib/site/expenses'
 import { PageHeader, PageBody, Card, CardBody, EmptyState } from '@/components/ui'
@@ -12,7 +12,7 @@ export default async function NewAssetPage({
   searchParams: Promise<{ expense?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('setup.edit')
+  const { siteId } = await requireModuleCapability('accounting', 'setup.edit')
   const params = await searchParams
 
   const categories = await listCategories(siteId)

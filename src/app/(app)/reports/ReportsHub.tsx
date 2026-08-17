@@ -12,6 +12,7 @@ import {
   FavoriteToggle,
   Icons,
   SegmentedControl,
+  Tabs,
   ToolbarSearch,
   useToast,
 } from '@/components/ui'
@@ -38,6 +39,35 @@ export type HubItem = {
 }
 
 type ViewMode = 'grid' | 'list'
+
+/** The "everything" tab. Not a category name, so it cannot collide with one. */
+const ALL = '__all'
+
+/**
+ * The order the category tabs sit in.
+ *
+ * Fixed rather than alphabetical, and it deliberately matches the sidebar's own
+ * running order — Sales, Stock, Customers, Suppliers, Money, Operations — so
+ * somebody who knows where things live in the menu finds the same sequence
+ * here. Saved sits after those because it is the shop's own work rather than a
+ * subject; anything unlisted lands at the end rather than silently first.
+ */
+const CATEGORY_ORDER = [
+  'Sales',
+  'Stock',
+  'Customers',
+  'Suppliers',
+  'Money',
+  'Operations',
+  'Multi-store',
+  'Job cards',
+  'Saved',
+]
+
+function categoryRank(category: string) {
+  const i = CATEGORY_ORDER.indexOf(category)
+  return i === -1 ? CATEGORY_ORDER.length : i
+}
 
 /**
  * The catalogue.
@@ -79,6 +109,7 @@ export default function ReportsHub({
   emptyHint?: string
 }) {
   const [search, setSearch] = useState('')
+  const [tab, setTab] = useState<string>(ALL)
   const [view, setView] = useState<ViewMode>('grid')
   const [favs, setFavs] = useState<Set<string>>(() => new Set(favorites))
   const [, startTransition] = useTransition()
@@ -99,16 +130,76 @@ export default function ReportsHub({
 
   const favouriteItems = useMemo(() => all.filter((i) => favs.has(i.id)), [all, favs])
 
+  /**
+   * The categories present, in CATEGORY_ORDER.
+   *
+   * Taken from the FULL catalogue, deliberately — not from the search results.
+   *
+   * Deriving these from `matches` was the obvious thing and it is wrong: typing
+   * in the search box then rewrites the tab bar itself. Tabs disappear as their
+   * category stops matching, the bar changes width, and the highlight is left on
+   * a tab that no longer exists. A navigation control that reshapes itself while
+   * being read is not navigable. So the bar is a STABLE structure, and the
+   * search filters within it.
+   *
+   * Still derived from the data rather than from CATEGORY_ORDER alone, for two
+   * reasons: a shop whose role hides Money should not be offered an empty tab,
+   * and this same component renders the Job cards screen where one category is
+   * all there is.
+   */
+  const categories = useMemo(() => {
+    const present = [...new Set(all.map((i) => i.category))]
+    present.sort((a, b) => categoryRank(a) - categoryRank(b))
+    return present
+  }, [all])
+
+  /* A stored tab naming a category this role cannot see falls back to All
+     rather than to a blank screen. Computed, so nothing has to chase state. */
+  const activeTab = tab !== ALL && categories.includes(tab) ? tab : ALL
+
+  /*
+   * Tab first, then search — and a search that finds nothing in the selected
+   * tab widens to the whole catalogue rather than showing an empty screen.
+   *
+   * Without that widening, searching "cashier" while Stock is selected shows
+   * nothing at all, even though the shop plainly has cashier reports; the tab is
+   * a browsing choice, and someone who has started typing a name has stopped
+   * browsing. `searchedWider` tells the reader that is what happened, so the
+   * results never look like they came from the tab they can see selected.
+   */
+  const inTab = useMemo(
+    () => (activeTab === ALL ? matches : matches.filter((i) => i.category === activeTab)),
+    [matches, activeTab],
+  )
+  const searchedWider = Boolean(query) && activeTab !== ALL && inTab.length === 0 && matches.length > 0
+  const visible = searchedWider ? matches : inTab
+
   /** Grouped by category, preserving the catalogue's own ordering. */
   const groups = useMemo(() => {
     const out = new Map<string, HubItem[]>()
-    for (const item of matches) {
+    for (const item of visible) {
       const list = out.get(item.category) ?? []
       list.push(item)
       out.set(item.category, list)
     }
     return [...out.entries()]
-  }, [matches])
+  }, [visible])
+
+  /* One tab per category, then All at the end as asked. Name and glyph only —
+     no counts: the bar is for choosing where to look, and eight numbers across
+     it compete with the eight words that actually say what is there. Each
+     category's own heading still carries its count on the All tab. */
+  const tabItems = useMemo(
+    () => [
+      ...categories.map((name) => ({
+        value: name,
+        label: name,
+        icon: categoryIcon(name, 15),
+      })),
+      { value: ALL, label: 'All', icon: <Icons.LayoutGrid size={15} strokeWidth={1.7} /> },
+    ],
+    [categories],
+  )
 
   function onToggleFavorite(id: string) {
     // Optimistic: the star must feel instant, and the only failure mode is a
@@ -222,6 +313,30 @@ export default function ReportsHub({
         </section>
       )}
 
+      {/*
+        ── category tabs ──────────────────────────────────────────────────
+        Only worth a bar when there is more than one category to switch
+        between: the Job cards screen renders this same component with a
+        single category, where a one-tab bar plus All is furniture that
+        filters nothing.
+      */}
+      {categories.length > 1 && (
+        <Tabs
+          items={tabItems}
+          value={activeTab}
+          onChange={setTab}
+          aria-label="Report category"
+        />
+      )}
+
+      {/* Said plainly, because otherwise results from other categories appear
+          under a tab the reader can see is still selected. */}
+      {searchedWider && (
+        <p className="text-xs text-muted">
+          Nothing in {activeTab} matches “{search.trim()}” — showing every category.
+        </p>
+      )}
+
       {/* ── the catalogue ────────────────────────────────────────────────── */}
       {matches.length === 0 ? (
         <Card>
@@ -245,6 +360,13 @@ export default function ReportsHub({
               items={items}
               favs={favs}
               onToggle={onToggleFavorite}
+              /* On a single-category tab the selected tab already names the
+                 section; repeating it as a heading directly underneath is the
+                 same word twice for no information. The description still
+                 shows, since that does say something the tab cannot. When the
+                 search has widened past the tab, headings come back — the
+                 results span categories and need naming again. */
+              showHeading={activeTab === ALL || searchedWider}
             />
           ))}
         </div>
@@ -278,24 +400,31 @@ function CategoryGrid({
   items,
   favs,
   onToggle,
+  showHeading = true,
 }: {
   category: string
   items: HubItem[]
   favs: Set<string>
   onToggle: (id: string) => void
+  /** False when a selected tab already names this category — see the caller. */
+  showHeading?: boolean
 }) {
   const description = categoryDescription(category)
 
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <CategoryTile icon={categoryIcon(category, 16)} tone={categoryTone(category)} size="sm" />
-        <div className="min-w-0">
-          <h2 className="truncate text-[15px] font-semibold text-ink">{category}</h2>
-          {description && <p className="truncate text-xs text-muted">{description}</p>}
+      {showHeading ? (
+        <div className="flex items-center gap-3">
+          <CategoryTile icon={categoryIcon(category, 16)} tone={categoryTone(category)} size="sm" />
+          <div className="min-w-0">
+            <h2 className="truncate text-[15px] font-semibold text-ink">{category}</h2>
+            {description && <p className="truncate text-xs text-muted">{description}</p>}
+          </div>
+          <Badge tone="neutral">{items.length}</Badge>
         </div>
-        <Badge tone="neutral">{items.length}</Badge>
-      </div>
+      ) : (
+        description && <p className="text-xs text-muted">{description}</p>
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {items.map((item) => (
@@ -341,6 +470,11 @@ function ReportTile({
           {item.kind === 'ask' && <Icons.Sparkles size={12} className="shrink-0 text-brand" />}
           {item.broken && <Badge tone="warning">Needs attention</Badge>}
         </span>
+        {/* The full sentence, wrapping. It was briefly clipped to one line with
+            the rest on hover, back when every category sat on one page and the
+            ragged tile heights were the loudest thing on the screen. The tabs
+            fixed that at the source — a tab shows a dozen tiles, not eighty —
+            so the description can simply be readable again. */}
         <span className="mt-0.5 block text-xs leading-relaxed text-muted">{item.description}</span>
       </Link>
       <span className="relative z-10">
@@ -390,6 +524,10 @@ function CategoryList({
               <span className="min-w-0 truncate text-sm font-medium text-ink-2 group-hover:text-ink sm:w-56">
                 {item.name}
               </span>
+              {/* Still one truncated line here, unlike the grid: a list row IS
+                  a single line by construction, and wrapping it would turn the
+                  rows into blocks and lose the scannability that is the whole
+                  reason for the list view. */}
               <span className="min-w-0 flex-1 truncate text-xs text-muted">{item.description}</span>
             </Link>
             {item.kind === 'ask' && (

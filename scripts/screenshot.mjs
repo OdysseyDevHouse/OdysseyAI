@@ -1,7 +1,7 @@
 // Logs in and screenshots app screens, so a change can be looked at rather
 // than only compiled.
 //
-//   node --env-file=.env.local scripts/screenshot.mjs /sales/invoicing [more paths...]
+//   node --env-file=.env.local scripts/screenshot.mjs /invoicing [more paths...]
 //
 // Credentials come from DEV_LOGIN_EMAIL / DEV_LOGIN_PASSWORD in .env.local,
 // which is gitignored. Nothing is written to disk but the PNGs.
@@ -30,7 +30,7 @@ if (!EMAIL || !PASSWORD) {
 
 const paths = process.argv.slice(2)
 if (!paths.length) {
-  console.error('Give at least one path, e.g. /sales/invoicing')
+  console.error('Give at least one path, e.g. /invoicing')
   process.exit(1)
 }
 

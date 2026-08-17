@@ -1,4 +1,4 @@
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { budgetGrid } from '@/lib/site/budgets'
 import { today } from '@/lib/site/ledger'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -19,7 +19,7 @@ export default async function BudgetsPage({
   searchParams: Promise<{ year?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
   const params = await searchParams
 
   const currentYear = Number(today().slice(0, 4))

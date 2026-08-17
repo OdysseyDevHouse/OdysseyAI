@@ -83,6 +83,22 @@ const PUBLIC_PREFIXES = [
    */
   '/portal/',
   '/api/payments/payfast/',
+  // The platform's OWN subscription callback — Odyssey collecting from a
+  // tenant, as opposed to the entry above where a tenant collects from its
+  // shoppers. PayFast posts here with no cookie and no browser.
+  //
+  // Leaving it out is the quietest way to break billing: every notification
+  // gets a 307 to the login page, PayFast treats that as a failed delivery,
+  // retries a few times and gives up. Money is taken and nothing is ever
+  // recorded, with no error on either side.
+  //
+  // It is not unguarded: the URL carries a signed token naming one billing
+  // account, and the route still requires a valid PayFast signature, a
+  // PayFast source IP and PayFast's own confirmation of the payload before it
+  // writes anything.
+  //
+  // The trailing slash matters, as it does for the routes above.
+  '/api/billing/payfast/',
   // A technician's calendar subscription. Google, Outlook and Apple all fetch it
   // on a schedule with no browser and no cookie, so behind the gate they would
   // fetch the login page for ever and render an empty calendar with no error —
@@ -115,6 +131,16 @@ const PUBLIC_PREFIXES = [
   // which nobody would notice until a customer mentioned they had not been
   // billed for a month.
   '/api/contracts/tick',
+  // Platform billing's heartbeat — the annual increase, and the sweep that
+  // makes PayFast agree with the price we hold locally. Same reasoning and the
+  // same protection as the ticks either side: BILLING_CRON_SECRET, compared in
+  // constant time, with the route refusing everything when it is not set.
+  //
+  // Its failure is quieter than most. Behind a cookie gate the sweep would 307
+  // to the login page, and an account whose amount PayFast never accepted would
+  // keep being debited the old figure indefinitely — the money keeps arriving,
+  // just the wrong amount of it, which no error surfaces anywhere.
+  '/api/billing/tick',
   // The abandoned-basket sweep. Same reasoning and the same protection as the
   // two ticks above: BASKET_CRON_SECRET, compared in constant time, with the
   // route refusing every request when it is not set. Behind a cookie gate it
@@ -254,10 +280,12 @@ export const config = {
   matcher: [
     // Everything except Next internals, the health probe the Electron shell
     // waits on, and static files.
-    /* `pos-sw.js` and `pos-manifest.json` are excluded because a service-worker
-       SCRIPT that answers 307 does not register — and it fails SILENTLY. The till
-       would simply have no offline shell, with nothing in the UI to say why, and
-       the symptom would only appear the next time the network dropped. */
-    '/((?!_next/static|_next/image|favicon.ico|api/health|pos-sw\\.js|pos-manifest\\.json|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)',
+    /* The service-worker SCRIPTS and manifests are excluded because a worker
+       script that answers 307 does not register — and it fails SILENTLY. The
+       screen would simply have no offline shell, with nothing in the UI to say
+       why, and the symptom would only appear the next time the network dropped.
+       `invoicing-sw.js` is here for the same reason `pos-sw.js` is: the
+       invoicing window has its own shell, scoped to /invoicing. */
+    '/((?!_next/static|_next/image|favicon.ico|api/health|pos-sw\\.js|pos-manifest\\.json|invoicing-sw\\.js|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)',
   ],
 }

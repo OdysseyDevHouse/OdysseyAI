@@ -119,7 +119,7 @@ export default function OrderDetail({
                 href={
                   order.documentNumber
                     ? `/sales/${order.documentId}`
-                    : `/sales/invoicing/${order.documentId}`
+                    : `/invoicing/${order.documentId}`
                 }
                 className="text-sm font-medium text-brand hover:underline"
               >

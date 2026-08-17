@@ -35,6 +35,7 @@ import TradeEntryPane from './TradeEntryPane'
 import ModuleMenu, {
   MODULE_DOC_TYPES,
   MODULE_PHRASES,
+  LIST_ONLY_MODULES,
   moduleForDocType,
   type TillModule,
 } from './ModuleMenu'
@@ -103,6 +104,18 @@ import { ReprintModal } from './ReprintModal'
 import { OnlineOrdersModal } from './OnlineOrdersModal'
 import { ClockModal } from './ClockModal'
 import { collectOnlineOrderAction, type CollectableOrder } from './onlineOrderActions'
+import { QuotesModal } from './QuotesModal'
+import { recallQuoteForTillAction, type TillQuote } from './quoteActions'
+import { OrdersModal } from './OrdersModal'
+import { collectOrderForTillAction, type TillOrder } from './orderActions'
+import { LaybysModal } from './LaybysModal'
+import { StartLaybyModal } from './StartLaybyModal'
+import {
+  takeLaybyPaymentAction,
+  collectLaybyAction,
+  startLaybyAction,
+  type TillLayby,
+} from './laybyActions'
 import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
 import { VoidModal } from './VoidModal'
@@ -253,6 +266,8 @@ export default function PosShell({
   serviceTiers,
   tipsTablesOnly,
   warnOutOfStock,
+  offlineAccountSales = false,
+  laybyDueDate = null,
   undoLimit,
 }: {
   /** Keys the till's own IndexedDB — one database per site, never one shared. */
@@ -351,6 +366,22 @@ export default function PosShell({
    * pos_warn_out_of_stock in settings.ts for why that is the default.
    */
   warnOutOfStock: boolean
+  /**
+   * Whether a disconnected till may still sell ON ACCOUNT.
+   *
+   * The shop's own decision — see pos_offline_account_sales for why this is a
+   * setting rather than a rule. Defaults false so an existing store behaves
+   * exactly as it did: account sales refused when the line is down.
+   */
+  offlineAccountSales?: boolean
+  /**
+   * What the lay-by dialog's "collected by" field opens with — today plus the
+   * shop's `layby_default_days`, computed on the SERVER.
+   *
+   * A till's own clock can be wrong, and a due date is a promise to a customer
+   * about when their goods stop being held. Null means the shop sets no term.
+   */
+  laybyDueDate?: string | null
   /**
    * How many undos one basket may spend. 0 means no limit.
    *
@@ -621,6 +652,27 @@ export default function PosShell({
    * ask about "an invoice" when the row said "Point of sale".
    */
   const [switchingTo, setSwitchingTo] = useState<TillModule | null>(null)
+  /**
+   * The shop's quotes, to find the one a customer is holding.
+   *
+   * Opened from the quote module's own screen rather than from the module menu:
+   * the menu says WHICH KIND of document this basket is, and finding an
+   * existing one is a different question from starting a new one.
+   */
+  const [showingQuotes, setShowingQuotes] = useState(false)
+  /** Orders waiting to be collected. Opened from the order module's own key. */
+  const [showingTillOrders, setShowingTillOrders] = useState(false)
+  /**
+   * The shop's lay-bys.
+   *
+   * Opened straight from the MODULE MENU, unlike quotes and orders which live
+   * on the recall key. Those two are "find an existing one of what I am
+   * writing"; a lay-by is not something the basket can be, so there is no
+   * module to be in and no key of its own to put it on.
+   */
+  const [showingLaybys, setShowingLaybys] = useState(false)
+  /** Turning the basket on screen into a new lay-by. */
+  const [startingLayby, setStartingLayby] = useState(false)
   const [sizingTiles, setSizingTiles] = useState(false)
   /** The floor's quick-key dialog. The gate has no pane to draw them in. */
   const [showingTableKeys, setShowingTableKeys] = useState(false)
@@ -1963,6 +2015,24 @@ export default function PosShell({
         return
       }
       toast.success(reference ? `${reference} saved.` : 'Sale saved.')
+      /*
+       * HAND THE CLAIM BACK.
+       *
+       * Harmless on an invoice, which is why nothing needed it before: a parked
+       * sale lands in `saved` and the saved-sales list reclaims one freely. It
+       * matters on a QUOTE. A terminal claim never expires by design, so a quote
+       * finished here would stay locked to this till forever and no other
+       * counter could ever open it again without a supervisor.
+       *
+       * Keyed on `saved.documentId` rather than through releaseHeldBill: that
+       * one reads `state.documentId`, which is null for a basket that has just
+       * been written for the first time — it would release nothing on exactly
+       * the case that creates the document.
+       *
+       * Not awaited, like every other release: the claim is invisible to the
+       * cashier and holding the screen on it would make saving feel slow.
+       */
+      void reparkTableBillAction(saved.documentId).catch(() => {})
       dispatch({ type: 'CLEAR' })
       // Counted optimistically rather than waiting for the server: the badge is
       // a hint, and the modal corrects it from the real query the moment it opens.
@@ -1970,9 +2040,14 @@ export default function PosShell({
 
       /* Back to the floor, with the tab's identity dropped so the next sale does
          not inherit this one's name. In hospitality the gate IS where a waiter
-         goes next; in retail there is no gate and the till simply empties. */
+         goes next; in retail there is no gate and the till simply empties.
+
+         NOT ON A QUOTE. Somebody writing quotes is working through a queue of
+         them at a counter, and being thrown out to the table plan after each one
+         means walking back in through the gate and the module menu to write the
+         next. The till stays where it is, empty and ready for the next quote. */
       clearTabIdentity()
-      if (hospitality) {
+      if (hospitality && state.docType !== 'quote') {
         setTable(null)
         setChoosingTable(true)
         refreshTables()
@@ -2409,6 +2484,24 @@ export default function PosShell({
       toast.info('Add something before saving the sale.')
       return
     }
+    /*
+     * A QUOTE IS NOT A TABLE'S BILL, so it never asks for a table.
+     *
+     * The naming dialog below is the hospitality path: an unnamed basket at a
+     * restaurant till belongs to a table or a tab, and Save asks which. A quote
+     * belongs to a CUSTOMER — it may be printed and carried out of the building
+     * — and putting "Create new table · pick a table number" in front of
+     * somebody saving one asks a question with no sensible answer. Which is
+     * exactly what it did: found by driving the screen, where the save key on a
+     * quote opened the table pad.
+     *
+     * Parked directly instead. The quote already carries the customer name it
+     * was recalled or rung up with, which is the identity that matters here.
+     */
+    if (state.docType === 'quote') {
+      park()
+      return
+    }
     if (table || tabLabel) {
       closeSale()
       return
@@ -2792,6 +2885,342 @@ export default function PosShell({
       })
       setShowingOrders(false)
       toast.success(`${order.orderNumber} is on the till. Add anything else, then take payment.`)
+    })
+  }
+
+  /**
+   * Bringing an existing quote onto the till.
+   *
+   * ── WHY IT REFUSES OVER A BASKET ──────────────────────────────────────────
+   *
+   * Same rule as a web order, for the same reason: two documents' lines in one
+   * basket is one sale for two customers. The till says what is in the way and
+   * the cashier finishes or saves first.
+   *
+   * ── WHAT IT DOES *NOT* DO ─────────────────────────────────────────────────
+   *
+   * It does not convert the quote. The basket comes back with the quote's
+   * document id and the till stays in the quote module, so saving writes back
+   * to the SAME quote. Turning it into an invoice is a decision somebody makes
+   * — `convertToInvoice` in the back office, or switching this basket to Point
+   * of sale — not a side effect of looking at one.
+   */
+  /**
+   * Opens the shop's quotes, or says why it cannot.
+   *
+   * A function rather than an inline setter because there are two ways in — the
+   * pane's recall key and a quick key — and a guard written at one of them is a
+   * guard the other does not have. Same for the order list below.
+   */
+  function openQuoteList() {
+    if (!till.online) {
+      toast.info('Quotes need the connection — they live on the server.')
+      return
+    }
+    setShowingQuotes(true)
+  }
+
+  function openOrderList() {
+    if (!till.online) {
+      toast.info('Sales orders need the connection — they live on the server.')
+      return
+    }
+    setShowingTillOrders(true)
+  }
+
+  function recallQuote(quote: TillQuote) {
+    /* Quotes live on the server and are claimed there, so an offline till can
+       neither read one nor stop another till opening the same one. Said in the
+       house phrasing every other server-bound key uses. */
+    if (!till.online) {
+      toast.info('Quotes need the connection — they live on the server.')
+      return
+    }
+    if (state.lines.length > 0) {
+      toast.error('Finish or save the sale on screen first, then bring the quote up.')
+      return
+    }
+    startTransition(async () => {
+      const result = await recallQuoteForTillAction(quote.id, priceStructureId, terminal?.id ?? null)
+      if (!result.ok) {
+        toast.error(result.error)
+        /* Closed rather than left open: every refusal here means the list is out
+           of date — accepted elsewhere, cancelled, open on another till — and
+           re-opening re-reads it. */
+        setShowingQuotes(false)
+        return
+      }
+      setDocDiscount(null)
+      dispatch({
+        type: 'LOAD',
+        documentId: result.documentId,
+        lines: result.lines,
+        /*
+         * SAYS IT IS A QUOTE, and this line is the whole of it.
+         *
+         * LOAD defaults an absent docType to `invoice` — right for a parked
+         * basket, and it silently overwrote the till's quote mode here: the
+         * lines landed and the header flipped to "Current Sale". Saving would
+         * then have written a SECOND document and left the customer's quote
+         * untouched, with both screens looking correct.
+         *
+         * Dispatching SET_DOC_TYPE first does NOT fix it — that action clears
+         * the basket, and LOAD runs after and re-imposes the default anyway. The
+         * type has to travel WITH the lines.
+         */
+        docType: 'quote',
+        /* The NAME comes back, the account does not — same rule as a recalled
+           sale. Credit needs a live balance, and a quote written last week is
+           not it; re-attaching is a deliberate act on the customer key. */
+        customer: null,
+        customerName: result.customerName ?? '',
+      })
+      setShowingQuotes(false)
+      toast.success(
+        `${quote.documentNumber ?? 'That quote'} is on the till. Take payment to invoice it.`,
+      )
+    })
+  }
+
+  /**
+   * Handing an order over at the counter.
+   *
+   * ── THIS IS THE ONE LIST TAP THAT MOVES STOCK ─────────────────────────────
+   *
+   * A recalled quote puts a price on screen and nothing has happened. This
+   * DELIVERS: the goods are recorded as gone, the order's outstanding
+   * quantities drop, and a linked invoice comes back to be paid for. None of
+   * that is undone by clearing the basket — the delivery is its own event, and
+   * reversing it is a credit note in the back office.
+   *
+   * Which is why the basket guard matters more here than anywhere else: firing
+   * this with somebody else's half-rung sale on screen would deliver an order
+   * AND lose the basket it could not merge into.
+   */
+  function collectTillOrder(order: TillOrder) {
+    /* Handing an order over MOVES STOCK and raises an invoice. A till that
+       cannot see what other tills have delivered could hand over goods already
+       collected somewhere else — the same reasoning that keeps saveAsOrder
+       online-only, and the reason this refuses rather than queues. */
+    if (!till.online) {
+      toast.info('Handing an order over needs the connection — the goods move on the server.')
+      return
+    }
+    if (state.lines.length > 0) {
+      toast.error('Finish or save the sale on screen first, then hand the order over.')
+      return
+    }
+    startTransition(async () => {
+      const result = await collectOrderForTillAction(
+        order.id,
+        priceStructureId,
+        terminal?.id ?? null,
+        terminal?.code ?? null,
+      )
+      if (!result.ok) {
+        toast.error(result.error)
+        /* Closed rather than left open: every refusal means the list is stale —
+           collected at the other till, cancelled, nothing outstanding — and
+           re-opening re-reads it. */
+        setShowingTillOrders(false)
+        return
+      }
+      setDocDiscount(null)
+      dispatch({
+        type: 'LOAD',
+        documentId: result.documentId,
+        lines: result.lines,
+        /*
+         * AN INVOICE, and deliberately so — the one place the basket's type
+         * changes on the way in.
+         *
+         * What came back is the DELIVERY invoice, not the order. The order is
+         * still an order and its fulfilment status has already moved; what is
+         * on the till is a sale to be tendered, and calling it anything else
+         * would put a Save key where Pay belongs and leave the goods handed
+         * over with nothing collected for them.
+         */
+        docType: 'invoice',
+        customer: null,
+        customerName: result.customerName ?? '',
+      })
+      setShowingTillOrders(false)
+      toast.success(
+        `${order.documentNumber ?? 'That order'} is on the till. Take payment to finish it.`,
+      )
+    })
+  }
+
+  /**
+   * Taking an instalment against a lay-by.
+   *
+   * ── NO BASKET GUARD, AND THAT IS THE POINT ────────────────────────────────
+   *
+   * Every other list on this till refuses over a basket, because pulling a
+   * document onto the screen would collide with what is already there. This one
+   * touches no basket at all: the money goes to `layby_payments` and the drawer,
+   * and the half-rung sale behind the dialog is still exactly as it was. A
+   * cashier interrupted mid-sale by somebody paying off their lay-by is an
+   * ordinary counter moment, not a conflict.
+   *
+   * ── AND IT DOES NOT COMPLETE ──────────────────────────────────────────────
+   *
+   * Even when the last instalment clears the balance. Paying up and collecting
+   * are days apart as often as not, and invoicing goods still on the shelf is
+   * the one mistake this flow could make that a customer would notice.
+   */
+  function payLayby(
+    layby: TillLayby,
+    input: { amount: number; tenderTypeId: number; reference: string | null },
+  ) {
+    /*
+     * Online only, and not merely because the row lives on the server.
+     *
+     * A lay-by balance is shared: the customer may have paid R200 off at the
+     * other till an hour ago. An offline payment would be taken against a
+     * balance this machine last saw, and `paymentRefusal` — which stops
+     * somebody overpaying — would be judging a stale figure. Queuing it would
+     * mean money accepted now and refused later, with the customer gone.
+     */
+    if (!till.online) {
+      toast.info('A lay-by payment needs the connection — the balance is kept on the server.')
+      return
+    }
+    startTransition(async () => {
+      const result = await takeLaybyPaymentAction(layby.id, {
+        ...input,
+        terminalId: terminal?.id ?? null,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setShowingLaybys(false)
+      toast.success(
+        result.settled
+          ? `${result.laybyNumber ?? 'That lay-by'} is paid up. Hand the goods over when they collect.`
+          : `${formatMoney(result.outstanding)} still to pay on ${result.laybyNumber ?? 'that lay-by'}.`,
+      )
+      /* The drawer has moved, and the till's own chrome reads from the shift —
+         see the cash-up work on why lay-by money is part of the expected cash. */
+      router.refresh()
+    })
+  }
+
+  /**
+   * Opens the "put this aside" dialog against the basket on screen.
+   *
+   * The refusals are here rather than in the dialog because they are about
+   * whether the question can be ASKED at all — an empty basket has nothing to
+   * put aside, and a return is money going the other way. The dialog itself
+   * handles the missing customer, because that one is fixable without closing
+   * it and losing the basket.
+   */
+  function openStartLayby() {
+    /*
+     * Refused BEFORE the dialog opens, not inside it.
+     *
+     * A lay-by takes a LAY number from the shared sequence the moment it is
+     * created, and the customer walks out holding a document that refers to it
+     * — a till inventing one offline would hand out a number another machine
+     * may already have used. The quick key says the same thing; this is the
+     * other route in, and letting somebody fill the dialog in first only to be
+     * refused at the end would waste their time in front of a customer.
+     */
+    if (!till.online) {
+      toast.info('A lay-by needs the connection — it takes a number from the server.')
+      return
+    }
+    if (state.lines.length === 0) {
+      toast.info('Ring the goods up first, then put them aside.')
+      return
+    }
+    if (state.returning) {
+      toast.info('A return cannot become a lay-by — finish the refund first.')
+      return
+    }
+    setStartingLayby(true)
+  }
+
+  /**
+   * Turns the basket into a lay-by.
+   *
+   * ── THE BASKET IS CLEARED, NOT SAVED ──────────────────────────────────────
+   *
+   * A lay-by is not a sales document and never becomes the one on screen: the
+   * goods are recorded in `laybys` with their own number, and the till goes
+   * back to empty ready for the next customer. Leaving the lines up would
+   * invite somebody to take payment for goods that are now on a shelf with a
+   * name on them.
+   *
+   * ── AND THE DEPOSIT IS THE SAME MONEY AS AN INSTALMENT ────────────────────
+   *
+   * It writes a `layby_payments` row, banks into this till's shift, and is
+   * counted by the cash-up — so opening one with R500 down leaves the drawer
+   * expecting R500 more. That is only true since the cash-up learned to count
+   * off-ledger money; before it, this key would have made the drawer read over.
+   */
+  function startLayby(input: {
+    deposit: { amount: number; tenderTypeId: number } | null
+    dueDate: string | null
+  }) {
+    const customerId = state.customer?.id
+    if (!customerId) {
+      toast.error('Attach the customer first — a lay-by is held for a named person.')
+      return
+    }
+
+    startTransition(async () => {
+      const result = await startLaybyAction({
+        customerId,
+        lines: salePayloadLines(state.lines, lineSpecials, docShares),
+        deposit: input.deposit,
+        dueDate: input.dueDate,
+        terminalId: terminal?.id ?? null,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setStartingLayby(false)
+      setDocDiscount(null)
+      dispatch({ type: 'CLEAR' })
+      toast.success(
+        `${result.laybyNumber} opened for ${state.customer?.name ?? 'the customer'}. ${formatMoney(
+          result.outstanding,
+        )} still to pay.`,
+      )
+      /* The drawer has moved if a deposit was taken, and the lay-by list the
+         module menu opens is now one longer. */
+      router.refresh()
+    })
+  }
+
+  /**
+   * Handing lay-by goods over — the moment it becomes a sale.
+   *
+   * The invoice is raised, the VAT is declared and the stock moves, all through
+   * the ordinary finalise path. Nothing lands on the basket: the sale is
+   * complete when this returns, so putting it on screen would invite a cashier
+   * to take payment for something already paid for.
+   */
+  function collectLayby(layby: TillLayby) {
+    /* This is a finalise: an invoice is numbered, VAT is declared and stock
+       moves. None of that can happen on a machine that cannot reach the
+       sequence — see the same rule on the quick key. */
+    if (!till.online) {
+      toast.info('Handing the goods over needs the connection — it raises an invoice.')
+      return
+    }
+    startTransition(async () => {
+      const result = await collectLaybyAction(layby.id)
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setShowingLaybys(false)
+      toast.success(`${result.documentNumber} raised. The goods are the customer's.`)
+      router.refresh()
     })
   }
 
@@ -3400,6 +3829,25 @@ export default function PosShell({
    */
   const pickModule = useCallback(
     (module: TillModule) => {
+      /*
+       * A LIST-ONLY MODULE CHANGES NOTHING. Lay-bys are not a kind of document
+       * the basket can be — they live in their own table — so picking that row
+       * opens the list and leaves whatever is on screen exactly where it is.
+       * Routing it through SET_DOC_TYPE would clear a half-rung sale to show a
+       * list and then hand back an identical empty till.
+       */
+      if (LIST_ONLY_MODULES.includes(module)) {
+        /* An offline list would render its empty state — "No lay-bys on the
+           go" — which reads as a fact about the shop rather than about the
+           line. Refused at the door, like every other server-bound list. */
+        if (!till.online) {
+          toast.info('Lay-bys need the connection — they live on the server.')
+          return
+        }
+        if (module === 'laybys') setShowingLaybys(true)
+        return
+      }
+
       const next = MODULE_DOC_TYPES[module]
       if (next === state.docType) return
       if (state.lines.length > 0) {
@@ -3409,7 +3857,12 @@ export default function PosShell({
       dispatch({ type: 'SET_DOC_TYPE', docType: next })
       toast.info(`Starting ${MODULE_PHRASES[module]}.`)
     },
-    [state.docType, state.lines.length, toast],
+    /* `till.online` is load-bearing here, not incidental: without it this
+       callback closes over the value from mount — which is optimistically
+       true — and the offline refusal below can never fire. Found by driving
+       it: the quote guard worked (a plain function, re-created each render)
+       while this one silently opened the list. */
+    [state.docType, state.lines.length, toast, till.online],
   )
 
   useEffect(() => {
@@ -3605,6 +4058,7 @@ export default function PosShell({
         saveSale,
         saveAsOrder,
         showSaved: () => setShowingSaved(true),
+        showQuotes: openQuoteList,
         undo: undoLastLine,
         pickCustomer: () => setPickingCustomer(true),
         editLine: () => {
@@ -3625,6 +4079,7 @@ export default function PosShell({
         takeDeposit: () => void openDeposit(),
         showReprints: () => setShowingReprints(true),
         showOnlineOrders: () => setShowingOrders(true),
+        startLayby: openStartLayby,
         showClock: () => setShowingClock(true),
         /* root: a quick key names the department to open outright — it is not a
            step down from wherever the pane happens to be sitting. */
@@ -3751,8 +4206,16 @@ export default function PosShell({
    * of what a shop takes.
    */
   const availableTenders = useMemo(
-    () => (till.online ? tenders : tenders.filter((t) => offlineBlockedTender(t) === null)),
-    [tenders, till.online],
+    () =>
+      till.online
+        ? tenders
+        : tenders.filter(
+            (t) => offlineBlockedTender(t, { allowAccount: offlineAccountSales }) === null,
+          ),
+    /* `offlineAccountSales` is the shop's own answer to whether a disconnected
+       till may still sell on account — see pos_offline_account_sales. Off by
+       default, so this list is unchanged for a shop that has not chosen. */
+    [tenders, till.online, offlineAccountSales],
   )
 
   return (
@@ -4019,11 +4482,28 @@ export default function PosShell({
           /* Decides whether the finish key says Pay or Save — a quote and an
              order take no money. See SalePane. */
           docType={state.docType}
-          /* Hospitality parks through Close, so the two park keys are retail-only —
-             see SalePane's `showParkKeys`. */
-          showParkKeys={!hospitality}
+          /*
+           * Hospitality parks through Close, so the two park keys are retail-only
+           * — see SalePane's `showParkKeys`.
+           *
+           * EXCEPT ON A QUOTE OR AN ORDER. That rule is about PARKING: a
+           * waiter's basket belongs to a table and Close is how it gets there,
+           * so a Save key beside it would be a second answer to a question the
+           * floor already answers. Neither a quote nor an order is a table's
+           * bill or ever becomes one, so none of that applies — and hiding the
+           * row there left a hospitality till switched to Quotes with no way to
+           * reach the shop's quotes at all. Found by driving it: the key was
+           * simply absent.
+           */
+          showParkKeys={
+            !hospitality || state.docType === 'quote' || state.docType === 'sales_order'
+          }
           onPark={park}
           onShowSaved={() => setShowingSaved(true)}
+          /* Both take over that same key on their own module — the pane decides,
+             because it is the one that knows which module is showing. */
+          onShowQuotes={openQuoteList}
+          onShowOrders={openOrderList}
           savedCount={savedTally}
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
@@ -4142,10 +4622,57 @@ export default function PosShell({
         current={moduleForDocType(state.docType)}
         /* Every module this build has. The list is filtered by what a shop has
            switched on the day there is a setting to switch; until then, showing
-           all three is honest — all three work. */
-        available={['sale', 'quotes', 'orders']}
+           all four is honest — all four work. */
+        available={['sale', 'quotes', 'orders', 'laybys']}
         onPick={pickModule}
         onClose={() => setShowingModules(false)}
+      />
+
+      {/* The shop's quotes. Reached from the quote screen's own key rather than
+          from the module menu: the menu answers "what kind of document is this
+          basket", and finding an existing one is a different question. */}
+      <QuotesModal
+        open={showingQuotes}
+        onClose={() => setShowingQuotes(false)}
+        onRecall={recallQuote}
+        busy={pending}
+      />
+
+      {/* Turning the basket into a NEW lay-by — the opposite direction from the
+          list below, which finds an existing one to pay against. */}
+      <StartLaybyModal
+        open={startingLayby}
+        onClose={() => setStartingLayby(false)}
+        onStart={startLayby}
+        customerName={state.customer?.name ?? null}
+        totalIncl={totals.doc.totalIncl}
+        lineCount={state.lines.length}
+        defaultDueDate={laybyDueDate}
+        busy={pending}
+      />
+
+      {/* The shop's lay-bys, from the module menu rather than a pane key —
+          a lay-by is not something the basket can be. */}
+      <LaybysModal
+        open={showingLaybys}
+        onClose={() => setShowingLaybys(false)}
+        onPay={payLayby}
+        onCollect={collectLayby}
+        /* Closes the list on the way, so the two dialogs never stack. */
+        onStartNew={() => {
+          setShowingLaybys(false)
+          openStartLayby()
+        }}
+        basketLines={state.lines.length}
+        busy={pending}
+      />
+
+      {/* Orders waiting to go out. Tapping one DELIVERS it — see OrdersModal. */}
+      <OrdersModal
+        open={showingTillOrders}
+        onClose={() => setShowingTillOrders(false)}
+        onCollect={collectTillOrder}
+        busy={pending}
       />
 
       {/* Only ever raised by a switch with a basket in hand — an empty one goes

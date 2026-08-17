@@ -76,6 +76,8 @@ export default function PosEntry({
   serviceTiers,
   tipsTablesOnly,
   warnOutOfStock,
+  offlineAccountSales = false,
+  laybyDueDate = null,
   undoLimit,
 }: {
   siteId: number
@@ -133,6 +135,10 @@ export default function PosEntry({
   tipsTablesOnly: boolean
   /** Whether the tender pad warns when the basket outruns the shelf. */
   warnOutOfStock: boolean
+  /** Passed through to the shell — the shop's offline account-sale rule. */
+  offlineAccountSales?: boolean
+  /** Passed through to the shell — see PosShell for why it is server-computed. */
+  laybyDueDate?: string | null
   /** How many undos a basket may spend. 0 is no limit. Relayed unchanged. */
   undoLimit: number
 }) {
@@ -282,6 +288,8 @@ export default function PosEntry({
       serviceTiers={serviceTiers}
       tipsTablesOnly={tipsTablesOnly}
       warnOutOfStock={warnOutOfStock}
+      offlineAccountSales={offlineAccountSales}
+      laybyDueDate={laybyDueDate}
       undoLimit={undoLimit}
     />
   )

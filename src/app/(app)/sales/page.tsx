@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 export const dynamic = 'force-dynamic'
 
 /**
- * The old Documents screen, now the invoice register at /sales/invoicing.
+ * The old Documents screen, now the invoice register at /invoicing.
  *
  * The two lists were the same table under two addresses — see the header
  * comment in ./invoicing/page.tsx for why they merged. This redirect stays
@@ -34,5 +34,5 @@ export default async function SalesPage({
   if (params.status) query.set('status', 'all')
 
   const qs = query.toString()
-  redirect(qs ? `/sales/invoicing?${qs}` : '/sales/invoicing?status=all')
+  redirect(qs ? `/invoicing?${qs}` : '/invoicing?status=all')
 }

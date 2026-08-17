@@ -238,3 +238,37 @@ export async function setWarnOutOfStockAction(on: boolean): Promise<TerminalActi
       : 'The till will no longer mention stock at the payment step.',
   }
 }
+
+/**
+ * Whether a disconnected till may still sell ON ACCOUNT.
+ *
+ * ── WHAT THE OWNER IS ACTUALLY AGREEING TO ────────────────────────────────
+ *
+ * That the till may extend credit against a limit it cannot check. A customer
+ * at their ceiling when the line dropped can keep buying, and the shop finds
+ * out when the queue syncs. There is no way to make that safe — a stale balance
+ * is stale — so the only honest thing is to say so and let somebody decide.
+ *
+ * The messages below are worded as consequences rather than as state, because
+ * "Offline account sales are on" tells an owner what they clicked and not what
+ * it means.
+ *
+ * Shop-wide, like the stock warning and the undo limit: "do we trust our
+ * account customers when the server is down" has one answer per business, not
+ * one per till.
+ */
+export async function setOfflineAccountSalesAction(on: boolean): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setSetting(ctx.siteId, 'pos_offline_account_sales', on ? '1' : '0')
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/setup/terminals')
+  return {
+    ok: true,
+    message: on
+      ? 'A till with no connection may now put a sale on account — against the balance it last saw.'
+      : 'A till with no connection will refuse account sales until the line is back.',
+  }
+}

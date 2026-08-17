@@ -62,6 +62,7 @@ export const MODULE_KEYS = [
   'online_store',
   'loyalty',
   'job_cards',
+  'accounting',
 ] as const
 
 export type ModuleKey = (typeof MODULE_KEYS)[number]
@@ -94,6 +95,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   online_store: 'Online Store',
   loyalty: 'Loyalty',
   job_cards: 'Job Cards',
+  accounting: 'Accounting',
 }
 
 export type AccountStatus = 'trial' | 'active' | 'suspended' | 'closed'
@@ -406,6 +408,170 @@ export async function holdingsForSites(siteIds: number[]): Promise<Holding[]> {
     })
   }
   return out
+}
+
+/**
+ * Till licences: what a store PAYS for, and what may actually trade.
+ *
+ * Two numbers on purpose. `requested` is the order the billing screen took;
+ * `provisioned` counts the cp2_devices rows that pass the same entitlement test
+ * the till itself is held to. Between ordering and payment they differ, and the
+ * screen says so — see sql/tickets/009_requested_devices.sql for why this is
+ * not simply a count of the register.
+ */
+export type DeviceOrder = {
+  siteId: number
+  requested: number
+  provisioned: number
+  /** Set when an increase is awaiting payment. */
+  pendingFrom: string | null
+}
+
+export async function deviceOrdersFor(siteIds: number[]): Promise<DeviceOrder[]> {
+  if (siteIds.length === 0) return []
+  const placeholders = siteIds.map(() => '?').join(',')
+
+  const [orders, provisioned] = await Promise.all([
+    query<Row>(
+      `SELECT site_id, requested, pending_from FROM cp2_site_device_orders
+        WHERE site_id IN (${placeholders})`,
+      [...siteIds],
+    ),
+    Promise.all(siteIds.map((id) => billableDeviceCount(id))),
+  ])
+
+  const byId = new Map(orders.map((o) => [Number(o.site_id), o]))
+  return siteIds.map((siteId, i) => {
+    const row = byId.get(siteId)
+    return {
+      siteId,
+      /* No row means nobody has been through the billing screen yet. One till
+         is the honest default: the Starter Pack includes it, so the shop is not
+         billed for it either way, and zero would read as "cannot sell". */
+      requested: row ? Number(row.requested) : 1,
+      provisioned: provisioned[i] ?? 0,
+      pendingFrom: row?.pending_from ? String(row.pending_from).slice(0, 10) : null,
+    }
+  })
+}
+
+/**
+ * Record how many tills a store is buying.
+ *
+ * An INCREASE is marked pending: it is an order, not a licence, and nothing may
+ * trade on it until payment confirms and `provisionDevices` runs. A DECREASE
+ * takes effect at once and clears any pending flag — handing a licence back is
+ * not a purchase and needs nobody's approval.
+ */
+export async function setRequestedDevices(
+  siteId: number,
+  requested: number,
+  actor: ChangeActor,
+): Promise<ModuleChange> {
+  const want = Math.max(1, Math.min(99, Math.floor(requested)))
+  const today = todayIso()
+
+  return transaction(async (tx) => {
+    const [existing] = await tx.execute(
+      'SELECT requested FROM cp2_site_device_orders WHERE site_id = ? FOR UPDATE',
+      [siteId],
+    )
+    const current = Number((existing as Row[])[0]?.requested ?? 1)
+    const increasing = want > current
+
+    await tx.execute(
+      `INSERT INTO cp2_site_device_orders (site_id, requested, pending_from, updated_by)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE requested = VALUES(requested),
+                               pending_from = VALUES(pending_from),
+                               updated_by = VALUES(updated_by)`,
+      [siteId, want, increasing ? today : null, actor.name ?? actor.email ?? null],
+    )
+
+    return { ok: true as const, effectiveOn: today }
+  })
+}
+
+/**
+ * Turn a PAID-FOR order into licences that may actually trade.
+ *
+ * ── THE ONE PLACE THIS REPO WRITES cp2_devices ROWS ─────────────────────────
+ *
+ * Everywhere else the rule holds: the register belongs to the v2 backend and
+ * this app only reads it. The exception is deliberate and narrow — a licence is
+ * created here ONLY after payment has been confirmed, which is what stops the
+ * stepper being a way to licence tills for free.
+ *
+ * Call it from whatever confirms payment. Today that is an owner-only button on
+ * the billing screen; when the gateway lands, the webhook calls this same
+ * function and the button goes away. Nothing else about it changes.
+ *
+ * Rows are created UNCLAIMED (`serial_number` NULL) — a paid spot with no
+ * machine in it yet, which is exactly what a till is allowed to claim.
+ */
+export async function provisionDevices(
+  siteId: number,
+  actor: ChangeActor,
+): Promise<{ ok: true; created: number; released: number } | { ok: false; error: string }> {
+  return transaction(async (tx) => {
+    const [orderRows] = await tx.execute(
+      'SELECT requested FROM cp2_site_device_orders WHERE site_id = ? FOR UPDATE',
+      [siteId],
+    )
+    const order = (orderRows as Row[])[0]
+    if (!order) return { ok: false as const, error: 'That store has no till order to confirm.' }
+
+    const want = Number(order.requested)
+
+    const [liveRows] = await tx.execute(
+      `SELECT id, serial_number FROM cp2_devices
+        WHERE site_id = ? AND status = 'active'
+          AND (is_paid = 1 OR (expiry_date IS NOT NULL AND expiry_date >= CURDATE()))
+        ORDER BY serial_number IS NULL DESC, id DESC`,
+      [siteId],
+    )
+    const live = liveRows as Row[]
+    let created = 0
+    let released = 0
+
+    if (want > live.length) {
+      for (let i = live.length; i < want; i++) {
+        await tx.execute(
+          `INSERT INTO cp2_devices (site_id, device_name, serial_number, status, is_paid)
+           VALUES (?, ?, NULL, 'active', 1)`,
+          [siteId, `Till ${i + 1}`],
+        )
+        created++
+      }
+    } else if (want < live.length) {
+      /* Retire the UNCLAIMED spots first — ordered above so they come first.
+         Retiring a claimed one would stop a till that is trading right now, and
+         a shop reducing its licence count is not asking for that. If every
+         remaining licence is claimed, the reduction stops here and the shop
+         releases a machine itself under Setup → Tills. */
+      for (const row of live) {
+        if (live.length - released <= want) break
+        if (row.serial_number) continue
+        await tx.execute("UPDATE cp2_devices SET status = 'inactive' WHERE id = ?", [row.id])
+        released++
+      }
+    }
+
+    await tx.execute('UPDATE cp2_site_device_orders SET pending_from = NULL WHERE site_id = ?', [
+      siteId,
+    ])
+
+    await logChange(tx, {
+      accountId: null,
+      siteId,
+      key: DEVICE_MODULE_KEY,
+      action: 'quantity_changed',
+      effectiveOn: todayIso(),
+      actor,
+    })
+
+    return { ok: true as const, created, released }
+  })
 }
 
 /** module_key -> unit price today. Feeds the pure pricing function. */

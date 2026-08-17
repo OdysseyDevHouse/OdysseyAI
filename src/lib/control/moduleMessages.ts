@@ -32,6 +32,12 @@ export const MODULE_DESCRIPTIONS: Record<ModuleKey, string> = {
   loyalty: 'A points programme with tiers, member cards, and redemption at the till.',
   job_cards:
     'Job cards from request to invoice: scheduling, the job board, parts, equipment history and SLAs.',
+  /* Deliberately says what it is NOT, because the obvious reading of
+     "Accounting" is "everything about money" — and the cashbook, expenses and
+     the VAT return stay in the base package. What is sold here is the
+     double-entry layer on top of them. */
+  accounting:
+    'The general ledger and the financial statements: chart of accounts, journals, budgets, fixed assets and period closing. The cashbook, expenses and VAT return are part of the base package.',
 }
 
 /** The sentence shown where the feature would have been. */

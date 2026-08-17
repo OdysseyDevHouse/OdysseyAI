@@ -52,6 +52,7 @@ export {
 } from './Field'
 export { FileInput } from './FileInput'
 export { Slider } from './Slider'
+export { Stepper } from './Stepper'
 
 export { Card, CardHeader, CardBody, CardFooter } from './Card'
 export { SettingRow, SettingGroup } from './SettingRow'
@@ -68,6 +69,7 @@ export {
 export { SwatchPicker } from './SwatchPicker'
 export { Badge, type BadgeTone } from './Badge'
 export { Callout, type CalloutTone } from './Callout'
+export { Tooltip } from './Tooltip'
 export { SettingsHint } from './SettingsHint'
 export {
   CategoryTile,

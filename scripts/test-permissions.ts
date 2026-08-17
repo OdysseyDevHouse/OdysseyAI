@@ -38,9 +38,19 @@ async function walk(dir: string, match: (name: string) => boolean): Promise<stri
 
 const rel = (f: string) => path.relative(ROOT, f).replace(/\\/g, '/')
 
-/** Anything that consults a capability, however it is spelled. */
+/**
+ * Anything that consults a capability, however it is spelled.
+ *
+ * The `requireModuleCapability` / `actorForModule` / `actorForModuleOrThrow`
+ * forms ask a module FIRST and then the same capability — see
+ * src/lib/control/modules.ts — so they satisfy this check too. `actorFor` and
+ * `requireCapability` are listed with the module variants explicitly rather
+ * than relying on a prefix match, because `requireModuleCapability` does not
+ * start with `requireCapability`, and a silent non-match here would report a
+ * properly guarded page as unguarded.
+ */
 const GUARD =
-  /requireCapability|requireAnyCapability|actorFor|actorForOrThrow|siteIdForCapability|can\(\s*(capabilities|ctx\.capabilities)/
+  /requireCapability|requireModuleCapability|requireAnyCapability|requireModule\b|actorFor|actorForModule|actorForOrThrow|actorForModuleOrThrow|siteIdForCapability|can\(\s*(capabilities|ctx\.capabilities)/
 
 /**
  * Is this file actually a server-actions module?
@@ -66,7 +76,7 @@ function isServerActionFile(src: string): boolean {
  */
 const OPEN_PAGES = new Set([
   'src/app/(app)/not-allowed/page.tsx',
-  /* A pure redirect to /sales/invoicing, kept because /sales is on printed
+  /* A pure redirect to /invoicing, kept because /sales is on printed
      references and bookmarks. It reads NOTHING — no query, no siteId, no
      document — so there is nothing here to guard; it only rewrites the query
      string and redirects. The capability lives where the data is: the target
@@ -112,6 +122,13 @@ const OPEN_ROUTES = new Set([
   'src/app/api/health/route.ts', // Electron's startup probe, before any session
   'src/app/api/auth/signout/route.ts', // signing out cannot require being signed in
   'src/app/api/payments/payfast/[token]/route.ts', // PayFast's server-to-server callback
+  /* The platform's own PayFast callback — Odyssey collecting from a tenant,
+     where the route above is a tenant collecting from its shoppers. PayFast
+     posts with no cookie and no session, so a capability check is impossible.
+     It is guarded instead by a signed account-scoped token in the URL, plus a
+     valid PayFast signature, a PayFast source IP and PayFast's own
+     confirmation of the payload before anything is written. */
+  'src/app/api/billing/payfast/[token]/route.ts',
   // Cron's heartbeat for scheduled reports. There is nobody signed in at 07:00,
   // so it proves itself with REPORT_CRON_SECRET compared by timingSafeEqual,
   // and refuses everything when that is unset. A capability check would be the
@@ -124,6 +141,13 @@ const OPEN_ROUTES = new Set([
   // rather than nothing — a biller running wide open would let anyone bill
   // every customer in the system.
   'src/app/api/contracts/tick/route.ts',
+  // Platform billing's heartbeat — the annual increase and the sweep that makes
+  // PayFast agree with the price held locally. Same reasoning again:
+  // BILLING_CRON_SECRET compared by timingSafeEqual, refusing everything when
+  // that is unset. It fails closed for a sharper reason than most — a
+  // price-raising job that ran for anyone who found the URL would let a
+  // stranger increase every customer's subscription.
+  'src/app/api/billing/tick/route.ts',
   /*
    * Three more cron heartbeats, all on the same reasoning as the two above: a scheduled
    * price change, a stale-basket sweep and a storefront publish each run with nobody
@@ -324,6 +348,15 @@ async function main() {
     const src = await readFile(path.join(ROOT, f), 'utf8')
     for (const m of src.matchAll(
       /(?:requireCapability|actorFor|actorForOrThrow|siteIdForCapability)\(\s*'([a-z_]+\.[a-z_]+)'/g,
+    )) {
+      used.add(m[1])
+    }
+    /* The module-gated forms take the module first and the capability second:
+       requireModuleCapability('loyalty', 'loyalty.view'). Without this, every
+       capability used only behind a module would look unreferenced and this
+       suite would ask for it to be deleted. */
+    for (const m of src.matchAll(
+      /(?:requireModuleCapability|actorForModule|actorForModuleOrThrow)\(\s*'[a-z_]+',\s*'([a-z_]+\.[a-z_]+)'/g,
     )) {
       used.add(m[1])
     }

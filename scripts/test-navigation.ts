@@ -284,11 +284,12 @@ const setupOnly = buildPageIndex(navFor((c) => c === 'sales.view'))
 const reachable = new Set(setupOnly.map((h) => h.href))
 check('a setting is not indexed without its hub', reachable.has('/setup/users'), false)
 check('nor is another section’s screen', reachable.has('/customers'), false)
-/* /sales/invoicing, not /sales: the latter is a redirect with no menu entry, so it
-   is correctly absent from the index and asserting it is present tested nothing but
+/* /invoicing, not /sales: the latter is a redirect with no menu entry, so it is
+   correctly absent from the index and asserting it is present tested nothing but
    the assertion's own staleness. The invoice register is the screen sales.view
-   actually grants. */
-check('but the granted one is', reachable.has('/sales/invoicing'), true)
+   actually grants — and it moved out of (app)/sales into its own window, which
+   is what this line last caught. */
+check('but the granted one is', reachable.has('/invoicing'), true)
 
 function allNavItems(): string[] {
   return NAV.flatMap((s) => (s.items ?? []).map((i) => i.href))
@@ -446,7 +447,7 @@ const UNLINKED: Record<string, string> = {
   '/reports/ask': 'the reports hub leads with it',
   '/reports/schedules': 'the reports hub leads with it',
   '/commission/rules': 'configuration reached from the commission periods screen',
-  /* Not a screen at all — a redirect to /sales/invoicing, kept because /sales is
+  /* Not a screen at all — a redirect to /invoicing, kept because /sales is
      on printed references, bookmarks, the quick-key runner and a dozen
      revalidatePath('/sales') calls. Giving it a menu entry would put a second
      door on one room; deleting it would 404 all of the above. */

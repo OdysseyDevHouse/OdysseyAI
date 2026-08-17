@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { requireCapability } from '@/lib/auth'
+import { requireModuleCapability } from '@/lib/auth'
 import { getBatch } from '@/lib/site/journals'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -38,7 +38,7 @@ export default async function JournalDetailPage({
   params: Promise<{ id: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('reports.financial')
+  const { siteId } = await requireModuleCapability('accounting', 'reports.financial')
   const { id } = await params
 
   const batchId = Number(id)

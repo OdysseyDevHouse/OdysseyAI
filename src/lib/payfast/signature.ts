@@ -48,6 +48,15 @@ export const CHECKOUT_FIELD_ORDER = [
   'amount',
   'item_name',
   'item_description',
+  /* custom_int BEFORE custom_str, which is PayFast's documented order and the
+     opposite of what everyone assumes. Getting it the wrong way round produces
+     a perfectly well-formed md5 that the gateway rejects with nothing more
+     specific than "signature mismatch". */
+  'custom_int1',
+  'custom_int2',
+  'custom_int3',
+  'custom_int4',
+  'custom_int5',
   'custom_str1',
   'custom_str2',
   'custom_str3',
@@ -56,6 +65,23 @@ export const CHECKOUT_FIELD_ORDER = [
   'email_confirmation',
   'confirmation_address',
   'payment_method',
+  /* ── The recurring block, last ───────────────────────────────────────────
+     Only a subscription checkout sets these. `buildCheckoutSignature` skips
+     anything undefined or empty, so a once-off form signs byte-identically
+     whether or not these names exist in this list — which is what makes
+     widening it safe for the store gateway that was here first.
+
+     NOTE there is no `currency`. PayFast's checkout signature has no currency
+     field; the merchant account fixes it. Adding the name here is harmless
+     until somebody also sets a value, at which point every signature breaks. */
+  'subscription_type',
+  'billing_date',
+  'recurring_amount',
+  'frequency',
+  'cycles',
+  'subscription_notify_email',
+  'subscription_notify_webhook',
+  'subscription_notify_buyer',
 ] as const
 
 export type CheckoutFields = Partial<
@@ -71,6 +97,48 @@ export function buildCheckoutSignature(fields: CheckoutFields, passphrase?: stri
     parts.push(`${key}=${phpUrlEncode(String(value).trim())}`)
   }
   if (passphrase) parts.push(`passphrase=${phpUrlEncode(passphrase.trim())}`)
+  return md5(parts.join('&'))
+}
+
+/**
+ * Sign a call to PayFast's MANAGEMENT API — pause, cancel, change the amount.
+ *
+ * ── FIVE DIFFERENCES FROM THE CHECKOUT SIGNATURE, EVERY ONE A TRAP ─────────
+ *
+ *                     checkout                     this
+ *   which keys        a fixed whitelist            every key given
+ *   order             the documented order         ALPHABETICAL
+ *   empty string      skipped entirely             INCLUDED
+ *   whitespace        values trimmed               NOT trimmed
+ *   passphrase        appended last                an ordinary sorted key
+ *
+ * The passphrase one costs the most time. `passphrase` sorts between
+ * `merchant-id` and `timestamp`, so appending it — which is correct for a
+ * checkout — yields a valid-looking digest the API rejects every single time,
+ * with no hint as to why.
+ *
+ * The encoding is shared, and that is the point of it living beside the other
+ * two rather than in the API client.
+ */
+export function buildApiSignature(
+  payload: Record<string, string | number | undefined | null>,
+  passphrase?: string,
+): string {
+  const merged: Record<string, string> = {}
+  for (const [key, value] of Object.entries(payload)) {
+    // A signature cannot cover itself.
+    if (key === 'signature') continue
+    // Only absent values are dropped. An empty string is a value here, unlike
+    // in the checkout signature.
+    if (value === undefined || value === null) continue
+    merged[key] = String(value)
+  }
+  if (passphrase) merged.passphrase = passphrase
+
+  const parts = Object.keys(merged)
+    .sort()
+    .map((key) => `${key}=${phpUrlEncode(merged[key])}`)
+
   return md5(parts.join('&'))
 }
 

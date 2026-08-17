@@ -193,6 +193,41 @@ export const SETTING_DEFAULTS = {
    */
   pos_warn_out_of_stock: '0',
   /**
+   * Whether a till with no connection may still sell ON ACCOUNT.
+   *
+   * ── WHAT IS ACTUALLY BEING DECIDED ────────────────────────────────────────
+   *
+   * An account sale needs the customer's credit limit and their live balance,
+   * and both live on the server. `offlineBlockedTender` therefore refuses the
+   * account tender outright when the line is down — which is correct, and for a
+   * counter shop costs almost nothing: 82% of finalised invoices on this
+   * database carry no account tender at all and go through offline today.
+   *
+   * The other 18% is the problem this setting exists for. A trade counter whose
+   * server has died is a shop that cannot serve its ACCOUNT customers — the
+   * regulars, the ones with a vehicle outside — while cash customers are served
+   * normally. For some shops that is the right answer and for others it is
+   * absurd, and the difference is not something software can work out.
+   *
+   * ── WHY IT DEFAULTS TO OFF ────────────────────────────────────────────────
+   *
+   * Turning it ON means the till sells against a limit it cannot verify. A
+   * customer who was at their ceiling before the line dropped can keep buying,
+   * and the shop finds out when the queue syncs. That is a real credit risk
+   * somebody has to accept deliberately — so an existing shop's behaviour does
+   * not change until an owner decides it should.
+   *
+   * ── AND WHY IT IS NOT A CEILING ───────────────────────────────────────────
+   *
+   * A per-sale rand cap was the obvious refinement and is deliberately not
+   * here. It reads as protection while providing very little: nothing stops a
+   * customer making four sales under the cap, and a limit the till cannot check
+   * is not made checkable by adding a second number it also cannot check
+   * against the first. The honest choice is whether the shop trusts its account
+   * customers when the server is down, which is one question with two answers.
+   */
+  pos_offline_account_sales: '0',
+  /**
    * Lay-by cancellation fee, as a percentage of the FULL price.
    *
    * Defaults to zero deliberately. Section 62 of the Consumer Protection Act
@@ -970,6 +1005,7 @@ export function validateSetting(key: SettingKey, value: string): string | null {
        months later as a service charge on a takeaway. */
     case 'tips_tables_only':
     case 'pos_warn_out_of_stock':
+    case 'pos_offline_account_sales':
       return value === '1' || value === '0' ? null : 'That setting must be 1 or 0.'
 
     case 'cashup_mode':

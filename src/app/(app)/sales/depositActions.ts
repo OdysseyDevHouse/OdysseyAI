@@ -64,8 +64,8 @@ export async function takeDocumentDepositAction(input: {
   })
   if (!result.ok) return result
 
-  revalidatePath(`/sales/invoicing/${input.documentId}`)
-  revalidatePath(`/sales/quotes/${input.documentId}`)
+  revalidatePath(`/invoicing/${input.documentId}`)
+  revalidatePath(`/invoicing/quotes/${input.documentId}`)
   return { ok: true, held: result.held, stillToPay: result.stillToPay }
 }
 
@@ -92,8 +92,8 @@ export async function refundDocumentDepositAction(input: {
   })
   if (!result.ok) return result
 
-  revalidatePath(`/sales/invoicing/${input.documentId}`)
-  revalidatePath(`/sales/quotes/${input.documentId}`)
+  revalidatePath(`/invoicing/${input.documentId}`)
+  revalidatePath(`/invoicing/quotes/${input.documentId}`)
   return { ok: true, held: result.held, stillToPay: 0 }
 }
 

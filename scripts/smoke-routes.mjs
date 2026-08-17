@@ -84,7 +84,7 @@ if (!EMAIL || !PASSWORD) {
 // One id per route exercises exactly one branch, so the id chosen decides how
 // much of the screen is ever compiled. Newest-first quietly selects the
 // EMPTIEST branch on any screen whose content is status-dependent: the newest
-// sales document is nearly always a draft, and /sales/invoicing/[id] hides its
+// sales document is nearly always a draft, and /invoicing/[id] hides its
 // whole attachments panel behind `!isEditable(status)`. A broken import inside
 // that panel passed this crawl because the crawl only ever opened drafts.
 //
@@ -138,12 +138,12 @@ const DYNAMIC = {
   // Finalised first: the attachments panel only exists once the invoice is no
   // longer editable, so a draft leaves that whole subtree uncompiled. ORDER BY
   // rather than WHERE, so a site holding only drafts still gets checked.
-  '/sales/invoicing/[id]':
+  '/invoicing/[id]':
     "SELECT id FROM sales_documents WHERE doc_type = 'invoice'" +
     " ORDER BY (status IN ('finalised','void','cancelled')) DESC, id DESC LIMIT 1",
-  '/sales/laybys/[id]': 'SELECT id FROM laybys ORDER BY id DESC LIMIT 1',
-  '/sales/orders/[id]': "SELECT id FROM sales_documents WHERE doc_type = 'sales_order' ORDER BY id DESC LIMIT 1",
-  '/sales/quotes/[id]': "SELECT id FROM sales_documents WHERE doc_type = 'quote' ORDER BY id DESC LIMIT 1",
+  '/invoicing/laybys/[id]': 'SELECT id FROM laybys ORDER BY id DESC LIMIT 1',
+  '/invoicing/orders/[id]': "SELECT id FROM sales_documents WHERE doc_type = 'sales_order' ORDER BY id DESC LIMIT 1",
+  '/invoicing/quotes/[id]': "SELECT id FROM sales_documents WHERE doc_type = 'quote' ORDER BY id DESC LIMIT 1",
   '/suppliers/[id]': 'SELECT id FROM suppliers ORDER BY id DESC LIMIT 1',
   '/suppliers/remittances/[runId]': 'SELECT id FROM supplier_payment_runs ORDER BY id DESC LIMIT 1',
   '/transfers/[id]': 'SELECT id FROM stock_transfers ORDER BY id DESC LIMIT 1',

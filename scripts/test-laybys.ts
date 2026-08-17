@@ -213,7 +213,28 @@ async function main() {
   ok('*** final payment settles it ***', finalPay.ok && finalPay.settled,
     finalPay.ok ? String(finalPay.outstanding) : finalPay.error)
 
-  const completed = await completeLayby(SITE, actor, created.laybyId, cash.id)
+  /*
+   * SETTLING WITH CASH IS REFUSED, and this assertion is the point of the rule.
+   *
+   * The instalments are already in the drawer and — since the cash-up learned
+   * to count off-ledger money — already counted. A cash tender for the whole
+   * lay-by value on handover day would count every rand of it a second time and
+   * leave the drawer reading over by the full amount.
+   *
+   * This test itself used to pass `cash.id` here, which is how the bug survived:
+   * the back office defaulted the settlement picker to the first active tender
+   * (Cash) and nothing refused it.
+   */
+  ok('*** settling with drawer cash is REFUSED ***',
+    !(await completeLayby(SITE, actor, created.laybyId, cash.id)).ok)
+
+  /* "Deposit paid" — counts_as_drawer_cash = 0 — is the honest record: the
+     money was taken over the instalments, not today. */
+  const settleWith = await getTenderByCode(SITE, 'DEPOSIT')
+  ok('  a non-drawer settlement tender exists', !!settleWith,
+    settleWith ? settleWith.name : 'no DEPOSIT tender')
+
+  const completed = await completeLayby(SITE, actor, created.laybyId, settleWith!.id)
   ok('*** goods handed over — invoice raised ***', completed.ok,
     completed.ok ? completed.documentNumber : completed.error)
   if (!completed.ok) { await sweepStrays(); process.exit(1) }

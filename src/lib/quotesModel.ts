@@ -37,6 +37,31 @@ export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
 }
 
 /**
+ * What colour each state wears.
+ *
+ * Here rather than at the call site because there are now TWO screens showing a
+ * quote's state — the back-office register and the till's list — and a state
+ * that reads green on one and grey on the other is two answers to one question.
+ * The register had this inline first; it moved when the till needed the same
+ * mapping, which is the moment a duplicated rule becomes a drifting one.
+ *
+ * Tone names are the kit's Badge tones, so this stays a lookup rather than
+ * something each screen re-decides.
+ *
+ * `warning` for a quote awaiting a decision is not an error: it is the one
+ * state with something still to DO, and amber is what says so in a list where
+ * everything else has been settled one way or the other.
+ */
+export const QUOTE_STATE_TONES: Record<QuoteState, 'success' | 'danger' | 'warning' | 'default'> = {
+  draft: 'warning',
+  open: 'warning',
+  expired: 'danger',
+  accepted: 'success',
+  declined: 'default',
+  cancelled: 'default',
+}
+
+/**
  * Today, as a plain YYYY-MM-DD string.
  *
  * A local copy of `today()` from site/ledger.ts rather than an import: that

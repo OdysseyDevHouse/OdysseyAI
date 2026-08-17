@@ -283,6 +283,16 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     hint: 'Orders waiting to be picked or collected.',
   },
   {
+    slug: 'start-layby',
+    label: 'Lay-by this',
+    icon: 'Package',
+    capability: 'sales.till',
+    /* THE BASKET IS THE LAY-BY. A customer who cannot pay today has already had
+       their goods rung up, and the alternative to this key is keying every line
+       again on another screen while they watch. */
+    hint: 'Puts the basket aside for a customer to pay off.',
+  },
+  {
     slug: 'clock-in-out',
     label: 'Clock in / out',
     icon: 'Clock',

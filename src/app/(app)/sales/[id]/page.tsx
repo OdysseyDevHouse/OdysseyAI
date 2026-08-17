@@ -120,7 +120,7 @@ export default async function SalesDocumentPage({
       <PageHeader
         title={document.documentNumber ?? `Draft #${document.id}`}
         subtitle={`${document.docLabel} · ${document.documentDate}`}
-        backHref="/sales/invoicing?status=all"
+        backHref="/invoicing?status=all"
         backLabel="Invoicing"
         action={
           <>

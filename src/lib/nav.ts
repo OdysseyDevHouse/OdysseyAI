@@ -121,10 +121,10 @@ export const NAV: NavSection[] = [
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
          filter on this screen now, and /sales redirects here. */
-      { label: 'Invoicing', href: '/sales/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history', description: 'Every invoice and credit note, from draft to finalised' },
-      { label: 'Orders', href: '/sales/orders', icon: ListOrdered, built: true, capability: 'sales.view', description: 'What customers have ordered but not yet taken' },
-      { label: 'Quotes', href: '/sales/quotes', icon: FileText, built: true, capability: 'sales.view', description: 'Prices offered, and what became of them' },
-      { label: 'Lay-bys', href: '/sales/laybys', icon: Package, built: true, capability: 'sales.view', description: 'Goods put aside and paid off over time' },
+      { label: 'Invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history', description: 'Every invoice and credit note, from draft to finalised' },
+      { label: 'Orders', href: '/invoicing/orders', icon: ListOrdered, built: true, capability: 'sales.view', description: 'What customers have ordered but not yet taken' },
+      { label: 'Quotes', href: '/invoicing/quotes', icon: FileText, built: true, capability: 'sales.view', description: 'Prices offered, and what became of them' },
+      { label: 'Lay-bys', href: '/invoicing/laybys', icon: Package, built: true, capability: 'sales.view', description: 'Goods put aside and paid off over time' },
       { label: 'Reservations', href: '/sales/reservations', icon: CalendarClock, built: true, capability: 'reservations.view', keywords: 'bookings table diary covers restaurant seating guests', description: 'Tonight’s book — who is coming and where they sit' },
       { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view', description: 'Agreements that bill themselves on a schedule' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note', description: 'Take goods back and credit the customer' },
@@ -226,6 +226,12 @@ export const NAV: NavSection[] = [
     href: '/accounting',
     built: true,
     capability: 'cashbook.view',
+    /* Deliberately NO `module` here, even though there is an Accounting module.
+       The hub also holds the cashbook, expenses and the VAT return, which are
+       part of the base package — every shop banks money and pays bills. What
+       the module sells is the double-entry layer on top, so the gating is on
+       those TILES (see accounting/catalogue.ts) rather than on this section.
+       Tagging the section would take a Starter Pack shop's bank account away. */
     keywords: 'money ledger books financials vat tax cashbook expenses debtors creditors',
     description: 'The books — ledgers, VAT, expenses and the bank',
   },
@@ -881,8 +887,8 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
      what went out — so the crumb names the thing rather than the action. */
   '/sales': { new: 'Point of sale', edit: 'Document' },
   /* Unlike /sales/[id], an invoice here IS being edited until it is finalised. */
-  '/sales/invoicing': { new: 'New invoice', edit: 'Invoice' },
-  '/sales/orders': { new: 'New order', edit: 'Order' },
+  '/invoicing': { new: 'New invoice', edit: 'Invoice' },
+  '/invoicing/orders': { new: 'New order', edit: 'Order' },
   /* A posted transfer is a record of what moved, not something anyone edits. */
   '/transfers': { new: 'New transfer', edit: 'Transfer' },
   /* A draft adjustment IS edited, but the same screen serves a posted one, so
@@ -893,7 +899,7 @@ const LEAF_LABELS: Record<string, { new: string; edit: string }> = {
   '/stock-takes': { new: 'New stock take', edit: 'Stock take' },
   /* Likewise a posted build: the screen records what was consumed and made. */
   '/manufacturing': { new: 'New build', edit: 'Build' },
-  '/sales/laybys': { new: 'New lay-by', edit: 'Lay-by' },
+  '/invoicing/laybys': { new: 'New lay-by', edit: 'Lay-by' },
   /* A contract's detail screen is a record of what it bills and what it has
      billed, not an edit form — editing is a separate route under it. */
   '/sales/contracts': { new: 'New contract', edit: 'Contract' },

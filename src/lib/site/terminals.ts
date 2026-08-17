@@ -232,11 +232,64 @@ export async function updateTerminal(
 }
 
 /**
+ * Whether this machine is already registered at a DIFFERENT shop.
+ *
+ * Returns the shop and till holding it, so the refusal can name them. Null when
+ * the machine is free, which is the ordinary case and costs one small query per
+ * active site.
+ *
+ * Deliberately tolerant of a site that cannot be read: a shop whose database is
+ * unreachable must not stop another shop registering a till. The cost of
+ * skipping it is that this check is best-effort rather than a guarantee — which
+ * is why `test-pos-unlock` also asserts the invariant across every site, and is
+ * the thing that would catch a claim this missed.
+ */
+async function claimedElsewhere(
+  siteId: number,
+  deviceId: string,
+): Promise<{ siteName: string; terminalCode: string } | null> {
+  const { activeSiteIds, publicSiteName } = await import('../sites')
+
+  for (const other of await activeSiteIds()) {
+    if (other === siteId) continue
+    const row = await siteQueryOne<{ code: string }>(
+      other,
+      'SELECT code FROM terminals WHERE device_id = ? AND is_active = 1 LIMIT 1',
+      [deviceId],
+    ).catch(() => null)
+    if (row) {
+      return {
+        siteName: (await publicSiteName(other)) ?? `site ${other}`,
+        terminalCode: String(row.code),
+      }
+    }
+  }
+  return null
+}
+
+/**
  * Binds a machine to a till.
  *
  * Takes the claim off whatever machine held it before: replacing a broken till
  * PC is routine, and requiring a manager to release the old one first would
  * mean a shop cannot trade until someone finds the setup screen.
+ *
+ * ── AND REFUSES ACROSS SITES, WHICH IS A DIFFERENT QUESTION ───────────────
+ *
+ * `terminals.device_id` is UNIQUE, so one machine cannot hold two registers in
+ * ONE shop — the database sees to that. It has nothing to say about two shops,
+ * because they are two databases.
+ *
+ * That gap is not cosmetic. `siteForDevice` in the unlock path walks the active
+ * sites and returns the FIRST whose terminals table matches, so a machine
+ * claimed in two shops unlocks into whichever happens to be listed first — a
+ * PIN typed at one company's counter opening another company's data, silently
+ * and repeatably. Found on a dev box that had been used to test both, where it
+ * had sat unnoticed for days.
+ *
+ * The scan is bounded by the number of active sites, runs once at claim time
+ * rather than per sale, and refuses by NAMING the other shop — a manager told
+ * only "already claimed" has nowhere to go.
  */
 export async function claimTerminal(
   siteId: number,
@@ -248,6 +301,14 @@ export async function claimTerminal(
 
   const terminal = await getTerminal(siteId, id)
   if (!terminal) return { ok: false, error: 'Till not found.' }
+
+  const elsewhere = await claimedElsewhere(siteId, deviceId.trim())
+  if (elsewhere) {
+    return {
+      ok: false,
+      error: `This machine is already registered as ${elsewhere.terminalCode} at ${elsewhere.siteName}. Unlink it there before using it here.`,
+    }
+  }
   if (!terminal.isActive) {
     return { ok: false, error: `${terminal.name} is deactivated and cannot be used.` }
   }

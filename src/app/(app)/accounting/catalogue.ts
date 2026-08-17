@@ -46,6 +46,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'LineChart',
         tone: 'indigo',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/balance-sheet',
@@ -54,6 +55,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Scale',
         tone: 'violet',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/cash-flow',
@@ -62,6 +64,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Coins',
         tone: 'indigo',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/trial-balance',
@@ -70,6 +73,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'BarChart',
         tone: 'sky',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/vat',
@@ -193,6 +197,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'ListOrdered',
         tone: 'slate',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/journals',
@@ -201,6 +206,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'FileText',
         tone: 'indigo',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/budgets',
@@ -209,6 +215,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'BarChart',
         tone: 'indigo',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/journals/recurring',
@@ -217,6 +224,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Repeat',
         tone: 'indigo',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/assets',
@@ -225,6 +233,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Warehouse',
         tone: 'teal',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/assets/depreciation',
@@ -233,6 +242,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'BarChart',
         tone: 'violet',
         capability: 'reports.financial',
+        module: 'accounting',
       },
       {
         href: '/accounting/periods',
@@ -241,6 +251,7 @@ const DECLARED: DeclaredGroup<AccountingHref>[] = [
         icon: 'Lock',
         tone: 'rose',
         capability: 'setup.edit',
+        module: 'accounting',
       },
     ],
   },
