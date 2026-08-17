@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireSiteId, actorFor } from '@/lib/auth'
+import { POS_MODE_LABELS, type PosMode } from '@/lib/posMode'
 import {
   createTerminal,
   updateTerminal,
@@ -179,6 +180,33 @@ export async function setUndoLimitAction(limit: number): Promise<TerminalActionR
     ok: true,
     message: limit === 0 ? 'Undo is now unlimited.' : `Cashiers may undo ${limit} times per sale.`,
   }
+}
+
+/**
+ * Which of the three tills this shop runs.
+ *
+ * Separate from `setPosModeAction` on the tables screen, which is a two-way
+ * switch that predates there being a third answer. That one still turns tables
+ * on and off; this one names the mode outright, which is the only way to reach
+ * the trade counter.
+ *
+ * Validated by `setSetting` against the same list the till reads through, so a
+ * value this action does not recognise cannot be stored — see settings.ts.
+ */
+export async function setPosModeChoiceAction(mode: PosMode): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setSetting(ctx.siteId, 'pos_mode', mode)
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  /* The till reads this from its offline catalogue as well as from the page, so
+     a running till picks the change up on its next refresh rather than needing
+     somebody to reload it mid-service. */
+  revalidatePath('/setup/terminals')
+  revalidatePath('/setup/tables')
+  revalidatePath('/pos')
+  return { ok: true, message: `This shop now runs the ${POS_MODE_LABELS[mode].toLowerCase()}.` }
 }
 
 /**

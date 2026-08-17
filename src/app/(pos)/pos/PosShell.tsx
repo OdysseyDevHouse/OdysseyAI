@@ -31,6 +31,7 @@ import {
 } from '@/lib/posOffline/parkOffline'
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
 import { stockShortfalls, stockWarning } from '@/lib/stockWarning'
+import TradeEntryPane from './TradeEntryPane'
 import {
   saveDraft as saveLocalDraft,
   readDraft as readLocalDraft,
@@ -232,6 +233,7 @@ export default function PosShell({
   quickKeyProductNames,
   quickKeyDepartmentNames,
   hospitality,
+  invoicing,
   initialTables,
   floorRooms,
   floorFeatures,
@@ -297,6 +299,14 @@ export default function PosShell({
   quickKeyDepartmentNames: Record<number, string>
   /** Read in THREE places only — see the docblock above. */
   hospitality: boolean
+  /**
+   * True on a TRADE COUNTER — a hardware or paint shop typing long documents.
+   *
+   * Changes the right-hand half of the screen and nothing else: the basket, the
+   * money, the actions and the offline layer are the same ones every till uses.
+   * See lib/posMode for why this picks a layout rather than adding branches.
+   */
+  invoicing: boolean
   /** The floor. Empty in retail, where the gate never mounts. */
   initialTables: PosTable[]
   /** The DRAWN floor, if a manager built one. Empty means the gate uses the grid. */
@@ -3791,6 +3801,58 @@ export default function PosShell({
           busy={pending}
         />
 
+        {/*
+          ── THE TRADE COUNTER'S WAY IN ─────────────────────────────────────
+          A keyboard instead of a grid. Everything to the LEFT of this — the
+          basket, its totals, Pay, Close — is the same component the touch till
+          draws, wired to the same handlers, because a trade counter and a
+          supermarket disagree about how a line is CHOSEN and about nothing
+          else. Only the right-hand half changes.
+
+          This is the shape phase 8 was for, and it is deliberately not a third
+          `if (invoicing)` threaded through the file: it is one branch, at the
+          one place the screen differs, over a shell that stays single.
+        */}
+        {invoicing ? (
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
+            <TradeEntryPane
+              online={till.online}
+              busy={pending}
+              onLookup={async (code) =>
+                till.online
+                  ? await scanAction(code, priceStructureId).catch(() =>
+                      findByCode(siteId, code),
+                    )
+                  : await findByCode(siteId, code)
+              }
+              onAdd={(product, qty) => add(product, qty)}
+            />
+            {/* The shop's own keys still work here — a trade counter wants Save
+                as order and the supervisor keys as much as a till does, even
+                though it has no use for a wall of product tiles. */}
+            <div className="min-h-0 flex-1 overflow-auto rounded-card border border-border bg-surface p-4">
+              <QuickKeyPanel
+                keys={keysToShow}
+                productNames={keyProductNames}
+                departmentNames={keyDepartmentNames}
+                isEnabled={(key) => quickKeyEnabled(key, quickKeyContext)}
+                onPress={(key) => runQuickKey(key, quickKeyContext)}
+                /* The default empty state says "pick a department on the left",
+                   and on this screen there is no rail on the left — the code box
+                   above IS how a line is added here. Pointing at furniture that
+                   is not on the screen reads as a broken till. */
+                emptyState={
+                  <EmptyState
+                    icon={<Icons.Sparkles size={28} />}
+                    title="No quick keys yet"
+                    hint="A manager can set these up in Setup → Quick keys. Until then, type a code above."
+                  />
+                }
+              />
+            </div>
+          </div>
+        ) : (
+          <>
         <DeptRail
           departments={departments}
           activeId={state.catalog.kind === 'departments' ? state.catalog.path[0] ?? null : null}
@@ -3830,6 +3892,8 @@ export default function PosShell({
             />
           }
         />
+          </>
+        )}
       </div>
       )}
 

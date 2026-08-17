@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { toPosMode } from '@/lib/posMode'
 import { requireSiteUser } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
@@ -244,7 +245,11 @@ export default async function PosPage() {
       pendingPrices={pendingPrices}
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
-      hospitality={posMode === 'hospitality'}
+      /* The one place the mode is turned into flags. Three values, resolved
+         once — see lib/posMode for why this picks a screen rather than
+         threading a third boolean through the shell. */
+      hospitality={toPosMode(posMode) === 'hospitality'}
+      invoicing={toPosMode(posMode) === 'invoicing'}
       initialTables={tables}
       floorRooms={floorRooms}
       visitTypes={visitTypes}

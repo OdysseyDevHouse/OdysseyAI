@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
-import { setSetting } from '@/lib/site/settings'
+import { setSetting, getSetting } from '@/lib/site/settings'
 import {
   listTables,
   createTable,
@@ -338,7 +338,22 @@ export async function setPosModeAction(hospitality: boolean): Promise<ModeResult
   if ('ok' in ctx) return ctx
   const { siteId } = ctx
 
-  const result = await setSetting(siteId, 'pos_mode', hospitality ? 'hospitality' : 'retail')
+  /*
+   * "Off" means RETAIL — unless this shop is running the trade counter, in which
+   * case off means staying there.
+   *
+   * This switch is a two-way toggle on the tables screen, and it predates there
+   * being a third mode. Written naively it would answer a question nobody asked:
+   * a paint shop that never touches this screen would still have its till turned
+   * into a supermarket the first time somebody opened Setup → Tables and saved.
+   *
+   * So the OFF branch reads what is there and only changes it if it is about to
+   * change something this screen owns.
+   */
+  const current = await getSetting(siteId, 'pos_mode')
+  const next = hospitality ? 'hospitality' : current === 'invoicing' ? 'invoicing' : 'retail'
+
+  const result = await setSetting(siteId, 'pos_mode', next)
   if (!result.ok) return { ok: false, error: result.error ?? 'That mode could not be saved.' }
 
   /* The till reads this from the offline catalog as well as from the page, so a running

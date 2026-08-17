@@ -3,10 +3,12 @@ import { listTerminals } from '@/lib/site/terminals'
 import { listLicences } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
 import { getNumericSetting, getSetting } from '@/lib/site/settings'
+import { toPosMode } from '@/lib/posMode'
 import TerminalsClient from './TerminalsClient'
 import LicencesPanel from './LicencesPanel'
 import UndoLimitPanel from './UndoLimitPanel'
 import StockWarningPanel from './StockWarningPanel'
+import PosModePanel from './PosModePanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,6 +28,9 @@ export default async function TerminalsPage() {
      that does not maintain its counts would be questioned about them all day.
      See pos_warn_out_of_stock in settings.ts. */
   const warnOutOfStock = (await getSetting(siteId, 'pos_warn_out_of_stock')) === '1'
+  /* Which of the three tills this shop runs. Anything unreadable resolves to
+     retail, which is the answer that trades — see lib/posMode. */
+  const posMode = toPosMode(await getSetting(siteId, 'pos_mode'))
 
   return (
     <>
@@ -36,6 +41,9 @@ export default async function TerminalsPage() {
       <PageBody>
         <div className="flex flex-col gap-4">
           <TerminalsClient terminals={terminals} />
+          {/* WHAT KIND of till, above how they behave: the mode decides which
+              screen the other settings even apply to. */}
+          <PosModePanel mode={posMode} />
           {/* How the tills BEHAVE, under the list of which tills there are. One
               field, so it sits between the registers and the licences rather than
               earning a screen of its own. */}

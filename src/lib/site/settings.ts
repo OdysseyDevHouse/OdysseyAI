@@ -105,9 +105,23 @@ export const SETTING_DEFAULTS = {
    * 'hospitality' — tables. A basket per table, held open while people eat, paid
    *                 at the end. The same basket and the same posting path; what
    *                 differs is how a waiter FINDS the one they left open.
+   * 'invoicing'   — a trade counter. A hardware or paint shop serving a queue of
+   *                 account customers with long documents: many lines, typed
+   *                 rather than tapped, and as often a quote or an order as an
+   *                 invoice. Same basket, same money, same posting path again.
    *
-   * Read in exactly three places on the client — see PosShell. A fourth is the
-   * signal that the flag is being threaded rather than contained.
+   * ── THE ONE RULE THIS SETTING HAS LEARNED ─────────────────────────────────
+   *
+   * The note that used to live here said the flag was read in exactly three
+   * places on the client, and that a fourth was the signal it was being threaded
+   * rather than contained. There are now NINE reads in PosShell alone, so the
+   * warning was right and went unheeded.
+   *
+   * The lesson is not "count harder". It is that a mode which decides WHAT A
+   * SCREEN IS should pick a screen, not sprinkle branches through one. So
+   * 'invoicing' does not add a tenth `if` to PosShell: it selects a different
+   * shell entirely, over the same basket, the same money and the same actions.
+   * See PosEntry, which is where the choice is made and the only place it is.
    */
   pos_mode: 'retail',
   /**
@@ -935,9 +949,9 @@ export function validateSetting(key: SettingKey, value: string): string | null {
     }
 
     case 'pos_mode':
-      return value === 'retail' || value === 'hospitality'
+      return value === 'retail' || value === 'hospitality' || value === 'invoicing'
         ? null
-        : "POS mode must be 'retail' or 'hospitality'."
+        : "POS mode must be 'retail', 'hospitality' or 'invoicing'."
 
     case 'pos_undo_limit': {
       const limit = Number(value)

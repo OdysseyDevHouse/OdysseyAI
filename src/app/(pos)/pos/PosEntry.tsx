@@ -66,6 +66,7 @@ export default function PosEntry({
   quickKeyProductNames,
   quickKeyDepartmentNames,
   hospitality,
+  invoicing,
   initialTables,
   floorRooms,
   floorFeatures,
@@ -115,6 +116,8 @@ export default function PosEntry({
   quickKeyProductNames: Record<number, string>
   quickKeyDepartmentNames: Record<number, string>
   hospitality: boolean
+  /** True on a trade counter — see PosShell. */
+  invoicing: boolean
   initialTables: PosTable[]
   /** The drawn floor. Relayed unchanged — this component owns sign-in, not the floor. */
   floorRooms: FloorRoom[]
@@ -266,6 +269,7 @@ export default function PosEntry({
       quickKeyProductNames={quickKeyProductNames}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
       hospitality={hospitality}
+      invoicing={invoicing}
       initialTables={initialTables}
       floorRooms={floorRooms}
       floorFeatures={floorFeatures}
