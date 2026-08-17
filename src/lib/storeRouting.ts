@@ -1,8 +1,10 @@
 import 'server-only'
+import { cookies } from 'next/headers'
 import { verifyPublicStoreToken } from './publicStoreToken'
 import { groupForSite, membersOfGroup } from './storeGroups'
 import { branchPinsFor, type BranchPin } from './control/storeBranches'
 import { allHold } from './control/modules'
+import { branchCookieName, parseBranchCookie } from './branchChoice'
 
 /**
  * Which shop a storefront URL is talking to — and, for a chain, which branch.
@@ -48,6 +50,36 @@ export type StoreRouting = {
   needsBranchChoice: boolean
   /** Every branch that could be chosen. Empty when this is not a group. */
   branches: BranchPin[]
+}
+
+/**
+ * The branch this browser last chose, if any.
+ *
+ * The cookie is keyed by CATALOGUE, which is not known until the group has been
+ * resolved — so both plausible names are read and the first hit wins. That
+ * sounds loose and is not: the value is only a candidate, and
+ * resolveStoreRouting refuses any id that is not an open member of this group.
+ * Reading one extra cookie is cheaper than resolving the group twice.
+ *
+ * Returns null outside a request scope (the sitemap, a cron), where there is no
+ * cookie jar and no shopper to have a preference.
+ */
+export async function rememberedBranch(token: string): Promise<number | null> {
+  try {
+    const tokenSiteId = await verifyPublicStoreToken(token)
+    if (tokenSiteId === null) return null
+
+    const jar = await cookies()
+    const own = parseBranchCookie(jar.get(branchCookieName(tokenSiteId))?.value)
+    if (own) return own
+
+    const group = await groupForSite(tokenSiteId)
+    const primary = group?.primarySiteId
+    if (!primary || primary === tokenSiteId) return null
+    return parseBranchCookie(jar.get(branchCookieName(primary))?.value)
+  } catch {
+    return null
+  }
 }
 
 /** What a single shop resolves to. Also the fallback for every refusal below. */

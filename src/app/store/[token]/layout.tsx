@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
+ import { resolveStoreRouting, rememberedBranch } from '@/lib/storeRouting'
 import { storefrontContext, publishedDepartments } from '@/lib/site/storefront'
 import { getPublishedLayout, getTheme } from '@/lib/site/storefrontLayout'
 import { navPages } from '@/lib/site/storefrontPages'
@@ -23,10 +24,20 @@ import StoreChrome from './StoreChrome'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * The store this request is for.
+ *
+ * For a single shop — every shop today — this is the token's site and nothing
+ * else happens. For a chain running one storefront it is TWO shops: the group's
+ * primary owns the catalogue and the branding, and the branch owns the stock,
+ * the delivery charges and the order. See storeRouting.ts.
+ */
 async function resolve(token: string) {
-  const siteId = await verifyPublicStoreToken(token)
-  if (siteId === null) return null
-  return storefrontContext(siteId)
+  const routing = await resolveStoreRouting(token, await rememberedBranch(token))
+  if (!routing) return null
+
+  const context = await storefrontContext(routing.catalogueSiteId, routing.branchSiteId)
+  return context ? { context, routing } : null
 }
 
 export async function generateMetadata({
@@ -35,10 +46,13 @@ export async function generateMetadata({
   params: Promise<{ token: string }>
 }): Promise<Metadata> {
   const { token } = await params
-  const context = await resolve(token)
-  if (!context) return { title: 'Shop' }
+  const resolved = await resolve(token)
+  if (!resolved) return { title: 'Shop' }
+  const { context } = resolved
 
-  const theme = await getTheme(context.siteId)
+  // Branding is the CATALOGUE's — one chain, one shop front, whichever branch
+  // is packing the order.
+  const theme = await getTheme(context.catalogueSiteId)
   const description = context.settings.blurb || `Order online from ${context.storeName}.`
 
   return {
@@ -84,17 +98,21 @@ export default async function StoreLayout({
   params: Promise<{ token: string }>
 }) {
   const { token } = await params
-  const context = await resolve(token)
-  if (!context) notFound()
-
+  const resolved = await resolve(token)
+  if (!resolved) notFound()
+  const { context, routing } = resolved
 
   // Read here so the masthead can show who is signed in on every page.
+  // The BRANCH's session: customer accounts are per-site, so a shopper signed
+  // in at one branch is a different account at the next.
   const session = await getCustomerSession(context.siteId)
 
   const [departments, layout, pages] = await Promise.all([
     publishedDepartments(context),
-    getPublishedLayout(context.siteId),
-    navPages(context.siteId),
+    // Layout, theme and pages are the shop front's, which for a chain is the
+    // primary's. A branch does not get its own branding — see the plan.
+    getPublishedLayout(context.catalogueSiteId),
+    navPages(context.catalogueSiteId),
   ])
 
   return (
@@ -131,6 +149,28 @@ export default async function StoreLayout({
         announce={
           announcementShowing(layout.theme)
             ? { text: layout.theme.announceText, href: layout.theme.announceLink }
+            : null
+        }
+        /*
+         * Null for a single shop, and the chrome then renders nothing new at
+         * all — no band, no picker, not a byte of that bundle. Every storefront
+         * that exists today is this case and must stay pixel-identical.
+         */
+        branch={
+          routing.isGroup
+            ? {
+                name: context.branchName,
+                needsChoice: routing.needsBranchChoice,
+                pinned: routing.isPinned,
+                choices: routing.branches.map((b) => ({
+                  siteId: b.siteId,
+                  name: b.displayName,
+                  address: b.addressLine,
+                  latitude: b.latitude,
+                  longitude: b.longitude,
+                  sortOrder: b.sortOrder,
+                })),
+              }
             : null
         }
       >
