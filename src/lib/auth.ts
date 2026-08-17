@@ -4,6 +4,13 @@ import { redirect } from 'next/navigation'
 import type { RowDataPacket } from 'mysql2/promise'
 import { queryOne, execute } from './db'
 import { claimSession, sessionIsCurrent, releaseSession } from './control/sessions'
+import {
+  entitlementsForSite,
+  has as hasModule,
+  type ModuleEntitlements,
+  type ModuleKey,
+} from './control/modules'
+import { moduleLabelFor } from './control/moduleMessages'
 import { verifyPassword, hashPassword } from './password'
 import { getSiteForUser, listSitesForUser, type Site } from './sites'
 import { siteExecute } from './siteDb'
@@ -516,6 +523,7 @@ export async function requireSiteUser(): Promise<{
   site: Site
   user: SiteUser
   capabilities: CapabilitySet
+  modules: ModuleEntitlements
 }> {
   const session = await requireSession()
   const site = await requireSite()
@@ -528,7 +536,12 @@ export async function requireSiteUser(): Promise<{
   if (!user.isActive) redirect('/select-site?inactive=1')
 
   const capabilities = await capabilitiesForRole(site.id, user.roleId)
-  return { site, user, capabilities }
+  /* What the SHOP has bought, alongside what this PERSON may do. Two different
+     questions with two different answers, deliberately kept apart — see
+     control/modules.ts. Memoised per request, so the several guards a single
+     render reaches share one read. */
+  const modules = await entitlementsForSite(site.id)
+  return { site, user, capabilities, modules }
 }
 
 /** Capabilities alone, for the many screens that need nothing else. */
@@ -645,6 +658,111 @@ export async function actorForAny(
     siteId: site.id,
     actor: { userId: user.id, userName: user.name },
     capabilities: held,
+  }
+}
+
+/* ── Module guards ──────────────────────────────────────────────────────────
+ *
+ * A module is what the SHOP bought; a capability is what the PERSON may do.
+ * Both are required, and they are asked in that order everywhere below.
+ *
+ * The order is not cosmetic. "Your shop has not bought Loyalty" and "your role
+ * does not include Loyalty" send the reader to two different people — the first
+ * to whoever pays the bill, the second to whoever manages roles. Asking the
+ * capability first would tell a cashier at a shop without Loyalty to go and
+ * request a permission that would not help them.
+ */
+
+/**
+ * A page behind a module.
+ *
+ * Redirects to /upgrade rather than /not-allowed, because the two mean
+ * different things and lead to different fixes.
+ */
+export async function requireModule(module: ModuleKey): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+  capabilities: CapabilitySet
+  modules: ModuleEntitlements
+}> {
+  const { site, user, capabilities, modules } = await requireSiteUser()
+  if (!hasModule(modules, module)) redirect(`/upgrade?module=${module}`)
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
+    modules,
+  }
+}
+
+/**
+ * Both questions, in one call — the shape almost every gated page wants.
+ *
+ * A page guarded on only one half is the bug this exists to prevent: on the
+ * module alone, a cashier reaches member balances at a shop that bought
+ * Loyalty; on the capability alone, the URL works at a shop that never bought
+ * it at all.
+ */
+export async function requireModuleCapability(
+  module: ModuleKey,
+  capability: Capability,
+): Promise<{
+  siteId: number
+  actor: { userId: number; userName: string }
+  capabilities: CapabilitySet
+  modules: ModuleEntitlements
+}> {
+  const { site, user, capabilities, modules } = await requireSiteUser()
+  if (!hasModule(modules, module)) redirect(`/upgrade?module=${module}`)
+  if (!can(capabilities, capability)) redirect('/not-allowed')
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
+    modules,
+  }
+}
+
+/**
+ * The server-action counterpart. Returns a refusal rather than redirecting,
+ * for the same reason `actorFor` does.
+ *
+ * Use it as the first line of every mutating action behind a module:
+ *
+ *   const ctx = await actorForModule('loyalty', 'loyalty.adjust')
+ *   if ('ok' in ctx) return ctx
+ *
+ * Hiding the screen is not enough. An action is a public endpoint, and a shop
+ * that never bought Loyalty must not be able to award points by calling one.
+ */
+export async function actorForModule(
+  module: ModuleKey,
+  capability: Capability,
+): Promise<
+  | {
+      siteId: number
+      actor: { userId: number; userName: string }
+      capabilities: CapabilitySet
+      modules: ModuleEntitlements
+    }
+  | Denied
+> {
+  const { site, user, capabilities, modules } = await requireSiteUser()
+
+  if (!hasModule(modules, module)) {
+    return { ok: false, error: moduleLabelFor(module, can(capabilities, 'setup.edit')) }
+  }
+  if (!can(capabilities, capability)) {
+    return {
+      ok: false,
+      error: 'You do not have permission to do that. An owner can grant it in Setup → Roles.',
+    }
+  }
+  return {
+    siteId: site.id,
+    actor: { userId: user.id, userName: user.name },
+    capabilities,
+    modules,
   }
 }
 
