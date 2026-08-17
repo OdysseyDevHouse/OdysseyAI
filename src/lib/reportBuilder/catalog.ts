@@ -2929,7 +2929,11 @@ const POS_VOIDS_SOURCE: CatalogSource = {
     { key: 'terminalCode', label: 'Till', type: 'text', expr: 't.terminal_code', group: FIELD_GROUPS.PEOPLE },
     { key: 'shiftId', label: 'Cash-up', type: 'number', expr: 't.shift_id', noTotal: true, group: FIELD_GROUPS.IDENTITY },
     { key: 'productCode', label: 'Stock code', type: 'text', expr: 't.product_code', group: FIELD_GROUPS.IDENTITY },
-    { key: 'productName', label: 'Product (current name)', type: 'text', expr: 'p.name', needs: ['product'], group: FIELD_GROUPS.PRODUCT },
+    /* `description`, not `name` — the products table has no `name` column, and
+       this field 500'd the moment anybody put it on a report. The stored
+       `product_code` beside it is what the void recorded at the time; this is
+       what the product is called TODAY, which is why it needs the join. */
+    { key: 'productName', label: 'Product (current name)', type: 'text', expr: 'p.description', needs: ['product'], group: FIELD_GROUPS.PRODUCT },
     /* Only a parked tab, a table or a recalled draft has one. Null is the normal
        case for a counter sale, which never reaches the database before it is paid. */
     { key: 'documentNumber', label: 'Draft', type: 'document', expr: 'sd.document_number', needs: ['draft'], group: FIELD_GROUPS.IDENTITY },
