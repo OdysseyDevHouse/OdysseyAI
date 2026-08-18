@@ -27,6 +27,8 @@ import {
 } from './actions'
 import SlipBlockEditor from './SlipBlockEditor'
 import { parseSlip, serialiseSlip } from '@/lib/stationery/slip'
+import { parseSpec, serialiseSpec } from '@/lib/stationery/blocks'
+import VisualDesigner from './visual/VisualDesigner'
 
 type TokenInfo = { key: string; label: string; hint: string; section: string | null }
 type DocInfo = {
@@ -34,6 +36,8 @@ type DocInfo = {
   label: string
   medium: 'a4' | 'slip'
   defaultBody: string
+  /** The same document as a block spec, for the visual editor. */
+  defaultSpec?: string
   tokens: TokenInfo[]
   sections: { key: string; label: string }[]
 }
@@ -44,6 +48,7 @@ type TemplateInfo = {
   body: string
   draftBody: string | null
   isActive: boolean
+  format: 'html' | 'slip' | 'blocks'
 }
 
 /**
@@ -98,6 +103,15 @@ export default function StationeryClient({
   const [name, setName] = useState('')
   const [body, setBody] = useState('')
   const [dirty, setDirty] = useState(false)
+  /**
+   * How the open design is written.
+   *
+   * `body` stays the single source of truth whichever editor is showing — the
+   * visual one serialises its spec into it on every change — so saving,
+   * dirty-checking and the draft flow need no second path. This only says how
+   * to READ it.
+   */
+  const [format, setFormat] = useState<'html' | 'slip' | 'blocks'>('html')
 
   const [html, setHtml] = useState('')
   const [previewLabel, setPreviewLabel] = useState('')
@@ -153,27 +167,39 @@ export default function StationeryClient({
   )
 
   useEffect(() => {
-    if (!body.trim()) {
+    // A block design previews itself, on its own canvas, block by block. Asking
+    // the markup renderer for it as well would render its JSON as a page.
+    if (format === 'blocks' || !body.trim()) {
       setHtml('')
       setWarnings([])
       return
     }
     const t = setTimeout(() => runPreview(body), 400)
     return () => clearTimeout(t)
-  }, [body, runPreview])
+  }, [body, format, runPreview])
 
   function openTemplate(t: TemplateInfo) {
     setEditingId(t.id)
     setName(t.name)
     setBody(t.draftBody ?? t.body)
+    setFormat(t.format)
     setDirty(false)
   }
 
-  function startFromDefault() {
+  /**
+   * Start a design, either way in.
+   *
+   * The VISUAL default and the MARKUP default are the same document expressed
+   * twice — the test suite compares what they render, word for word — so which
+   * one a shop starts from is a question of how they want to work, not of what
+   * they will get.
+   */
+  function startFromDefault(as: 'blocks' | 'html') {
     if (!doc) return
     setEditingId(null)
     setName(`${doc.label} — ${siteName}`)
-    setBody(doc.defaultBody)
+    setBody(as === 'blocks' ? (doc.defaultSpec ?? '') : doc.defaultBody)
+    setFormat(doc.medium === 'slip' ? 'slip' : as)
     setDirty(true)
   }
 
@@ -185,6 +211,7 @@ export default function StationeryClient({
         docType,
         name,
         body,
+        format,
         asDraft,
       })
       if (!res.ok) {
@@ -210,7 +237,7 @@ export default function StationeryClient({
         }
         return [
           ...prev,
-          { id, docType, name, body, draftBody: asDraft ? body : null, isActive: false },
+          { id, docType, name, body, format, draftBody: asDraft ? body : null, isActive: false },
         ]
       })
     })
@@ -273,6 +300,13 @@ export default function StationeryClient({
     [doc?.medium, body],
   )
 
+  /* A block design is JSON in `body`, parsed for the canvas. Dropping what
+     this build no longer knows happens here, once, rather than in the canvas. */
+  const blockSpec = useMemo(
+    () => (format === 'blocks' && body.trim() ? parseSpec(body, docType) : null),
+    [format, body, docType],
+  )
+
   /* The stored name doubles as a cache-buster: the URL is constant per site, so
      without it a replaced logo would keep showing the old picture. */
   const [logo, setLogo] = useState(logoFile)
@@ -318,7 +352,7 @@ export default function StationeryClient({
               <Button variant="ghost" onClick={reset} disabled={pending || !active}>
                 Use the standard layout
               </Button>
-              <Button variant="secondary" onClick={startFromDefault} disabled={pending}>
+              <Button variant="secondary" onClick={() => startFromDefault(doc?.defaultSpec ? 'blocks' : 'html')} disabled={pending}>
                 <Icons.Plus aria-hidden className="h-4 w-4" />
                 Start a design
               </Button>
@@ -460,7 +494,7 @@ export default function StationeryClient({
                   : 'Start a design and you will get the standard layout to change, so nothing looks wrong while you work.'
               }
               action={
-                <Button variant="primary" onClick={startFromDefault}>
+                <Button variant="primary" onClick={() => startFromDefault(doc?.defaultSpec ? 'blocks' : 'html')}>
                   Start a design
                 </Button>
               }
@@ -468,8 +502,30 @@ export default function StationeryClient({
           </CardBody>
         </Card>
       ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_26rem]">
-          {/* The paper. Deliberately first and widest — it is the subject. */}
+        /* The visual designer carries its own palette AND its own page, so it
+           wants the width; the markup editor is a pane beside a preview and
+           wants the split. Same row, two shapes. */
+        <div
+          className={`grid gap-5 ${
+            format === 'blocks'
+              ? 'xl:grid-cols-[minmax(0,1fr)_22rem]'
+              : 'xl:grid-cols-[minmax(0,1fr)_26rem]'
+          }`}
+        >
+          {/* The VISUAL designer owns the whole left column: it carries its own
+              palette and its own preview, because what is being arranged and
+              what it will look like are the same picture. The markup editor
+              splits them, because markup is not a picture of anything. */}
+          {format === 'blocks' ? (
+            <VisualDesigner
+              docType={docType}
+              spec={blockSpec ?? { version: 1, blocks: [] }}
+              onChange={(next) => {
+                setBody(serialiseSpec(next))
+                setDirty(true)
+              }}
+            />
+          ) : (
           <Card>
             <CardHeader
               title="What the paper will look like"
@@ -505,6 +561,7 @@ export default function StationeryClient({
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* The tools. Sticky on a wide screen: a purchase order runs longer
               than the viewport, and scrolling to check the bottom of the paper
@@ -525,8 +582,14 @@ export default function StationeryClient({
                 </Field>
 
                 {/* A slip has no markup to edit — see lib/stationery/slip.ts
-                    for why its design is a block list instead. */}
-                {doc?.medium === 'slip' ? (
+                    for why its design is a block list instead. A `blocks`
+                    document has no markup pane here either: it is edited on the
+                    canvas above, which needs the width. */}
+                {format === 'blocks' ? (
+                  <p className="text-sm text-muted">
+                    Arrange this document by dragging the blocks on the page.
+                  </p>
+                ) : doc?.medium === 'slip' ? (
                   <SlipBlockEditor
                     spec={slipSpec ?? { version: 1, blocks: [] }}
                     onChange={(next) => {
@@ -586,7 +649,11 @@ export default function StationeryClient({
                 carry their own content, so there is nothing to list — and an
                 empty "what you can put on the page" card reads as a feature
                 that is broken rather than one that does not apply. */}
-            {doc && doc.medium !== 'slip' && (
+            {/* Not for the visual editor either: a token list is a reference
+                for someone TYPING one. On the canvas, fields are picked from
+                the block being edited, so a column of forty token names is a
+                second way to do something that already has a first. */}
+            {doc && doc.medium !== 'slip' && format !== 'blocks' && (
               <Card>
                 <CardHeader
                   title="What you can put on the page"

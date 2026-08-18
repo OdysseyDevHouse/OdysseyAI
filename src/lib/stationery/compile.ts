@@ -346,6 +346,25 @@ function needsWrapper(b: DocBlock): boolean {
 }
 
 /**
+ * Each block compiled on its own, keyed by id.
+ *
+ * For the DESIGNER, which draws every block in its own selectable box and
+ * therefore needs them apart rather than joined. Deliberately the same
+ * `compileBlock` the whole-document path uses — the canvas showing something
+ * the page would not print is the exact failure this whole design avoids.
+ *
+ * The caller renders each fragment through the ordinary token renderer, so a
+ * block on the canvas resolves its values exactly as it will on paper,
+ * including the permission-gated ones.
+ */
+export function compileBlocks(spec: DocumentSpec, docKey: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!spec || !Array.isArray(spec.blocks)) return out
+  for (const b of spec.blocks) out[b.id] = compileBlock(b, docKey)
+  return out
+}
+
+/**
  * Which document kinds the visual designer can currently express.
  *
  * A guard rather than an assumption: a document type whose default this cannot

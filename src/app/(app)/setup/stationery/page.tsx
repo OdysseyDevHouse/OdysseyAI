@@ -3,6 +3,9 @@ import { PageHeader, PageBody } from '@/components/ui'
 import { listTemplates } from '@/lib/site/stationeryTemplates'
 import { DOC_TYPES, getDocType, tokensFor } from '@/lib/stationery/catalog'
 import { DEFAULT_TEMPLATES } from '@/lib/stationery/resolve'
+import { PURCHASE_ORDER_BLOCKS } from '@/lib/stationery/defaults/purchaseOrderBlocks'
+import { serialiseSpec } from '@/lib/stationery/blocks'
+import { supportsBlocks } from '@/lib/stationery/compile'
 import { logoFileName } from '@/lib/site/documentLogo'
 import StationeryClient from './StationeryClient'
 
@@ -41,6 +44,13 @@ export default async function StationerySetupPage() {
       label: d.label,
       medium: d.medium,
       defaultBody: DEFAULT_TEMPLATES[d.key] ?? '',
+      // Only where a block default exists; a document the visual editor cannot
+      // express must not offer it, or a shop would switch and lose part of
+      // their paperwork.
+      defaultSpec:
+        supportsBlocks(d.key) && d.key === 'purchase_order'
+          ? serialiseSpec(PURCHASE_ORDER_BLOCKS)
+          : undefined,
       tokens: tokensFor(def, capabilities).map((t) => ({
         key: t.key,
         label: t.label,
@@ -69,6 +79,7 @@ export default async function StationerySetupPage() {
             body: t.body,
             draftBody: t.draftBody,
             isActive: t.isActive,
+            format: t.format,
           }))}
         />
       </PageBody>
