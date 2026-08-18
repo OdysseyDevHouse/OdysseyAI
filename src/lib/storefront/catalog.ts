@@ -169,9 +169,29 @@ export const VIDEO_PROVIDERS = ['youtube', 'vimeo'] as const
  * symptom is an unsaved-changes badge that no amount of saving clears.
  * Declaring the order is what makes that impossible to get wrong by hand.
  */
+/**
+ * How a field is presented, when the generic inspector draws it.
+ *
+ * Optional throughout. A field is first a WRITE rule: several kinds keep a
+ * hand-written inspector because their controls depend on each other, on the
+ * page kind, or on live data, and those still declare their coercion here
+ * without inventing a label for a control this file never draws.
+ */
+export type FieldUi = {
+  label: string
+  hint?: string
+  placeholder?: string
+  /** Textarea rows. Present means "draw a textarea", absent means a single line. */
+  rows?: number
+  /** For a choice: the words an owner reads, in the order they are offered. */
+  options?: readonly { value: string; label: string }[]
+  /** Narrow control, for a number nobody types four digits into. */
+  narrow?: boolean
+}
+
 export type SectionField =
   /** Plain text, truncated. */
-  | { key: FieldKey; type: 'text'; max: number }
+  | { key: FieldKey; type: 'text'; max: number; ui?: FieldUi }
   /**
    * A URL an owner typed, through `safeLinkTarget`.
    *
@@ -180,9 +200,9 @@ export type SectionField =
    * right twice and wrong the third time is exactly what a declared type
    * prevents.
    */
-  | { key: FieldKey; type: 'link'; max: number }
+  | { key: FieldKey; type: 'link'; max: number; ui?: FieldUi }
   /** A whole number, clamped into range. Junk becomes the fallback. */
-  | { key: FieldKey; type: 'int'; min: number; max: number; fallback: number }
+  | { key: FieldKey; type: 'int'; min: number; max: number; fallback: number; ui?: FieldUi }
   /**
    * A reference to a row elsewhere — a picture, a department, a special.
    *
@@ -190,31 +210,31 @@ export type SectionField =
    * and -5 into id 1, inventing a reference to a real row nobody chose. An
    * id is an identity, not a quantity.
    */
-  | { key: FieldKey; type: 'ref' }
+  | { key: FieldKey; type: 'ref'; ui?: FieldUi }
   /** One of a fixed set of words. Anything else becomes the fallback. */
-  | { key: FieldKey; type: 'choice'; of: readonly string[]; fallback: string }
+  | { key: FieldKey; type: 'choice'; of: readonly string[]; fallback: string; ui?: FieldUi }
   /**
    * Like `choice`, but null is a real answer rather than a failure.
    *
    * A product row’s layout is the case: null means "follow the shop", so an
    * unrecognised value must become null and not a grid the owner never chose.
    */
-  | { key: FieldKey; type: 'choiceOrNull'; of: readonly string[] }
+  | { key: FieldKey; type: 'choiceOrNull'; of: readonly string[]; ui?: FieldUi }
   /** A wall-clock date, YYYY-MM-DD. Junk becomes ‘’ — no bound. */
-  | { key: FieldKey; type: 'date' }
+  | { key: FieldKey; type: 'date'; ui?: FieldUi }
   /** A wall-clock moment, YYYY-MM-DDTHH:mm. Junk becomes ‘’ — no deadline. */
-  | { key: FieldKey; type: 'dateTime' }
+  | { key: FieldKey; type: 'dateTime'; ui?: FieldUi }
   /** Text that falls back to a default rather than to ‘’ when blank. */
-  | { key: FieldKey; type: 'textOrDefault'; max: number; fallback: string }
+  | { key: FieldKey; type: 'textOrDefault'; max: number; fallback: string; ui?: FieldUi }
   /** A list of row ids, de-duplicated, junk dropped rather than clamped. */
-  | { key: FieldKey; type: 'refList'; max: number }
+  | { key: FieldKey; type: 'refList'; max: number; ui?: FieldUi }
   /**
    * A URL that is by definition off-site, through `safeUrl`.
    *
    * Distinct from `link`: directions go to a mapping service, so a relative
    * path here would be a link to a page of the shop that does not exist.
    */
-  | { key: FieldKey; type: 'url'; max: number }
+  | { key: FieldKey; type: 'url'; max: number; ui?: FieldUi }
   /**
    * An id, reduced to the characters an id can contain.
    *
@@ -224,7 +244,7 @@ export type SectionField =
    * reduced to its id by the inspector before it reaches here; anything still
    * carrying a slash at this point is not an id.
    */
-  | { key: FieldKey; type: 'idChars'; max: number }
+  | { key: FieldKey; type: 'idChars'; max: number; ui?: FieldUi }
 
 /** A key on HomeSection. Typed so a field cannot name one that does not exist. */
 export type FieldKey = keyof HomeSection
@@ -615,8 +635,29 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: '', ...BASE, text: '', align: 'left' }),
     isEmpty: (f) => !(f.section.text?.trim() ?? '') && !f.section.title,
     fields: [
-      { key: 'text', type: 'text', max: MAX_SECTION_TEXT },
-      { key: 'align', type: 'choice', of: TEXT_ALIGNS, fallback: 'left' },
+      {
+        key: 'text',
+        type: 'text',
+        max: MAX_SECTION_TEXT,
+        ui: {
+          label: 'What it says',
+          rows: 6,
+          placeholder: 'Deliveries go out on Tuesdays and Fridays.',
+        },
+      },
+      {
+        key: 'align',
+        type: 'choice',
+        of: TEXT_ALIGNS,
+        fallback: 'left',
+        ui: {
+          label: 'Line it up',
+          options: [
+            { value: 'left', label: 'Left' },
+            { value: 'center', label: 'Centred' },
+          ],
+        },
+      },
     ],
   },
   richtext: {
@@ -733,7 +774,22 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: '', ...BASE, size: 'medium' }),
     // As above: the gap is the point.
     isEmpty: () => false,
-    fields: [{ key: 'size', type: 'choice', of: SPACE_SIZES, fallback: 'medium' }],
+    fields: [
+      {
+        key: 'size',
+        type: 'choice',
+        of: SPACE_SIZES,
+        fallback: 'medium',
+        ui: {
+          label: 'How much room',
+          options: [
+            { value: 'small', label: 'A little' },
+            { value: 'medium', label: 'Some' },
+            { value: 'large', label: 'A lot' },
+          ],
+        },
+      },
+    ],
   },
 }
 

@@ -106,6 +106,7 @@ import ProductPicker from './ProductPicker'
 import Outline from './Outline'
 import SectionPalette, { PALETTE_PREFIX, paletteKind } from './SectionPalette'
 import { SECTION_CATALOG } from '@/lib/storefront/catalog'
+import SectionFields from './SectionFields'
 import PicturePicker from '@/components/PicturePicker'
 import {
   deleteSavedSectionAction,
@@ -1665,6 +1666,18 @@ export default function Builder({
                   />
                 </div>
 
+                {/*
+                  The kinds whose controls are a plain list, drawn from the
+                  catalog. The panels below are the ones whose controls depend
+                  on each other, on the page kind or on live data — see
+                  SectionFields on why those are not worth describing in a table.
+                */}
+                <SectionFields
+                  def={SECTION_CATALOG[selected.kind]}
+                  section={selected}
+                  onPatch={(next) => patch(selected.id, next)}
+                />
+
                 {selected.kind === 'products' && (
                   <>
                     <Field
@@ -1865,35 +1878,6 @@ export default function Builder({
                       patch(selected.id, { autoplaySeconds })
                     }
                   />
-                )}
-
-                {selected.kind === 'text' && (
-                  <>
-                    <Field
-                      label="What it says"
-                      hint={`${(selected.text ?? '').length} of ${MAX_SECTION_TEXT} characters. Line breaks are kept.`}
-                    >
-                      <Textarea
-                        value={selected.text ?? ''}
-                        rows={6}
-                        maxLength={MAX_SECTION_TEXT}
-                        placeholder="Deliveries go out on Tuesdays and Fridays."
-                        onChange={(e) => patch(selected.id, { text: e.target.value })}
-                      />
-                    </Field>
-
-                    <Field label="Line it up">
-                      <Select
-                        value={selected.align ?? 'left'}
-                        onChange={(e) =>
-                          patch(selected.id, { align: e.target.value as 'left' | 'center' })
-                        }
-                      >
-                        <option value="left">Left</option>
-                        <option value="center">Centred</option>
-                      </Select>
-                    </Field>
-                  </>
                 )}
 
                 {selected.kind === 'split' && (
@@ -2247,47 +2231,6 @@ export default function Builder({
                       </p>
                     )}
                   </>
-                )}
-
-                {selected.kind === 'map' && (
-                  <>
-                    <Field label="Your address" hint="Line breaks are kept.">
-                      <Textarea
-                        value={selected.addressText ?? ''}
-                        rows={4}
-                        maxLength={300}
-                        placeholder={'12 Main Road\nGreen Point\nCape Town 8005'}
-                        onChange={(e) => patch(selected.id, { addressText: e.target.value })}
-                      />
-                    </Field>
-
-                    <Field
-                      label="Link to directions"
-                      hint="Open your shop in Google Maps and paste the address bar here."
-                    >
-                      <Input
-                        value={selected.mapUrl ?? ''}
-                        maxLength={500}
-                        placeholder="https://maps.google.com/…"
-                        onChange={(e) => patch(selected.id, { mapUrl: e.target.value })}
-                      />
-                    </Field>
-                  </>
-                )}
-
-                {selected.kind === 'spacer' && (
-                  <Field label="How much room">
-                    <Select
-                      value={selected.size ?? 'medium'}
-                      onChange={(e) =>
-                        patch(selected.id, { size: e.target.value as 'small' | 'medium' | 'large' })
-                      }
-                    >
-                      <option value="small">A little</option>
-                      <option value="medium">Some</option>
-                      <option value="large">A lot</option>
-                    </Select>
-                  </Field>
                 )}
 
                 {selected.kind === 'divider' && (
