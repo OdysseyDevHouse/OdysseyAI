@@ -34,7 +34,7 @@ import {
 } from '@/lib/stationery/blocks'
 import { previewBlocksAction } from '../actions'
 import BlockPalette, { PALETTE_PREFIX, paletteKind } from './BlockPalette'
-import DocumentCanvas, { parseGap } from './DocumentCanvas'
+import DocumentCanvas, { GAP_PREFIX, parseGap } from './DocumentCanvas'
 import BlockInspector, { type TokenChoice } from './BlockInspector'
 
 /**
@@ -52,18 +52,49 @@ import BlockInspector, { type TokenChoice } from './BlockInspector'
  *   carries on. Without a fixed id the whole screen reports a hydration
  *   mismatch.
  *
- *   COLLISION PER DRAG SOURCE — `closestCorners` always returns something, so a
- *   palette tile carried back to the palette and released still "landed" on a
- *   far-away gap and got added anyway. A NEW block therefore uses
- *   `pointerWithin`, which can return nothing, so a drag can be abandoned.
- *
  *   A CHEAP OVERLAY — a label chip, never a clone of the block. Cloning a live
  *   preview of a line table every frame is what makes a canvas feel slow.
+ *
+ * Collision detection is the one thing this screen had to work out for itself,
+ * because it has NESTED drop targets where the builder has a flat list. See
+ * `collisionStrategy`.
  */
 
-/** Where a drag can be abandoned, and where it cannot. */
-const collisionStrategy: CollisionDetection = (args) =>
-  String(args.active.id).startsWith(PALETTE_PREFIX) ? pointerWithin(args) : closestCorners(args)
+/**
+ * Where a drag may land.
+ *
+ * ── ONLY GAPS ARE CANDIDATES ──────────────────────────────────────────────
+ *
+ * Blocks are registered as sortable so they can be PICKED UP, which also makes
+ * them collision candidates — and dnd-kit was offering them as drop targets.
+ * `handleEnd` ignores anything that is not a gap, so every one of those was a
+ * silent dead drop: the block lifted, the pointer sat on a neighbour, the
+ * release did nothing and the designer got no explanation.
+ *
+ * They also crowded out the real ones. Filtering to gaps makes every target
+ * dnd-kit names somewhere the block can actually go, which is what the
+ * announcements read out — so a screen-reader user is told the truth.
+ *
+ * Found by driving the drag and reading those announcements back, which named
+ * "the page" and "The items" as targets that could never accept a drop.
+ *
+ * ── AND A NEW BLOCK MUST STILL BE ABANDONABLE ─────────────────────────────
+ *
+ * `closestCorners` always returns something, so a palette tile carried back to
+ * the palette and released would still "land" on a far-away gap and be added
+ * anyway. A new block therefore uses `pointerWithin`, which can return nothing.
+ */
+const collisionStrategy: CollisionDetection = (args) => {
+  const gapsOnly = {
+    ...args,
+    droppableContainers: args.droppableContainers.filter((c) =>
+      String(c.id).startsWith(GAP_PREFIX),
+    ),
+  }
+  return String(args.active.id).startsWith(PALETTE_PREFIX)
+    ? pointerWithin(gapsOnly)
+    : closestCorners(gapsOnly)
+}
 
 const HISTORY_LIMIT = 50
 
@@ -289,6 +320,39 @@ export default function VisualDesigner({
     [spec, commit],
   )
 
+  /**
+   * Nudge a block one place inside whatever column it is in.
+   *
+   * The keyboard path, and the quiet everyday one — dragging is for taking a
+   * block somewhere else, this is for "not quite there". It stays WITHIN the
+   * column deliberately: a block stepping out of a cell on its own would be a
+   * surprise, and moving between columns is what dragging is for.
+   */
+  const nudge = useCallback(
+    (id: string, by: -1 | 1) => {
+      const found = locate(spec, id)
+      if (!found) return
+
+      const column =
+        found.cellId === null
+          ? spec.blocks
+          : (spec.blocks
+              .find(
+                (b) => b.kind === 'row' && (b.cells ?? []).some((c) => c.id === found.cellId),
+              )
+              ?.cells?.find((c) => c.id === found.cellId)?.blocks ?? [])
+
+      const from = column.findIndex((b) => b.id === id)
+      const to = from + by
+      if (from === -1 || to < 0 || to >= column.length) return
+
+      // moveTo takes a GAP index, which counts positions in the array as it is
+      // now — so stepping down is a gap two along, not one.
+      moveTo(id, found.cellId, by === 1 ? to + 1 : to)
+    },
+    [spec, moveTo],
+  )
+
   /* ── drag ──────────────────────────────────────────────────────────────── */
 
   function handleStart(e: DragStartEvent) {
@@ -424,6 +488,7 @@ export default function VisualDesigner({
               over={over}
               onSelect={setSelectedId}
               onRemove={remove}
+              onMove={nudge}
             />
           </CardBody>
         </Card>
@@ -446,9 +511,16 @@ function nameOf(id: string, blocks: DocumentSpec['blocks']): string {
   const kind = paletteKind(id)
   if (kind) return DOC_BLOCK_CATALOG[kind].label
   const gap = parseGap(id)
-  if (gap) return gap.cellId ? `a column, position ${gap.index + 1}` : `position ${gap.index + 1}`
+  if (gap) {
+    return gap.cellId
+      ? `a column, position ${gap.index + 1}`
+      : `position ${gap.index + 1} on the page`
+  }
   const block = blocks.find((b) => b.id === id)
-  return block ? DOC_BLOCK_CATALOG[block.kind].label : 'the page'
+  // Only reached for the thing being CARRIED, since collision now offers gaps
+  // alone. Naming a block here as a target would describe a drop that cannot
+  // happen.
+  return block ? DOC_BLOCK_CATALOG[block.kind].label : 'a block'
 }
 
 /**

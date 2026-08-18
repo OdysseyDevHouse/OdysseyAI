@@ -120,16 +120,23 @@ function CanvasBlock({
   html,
   selected,
   placing,
+  canMoveUp,
+  canMoveDown,
   onSelect,
   onRemove,
+  onMove,
   children,
 }: {
   block: DocBlock
   html: string
   selected: boolean
   placing: boolean
+  canMoveUp: boolean
+  canMoveDown: boolean
   onSelect: () => void
   onRemove: () => void
+  /** Step it one place within whatever column it is in. */
+  onMove: (by: -1 | 1) => void
   /** A row draws its cells here instead of rendered markup. */
   children?: React.ReactNode
 }) {
@@ -195,12 +202,47 @@ function CanvasBlock({
             {...listeners}
             role="button"
             tabIndex={0}
-            aria-label={`Move ${def.label}`}
+            aria-label={`Drag ${def.label}`}
             className="cursor-grab px-0.5 text-faint hover:text-muted"
             data-kit-ok
           >
             <Icons.DragHandle aria-hidden className="h-3.5 w-3.5" />
           </span>
+
+          {/*
+           * Up and down, beside the drag handle.
+           *
+           * Not a duplicate control: dragging is for moving a block somewhere
+           * else, and these are for nudging it one place. They are also the
+           * KEYBOARD path — dnd-kit's keyboard sensor re-runs collision
+           * detection from wherever its coordinate getter puts the drag, which
+           * in a page of side-by-side cells means it wanders rather than
+           * stepping. Measured: five presses of Down left the overlay's `top`
+           * unchanged while it oscillated between two cells.
+           *
+           * The repo has made this call before — setup/tender-types and the
+           * slip editor both use buttons over drag for the same reason.
+           */}
+          <Button
+            size="sm"
+            variant="ghost"
+            iconOnly
+            aria-label={`Move ${def.label} up`}
+            disabled={!canMoveUp}
+            onClick={() => onMove(-1)}
+          >
+            <Icons.ChevronUp aria-hidden className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            iconOnly
+            aria-label={`Move ${def.label} down`}
+            disabled={!canMoveDown}
+            onClick={() => onMove(1)}
+          >
+            <Icons.ChevronDown aria-hidden className="h-3.5 w-3.5" />
+          </Button>
           {/* A row's label is also how you select it, since its body belongs to
               its cells. */}
           <button
@@ -246,6 +288,7 @@ function BlockColumn({
   over,
   onSelect,
   onRemove,
+  onMove,
   renderRow,
 }: {
   blocks: DocBlock[]
@@ -257,6 +300,7 @@ function BlockColumn({
   over: string | null
   onSelect: (id: string) => void
   onRemove: (id: string) => void
+  onMove: (id: string, by: -1 | 1) => void
   /** Only the page draws rows; a cell cannot contain one. */
   renderRow?: (block: DocBlock) => React.ReactNode
 }) {
@@ -276,8 +320,11 @@ function BlockColumn({
             html={blockHtml[b.id] ?? ''}
             selected={selectedId === b.id}
             placing={placing}
+            canMoveUp={i > 0}
+            canMoveDown={i < blocks.length - 1}
             onSelect={() => onSelect(b.id)}
             onRemove={() => onRemove(b.id)}
+            onMove={(by) => onMove(b.id, by)}
           >
             {b.kind === 'row' ? renderRow?.(b) : undefined}
           </CanvasBlock>
@@ -297,6 +344,7 @@ export default function DocumentCanvas({
   over,
   onSelect,
   onRemove,
+  onMove,
 }: {
   spec: DocumentSpec
   /** The server's render of each block, by block id. */
@@ -308,6 +356,7 @@ export default function DocumentCanvas({
   over: string | null
   onSelect: (id: string) => void
   onRemove: (id: string) => void
+  onMove: (id: string, by: -1 | 1) => void
 }) {
   /*
    * Every block id, page and cells alike, in one SortableContext.
@@ -340,6 +389,7 @@ export default function DocumentCanvas({
               over={over}
               onSelect={onSelect}
               onRemove={onRemove}
+              onMove={onMove}
             />
           </div>
         ))}
@@ -362,6 +412,7 @@ export default function DocumentCanvas({
           over={over}
           onSelect={onSelect}
           onRemove={onRemove}
+          onMove={onMove}
           renderRow={renderRow}
         />
       </div>
