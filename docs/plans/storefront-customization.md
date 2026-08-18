@@ -155,7 +155,7 @@ short pages and behind every overscroll; and an import landed above the
 
 ---
 
-## Phase 2 — Listing pages that can show a department
+## Phase 2 — Listing pages that can show a department ✅ DONE
 
 ### Done: paging, sorting, and an honest count ✅
 
@@ -207,16 +207,42 @@ like. Saving 2 columns and reading back 3 looks like a caching bug and is a
 schema one. 186 collapses the duplicates and switches to 0 as the sentinel,
 safe because `departments.id` is AUTO_INCREMENT and never 0.
 
-### Remaining: product badges
+### Done: product badges ✅
 
-Two sources, one renderer. **Rule badges** on the shop default row ("added in
-the last N days", "top N sellers", "stock ≤ N"), each with a merchant-chosen
-label and an existing `Badge` tone. **Manual badges** — `online_badge` and
-`online_badge_tone` on `products` — because no rule infers "Halaal" or "Made
-here". Cap at two per tile. `badgesFor(product, rules)` stays a pure function in
-the model so the builder canvas shows what the shop shows.
+> **Shipped.** `sql/site/187_listing_badge_rules.sql` applied to both sites.
+> Rules on the shop's preset row, hand-written badges on `products`, both
+> combined by `badgesFor`, and a panel on `/online-store/listing`.
+
+Two kinds, because they answer different questions. **Rule badges** are true of
+a product for a while and then stop being true — "New", "Best seller", "Almost
+gone" — which is exactly the kind nobody remembers to take off by hand.
+**Hand-written badges** are true regardless: no rule infers "Halaal" or "Made
+here", and there was nowhere on a product to say them.
+
+An empty label is the off switch, not a tick box beside each rule. A rule with
+nothing to say cannot draw anything, so "off" and "blank" are one state rather
+than two controls that can disagree about whether a badge shows. Every rule
+ships off, so a shop that never opens the screen renders what it renders today.
+
+Shop-wide only, read from the default preset row. "New" meaning thirty days in
+one aisle and seven in another is not a distinction a shopper can perceive, and
+it is how a shop ends up with badges that contradict each other.
+
+Capped at two per tile, rules before the hand-written one — a rule badge is
+about the moment, and that is the one a shopper acts on. A product that is new
+AND nearly out AND hand-labelled is not unusual.
+
+`bestSellerIds` returns ids rather than products: the caller already has the
+products and only needs to know which of them wear the badge.
+
+**The bug worth recording.** Extending the SELECTs with the badge columns also
+rewrote the listing INSERT's column list without its VALUES, so every listing
+save failed on a column count. A search-and-replace across a file holding both
+a SELECT list and an INSERT list will hit both — the suite caught it in one
+run, and reading the diff would not have.
 
 ---
+
 
 ## Phase 3 — Per-section styling and a columns block
 
