@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { requireCapability, requireSite, requireActor } from '@/lib/auth'
 import { getPurchaseDocument, purchaseAudit, recordOrderPrint } from '@/lib/site/purchaseDocuments'
 import { getSupplier } from '@/lib/site/suppliers'
-import { activeTemplateBody } from '@/lib/site/stationeryTemplates'
+import { activeTemplate } from '@/lib/site/stationeryTemplates'
 import { logoImgTag } from '@/lib/site/documentLogo'
 import { purchaseOrderTokens } from '@/lib/stationery/adapters/purchaseOrder'
 import { renderTemplate } from '@/lib/stationery/render'
@@ -45,7 +45,7 @@ export default async function PurchaseOrderPrintPage({
     purchaseAudit(siteId, id),
     // Never throws: a site with no designed stationery, or without the table
     // yet, gets null and prints the shipped default.
-    activeTemplateBody(siteId, 'purchase_order'),
+    activeTemplate(siteId, 'purchase_order'),
     logoImgTag(siteId),
   ])
 
@@ -101,7 +101,7 @@ export default async function PurchaseOrderPrintPage({
    * print for whoever holds products.cost and are silently blank for everyone
    * else, so one template serves the buyer and the counter alike.
    */
-  const template = resolveTemplate('purchase_order', custom)
+  const template = resolveTemplate('purchase_order', custom?.body ?? null, custom?.format)
   const input = purchaseOrderTokens({
     doc,
     site: {

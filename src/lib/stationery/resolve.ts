@@ -2,6 +2,8 @@ import { PURCHASE_ORDER_DEFAULT } from './defaults/purchaseOrder'
 import { INVOICE_DEFAULT } from './defaults/invoice'
 import { SLIP_DEFAULT, serialiseSlip } from './slip'
 import { validateTemplate } from './validate'
+import { parseSpec } from './blocks'
+import { compileDocument } from './compile'
 
 /**
  * Which template a document actually prints from.
@@ -42,10 +44,37 @@ export type Resolved = {
   rejected?: string
 }
 
-export function resolveTemplate(docTypeKey: string, custom: string | null): Resolved {
+/**
+ * How the stored body is written. Absent means markup, which is what every row
+ * predating the visual designer holds.
+ */
+export type StoredFormat = 'html' | 'blocks' | 'slip'
+
+export function resolveTemplate(
+  docTypeKey: string,
+  custom: string | null,
+  format: StoredFormat = 'html',
+): Resolved {
   const fallback = DEFAULT_TEMPLATES[docTypeKey] ?? ''
 
   if (!custom || custom.trim() === '') return { body: fallback, source: 'default' }
+
+  /*
+   * A block document is JSON, so it becomes markup here — before validation,
+   * because what must be checked is what will PRINT.
+   *
+   * A spec that no longer parses falls back rather than throwing: the visual
+   * designer's whole promise is that a stored design keeps working, and a
+   * document that will not print is worse than one that prints plainly.
+   */
+  if (format === 'blocks') {
+    const spec = parseSpec(custom, docTypeKey)
+    if (!spec) {
+      return { body: fallback, source: 'default', rejected: 'That design could not be read.' }
+    }
+    custom = compileDocument(spec, docTypeKey)
+    if (custom.trim() === '') return { body: fallback, source: 'default' }
+  }
 
   const check = validateTemplate(docTypeKey, custom)
   if (!check.ok) {

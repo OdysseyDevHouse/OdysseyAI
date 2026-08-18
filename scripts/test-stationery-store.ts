@@ -21,12 +21,16 @@ import {
   listTemplates,
   getTemplate,
   activeTemplateBody,
+  activeTemplate,
   resetToDefault,
   deleteTemplate,
   discardDraft,
 } from '../src/lib/site/stationeryTemplates'
 import { siteExecute, siteQueryOne } from '../src/lib/siteDb'
 import { PURCHASE_ORDER_DEFAULT } from '../src/lib/stationery/defaults/purchaseOrder'
+import { PURCHASE_ORDER_BLOCKS } from '../src/lib/stationery/defaults/purchaseOrderBlocks'
+import { serialiseSpec, type DocumentSpec } from '../src/lib/stationery/blocks'
+import { resolveTemplate } from '../src/lib/stationery/resolve'
 import type { RowDataPacket } from 'mysql2'
 
 const SITE = Number(process.env.TEST_SITE_ID || 1)
@@ -173,6 +177,66 @@ async function main() {
 
     await deleteTemplate(SITE, a.id)
     ok('a template can be deleted', (await getTemplate(SITE, a.id)) === null)
+
+    /* ── a block design, end to end ─────────────────────────────────────── */
+
+    /*
+     * The visual designer stores JSON where the HTML editor stores markup, so
+     * every step between save and paper has to know the difference. This is the
+     * whole path: saved, stored as a spec, activated, read back with its format,
+     * and compiled to the markup the print route renders.
+     */
+    const designed: DocumentSpec = {
+      version: 1,
+      blocks: PURCHASE_ORDER_BLOCKS.blocks.map((bl) =>
+        bl.kind === 'lineTable'
+          ? {
+              ...bl,
+              columns: bl
+                .columns!.filter((c) => c.token !== 'line.unitCostExcl')
+                .map((c) => (c.token === 'line.totalExcl' ? { ...c, heading: 'Amount' } : c)),
+            }
+          : bl,
+      ),
+    }
+
+    const blocksSaved = await saveTemplate(
+      SITE,
+      {
+        docType: 'purchase_order',
+        name: `${MARK} blocks`,
+        body: serialiseSpec(designed),
+        format: 'blocks',
+      },
+      ACTOR,
+    )
+    ok('a block design saves', blocksSaved.ok, JSON.stringify(blocksSaved))
+
+    if (blocksSaved.ok) {
+      const stored = await getTemplate(SITE, blocksSaved.id)
+      ok('...stored as a spec, not mangled through the markup sanitiser',
+        stored?.format === 'blocks' && stored.body.startsWith('{'))
+
+      const activated = await setActive(SITE, blocksSaved.id)
+      ok('...and can be made the one that prints', activated.ok, JSON.stringify(activated))
+
+      const active = await activeTemplate(SITE, 'purchase_order')
+      ok('the print path reads its format back', active?.format === 'blocks')
+
+      const resolved = resolveTemplate('purchase_order', active?.body ?? null, active?.format)
+      ok('...and resolves it as the site’s own design',
+        resolved.source === 'custom', resolved.rejected ?? '')
+      ok('...compiled to markup, not served as JSON', resolved.body.includes('<article'))
+      ok('the column removed in the designer is not in what prints',
+        !resolved.body.includes('line.unitCostExcl'))
+      ok('the renamed heading is', resolved.body.includes('Amount'))
+
+      // A body that is not a readable spec must fall back rather than print
+      // JSON at a supplier — written past saveTemplate to simulate a row from
+      // a later version this build cannot read.
+      const broken = resolveTemplate('purchase_order', '{"version":1,"blocks":"not-an-array"}', 'blocks')
+      ok('an unreadable spec falls back to the shipped design', broken.source === 'default')
+    }
   }
 }
 

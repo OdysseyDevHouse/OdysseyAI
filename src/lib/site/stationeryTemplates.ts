@@ -5,6 +5,8 @@ import { sanitiseTemplate } from '../stationery/sanitise'
 import { validateTemplate, summarise } from '../stationery/validate'
 import { isDocType, getDocType } from '../stationery/catalog'
 import { parseSlip, validateSlip, serialiseSlip } from '../stationery/slip'
+import { parseSpec, validateSpec, serialiseSpec } from '../stationery/blocks'
+import { compileDocument } from '../stationery/compile'
 
 /**
  * Reading and writing a site's designed stationery.
@@ -35,7 +37,7 @@ export type StationeryTemplate = {
   id: number
   docType: string
   name: string
-  format: 'html' | 'slip'
+  format: 'html' | 'slip' | 'blocks'
   body: string
   /** Work in progress. Null when there is nothing unpublished. */
   draftBody: string | null
@@ -69,7 +71,8 @@ function mapRow(r: Record<string, unknown>): StationeryTemplate {
     id: Number(r.id),
     docType: String(r.doc_type),
     name: String(r.name),
-    format: r.format === 'slip' ? 'slip' : 'html',
+    // A format this build does not know reads as markup — the historical shape.
+    format: r.format === 'slip' ? 'slip' : r.format === 'blocks' ? 'blocks' : 'html',
     body: String(r.body ?? ''),
     draftBody: r.draft_body === null || r.draft_body === undefined ? null : String(r.draft_body),
     isActive: Number(r.is_active) === 1,
@@ -107,6 +110,50 @@ export async function activeTemplateBody(
     )
     const body = row ? String((row as Record<string, unknown>).body ?? '') : ''
     return body.trim() === '' ? null : body
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The active template WITH how it is written.
+ *
+ * A print route needs both: a `blocks` body is JSON that must be compiled
+ * before it means anything, and reading one as markup would put a page of
+ * escaped braces in front of a supplier.
+ *
+ * `activeTemplateBody` stays as the body-only reader for callers that predate
+ * the visual designer, so nothing had to change to keep working.
+ *
+ * Never throws, same as the body-only version: a print route calling this is
+ * about to put paper in front of somebody.
+ */
+export async function activeTemplate(
+  siteId: number,
+  docType: string,
+): Promise<{ body: string; format: 'html' | 'slip' | 'blocks' } | null> {
+  try {
+    if (!isDocType(docType)) return null
+    if (!(await tableExists(siteId))) return null
+
+    const row = await siteQueryOne<RowDataPacket>(
+      siteId,
+      `SELECT body, format FROM stationery_templates
+        WHERE doc_type = ? AND is_active = 1
+        ORDER BY updated_at DESC, id DESC LIMIT 1`,
+      [docType],
+    )
+    if (!row) return null
+
+    const r = row as Record<string, unknown>
+    const body = String(r.body ?? '')
+    if (body.trim() === '') return null
+
+    const raw = String(r.format ?? 'html')
+    // A format this build does not know is read as markup — the historical
+    // shape, and the one that degrades to a visible page rather than to JSON.
+    const format = raw === 'slip' || raw === 'blocks' ? raw : 'html'
+    return { body, format }
   } catch {
     return null
   }
@@ -150,7 +197,7 @@ export type TemplateInput = {
   docType: string
   name: string
   body: string
-  format?: 'html' | 'slip'
+  format?: 'html' | 'slip' | 'blocks'
   /** Save as a draft rather than publishing over what currently prints. */
   asDraft?: boolean
 }
@@ -197,8 +244,19 @@ export async function saveTemplate(
   const doc = getDocType(input.docType)
   const isSlip = doc?.medium === 'slip'
 
+  /*
+   * The FORMAT decides the road, not the medium.
+   *
+   * A slip is always a block list. An A4 page is markup or blocks — same
+   * medium, different storage — so the caller says which, and only a slip is
+   * inferred. Keying this off `medium` would send every block document through
+   * the markup sanitiser, which would quietly mangle the JSON into something
+   * parseSpec could not read.
+   */
+  const format: 'html' | 'slip' | 'blocks' = isSlip ? 'slip' : (input.format ?? 'html')
+
   let clean: string
-  if (isSlip) {
+  if (format === 'slip') {
     const spec = parseSlip(input.body)
     if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
     const check = validateSlip(spec)
@@ -206,6 +264,25 @@ export async function saveTemplate(
     // Stored re-serialised, so what is on disk is what the parser accepted
     // rather than whatever the browser happened to send.
     clean = serialiseSlip(spec)
+  } else if (format === 'blocks') {
+    const spec = parseSpec(input.body, input.docType)
+    if (!spec) return { ok: false, error: 'That design cannot be read.' }
+
+    const structure = validateSpec(spec, input.docType)
+    if (!structure.ok) return { ok: false, error: structure.errors.join(' ') }
+
+    /*
+     * The legal check runs against the COMPILED markup, not the spec.
+     *
+     * One set of rules for both editors: a document designed by dragging must
+     * carry everything a typed one must, and the only honest way to know that
+     * is to ask the question of what will actually print.
+     */
+    const compiled = compileDocument(spec, input.docType)
+    const legal = validateTemplate(input.docType, compiled)
+    if (!legal.ok) return { ok: false, error: summarise(legal) }
+
+    clean = serialiseSpec(spec)
   } else {
     clean = sanitiseTemplate(input.body)
     if (clean.trim() === '') return { ok: false, error: 'The template is empty.' }
@@ -213,8 +290,6 @@ export async function saveTemplate(
     const check = validateTemplate(input.docType, clean)
     if (!check.ok) return { ok: false, error: summarise(check) }
   }
-
-  const format = input.format ?? (isSlip ? 'slip' : 'html')
 
   if (id) {
     // A draft edit leaves what prints alone; a publish replaces it and clears
@@ -278,6 +353,14 @@ export async function setActive(siteId: number, id: number): Promise<SaveResult>
     if (!spec) return { ok: false, error: 'That slip design can no longer be read.' }
     const check = validateSlip(spec)
     if (!check.ok) return { ok: false, error: check.errors.join(' ') }
+  } else if (tpl.format === 'blocks') {
+    const spec = parseSpec(tpl.body, tpl.docType)
+    if (!spec) return { ok: false, error: 'That design can no longer be read.' }
+    const structure = validateSpec(spec, tpl.docType)
+    if (!structure.ok) return { ok: false, error: structure.errors.join(' ') }
+    // Against what will print, for the same reason as at save.
+    const legal = validateTemplate(tpl.docType, compileDocument(spec, tpl.docType))
+    if (!legal.ok) return { ok: false, error: summarise(legal) }
   } else {
     const check = validateTemplate(tpl.docType, tpl.body)
     if (!check.ok) return { ok: false, error: summarise(check) }

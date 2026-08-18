@@ -1,0 +1,38 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- A third way to design a document: BLOCKS.
+--
+-- 181 gave a template two shapes — 'html' for an A4 page written as markup,
+-- 'slip' for the 80mm roll written as an ordered block list. This adds 'blocks'
+-- for an A4 page that is ALSO an ordered block list, which is what the visual
+-- designer edits: drag the logo to the other side, untick the discount column,
+-- rename a heading.
+--
+-- ── WHY A NEW FILE RATHER THAN EDITING 181 ───────────────────────────────
+--
+-- The migration runner records applied files BY NAME. Editing 181 in place
+-- would change nothing on any site that already ran it — including the two this
+-- feature was built against — while looking in the diff exactly like it worked.
+--
+-- ── WHY NOT A SEPARATE TABLE ─────────────────────────────────────────────
+--
+-- A block document and a markup document are the same THING: a design for one
+-- document type, one of which prints, with a draft beside it. Everything that
+-- reads stationery_templates — activeTemplateBody, the active-per-doc-type
+-- invariant, draft/publish, the designer's list — would need a second
+-- implementation for a second table, and the two would drift.
+--
+-- What differs is only how `body` is READ, and `format` already exists to say
+-- so. A 'blocks' row stores its DocumentSpec as JSON, exactly as a 'slip' does.
+--
+-- ── THE BODY IS STILL RE-VALIDATED ON EVERY READ ─────────────────────────
+--
+-- Unchanged from 181 and for the same reason: a spec outlives the catalog that
+-- produced it. parseSpec drops a block kind this build no longer knows and a
+-- column naming a field that has gone, so a design written by a later version
+-- costs a block rather than the whole document. What resolves is then COMPILED
+-- to markup and passed through the same sanitiser and legal validator a
+-- hand-written template gets — a document designed by dragging cannot escape
+-- what a typed one must carry.
+
+ALTER TABLE stationery_templates
+  MODIFY format ENUM('html','slip','blocks') NOT NULL DEFAULT 'html';
