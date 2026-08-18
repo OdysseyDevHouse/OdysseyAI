@@ -179,6 +179,7 @@
     "test:billing-itn-route": "tsx --conditions=react-server --env-file=.env scripts/test-billing-itn-route.ts",
     "test:builder": "tsx --conditions=react-server --env-file=.env scripts/test-builder.ts",
     "test:storefront-theme": "tsx --conditions=react-server scripts/test-storefront-theme.ts",
+    "test:listing-presets": "tsx --conditions=react-server --env-file=.env scripts/test-listing-presets.ts",
     "test:builder-ui": "node --env-file=.env scripts/test-builder-ui.mjs",
     "test:report-templates": "tsx --conditions=react-server --env-file=.env scripts/test-report-templates.ts",
     "test:product-images": "tsx --conditions=react-server --env-file=.env scripts/test-product-images.ts",

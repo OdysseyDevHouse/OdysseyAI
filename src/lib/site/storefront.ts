@@ -425,18 +425,13 @@ export async function storefrontContext(
 }
 
 /**
- * How a listing is ordered.
- *
- * ── A FIXED SET, MAPPED TO LITERAL SQL ───────────────────────────────────
- *
- * The value arrives from a query string, and the thing it decides is an
- * ORDER BY. Those two facts together are why this is a union mapped through
- * a literal record and never a string reaching the query: a sort parameter
- * is the classic place an injection gets in, and a fixed vocabulary makes
- * one unrepresentable rather than something to escape.
+ * The sort vocabulary lives in storefront/sorts.ts, which is client-safe — the
+ * chips a shopper picks from and the admin screen both need it, and this file
+ * is server-only. Re-exported here so callers that already import from the
+ * query layer keep working.
  */
-export const CATALOGUE_SORTS = ['name', 'priceAsc', 'priceDesc', 'newest'] as const
-export type CatalogueSort = (typeof CATALOGUE_SORTS)[number]
+export { CATALOGUE_SORTS, safeSort, type CatalogueSort } from '../storefront/sorts'
+import type { CatalogueSort } from '../storefront/sorts'
 
 /**
  * Each sort's ORDER BY, written out here and never built.
@@ -455,11 +450,6 @@ const SORT_SQL: Record<CatalogueSort, string> = {
   newest: 'p.id DESC',
 }
 
-/** Anything else — a stale link, a typo, a probe — reads as the default. */
-export function safeSort(value: unknown): CatalogueSort {
-  const raw = String(value ?? '')
-  return (CATALOGUE_SORTS as readonly string[]).includes(raw) ? (raw as CatalogueSort) : 'name'
-}
 
 export type CatalogueOptions = {
   departmentId?: number

@@ -15,6 +15,12 @@ import {
   savingPercent,
   stockState,
 } from './ShopBits'
+import {
+  DEFAULT_LISTING,
+  gridClass,
+  type CardField,
+  type ListingPreset,
+} from '@/lib/storefront/listing'
 
 /**
  * How products are listed — everywhere.
@@ -51,6 +57,7 @@ export default function ProductGrid({
   showStock = false,
   showPhotos = true,
   showBrands = true,
+  listing,
   reviews,
 }: {
   token: string
@@ -61,8 +68,23 @@ export default function ProductGrid({
   showBrands?: boolean
   /** Star ratings by product id. Absent means this listing shows no stars. */
   reviews?: Map<number, ReviewSummary>
+  /**
+   * How this listing is configured — columns, and which parts of a tile draw.
+   *
+   * Optional, because four listings render through this component and only the
+   * department page has a preset to hand: a product row inside a built page is
+   * arranged by the builder, not by a department’s settings. Absent means the
+   * built-in default, which is what every listing did before this existed.
+   */
+  listing?: ListingPreset
 }) {
   const asGrid = layout === 'grid' && showPhotos
+
+  // One place that answers "what is configured here", so every branch below
+  // reads the same thing whether or not a preset was passed.
+  const settings = listing ?? DEFAULT_LISTING
+  const cols = { phone: settings.columnsPhone, desktop: settings.columnsDesktop }
+  const shows = (field: CardField) => settings.cardFields.includes(field)
 
   /*
    * ── SIBLINGS COLLAPSE INTO ONE TILE ─────────────────────────────────────
@@ -89,8 +111,16 @@ export default function ProductGrid({
      * silently fell back to viewport breakpoints in half its call sites would
      * be worse than one that never used them.
      */
+    /* Columns from the listing’s own settings, as a class string written out
+       rather than built — see gridClass on why an interpolated
+       `grid-cols-${n}` silently collapses to one column. */
     return (
-      <ul className="@container grid grid-cols-2 items-stretch gap-3 @sm:grid-cols-3 @lg:grid-cols-4 @xl:grid-cols-5">
+      <ul
+        className={`@container grid items-stretch gap-3 ${gridClass(
+          cols.phone,
+          cols.desktop,
+        )}`}
+      >
         {tiles.map((tile, i) => (
           <Tile
             key={tile.product.id}
@@ -101,6 +131,7 @@ export default function ProductGrid({
             fromPrice={tile.priceVaries ? tile.fromPriceIncl : null}
             showStock={showStock}
             showBrands={showBrands}
+            shows={shows}
             review={reviews?.get(tile.product.id)}
             // The first two are the phone's visible row, so they load eagerly
             // and everything below them waits until it is scrolled to.
@@ -121,6 +152,7 @@ export default function ProductGrid({
           title={tile.title}
           variantCount={tile.siblings.length}
           showStock={showStock}
+            shows={shows}
           showPhotos={showPhotos}
           review={reviews?.get(tile.product.id)}
         />
@@ -137,6 +169,7 @@ function Tile({
   fromPrice,
   showStock,
   showBrands,
+  shows,
   review,
   eager,
 }: {
@@ -150,6 +183,8 @@ function Tile({
   fromPrice: number | null
   showStock: boolean
   showBrands: boolean
+  /** Whether this listing draws a given part of the tile. */
+  shows: (field: CardField) => boolean
   review?: ReviewSummary
   eager: boolean
 }) {
@@ -199,18 +234,18 @@ function Tile({
           {/* Above the scrim too — "Sold out" must stay legible on the tile
               the scrim is dimming. */}
           <span className="absolute left-2 top-2 z-20 flex max-w-[calc(100%-1rem)] flex-col items-start gap-1">
-            {product.departmentName && (
+            {shows('department') && product.departmentName && (
               <span className="truncate rounded-control bg-surface/90 px-2 py-1 text-xs font-medium uppercase tracking-wide text-ink backdrop-blur-sm">
                 {product.departmentName}
               </span>
             )}
-            {saving !== null && <Badge tone="danger">Save {saving}%</Badge>}
-            <StockBadge product={product} showStock={showStock} />
+            {shows('saving') && saving !== null && <Badge tone="danger">Save {saving}%</Badge>}
+            {shows('stock') && <StockBadge product={product} showStock={showStock} />}
           </span>
         </span>
 
         <span className="block px-3 pt-3">
-          {showBrands && product.brand && (
+          {shows('brand') && showBrands && product.brand && (
             <span className="block truncate text-xs uppercase tracking-wide text-muted">
               {product.brand}
             </span>
@@ -226,10 +261,10 @@ function Tile({
               would need every sibling's price and stock in the listing, and
               the shopper still has to land on the product to see which size
               the photograph is of. */}
-          {variantCount > 1 && (
+          {shows('variants') && variantCount > 1 && (
             <span className="mt-1 block text-xs text-muted">{variantCount} options</span>
           )}
-          {review && review.count > 0 && (
+          {shows('rating') && review && review.count > 0 && (
             <span className="mt-1 block">
               <Stars value={review.average} count={review.count} />
             </span>
@@ -280,6 +315,7 @@ function Row({
   title,
   variantCount,
   showStock,
+  shows,
   showPhotos,
   review,
 }: {
@@ -288,6 +324,8 @@ function Row({
   title: string
   variantCount: number
   showStock: boolean
+  /** Whether this listing draws a given part of the row. */
+  shows: (field: CardField) => boolean
   showPhotos: boolean
   review?: ReviewSummary
 }) {
@@ -306,7 +344,7 @@ function Row({
           {/* One line, truncated — a row is scanned, not read. The grid tile
               clamps to two because it has the width for a second. */}
           <span className="block truncate text-sm font-medium text-ink">{title}</span>
-          {review && review.count > 0 && (
+          {shows('rating') && review && review.count > 0 && (
             <span className="mt-0.5 block">
               <Stars value={review.average} count={review.count} />
             </span>
@@ -321,7 +359,7 @@ function Row({
                 {formatMoney(product.wasPriceIncl)}
               </span>
             )}
-            <StockBadge product={product} showStock={showStock} />
+            {shows('stock') && <StockBadge product={product} showStock={showStock} />}
           </span>
         </span>
       </Link>

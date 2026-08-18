@@ -27,6 +27,7 @@ import PreviewBar from '../../PreviewBar'
 import CategoryBrowser from './CategoryBrowser'
 import FacetBar, { priceBands } from './FacetBar'
 import SortBar from './SortBar'
+import { listingPresetFor } from '@/lib/site/listingPresets'
 
 /**
  * One department.
@@ -45,17 +46,6 @@ import SortBar from './SortBar'
 
 export const dynamic = 'force-dynamic'
 
-/** Enough to browse without paging; far short of rendering a 900-product wall. */
-/**
- * Products per page.
- *
- * A PAGE size now, not a ceiling. This was 120 with a footnote telling the
- * shopper to search — which meant a department of 400 showed 120 of them,
- * alphabetically, with no way to reach the rest. 24 fills a grid evenly at
- * every column count the theme offers (2, 3, 4, 5 and 6 all divide it or
- * leave one short row), and the pager below reaches everything.
- */
-const PER_PAGE = 24
 
 async function resolve(token: string, departmentId: string) {
   const resolved = await resolveStorefront(token)
@@ -182,15 +172,24 @@ export default async function DepartmentPage({
    * gives for being links. A junk page number reads as page 1 instead of
    * throwing: these arrive from stale links and search-engine probes.
    */
-  const sort = safeSort(sortParam)
+  const listing = await listingPresetFor(context.catalogueSiteId, department.id)
+  const perPage = listing.perPage
+  /*
+   * The URL wins over the department’s default.
+   *
+   * A shopper who picked an order has said what they want; the default is
+   * what the aisle opens on. Reading the default LAST would silently ignore
+   * the chip they just pressed.
+   */
+  const sort = sortParam ? safeSort(sortParam) : listing.defaultSort
   const requested = Math.floor(Number(pageParam))
   const pageNumber = Number.isFinite(requested) && requested > 1 ? requested : 1
-  const offset = (pageNumber - 1) * PER_PAGE
+  const offset = (pageNumber - 1) * perPage
 
   const [products, total, layout, found2, facets] = await Promise.all([
     publishedProducts(context, {
       departmentId: department.id,
-      limit: PER_PAGE,
+      limit: perPage,
       offset,
       sort,
       brand: activeBrand || undefined,
@@ -222,7 +221,7 @@ export default async function DepartmentPage({
    * second URL for the same content, which is a duplicate a search engine
    * has to be told about.
    */
-  const lastPage = Math.max(1, Math.ceil(total / PER_PAGE))
+  const lastPage = Math.max(1, Math.ceil(total / perPage))
   if (pageNumber > lastPage) {
     const next = new URLSearchParams()
     for (const [key, value] of Object.entries({ q, brand, min, max, band, sort: sortParam })) {
@@ -342,7 +341,9 @@ export default async function DepartmentPage({
         token={token}
         departmentName={department.name}
         products={products}
-        layout={layout.theme.productLayout}
+        // The department’s own choice, which falls back to the shop’s.
+        layout={listing.layout}
+        listing={listing}
         showStock={context.settings.showStock}
         showPhotos={context.settings.showPhotos}
         showBrands={context.settings.showBrands}
@@ -351,7 +352,7 @@ export default async function DepartmentPage({
 
       <Pager
         page={pageNumber}
-        perPage={PER_PAGE}
+        perPage={perPage}
         total={total}
         basePath={`/store/${token}/c/${department.id}`}
         // Everything else the URL is carrying, so paging keeps the filters

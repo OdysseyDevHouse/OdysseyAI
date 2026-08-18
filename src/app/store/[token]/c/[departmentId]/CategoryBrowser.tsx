@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { Button, EmptyState, Icons, Input } from '@/components/ui'
 import type { StorefrontProduct } from '@/lib/site/storefront'
 import ProductGrid, { type ProductListLayout } from '../../ProductGrid'
+import type { ListingPreset } from '@/lib/storefront/listing'
 
 /**
  * Browsing one department.
@@ -21,6 +22,7 @@ export default function CategoryBrowser({
   departmentName,
   products,
   layout,
+  listing,
   showStock,
   showPhotos,
   showBrands,
@@ -30,6 +32,8 @@ export default function CategoryBrowser({
   departmentName: string
   products: StorefrontProduct[]
   layout: ProductListLayout
+  /** How this department’s listing is configured — columns, tile fields. */
+  listing: ListingPreset
   showStock: boolean
   showPhotos: boolean
   showBrands: boolean
@@ -91,6 +95,7 @@ export default function CategoryBrowser({
           />
         ) : (
           <ProductGrid
+            listing={listing}
             token={token}
             products={visible}
             layout={layout}
