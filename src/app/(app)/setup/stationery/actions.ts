@@ -13,7 +13,9 @@ import { isDocType } from '@/lib/stationery/catalog'
 import { sanitiseTemplate, unsupportedIn } from '@/lib/stationery/sanitise'
 import { validateTemplate } from '@/lib/stationery/validate'
 import { renderTemplate } from '@/lib/stationery/render'
-import { purchaseOrderPreview } from '@/lib/stationery/preview'
+import { purchaseOrderPreview, sampleReceipt } from '@/lib/stationery/preview'
+import { parseSlip, validateSlip } from '@/lib/stationery/slip'
+import { slipPreviewHtml } from '@/lib/stationery/slipHtml'
 import { setLogo, clearLogo } from '@/lib/site/documentLogo'
 
 /**
@@ -132,11 +134,33 @@ export async function previewTemplateAction(input: {
   if ('ok' in ctx) return ctx
 
   if (!isDocType(input.docType)) return { ok: false, error: 'Unknown document type.' }
+
+  const site = await requireSite()
+
+  /*
+   * A slip is previewed as the ROLL, not as a page: rendered from the block
+   * spec by the same component the print route uses, so what the designer sees
+   * is what comes out of the browser — and, through slipSpec.ts, what comes out
+   * of the thermal head.
+   */
+  if (input.docType === 'slip') {
+    const spec = parseSlip(input.body)
+    if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
+
+    const check = validateSlip(spec)
+    const receipt = sampleReceipt(site.displayName, site.vatNumber)
+
+    return {
+      ok: true,
+      html: slipPreviewHtml(spec, receipt),
+      label: 'A sample sale, on 80mm paper.',
+      warnings: check.errors,
+    }
+  }
+
   if (input.docType !== 'purchase_order') {
     return { ok: false, error: 'That document cannot be previewed yet.' }
   }
-
-  const site = await requireSite()
 
   // Cleaned first, then rendered — so the preview shows what would actually be
   // STORED, not what was typed. A designer whose <script> silently vanishes at

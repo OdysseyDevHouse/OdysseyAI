@@ -205,6 +205,7 @@
     "test:session-eviction": "node --env-file=.env --env-file=.env.local scripts/test-session-eviction.mjs",
     "test:pos-split": "tsx --conditions=react-server --env-file=.env scripts/test-pos-split.ts",
     "test:rich-paste": "tsx scripts/test-rich-paste.ts",
+    "test:slip-design": "tsx scripts/test-slip-design.ts",
     "test:stationery": "tsx scripts/test-stationery.ts",
     "test:stationery-store": "tsx --conditions=react-server --env-file=.env scripts/test-stationery-store.ts",
     "test:imports": "tsx --conditions=react-server --env-file=.env scripts/test-imports.ts",

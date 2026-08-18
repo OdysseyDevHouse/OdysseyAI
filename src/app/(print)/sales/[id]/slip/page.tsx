@@ -6,6 +6,9 @@ import { siteQuery, siteQueryOne } from '@/lib/siteDb'
 import { toNum } from '@/lib/decimals'
 import { receiptDataFor, type ReceiptTender } from '@/lib/receiptData'
 import { ReceiptSlip } from '@/components/pos/ReceiptSlip'
+import { slipPreviewHtml } from '@/lib/stationery/slipHtml'
+import { activeTemplateBody } from '@/lib/site/stationeryTemplates'
+import { parseSlip, validateSlip } from '@/lib/stationery/slip'
 import SlipPrintClient from './SlipPrintClient'
 
 export const dynamic = 'force-dynamic'
@@ -93,10 +96,28 @@ export default async function SlipPage({
     },
   )
 
+  /*
+   * A designed slip when the shop has one, the shipped layout otherwise.
+   *
+   * The SAME spec the thermal renderer walks, so the paper from the bridge and
+   * the paper from this page cannot disagree — the rule stated in
+   * lib/escpos/slips.ts. A design that no longer parses or validates falls back
+   * rather than failing: a slip that will not print is a queue at the counter.
+   */
+  const designJson = await activeTemplateBody(site.id, 'slip')
+  const design = designJson ? parseSlip(designJson) : null
+  const usable = design && validateSlip(design).ok ? design : null
+
   return (
     <div className="px-4 py-4">
       <SlipPrintClient documentId={doc.id} gift={gift === '1'} auto={auto === '1'} />
-      <ReceiptSlip receipt={receipt} />
+      {usable ? (
+        /* Composed by the same module the designer previews with, so the screen,
+           this page and the thermal roll are three views of one spec. */
+        <div dangerouslySetInnerHTML={{ __html: slipPreviewHtml(usable, receipt) }} />
+      ) : (
+        <ReceiptSlip receipt={receipt} />
+      )}
     </div>
   )
 }

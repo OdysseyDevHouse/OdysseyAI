@@ -3,7 +3,8 @@ import type { RowDataPacket } from 'mysql2'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { sanitiseTemplate } from '../stationery/sanitise'
 import { validateTemplate, summarise } from '../stationery/validate'
-import { isDocType } from '../stationery/catalog'
+import { isDocType, getDocType } from '../stationery/catalog'
+import { parseSlip, validateSlip, serialiseSlip } from '../stationery/slip'
 
 /**
  * Reading and writing a site's designed stationery.
@@ -187,13 +188,33 @@ export async function saveTemplate(
     }
   }
 
-  const clean = sanitiseTemplate(input.body)
-  if (clean.trim() === '') return { ok: false, error: 'The template is empty.' }
+  /*
+   * A slip is not markup, so it takes the other road entirely: no sanitiser
+   * (there is no HTML to clean — the body is JSON), and the block validator
+   * rather than the token one. Running sanitiseTemplate over a JSON spec would
+   * quietly mangle it into something parseSlip could not read.
+   */
+  const doc = getDocType(input.docType)
+  const isSlip = doc?.medium === 'slip'
 
-  const check = validateTemplate(input.docType, clean)
-  if (!check.ok) return { ok: false, error: summarise(check) }
+  let clean: string
+  if (isSlip) {
+    const spec = parseSlip(input.body)
+    if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
+    const check = validateSlip(spec)
+    if (!check.ok) return { ok: false, error: check.errors.join(' ') }
+    // Stored re-serialised, so what is on disk is what the parser accepted
+    // rather than whatever the browser happened to send.
+    clean = serialiseSlip(spec)
+  } else {
+    clean = sanitiseTemplate(input.body)
+    if (clean.trim() === '') return { ok: false, error: 'The template is empty.' }
 
-  const format = input.format ?? 'html'
+    const check = validateTemplate(input.docType, clean)
+    if (!check.ok) return { ok: false, error: summarise(check) }
+  }
+
+  const format = input.format ?? (isSlip ? 'slip' : 'html')
 
   if (id) {
     // A draft edit leaves what prints alone; a publish replaces it and clears
@@ -244,10 +265,23 @@ export async function setActive(siteId: number, id: number): Promise<SaveResult>
   const tpl = await getTemplate(siteId, id)
   if (!tpl) return { ok: false, error: 'That template no longer exists.' }
 
-  // Re-checked here and not only at save: this is the moment it starts
-  // printing, and the required set may have grown since it was written.
-  const check = validateTemplate(tpl.docType, tpl.body)
-  if (!check.ok) return { ok: false, error: summarise(check) }
+  /*
+   * Re-checked here and not only at save: this is the moment it starts
+   * printing, and the required set may have grown since it was written.
+   *
+   * Through whichever validator suits the medium — running the token validator
+   * over a slip's JSON would reject every slip ever designed, and running the
+   * block validator over markup would accept anything.
+   */
+  if (tpl.format === 'slip') {
+    const spec = parseSlip(tpl.body)
+    if (!spec) return { ok: false, error: 'That slip design can no longer be read.' }
+    const check = validateSlip(spec)
+    if (!check.ok) return { ok: false, error: check.errors.join(' ') }
+  } else {
+    const check = validateTemplate(tpl.docType, tpl.body)
+    if (!check.ok) return { ok: false, error: summarise(check) }
+  }
 
   await siteTransaction(siteId, async (tx) => {
     await tx.execute(

@@ -3,6 +3,8 @@
 import { bridgeConfig, printRaw } from '@/lib/printBridge'
 import { renderReceipt, renderKitchenTicket, type KitchenTicketData } from '@/lib/escpos/slips'
 import { EscPos } from '@/lib/escpos/encoder'
+import { renderSlipSpec } from '@/lib/escpos/slipSpec'
+import { parseSlip, validateSlip } from '@/lib/stationery/slip'
 import type { ReceiptData } from '@/lib/receiptData'
 
 /**
@@ -36,6 +38,30 @@ export async function kickDrawer(): Promise<void> {
   await printRaw('receipt', job).catch(() => {})
 }
 
+/**
+ * This site's designed slip, or null for the shipped layout.
+ *
+ * Cached for the life of the page: a till prints many slips a shift and the
+ * design changes about once a year, so re-asking on every print would be a
+ * round trip between a tender and paper for an answer that never moves.
+ *
+ * Every failure resolves to null and the shipped layout prints. A slip that
+ * will not come out because a settings lookup hiccupped is a queue at the
+ * counter, and the fallback is the exact slip this till printed last week.
+ */
+let slipDesign: string | null | undefined
+async function activeSlipDesign(): Promise<string | null> {
+  if (slipDesign !== undefined) return slipDesign
+  try {
+    const res = await fetch('/api/pos/slip-design')
+    const body = (await res.json()) as { design?: string | null }
+    slipDesign = body.design ?? null
+  } catch {
+    slipDesign = null
+  }
+  return slipDesign
+}
+
 /** Prints a slip through the bridge. The caller falls back to the browser. */
 export async function printSlipViaBridge(
   receipt: ReceiptData,
@@ -44,6 +70,20 @@ export async function printSlipViaBridge(
   if (!config || !config.receiptPrinter) {
     return { ok: false, error: 'No print bridge is set up on this machine.' }
   }
+
+  /*
+   * A designed slip, when the shop has one. parseSlip drops anything this
+   * build no longer understands and returns null if the JSON is unreadable, so
+   * a design written by a later version costs a block rather than the sale.
+   */
+  const design = await activeSlipDesign()
+  if (design) {
+    const spec = parseSlip(design)
+    if (spec && validateSlip(spec).ok) {
+      return printRaw('receipt', renderSlipSpec(spec, receipt, { columns: config.columns }))
+    }
+  }
+
   return printRaw('receipt', renderReceipt(receipt, { columns: config.columns }))
 }
 

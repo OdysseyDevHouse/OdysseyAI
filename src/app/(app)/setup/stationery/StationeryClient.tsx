@@ -25,6 +25,8 @@ import {
   uploadLogoAction,
   clearLogoAction,
 } from './actions'
+import SlipBlockEditor from './SlipBlockEditor'
+import { parseSlip, serialiseSlip } from '@/lib/stationery/slip'
 
 type TokenInfo = { key: string; label: string; hint: string; section: string | null }
 type DocInfo = {
@@ -263,6 +265,13 @@ export default function StationeryClient({
   }
 
   const blocking = warnings.filter((w) => /must show|must carry/i.test(w))
+
+  /* The slip's body is a JSON block spec rather than markup, so the editor
+     works on the parsed form and `body` stays the single source of truth. */
+  const slipSpec = useMemo(
+    () => (doc?.medium === 'slip' && body.trim() ? parseSlip(body) : null),
+    [doc?.medium, body],
+  )
 
   /* The stored name doubles as a cache-buster: the URL is constant per site, so
      without it a replaced logo would keep showing the old picture. */
@@ -503,19 +512,31 @@ export default function StationeryClient({
                   />
                 </Field>
 
-                <Field
-                  label="Layout"
-                  hint="HTML and CSS. Put a value on the page by writing its token in braces."
-                >
-                  <CodeArea
-                    rows={22}
-                    value={body}
-                    onChange={(e) => {
-                      setBody(e.target.value)
+                {/* A slip has no markup to edit — see lib/stationery/slip.ts
+                    for why its design is a block list instead. */}
+                {doc?.medium === 'slip' ? (
+                  <SlipBlockEditor
+                    spec={slipSpec ?? { version: 1, blocks: [] }}
+                    onChange={(next) => {
+                      setBody(serialiseSlip(next))
                       setDirty(true)
                     }}
                   />
-                </Field>
+                ) : (
+                  <Field
+                    label="Layout"
+                    hint="HTML and CSS. Put a value on the page by writing its token in braces."
+                  >
+                    <CodeArea
+                      rows={22}
+                      value={body}
+                      onChange={(e) => {
+                        setBody(e.target.value)
+                        setDirty(true)
+                      }}
+                    />
+                  </Field>
+                )}
 
                 {dirty && (
                   <p className="text-xs text-warning-ink">
@@ -549,19 +570,25 @@ export default function StationeryClient({
               </CardBody>
             </Card>
 
-            <Card>
-              <CardHeader
-                title="What you can put on the page"
-                description="Click to copy. Only fields you are allowed to see are listed."
-              />
-              {/* Scrolls inside itself. Forty-odd tokens is a legitimate list
-                  for a document this size, but letting it set the page height
-                  pushes the editor and the Save button off the bottom — which
-                  is the one thing on this screen that must always be reachable. */}
-              <CardBody className="max-h-[28rem] overflow-y-auto">
-                {doc && <TokenList doc={doc} onCopy={(k) => navigator.clipboard?.writeText(k)} />}
-              </CardBody>
-            </Card>
+            {/* Tokens are a markup idea. A slip is composed of blocks that
+                carry their own content, so there is nothing to list — and an
+                empty "what you can put on the page" card reads as a feature
+                that is broken rather than one that does not apply. */}
+            {doc && doc.medium !== 'slip' && (
+              <Card>
+                <CardHeader
+                  title="What you can put on the page"
+                  description="Click to copy. Only fields you are allowed to see are listed."
+                />
+                {/* Scrolls inside itself. Forty-odd tokens is a legitimate list
+                    for a document this size, but letting it set the page height
+                    pushes the editor and the Save button off the bottom — which
+                    is the one thing on this screen that must always be reachable. */}
+                <CardBody className="max-h-[28rem] overflow-y-auto">
+                  <TokenList doc={doc} onCopy={(k) => navigator.clipboard?.writeText(k)} />
+                </CardBody>
+              </Card>
+            )}
           </div>
         </div>
       )}

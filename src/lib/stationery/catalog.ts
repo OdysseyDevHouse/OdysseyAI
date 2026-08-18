@@ -262,7 +262,28 @@ const PURCHASE_ORDER: DocTypeDef = {
   ],
 }
 
-export const DOC_TYPES: readonly DocTypeDef[] = [PURCHASE_ORDER]
+/*
+ * The till slip.
+ *
+ * Present so the designer's document picker and the storage layer know it
+ * exists, with NO tokens and NO sections — a slip is not designed as markup and
+ * has no token language. Its design is an ordered block list; see
+ * lib/stationery/slip.ts for why, and lib/escpos/slipSpec.ts for what a block
+ * becomes on the roll.
+ *
+ * `medium: 'slip'` is what tells the designer to open the block editor rather
+ * than the markup editor, and what stops the A4 validator being run against a
+ * document that has no markup to validate.
+ */
+const TILL_SLIP: DocTypeDef = {
+  key: 'slip',
+  label: 'Till slip',
+  medium: 'slip',
+  tokens: [],
+  sections: [],
+}
+
+export const DOC_TYPES: readonly DocTypeDef[] = [PURCHASE_ORDER, TILL_SLIP]
 
 /* ── lookups ─────────────────────────────────────────────────────────────── */
 

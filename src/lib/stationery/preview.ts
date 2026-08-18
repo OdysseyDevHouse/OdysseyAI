@@ -5,6 +5,7 @@ import { purchaseOrderTokens } from './adapters/purchaseOrder'
 import { logoImgTag } from '../site/documentLogo'
 import type { RenderInput } from './render'
 import type { PurchaseDocument } from '../site/purchaseDocuments'
+import type { ReceiptData } from '../receiptData'
 
 /**
  * What a designed document is previewed AGAINST.
@@ -135,6 +136,61 @@ function sampleDocument(): PurchaseDocument {
       },
     ],
   } as unknown as PurchaseDocument
+}
+
+/**
+ * A sale to preview a slip design against.
+ *
+ * Invented rather than a real one, unlike the purchase order. A slip is a
+ * receipt for a sale that happened minutes ago at a till, and putting a real
+ * customer's name and what they bought on a setup screen — where it can be
+ * left open on a back-office monitor — is a use of that record nobody
+ * consented to. The order a shop places with its supplier carries no such
+ * problem.
+ *
+ * Deliberately awkward all the same: a fractional quantity, a line with a note
+ * that must wrap, a discount, cash rounding and two tenders, because those are
+ * the things a design breaks on.
+ */
+export function sampleReceipt(siteName: string, vatNumber: string | null): ReceiptData {
+  return {
+    proForma: false,
+    gift: false,
+    siteName,
+    vatNumber,
+    documentNumber: 'INV000481',
+    documentDate: new Date().toISOString().slice(0, 10),
+    printedAt: new Date().toLocaleTimeString('en-ZA', { timeStyle: 'short' }),
+    cashierName: 'Sam',
+    terminalCode: 'TILL 1',
+    customerName: 'A. Customer',
+    customerVatNo: null,
+    lines: [
+      { qty: 2, description: 'Bread, white', unitPriceIncl: 21.99, lineTotalIncl: 43.98, notes: [] },
+      {
+        qty: 1.42,
+        description: 'Cheese, mature cheddar',
+        unitPriceIncl: 189.9,
+        lineTotalIncl: 269.66,
+        notes: ['sliced thin'],
+      },
+      { qty: 1, description: 'Milk 2L', unitPriceIncl: 34.99, lineTotalIncl: 34.99, notes: [] },
+    ],
+    subtotalExcl: 304.9,
+    vatTotal: 45.73,
+    discountTotal: 15,
+    totalIncl: 335.6,
+    roundingAdj: -0.03,
+    vatByRate: [{ ratePct: 15, excl: 304.9, vat: 45.73, incl: 350.63 }],
+    tenders: [
+      { name: 'Cash', amount: 300, changeGiven: 0, reference: null },
+      { name: 'Card', amount: 35.6, changeGiven: 0, reference: '****4242' },
+    ],
+    changeGiven: 0,
+    loyalty: { pointsEarned: 33, balance: 415 },
+    copyNumber: 0,
+    footerText: '',
+  } as unknown as ReceiptData
 }
 
 /**
