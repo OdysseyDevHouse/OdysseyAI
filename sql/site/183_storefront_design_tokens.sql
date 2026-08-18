@@ -1,0 +1,41 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- A shop's own look: surfaces, ink, corners, spacing, buttons, width.
+--
+-- Until now a shop could change exactly one thing about how it rendered — its
+-- brand colour, injected as a single CSS variable over the storefront. The
+-- surfaces behind the cards, the text colours, the corner radius and the
+-- spacing all came from globals.css, which is the BACK OFFICE's palette. Two
+-- shops differed by an accent and a logo.
+--
+-- ── WHY JSON, WHEN 040 AND 077 CHOSE COLUMNS ─────────────────────────────
+--
+-- Both were right at the time and the reasoning has since inverted. The theme
+-- scalars they added are read whole, written whole, never filtered, never
+-- joined and never ordered by — they are already a document that happens to be
+-- spread across seventeen columns. Eight more would be eight more `?` in
+-- saveTheme, and a migration for every token added after that.
+--
+-- The counter-argument is type safety at the database boundary. It does not
+-- apply: readTheme is ALREADY the coercion layer, and every field passes
+-- through safeColour, safeFontKey or String() on the way out. The safety was
+-- never in the column type. `readDesignTokens` applies the same rule to this
+-- blob, and it fails in one direction only — an unrecognised value becomes the
+-- default, which is the shop exactly as it renders today.
+--
+-- ── DRAFT AND PUBLISHED, LIKE EVERYTHING ELSE ────────────────────────────
+--
+-- Two columns, not one. The theme has always saved straight to live, which was
+-- defensible while it was a single colour and is not for eight controls that
+-- restyle the whole shop: an owner WILL change half a look, get interrupted,
+-- and leave the shop mid-change. The draft publishes with the front page, so
+-- the appearance goes live at the same moment as the layout it was designed
+-- against, and the publish summary can say what changed.
+--
+-- NULL in `design_tokens` means "never chosen", which reads as the default
+-- look. NULL in the draft means "nothing unpublished" — the same convention
+-- layout_draft uses on storefront_pages.
+-- ─────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE online_store_settings
+  ADD COLUMN IF NOT EXISTS design_tokens TEXT NULL,
+  ADD COLUMN IF NOT EXISTS design_tokens_draft TEXT NULL;

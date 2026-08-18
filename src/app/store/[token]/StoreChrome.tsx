@@ -12,6 +12,7 @@ import { useWishlist } from './WishlistContext'
 import AnnounceBar from './AnnounceBar'
 import CartBar from './CartBar'
 import { DepartmentImage } from './ShopBits'
+import { SURFACE_PALETTES, themeVars, type DesignTokens } from '@/lib/storefront/tokens'
 
 /**
  * The shop's frame: masthead, department rail, footer.
@@ -37,6 +38,7 @@ export default function StoreChrome({
   departments,
   showDepartmentImages,
   theme,
+  tokens,
   allowAccount,
   customerName,
   offerSaveBasket = false,
@@ -54,6 +56,14 @@ export default function StoreChrome({
   /** Whether the rail shows each department's picture. The shop's setting. */
   showDepartmentImages: boolean
   theme: StorefrontTheme
+  /**
+   * The shop’s design tokens — surfaces, ink, corners, spacing, width.
+   *
+   * Resolved server-side and passed whole, so this component never has to ask
+   * whether a shop has chosen: readDesignTokens fills every field, and a shop
+   * that has chosen nothing gets the default look.
+   */
+  tokens: DesignTokens
   /** Whether this shop offers account ordering at all. */
   allowAccount: boolean
   /** Whether this shop offers to save a basket and remind about it. */
@@ -101,18 +111,40 @@ export default function StoreChrome({
     // The storefront sits outside the (app) layout, so it brings its own
     // toaster — feedback on a phone has nowhere else to go.
     <ToastProvider>
-      {/* The shop's own colour, applied by overriding the brand token for this
-          subtree only. Every `text-brand` and `bg-brand` inside then follows
-          it, so a store re-colours its whole shop without a single component
-          knowing the theme exists. The value is hex-validated before storage.
+      {/* The shop’s own look, applied by overriding the design tokens for
+          this subtree only. Every `bg-canvas`, `text-ink`, `rounded-card` and
+          `bg-brand` inside then follows it, so a store restyles its whole shop
+          without a single component knowing a theme exists.
+
+          EVERY variable is written, including the ones a shop left alone. The
+          storefront sits inside the app’s stylesheet, which redefines all of
+          them under `prefers-color-scheme: dark` — so emitting only what
+          changed would leave the rest following the shopper’s phone, and a
+          shop that chose "paper" would render as paper cards on the back
+          office’s near-black canvas for every shopper with dark mode on.
+
+          That is a deliberate decision about whose preference wins, and it is
+          the shop’s: a storefront’s look is a brand decision, and neither
+          Shopify nor WooCommerce flips a shop because a visitor’s OS is set
+          that way. A shopper’s setting is a reading preference for APPS.
+          `color-scheme` goes with it so the browser’s own furniture agrees.
 
           The font arrives as a CLASS from the server — see fonts.ts on why
           next/font cannot be called from a client component, and why the shop
           picks between pre-declared faces rather than naming one. */}
       <div
         className={`flex min-h-screen flex-col bg-canvas ${fontClassName}`}
-        style={{ '--color-brand': theme.brandColour } as React.CSSProperties}
+        style={themeVars(tokens, theme.brandColour) as React.CSSProperties}
       >
+        {/*
+          The BODY is outside this subtree and keeps the app’s own canvas, which
+          shows as a pale band under a short page and behind an overscroll — on a
+          dark shop, a white flash at the bottom of every screen. Painting it from
+          here keeps the one decision about a shop’s background in one place; the
+          alternative is a second copy of the palette in the root layout, which
+          would be the thing that drifts.
+        */}
+        <style>{`body{background:${SURFACE_PALETTES[tokens.surfaceStyle].canvas}}`}</style>
         {/* ABOVE the sticky header, and outside it: the strip is an
             announcement, not navigation, and one that followed the page down
             would be taking permanent space from a phone screen to say

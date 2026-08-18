@@ -1,3 +1,4 @@
+import { readDesignTokens, type DesignTokens } from '@/lib/storefront/tokens'
 import 'server-only'
 import { siteExecute, siteQueryOne } from '../siteDb'
 import {
@@ -167,12 +168,127 @@ export async function saveTheme(siteId: number, theme: Partial<StorefrontTheme>)
 export async function publishDraft(siteId: number): Promise<SaveResult> {
   const home = await homePage(siteId)
   if (!home) return { ok: false, error: 'This shop has no front page yet.' }
-  return publishPageDraft(siteId, home.id)
+  const result = await publishPageDraft(siteId, home.id)
+  if (!result.ok) return result
+  /*
+   * The appearance goes live with the page it was designed against.
+   *
+   * After the layout rather than before: a publish that half-succeeded
+   * should leave the shop looking as it did, not restyled to match a page
+   * that never landed. A shop with no appearance draft is the common case
+   * and this is a no-op for it.
+   */
+  return publishThemeTokens(siteId)
 }
 
 /** Throw the front page's draft away and go back to what is live. */
 export async function discardDraft(siteId: number): Promise<SaveResult> {
   const home = await homePage(siteId)
+  // Both halves, because the button says "throw away my changes" and an
+  // owner does not think of the colours as a separate set of them.
+  await discardThemeTokens(siteId)
   if (!home) return { ok: true }
   return discardPageDraft(siteId, home.id)
+}
+
+/* ── The shop's own look ──────────────────────────────────────────────────── */
+
+/**
+ * The tokens a SHOPPER sees, and the ones the owner is editing.
+ *
+ * Two values rather than one because the appearance now has a draft, exactly
+ * as the layout does — see 183 on why eight controls earned one where a single
+ * colour did not.
+ */
+export type ThemeTokens = {
+  published: DesignTokens
+  /** What the owner has unpublished, or null when there is nothing. */
+  draft: DesignTokens | null
+}
+
+/**
+ * Both, for the builder.
+ *
+ * Parsed through `readDesignTokens` on the way out, so a column holding
+ * anything unexpected — a half-written blob, a value from a build that offered
+ * a key this one does not — reads as the default look rather than throwing on
+ * a public page.
+ */
+export async function getThemeTokens(siteId: number): Promise<ThemeTokens> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT design_tokens, design_tokens_draft FROM online_store_settings WHERE id = 1`,
+  )
+  return {
+    published: readDesignTokens(parseJson(row?.design_tokens)),
+    draft: row?.design_tokens_draft == null ? null : readDesignTokens(parseJson(row.design_tokens_draft)),
+  }
+}
+
+/**
+ * What the SHOP renders: the published tokens, never the draft.
+ *
+ * A separate function rather than `getThemeTokens().published` so no public
+ * route can reach the draft by picking the wrong field off one object.
+ */
+export async function getPublishedTokens(siteId: number): Promise<DesignTokens> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT design_tokens FROM online_store_settings WHERE id = 1`,
+  )
+  return readDesignTokens(parseJson(row?.design_tokens))
+}
+
+/**
+ * Text out of the column, into something `readDesignTokens` can judge.
+ *
+ * Unparseable is not an error worth raising: the caller's answer to a broken
+ * blob and to no blob at all is the same — the default look — and throwing
+ * here would take the shop's front page down over its corner radius.
+ */
+function parseJson(value: unknown): unknown {
+  if (value == null) return null
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(String(value))
+  } catch {
+    return null
+  }
+}
+
+/** Store what the owner is editing. Normalised on the way in — a draft is untrusted. */
+export async function saveThemeTokensDraft(siteId: number, tokens: unknown): Promise<SaveResult> {
+  await siteExecute(
+    siteId,
+    `UPDATE online_store_settings SET design_tokens_draft = ? WHERE id = 1`,
+    [JSON.stringify(readDesignTokens(tokens))],
+  )
+  return { ok: true }
+}
+
+/**
+ * Make the appearance draft live, and clear it.
+ *
+ * Called by `publishDraft` alongside the page, so the look and the layout it
+ * was designed against go live together. Publishing with no appearance draft
+ * is a no-op rather than an error — most publishes are layout-only.
+ */
+export async function publishThemeTokens(siteId: number): Promise<SaveResult> {
+  await siteExecute(
+    siteId,
+    `UPDATE online_store_settings
+        SET design_tokens = COALESCE(design_tokens_draft, design_tokens),
+            design_tokens_draft = NULL
+      WHERE id = 1`,
+  )
+  return { ok: true }
+}
+
+/** Throw the appearance draft away and go back to what is live. */
+export async function discardThemeTokens(siteId: number): Promise<SaveResult> {
+  await siteExecute(
+    siteId,
+    `UPDATE online_store_settings SET design_tokens_draft = NULL WHERE id = 1`,
+  )
+  return { ok: true }
 }
