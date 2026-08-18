@@ -26,6 +26,7 @@ import HomeSections, { type SectionContent } from '../../HomeSections'
 import PreviewBar from '../../PreviewBar'
 import CategoryBrowser from './CategoryBrowser'
 import FacetBar, { priceBands } from './FacetBar'
+import SortBar from './SortBar'
 
 /**
  * One department.
@@ -306,6 +307,16 @@ export default async function DepartmentPage({
           activeBrand={activeBrand}
           bands={priceBands(facets.minPrice, facets.maxPrice)}
           activeBand={Number.isInteger(Number(band)) && Number(band) >= 0 ? Number(band) : -1}
+        />
+      )}
+
+      {/* Only where there is something to reorder. One product in an aisle
+          does not need four ways to arrange it. */}
+      {total > 1 && (
+        <SortBar
+          basePath={`/store/${token}/c/${department.id}`}
+          active={sort}
+          params={{ q, brand, min, max, band }}
         />
       )}
 
