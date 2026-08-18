@@ -111,6 +111,30 @@ export const DEFAULT_CONSENT_TEXT =
 export type SectionIconName = string
 
 /**
+ * What answering "is this section empty?" needs.
+ *
+ * The resolved content (products, departments, pictures, reviews) plus the
+ * few model helpers the answer depends on. Supplied by the caller so this
+ * file stays free of any runtime import from the model — see isEmpty.
+ */
+export type EmptyContext = {
+  section: HomeSection
+  products?: unknown[]
+  departments?: unknown[]
+  image?: unknown
+  slideImages?: Map<number, unknown>
+  reviews?: unknown[]
+  logoImages?: Map<number, unknown>
+  /** The shop’s theme — only the welcome banner reads it. */
+  heroHeadline: string
+  heroSubtext: string
+  /** Model helpers, handed over rather than imported. */
+  liveSlideCount: () => number
+  hasRichText: () => boolean
+  now: () => string
+}
+
+/**
  * One section kind, declared whole.
  *
  * Field lists arrive in step 2 of the catalog migration; this is deliberately
@@ -140,6 +164,29 @@ export type SectionDef = {
    * within a session.
    */
   defaults: (make: DefaultsHelpers) => Omit<HomeSection, 'id' | 'kind'>
+  /**
+   * Would a section of this kind draw anything at all?
+   *
+   * ── ONE RULE, FOUR CALLERS ────────────────────────────────────────────
+   *
+   * The shop renders by it, the builder’s placeholder is keyed off it, the
+   * shop page decides whether to fall back to the catalogue with it, and the
+   * pre-publish warning counts with it. It used to be four separate
+   * statements of the same idea, and a mirror is correct only until someone
+   * adds a kind and updates one copy — with a silent failure either way: a
+   * shopper sees an empty heading, or an owner is told their page is broken
+   * when it is fine.
+   *
+   * ── WHY THE HELPERS ARE PASSED IN ─────────────────────────────────────
+   *
+   * Answering takes `liveSlides`, `richBlockHasText`, `wallClockNow` and the
+   * theme, all of which live in the model — and the model imports this file.
+   * Importing them back would rebuild the cycle that once made whichever
+   * module loaded second read `undefined` and throw before a line of the app
+   * ran. So the model hands them over at the call, and the dependency still
+   * runs one way.
+   */
+  isEmpty: (fill: EmptyContext) => boolean,
 }
 
 /**
@@ -212,6 +259,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'Sparkles',
     pages: HOME_ONLY,
     defaults: () => ({ title: '', ...BASE }),
+    // Draws the theme's greeting, so it is empty when the shop never wrote one.
+    isEmpty: (f) => !f.heroHeadline && !f.heroSubtext,
   },
   banner: {
     kind: 'banner',
@@ -228,6 +277,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       bodyText: '',
       buttonLabel: '',
     }),
+    isEmpty: (f) => !f.image,
   },
   carousel: {
     kind: 'carousel',
@@ -245,6 +295,10 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       slides: [make.slide(), make.slide()],
       autoplaySeconds: DEFAULT_AUTOPLAY_SECONDS,
     }),
+    // Same rule as a banner, applied per slide: no picture, nothing to show.
+    // A carousel whose slides have all lost their pictures is as empty as one
+    // with no slides at all.
+    isEmpty: (f) => f.liveSlideCount() === 0,
   },
   split: {
     kind: 'split',
@@ -262,6 +316,10 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       linkUrl: '',
       side: 'left',
     }),
+    // Words alone are the `text` kind and a picture alone is a banner. This
+    // section is the PAIRING, so it needs both — with one missing it would
+    // silently render as a worse version of a section that already exists.
+    isEmpty: (f) => !f.image || !(f.section.bodyText?.trim() || f.section.title),
   },
   categories: {
     kind: 'categories',
@@ -270,6 +328,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'LayoutGrid',
     pages: NOT_DEPARTMENT_OR_PRODUCT,
     defaults: () => ({ title: 'Shop by department', ...BASE, maxItems: 0 }),
+    isEmpty: (f) => !f.departments || f.departments.length === 0,
   },
   products: {
     kind: 'products',
@@ -286,6 +345,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       departmentId: null,
       layout: null,
     }),
+    isEmpty: (f) => !f.products || f.products.length === 0,
   },
   reviews: {
     kind: 'reviews',
@@ -300,6 +360,9 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       minRating: 4,
       departmentId: null,
     }),
+    // Correctly empty for a shop nobody has reviewed yet, which is every new
+    // shop. The builder says so rather than calling it a fault.
+    isEmpty: (f) => !f.reviews || f.reviews.length === 0,
   },
   countdown: {
     kind: 'countdown',
@@ -315,6 +378,14 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       bodyText: '',
       finishedText: '',
     }),
+    // A countdown with nothing left to count is over. It keeps drawing only if
+    // the owner wrote something for it to say afterwards — otherwise a
+    // finished sale would sit on the front page advertising 00:00:00.
+    isEmpty: (f) => {
+      const ends = f.section.endsAt?.trim() ?? ''
+      if (!ends) return true
+      return ends <= f.now() && !(f.section.finishedText?.trim() ?? '')
+    },
   },
   recent: {
     kind: 'recent',
@@ -323,6 +394,16 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'History',
     pages: ALL_PAGES,
     defaults: () => ({ title: '', ...BASE }),
+    /*
+     * Never empty HERE, because the server cannot know.
+     *
+     * What this holds lives in the shopper's own browser, so at render time it
+     * is genuinely unknown — and answering "empty" would make the builder draw
+     * a placeholder for a section that is fine, while answering it on the shop
+     * would drop a section that has content. The component itself renders
+     * nothing when the list turns out to be short; see RecentlyViewed.
+     */
+    isEmpty: () => false,
   },
   cards: {
     kind: 'cards',
@@ -335,6 +416,9 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       ...BASE,
       cards: [{ icon: '🚚', heading: 'Delivery', text: '' }],
     }),
+    // A card with nothing written on it is not worth a tile, so a section of
+    // blank cards is as empty as one with none.
+    isEmpty: (f) => (f.section.cards ?? []).filter((c) => c.heading || c.text).length === 0,
   },
   text: {
     kind: 'text',
@@ -343,6 +427,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'AlignLeft',
     pages: ALL_PAGES,
     defaults: () => ({ title: '', ...BASE, text: '', align: 'left' }),
+    isEmpty: (f) => !(f.section.text?.trim() ?? '') && !f.section.title,
   },
   richtext: {
     kind: 'richtext',
@@ -354,6 +439,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // nothing to type into, and "add a paragraph" before you can write a word
     // is a step nobody should need.
     defaults: () => ({ title: '', ...BASE, blocks: [{ type: 'p', spans: [{ text: '' }] }] }),
+    isEmpty: (f) => !f.hasRichText(),
   },
   signup: {
     kind: 'signup',
@@ -371,6 +457,9 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       consentText: DEFAULT_CONSENT_TEXT,
       thanksText: '',
     }),
+    // Never empty: the form IS the content, and a heading is optional. An owner
+    // who added one meant to collect addresses.
+    isEmpty: () => false,
   },
   testimonial: {
     kind: 'testimonial',
@@ -379,6 +468,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'MessageSquare',
     pages: ALL_PAGES,
     defaults: (make) => ({ title: 'In their words', ...BASE, quotes: [make.quote()] }),
+    isEmpty: (f) => (f.section.quotes ?? []).filter((q) => q.quote.trim()).length === 0,
   },
   logos: {
     kind: 'logos',
@@ -387,6 +477,9 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'Shapes',
     pages: NOT_PRODUCT,
     defaults: () => ({ title: 'Brands we stock', ...BASE, logoImageIds: [] }),
+    // Counted against what actually RESOLVED, not against the stored ids: a
+    // strip whose pictures were all deleted is as empty as one with none.
+    isEmpty: (f) => (f.logoImages?.size ?? 0) === 0,
   },
   video: {
     kind: 'video',
@@ -395,6 +488,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'Play',
     pages: NOT_PRODUCT,
     defaults: () => ({ title: '', ...BASE, videoProvider: 'youtube', videoId: '' }),
+    isEmpty: (f) => !(f.section.videoId ?? '').trim(),
   },
   map: {
     kind: 'map',
@@ -403,6 +497,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'Pin',
     pages: NOT_PRODUCT,
     defaults: () => ({ title: 'Where to find us', ...BASE, addressText: '', mapUrl: '' }),
+    isEmpty: (f) => !(f.section.addressText?.trim() ?? ''),
   },
   divider: {
     kind: 'divider',
@@ -411,6 +506,9 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'Minus',
     pages: ALL_PAGES,
     defaults: () => ({ title: '', ...BASE }),
+    // Draws exactly itself and is never empty — that IS its content. Returning
+    // true here would make it impossible to add.
+    isEmpty: () => false,
   },
   spacer: {
     kind: 'spacer',
@@ -419,6 +517,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     icon: 'StackedBands',
     pages: ALL_PAGES,
     defaults: () => ({ title: '', ...BASE, size: 'medium' }),
+    // As above: the gap is the point.
+    isEmpty: () => false,
   },
 }
 

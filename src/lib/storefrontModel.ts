@@ -1136,82 +1136,27 @@ export function liveSlides<T>(
  * it without dragging next/link into a react-server script.
  */
 export function sectionIsEmpty(fill: SectionFill, theme: StorefrontTheme): boolean {
-  const { section, products, departments, image, slideImages, reviews } = fill
-  switch (section.kind) {
-    case 'hero':
-      return !theme.heroHeadline && !theme.heroSubtext
-    case 'banner':
-      return !image
-    case 'split':
-      // Words alone are the `text` kind and a picture alone is a banner. This
-      // section is the PAIRING, so it needs both — with one missing it would
-      // silently render as a worse version of a section that already exists.
-      return !image || !(section.bodyText?.trim() || section.title)
-    case 'reviews':
-      // Correctly empty for a shop nobody has reviewed yet, which is every new
-      // shop. The builder says so rather than calling it a fault.
-      return !reviews || reviews.length === 0
-    case 'countdown': {
-      // A countdown with nothing left to count is over. It keeps drawing only
-      // if the owner wrote something for it to say afterwards — otherwise a
-      // finished sale would sit on the front page advertising 00:00:00.
-      const ends = section.endsAt?.trim() ?? ''
-      if (!ends) return true
-      return ends <= wallClockNow() && !(section.finishedText?.trim() ?? '')
-    }
-    case 'richtext':
-      return !(section.blocks ?? []).some(richBlockHasText)
-    case 'testimonial':
-      return (section.quotes ?? []).filter((q) => q.quote.trim()).length === 0
-    case 'logos':
-      // Counted against what actually RESOLVED, not against the stored ids: a
-      // strip whose pictures were all deleted is as empty as one with none.
-      return (fill.logoImages?.size ?? 0) === 0
-    // Never empty: the form IS the content, and a heading is optional. An
-    // owner who added one meant to collect addresses.
-    case 'signup':
-      return false
-    /*
-     * Never empty HERE, because the server cannot know.
-     *
-     * What this holds lives in the shopper's own browser, so at render time it
-     * is genuinely unknown — and answering "empty" would make the builder draw
-     * a placeholder for a section that is fine, while answering it on the shop
-     * would drop a section that has content. The component itself renders
-     * nothing when the list turns out to be short; see RecentlyViewed.
-     */
-    case 'recent':
-      return false
-    case 'video':
-      return !(section.videoId ?? '').trim()
-    case 'map':
-      return !(section.addressText?.trim() ?? '')
-    // Both draw exactly themselves and are never empty — that IS their
-    // content. Returning true here would make them impossible to add.
-    case 'divider':
-    case 'spacer':
-      return false
-    case 'carousel':
-      // Same rule as a banner, applied per slide: no picture, nothing to show.
-      // A carousel of slides that have all lost their pictures is as empty as
-      // one with no slides at all.
-      return liveSlides(section, slideImages).length === 0
-    case 'categories':
-      return !departments || departments.length === 0
-    case 'products':
-      return !products || products.length === 0
-    case 'text':
-      return !(section.text?.trim() ?? '') && !section.title
-    case 'cards':
-      // A card with nothing written on it is not worth a tile, so a section of
-      // blank cards is as empty as one with none.
-      return (section.cards ?? []).filter((c) => c.heading || c.text).length === 0
-    default:
-      // A kind this build cannot draw. Normalisation drops these before they
-      // are ever stored, so reaching here means something is very wrong —
-      // "empty" is the safe answer either way.
-      return true
-  }
+  const def = SECTION_CATALOG[fill.section.kind]
+  // A kind this build cannot draw. Normalisation drops these before they are
+  // ever stored, so reaching here means something is very wrong — "empty" is
+  // the safe answer either way.
+  if (!def) return true
+  return def.isEmpty({
+    section: fill.section,
+    products: fill.products,
+    departments: fill.departments,
+    image: fill.image,
+    slideImages: fill.slideImages,
+    reviews: fill.reviews,
+    logoImages: fill.logoImages,
+    heroHeadline: theme.heroHeadline,
+    heroSubtext: theme.heroSubtext,
+    // Passed as thunks rather than values so a kind that does not ask pays
+    // nothing — liveSlides walks every slide, and eighteen kinds never need it.
+    liveSlideCount: () => liveSlides(fill.section, fill.slideImages).length,
+    hasRichText: () => (fill.section.blocks ?? []).some(richBlockHasText),
+    now: wallClockNow,
+  })
 }
 
 /* ── What publishing would change ─────────────────────────────────────────── */
