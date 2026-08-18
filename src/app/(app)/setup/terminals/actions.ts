@@ -9,6 +9,8 @@ import {
   deleteTerminal,
   releaseTerminal,
   claimTerminal,
+  setTerminalPosMode,
+  getTerminal,
   type TerminalInput,
 } from '@/lib/site/terminals'
 import { releaseSpot, claimSpot } from '@/lib/control/devices'
@@ -183,30 +185,41 @@ export async function setUndoLimitAction(limit: number): Promise<TerminalActionR
 }
 
 /**
- * Which of the three tills this shop runs.
+ * Which of the three screens ONE TILL runs.
  *
- * Separate from `setPosModeAction` on the tables screen, which is a two-way
- * switch that predates there being a third answer. That one still turns tables
- * on and off; this one names the mode outright, which is the only way to reach
- * the trade counter.
+ * ── WHY THIS IS PER TILL AND NOT PER SHOP ─────────────────────────────────
  *
- * Validated by `setSetting` against the same list the till reads through, so a
- * value this action does not recognise cannot be stored — see settings.ts.
+ * It used to write a single `pos_mode` setting for the whole site, which cannot
+ * describe a real shop: a builders' merchant runs a wholesale trade desk on the
+ * invoicing screen and a retail front counter on the retail screen, under one
+ * company and one roof. One answer per site puts one of those two halves on the
+ * wrong screen every day it trades.
+ *
+ * The site setting is gone rather than kept as a default — see
+ * sql/site/180_terminal_pos_mode.sql for why one place to set a thing beats
+ * two.
  */
-export async function setPosModeChoiceAction(mode: PosMode): Promise<TerminalActionResult> {
+export async function setTerminalPosModeAction(
+  terminalId: number,
+  mode: PosMode,
+): Promise<TerminalActionResult> {
   const ctx = await actorFor('setup.edit')
   if ('ok' in ctx) return ctx
 
-  const saved = await setSetting(ctx.siteId, 'pos_mode', mode)
+  const saved = await setTerminalPosMode(ctx.siteId, terminalId, mode)
   if (!saved.ok) return { ok: false, error: saved.error }
 
-  /* The till reads this from its offline catalogue as well as from the page, so
-     a running till picks the change up on its next refresh rather than needing
-     somebody to reload it mid-service. */
+  const terminal = await getTerminal(ctx.siteId, terminalId)
+
+  /* The till reads this through its own page render, so a running till picks the
+     change up on its next refresh rather than needing somebody to reload it
+     mid-service. */
   revalidatePath('/setup/terminals')
-  revalidatePath('/setup/tables')
   revalidatePath('/pos')
-  return { ok: true, message: `This shop now runs the ${POS_MODE_LABELS[mode].toLowerCase()}.` }
+  return {
+    ok: true,
+    message: `${terminal?.code ?? 'That till'} now runs the ${POS_MODE_LABELS[mode].toLowerCase()}.`,
+  }
 }
 
 /**

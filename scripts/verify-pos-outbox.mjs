@@ -23,46 +23,18 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const BASE = process.env.APP_URL || 'http://localhost:4100'
-const PORT = 9336
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const profile = path.join(tmpdir(), `odyssey-outbox-${process.pid}`)
-mkdirSync(profile, { recursive: true })
 
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    `--remote-debugging-port=${PORT}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-gpu',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { wsUrl, close: closeChrome } = await launchChrome('outbox')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 process.on('exit', () => {
-  try { chrome.kill() } catch {}
-  try { rmSync(profile, { recursive: true, force: true }) } catch {}
 })
 
-async function devtoolsUrl() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/json/version`)
-      if (r.ok) return (await r.json()).webSocketDebuggerUrl
-    } catch {}
-    await sleep(250)
-  }
-  throw new Error('Chrome did not expose a debugging port')
-}
 
-const ws = new WebSocket(await devtoolsUrl())
+const ws = new WebSocket(wsUrl)
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
 
 let id = 0

@@ -520,7 +520,15 @@ export function loadPrefs(): DashboardPrefs {
       // widget that became fixed-size must not stay resizable because of a
       // stale saved flag, and one that became resizable (the KPI tiles) must
       // not stay locked because it was saved while it was not.
-      return { ...item, isResizable: w.resizable !== false }
+      //
+      // Only the veto is written. Setting `isResizable: true` here would ALSO
+      // override the grid's own `resizeConfig.enabled`, which is what gates
+      // resizing on edit mode: react-grid-layout takes a per-item boolean over
+      // the grid-level flag, so a `true` saved onto every widget left the
+      // resize corners live on a dashboard that was only being read. Dropping
+      // the key entirely hands that decision back to edit mode.
+      const { isResizable: _stale, ...rest } = item
+      return w.resizable === false ? { ...rest, isResizable: false } : rest
     })
     const hidden = (parsed.hidden ?? []).filter((id): id is WidgetId =>
       ALL_WIDGET_IDS.includes(id as WidgetId),

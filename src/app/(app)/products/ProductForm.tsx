@@ -121,6 +121,7 @@ export default function ProductForm({
   productSuppliers,
   suggestedCode = null,
   autoCode = false,
+  pictureFont = '',
   generalExtras = null,
 }: {
   product: Product | null
@@ -143,6 +144,12 @@ export default function ProductForm({
   suggestedCode?: string | null
   /** Whether this site numbers products automatically — the refer wizard asks. */
   autoCode?: boolean
+  /**
+   * The site's typeface for generated till icons — a PICTURE_FONTS id, or ''
+   * for "never chosen". Site-wide rather than per product; see
+   * lib/generatedPicture.
+   */
+  pictureFont?: string | null
   departments: Department[]
   brands: Brand[]
   vatRates: VatRate[]
@@ -402,6 +409,11 @@ export default function ProductForm({
                 color={color}
                 onColorChange={setColor}
                 initialIcon={product?.imageIcon ?? null}
+                /* Live state, not the saved record: the generated icon should
+                   carry the name the user is typing now, not the one that was
+                   last saved. */
+                productName={description}
+                pictureFont={pictureFont}
               />
 
               <Field label="Extra description">

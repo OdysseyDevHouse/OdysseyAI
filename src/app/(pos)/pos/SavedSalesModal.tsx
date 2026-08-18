@@ -71,7 +71,6 @@ export function SavedSalesModal({
   onClose,
   onRecall,
   onDiscard,
-  onCount,
 }: {
   open: boolean
   /** Narrows the list to one till. Null shows every parked sale. */
@@ -90,14 +89,9 @@ export function SavedSalesModal({
   onClose: () => void
   onRecall: (entry: SavedEntry) => void
   onDiscard: (entry: SavedEntry) => void
-  /**
-   * How many were actually found.
-   *
-   * Reported back so the badge on the till agrees with this list — they are drawn
-   * from the same query, and a badge saying 2 beside a list of 1 reads as a lost
-   * basket.
-   */
-  onCount: (n: number) => void
+  /* `onCount` was here, reporting the length back so a badge on the basket's
+     Saved key could agree with this list. That key is a quick key now and
+     carries no badge, so the count had nowhere to go. */
 }) {
   const [serverRows, setServerRows] = useState<SavedEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -116,7 +110,6 @@ export function SavedSalesModal({
     if (!online) {
       setServerRows([])
       setLoading(false)
-      onCount(localBaskets.length)
       return
     }
 
@@ -126,7 +119,6 @@ export function SavedSalesModal({
         if (cancelled) return
         const entries = rows.map(fromServer)
         setServerRows(entries)
-        onCount(entries.length + localBaskets.length)
       })
       .catch(() => {
         // A failure here is usually the connection going while the modal opened.
@@ -134,7 +126,6 @@ export function SavedSalesModal({
         // as "your parked baskets are gone".
         if (cancelled) return
         setServerRows([])
-        onCount(localBaskets.length)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -142,9 +133,9 @@ export function SavedSalesModal({
     return () => {
       cancelled = true
     }
-    // onCount is a fresh arrow each render; listing it would re-run this on every
-    // parent render and re-query on every keystroke elsewhere on the till.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    /* The disable that used to sit here went with `onCount` — a fresh arrow each
+       render, which would have re-queried on every keystroke elsewhere on the
+       till. Nothing else in this effect is unstable, so the list is honest. */
   }, [open, terminalId, online])
 
   /* Local first. They are the ones this cashier parked on this machine in the last

@@ -67,6 +67,8 @@ import {
   MeterBar,
   TableGlyph,
   FeatureGlyph,
+  PromoArt,
+  TintButton,
   StoreColumnTable,
   StatStrip,
   StatTile,
@@ -75,6 +77,12 @@ import {
   SummaryTotal,
   Switch,
   TableSkeleton,
+  PageHeaderSkeleton,
+  StatStripSkeleton,
+  ToolbarSkeleton,
+  TabsSkeleton,
+  FormSkeleton,
+  SettingRowsSkeleton,
   TableToolbar,
   Tabs,
   Textarea,
@@ -88,6 +96,7 @@ import {
   Slider,
   Stepper,
   SwatchPicker,
+  GeneratedPictureModal,
   tileClass,
   ToolbarSearch,
   useChartColors,
@@ -106,6 +115,7 @@ import InstructionsModal from '@/app/(pos)/pos/InstructionsModal'
 import { ReceiptModal } from '@/app/(pos)/pos/ReceiptModal'
 import { SplitPreview } from './SplitPreview'
 import { GatePreview, FloorPreview } from './GatePreview'
+import { ModuleMenuPreview } from './ModuleMenuPreview'
 import { TenderPreview } from './TenderPreview'
 import type { TillInstructionGroup } from '@/lib/site/instructions'
 import type { TillProduct } from '@/lib/site/tillSearch'
@@ -157,6 +167,7 @@ export default function StyleGuidePage() {
         <SelectableCardSection />
         <ReasonPickerSection />
         <TileSwatchSection />
+        <GeneratedPictureSection />
         <ToastSection />
         <MenuSection />
         <ColumnPickerSection />
@@ -179,6 +190,7 @@ export default function StyleGuidePage() {
         <ReceiptSection />
         <SplitBillSection />
         <TableGateSection />
+        <ModuleMenuSection />
         <PaginationSection />
         <EmptyStateSection />
         <SkeletonSection />
@@ -269,6 +281,24 @@ function ButtonsSection() {
           <Icons.Trash size={16} />
           Delete
         </Button>
+      </Row>
+      <Row>
+        <Spec
+          name="<TintButton tone>"
+          note="The OTHER kind of button: wears a SUBJECT's colour, not a meaning's. Same tones as CategoryTile, so a disc and the buttons under it read as one identifier (the till's module menu). Only where a subject colour is already established beside it — never for a confirm, save or delete, which are always a Button."
+        />
+        <TintButton tone="emerald">
+          <Icons.Plus size={16} />
+          New sale
+        </TintButton>
+        <TintButton tone="indigo">
+          <Icons.ListOrdered size={16} />
+          Quote list
+        </TintButton>
+        <TintButton tone="sky">
+          <Icons.ListOrdered size={16} />
+          Order list
+        </TintButton>
       </Row>
     </Card>
   )
@@ -693,6 +723,62 @@ function TileSwatchSection() {
   )
 }
 
+function GeneratedPictureSection() {
+  const [open, setOpen] = useState(false)
+  const [font, setFont] = useState('')
+  const [made, setMade] = useState<string | null>(null)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Generated picture"
+        description="<GeneratedPictureModal> / <GeneratedPictureGallery> — builds a square PNG from a record's own initial and name on a gradient, for products that will never be photographed. Used on the product screen to make a TILL ICON. The result is an ordinary image File, saved through whatever upload the screen already has, so nothing downstream knows it was generated."
+        action={
+          <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+            <Icons.Sparkles size={15} />
+            Generate a picture
+          </Button>
+        }
+      />
+      <CardBody className="flex flex-wrap items-center gap-4">
+        {made ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={made}
+            alt="The generated picture"
+            className="size-24 rounded-card border border-border"
+          />
+        ) : (
+          <div className="flex size-24 items-center justify-center rounded-card border border-dashed border-border text-xs text-faint">
+            No picture
+          </div>
+        )}
+        <p className="max-w-96 text-xs text-muted">
+          One renderer draws both the live preview and the saved PNG, so what is approved is
+          what is stored. The typeface is a SITE setting rather than a per-product one — a
+          catalogue set in eight different faces reads as broken, not varied; the gradient is
+          what tells one product from the next, and it is suggested from the name so the same
+          product always opens on the same colour.
+        </p>
+
+        <GeneratedPictureModal
+          open={open}
+          onClose={() => setOpen(false)}
+          name="2-Hole Punch 22"
+          fontId={font}
+          onFontChange={setFont}
+          onPick={(file) => {
+            // The style guide has nothing to upload to, so it just shows the
+            // File it was handed — which is exactly what a real screen passes
+            // to its own image action.
+            setMade(URL.createObjectURL(file))
+          }}
+        />
+      </CardBody>
+    </Card>
+  )
+}
+
 function BadgeSection() {
   return (
     <Card>
@@ -1062,13 +1148,66 @@ function FieldGroupSection() {
 
 function SkeletonSection() {
   return (
-    <Card>
-      <CardHeader
-        title="Loading skeleton"
-        description="<TableSkeleton columns rows> — holds a table's real 36px row rhythm while data loads, instead of a spinner that collapses the page."
-      />
-      <TableSkeleton columns={4} rows={3} />
-    </Card>
+    <div className="flex flex-col gap-5">
+      <Card>
+        <CardHeader
+          title="Loading skeleton"
+          description="<TableSkeleton columns rows tile> — holds a table's real row rhythm while data loads, instead of a spinner that collapses the page. A plain row measures 33px; pass `tile` for lists with a leading thumbnail, which measure 49px."
+        />
+        <TableSkeleton columns={4} rows={3} />
+        <div className="border-t border-border">
+          <TableSkeleton columns={4} rows={2} tile />
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Page skeletons"
+          description="The pieces a route's loading.tsx is built from. Each mirrors a real component's measured height, so the page does not jump when data arrives: the header is 73px (its h-control action, not the title, sets that), and a stat tile is 84px — 102px with a hint."
+        />
+        <CardBody className="flex flex-col gap-4">
+          <div>
+            <p className="mb-2 text-xs text-muted">
+              &lt;PageHeaderSkeleton titleWidth action back&gt;
+            </p>
+            {/* Bordered so the header's own bottom rule is visible in isolation. */}
+            <div className="overflow-hidden rounded-card border border-border">
+              <PageHeaderSkeleton titleWidth="w-40" />
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-xs text-muted">&lt;StatStripSkeleton tiles columns hint&gt;</p>
+            <StatStripSkeleton tiles={3} hint />
+          </div>
+          <div>
+            <p className="mb-2 text-xs text-muted">&lt;ToolbarSkeleton controls actions inCard&gt;</p>
+            <div className="overflow-hidden rounded-card border border-border">
+              <ToolbarSkeleton />
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-xs text-muted">&lt;TabsSkeleton tabs&gt;</p>
+            <TabsSkeleton tabs={3} />
+          </div>
+          <div>
+            <p className="mb-2 text-xs text-muted">&lt;FormSkeleton fields columns&gt;</p>
+            <div className="overflow-hidden rounded-card border border-border">
+              <FormSkeleton fields={4} />
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-xs text-muted">&lt;SettingRowsSkeleton rows&gt;</p>
+            <div className="overflow-hidden rounded-card border border-border">
+              <SettingRowsSkeleton rows={2} />
+            </div>
+          </div>
+          <p className="text-xs text-muted">
+            &lt;PageSkeleton&gt; wraps a header and a PageBody-shaped column around these — it is
+            what a generated loading.tsx returns.
+          </p>
+        </CardBody>
+      </Card>
+    </div>
   )
 }
 
@@ -2383,12 +2522,34 @@ function TenderTileSection() {
   )
 }
 
+function ModuleMenuSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="The module menu"
+        description="<ModuleMenu /> — the till's way between the kinds of document it writes. Most rows are a CARD with two buttons rather than one destination, because “quotes” is two opposite jobs: write a new one for the person standing there, or find the one written last week. A single row had to pick, and picking “write” meant looking one up cost you the basket."
+      />
+      <Row>
+        <Spec
+          name="<ModuleMenu current available onPick onOpenList>"
+          note="onPick starts a NEW document — it clears the basket, so the shell asks first when there are lines. onOpenList lays the list over the top and touches nothing. Two callbacks rather than one with a flag: they differ in what they do to the screen behind, which is the only thing the cashier is deciding."
+        />
+        <Spec
+          name="lay-bys keep one row"
+          note="A lay-by is not something the basket BECOMES — it is opened from one already rung up, by taking a deposit. A “new lay-by” button here could only ever refuse, so that row stays the single tap it was."
+        />
+      </Row>
+      <ModuleMenuPreview />
+    </Card>
+  )
+}
+
 function TillTileSection() {
   return (
     <Card>
       <CardHeader
         title="Till tiles"
-        description="<ProductTile /> names a THING and shows what it costs; <ActionTile /> names an ACT and shows what it will do. Both put colour in a 44px disc and leave the caption ink-on-surface — a grid of fully-saturated tiles has no hierarchy left and its white captions are the worst contrast on the screen."
+        description="<ProductTile /> names a THING and shows what it costs; <ActionTile /> names an ACT and shows what it will do. Both put colour in a 44px squircle badge and leave the caption ink-on-surface — a grid of fully-saturated tiles has no hierarchy left and its white captions are the worst contrast on the screen. On an action tile the badge and caption share the top line and the hint runs full width beneath them."
       />
       <Row>
         <Spec name="<ActionTile tone icon hint>" note="A till quick key — runs something" />
@@ -2479,6 +2640,32 @@ function TillTileSection() {
               onClick={() => {}}
             />
           ))}
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<TouchRow tone='bare'>"
+          note="Drops the border and the fill and keeps everything else — the geometry, the type scale, the whole-row hit target. For a row INSIDE a box somebody else drew, where a bordered row in a bordered card is a double frame: the till's module menu puts one at the head of each module card. The card carries the hairline and the shadow; the row inside it carries nothing."
+        />
+        <div className="flex w-full max-w-sm flex-col gap-3">
+          <div className="rounded-card border border-border bg-surface p-2 shadow-card">
+            <TouchRow
+              icon={<CategoryTile icon={<Icons.ShoppingCart size={20} />} tone="emerald" size="lg" />}
+              title="Point of sale"
+              subtitle="tone='bare' — the card is the only box"
+              tone="bare"
+              onClick={() => {}}
+            />
+          </div>
+          <div className="rounded-card border border-border bg-surface p-2 shadow-card">
+            <TouchRow
+              icon={<CategoryTile icon={<Icons.FileText size={20} />} tone="indigo" size="lg" />}
+              title="Quotes"
+              subtitle="Colour stays on the tile, not the frame"
+              tone="bare"
+              onClick={() => {}}
+            />
+          </div>
         </div>
       </Row>
     </Card>
@@ -2632,6 +2819,25 @@ function ChartSection() {
               <span className="text-xs text-muted">{f.kind}</span>
             </div>
           ))}
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<PromoArt kind />"
+          note="The drawing beside a promo panel's copy — the one place a picture is not decoration, because it fills the dead space at the foot of a drawer where an icon would read as a control that has stopped working. Every stroke is `currentColor`, so the caller sets one text tone and the whole thing follows it into dark mode. In the kit rather than inline so the second panel to want one does not draw its own."
+        />
+        <div className="flex flex-1 items-center gap-3 rounded-card bg-brand-soft/60 p-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[15px] font-semibold leading-snug text-ink">
+              All your sales,
+              <br />
+              in one place
+            </p>
+            <p className="mt-1.5 text-[13px] leading-snug text-muted">
+              Fast, simple and built for your business.
+            </p>
+          </div>
+          <PromoArt kind="bag" className="h-20 w-20 shrink-0 text-brand" />
         </div>
       </Row>
       <Row>

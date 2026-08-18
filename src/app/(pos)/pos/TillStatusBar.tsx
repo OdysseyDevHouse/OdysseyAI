@@ -17,6 +17,7 @@ import { Icons } from '@/components/ui'
  */
 export function TillStatusBar({
   screenTitle,
+  modeName,
   operatorName,
   terminalLabel,
   unclaimed,
@@ -42,6 +43,15 @@ export function TillStatusBar({
    * carries the logo there — the one screen with room to say whose till this is.
    */
   screenTitle: string | null
+  /**
+   * The second word of the lockup — "Retail", "Hospitality", "Invoicing".
+   *
+   * Which till this IS, not which screen is on it. A shop running tables and
+   * a shop running a counter are different products to the person standing at
+   * them, and the corner is where that is stated. Resolved from the mode at the
+   * page (see lib/posMode), so this component stays mode-blind.
+   */
+  modeName: string
   operatorName: string
   /** The till's code and number, or null when this machine has claimed none. */
   terminalLabel: string | null
@@ -193,7 +203,7 @@ export function TillStatusBar({
               the two halves of the name, and leaving both at one weight made
               the blue read as an accident of markup rather than a second word. */}
           <h1 className="wordmark-lockup text-xl leading-none text-ink">
-            Odyssey <span className="font-bold text-brand">POS</span>
+            Odyssey <span className="font-bold text-brand">{modeName}</span>
           </h1>
         </span>
       ) : (

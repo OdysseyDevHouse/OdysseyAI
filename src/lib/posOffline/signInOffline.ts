@@ -1,6 +1,7 @@
 'use client'
 
 import { deriveVerifier, verifierMatches } from '../offlinePin'
+import { currentWindowId, ensureWindowId, windowMatches } from '../windowSession'
 import { kvGet, kvPut, KV } from './db'
 import { storedOperators } from './catalog'
 import type { OfflineOperator } from '../site/offlineOperators'
@@ -84,6 +85,20 @@ export type OfflineSession = {
   signedInAt: string
   /** 8h, matching TILL_COOKIE — a shift, not a day. */
   expiresAt: string
+  /**
+   * The TAB this was signed in on — the offline half of the same rule the till
+   * cookie follows. See `src/lib/windowSession.ts`.
+   *
+   * It matters MORE here than online, not less. IndexedDB is shared across every
+   * tab on the origin and survives a browser restart outright, so without this an
+   * offline session is the most durable identity in the app — a till closed at
+   * 17:00 would still be that cashier at 21:00 for anyone who reopened it.
+   *
+   * Optional for the same reason `wid` is optional on the cookie: a session
+   * written by an earlier build carries none, and refusing those would sign a
+   * shop's till out the moment it updated.
+   */
+  wid?: string
 }
 
 const SESSION_HOURS = 8
@@ -222,16 +237,30 @@ export async function startOfflineSession(
     capabilities: operator.capabilities,
     signedInAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + SESSION_HOURS * 3_600_000).toISOString(),
+    /* Bound to this tab, so closing the window ends the shift here too. Unset
+       rather than '' when the browser forbids sessionStorage — `windowMatches`
+       reads an absent claim as unbound, which keeps such a till trading on the
+       eight-hour rule instead of refusing every sign-in it makes. */
+    wid: ensureWindowId() || undefined,
   }
   await kvPut(siteId, KV.operator, session)
   return session
 }
 
-/** The offline session, or null when there is none or it has expired. */
+/**
+ * The offline session, or null when there is none, it has expired, or it
+ * belongs to a window that has since been closed.
+ */
 export async function offlineSession(siteId: number): Promise<OfflineSession | null> {
   const session = await kvGet<OfflineSession>(siteId, KV.operator)
   if (!session) return null
   if (Date.parse(session.expiresAt) <= Date.now()) return null
+  /* `currentWindowId`, NOT `ensureWindowId`: minting an id while READING would
+     hand a fresh tab an id and then compare it against the stored one — always a
+     mismatch, so it would happen to work, but by accident. Worse, it would write
+     a cookie on a page load that never signed anybody in. Reading asks; only
+     signing in mints. */
+  if (!windowMatches(session.wid, currentWindowId() || null)) return null
   return session
 }
 

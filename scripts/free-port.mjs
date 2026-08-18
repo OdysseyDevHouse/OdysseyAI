@@ -28,7 +28,11 @@ if (!pids.length) {
     // PID 0 is the system idle process — never a real listener we can kill.
     if (pid === '0') continue
     try {
-      execSync(`taskkill /PID ${pid} /F /T`, { stdio: 'ignore' })
+      // No /T. The port holder is the only thing in the way; its descendants
+      // are not. /T force-kills the whole tree, and a browser opened from the
+      // same shell that later started the dev server sits in that tree — so
+      // `npm run dev` was closing the developer's Chrome at random.
+      execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' })
       console.log(`[free-port] killed pid ${pid} on ${port}`)
     } catch {
       console.warn(`[free-port] could not kill pid ${pid} — continuing`)

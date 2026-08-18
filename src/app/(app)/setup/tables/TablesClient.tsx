@@ -13,7 +13,6 @@ import {
   Input,
   NumberInput,
   Select,
-  Switch,
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -22,7 +21,6 @@ import type { VisitType } from '@/lib/site/visitTypes'
 import {
   createTableAction,
   retireTableAction,
-  setPosModeAction,
   updateTableAction,
 } from './actions'
 
@@ -45,16 +43,16 @@ import {
  */
 export default function TablesClient({
   tables: initial,
-  hospitality: initialHospitality,
   visitTypes = [],
 }: {
   tables: PosTable[]
-  hospitality: boolean
+  /* NO `hospitality` PROP. Whether a till shows the floor is a property of that
+     till now, set on Setup → Tills — this screen builds the floor and no longer
+     has an opinion about who looks at it. */
   /** Active types only — a hidden one must not be offered on a NEW table. */
   visitTypes?: VisitType[]
 }) {
   const [tables, setTables] = useState(initial)
-  const [hospitality, setHospitality] = useState(initialHospitality)
   const [pending, startAction] = useTransition()
   const [editing, setEditing] = useState<number | null>(null)
   const [adding, setAdding] = useState(false)
@@ -88,54 +86,28 @@ export default function TablesClient({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── The mode ────────────────────────────────────────────────────── */}
-      <Card>
-        <CardHeader
-          title="What kind of till is this?"
-          description="A counter takes one sale at a time. A floor holds a bill per table."
-        />
-        <div className="p-4">
-          <Switch
-            checked={hospitality}
-            disabled={pending}
-            label="This shop serves tables"
-            hint="Turns on the table screen in front of the till. Walk-in and takeaway sales still work exactly as they do now."
-            onChange={(next) =>
-              startAction(async () => {
-                const result = await setPosModeAction(next)
-                if (!result.ok) {
-                  toast.error(result.error)
-                  return
-                }
-                setHospitality(result.hospitality)
-                toast.success(
-                  result.hospitality
-                    ? 'The till will show the floor.'
-                    : 'The till is back to a counter.',
-                )
-              })
-            }
-          />
+      {/*
+        ── NO MODE SWITCH HERE ANY MORE ─────────────────────────────────────
 
-          {/* Said only when it is ON and there is nothing to show. A shop that flipped
-              the switch and stopped would otherwise find an empty screen at the till
-              with no clue what was missing. */}
-          {hospitality && tables.length === 0 && (
-            <Callout tone="warning" title="No tables yet" className="mt-4">
-              The till will show the floor as empty. Add the tables below — until then,
-              only walk-in sales are possible.
-            </Callout>
-          )}
+        This screen used to carry "This shop serves tables", a two-way switch
+        writing one `pos_mode` setting for the whole site. That question now has
+        a different shape: each TILL runs its own screen, so a shop can put the
+        trade counter on the wholesale desk and the retail till on the front
+        counter. A single switch here cannot express that, and leaving it would
+        let this screen silently overwrite four tills' modes at once.
 
-          {/* And the reverse: tables built but the mode off is work that does nothing. */}
-          {!hospitality && tables.length > 0 && (
-            <Callout tone="neutral" title="These tables are not in use" className="mt-4">
-              {tables.length} table{tables.length === 1 ? '' : 's'} are set up, but the till
-              is running as a counter. Turn the switch on to use them.
-            </Callout>
-          )}
-        </div>
-      </Card>
+        A pointer rather than nothing at all: somebody who came here to turn
+        tables on will look for the switch that used to be here, and an empty
+        space would read as a bug.
+      */}
+      {tables.length > 0 && (
+        <Callout tone="neutral" title="Which tills show this floor">
+          Tables are set up here, but whether a till SHOWS them is now set per
+          till — under <b className="font-semibold">Setup › Tills</b>, choose{' '}
+          <b className="font-semibold">Tables</b> for each register that works the
+          floor. A shop can run tables on one till and a counter on another.
+        </Callout>
+      )}
 
       {/* ── The floor ───────────────────────────────────────────────────── */}
       <Card>

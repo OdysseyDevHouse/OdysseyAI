@@ -37,12 +37,18 @@ export type ButtonVariant =
  * sizes rather than call-site overrides so that "how big is a finger target"
  * stays one answer in one place; see --spacing-touch in globals.css.
  */
-export type ButtonSize = 'md' | 'sm' | 'touch' | 'touch-lg'
+export type ButtonSize = 'md' | 'sm' | 'touch' | 'touch-lg' | 'keypad'
 
 /* Layout, radius, type scale and motion — identical for every variant, so
    none of them can drift. Only colour changes below. */
+/* The radius, type size and weight are NOT here.
+   They belong to BUTTON_SIZE, and a copy in the base defeats it: both land in
+   the same Tailwind layer, so `text-sm` here beat the `text-base` a touch
+   button asked for purely on source order, and every till button rendered at
+   14px — the exact thing the note on `touch` below says the sizes exist to
+   stop. `md` and `sm` carry the old defaults explicitly instead. */
 const BUTTON_BASE =
-  'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-control border text-sm font-medium transition ' +
+  'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap border transition ' +
   'disabled:pointer-events-none'
 
 const BUTTON_VARIANT: Record<ButtonVariant, string> = {
@@ -81,20 +87,40 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
 /* Icon-only buttons go square at the same height, so a toolbar of mixed
    buttons still lines up. */
 const BUTTON_SIZE: Record<ButtonSize, { text: string; icon: string }> = {
-  md: { text: 'h-control px-3.5', icon: 'h-control w-control' },
-  sm: { text: 'h-control-sm px-3 text-[13px]', icon: 'h-control-sm w-control-sm' },
+  md: {
+    text: 'h-control px-3.5 rounded-control text-sm font-medium',
+    icon: 'h-control w-control rounded-control text-sm font-medium',
+  },
+  sm: {
+    text: 'h-control-sm px-3 rounded-control text-[13px] font-medium',
+    icon: 'h-control-sm w-control-sm rounded-control text-sm font-medium',
+  },
   /* Type steps up with the box. A 56px button wearing 14px text reads as a
      small button that has been stretched, which is exactly how the till's
      buttons looked before these existed. */
-  touch: { text: 'h-touch px-5 text-base', icon: 'h-touch w-touch' },
+  touch: {
+    text: 'h-touch px-5 rounded-control text-base font-medium',
+    icon: 'h-touch w-touch rounded-control text-base font-medium',
+  },
   /* SHADOWED, and only at this size. `touch-lg` is reserved for the keys that
      END a sale — Close and Pay — and on a screen built from floating cards those
      two should sit on the surface the same way the cards do, rather than looking
      printed onto the basket. Every smaller button stays flat: a shadow on all of
      them would be a page of lifted rectangles, which is no hierarchy at all. */
   'touch-lg': {
-    text: 'h-touch-lg px-6 text-lg font-semibold shadow-card',
-    icon: 'h-touch-lg w-touch-lg shadow-card',
+    text: 'h-touch-lg px-6 rounded-control text-lg font-semibold shadow-card',
+    icon: 'h-touch-lg w-touch-lg rounded-control text-lg font-semibold shadow-card',
+  },
+  /* A NUMBER-PAD KEY, and only that. Not a height but a proportion: the key
+     fills the column its grid gives it and takes its height from that, so one
+     pad can be a block in a modal and another can span a whole card without
+     two different sets of numbers to keep in step.
+
+     `rounded-card` rather than `rounded-control` because at this size the
+     tighter radius reads as a text input rather than a key to press. */
+  keypad: {
+    text: 'h-auto w-full rounded-card py-5 text-3xl font-bold',
+    icon: 'h-auto w-full rounded-card py-5',
   },
 }
 
@@ -110,6 +136,27 @@ export function buttonClass({
   return `${BUTTON_BASE} ${BUTTON_VARIANT[variant]} ${
     iconOnly ? BUTTON_SIZE[size].icon : BUTTON_SIZE[size].text
   }`
+}
+
+/**
+ * A button's GEOMETRY with no colour attached — box, radius, type scale, motion.
+ *
+ * For the one control that cannot pick a `ButtonVariant`, because its colour is
+ * a runtime value rather than a meaning: `TintButton`, which wears a subject's
+ * `CategoryTone`. It could have called `buttonClass()` and written its tint
+ * after, but "after" is not how Tailwind resolves a conflict — both classes land
+ * in the same layer and the winner is decided by the stylesheet's order, not the
+ * attribute's. That is a coin toss between `bg-brand` and the tone, and a coin
+ * toss is exactly what a design system is for removing.
+ *
+ * So the colour is never emitted in the first place. Same base and same size map
+ * as every other button, which is the part that must not drift.
+ */
+export function buttonShape({
+  size = 'md',
+  iconOnly = false,
+}: { size?: ButtonSize; iconOnly?: boolean } = {}) {
+  return `${BUTTON_BASE} ${iconOnly ? BUTTON_SIZE[size].icon : BUTTON_SIZE[size].text}`
 }
 
 /* ── Tables ──────────────────────────────────────────────────────────────── */
@@ -331,3 +378,4 @@ export const EDGE_LEAD: Record<string, string> = {
   orange: 'border-l-cat-orange',
   slate: 'border-l-cat-slate',
 }
+

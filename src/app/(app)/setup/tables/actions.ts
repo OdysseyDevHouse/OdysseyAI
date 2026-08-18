@@ -318,51 +318,21 @@ export async function retireTableAction(id: number): Promise<TablesResult> {
   return { ok: true, tables: await listTables(siteId) }
 }
 
-export type ModeResult = { ok: true; hospitality: boolean } | { ok: false; error: string }
-
-/**
- * Switches the till between a counter and a floor.
+/*
+ * ── THERE IS NO `setPosModeAction` HERE ANY MORE ─────────────────────────
  *
- * ── SAFE IN BOTH DIRECTIONS, AND THAT IS DELIBERATE ───────────────────────
+ * It switched the whole SHOP between a counter and a floor, writing one
+ * `pos_mode` setting. The mode is now a property of each TILL — a merchant can
+ * run a wholesale trade desk and a retail counter side by side — so a single
+ * shop-wide switch cannot express the answer, and leaving it would let this
+ * screen silently overwrite every register's mode at once.
  *
- * Turning hospitality OFF leaves the tables and their open bills exactly where they are —
- * the bills are ordinary saved sales, so they appear in Saved sales and can be paid from
- * the counter like any parked basket. Nothing is stranded and nothing needs migrating.
+ * Removed rather than left unused: every export in a `'use server'` file is a
+ * live public endpoint, so a dead action here is still callable and would still
+ * write a setting nothing reads.
  *
- * Turning it ON with no tables is also fine: the gate shows "no tables set up" and the
- * walk-in key still works, so a shop can flip the switch and build its floor afterwards
- * rather than being made to do it in the right order.
+ * Set it per till on Setup → Tills. See sql/site/180_terminal_pos_mode.sql.
  */
-export async function setPosModeAction(hospitality: boolean): Promise<ModeResult> {
-  const ctx = await actorFor('setup.edit')
-  if ('ok' in ctx) return ctx
-  const { siteId } = ctx
-
-  /*
-   * "Off" means RETAIL — unless this shop is running the trade counter, in which
-   * case off means staying there.
-   *
-   * This switch is a two-way toggle on the tables screen, and it predates there
-   * being a third mode. Written naively it would answer a question nobody asked:
-   * a paint shop that never touches this screen would still have its till turned
-   * into a supermarket the first time somebody opened Setup → Tables and saved.
-   *
-   * So the OFF branch reads what is there and only changes it if it is about to
-   * change something this screen owns.
-   */
-  const current = await getSetting(siteId, 'pos_mode')
-  const next = hospitality ? 'hospitality' : current === 'invoicing' ? 'invoicing' : 'retail'
-
-  const result = await setSetting(siteId, 'pos_mode', next)
-  if (!result.ok) return { ok: false, error: result.error ?? 'That mode could not be saved.' }
-
-  /* The till reads this from the offline catalog as well as from the page, so a running
-     till picks the change up on its next refresh rather than needing a reload. */
-  revalidatePath('/setup/tables')
-  revalidatePath('/pos')
-  return { ok: true, hospitality }
-}
-
 /*
  * There is deliberately no `currentPosMode(siteId)` here.
  *

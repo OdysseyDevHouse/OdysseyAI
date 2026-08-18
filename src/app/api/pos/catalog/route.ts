@@ -182,10 +182,10 @@ export async function GET(req: NextRequest) {
       'barcode_value_divisor',
       'sales_number_scope',
       'store_number',
-      /* Which kind of till this is. Without it an offline reload would come up in RETAIL
-         on a restaurant floor — no table gate, and a waiter with no way to reach the bill
-         they left open. */
-      'pos_mode',
+      /* NOT `pos_mode`. It is no longer a shop setting — each till carries its
+         own, and this route already knows which till is asking. It is injected
+         into the map below, from `terminal`, so the offline shape is unchanged
+         for every consumer that reads `settings.pos_mode`. */
     ]),
     deviceId ? operatorsForDevice(siteId, deviceId) : Promise.resolve([]),
     /*
@@ -288,7 +288,23 @@ export async function GET(req: NextRequest) {
        * Empty is the normal case.
        */
       pendingPrices,
-      settings,
+      /*
+       * The shop's settings, plus THIS TILL's mode.
+       *
+       * `pos_mode` used to be one of the settings read above. It is now a
+       * column on the till, so it is merged in here rather than fetched — the
+       * route already resolved `terminal` from the device id for numbering.
+       *
+       * Merged into the same key the till already reads, deliberately: an
+       * offline reload takes its mode from this map, and moving it to a new
+       * field would mean a till running an older bundle silently coming up in
+       * retail on a restaurant floor — no table gate, and a waiter with no way
+       * to reach the bill they left open. Same key, better source.
+       *
+       * A machine matching no terminal gets 'retail', which is the answer that
+       * trades and the same one the column defaults to.
+       */
+      settings: { ...settings, pos_mode: terminal?.posMode ?? 'retail' },
       /**
        * The questions the till may ask, and which ones each product starts on.
        *

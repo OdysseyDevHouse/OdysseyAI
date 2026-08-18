@@ -14,6 +14,7 @@ import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
 import { Callout, PageBody, PageHeader } from '@/components/ui'
 import { listImages } from '@/lib/site/productImages'
+import { getSetting } from '@/lib/site/settings'
 import { variantStanding } from '@/lib/site/productVariants'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
 import { referChain, isOnReferLadder } from '@/lib/site/referRange'
@@ -85,7 +86,7 @@ export default async function EditProductPage({
   // The setup each product type needs. Only fetched for the type that uses it —
   // a normal product has no ingredient list to read — and each is tolerant of
   // its table not existing yet, so an unmigrated store still edits products.
-  const [recipeLines, referChainRows, serials, productSuppliers, extraBarcodes, priceHistory, images, autoCode] = await Promise.all([
+  const [recipeLines, referChainRows, serials, productSuppliers, extraBarcodes, priceHistory, images, autoCode, pictureFont] = await Promise.all([
     product.productType === 'recipe'
       ? listRecipe(siteId, product.id).catch(() => [])
       : Promise.resolve([]),
@@ -126,6 +127,13 @@ export default async function EditProductPage({
     suggestedMasterCode(siteId, 'product')
       .then((c) => c !== null)
       .catch(() => false),
+    /*
+     * The typeface for generated pictures. Read here rather than fetched by the
+     * dialog so it is already correct the first time it opens — the picture is
+     * drawn the instant the dialog appears, and a font arriving afterwards
+     * would repaint under the user.
+     */
+    getSetting(siteId, 'generate_picture_font').catch(() => ''),
   ])
 
   // Same tolerance: a store that has not run 070 yet has no parent_id column,
@@ -216,6 +224,7 @@ export default async function EditProductPage({
           recipeLines={recipeLines}
           referChain={referChainRows}
           autoCode={autoCode}
+          pictureFont={pictureFont}
           serials={serials}
           productSuppliers={productSuppliers}
           // Archive and delete live in the header's Actions menu — Save stays

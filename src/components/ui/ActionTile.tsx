@@ -29,8 +29,14 @@ import { EDGE_RING, EDGE_LEAD } from './styles'
  * That loses twice: twenty saturated tiles side by side have no hierarchy left, so
  * nothing stands out, and the caption is the thing a cashier actually reads — white
  * on mid-saturation amber is the worst contrast on the screen. Confining colour to a
- * 44px disc keeps the hue as an IDENTIFIER you find by, while the caption stays ink
+ * 44px badge keeps the hue as an IDENTIFIER you find by, while the caption stays ink
  * on surface where it is legible at arm's length.
+ *
+ * ── HOW THE THREE PARTS ARE ARRANGED ──────────────────────────────────────
+ *
+ * Badge and caption share the top line; the hint runs the full width beneath them.
+ * See the layout itself for why — briefly, the picture and the word for it are one
+ * label and must sit together, and the hint describes the key rather than the caption.
  */
 export function ActionTile({
   title,
@@ -86,20 +92,54 @@ export function ActionTile({
       } ${
         short
           ? `items-center gap-3 py-2 pr-3 ${edge ? 'pl-2.5' : 'pl-3'}`
-          : `flex-col gap-2.5 py-3.5 pr-3.5 ${edge ? 'pl-3' : 'pl-3.5'}`
+          : /* gap-2 rather than the stack's 2.5: the hint is a note ABOUT the caption
+               above it, and a gap wide enough to be read as a separator makes it look
+               like a third, unrelated line — see the layout note below. */
+            `flex-col gap-2 py-3.5 pr-3.5 ${edge ? 'pl-3' : 'pl-3.5'}`
       }`}
     >
-      {icon && <CategoryTile icon={icon} tone={tone} size={short ? 'md' : 'lg'} />}
+      {/*
+        THE ICON SITS BESIDE THE CAPTION, NOT ABOVE IT.
 
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex min-w-0 items-start gap-1.5">
-          <span className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-tight text-ink">
-            {title}
+        Both belong to the same act — the picture and the word for it are one label,
+        and a cashier reads them as a pair. Stacked, the caption drifted a full disc
+        height away from its own icon and landed nearer the hint below it, so a fast
+        scan down the grid read picture / picture / picture and then had to go back up
+        for the words.
+
+        Side by side they are one line to scan, the hint drops underneath as the second
+        thing rather than a competing third, and the tile gains back the vertical room
+        the stack was spending — which is what lets a two-line caption and a two-line
+        hint both fit at the default height.
+      */}
+      {short ? (
+        <>
+          {icon && <CategoryTile icon={icon} tone={tone} size="md" />}
+          <span className="flex min-w-0 flex-1 items-start gap-1.5">
+            <span className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-tight text-ink">
+              {title}
+            </span>
+            {chevron && <ChevronRight size={16} className="mt-0.5 shrink-0 text-muted" />}
           </span>
-          {chevron && <ChevronRight size={16} className="mt-0.5 shrink-0 text-muted" />}
-        </span>
-        {hint && !short && <span className="line-clamp-2 text-[13px] text-muted">{hint}</span>}
-      </span>
+        </>
+      ) : (
+        <>
+          <span className="flex min-w-0 items-center gap-2.5">
+            {icon && <CategoryTile icon={icon} tone={tone} size="lg" />}
+            <span className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-tight text-ink">
+              {title}
+            </span>
+            {chevron && <ChevronRight size={16} className="shrink-0 text-muted" />}
+          </span>
+
+          {/* Full tile width, under BOTH — it explains the key rather than the
+              caption, so indenting it to clear the disc would make it look like a
+              continuation of the title instead of a note about the whole thing. */}
+          {hint && (
+            <span className="line-clamp-3 text-[13px] leading-snug text-muted">{hint}</span>
+          )}
+        </>
+      )}
 
       {badge && <span className="absolute right-2 top-2">{badge}</span>}
       {corner && <span className="absolute left-2 top-2 text-muted">{corner}</span>}

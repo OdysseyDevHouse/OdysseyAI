@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Button, CategoryTile, Icons, TouchRow, type CategoryTone } from '@/components/ui'
 import { useOfflineShell, INVOICING_SHELL } from '@/lib/posOffline/useOfflineShell'
+import ShiftModal from '@/app/(pos)/pos/ShiftModal'
+import { counterSignOutAction } from './pinActions'
 
 /**
  * The four screens this window holds, in the order a counter reaches for them.
@@ -86,15 +87,23 @@ const SCREENS: {
 export default function InvoicingChrome({
   siteName,
   capabilities,
+  operatorName,
+  canCashup,
   children,
 }: {
   siteName: string
   /** Reserved: per-screen gating lands here when the screens grow it. */
   capabilities: string[]
+  /** Who is signed in at this counter — see the layout on why this is not the session. */
+  operatorName: string
+  /** Whether the OPERATOR may open and close a shift. The modal states it too. */
+  canCashup: boolean
   children: React.ReactNode
 }) {
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [shiftOpen, setShiftOpen] = useState(false)
+  const router = useRouter()
 
   /*
    * THE OFFLINE SHELL, registered here because this component wraps every
@@ -154,10 +163,20 @@ export default function InvoicingChrome({
    * taking the first match is what makes /invoicing/quotes read as Quotes
    * rather than as both.
    */
-  const current =
-    [...SCREENS]
-      .sort((a, b) => b.href.length - a.href.length)
-      .find((s) => pathname === s.href || pathname.startsWith(`${s.href}/`))?.href ?? '/invoicing'
+  const currentScreen = [...SCREENS]
+    .sort((a, b) => b.href.length - a.href.length)
+    .find((s) => pathname === s.href || pathname.startsWith(`${s.href}/`))
+
+  const current = currentScreen?.href ?? '/invoicing'
+
+  /*
+   * The caption names the SCREEN and nothing else — "Quotes" on quotes,
+   * "Lay-bys" on lay-bys. This window holds four different jobs, and the
+   * top-left corner is where somebody checks which one they are in. The
+   * mark and the product name said the same thing on all four, so they are
+   * gone; what is left is the only word that changes.
+   */
+  const screenName = currentScreen?.label ?? 'Invoicing'
 
   return (
     <>
@@ -176,23 +195,17 @@ export default function InvoicingChrome({
           <Icons.Menu size={20} />
         </button>
 
-        <span className="flex items-center gap-2.5">
-          {/* Decorative beside the wordmark, so no alt of its own. */}
-          <Image
-            src="/logo-icon.png"
-            alt=""
-            aria-hidden
-            width={318}
-            height={278}
-            unoptimized
-            className="h-7 w-auto object-contain"
-          />
-          {/* Set like the till's lockup and the back office's rail — the same
-              product name in the same face, so this reads as a room in the
-              app rather than a different application. */}
-          <span className="wordmark-lockup text-lg leading-none text-ink">
-            Odyssey <span className="font-bold text-brand">Invoicing</span>
-          </span>
+        {/* Set in the wordmark face like the till's lockup and the back
+            office's rail, so this still reads as a room in the same app — but
+            the mark and the product name are not repeated. The window is
+            already open; the one thing worth stating here is WHICH of the four
+            screens you are on.
+
+            Brand blue, the same weight and colour the screen name carried when
+            it was the second half of the lockup — dropping the mark and the
+            product name changed what the corner SAYS, not how it is set. */}
+        <span className="wordmark-lockup text-lg font-bold leading-none text-brand">
+          {screenName}
         </span>
 
         <span className="ml-auto flex items-center gap-2.5">
@@ -231,6 +244,42 @@ export default function InvoicingChrome({
               Online only
             </span>
           )}
+          {/*
+            WHO IS AT THE COUNTER, and the drawer they are answerable for.
+
+            The same two facts the till puts in its status bar, in the same
+            order: the person first, because every document typed here is
+            attributed to them, then the shift, because that is what they open
+            before trading and count at the end of it.
+          */}
+          <button
+            type="button"
+            data-kit-ok
+            onClick={() => setShiftOpen(true)}
+            title="Shift and drawer"
+            className="flex h-control items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-ink-2 transition hover:border-brand/40 hover:bg-brand-soft hover:text-brand"
+          >
+            <Icons.Coins size={16} />
+            <span className="hidden sm:inline">Shift</span>
+          </button>
+
+          {/* Signing OUT of the counter, not out of the shop — the browser
+              session stays, so the next clerk needs a PIN rather than a full
+              login. Named with the person so it reads as "this is you, and
+              this is how you hand over". */}
+          <button
+            type="button"
+            data-kit-ok
+            onClick={() => {
+              void counterSignOutAction().then(() => router.refresh())
+            }}
+            title="Hand over to the next person"
+            className="flex h-control items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-ink-2 transition hover:border-brand/40 hover:bg-brand-soft hover:text-brand"
+          >
+            <Icons.LogOut size={16} />
+            <span className="hidden max-w-[12ch] truncate sm:inline">{operatorName}</span>
+          </button>
+
           <span className="hidden text-[13px] text-muted sm:inline">{siteName}</span>
           {/* The one way out, named rather than drawn. An operator who opened
               this window from the back office still has that window; this is
@@ -249,6 +298,36 @@ export default function InvoicingChrome({
       {/* `min-h-0` is what lets this scroll inside a flex column instead of
           pushing the header off screen. */}
       <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+
+      {/*
+        The till's own shift modal, reused rather than reimplemented.
+
+        A shift is a shift: the same drawer, the same opening float, the same
+        blind count, the same `shifts` rows. A second copy here would be a
+        second place for the cash-up rules to drift, which is exactly what
+        shiftActions.ts was written to stop.
+
+        `terminalId` is null: a trade counter claims no till. On a shop set to
+        TERMINAL cash-up that means the modal reports no shift, which is honest
+        — that shop counts drawers per till and this counter is not one. On
+        USER cash-up (openShiftForUser) it is the operator's own shift, which
+        is the mode a counter wants.
+      */}
+      <ShiftModal
+        open={shiftOpen}
+        online={online}
+        terminalId={null}
+        pendingSales={0}
+        onClose={() => setShiftOpen(false)}
+        onShiftChanged={() => router.refresh()}
+        /* The detailed declaration lives in the back office. Opened in this
+           window rather than a new one: the operator is cashing up, which is
+           the end of their stint at this counter. */
+        onDeclare={() => {
+          setShiftOpen(false)
+          router.push('/sales/cashup')
+        }}
+      />
 
       {menuOpen && (
         <>

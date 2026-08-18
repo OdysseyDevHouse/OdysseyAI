@@ -80,6 +80,7 @@ export function TenderPad({
   serviceCharge: serviceChargeProp = 0,
   canRemoveServiceCharge = false,
   credit = null,
+  depositHeld = 0,
   onGiftCardLookup,
   onFinalise,
 }: {
@@ -127,6 +128,20 @@ export function TenderPad({
    * reduces what is owed rather than being a payment the cashier keys.
    */
   credit?: { amount: number; label: string } | null
+  /**
+   * A deposit already taken against this document on an earlier day.
+   *
+   * Its own prop rather than folded into `credit`, because a bill can carry
+   * both an exchange credit and a deposit and `credit` holds exactly one —
+   * overloading it would silently drop whichever arrived second.
+   *
+   * Behaves like `credit` otherwise: DISPLAY-ONLY, reducing what the pad asks
+   * for. `finaliseDocument` adds the held amount as a DEPOSIT tender when it
+   * posts, so a pad that asked for the full total would post the sale over-paid
+   * by exactly the deposit — and DEPOSIT gives no change and takes no tip, so
+   * `planTips` refuses it outright and the sale cannot be finalised at all.
+   */
+  depositHeld?: number
   /**
    * Looks a gift card up for the redemption step (147). Wired by the shell to
    * a server action — the pad itself stays database-free. Absent means the
@@ -250,9 +265,18 @@ export function TenderPad({
       ? roundToCash(totalIncl, cashRounding)
       : { rounded: totalIncl, adjustment: 0 }
 
+  /* Capped at the total exactly as `tenderAtFinalise` caps it on the server: the
+     excess of an over-held deposit is refunded as its own event and never becomes
+     a tender, so it must not come off what is owed here either. */
+  const depositCredit = round(Math.min(Math.max(depositHeld, 0), Math.max(totalIncl, 0)), 2)
+
   /* The exchange credit comes off like a voucher: after rounding, before the
-     tender check — the same order the server nets the pair of documents. */
-  const payable = round(Math.max(0, roundedTotal - voucherCredit - (credit?.amount ?? 0)), 2)
+     tender check — the same order the server nets the pair of documents. The
+     deposit comes off beside it, for the same reason and in the same place. */
+  const payable = round(
+    Math.max(0, roundedTotal - voucherCredit - (credit?.amount ?? 0) - depositCredit),
+    2,
+  )
 
   /*
    * The RAW excess, computed here rather than taken from `check.change`.
@@ -636,6 +660,16 @@ export function TenderPad({
                     {' · '}
                     {credit.label} covers {formatMoney(Math.min(credit.amount, roundedTotal))} —{' '}
                     {formatMoney(payable)} to pay
+                  </>
+                )}
+                {/* Likewise the deposit: the cashier is about to ask for less
+                    than the bill says, and this is the sentence that explains
+                    why before the customer queries it. */}
+                {depositCredit > 0.005 && (
+                  <>
+                    {' · '}
+                    {formatMoney(depositCredit)} deposit already paid — {formatMoney(payable)} to
+                    pay
                   </>
                 )}
                 {adjustment !== 0 && (

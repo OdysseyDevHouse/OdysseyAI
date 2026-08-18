@@ -23,10 +23,21 @@ export function NumPad({
   maxDecimals = 2,
   maxLength = 9,
   disabled = false,
+  size = 'default',
 }: {
   /** The decimal string being typed, e.g. "12.5" or "" — not a number. */
   value: string
   onChange: (next: string) => void
+  /**
+   * `default` is the pad inside a modal, where it shares the dialog with a
+   * heading, a total and a confirm button and must not crowd them.
+   *
+   * `lg` is for a pad that IS the screen — the open-till gate. There the keys
+   * are the only thing to hit, so they take the full width they are given and
+   * grow to a comfortable thumb target rather than sitting as a small block in
+   * the middle of an empty card. Opt in; it would burst a modal.
+   */
+  size?: 'default' | 'lg'
   /**
    * 0 for a whole-number pad (quantity of a non-fractional product, covers).
    * The decimal key is then rendered as a gap rather than removed, so the 0 and
@@ -94,16 +105,25 @@ export function NumPad({
 
   const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
 
+  const lg = size === 'lg'
+  /* The SIZE prop, not a className. Button concatenates its own size classes
+     with whatever className it is handed and does not resolve the conflict, so
+     an `h-auto text-3xl` passed in loses to `h-touch text-base` on source order
+     alone — the keys stayed 56px and 14px while every class looked right in the
+     DOM. `keypad` puts the same declarations where they can win. */
+  const keySize = lg ? 'keypad' : 'touch'
+  const keyClass = lg ? '' : 'text-xl font-bold'
+
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className={`grid grid-cols-3 ${lg ? 'gap-3' : 'gap-2'}`}>
       {KEYS.map((key) => (
         <Button
           key={key}
           variant="ghost"
-          size="touch"
+          size={keySize}
           disabled={disabled}
           onClick={() => press(key)}
-          className="text-xl font-bold"
+          className={keyClass}
         >
           {key}
         </Button>
@@ -112,10 +132,10 @@ export function NumPad({
       {maxDecimals > 0 ? (
         <Button
           variant="ghost"
-          size="touch"
+          size={keySize}
           disabled={disabled}
           onClick={() => press('.')}
-          className="text-xl font-bold"
+          className={keyClass}
           aria-label="Decimal point"
         >
           .
@@ -129,25 +149,26 @@ export function NumPad({
 
       <Button
         variant="ghost"
-        size="touch"
+        size={keySize}
         disabled={disabled}
         onClick={() => press('0')}
-        className="text-xl font-bold"
+        className={keyClass}
       >
         0
       </Button>
 
       <Button
         variant="ghost"
-        size="touch"
+        size={keySize}
         disabled={disabled || value === ''}
         onClick={() => press('back')}
         aria-label="Backspace"
+        className={keyClass}
       >
         {/* The key a cashier already knows. A ChevronLeft — which this used to
             be — reads as "go back a screen" on a touch till, which is the one
             thing this key must not be mistaken for mid-entry. */}
-        <Icons.Backspace size={22} />
+        <Icons.Backspace size={lg ? 30 : 22} />
       </Button>
     </div>
   )
@@ -166,23 +187,52 @@ export function NumPadDisplay({
   value,
   placeholder = '0',
   tone = 'default',
+  layout = 'stacked',
 }: {
   label?: string
   value: string
   placeholder?: string
   /** `danger` while the entry is refused — over a discount ceiling, say. */
   tone?: 'default' | 'danger'
+  /**
+   * `stacked` puts the label above the figure — the default, and right for a
+   * pad in a modal where the label runs long ("Cash — amount handed over").
+   *
+   * `inline` sets the label and the figure on one line, and paints the figure
+   * in brand. It reads as one statement — "Opening float … 0.00" — which suits
+   * a pad that IS the screen rather than one control on it. Opt in; a long
+   * label would crowd the figure on the same row.
+   */
+  layout?: 'stacked' | 'inline'
 }) {
+  const empty = value === ''
+  const inline = layout === 'inline'
+  const figure = `numeric font-extrabold ${inline ? 'text-3xl' : 'block text-right text-3xl'} ${
+    tone === 'danger'
+      ? 'text-danger'
+      : /* Brand, not faint, when inline: the figure is the subject of the
+           screen, and greying the resting value made the one number the
+           cashier is about to change look disabled. */
+        inline
+        ? 'text-brand'
+        : empty
+          ? 'text-faint'
+          : 'text-ink'
+  }`
+
+  if (inline) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-control border border-border bg-surface-2 px-4 py-3.5">
+        {label && <span className="text-sm font-semibold text-ink">{label}</span>}
+        <span className={figure}>{empty ? placeholder : value}</span>
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-control border border-border bg-canvas px-4 py-3">
       {label && <span className="block text-xs font-semibold text-muted">{label}</span>}
-      <span
-        className={`numeric block text-right text-3xl font-extrabold ${
-          tone === 'danger' ? 'text-danger' : value === '' ? 'text-faint' : 'text-ink'
-        }`}
-      >
-        {value === '' ? placeholder : value}
-      </span>
+      <span className={figure}>{empty ? placeholder : value}</span>
     </div>
   )
 }

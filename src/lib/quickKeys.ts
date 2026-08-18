@@ -93,6 +93,15 @@ export type QuickKeyAction = {
    */
   retailOnly?: boolean
   /**
+   * Why this one is retail-only, when the default sentence would not fit.
+   *
+   * The default answers "a table is already your parked basket", which is true
+   * of the saved-sales key and of nothing else. The document lists are retail
+   * for a different reason — a restaurant does not quote, order or lay by — and
+   * telling a manager the wrong reason is worse than telling them none.
+   */
+  retailReason?: string
+  /**
    * Meaningless on the TABLES bar, even on a restaurant till.
    *
    * Not the same flag as `retailOnly`. That one is about the shop; this is about which
@@ -158,6 +167,61 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     capability: 'sales.view',
     retailOnly: true,
     hint: 'The parked baskets, to bring one back.',
+  },
+
+  /*
+   * ── THE THREE LISTS ───────────────────────────────────────────────────────
+   *
+   * "Find an existing quote / order / lay-by" is one question asked of three
+   * different piles, and until now only two of them had a way in from the till:
+   * the basket carried a recall key that CHANGED MEANING with the module it was
+   * showing. That key is gone. It cost every shop a strip of the basket, it sat
+   * beside Save where a thumb rests, and it could only ever reach the list for
+   * the module already on screen — so a cashier ringing a sale who was asked
+   * about a quote had to switch module, binning the basket, to look one up.
+   *
+   * As keys they are three things a shop places, or does not, and any of them
+   * opens over whatever is on screen without touching it. Three slugs rather
+   * than one "Documents" key for the same reason the modals are separate: a
+   * quote is answered by recalling it, an order by delivering it, a lay-by by
+   * taking a payment against it. One key would have to ask which — which is the
+   * question the cashier already answered by pressing it.
+   *
+   * All three take `sales.view`: this is reading the shop's documents, not
+   * writing one. What they lead to re-checks for itself, as every action does.
+   */
+  /*
+   * All three RETAIL-ONLY, which is the same call the module menu makes: it is
+   * hidden on a restaurant till because every row behind it is a promise about
+   * goods leaving the shop later, and a kitchen makes none of those. Offering
+   * the same three as keys there would put the menu back one button at a time.
+   */
+  {
+    slug: 'view-quotes',
+    label: 'Quotes',
+    icon: 'ListOrdered',
+    capability: 'sales.view',
+    retailOnly: true,
+    retailReason: 'Quotes are a counter act — a restaurant till does not write them.',
+    hint: "The shop's quotes, to bring one onto the till.",
+  },
+  {
+    slug: 'view-orders',
+    label: 'Orders',
+    icon: 'Package',
+    capability: 'sales.view',
+    retailOnly: true,
+    retailReason: 'Sales orders are a counter act — a restaurant till does not write them.',
+    hint: 'Sales orders waiting to go out, to deliver one.',
+  },
+  {
+    slug: 'view-laybys',
+    label: 'Lay-bys',
+    icon: 'PackageOpen',
+    capability: 'sales.view',
+    retailOnly: true,
+    retailReason: 'Lay-bys are a counter act — a restaurant till does not write them.',
+    hint: 'The lay-bys on the go, to take a payment or hand one over.',
   },
   {
     slug: 'undo',
@@ -394,7 +458,20 @@ export function quickKeyAllowedOnTill(
   const action = actionForSlug(key.actionSlug ?? '')
   if (!action) return null
   if (action.retailOnly && hospitality) {
-    return `${action.label} is for a counter till. With tables, the table is the parked basket.`
+    /*
+     * TWO REASONS A KEY IS RETAIL-ONLY, and one sentence would only ever fit one
+     * of them. "The table is the parked basket" answers Saved sales exactly, and
+     * answers Quotes with a non-sequitur: nobody was asking about parking.
+     *
+     * So the ones that are about DOCUMENTS the shop does not write say that
+     * instead. The distinction is `retailReason` on the action rather than a
+     * second flag, because both still mean the same thing to every caller —
+     * hide it — and a second flag would be a second thing to keep in step.
+     */
+    return (
+      action.retailReason ??
+      `${action.label} is for a counter till. With tables, the table is the parked basket.`
+    )
   }
   if (action.hospitalityOnly && !hospitality) {
     return `${action.label} needs a restaurant till — this shop is set to retail.`

@@ -96,6 +96,65 @@
   --color-tile-6: #0e7490;
   --color-tile-7: #475569;
 
+  /* --- Picture gradients -------------------------------------------------- */
+  /* The 20 ramps a product's till tile can wear, shared with the generated
+     picture dialog (lib/generatedPicture) so a shop that generates an icon and
+     a shop that only picks a colour are choosing from ONE palette.
+
+     Two stops each, dark → light within one hue family, so a tile reads as one
+     colour rather than a rainbow. The pale ramps (yellow, gold, amber, lime)
+     take dark ink — see `--color-pic-ink-dark` below and inkFor() in
+     lib/generatedPicture, which measures the light stop and decides the same
+     way the canvas does.
+
+     These ARE the same hex values as the renderer's, deliberately duplicated:
+     the canvas cannot read a CSS custom property, and a swatch cannot be
+     painted by the canvas. Keep the two lists in step — lib/generatedPicture
+     is the source of truth for the numbers. */
+  --color-pic-green-from: #1e7f3d;
+  --color-pic-green-to: #43b02a;
+  --color-pic-lime-from: #7bc043;
+  --color-pic-lime-to: #c5e86a;
+  --color-pic-teal-from: #00897b;
+  --color-pic-teal-to: #26a69a;
+  --color-pic-aqua-from: #00bcd4;
+  --color-pic-aqua-to: #4dd0e1;
+  --color-pic-blue-from: #1565c0;
+  --color-pic-blue-to: #42a5f5;
+  --color-pic-deep-blue-from: #0d47a1;
+  --color-pic-deep-blue-to: #1976d2;
+  --color-pic-indigo-from: #3949ab;
+  --color-pic-indigo-to: #5c6bc0;
+  --color-pic-purple-from: #6a1b9a;
+  --color-pic-purple-to: #ab47bc;
+  --color-pic-violet-from: #7e57c2;
+  --color-pic-violet-to: #b388ff;
+  --color-pic-magenta-from: #ad1457;
+  --color-pic-magenta-to: #ec407a;
+  --color-pic-pink-from: #d81b60;
+  --color-pic-pink-to: #ff4081;
+  --color-pic-rose-from: #f06292;
+  --color-pic-rose-to: #ff80ab;
+  --color-pic-red-from: #c62828;
+  --color-pic-red-to: #ef5350;
+  --color-pic-orange-from: #ef6c00;
+  --color-pic-orange-to: #ffa726;
+  --color-pic-deep-orange-from: #e65100;
+  --color-pic-deep-orange-to: #ff7043;
+  --color-pic-amber-from: #ffb300;
+  --color-pic-amber-to: #ffd54f;
+  --color-pic-yellow-from: #fdd835;
+  --color-pic-yellow-to: #fff176;
+  --color-pic-gold-from: #ffc107;
+  --color-pic-gold-to: #ffd54f;
+  --color-pic-brown-from: #6d4c41;
+  --color-pic-brown-to: #a1887f;
+  --color-pic-slate-from: #455a64;
+  --color-pic-slate-to: #78909c;
+  /* The ink for a pale ramp. Not `--color-ink`: that follows the theme, and a
+     till tile is a fixed picture whose contrast must not flip in dark mode. */
+  --color-pic-ink-dark: #1f2937;
+
   /* --- Charts ------------------------------------------------------------- */
   /* The categorical ramp for series colour — the dashboard's charts and the
      tender donut read these in order and wrap when they run out. Ordered so

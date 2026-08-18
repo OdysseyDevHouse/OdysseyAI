@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireActor, actorFor } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
+import { setSetting } from '@/lib/site/settings'
 import {
   addImage,
   clearIcon,
@@ -174,4 +175,27 @@ export async function setAltTextAction(
   const result = await setAltText(siteId, productId, imageId, altText)
   if (result.ok) revalidatePath(`/products/${productId}`)
   return result
+}
+
+/* ── The generated-icon typeface ─────────────────────────────────────────────
+ *
+ * Site-wide, but written from the product screen while generating a till icon,
+ * so it lives with the icon actions above rather than in the settings screen's
+ * own file.
+ *
+ * GUARDED ON products.edit, deliberately — NOT a settings capability. The value
+ * is global, but it is saved as a side effect of generating an icon for one
+ * product: a buyer with product rights must be able to use the generator
+ * without also holding settings rights, which in most shops is manager-only.
+ */
+
+export async function setGeneratePictureFontAction(
+  font: string,
+): Promise<SaveResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  // validateSetting rejects anything that is not a PICTURE_FONTS id, so an
+  // unknown value never reaches the table.
+  return setSetting(ctx.siteId, 'generate_picture_font', font)
 }

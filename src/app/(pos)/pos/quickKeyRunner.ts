@@ -58,6 +58,18 @@ export type QuickKeyHandlers = {
   saveAsOrder: () => void
   /** Opens the saved-sales list. */
   showSaved: () => void
+  /**
+   * The three document lists, each opening OVER the basket without touching it.
+   *
+   * They replaced the basket's recall key, which was one button that meant a
+   * different list depending on the module showing — so the list a cashier
+   * could reach was decided by the document they happened to be writing. These
+   * are reachable from anywhere, mid-sale included, which is when somebody at
+   * the counter actually asks "did you quote me for this?".
+   */
+  showQuotes: () => void
+  showTillOrders: () => void
+  showLaybys: () => void
   /** Removes the last line added. */
   undo: () => void
   /** Opens the customer picker. */
@@ -244,6 +256,34 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
   },
 
   'view-saved-sales': ({ handlers }) => handlers.showSaved(),
+
+  /*
+   * ── THE THREE LISTS ───────────────────────────────────────────────────────
+   *
+   * Online-only, all three, and for the same reason the recall key they replaced
+   * was: these documents live on the server and are claimed there. An offline
+   * till would render the list's empty state — "No lay-bys on the go" — which
+   * reads as a fact about the SHOP rather than about the line, and sends a
+   * cashier to tell a customer their quote does not exist.
+   *
+   * Each says which pile it could not reach rather than sharing one message.
+   * "Quotes need the connection" is actionable; "that needs the connection" is
+   * the same sentence a cashier has already learnt to skip.
+   */
+  'view-quotes': ({ handlers, online }) =>
+    online
+      ? handlers.showQuotes()
+      : handlers.say('Quotes need the connection — they live on the server.', 'info'),
+
+  'view-orders': ({ handlers, online }) =>
+    online
+      ? handlers.showTillOrders()
+      : handlers.say('Sales orders need the connection — they live on the server.', 'info'),
+
+  'view-laybys': ({ handlers, online }) =>
+    online
+      ? handlers.showLaybys()
+      : handlers.say('Lay-bys need the connection — they live on the server.', 'info'),
 
   undo: ({ handlers, hasLines }) =>
     hasLines ? handlers.undo() : handlers.say('Nothing to undo.', 'info'),

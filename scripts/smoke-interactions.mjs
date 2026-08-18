@@ -14,13 +14,11 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const BASE = process.env.APP_URL || 'http://localhost:4100'
-const PORT = Number(process.env.CDP_PORT || 9345)
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 
 const jsonAt = (() => {
   const i = process.argv.indexOf('--json')
@@ -40,37 +38,10 @@ function record(name, ok, detail) {
 }
 
 // ── Chrome ──────────────────────────────────────────────────────────────
-const profile = path.join(tmpdir(), `odyssey-interactions-${process.pid}`)
-mkdirSync(profile, { recursive: true })
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    `--remote-debugging-port=${PORT}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-gpu',
-    `--user-data-dir=${profile}`,
-    '--window-size=1600,1000',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { wsUrl, close: closeChrome } = await launchChrome('interactions')
 process.on('exit', () => {
-  try { chrome.kill() } catch {}
-  try { rmSync(profile, { recursive: true, force: true }) } catch {}
 })
 
-async function devtoolsUrl() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/json/version`)
-      if (r.ok) return (await r.json()).webSocketDebuggerUrl
-    } catch {}
-    await sleep(250)
-  }
-  throw new Error('Chrome did not expose a debugging port')
-}
 
 let ws
 let sessionId
@@ -84,7 +55,7 @@ const send = (method, params = {}, sid) =>
   })
 
 async function connect() {
-  ws = new WebSocket(await devtoolsUrl())
+  ws = new WebSocket(wsUrl)
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data)

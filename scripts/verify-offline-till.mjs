@@ -14,12 +14,12 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const BASE = process.env.APP_URL || 'http://localhost:4100'
 const OUT = process.env.SHOT_DIR || path.join(process.cwd(), '.screenshots')
-const PORT = 9334
 /** The device id TILL01 has claimed, so this browser IS that till. */
 const DEVICE = process.env.VERIFY_DEVICE_ID || 'b7a53389-9e44-4378-873c-af3cbd870b7d'
 const SITE_ID = Number(process.env.VERIFY_SITE_ID || 1)
@@ -29,46 +29,17 @@ if (!EMAIL || !PASSWORD) {
   process.exit(1)
 }
 
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const profile = path.join(tmpdir(), `odyssey-offline-${process.pid}`)
 mkdirSync(OUT, { recursive: true })
 
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    `--remote-debugging-port=${PORT}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-gpu',
-    '--hide-scrollbars',
-    `--user-data-dir=${profile}`,
-    '--window-size=1600,1000',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { wsUrl, close: closeChrome } = await launchChrome('offline')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 function cleanup() {
-  try { chrome.kill() } catch {}
-  try { rmSync(profile, { recursive: true, force: true }) } catch {}
 }
 process.on('exit', cleanup)
 
-async function devtoolsUrl() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/json/version`)
-      if (r.ok) return (await r.json()).webSocketDebuggerUrl
-    } catch {}
-    await sleep(250)
-  }
-  throw new Error('Chrome did not expose a debugging port')
-}
 
-const ws = new WebSocket(await devtoolsUrl())
+const ws = new WebSocket(wsUrl)
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
 
 let id = 0

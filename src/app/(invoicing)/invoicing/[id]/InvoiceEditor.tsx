@@ -19,6 +19,8 @@ import {
   PageBody,
   PageHeader,
   PickerResults,
+  type PickableReason,
+  ReasonPicker,
   Select,
   SummaryList,
   SummaryRow,
@@ -52,13 +54,20 @@ import {
   searchProductsAction,
   browseProductsAction,
   listProductDepartmentsAction,
+  voidSaleAction,
+  creditWholeSaleAction,
+  recordPrintAction,
 } from '@/app/(app)/sales/actions'
+import { EmailInvoiceDialog } from '@/app/(app)/sales/EmailInvoiceDialog'
 import {
   finaliseInvoiceAction,
   getInvoiceCustomerAction,
+  saleRecordAction,
   saveInvoiceAction,
   type InvoicePayload,
 } from '../actions'
+import { SaleRecord } from '@/app/(app)/sales/[id]/SaleRecord'
+import type { SaleRecordSnapshot } from '@/lib/site/saleRecord'
 import TenderPad from './TenderPad'
 import { issueQuoteAction } from '@/app/(invoicing)/invoicing/quotes/actions'
 import CustomerBar from './CustomerBar'
@@ -134,6 +143,11 @@ export default function InvoiceEditor({
   showCost,
   specials,
   extraStatus = null,
+  voidReasons = [],
+  returnReasons = [],
+  canVoid = false,
+  canCredit = false,
+  depositHeld = 0,
 }: {
   document: SalesDocument
   structures: PriceStructure[]
@@ -167,6 +181,23 @@ export default function InvoiceEditor({
    * beside the buttons that change it.
    */
   extraStatus?: ReactNode
+  /**
+   * The site's reason lists, for the dialog shown once this invoice posts.
+   *
+   * Empty by default so the back-office editor — which has a document viewer
+   * one click away — is unchanged by this.
+   */
+  voidReasons?: PickableReason[]
+  returnReasons?: PickableReason[]
+  /** Whether this ROLE may cancel / credit. Both re-checked by the actions. */
+  canVoid?: boolean
+  canCredit?: boolean
+  /**
+   * Money already held against this document, so the tender pad asks for the
+   * balance rather than the whole total. Zero for a document with no deposit,
+   * which is the overwhelming majority. See TenderPad's `depositHeld`.
+   */
+  depositHeld?: number
 }) {
   const toast = useToast()
   const router = useRouter()
@@ -238,7 +269,90 @@ export default function InvoiceEditor({
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const [tendering, setTendering] = useState(false)
-  const [receipt, setReceipt] = useState<{ number: string; change: number } | null>(null)
+  const [receipt, setReceipt] = useState<{
+    documentId: number
+    number: string
+    change: number
+  } | null>(null)
+
+  /*
+   * The posted invoice as a RECORD, for the dialog to show.
+   *
+   * Read back from the server rather than assembled from what is on screen: the
+   * capture form holds what was typed, and what matters now is what was STORED
+   * — the numbers the posting engine settled on, the tenders it wrote, the
+   * document number it allocated. Null while it loads, which is the one beat
+   * between the dialog opening and the record arriving.
+   */
+  const [record, setRecord] = useState<SaleRecordSnapshot | null>(null)
+
+  /*
+   * The finalised dialog's two destructive paths.
+   *
+   * Kept as a 'which face is showing' value rather than nested modals: a
+   * <dialog> inside an open <dialog> is a stacking problem, and the counter is
+   * answering one question at a time — print it, or cancel it, or credit it.
+   * `null` is the ordinary face with the four buttons.
+   */
+  const [finalisedFace, setFinalisedFace] = useState<'void' | 'credit' | null>(null)
+  const [emailingPosted, setEmailingPosted] = useState(false)
+  const [postedReasonId, setPostedReasonId] = useState<number | null>(null)
+  const [postedNote, setPostedNote] = useState("")
+
+  /**
+   * Cancelling the invoice that was just posted, without leaving the counter.
+   *
+   * Same action the back-office viewer calls, so the same rules apply: it
+   * re-resolves the operator, re-checks `sales.void`, and refuses anything that
+   * is not same-day. A refusal is shown as a toast and the dialog stays open on
+   * the reason face, because the counter still has a customer in front of them
+   * and needs to know what happened.
+   */
+  function voidPosted() {
+    if (!receipt || postedReasonId === null) return
+    startTransition(async () => {
+      const result = await voidSaleAction(receipt.documentId, {
+        reasonId: postedReasonId,
+        note: postedNote.trim() || null,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(`${receipt.number} cancelled. The stock has been returned.`)
+      leaveFinalised()
+    })
+  }
+
+  /** Crediting it in full — the after-today answer to the same mistake. */
+  function creditPosted() {
+    if (!receipt || postedReasonId === null) return
+    startTransition(async () => {
+      const result = await creditWholeSaleAction(receipt.documentId, {
+        reasonId: postedReasonId,
+        note: postedNote.trim() || null,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(`${receipt.number} credited in full.`)
+      leaveFinalised()
+    })
+  }
+
+  /** Closes the dialog and leaves the counter ready for the next customer. */
+  function leaveFinalised() {
+    setReceipt(null)
+    setRecord(null)
+    setFinalisedFace(null)
+    setPostedReasonId(null)
+    setPostedNote("")
+    /* Back to the register rather than the back office: this window is where
+       the next customer is served, and the list re-reads so the invoice just
+       posted is on it. */
+    router.push('/invoicing')
+  }
 
   /*
    * The credit position of whoever is attached right now.
@@ -554,7 +668,16 @@ export default function InvoiceEditor({
         return
       }
       setTendering(false)
-      setReceipt({ number: result.documentNumber, change: result.change })
+      setReceipt({
+        documentId: result.documentId,
+        number: result.documentNumber,
+        change: result.change,
+      })
+      /* Opened first, filled a moment later: the dialog must appear the instant
+         the sale posts — the counter is waiting on it — so the record is read
+         behind it rather than held up in front of it. */
+      setRecord(null)
+      void saleRecordAction(result.documentId).then(setRecord)
     })
   }
 
@@ -973,6 +1096,10 @@ export default function InvoiceEditor({
           totalIncl={computed.totals.totalIncl}
           cashRounding={cashRounding}
           customer={customer}
+          /* What is already paid comes off what the pad asks for — the posting
+             engine adds it back as a DEPOSIT tender of its own. See the prop's
+             docblock in TenderPad. */
+          depositHeld={depositHeld}
           pending={pending}
           onFinalise={finalise}
         />
@@ -1076,31 +1203,170 @@ export default function InvoiceEditor({
           </div>
         </Modal>
 
+        {/*
+          WHAT NOW — answered HERE, not in the back office.
+
+          This used to offer one button that navigated to /sales/[id], which
+          left the invoicing window entirely: the counter lost its chrome, its
+          offline shell and its place in the queue, to reach four buttons. The
+          four buttons now come to it — and so does the record itself.
+
+          The record is the point. "Finalised" as a line of text asks the
+          operator to take the system's word for it; showing the SALE — what was
+          rung, what it came to, how it was paid — lets them check it against
+          the customer standing in front of them before anyone walks off. It is
+          the same <SaleRecord> the /sales/[id] screen renders, so the two can
+          never disagree about a sale.
+
+          Everything destructive is still re-checked server-side — voidSaleAction
+          and creditWholeSaleAction each resolve the operator and their role for
+          themselves — so these buttons decide what is EASY, never what is
+          permitted.
+        */}
         <Modal
           open={receipt !== null}
-          onClose={() => router.push(`/sales/${document.id}`)}
-          title="Invoice finalised"
-          description={receipt?.number}
-          size="sm"
+          onClose={leaveFinalised}
+          title={
+            finalisedFace === 'void'
+              ? 'Cancel this invoice'
+              : finalisedFace === 'credit'
+                ? 'Credit this invoice'
+                : (receipt?.number ?? 'Invoice finalised')
+          }
+          description={
+            finalisedFace !== null
+              ? (receipt?.number ?? undefined)
+              : record
+                ? `${record.docLabel} · ${record.documentDate}`
+                : 'Finalised'
+          }
+          /* The reason face is one question with a reason list; the record is a
+             three-column layout. They are not the same dialog size. */
+          size={finalisedFace === null ? 'xl' : 'sm'}
           footer={
-            <Button variant="primary" onClick={() => router.push(`/sales/${document.id}`)}>
-              View invoice
-            </Button>
+            finalisedFace === null ? (
+              /* The four buttons live in the FOOTER now, not in the body: the
+                 body is a scrolling record, and an action row that scrolls out
+                 of reach is an action row the counter cannot find. */
+              <>
+                {canVoid && (
+                  <Button variant="danger-ghost" onClick={() => setFinalisedFace('void')}>
+                    <Icons.Close size={15} />
+                    Cancel sale
+                  </Button>
+                )}
+
+                {canCredit && (
+                  <Button variant="ghost" onClick={() => setFinalisedFace('credit')}>
+                    <Icons.Reverse size={15} />
+                    Credit sale
+                  </Button>
+                )}
+
+                <Button variant="ghost" onClick={() => setEmailingPosted(true)}>
+                  <Icons.Mail size={15} />
+                  Email
+                </Button>
+
+                {/* Print leads: on a posted invoice it is what most of these
+                    dialogs are for. Opened as the slip route in its own tab so
+                    the printed page is the DOCUMENT — window.print() here would
+                    print the capture screen behind the dialog. */}
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    if (!receipt) return
+                    void recordPrintAction(receipt.documentId)
+                    window.open(`/sales/${receipt.documentId}/slip?auto=1`, '_blank')
+                  }}
+                >
+                  <Icons.Printer size={15} />
+                  Print
+                </Button>
+
+                <Button variant="primary" onClick={leaveFinalised}>
+                  Done
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={() => {
+                    setFinalisedFace(null)
+                    setPostedReasonId(null)
+                    setPostedNote('')
+                  }}
+                >
+                  Back
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={pending || postedReasonId === null}
+                  onClick={finalisedFace === 'void' ? voidPosted : creditPosted}
+                >
+                  {finalisedFace === 'void' ? 'Cancel the invoice' : 'Credit it in full'}
+                </Button>
+              </>
+            )
           }
         >
-          <div className="flex flex-col gap-2">
-            <p className="text-sm text-muted">
-              {formatMoney(computed.totals.totalIncl)} posted. Stock has moved and the payment is
-              recorded against this sale.
-            </p>
-            {receipt !== null && receipt.change > 0 && (
-              <p className="rounded-card bg-success-soft px-4 py-3 text-sm text-success-ink">
-                Change due{' '}
-                <span className="numeric font-semibold">{formatMoney(receipt.change)}</span>
+          {finalisedFace === null ? (
+            <div className="flex flex-col gap-4">
+              {/* Change first and loudest: it is the one thing on this dialog
+                  that is owed to a person rather than filed. */}
+              {receipt !== null && receipt.change > 0 && (
+                <p className="rounded-card bg-success-soft px-4 py-3 text-sm text-success-ink">
+                  Change due{' '}
+                  <span className="numeric font-semibold">{formatMoney(receipt.change)}</span>
+                </p>
+              )}
+
+              {record ? (
+                <SaleRecord sale={record} linkCredits={false} />
+              ) : (
+                /* The one beat before the record lands. It says what is known
+                   for certain already — the sale posted — rather than an empty
+                   panel that reads like something went wrong. */
+                <p className="text-sm text-muted">
+                  {formatMoney(computed.totals.totalIncl)} posted. Stock has moved and the payment
+                  is recorded against this sale.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-muted">
+                {finalisedFace === 'void'
+                  ? 'The invoice is reversed and the stock goes back. Same-day only — after today, credit it instead.'
+                  : 'Every line is credited and the stock comes back. The invoice stays on file as issued.'}
               </p>
-            )}
-          </div>
+              <ReasonPicker
+                reasons={finalisedFace === 'void' ? voidReasons : returnReasons}
+                value={postedReasonId}
+                onChange={setPostedReasonId}
+                note={postedNote}
+                onNoteChange={setPostedNote}
+              />
+            </div>
+          )}
         </Modal>
+
+        {/* The same dialog the back office and the register use. */}
+        {receipt !== null && (
+          <EmailInvoiceDialog
+            open={emailingPosted}
+            onClose={() => setEmailingPosted(false)}
+            documentId={receipt.documentId}
+            documentNumber={receipt.number}
+            /* The till customer record carries CREDIT facts, not contact
+               details, so there is no address to prefill here — the dialog asks
+               for one, which is also what a walk-in needs. */
+            defaultTo=""
+            lastEmailedNote={null}
+          />
+        )}
       </PageBody>
     </>
   )

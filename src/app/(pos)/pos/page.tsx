@@ -1,10 +1,10 @@
 import { redirect } from 'next/navigation'
-import { toPosMode } from '@/lib/posMode'
+
 import { requireSiteUser } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { listSalesReasons } from '@/lib/site/salesReasons'
-import { listSaved, toDocType } from '@/lib/site/salesDocuments'
+import { toDocType } from '@/lib/site/salesDocuments'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { getNumericSetting, getSetting, getSettings } from '@/lib/site/settings'
 import { can, capabilitiesForRole } from '@/lib/site/permissions'
@@ -84,14 +84,12 @@ export default async function PosPage({
     tenders,
     voidReasons,
     returnReasons,
-    saved,
     structures,
     cashRounding,
     specials,
     pendingPrices,
     departments,
     quickKeys,
-    posMode,
     tables,
     floorRooms,
     floorFeatures,
@@ -111,11 +109,10 @@ export default async function PosPage({
          one back. */
       listSalesReasons(site.id, 'void'),
       listSalesReasons(site.id, 'return'),
-      /* Site-wide, and it cannot be otherwise here: which till this machine IS
-         lives in its own localStorage, so the server has no way to narrow this at
-         render time. The count is a first paint for the badge — PosShell replaces
-         it with the per-till figure the moment the saved-sales list is opened. */
-      listSaved(site.id),
+      /* `listSaved(site.id)` was here, site-wide, on every till load — a first
+         paint for the badge on the basket's Saved key. That key is a quick key
+         now and carries no badge, so this was a query nothing read. The list
+         itself still loads on demand, per till, when the modal opens. */
       listPriceStructures(site.id),
       getNumericSetting(site.id, 'sales_cash_rounding'),
       /*
@@ -148,10 +145,12 @@ export default async function PosPage({
          one — so the extra rows cost a shop with no tables bar nothing but the handful of
          rows it does not have. */
       listAllQuickKeys(site.id),
-      /* The mode, and the floor. In retail the floor query returns nothing and the gate
-         never mounts — one query rather than a branch, because the branch would have to
-         be repeated for every consumer of the result. */
-      getSetting(site.id, 'pos_mode'),
+      /* The floor. In retail the query returns nothing and the gate never mounts —
+         one query rather than a branch, because the branch would have to be
+         repeated for every consumer of the result.
+
+         The MODE no longer comes from here: it is a property of the till, and
+         only the browser knows which till this is. See PosEntry. */
       listTables(site.id),
       /* The drawn plan, if a manager built one. Both come back empty on a shop that
          never opened the designer, and the gate then renders the sectioned grid — so
@@ -267,7 +266,6 @@ export default async function PosPage({
          these and they change about never, so a round trip mid-sale would buy
          nothing and cost the one thing a till cannot spend. */
       priceStructures={structures}
-      savedCount={saved.length}
       cashRounding={cashRounding}
       depositMinPct={depositMinPct}
       depositAllowWalkin={depositAllowWalkin}
@@ -275,11 +273,11 @@ export default async function PosPage({
       pendingPrices={pendingPrices}
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
-      /* The one place the mode is turned into flags. Three values, resolved
-         once — see lib/posMode for why this picks a screen rather than
-         threading a third boolean through the shell. */
-      hospitality={toPosMode(posMode) === 'hospitality'}
-      invoicing={toPosMode(posMode) === 'invoicing'}
+      /* NO MODE PASSED DOWN, deliberately.
+         The mode belongs to the TILL now, and this page cannot tell which till
+         it is serving — the device id is browser-only. PosEntry matches the
+         machine against `terminals` and resolves it there, before PosShell
+         mounts and seeds its state from it. */
       /* What this till should open as, when the back office asked for something
          specific. Absent means invoice — see the page signature. */
       startAs={startAs}

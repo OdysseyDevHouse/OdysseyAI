@@ -62,6 +62,20 @@ const SKIP = new Set([
    *   npm run test:billing-itn-route
    */
   'test:billing-itn-route',
+  /*
+   * CLAIMS AND RELEASES REAL TILLS on two real sites, to prove one machine may
+   * be a till in several shops. It snapshots every row it touches and writes
+   * them back in a `finally`, but it is still a mutation against live shop data
+   * and it needs two active sites to mean anything at all.
+   *
+   * Out of the chain for both reasons: a machine with one site would fail it
+   * for saying nothing about the code, and a suite that edits terminals is not
+   * something to run by reflex. Run it when a change touches device claims or
+   * the unlock path:
+   *
+   *   npm run test:multi-store-device
+   */
+  'test:multi-store-device',
 ])
 const suites = Object.keys(pkg.scripts)
   .filter((k) => k.startsWith('test:') && !SKIP.has(k))

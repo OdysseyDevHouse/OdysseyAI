@@ -11,11 +11,11 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const BASE = process.env.APP_URL || 'http://localhost:4100'
-const PORT = 9338
 const documentId = process.argv[2]
 
 if (!EMAIL || !PASSWORD || !documentId) {
@@ -23,23 +23,7 @@ if (!EMAIL || !PASSWORD || !documentId) {
   process.exit(1)
 }
 
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const profile = path.join(tmpdir(), `odyssey-pad-${process.pid}`)
-mkdirSync(profile, { recursive: true })
-
-const chrome = spawn(
-  CHROME,
-  [
-    `--remote-debugging-port=${PORT}`,
-    `--user-data-dir=${profile}`,
-    '--headless=new',
-    '--no-first-run',
-    '--window-size=1600,1400',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { pageTarget, wsUrl, close: closeChrome } = await launchChrome('pad', { windowSize: '1600,1400' })
 
 let ws
 let nextId = 1
@@ -253,7 +237,7 @@ try {
   try {
     ws?.close()
   } catch {}
-  chrome.kill()
+    closeChrome()
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`)

@@ -13,11 +13,11 @@ import { tmpdir } from 'node:os'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import mysql from 'mysql2/promise'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const BASE = process.env.APP_URL || 'http://localhost:4100'
-const PORT = 9336
 
 if (!EMAIL || !PASSWORD) {
   console.error('Set DEV_LOGIN_EMAIL / DEV_LOGIN_PASSWORD in .env.local')
@@ -59,23 +59,7 @@ await db.execute(
 
 console.log(`\nprobe quote ${quoteId} created as doc_type='quote'\n`)
 
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const profile = path.join(tmpdir(), `odyssey-savebug-${process.pid}`)
-mkdirSync(profile, { recursive: true })
-
-const chrome = spawn(
-  CHROME,
-  [
-    `--remote-debugging-port=${PORT}`,
-    `--user-data-dir=${profile}`,
-    '--headless=new',
-    '--no-first-run',
-    '--window-size=1600,1200',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { pageTarget, wsUrl, close: closeChrome } = await launchChrome('savebug', { windowSize: '1600,1200' })
 
 let ws
 let nextId = 1
@@ -202,7 +186,7 @@ try {
   try {
     ws?.close()
   } catch {}
-  chrome.kill()
+    closeChrome()
 
   await db.execute('DELETE FROM sale_deposits WHERE document_id = ?', [quoteId])
   await db.execute('DELETE FROM document_audit WHERE document_id = ?', [quoteId])

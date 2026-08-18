@@ -35,6 +35,7 @@ import TradeEntryPane from './TradeEntryPane'
 import ModuleMenu, {
   MODULE_DOC_TYPES,
   MODULE_PHRASES,
+  MODULE_LIST_NAMES,
   LIST_ONLY_MODULES,
   moduleForDocType,
   type TillModule,
@@ -250,13 +251,13 @@ export default function PosShell({
   canOverrideDiscount,
   canOverridePrice,
   canVoid,
-  savedCount,
   specials,
   pendingPrices: pendingPricesProp,
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
   hospitality,
+  modeName,
   invoicing,
   startAs,
   initialTables,
@@ -308,9 +309,6 @@ export default function PosShell({
   canOverridePrice: boolean
   /** Whether the OPERATOR may void. Re-checked by voidSaleAction regardless. */
   canVoid: boolean
-  /* Not read yet — saved-sales recall is still to come, and this is the count for
-     its button's badge. Typed now so the server page's contract is settled. */
-  savedCount: number
   specials: Special[]
   /**
    * Approved price changes that have not happened yet, moments unevaluated.
@@ -326,6 +324,14 @@ export default function PosShell({
   quickKeyDepartmentNames: Record<number, string>
   /** Read in THREE places only — see the docblock above. */
   hospitality: boolean
+  /**
+   * The lockup's second word, already resolved.
+   *
+   * A STRING rather than the mode itself, deliberately: the shell reads no
+   * fourth branch off it, it only hands it to the bar. See the docblock above
+   * on what a mode flag does once it starts spreading.
+   */
+  modeName: string
   /**
    * True on a TRADE COUNTER — a hardware or paint shop typing long documents.
    *
@@ -681,18 +687,11 @@ export default function PosShell({
   /* Per-machine, from localStorage, applied after mount — a counter screen's useful
      tile size is a property of that screen, not of the shop. See useTileSize. */
   const tileSize = useTileSize()
-  /*
-   * How many baskets are parked, for the badge.
-   *
-   * Seeded from the server render and then maintained here, because the badge and
-   * the list must agree. The server counts SITE-WIDE at page load while the modal
-   * narrows to this till, so the two disagreed the moment a sale was parked — the
-   * badge said 2 and the list showed 1, which reads as a lost basket.
-   *
-   * The modal reports its own count on open, which is the authoritative one: it is
-   * the same query the list is drawn from.
-   */
-  const [savedTally, setSavedTally] = useState(savedCount)
+  /* `savedTally` was here — a count of parked baskets, seeded by the server page
+     and nudged up and down at five call sites, purely to feed a badge on the
+     basket's Saved key. The key is a quick key now and carries no badge, so the
+     counter had no reader; the server query that seeded it went with it. The
+     list is still read fresh, per till, each time the modal opens. */
   const [editing, setEditing] = useState<BasketLine | null>(null)
   /**
    * Which field the line pad opens on.
@@ -848,10 +847,9 @@ export default function PosShell({
   /*
    * Baskets parked on THIS machine, with no server involved.
    *
-   * Kept in state rather than read inside the modal so the badge and the list agree —
-   * the same reason `savedTally` exists. Re-read after every park, recall and discard,
-   * because IndexedDB has no change notification and a stale list offers a basket
-   * that is not there.
+   * Kept in state rather than read inside the modal so the shell can re-read them
+   * after every park, recall and discard — IndexedDB has no change notification,
+   * and a stale list offers a basket that is not there.
    */
   const [localBaskets, setLocalBaskets] = useState<SavedEntry[]>([])
 
@@ -879,6 +877,18 @@ export default function PosShell({
   // `device === null` only means "not resolved yet", so the warning waits for it
   // rather than flashing on every load.
   const unclaimed = device !== null && terminal === undefined
+
+  /**
+   * What to CALL this machine — "TILL001 • till 01".
+   *
+   * One value because two screens show it: the status bar along the top while
+   * the till is trading, and the module menu's foot, which covers the bar while
+   * it is open. It was written out twice for a few minutes and the two copies
+   * had already picked different separators, which is the whole argument.
+   */
+  const terminalLabel = terminal
+    ? `${terminal.code}${terminal.tillNumber ? ` • till ${terminal.tillNumber}` : ''}`
+    : null
 
   /*
    * ── WHERE THE PENDING CHANGES COME FROM ──────────────────────────────
@@ -1856,7 +1866,6 @@ export default function PosShell({
     }
     toast.success('Sale saved on this till.')
     dispatch({ type: 'CLEAR' })
-    setSavedTally((n) => n + 1)
   }
 
   /**
@@ -2034,9 +2043,6 @@ export default function PosShell({
        */
       void reparkTableBillAction(saved.documentId).catch(() => {})
       dispatch({ type: 'CLEAR' })
-      // Counted optimistically rather than waiting for the server: the badge is
-      // a hint, and the modal corrects it from the real query the moment it opens.
-      setSavedTally((n) => n + 1)
 
       /* Back to the floor, with the tab's identity dropped so the next sale does
          not inherit this one's name. In hospitality the gate IS where a waiter
@@ -2805,7 +2811,6 @@ export default function PosShell({
       customerName: row.customerName ?? '',
     })
     setShowingSaved(false)
-    setSavedTally((n) => Math.max(0, n - 1))
     toast.success('Sale recalled.')
   }
 
@@ -2820,7 +2825,6 @@ export default function PosShell({
         setShowingSaved(false)
         return
       }
-      setSavedTally((n) => Math.max(0, n - 1))
       setDocDiscount(null) // a recalled basket must not inherit the last one's discount
       dispatch({
         type: 'LOAD',
@@ -2926,6 +2930,22 @@ export default function PosShell({
       return
     }
     setShowingTillOrders(true)
+  }
+
+  /**
+   * The lay-by list, guarded the same way.
+   *
+   * It used to be opened inline from `pickModule` with its own copy of the
+   * offline check — fine while the module menu was the only door. It is not any
+   * more: there is a quick key now, and a guard written at one door is a guard
+   * the other does not have. Same shape as the two above for that reason.
+   */
+  function openLaybyList() {
+    if (!till.online) {
+      toast.info('Lay-bys need the connection — they live on the server.')
+      return
+    }
+    setShowingLaybys(true)
   }
 
   function recallQuote(quote: TillQuote) {
@@ -3837,19 +3857,30 @@ export default function PosShell({
        * list and then hand back an identical empty till.
        */
       if (LIST_ONLY_MODULES.includes(module)) {
-        /* An offline list would render its empty state — "No lay-bys on the
-           go" — which reads as a fact about the shop rather than about the
-           line. Refused at the door, like every other server-bound list. */
-        if (!till.online) {
-          toast.info('Lay-bys need the connection — they live on the server.')
-          return
-        }
-        if (module === 'laybys') setShowingLaybys(true)
+        /* Through the shared opener, which carries the offline refusal — an
+           offline list would render its empty state, "No lay-bys on the go",
+           which reads as a fact about the shop rather than about the line. */
+        if (module === 'laybys') openLaybyList()
         return
       }
 
       const next = MODULE_DOC_TYPES[module]
-      if (next === state.docType) return
+
+      /*
+       * ALREADY ON THIS MODULE, WITH AN EMPTY BASKET — nothing to do.
+       *
+       * This used to return for the whole same-module case, which was right while
+       * a tap on the row meant "go to quotes": you were there. It is wrong now
+       * that a button says "New quote" out loud. Somebody halfway through a quote
+       * who presses that is asking to abandon it and start again, and a button
+       * that silently did nothing would be pressed twice and then distrusted.
+       *
+       * So the empty case still returns (starting a fresh empty quote from an
+       * empty quote is a no-op with a toast), and a basket with lines falls
+       * through to the confirm below — which is the question that act deserves.
+       */
+      if (next === state.docType && state.lines.length === 0) return
+
       if (state.lines.length > 0) {
         setSwitchingTo(module)
         return
@@ -3863,6 +3894,52 @@ export default function PosShell({
        it: the quote guard worked (a plain function, re-created each render)
        while this one silently opened the list. */
     [state.docType, state.lines.length, toast, till.online],
+  )
+
+  /**
+   * Opens a module's EXISTING documents, from the menu's second button.
+   *
+   * ── WHY THIS IS NOT `pickModule` ──────────────────────────────────────────
+   *
+   * They are opposites in the one way that matters to a cashier: picking a
+   * module decides what the BASKET is and so may clear it, while this lays a
+   * list over the top and touches nothing. A counterhand six lines into a sale
+   * who wants to check last week's quote gets to keep their six lines.
+   *
+   * Each opener carries its own offline refusal, which is why this dispatches to
+   * them rather than setting the modal flags directly — these documents live on
+   * the server, and a list rendering its empty state offline would say "no
+   * quotes" when the truth is "this till cannot see them".
+   *
+   * The MENU IS CLOSED ONLY ON THE WAY THROUGH. A refused open leaves it
+   * standing, so the toast lands on the screen the cashier pressed from rather
+   * than on a trading screen they did not ask to be returned to.
+   */
+  const openModuleList = useCallback(
+    (module: TillModule) => {
+      /*
+       * SAVED SALES ARE THE EXCEPTION, and the only one: parked baskets live in
+       * this machine's own IndexedDB as well as on the server, so that list has
+       * something true to show with the line down. The other three are entirely
+       * server-side.
+       *
+       * Refused HERE as well as inside each opener, because this is the branch
+       * that decides whether the menu closes. Falling through would shut the menu
+       * and then refuse, which reads as the tap having worked.
+       */
+      if (module !== 'sale' && !till.online) {
+        toast.info(`${MODULE_LIST_NAMES[module]} need the connection — they live on the server.`)
+        return
+      }
+      setShowingModules(false)
+      if (module === 'sale') setShowingSaved(true)
+      else if (module === 'quotes') openQuoteList()
+      else if (module === 'orders') openOrderList()
+      else if (module === 'laybys') openLaybyList()
+    },
+    /* Same reason `pickModule` lists it: without `till.online` this closes over
+       the optimistic mount value and the refusal above can never fire. */
+    [till.online, toast],
   )
 
   useEffect(() => {
@@ -4058,7 +4135,13 @@ export default function PosShell({
         saveSale,
         saveAsOrder,
         showSaved: () => setShowingSaved(true),
+        /* The three document lists. Each goes through the SAME guarded opener the
+           rest of the shell uses rather than setting its state flag directly —
+           the online check belongs with the thing being opened, not copied into
+           every caller. See `openQuoteList`. */
         showQuotes: openQuoteList,
+        showTillOrders: openOrderList,
+        showLaybys: openLaybyList,
         undo: undoLastLine,
         pickCustomer: () => setPickingCustomer(true),
         editLine: () => {
@@ -4221,6 +4304,7 @@ export default function PosShell({
   return (
     <TileSizeContext.Provider value={tileSize.size}>
       <TillStatusBar
+        modeName={modeName}
         /* The bar names the SCREEN under it — except on either gate, where the
            card below carries its own heading and the slot takes the brand
            instead. No basket there either, so no item pill. */
@@ -4245,11 +4329,7 @@ export default function PosShell({
               : DRAFT_DOC_LABELS[state.docType]
         }
         operatorName={operatorName}
-        terminalLabel={
-          terminal
-            ? `${terminal.code}${terminal.tillNumber ? ` · till ${terminal.tillNumber}` : ''}`
-            : null
-        }
+        terminalLabel={terminalLabel}
         unclaimed={unclaimed}
         /* Only once the device has resolved AND the shell has had its say — before
            that, "offline unavailable" would flash on every load and mean nothing. */
@@ -4285,7 +4365,24 @@ export default function PosShell({
            choice of TABLE — a cashier who switched to quotes from there would
            land on a trading screen belonging to no bill. Both gates lead to the
            sale screen, where this is waiting. */
-        onOpenModules={choosingTable || closedGate ? undefined : () => setShowingModules(true)}
+        /*
+         * AND NOT ON A RESTAURANT TILL AT ALL.
+         *
+         * Every row behind this menu is a retail act. A quote, a sales order and
+         * a lay-by are all promises about goods leaving the shop later — none of
+         * which a kitchen does. Worse, two of them CHANGE THE DOC TYPE, which
+         * clears the basket: a waiter with a table open who taps here to see what
+         * it is loses the tab's lines to a document the restaurant will never
+         * write. The one row that would survive — the floor — is already the
+         * screen behind them, reached by Change table beside this.
+         *
+         * So it is hidden rather than filtered down to one row: a menu offering
+         * only "Sale" on a screen already selling is a control that can do
+         * nothing, and the space belongs to the table label instead.
+         */
+        onOpenModules={
+          hospitality || choosingTable || closedGate ? undefined : () => setShowingModules(true)
+        }
         onChangeTable={
           hospitality && !choosingTable && !closedGate
             ? () => {
@@ -4329,6 +4426,12 @@ export default function PosShell({
           operatorName={operatorName}
           terminalId={terminal?.id ?? null}
           terminalLabel={terminal?.code ?? null}
+          /* NOT `terminalId === null`, which the gate could work out for
+             itself. `terminal` is also undefined for the tick before `device`
+             resolves, so inferring it there would flash "not set up as a till"
+             on every single load — the same reason this flag exists at all
+             rather than the status bar testing `terminalLabel`. */
+          unclaimed={unclaimed}
           canCashup={closedGate.canCashup}
           online={till.online}
           onOpened={(shiftId) => {
@@ -4482,29 +4585,10 @@ export default function PosShell({
           /* Decides whether the finish key says Pay or Save — a quote and an
              order take no money. See SalePane. */
           docType={state.docType}
-          /*
-           * Hospitality parks through Close, so the two park keys are retail-only
-           * — see SalePane's `showParkKeys`.
-           *
-           * EXCEPT ON A QUOTE OR AN ORDER. That rule is about PARKING: a
-           * waiter's basket belongs to a table and Close is how it gets there,
-           * so a Save key beside it would be a second answer to a question the
-           * floor already answers. Neither a quote nor an order is a table's
-           * bill or ever becomes one, so none of that applies — and hiding the
-           * row there left a hospitality till switched to Quotes with no way to
-           * reach the shop's quotes at all. Found by driving it: the key was
-           * simply absent.
-           */
-          showParkKeys={
-            !hospitality || state.docType === 'quote' || state.docType === 'sales_order'
-          }
-          onPark={park}
-          onShowSaved={() => setShowingSaved(true)}
-          /* Both take over that same key on their own module — the pane decides,
-             because it is the one that knows which module is showing. */
-          onShowQuotes={openQuoteList}
-          onShowOrders={openOrderList}
-          savedCount={savedTally}
+          /* The Save/recall row this pane used to carry — and the six props that
+             fed it — is gone. Saving is the `save-sale` quick key, and the three
+             lists are quick keys of their own, so a shop places what it uses
+             instead of every till carrying a strip it may never press. */
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
           exchange={
@@ -4624,7 +4708,13 @@ export default function PosShell({
            switched on the day there is a setting to switch; until then, showing
            all four is honest — all four work. */
         available={['sale', 'quotes', 'orders', 'laybys']}
+        /* The same two values the status bar reads, from the same place — the
+           panel covers most of the bar while it is open, and one source viewed
+           twice is what stops the two disagreeing. */
+        operatorName={operatorName}
+        terminalLabel={terminalLabel}
         onPick={pickModule}
+        onOpenList={openModuleList}
         onClose={() => setShowingModules(false)}
       />
 
@@ -4675,9 +4765,15 @@ export default function PosShell({
         busy={pending}
       />
 
-      {/* Only ever raised by a switch with a basket in hand — an empty one goes
-          straight through. Worded as what will HAPPEN to the lines rather than
-          as "are you sure", because the cost is the thing being decided. */}
+      {/* Only ever raised with a basket in hand — an empty one goes straight
+          through. Worded as what will HAPPEN to the lines rather than as "are you
+          sure", because the cost is the thing being decided.
+
+          Raised by TWO acts now, and the wording covers both without changing:
+          switching to another module, and the menu's "New quote" pressed while a
+          quote is already half-written. "Start a quote? The 6 lines on screen
+          will be cleared" is the right question either way — what the cashier is
+          deciding is the fate of the lines, not the doc type. */}
       <ConfirmModal
         open={switchingTo !== null}
         title={switchingTo ? `Start ${MODULE_PHRASES[switchingTo]}?` : ''}
@@ -4901,6 +4997,10 @@ export default function PosShell({
             ? { amount: exchangeCredit.total, label: `Credit from ${exchangeCredit.invoiceNumber}` }
             : null
         }
+        /* A deposit already taken against this basket — the pad asks for the
+           balance, the server adds the DEPOSIT tender when it posts. Same
+           arrangement as the exchange credit above it. */
+        depositHeld={depositHeld}
         /* The card lookup for the redemption step (147). Online only — the
            balance lives on the server, and offlineBlockedTender already hides
            the key when the line is down. */
@@ -5030,7 +5130,6 @@ export default function PosShell({
         online={till.online}
         localBaskets={localBaskets}
         onClose={() => setShowingSaved(false)}
-        onCount={setSavedTally}
         onRecall={(entry) => {
           startTransition(async () => {
             if (entry.where === 'till' && entry.uid) {
@@ -5045,7 +5144,6 @@ export default function PosShell({
             if (entry.where === 'till' && entry.uid) {
               await discardParkedOffline(siteId, entry.uid)
               toast.success('Saved sale discarded.')
-              setSavedTally((n) => Math.max(0, n - 1))
               setShowingSaved(false)
               return
             }
@@ -5056,7 +5154,6 @@ export default function PosShell({
               return
             }
             toast.success('Saved sale discarded.')
-            setSavedTally((n) => Math.max(0, n - 1))
             // Closed rather than refreshed in place: the list is read on open, so
             // re-opening is what shows the shortened one.
             setShowingSaved(false)

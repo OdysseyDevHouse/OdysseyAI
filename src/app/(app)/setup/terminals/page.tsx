@@ -3,13 +3,13 @@ import { listTerminals } from '@/lib/site/terminals'
 import { listLicences } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
 import { getNumericSetting, getSetting } from '@/lib/site/settings'
-import { toPosMode } from '@/lib/posMode'
+
 import TerminalsClient from './TerminalsClient'
 import LicencesPanel from './LicencesPanel'
 import UndoLimitPanel from './UndoLimitPanel'
 import StockWarningPanel from './StockWarningPanel'
 import OfflineAccountPanel from './OfflineAccountPanel'
-import PosModePanel from './PosModePanel'
+
 import UnlockPanel from './UnlockPanel'
 import { siteHasLocalBackend } from '@/lib/licence/grantUnlock'
 
@@ -35,9 +35,9 @@ export default async function TerminalsPage() {
      till may extend credit against a limit it cannot check, which nobody should
      inherit by upgrade. See pos_offline_account_sales. */
   const offlineAccountSales = (await getSetting(siteId, 'pos_offline_account_sales')) === '1'
-  /* Which of the three tills this shop runs. Anything unreadable resolves to
-     retail, which is the answer that trades — see lib/posMode. */
-  const posMode = toPosMode(await getSetting(siteId, 'pos_mode'))
+  /* NO SHOP-WIDE MODE READ HERE ANY MORE. Which screen a till runs is a
+     property of that till, carried on its own row — see TerminalsClient and
+     sql/site/180_terminal_pos_mode.sql. */
   /* The telephone unlock only means anything where a machine holds its own
      database and can therefore be cut off from us. Hidden entirely for a cloud
      site rather than shown and refused: a panel that can never do anything is a
@@ -53,9 +53,6 @@ export default async function TerminalsPage() {
       <PageBody>
         <div className="flex flex-col gap-4">
           <TerminalsClient terminals={terminals} />
-          {/* WHAT KIND of till, above how they behave: the mode decides which
-              screen the other settings even apply to. */}
-          <PosModePanel mode={posMode} />
           {/* How the tills BEHAVE, under the list of which tills there are. One
               field, so it sits between the registers and the licences rather than
               earning a screen of its own. */}

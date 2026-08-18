@@ -10,6 +10,7 @@ import {
   type LineInput,
 } from '@/lib/site/salesDocuments'
 import { finaliseDocument } from '@/lib/site/salesPosting'
+import { loadSaleRecord, type SaleRecordSnapshot } from '@/lib/site/saleRecord'
 import { terminalForDevice } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import {
@@ -312,4 +313,24 @@ async function accountTenderFor(
   }
 
   return [{ tenderTypeId: account.id, amount: totalIncl }]
+}
+
+/**
+ * The finished sale, for the dialog that opens the moment an invoice posts.
+ *
+ * The same record the /sales/[id] screen shows, read by the same loader — an
+ * operator who has just finalised should see WHAT they finalised (lines,
+ * totals, how it was paid) rather than a line of text saying it worked, and
+ * showing it in a dialog keeps them on the capture screen ready for the next
+ * one.
+ *
+ * Read-only, so it asks for `sales.view`: someone allowed to look at a sale is
+ * allowed to look at the one they have this second created.
+ */
+export async function saleRecordAction(
+  documentId: number,
+): Promise<SaleRecordSnapshot | null> {
+  const ctx = await actorFor('sales.view')
+  if ('ok' in ctx) return null
+  return loadSaleRecord(ctx.siteId, documentId)
 }

@@ -12,6 +12,7 @@ import InvoiceEditor from './InvoiceEditor'
 import { depositSummary } from '@/lib/site/deposits'
 import { DepositPanel } from '@/app/(app)/sales/DepositPanel'
 import { listAttachments } from '@/lib/site/attachments'
+import { listSalesReasons } from '@/lib/site/salesReasons'
 import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
 import { PageBody, Card, CardHeader, CardBody } from '@/components/ui'
 
@@ -32,8 +33,17 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
   const documentId = Number(id)
   if (!Number.isFinite(documentId) || documentId <= 0) notFound()
 
-  const [document, structures, users, tenders, cashRounding, specials, deposits] =
-    await Promise.all([
+  const [
+    document,
+    structures,
+    users,
+    tenders,
+    cashRounding,
+    specials,
+    deposits,
+    voidReasons,
+    returnReasons,
+  ] = await Promise.all([
     getDocument(site.id, documentId),
     listPriceStructures(site.id),
     // Users, not sales_reps: commission is paid to a user (047), so the
@@ -46,6 +56,13 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
     // What is held against this invoice (172). Batched here rather than fetched
     // by the panel, so the figures paint with the page instead of after it.
     depositSummary(site.id, documentId),
+    /* The two reason lists, for the dialog that appears once this invoice is
+       posted — a counter cancelling or crediting picks from them without
+       leaving the window. Active only: these are the lists somebody picks
+       FROM, and a retired reason stays readable on the documents that used
+       it. Batched here so the dialog opens with them already in hand. */
+    listSalesReasons(site.id, 'void'),
+    listSalesReasons(site.id, 'return'),
   ])
   if (!document) notFound()
 
@@ -81,6 +98,18 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
         canOverridePrice={can(capabilities, 'sales.price_override')}
         specials={specials}
         showCost={can(capabilities, 'products.cost')}
+        /* What the counter may do with the invoice the moment it posts —
+           the finalised dialog offers cancel and credit rather than sending
+           somebody to the back office to find them. The rules themselves
+           are re-checked server-side by each action. */
+        voidReasons={voidReasons}
+        returnReasons={returnReasons}
+        canVoid={can(capabilities, 'sales.void')}
+        canCredit={can(capabilities, 'sales.credit_note')}
+        /* Already read for the panel below, and the tender pad needs the same
+           figure: it must ask for the BALANCE, because finaliseDocument adds
+           the held deposit as a tender of its own. */
+        depositHeld={deposits.held}
       />
 
       {/* Money already paid against this invoice. Below the grid: the lines are

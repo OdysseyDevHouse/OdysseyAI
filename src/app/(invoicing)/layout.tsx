@@ -1,8 +1,12 @@
 import { redirect } from 'next/navigation'
 import { requireSession, requireSiteUser } from '@/lib/auth'
-import { can } from '@/lib/site/permissions'
+import { getUser } from '@/lib/site/users'
+import { can, capabilitiesForRole } from '@/lib/site/permissions'
+import { getTillSession } from '@/lib/tillSession'
 import { ToastProvider } from '@/components/ui'
+import WindowSessionMarker from '@/components/WindowSessionMarker'
 import InvoicingChrome from './InvoicingChrome'
+import InvoicingGate from './InvoicingGate'
 
 /**
  * The invoicing window — deliberately NOT (app)/layout.tsx.
@@ -53,6 +57,47 @@ export default async function InvoicingLayout({ children }: { children: React.Re
   const { site, capabilities } = await requireSiteUser()
   if (!can(capabilities, 'sales.view')) redirect('/not-allowed')
 
+  /*
+   * ── WHO IS STANDING AT THE COUNTER ──────────────────────────────────────
+   *
+   * The browser session above says which SHOP is open. This says which PERSON
+   * is typing the invoice, and they are not the same fact: the session lasts
+   * twelve hours while a trade counter changes hands several times a day.
+   * Without this every document typed here would be attributed to whoever
+   * opened the browser that morning.
+   *
+   * The same `odyssey_till` cookie the POS mints, deliberately — see
+   * pinActions.ts. A clerk who signed in at the till is already signed in
+   * here, and `withTillOperator` in the shared sales actions already reads it,
+   * so attribution starts working the moment this gate does.
+   */
+  const till = await getTillSession(site.id)
+
+  /* Rendered ABOVE the chrome, not inside it. A gate wrapped in a menu bar
+     invites somebody to try the four doors behind it, all of which want the
+     operator this screen is asking for. The till does the same thing for the
+     same reason (see (app)/layout.tsx on the lease lock). */
+  if (!till) {
+    return (
+      <div className="flex h-screen flex-col overflow-hidden bg-canvas">
+        {/* On the GATE too, not only past it: the cookie has to be in place on
+            the request that follows the PIN, and this is the render before it. */}
+        <WindowSessionMarker />
+        <ToastProvider>
+          <InvoicingGate siteName={site.displayName} />
+        </ToastProvider>
+      </div>
+    )
+  }
+
+  /* The OPERATOR's rights, read from their role rather than the browser
+     session's — a manager who signed the browser in must not leave their own
+     rights on the counter for the next clerk. */
+  const operator = await getUser(site.id, till.userId)
+  const operatorCapabilities = operator
+    ? await capabilitiesForRole(site.id, operator.roleId)
+    : capabilities
+
   return (
     /* SCROLLS, unlike the till.
        The POS is a fixed board where every key must stay where the cashier's
@@ -61,8 +106,19 @@ export default async function InvoicingLayout({ children }: { children: React.Re
        this takes the viewport and lets the content inside scroll, rather than
        forbidding scroll outright the way (pos)/layout.tsx does. */
     <div className="flex h-screen flex-col overflow-hidden bg-canvas">
+      {/* Keeps the tab's id and its cookie in step for as long as this window
+          lives — a browser restart can drop the cookie while restoring the tab. */}
+      <WindowSessionMarker />
       <ToastProvider>
-        <InvoicingChrome siteName={site.displayName} capabilities={[...capabilities.granted]}>
+        <InvoicingChrome
+          siteName={site.displayName}
+          /* The BROWSER session's rights still decide which of the four screens
+             the menu offers — they are the same reads the back office allows. */
+          capabilities={[...capabilities.granted]}
+          /* The counter clerk, for the status strip and the shift. */
+          operatorName={till.name}
+          canCashup={can(operatorCapabilities, 'sales.cashup')}
+        >
           {children}
         </InvoicingChrome>
       </ToastProvider>

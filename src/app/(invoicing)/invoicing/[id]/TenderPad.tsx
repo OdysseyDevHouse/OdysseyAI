@@ -66,6 +66,7 @@ export default function TenderPad({
   cashRounding,
   customer,
   loyalty = null,
+  depositHeld = 0,
   pending,
   onFinalise,
 }: {
@@ -74,6 +75,22 @@ export default function TenderPad({
   tenders: TenderType[]
   totalIncl: number
   cashRounding: number
+  /**
+   * Money already taken against this document on an earlier day.
+   *
+   * The pad must ask for what is STILL owed, not the whole total: at finalise
+   * `finaliseDocument` adds the held deposit as a DEPOSIT tender of its own,
+   * so a cashier who settled the full total here would post the sale over-paid
+   * by exactly the deposit. DEPOSIT allows no change and takes no tip, so that
+   * over-payment is refused outright — "Deposit paid was paid over by 50.00" —
+   * and a perfectly ordinary sale cannot be finalised at all.
+   *
+   * Subtracted rather than shown as a tender the cashier has to key, because
+   * the money is not being handed over now. Capped the same way
+   * `tenderAtFinalise` caps it, so a deposit larger than a since-reduced total
+   * cannot drive the amount owed below zero.
+   */
+  depositHeld?: number
   /** Null for a walk-in. Non-null unlocks the account tender, subject to credit. */
   customer: TillCustomer | null
   /**
@@ -164,7 +181,12 @@ export default function TenderPad({
       ? roundToCash(totalIncl, cashRounding)
       : { rounded: totalIncl, adjustment: 0 }
 
-  const payable = round(Math.max(0, roundedTotal - voucherCredit), 2)
+  /* Capped at the total exactly as `tenderAtFinalise` caps it on the server:
+     the excess of an over-held deposit is refunded as its own event and never
+     becomes a tender, so it must not come off what is owed here either. */
+  const depositCredit = round(Math.min(Math.max(depositHeld, 0), Math.max(totalIncl, 0)), 2)
+
+  const payable = round(Math.max(0, roundedTotal - voucherCredit - depositCredit), 2)
 
   const check = useMemo(() => {
     // flatMap rather than map+filter: it drops the unmatched entries without
@@ -211,7 +233,11 @@ export default function TenderPad({
       open={open}
       onClose={onClose}
       title="Take payment"
-      description={`${formatMoney(totalIncl)} due`}
+      description={
+        depositCredit > 0
+          ? `${formatMoney(payable)} due of ${formatMoney(totalIncl)}`
+          : `${formatMoney(totalIncl)} due`
+      }
       size="md"
       closeOnBackdrop={false}
       footer={
@@ -245,6 +271,14 @@ export default function TenderPad({
               {formatMoney(outstanding > 0 ? outstanding : check.change)}
             </span>
           </div>
+          {/* Why the ask is less than the invoice. Without this the figure
+              looks like a mispriced sale rather than one already part-paid. */}
+          {depositCredit > 0 && (
+            <p className="mt-1 text-xs text-muted">
+              {formatMoney(depositCredit)} already paid as a deposit, off{' '}
+              {formatMoney(totalIncl)}.
+            </p>
+          )}
           {adjustment !== 0 && (
             <p className="mt-1 text-xs text-muted">
               Rounded to {formatMoney(payable)} at the drawer ({adjustment > 0 ? '+' : ''}

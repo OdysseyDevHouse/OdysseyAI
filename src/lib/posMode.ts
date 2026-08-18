@@ -47,6 +47,24 @@ export const POS_MODE_LABELS: Record<PosMode, string> = {
 }
 
 /**
+ * The second word of the till's wordmark — "Odyssey Retail", "Odyssey Hospitality".
+ *
+ * Separate from POS_MODE_LABELS on purpose. Those name the CHOICE on a settings
+ * screen, where "Retail counter" and "Tables" describe what the shop does. This
+ * names the PRODUCT in a lockup beside the logo, where the same words would read
+ * as a page title rather than as half of a name.
+ *
+ * Kept here rather than in the status bar so all three modes are named in one
+ * place, next to the labels and hints they sit beside — a fourth mode adds a line
+ * here and nothing else changes.
+ */
+export const POS_MODE_WORDMARKS: Record<PosMode, string> = {
+  retail: 'Retail',
+  hospitality: 'Hospitality',
+  invoicing: 'Invoicing',
+}
+
+/**
  * One line on why a shop would pick each, for the setting that offers them.
  *
  * Written as what the shop DOES rather than what the software has: somebody

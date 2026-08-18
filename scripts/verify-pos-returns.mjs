@@ -33,13 +33,13 @@ import { mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { SignJWT } from 'jose'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const SECRET = process.env.SESSION_SECRET
 const BASE = process.env.APP_URL || 'http://localhost:4100'
 const OUT = process.env.SHOT_DIR || path.join(process.cwd(), '.screenshots')
-const PORT = 9343
 /* A serial_number from cp2_devices with status='active' — the till licence this run
    pretends to be. The previous default named no row at all, which the catalog API
    tolerated while the SCREEN refused to render. Override with VERIFY_DEVICE_ID. */
@@ -54,45 +54,16 @@ if (!SECRET) {
   process.exit(1)
 }
 
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const profile = path.join(tmpdir(), `odyssey-ret-${process.pid}`)
 mkdirSync(OUT, { recursive: true })
 
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    `--remote-debugging-port=${PORT}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-gpu',
-    '--hide-scrollbars',
-    `--user-data-dir=${profile}`,
-    '--window-size=1600,1000',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { wsUrl, close: closeChrome } = await launchChrome('ret')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 process.on('exit', () => {
-  try { chrome.kill() } catch {}
-  try { rmSync(profile, { recursive: true, force: true }) } catch {}
 })
 
-async function devtoolsUrl() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/json/version`)
-      if (r.ok) return (await r.json()).webSocketDebuggerUrl
-    } catch {}
-    await sleep(250)
-  }
-  throw new Error('Chrome did not expose a debugging port')
-}
 
-const ws = new WebSocket(await devtoolsUrl())
+const ws = new WebSocket(wsUrl)
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
 
 let id = 0

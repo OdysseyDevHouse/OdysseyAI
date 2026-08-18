@@ -13,6 +13,7 @@ import {
   Icons,
   Input,
   Modal,
+  Select,
   SettingRow,
   Skeleton,
   Switch,
@@ -20,9 +21,11 @@ import {
 } from '@/components/ui'
 import { deviceId } from '@/lib/deviceId'
 import type { Terminal } from '@/lib/site/terminals'
+import { POS_MODES, POS_MODE_LABELS, toPosMode } from '@/lib/posMode'
 import {
   saveTerminalAction,
   deleteTerminalAction,
+  setTerminalPosModeAction,
 } from './actions'
 
 /**
@@ -86,7 +89,11 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
         <CardHeader
           icon={<Icons.Terminal size={16} />}
           title="Tills"
-          description="Every register in the store. A sale records which one rang it up."
+          /* Says what the screen a cashier stands at is set FROM, because that
+             is now a per-till choice and the control is one small select in a
+             row of icon buttons. A shop with a wholesale desk and a retail
+             counter needs to know that is possible before they go looking. */
+          description="Every register in the store. A sale records which one rang it up, and each till runs its own screen — so a wholesale desk and a retail counter can differ."
           /* Always primary now. It used to step down to `secondary` when
              claiming a till was the more urgent act on this screen — but
              claiming no longer happens here, so registering one is the only
@@ -137,6 +144,35 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
                       )}
                     </>
                   )}
+
+                  {/* ── WHAT KIND OF TILL THIS ONE IS ──────────────────────
+                      On the ROW, not in the edit dialog, because the question a
+                      manager actually has is comparative: "which of my four
+                      tills runs what". That is a column you read down, not four
+                      modals you open in turn.
+
+                      A select rather than the three explanatory cards this
+                      replaced. Those earned their room while the choice was
+                      made ONCE for the whole shop; repeated per till they would
+                      be three paragraphs of identical prose per row. The hint
+                      is carried once, above the list. */}
+                  <Select
+                    aria-label={`What kind of till ${terminal.code} is`}
+                    value={terminal.posMode}
+                    disabled={pending}
+                    onChange={(e) => {
+                      const next = toPosMode(e.target.value)
+                      if (next === terminal.posMode) return
+                      run(() => setTerminalPosModeAction(terminal.id, next))
+                    }}
+                    className="h-8 w-[150px] text-[13px]"
+                  >
+                    {POS_MODES.map((value) => (
+                      <option key={value} value={value}>
+                        {POS_MODE_LABELS[value]}
+                      </option>
+                    ))}
+                  </Select>
 
                   <Button
                     variant="ghost"

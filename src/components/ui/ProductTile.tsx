@@ -76,9 +76,11 @@ export function ProductTile({
   dashed?: boolean
   onClick?: () => void
 }) {
-  // The whole responsive story. A short tile cannot stack a 44px disc above two
-  // lines of text, so it lays them out in a row and drops the subtitle — the
-  // least load-bearing of the three, since a cashier picks by name and price.
+  // The whole responsive story. A short tile has room for ONE line of content
+  // beside its badge, so it keeps the name and the price on that line and drops
+  // the subtitle — the least load-bearing of the three, since a cashier picks by
+  // name and price. A tall tile keeps all three: name beside the badge, code and
+  // price on their own lines beneath.
   const short = isShortTile(tileHeight)
 
   const glyph = image ? (
@@ -97,7 +99,10 @@ export function ProductTile({
          it takes the same light blue the other dashed tiles wear. */
       <span
         aria-hidden
-        className={`flex shrink-0 items-center justify-center rounded-pill bg-brand-soft text-brand ${
+        /* The same squircle CategoryTile draws at this size — a round disc here
+           beside squared badges on every tile around it reads as the odd one out
+           rather than as the deliberate exception it is meant to be. */
+        className={`flex shrink-0 items-center justify-center rounded-[14px] bg-brand-soft text-brand ${
           short ? 'h-10 w-10' : 'h-11 w-11'
         }`}
       >
@@ -108,14 +113,14 @@ export function ProductTile({
     )
   ) : null
 
-  // Tall: glyph on top, text below it filling the rest, price pinned to the
-  // bottom edge. Short: everything on one row.
+  // Tall: glyph and description share the top line, code and price beneath them.
+  // Short: everything on one row.
   //
   // The chevron sits NEXT TO THE TITLE rather than as a third child of the
   // column — as a sibling of the glyph it becomes its own row in tall mode and
   // lands under the text, which reads as a stray character.
   const heading = (
-    <span className="flex min-w-0 items-start gap-2">
+    <span className="flex min-w-0 flex-1 items-center gap-2">
       {/* 15px, above the back office's 14px body: read at arm's length on a
           counter screen, not at desk distance. Clamped to two lines so a long
           description cannot push the price out of the tile. */}
@@ -162,19 +167,50 @@ export function ProductTile({
       } ${edge && !dashed ? 'border-l-4' : ''} ${
         short
           ? `items-center gap-3 py-2 pr-3 ${edge && !dashed ? 'pl-2.5' : 'pl-3'}`
-          : `flex-col gap-2.5 py-3.5 pr-3.5 ${edge && !dashed ? 'pl-3' : 'pl-3.5'}`
+          : /* gap-2, matching ActionTile: the code and price under the top line are
+               notes about the product named on it, and a gap wide enough to read as a
+               separator makes them look like an unrelated second block. */
+            `flex-col gap-2 py-3.5 pr-3.5 ${edge && !dashed ? 'pl-3' : 'pl-3.5'}`
       }`}
     >
-      {glyph}
+      {/*
+        THE GLYPH SITS BESIDE THE DESCRIPTION, NOT ABOVE IT — the same arrangement
+        the quick keys wear, for the same reason: the picture and the name for it are
+        one label, and splitting them by a disc's height makes a scan down the grid
+        read every picture first and then go back up for the words.
 
-      {/* flex-1 so the column owns the tile's remaining height — that is what
-          lets mt-auto below push the price to the bottom edge instead of
-          leaving it floating under the title with dead space beneath. */}
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        {heading}
-        {subtitle && !short && <span className="truncate text-[13px] text-muted">{subtitle}</span>}
-        {price && <span className="numeric mt-auto text-base font-bold text-brand">{price}</span>}
-      </span>
+        Code and price drop underneath, full tile width. They ANSWER the description
+        rather than continue it — "which one is it" then "what does it cost" — so
+        indenting them to clear the glyph would file them under the name instead of
+        under the product.
+      */}
+      {short ? (
+        <>
+          {glyph}
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            {heading}
+            {price && <span className="numeric text-base font-bold text-brand">{price}</span>}
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="flex min-w-0 items-center gap-2.5">
+            {glyph}
+            {heading}
+          </span>
+
+          {/* flex-1 so this block owns the tile's remaining height — that is what
+              lets mt-auto below hold the price on the bottom edge, where a cashier
+              finds it in the same place on every tile in the row rather than at a
+              height that moves with the length of the description above it. */}
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            {subtitle && <span className="truncate text-[13px] text-muted">{subtitle}</span>}
+            {price && (
+              <span className="numeric mt-auto text-base font-bold text-brand">{price}</span>
+            )}
+          </span>
+        </>
+      )}
     </button>
   )
 }

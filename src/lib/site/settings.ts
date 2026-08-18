@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
 import { toNum } from '../decimals'
 import { DEFAULT_MAX_CANCELLATION_FEE_PCT } from '../laybyRules'
+import { PICTURE_FONTS } from '../generatedPicture'
 
 /**
  * The site settings KV.
@@ -96,34 +97,19 @@ export const SETTING_DEFAULTS = {
    * Defaults to 'terminal' so an existing store keeps behaving as it did.
    */
   cashup_mode: 'terminal',
-  /**
-   * What kind of till this shop runs.
+  /*
+   * NO `pos_mode` SETTING ANY MORE.
    *
-   * 'retail'      — a queue at a counter. One basket at a time, paid before the
-   *                 customer leaves. The default, so every existing store is
-   *                 untouched.
-   * 'hospitality' — tables. A basket per table, held open while people eat, paid
-   *                 at the end. The same basket and the same posting path; what
-   *                 differs is how a waiter FINDS the one they left open.
-   * 'invoicing'   — a trade counter. A hardware or paint shop serving a queue of
-   *                 account customers with long documents: many lines, typed
-   *                 rather than tapped, and as often a quote or an order as an
-   *                 invoice. Same basket, same money, same posting path again.
+   * What kind of till a screen is belongs to the TILL, not the shop: a
+   * merchant runs a wholesale trade desk on the invoicing screen and a retail
+   * front counter on the retail screen, under one company. One answer per site
+   * put one of those halves on the wrong screen every day it traded.
    *
-   * ── THE ONE RULE THIS SETTING HAS LEARNED ─────────────────────────────────
-   *
-   * The note that used to live here said the flag was read in exactly three
-   * places on the client, and that a fourth was the signal it was being threaded
-   * rather than contained. There are now NINE reads in PosShell alone, so the
-   * warning was right and went unheeded.
-   *
-   * The lesson is not "count harder". It is that a mode which decides WHAT A
-   * SCREEN IS should pick a screen, not sprinkle branches through one. So
-   * 'invoicing' does not add a tenth `if` to PosShell: it selects a different
-   * shell entirely, over the same basket, the same money and the same actions.
-   * See PosEntry, which is where the choice is made and the only place it is.
+   * It is now `terminals.pos_mode` — see sql/site/180_terminal_pos_mode.sql and
+   * `setTerminalPosMode` in lib/site/terminals.ts. Removed from this map rather
+   * than left as an unread default, because a default here is a value that
+   * looks authoritative and decides nothing.
    */
-  pos_mode: 'retail',
   /**
    * How many times a cashier may undo within one basket.
    *
@@ -775,6 +761,18 @@ export const SETTING_DEFAULTS = {
 
   /** How many files a customer may put on one job. A ceiling, not a target. */
   portal_max_uploads_per_job: '10',
+
+  /**
+   * Typeface for generated till icons — the initial-on-a-gradient pictures
+   * offered on the product screen when a product has no icon to upload.
+   *
+   * A PICTURE_FONTS id from lib/generatedPicture. Blank means "never chosen",
+   * which fontById() reads as Inter. Site-wide rather than per product on
+   * purpose: a till whose buttons are set in eight different faces looks
+   * broken, not varied — the gradient is what distinguishes one product from
+   * the next.
+   */
+  generate_picture_font: '',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -913,6 +911,14 @@ export function validateSetting(key: SettingKey, value: string): string | null {
         ? null
         : "Numbering scope must be 'terminal' or 'site'."
 
+    // Only ids the generator actually offers reach the table. An unknown value
+    // would silently render as Inter for ever, which reads as "the setting is
+    // broken" rather than "that font does not exist".
+    case 'generate_picture_font':
+      return value === '' || PICTURE_FONTS.some((f) => f.id === value)
+        ? null
+        : 'That is not one of the fonts the picture generator offers.'
+
     // Digits only, and never zero. This lands in a legal document number, so a
     // stray letter here would print on an invoice — and 'store 0' reads as
     // "no store" to anyone comparing group reports.
@@ -982,11 +988,6 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       if (tolerance > 500) return 'A tolerance above 500 would hide real shortages.'
       return null
     }
-
-    case 'pos_mode':
-      return value === 'retail' || value === 'hospitality' || value === 'invoicing'
-        ? null
-        : "POS mode must be 'retail', 'hospitality' or 'invoicing'."
 
     case 'pos_undo_limit': {
       const limit = Number(value)

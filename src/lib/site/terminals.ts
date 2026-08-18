@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { toPosMode, type PosMode } from '../posMode'
 
 /**
  * Tills, registered as master data.
@@ -31,6 +32,15 @@ export type Terminal = {
   tillNumber: string | null
   name: string
   location: string | null
+  /**
+   * Which screen this till runs — retail counter, tables, or trade counter.
+   *
+   * PER TILL, not per shop, and that is the whole point of it living here. A
+   * builders' merchant runs a wholesale trade desk and a retail front counter
+   * in one company: with one answer per site, one of them is always on the
+   * wrong screen. See sql/site/180_terminal_pos_mode.sql.
+   */
+  posMode: PosMode
   deviceId: string | null
   deviceLabel: string | null
   isActive: boolean
@@ -49,6 +59,12 @@ function mapTerminal(r: Row): Terminal {
     tillNumber: (r.till_number as string | null) ?? null,
     name: String(r.name),
     location: (r.location as string | null) ?? null,
+    /* Through `toPosMode` rather than cast. The column is an ENUM so the
+       database already constrains it, but a row read from a site whose
+       migration has not run yet has no such column at all — and `undefined`
+       cast to PosMode is a value every switch silently mishandles. This turns
+       it into 'retail', which is a till that trades. */
+    posMode: toPosMode(r.pos_mode),
     deviceId: (r.device_id as string | null) ?? null,
     deviceLabel: (r.device_label as string | null) ?? null,
     isActive: !!r.is_active,
@@ -59,7 +75,7 @@ function mapTerminal(r: Row): Terminal {
 }
 
 const SELECT_TERMINAL = `
-  SELECT t.id, t.code, t.till_number, t.name, t.location, t.device_id, t.device_label,
+  SELECT t.id, t.code, t.till_number, t.name, t.location, t.pos_mode, t.device_id, t.device_label,
          t.is_active, t.claimed_at, t.last_seen_at,
          (SELECT COUNT(*) FROM sales_documents d WHERE d.terminal_id = t.id) AS document_count
     FROM terminals t
@@ -232,6 +248,40 @@ export async function updateTerminal(
 }
 
 /**
+ * Which screen this till runs.
+ *
+ * ── ITS OWN FUNCTION, NOT A FIELD ON `updateTerminal` ─────────────────────
+ *
+ * `TerminalInput` is what the edit dialog collects — code, name, location,
+ * active. The mode is set from the till's ROW, one control per till, because
+ * that is where a manager comparing "which of my four tills runs what" is
+ * looking. Folding it into the dialog would mean opening a modal per till to
+ * answer a question that is really a column.
+ *
+ * More importantly, a partial save through `updateTerminal` would carry the
+ * OTHER fields with it — and an action that writes a whole aggregate from a
+ * screen holding only part of it is how sibling fields get wiped. One narrow
+ * write, one column.
+ */
+export async function setTerminalPosMode(
+  siteId: number,
+  id: number,
+  mode: PosMode,
+): Promise<SaveResult> {
+  const existing = await getTerminal(siteId, id)
+  if (!existing) return { ok: false, error: 'Till not found.' }
+
+  /* Normalised rather than trusted. The value crosses a server-action
+     boundary, so it is a string from the client until something proves
+     otherwise, and an unrecognised one must become a till that trades rather
+     than a column write the ENUM rejects at the driver. */
+  const safe = toPosMode(mode)
+
+  await siteExecute(siteId, 'UPDATE terminals SET pos_mode = ? WHERE id = ?', [safe, id])
+  return { ok: true, id }
+}
+
+/**
  * Whether this machine is already registered at a DIFFERENT shop.
  *
  * Returns the shop and till holding it, so the refusal can name them. Null when
@@ -244,27 +294,65 @@ export async function updateTerminal(
  * is why `test-pos-unlock` also asserts the invariant across every site, and is
  * the thing that would catch a claim this missed.
  */
-async function claimedElsewhere(
-  siteId: number,
-  deviceId: string,
-): Promise<{ siteName: string; terminalCode: string } | null> {
-  const { activeSiteIds, publicSiteName } = await import('../sites')
+/** One shop this machine is a till in. */
+export type DeviceSite = {
+  siteId: number
+  siteName: string
+  terminalCode: string
+}
 
-  for (const other of await activeSiteIds()) {
-    if (other === siteId) continue
+/**
+ * EVERY shop this machine holds a till in.
+ *
+ * ── WHY A LIST AND NOT THE FIRST MATCH ────────────────────────────────────
+ *
+ * This replaced a `siteForDevice` that returned the first site whose terminals
+ * table matched and stopped there. That was safe only while a machine could
+ * hold one till in total — and enforcing THAT was refusing a real arrangement:
+ * an operator invoicing for two stores from one PC, with a separately paid
+ * licence in each, which `claimSpot` has always allowed.
+ *
+ * So the ambiguity is resolved by ASKING rather than by forbidding. A machine
+ * registered in one shop unlocks straight into it, exactly as before; one
+ * registered in several offers the choice, and the person standing at the
+ * counter knows which shop they are in better than a sort order does.
+ *
+ * ── ORDERED, SO THE ANSWER IS STABLE ──────────────────────────────────────
+ *
+ * By site id, which is `activeSiteIds`' own order. The unlock screen lists them
+ * in this order, so the same machine offers the same list in the same sequence
+ * every morning — a picker whose entries move is a picker somebody eventually
+ * taps without reading.
+ *
+ * Inactive terminals are skipped: a deactivated till is not a shop this machine
+ * may open, and offering it would be a door that refuses on the far side.
+ */
+export async function sitesForDevice(deviceId: string): Promise<DeviceSite[]> {
+  const trimmed = deviceId.trim()
+  /* Same shape check the unlock path used to apply, kept here so every caller
+     gets it: this is a public identifier from a browser, not a credential. */
+  if (!/^[a-zA-Z0-9-]{8,64}$/.test(trimmed)) return []
+
+  const { activeSiteIds, publicSiteName } = await import('../sites')
+  const found: DeviceSite[] = []
+
+  for (const siteId of await activeSiteIds()) {
     const row = await siteQueryOne<{ code: string }>(
-      other,
+      siteId,
       'SELECT code FROM terminals WHERE device_id = ? AND is_active = 1 LIMIT 1',
-      [deviceId],
+      [trimmed],
+      /* A site whose database is unreachable is skipped rather than fatal — one
+         sick shop must not stop a machine unlocking into a healthy one. */
     ).catch(() => null)
-    if (row) {
-      return {
-        siteName: (await publicSiteName(other)) ?? `site ${other}`,
-        terminalCode: String(row.code),
-      }
-    }
+    if (!row) continue
+    found.push({
+      siteId,
+      siteName: (await publicSiteName(siteId)) ?? `Site ${siteId}`,
+      terminalCode: String(row.code),
+    })
   }
-  return null
+
+  return found
 }
 
 /**
@@ -274,22 +362,26 @@ async function claimedElsewhere(
  * PC is routine, and requiring a manager to release the old one first would
  * mean a shop cannot trade until someone finds the setup screen.
  *
- * ── AND REFUSES ACROSS SITES, WHICH IS A DIFFERENT QUESTION ───────────────
+ * ── ONE MACHINE MAY WORK SEVERAL SHOPS ───────────────────────────────────
  *
  * `terminals.device_id` is UNIQUE, so one machine cannot hold two registers in
- * ONE shop — the database sees to that. It has nothing to say about two shops,
- * because they are two databases.
+ * ONE shop — the database sees to that, and that limit is real: a shop paying
+ * for two tills must not trade from one browser twice.
  *
- * That gap is not cosmetic. `siteForDevice` in the unlock path walks the active
- * sites and returns the FIRST whose terminals table matches, so a machine
- * claimed in two shops unlocks into whichever happens to be listed first — a
- * PIN typed at one company's counter opening another company's data, silently
- * and repeatably. Found on a dev box that had been used to test both, where it
- * had sat unnoticed for days.
+ * Across shops it is the opposite. An operator invoicing for two stores from
+ * one back-office PC is an ordinary arrangement, not an abuse — and the LICENCE
+ * layer already says so in as many words (`claimSpot` in control/devices.ts:
+ * "a machine may hold one licence in each store it works … each store's licence
+ * is separately sold and separately paid"). A terminal claim that refused what
+ * the licence permits made the two halves of one action disagree.
  *
- * The scan is bounded by the number of active sites, runs once at claim time
- * rather than per sale, and refuses by NAMING the other shop — a manager told
- * only "already claimed" has nowhere to go.
+ * This used to refuse it, for a reason that was real but was fixed in the wrong
+ * place: `siteForDevice` in the unlock path returned the FIRST site whose
+ * terminals table matched, so a machine claimed twice would unlock into
+ * whichever sorted first — one company's counter opening another's data. The
+ * answer is for that lookup to RETURN ALL the matches and let the person say
+ * which shop they are standing in, which is what it now does. Blocking the
+ * claim was making every multi-store customer pay for a single-store bug.
  */
 export async function claimTerminal(
   siteId: number,
@@ -302,13 +394,9 @@ export async function claimTerminal(
   const terminal = await getTerminal(siteId, id)
   if (!terminal) return { ok: false, error: 'Till not found.' }
 
-  const elsewhere = await claimedElsewhere(siteId, deviceId.trim())
-  if (elsewhere) {
-    return {
-      ok: false,
-      error: `This machine is already registered as ${elsewhere.terminalCode} at ${elsewhere.siteName}. Unlink it there before using it here.`,
-    }
-  }
+  /* NO CROSS-SITE REFUSAL. See the docblock: a machine working two stores is a
+     real arrangement the licence layer already allows, and the unlock path now
+     asks which shop rather than guessing. */
   if (!terminal.isActive) {
     return { ok: false, error: `${terminal.name} is deactivated and cannot be used.` }
   }

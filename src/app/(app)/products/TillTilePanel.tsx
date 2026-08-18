@@ -3,15 +3,20 @@
 import { useRef, useState, useTransition } from 'react'
 import {
   Button,
+  GeneratedPictureModal,
   Icons,
-  TILE_GRADIENTS,
+  PICTURE_TILE_GRADIENTS,
   TILE_NONE,
-  TILE_SWATCHES,
+  tileInkClass,
   tileClass,
   useToast,
 } from '@/components/ui'
 import { IMAGE_ACCEPT, IMAGE_EXTENSIONS_LABEL } from '@/lib/productImageModel'
-import { removeProductIconAction, uploadProductIconAction } from './imageActions'
+import {
+  removeProductIconAction,
+  setGeneratePictureFontAction,
+  uploadProductIconAction,
+} from './imageActions'
 
 /**
  * How a product looks on the till: an icon, over a colour or gradient.
@@ -41,6 +46,8 @@ export default function TillTilePanel({
   color,
   onColorChange,
   initialIcon,
+  productName = '',
+  pictureFont = '',
 }: {
   /** Null while the product is being created — see the note above. */
   productId: number | null
@@ -51,10 +58,21 @@ export default function TillTilePanel({
   onColorChange: (token: string) => void
   /** The stored name of the current icon, or null. */
   initialIcon: string | null
+  /**
+   * The product's description as it stands in the form — seeds the generated
+   * icon's letter, caption and suggested gradient.
+   */
+  productName?: string
+  /** The site's saved typeface for generated icons — a PICTURE_FONTS id. */
+  pictureFont?: string | null
 }) {
   const toast = useToast()
   const [busy, startAction] = useTransition()
   const [icon, setIcon] = useState(initialIcon)
+  const [generateOpen, setGenerateOpen] = useState(false)
+  // Held locally so a typeface chosen while generating is already in place the
+  // next time the dialog opens, without waiting for the page to revalidate.
+  const [font, setFont] = useState(pictureFont ?? '')
   const fileInput = useRef<HTMLInputElement>(null)
 
   /*
@@ -66,21 +84,35 @@ export default function TillTilePanel({
    */
   const [version, setVersion] = useState(0)
 
+  /**
+   * Save one file as the icon, and say whether it landed.
+   *
+   * Awaited rather than wrapped in a transition, because the generator needs to
+   * know whether the icon actually saved before it closes its dialog — a dialog
+   * that shuts on a rejected upload tells the user the opposite of what
+   * happened.
+   */
+  async function saveIcon(file: File): Promise<boolean> {
+    if (productId === null) return false
+    const form = new FormData()
+    form.set('file', file)
+    const result = await uploadProductIconAction(productId, form)
+    if (!result.ok) {
+      toast.error(result.error)
+      return false
+    }
+    setIcon(result.storedName)
+    setVersion((v) => v + 1)
+    toast.success('Till icon updated.')
+    return true
+  }
+
   function upload(files: FileList | null) {
     const file = files?.[0]
     if (!file || productId === null) return
 
     startAction(async () => {
-      const form = new FormData()
-      form.set('file', file)
-      const result = await uploadProductIconAction(productId, form)
-      if (!result.ok) {
-        toast.error(result.error)
-      } else {
-        setIcon(result.storedName)
-        setVersion((v) => v + 1)
-        toast.success('Till icon updated.')
-      }
+      await saveIcon(file)
       // Cleared either way, so choosing the SAME file again still fires change.
       if (fileInput.current) fileInput.current.value = ''
     })
@@ -114,7 +146,10 @@ export default function TillTilePanel({
         {/* The preview. The icon sits ON the colour rather than replacing it,
             so a transparent glyph keeps its background. */}
         <div
-          className={`relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-card text-white ${tileClass(color)}`}
+          /* Ink follows the ramp: the pale ones (yellow, gold, amber, lime)
+             take dark text, exactly as the generated icon does. Hard-coded
+             white here left the letter invisible on four of the twenty. */
+          className={`relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-card ${tileInkClass(color)} ${tileClass(color)}`}
         >
           {icon && productId !== null ? (
             <img
@@ -129,61 +164,53 @@ export default function TillTilePanel({
 
         <div className="flex flex-col gap-3">
           {/* ── Backgrounds ──────────────────────────────────────────────── */}
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-1.5">
-              {TILE_SWATCHES.map((c) => (
-                /* Not a kit control: a colour swatch is a coloured target with
-                   no label, which no Button variant should ever become. */
-                <button
-                  key={c.token}
-                  data-kit-ok
-                  type="button"
-                  aria-label={`Colour ${c.token}`}
-                  aria-pressed={color === c.token}
-                  onClick={() => onColorChange(c.token)}
-                  className={`size-6 rounded-pill border-2 transition ${c.className} ${
-                    color === c.token ? 'border-ink' : 'border-transparent'
-                  }`}
-                />
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              {TILE_GRADIENTS.map((c) => (
-                /* Same as above — see the note on the flat swatches. */
-                <button
-                  key={c.token}
-                  data-kit-ok
-                  type="button"
-                  aria-label={`Gradient ${c.token}`}
-                  aria-pressed={color === c.token}
-                  onClick={() => onColorChange(c.token)}
-                  className={`size-6 rounded-pill border-2 transition ${c.className} ${
-                    color === c.token ? 'border-ink' : 'border-transparent'
-                  }`}
-                />
-              ))}
-
-              {/* No colour. Set apart by a divider and drawn as an outlined
-                  blank rather than a filled circle, because "none" is a
-                  different KIND of answer from the sixteen colours before it —
-                  another circle in the row would read as a seventeenth. */}
-              <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
+          {/* The SAME twenty ramps the generator offers, so choosing a colour
+              here and generating an icon there are one palette rather than two
+              that nearly match. Ten per row, as in the dialog. Squares, not
+              circles: these are gradients, and a two-stop ramp is far easier to
+              read across a square than around a disc. */}
+          {/* A ten-column grid rather than a wrapping row: the twenty ramps are
+              meant to read as two even rows of ten, and with "no colour" in the
+              same flex line the wrap fell 10/9/1. */}
+          <div className="grid w-fit grid-cols-10 gap-1.5">
+            {PICTURE_TILE_GRADIENTS.map((c) => (
+              /* Not a kit control: a colour swatch is a coloured target with no
+                 label, which no Button variant should ever become. */
               <button
+                key={c.token}
                 data-kit-ok
                 type="button"
-                title="No background colour"
-                aria-label="No background colour"
-                aria-pressed={color === TILE_NONE.token}
-                onClick={() => onColorChange(TILE_NONE.token)}
-                className={`flex size-6 items-center justify-center rounded-pill border-2 bg-surface-2 transition ${
-                  color === TILE_NONE.token ? 'border-ink' : 'border-border'
+                title={c.token.replace('pic-', '').replace('-', ' ')}
+                aria-label={`Colour ${c.token.replace('pic-', '')}`}
+                aria-pressed={color === c.token}
+                onClick={() => onColorChange(c.token)}
+                className={`size-7 rounded-control border-2 transition ${c.className} ${
+                  color === c.token ? 'border-ink' : 'border-transparent'
                 }`}
-              >
-                <Icons.Ban size={13} className="text-muted" />
-              </button>
-            </div>
+              />
+            ))}
+
           </div>
+
+          {/* No colour, on its own line BELOW the grid — "none" is a different
+              KIND of answer from the twenty ramps, and sitting in the grid it
+              read as a twenty-first colour while also breaking the 10/10 wrap. */}
+          <button
+            data-kit-ok
+            type="button"
+            title="No background colour"
+            aria-label="No background colour"
+            aria-pressed={color === TILE_NONE.token}
+            onClick={() => onColorChange(TILE_NONE.token)}
+            className={`flex w-fit items-center gap-1.5 rounded-control border px-2 py-1 text-xs transition ${
+              color === TILE_NONE.token
+                ? 'border-ink text-ink'
+                : 'border-border text-muted hover:bg-surface-2'
+            }`}
+          >
+            <Icons.Ban size={13} />
+            No background
+          </button>
 
           {/* ── The icon ─────────────────────────────────────────────────── */}
           <div className="flex flex-wrap items-center gap-2">
@@ -202,6 +229,19 @@ export default function TillTilePanel({
             >
               <Icons.Upload size={15} />
               {busy ? 'Working…' : icon ? 'Replace icon' : 'Add icon'}
+            </Button>
+
+            {/* Beside the upload, never instead of it — a real picture is
+                better when there is one. This is for the long tail of products
+                nobody will ever photograph, where a coloured tile carrying the
+                name still beats a bare letter on the till button. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy || productId === null}
+              onClick={() => setGenerateOpen(true)}
+            >
+              Generate icon
             </Button>
 
             {icon && (
@@ -224,6 +264,29 @@ export default function TillTilePanel({
           </p>
         </div>
       </div>
+
+      {/* An icon built from the product's own initial and name on a gradient.
+          The rendered PNG rides the ordinary icon upload, so the till receives
+          an ordinary icon and never learns it was generated. */}
+      <GeneratedPictureModal
+        open={generateOpen}
+        onClose={() => setGenerateOpen(false)}
+        name={productName}
+        busy={busy}
+        fontId={font}
+        onFontChange={async (next) => {
+          setFont(next)
+          const result = await setGeneratePictureFontAction(next)
+          // Not fatal: the icon the user asked for is still made, and the
+          // typeface simply stays as it was for the next product.
+          if (!result.ok) toast.error(result.error)
+        }}
+        onPick={async (file) => {
+          const saved = await saveIcon(file)
+          // false keeps the dialog open, so the work isn't lost on a refusal.
+          return saved
+        }}
+      />
     </div>
   )
 }

@@ -25,6 +25,7 @@ import { mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { createDecipheriv, scryptSync } from 'node:crypto'
 import mysql from 'mysql2/promise'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /**
@@ -50,7 +51,6 @@ const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const BASE = process.env.APP_URL || 'http://localhost:4100'
 const SITE = Number(process.env.SMOKE_SITE_ID || 1)
-const PORT = 9334 // not 9333 — so this can run alongside a screenshot run
 
 const jsonFlag = process.argv.indexOf('--json')
 const JSON_OUT = jsonFlag !== -1 ? process.argv[jsonFlag + 1] : null
@@ -235,46 +235,14 @@ async function resolveRoute(route, db) {
 }
 
 // ── Chrome ──────────────────────────────────────────────────────────────
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const profile = path.join(tmpdir(), `odyssey-smoke-${process.pid}-${process.hrtime.bigint()}`)
-mkdirSync(profile, { recursive: true })
 
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    `--remote-debugging-port=${PORT}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-gpu',
-    '--hide-scrollbars',
-    `--user-data-dir=${profile}`,
-    '--window-size=1600,1000',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { wsUrl, close: closeChrome } = await launchChrome('smoke')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-function cleanup() {
-  try { chrome.kill() } catch {}
-  try { rmSync(profile, { recursive: true, force: true }) } catch {}
-}
-process.on('exit', cleanup)
+const cleanup = closeChrome
 
-async function devtoolsUrl() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/json/version`)
-      if (r.ok) return (await r.json()).webSocketDebuggerUrl
-    } catch {}
-    await sleep(250)
-  }
-  throw new Error('Chrome did not expose a debugging port')
-}
 
-const ws = new WebSocket(await devtoolsUrl())
+const ws = new WebSocket(wsUrl)
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
 
 let msgId = 0

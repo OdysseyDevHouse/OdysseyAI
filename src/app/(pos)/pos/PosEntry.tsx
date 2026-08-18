@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { offlineSession, type OfflineSession } from '@/lib/posOffline/signInOffline'
+import { POS_MODE_WORDMARKS } from '@/lib/posMode'
 import { deviceId } from '@/lib/deviceId'
 import { checkDeviceAction, type DeviceState } from './deviceActions'
 import PosGate from './PosGate'
@@ -60,14 +61,11 @@ export default function PosEntry({
   cashRounding,
   depositMinPct,
   depositAllowWalkin,
-  savedCount,
   specials,
   pendingPrices,
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
-  hospitality,
-  invoicing,
   startAs,
   initialTables,
   floorRooms,
@@ -112,16 +110,21 @@ export default function PosEntry({
   depositMinPct: number
   /** Whether a deposit may be taken with no customer named. */
   depositAllowWalkin: boolean
-  savedCount: number
   specials: Special[]
   /** Approved price changes, moments unevaluated — the till decides on its clock. */
   pendingPrices: PendingSchedule[]
   quickKeys: QuickKeyRow[]
   quickKeyProductNames: Record<number, string>
   quickKeyDepartmentNames: Record<number, string>
-  hospitality: boolean
-  /** True on a trade counter — see PosShell. */
-  invoicing: boolean
+  /*
+   * NO `hospitality` / `modeName` / `invoicing` PROPS.
+   *
+   * They used to be threaded from the server page, which read one `pos_mode`
+   * setting for the whole shop. The mode is now a property of the TILL, and
+   * only the browser knows which till it is standing at — so it is resolved
+   * from `terminals` and this machine's serial in the body below, and the
+   * server page no longer has an opinion to pass down.
+   */
   /** What the till should open as, when the back office asked. See PosShell. */
   startAs: DraftDocType
   initialTables: PosTable[]
@@ -252,6 +255,33 @@ export default function PosEntry({
     )
   }
 
+  /*
+   * ── WHICH SCREEN THIS TILL RUNS ──────────────────────────────────────────
+   *
+   * Resolved from the TILL, not the shop. A builders' merchant runs a wholesale
+   * trade desk on invoicing and a retail front counter on retail, in one
+   * company — one answer per site puts one of them on the wrong screen all day.
+   *
+   * ── AND RESOLVED HERE, NOT IN PosShell ──────────────────────────────────
+   *
+   * Even though PosShell already matches the device to a terminal for its own
+   * purposes. `hospitality` seeds `useState` initialisers in that component —
+   * `choosingTable` among them — so it has to be right on the FIRST render.
+   * Resolving it a tick later would mount a retail shell and then change the
+   * mode under it, which those initialisers would never re-read.
+   *
+   * This component already refuses to render the shell until the licence check
+   * has come back, and the device id resolves in the same effect, so by the
+   * time PosShell mounts the answer is known.
+   *
+   * A machine matching no terminal gets 'retail' — the mode that trades. The
+   * same answer `toPosMode` gives an unrecognised value, and the column
+   * default, so all three agree.
+   */
+  const posMode = serial
+    ? (terminals.find((t) => t.deviceId === serial)?.posMode ?? 'retail')
+    : 'retail'
+
   return (
     <PosShell
       siteId={siteId}
@@ -269,7 +299,6 @@ export default function PosEntry({
       cashRounding={cashRounding}
       depositMinPct={depositMinPct}
       depositAllowWalkin={depositAllowWalkin}
-      savedCount={savedCount}
       canOverrideDiscount={operator.canOverrideDiscount}
       canOverridePrice={operator.canOverridePrice}
       canVoid={operator.canVoid}
@@ -278,8 +307,10 @@ export default function PosEntry({
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
-      hospitality={hospitality}
-      invoicing={invoicing}
+      /* From THIS till's mode — see the resolution above. */
+      hospitality={posMode === 'hospitality'}
+      modeName={POS_MODE_WORDMARKS[posMode]}
+      invoicing={posMode === 'invoicing'}
       startAs={startAs}
       initialTables={initialTables}
       floorRooms={floorRooms}

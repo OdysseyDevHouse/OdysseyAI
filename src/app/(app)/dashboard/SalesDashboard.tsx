@@ -652,6 +652,12 @@ export function SalesDashboard({
                     }`}
                   >
                     <CardHeader
+                      /* No brand rule down the left edge. The rule marks one
+                         card as the subject of a screen; the dashboard is a
+                         grid of a dozen equal widgets, so drawing it on every
+                         one of them marked nothing and just striped the page
+                         blue. The cards keep their plain border. */
+                      tone="default"
                       className={editing ? 'widget-drag cursor-move select-none' : ''}
                       title={
                         <span className="flex items-center gap-1.5">

@@ -18,12 +18,11 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const BASE = process.env.APP_URL || 'http://localhost:4100'
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 
 /* Mirrors multipleSessionsAllowed() in src/lib/auth.ts. The dev server sets its
    own NODE_ENV, so what matters here is the flag the server was started with. */
@@ -37,36 +36,10 @@ const ok = (label, cond, extra = '') => {
 }
 
 /** One isolated browser: its own profile directory, its own debugging port. */
-async function browser(name, port) {
-  const profile = path.join(tmpdir(), `ody-session-${name}-${process.pid}`)
-  mkdirSync(profile, { recursive: true })
-  const proc = spawn(
-    CHROME,
-    [
-      '--headless=new',
-      `--remote-debugging-port=${port}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-gpu',
-      `--user-data-dir=${profile}`,
-      '--window-size=1400,900',
-      'about:blank',
-    ],
-    { stdio: 'ignore' },
-  )
-
-  let wsUrl = null
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}/json/version`)
-      if (r.ok) {
-        wsUrl = (await r.json()).webSocketDebuggerUrl
-        break
-      }
-    } catch {}
-    await sleep(250)
-  }
-  if (!wsUrl) throw new Error(`${name}: Chrome did not expose a debugging port`)
+async function browser(name) {
+  const { wsUrl, close: closeChrome } = await launchChrome(`session-${name}`, {
+    windowSize: '1400,900',
+  })
 
   const ws = new WebSocket(wsUrl)
   await new Promise((res, rej) => {
@@ -123,10 +96,7 @@ async function browser(name, port) {
     evaluate,
     goto,
     text: () => evaluate('(document.body.innerText || "").replace(/\\s+/g, " ").trim()'),
-    close: () => {
-      try { proc.kill() } catch {}
-      try { rmSync(profile, { recursive: true, force: true }) } catch {}
-    },
+    close: closeChrome,
   }
 }
 
@@ -174,8 +144,8 @@ async function signIn(b) {
 async function main() {
   if (!EMAIL || !PASSWORD) throw new Error('Set DEV_LOGIN_EMAIL / DEV_LOGIN_PASSWORD in .env.local')
 
-  const a = await browser('A', 9401)
-  const b = await browser('B', 9402)
+  const a = await browser('A')
+  const b = await browser('B')
 
   try {
     // ── A signs in and is working ──────────────────────────────────────────

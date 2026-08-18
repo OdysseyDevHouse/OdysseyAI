@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import {
-  Badge,
   Button,
   Icons,
   EmptyState,
@@ -44,15 +43,9 @@ export function SalePane({
   onPay,
   returning,
   docType = 'invoice',
-  onPark,
-  onShowSaved,
-  onShowQuotes,
-  onShowOrders,
-  savedCount,
   onDocDiscount,
   onFindReceipt,
   exchange = null,
-  showParkKeys = true,
   busy,
 }: {
   lines: BasketLine[]
@@ -92,35 +85,12 @@ export function SalePane({
    * carried out. Defaulted to 'invoice' so every existing caller is unchanged.
    */
   docType?: 'invoice' | 'quote' | 'sales_order' | 'credit_sale'
-  onPark: () => void
-  onShowSaved: () => void
-  /**
-   * Opens the shop's quotes. Takes over the recall key while the till is on
-   * quotes — see the button for why it is that key and not a second one.
-   *
-   * Optional so a screen mounting this pane without quote support keeps
-   * compiling; absent, the key stays the parked-basket list it has always been.
-   */
-  onShowQuotes?: () => void
-  /** Opens the orders waiting to go out. Takes the same key on an order. */
-  onShowOrders?: () => void
-  /** How many baskets are parked, for the badge. */
-  savedCount: number
   /** Opens the whole-sale discount dialog. Undefined leaves the row inert. */
   onDocDiscount?: () => void
   /** Opens the receipted-return flow. Shown in return mode only. */
   onFindReceipt?: () => void
   /** Exchange credit held from a return — shown as a banner until Pay. */
   exchange?: { label: string; onClear: () => void } | null
-  /**
-   * Whether to offer Save / Saved at all.
-   *
-   * OFF in hospitality. There, Close IS the save — a waiter rings up drinks and
-   * walks away, and the tab parks itself under the table's name — so a separate
-   * "Save" key would be a second way to do the thing Close already did, and
-   * "Saved" a second floor beside the one the gate already shows.
-   */
-  showParkKeys?: boolean
   busy: boolean
 }) {
   const empty = lines.length === 0
@@ -143,22 +113,6 @@ export function SalePane({
   const tendered = !returning && docType === 'invoice'
   const finishLabel = returning ? 'Refund' : tendered ? 'Pay' : 'Save'
   const finishTone = returning ? 'warning' : tendered ? 'success' : 'primary'
-
-  /**
-   * What the recall key IS on this screen.
-   *
-   * Resolved once, here, rather than as three conditionals inside the button —
-   * the label, the glyph and the handler have to agree, and a key reading
-   * "Quotes" that opened the parked baskets is a worse bug than one that is
-   * merely absent. Falling back to Saved keeps a screen that has not been given
-   * the newer handlers working exactly as it always did.
-   */
-  const recall =
-    docType === 'quote' && onShowQuotes
-      ? { label: 'Quotes', Icon: Icons.FileText, onClick: onShowQuotes }
-      : docType === 'sales_order' && onShowOrders
-        ? { label: 'Orders', Icon: Icons.ListOrdered, onClick: onShowOrders }
-        : { label: 'Saved', Icon: Icons.Archive, onClick: onShowSaved }
 
   const now = useMinuteClock()
 
@@ -348,50 +302,14 @@ export function SalePane({
         </div>
       </div>
 
-      {/* ── Park and recall ──────────────────────────────────────────────
-          Above Close/Pay, not beside them: these two are used a few times a day
-          and those two are used on every sale, so they must not share a row and
-          risk being hit instead. */}
-      {showParkKeys && (
-        <div className="flex items-stretch gap-2 px-3 pt-1">
-          <Button
-            variant="ghost"
-            size="touch"
-            className="flex-1"
-            disabled={empty || busy}
-            onClick={onPark}
-          >
-            <Icons.Save size={18} />
-            Save
-          </Button>
-          {/*
-            THE RECALL KEY ANSWERS THE MODULE'S OWN QUESTION.
-
-            On a sale it opens the parked baskets. On a quote it opens the
-            shop's quotes; on an order, the orders waiting to go out. "Find an
-            existing one" is the same question in all three, and parked baskets
-            are not the answer to it in two of them — a cashier in the quote
-            module reaching for a quote must not be handed a list of half-rung
-            sales instead.
-
-            One key rather than three: buttons that are dead on every screen but
-            one are buttons cashiers learn to ignore.
-          */}
-          <Button
-            variant="ghost"
-            size="touch"
-            className="flex-1"
-            disabled={busy}
-            onClick={recall.onClick}
-          >
-            <recall.Icon size={18} />
-            {recall.label}
-            {recall.label === 'Saved' && savedCount > 0 && <Badge tone="brand">{savedCount}</Badge>}
-          </Button>
-        </div>
-      )}
-
-      {/* ── Close and Pay ────────────────────────────────────────────────── */}
+      {/* ── Close and Pay ──────────────────────────────────────────────────
+          Straight after the totals now. A Save/recall row used to sit in this
+          gap — a pair of keys every shop paid for in basket space, on the one
+          strip a thumb passes over on its way to Pay, and the recall half of it
+          could only ever reach the list belonging to the module already showing.
+          Both are quick keys instead: Save is `save-sale`, and the lists are
+          Quotes, Orders and Lay-bys, each reachable from any module. A shop that
+          wants them keeps them; one that never parks a basket gets the space. */}
       {/* Side by side, always in the same place: the way OUT and the way to
           FINISH are the two things a cashier reaches for without looking, and a
           Pay button that moves as the basket grows is a Pay button that gets

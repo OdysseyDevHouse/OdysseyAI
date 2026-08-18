@@ -41,9 +41,18 @@ const TONE: Record<CategoryTone, string> = {
 const SIZE = {
   sm: 'h-8 w-8 rounded-control',
   md: 'h-10 w-10 rounded-[10px]',
-  /* Round, and larger, for a touch tile — the till's department and quick-key
-     tiles carry this at 44px so the glyph still reads at arm's length. */
-  lg: 'h-11 w-11 rounded-pill',
+  /*
+   * A SOFT SQUARE, and larger, for a touch tile — the till's department and
+   * quick-key tiles carry this at 44px so the glyph still reads at arm's length.
+   *
+   * Not a circle. A circle inscribes the glyph in the smallest shape that can hold
+   * it, so a wide drawing (a bank card, a printer) shrinks to clear the curve while a
+   * tall one does not, and a grid of discs ends up with its icons at visibly different
+   * weights. A squircle gives every glyph the same square of room, and keeps the
+   * corner soft enough to read as a badge rather than as a second, smaller card
+   * sitting on the tile.
+   */
+  lg: 'h-11 w-11 rounded-[14px]',
 }
 
 /** Every tone, in the order toneForId walks them. */

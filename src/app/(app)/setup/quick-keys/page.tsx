@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listQuickKeys, ensureSupervisorGroup } from '@/lib/site/quickKeys'
-import { getSetting } from '@/lib/site/settings'
+import { listTerminals } from '@/lib/site/terminals'
 import { siteQuery } from '@/lib/siteDb'
 import { PageHeader, PageBody, Callout } from '@/components/ui'
 import QuickKeyCanvas from './QuickKeyCanvas'
@@ -45,15 +45,19 @@ export default async function QuickKeysPage() {
    * holds one list: every action already returns the whole section, and a tab that
    * had to round-trip before drawing would feel like a page load.
    */
-  const [mainKeys, tableKeys, posMode] = await Promise.all([
+  const [mainKeys, tableKeys, terminals] = await Promise.all([
     listQuickKeys(siteId, 'main'),
     listQuickKeys(siteId, 'tables'),
-    getSetting(siteId, 'pos_mode'),
+    listTerminals(siteId, false),
   ])
 
   /* A retail shop is never shown the tables bar — it has no tables, so a second tab
-     would be a permanently empty screen inviting somebody to fill it. */
-  const hospitality = posMode === 'hospitality'
+     would be a permanently empty screen inviting somebody to fill it.
+
+     Asked of the TILLS rather than of a shop setting: the mode is per register
+     now, so a merchant with three retail lanes and one restaurant counter still
+     arranges that counter's bar here. One till running tables is enough. */
+  const hospitality = terminals.some((t) => t.posMode === 'hospitality')
   const keys = hospitality ? [...mainKeys, ...tableKeys] : mainKeys
 
   /* Only the products and departments actually ON a key. The alternative — shipping the

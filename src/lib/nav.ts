@@ -121,10 +121,19 @@ export const NAV: NavSection[] = [
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
          filter on this screen now, and /sales redirects here. */
-      { label: 'Invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history', description: 'Every invoice and credit note, from draft to finalised' },
-      { label: 'Orders', href: '/invoicing/orders', icon: ListOrdered, built: true, capability: 'sales.view', description: 'What customers have ordered but not yet taken' },
-      { label: 'Quotes', href: '/invoicing/quotes', icon: FileText, built: true, capability: 'sales.view', description: 'Prices offered, and what became of them' },
-      { label: 'Lay-bys', href: '/invoicing/laybys', icon: Package, built: true, capability: 'sales.view', description: 'Goods put aside and paid off over time' },
+      { label: 'Invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history quote quotes order orders sales orders lay-by lay-bys laybys', description: 'Invoices, quotes, orders and lay-bys' },
+      /*
+       * Orders, Quotes and Lay-bys are NOT rows here.
+       *
+       * All three live in the invoicing window, which carries its own menu
+       * naming exactly these four screens — so the rail was a second door to a
+       * room that already has one, and the two could disagree about which
+       * screen a word meant. Invoicing is the way in; the window takes it from
+       * there.
+       *
+       * Their words moved onto the Invoicing row's `keywords`, so searching the
+       * rail for "quote" or "lay-by" still finds the door rather than nothing.
+       */
       { label: 'Reservations', href: '/sales/reservations', icon: CalendarClock, built: true, capability: 'reservations.view', keywords: 'bookings table diary covers restaurant seating guests', description: 'Tonight’s book — who is coming and where they sit' },
       { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view', description: 'Agreements that bill themselves on a schedule' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note', description: 'Take goods back and credit the customer' },

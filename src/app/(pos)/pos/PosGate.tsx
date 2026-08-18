@@ -11,6 +11,7 @@ import {
   canSignInOffline,
   type OfflineSession,
 } from '@/lib/posOffline/signInOffline'
+import { ensureWindowId } from '@/lib/windowSession'
 
 /**
  * The PIN prompt in front of the touch till.
@@ -90,7 +91,11 @@ export default function PosGate({
        * wrong".
        */
       try {
-        const result = await tillSignInAction(pin)
+        /* Minted HERE rather than on mount, so the id exists before the token
+           that must carry it. `ensureWindowId` is idempotent — a tab that
+           already has one keeps it — so signing out and back in on the same tab
+           reuses the id rather than churning it. */
+        const result = await tillSignInAction(pin, ensureWindowId())
         if (result.ok) {
           // The server component re-reads the till cookie and renders the basket.
           router.refresh()

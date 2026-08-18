@@ -1,6 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listTables } from '@/lib/site/posTables'
-import { getSetting } from '@/lib/site/settings'
+import { listTerminals } from '@/lib/site/terminals'
 import { PageHeader, PageBody } from '@/components/ui'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
 import { listVisitTypes } from '@/lib/site/visitTypes'
@@ -22,16 +22,29 @@ export default async function TablesPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('setup.edit')
 
-  const [tables, mode, rooms, features, visitTypes] = await Promise.all([
+  const [tables, terminals, rooms, features, visitTypes] = await Promise.all([
     listTables(siteId),
-    getSetting(siteId, 'pos_mode'),
+    listTerminals(siteId, false),
     listRooms(siteId),
     listFeatures(siteId),
     /* Everything, not just the active ones — a hidden type has to be visible here in
        order to be brought back, the same rule the quick-key designer follows. */
     listVisitTypes(siteId),
   ])
-  const hospitality = mode === 'hospitality'
+
+  /*
+   * Does ANY till work the floor?
+   *
+   * The mode is per till now, so "is this shop hospitality" no longer has an
+   * answer. What this screen actually needs to know is whether the floor tools
+   * are worth showing at all, and the honest test is whether one register runs
+   * tables — a merchant with three retail lanes and one restaurant counter
+   * still needs to draw that counter's floor.
+   *
+   * ACTIVE tills only: a deactivated register is not a reason to keep showing
+   * the designer.
+   */
+  const hospitality = terminals.some((t) => t.posMode === 'hospitality')
 
   return (
     <>
@@ -40,7 +53,7 @@ export default async function TablesPage() {
         subtitle="The floor a waiter sees, and whether the till shows it at all"
       />
       <PageBody>
-        <TablesClient tables={tables} hospitality={hospitality} visitTypes={visitTypes} />
+        <TablesClient tables={tables} visitTypes={visitTypes} />
         {/*
           The designer, BELOW the list and only in hospitality mode.
           Below because the list is what has to exist first — somebody must be able to add

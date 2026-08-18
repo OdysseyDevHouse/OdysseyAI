@@ -18,7 +18,15 @@ export type PinSignInActionResult =
   | { ok: true; name: string; canOverrideDiscount: boolean }
   | { ok: false; error: string }
 
-export async function tillSignInAction(pin: string): Promise<PinSignInActionResult> {
+/**
+ * @param windowId This tab's id, from `ensureWindowId()`. Signed into the token
+ *   so the session dies with the window rather than lasting the full eight
+ *   hours — see `src/lib/windowSession.ts`.
+ */
+export async function tillSignInAction(
+  pin: string,
+  windowId: string,
+): Promise<PinSignInActionResult> {
   const siteId = await requireSiteId()
 
   const result = await signInWithPin(siteId, pin)
@@ -30,7 +38,14 @@ export async function tillSignInAction(pin: string): Promise<PinSignInActionResu
   }
 
   await setTillCookie(
-    await createTillToken({ userId: result.user.id, name: result.user.name, siteId }),
+    await createTillToken({
+      userId: result.user.id,
+      name: result.user.name,
+      siteId,
+      /* Unset rather than '' when the tab could not mint one — see the note in
+         (invoicing)/pinActions.ts. */
+      wid: windowId || undefined,
+    }),
   )
 
   return {

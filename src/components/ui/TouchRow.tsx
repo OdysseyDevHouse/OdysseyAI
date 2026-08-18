@@ -45,8 +45,20 @@ export function TouchRow({
   /** An amount, a badge — anything that belongs on the right. */
   trailing?: ReactNode
   showChevron?: boolean
-  /** `active` when the row represents something currently chosen. */
-  tone?: 'default' | 'active'
+  /**
+   * `active` when the row represents something currently chosen.
+   *
+   * `bare` drops the border and the fill and keeps everything else — the
+   * geometry, the type scale, the chevron, the whole-row hit target. For a row
+   * that is already INSIDE a box somebody else drew: the till's module menu puts
+   * one at the head of each module card, and a bordered row inside a bordered
+   * card is the double frame that made that panel read as nested rectangles.
+   *
+   * A tone rather than a class the caller passes, because "no border" written at
+   * the call site is two colour classes in one attribute — and which of them
+   * wins is decided by stylesheet order, not by which was written last.
+   */
+  tone?: 'default' | 'active' | 'bare'
   /**
    * A colour down the leading edge, for a list where every row is a different
    * SUBJECT — the till's department rail.
@@ -89,7 +101,14 @@ export function TouchRow({
            border-l-* wins over border-brand/40 by being the more specific side. */
         tone === 'active'
           ? `border-brand/40 bg-brand-soft ${edge ? EDGE_LEAD[edge] : ''}`
-          : edge
+          : /* Inside a box the caller already drew — no second frame, and a hover
+               that tints rather than outlines, since an outline appearing on
+               press is the frame arriving after all. An `edge` still shows: the
+               leading colour is identity, not chrome, and is the one part of the
+               row worth keeping when the rest of the box goes. */
+            tone === 'bare'
+            ? `border-transparent bg-transparent hover:bg-surface-2 ${edge ? EDGE_LEAD[edge] : ''}`
+            : edge
             ? /* No hover:border-brand here. It would repaint all four sides and take
                  the department's leading edge with it — the row would lose its colour
                  at the moment a finger is on it, which is the moment it most needs to

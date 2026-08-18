@@ -1,4 +1,5 @@
 import { ToastProvider } from '@/components/ui'
+import WindowSessionMarker from '@/components/WindowSessionMarker'
 
 /**
  * The till's shell — deliberately NOT (app)/layout.tsx.
@@ -59,6 +60,10 @@ export default function PosLayout({ children }: { children: React.ReactNode }) {
         paddingRight: 'env(safe-area-inset-right)',
       }}
     >
+      {/* Marks this TAB, so the operator's session ends when the window does
+          rather than eight hours later. Mounted on the layout so it also covers
+          /pos-unlock — which mints a till token of its own. */}
+      <WindowSessionMarker />
       <ToastProvider>{children}</ToastProvider>
     </div>
   )

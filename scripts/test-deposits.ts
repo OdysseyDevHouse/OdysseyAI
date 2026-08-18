@@ -206,6 +206,68 @@ async function run() {
     )
   }
 
+  /* ── 3b. THE PAD MUST ASK FOR THE BALANCE, NOT THE TOTAL ───────────────
+   *
+   * The bug this pins: both tender pads computed what to ask for as the
+   * document total less vouchers, with no deposit term at all. So an 85.00
+   * sale carrying a 50.00 deposit asked the cashier for the whole 85.00, and
+   * `finaliseDocument` then added the held 50.00 as a DEPOSIT tender on top —
+   * 135.00 against an 85.00 sale.
+   *
+   * DEPOSIT allows no change and takes no tip, so `planTips` refuses the 50.00
+   * excess outright rather than paying it back out of a drawer that never
+   * received it. The cashier saw "Deposit paid was paid over by 50.00, and it
+   * cannot give change or take a tip" and simply could not finalise the sale.
+   *
+   * Both halves are asserted, because only the pair proves the fix: keying the
+   * TOTAL must fail, and keying the BALANCE must post.
+   */
+  {
+    const overId = await makeInvoice(85)
+    await takeDeposit(SITE, ACTOR, {
+      documentId: overId,
+      amount: 50,
+      tenderTypeId: cash!.id,
+      tenderName: 'Cash',
+    })
+
+    // What the pad used to ask for: the whole total, on top of the deposit.
+    const over = await finaliseDocument(SITE, ACTOR, {
+      documentId: overId,
+      tenders: [{ tenderTypeId: cash!.id, amount: 85, reference: null }],
+    })
+    check(
+      'tendering the full total over a deposit is refused',
+      !over.ok,
+      over.ok ? 'it posted 135.00 against an 85.00 sale' : over.error,
+    )
+
+    // What the pad asks for now: the balance.
+    const balance = await finaliseDocument(SITE, ACTOR, {
+      documentId: overId,
+      tenders: [{ tenderTypeId: cash!.id, amount: 35, reference: null }],
+    })
+    check(
+      'tendering the balance posts the sale',
+      balance.ok,
+      balance.ok ? '' : balance.error,
+    )
+
+    if (balance.ok) {
+      const rows = await siteQuery<{ tender_code: string; amount: string }>(
+        SITE,
+        'SELECT tender_code, amount FROM sales_tenders WHERE document_id = ?',
+        [overId],
+      )
+      const total = rows.reduce((sum, t) => sum + toNum(t.amount), 0)
+      check(
+        'and the deposit plus the balance is the sale',
+        Math.abs(total - 85) < 0.005,
+        `${rows.map((t) => `${t.tender_code} ${t.amount}`).join(' + ')} = ${total}`,
+      )
+    }
+  }
+
   /* ── 4. A refund gives it back, and the sum follows ────────────────────── */
   const refundId = await makeInvoice(300)
   await takeDeposit(SITE, ACTOR, {

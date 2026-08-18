@@ -20,7 +20,7 @@ import {
   type QuickKeySection,
   type QuickKeyTarget,
 } from '@/lib/quickKeys'
-import { getSetting } from '@/lib/site/settings'
+import { listTerminals } from '@/lib/site/terminals'
 import { STARTER_TEMPLATES } from './templates'
 
 /**
@@ -84,11 +84,17 @@ export async function createQuickKeyAction(input: {
   const { siteId } = ctx
 
   /* Whether this shop can use the action at all. Checked here rather than in
-     `createQuickKey` because it depends on a SETTING, and threading the till mode down
+     `createQuickKey` because it depends on the TILLS, and threading the mode down
      into the data layer would make every caller fetch it — including the till, which
-     already knows. The designer hides these rows; this is the boundary. */
+     already knows. The designer hides these rows; this is the boundary.
+
+     "Any till runs tables" rather than "this shop is hospitality": the mode is
+     per register now, and a key is arranged once for whichever tills show that
+     bar. Refusing a table action because the FIRST till happens to be retail
+     would block a merchant whose restaurant counter is register four. */
   if (input.target.kind === 'action') {
-    const hospitality = (await getSetting(siteId, 'pos_mode')) === 'hospitality'
+    const terminals = await listTerminals(siteId, false)
+    const hospitality = terminals.some((t) => t.posMode === 'hospitality')
     const wrongTill = quickKeyAllowedOnTill(
       { kind: 'action', actionSlug: input.target.actionSlug },
       hospitality,

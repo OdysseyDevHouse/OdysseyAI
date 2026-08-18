@@ -9,49 +9,23 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { launchChrome } from './lib/cdp-chrome.mjs'
 
 const BASE = process.env.APP_URL || 'http://localhost:4100'
 const EMAIL = process.env.DEV_LOGIN_EMAIL
 const PASSWORD = process.env.DEV_LOGIN_PASSWORD
 const SITE = process.env.SHOT_SITE || 'Smash'
-const PORT = 9336
 
 if (!EMAIL || !PASSWORD) {
   console.error('Set DEV_LOGIN_EMAIL and DEV_LOGIN_PASSWORD in .env.local.')
   process.exit(1)
 }
 
-const profile = path.join(tmpdir(), `ody-soldout-${Date.now()}`)
-mkdirSync(profile, { recursive: true })
 
-const chrome = spawn(
-  process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  [
-    `--remote-debugging-port=${PORT}`,
-    `--user-data-dir=${profile}`,
-    '--headless=new',
-    '--no-first-run',
-    '--no-default-browser-check',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
+const { pageTarget, close: closeChrome } = await launchChrome('soldout')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function target() {
-  for (let i = 0; i < 40; i++) {
-    try {
-      const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()
-      const page = list.find((t) => t.type === 'page')
-      if (page) return page.webSocketDebuggerUrl
-    } catch {
-      /* not up yet */
-    }
-    await sleep(250)
-  }
-  throw new Error('Chrome did not start')
-}
 
 let id = 0
 function rpc(ws, method, params = {}) {
@@ -85,7 +59,7 @@ const ok = (label, cond, extra = '') => {
 }
 
 async function main() {
-  const ws = new WebSocket(await target())
+  const ws = new WebSocket(await pageTarget())
   await new Promise((r) => ws.addEventListener('open', r, { once: true }))
   await rpc(ws, 'Page.enable')
   await rpc(ws, 'Runtime.enable')
@@ -184,9 +158,8 @@ main()
     process.exitCode = 1
   })
   .finally(() => {
-    chrome.kill()
+    closeChrome()
     try {
-      rmSync(profile, { recursive: true, force: true })
     } catch {
       /* tmp profile; a leftover is harmless */
     }

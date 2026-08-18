@@ -230,6 +230,7 @@ export default function ProductImages({
           another.
         </p>
       )}
+
     </Card>
   )
 }

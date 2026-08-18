@@ -193,10 +193,33 @@ export default function LicencesPanel({
                       been asked what it is. Server-side `me.id` is null, and a
                       warning that appears in the server markup and vanishes on
                       the client is a hydration mismatch. */}
+                  {/* NAMES WHICH machine, or says there is none.
+                      The old wording said "a different machine" in BOTH cases,
+                      and the commoner case by far is that the till has NO device
+                      on it at all — `null !== serial` is true, so an empty field
+                      was reported as a rival machine. Somebody then reads "POS1
+                      is this machine" and "registered to a different machine" on
+                      one row, with nothing on the screen naming the other one,
+                      because there isn't one. (Reported exactly that way.) */}
                   {me.ready && spot.serial && till && till.deviceId !== spot.serial && (
                     <p className="mt-1 text-[13px] text-danger">
-                      {till.code} is registered to a different machine, so the till will be
-                      refused. Re-link it from the machine that should be using it.
+                      {till.deviceId ? (
+                        <>
+                          {till.code} is registered to{' '}
+                          <b className="font-semibold">
+                            {terminalHolder(till.deviceId, licences) ?? till.deviceLabel ?? 'another machine'}
+                          </b>
+                          {' '}({till.deviceId.slice(0, 8)}…), not to this licence, so the till
+                          will be refused. Re-link it from the machine that should be using it.
+                        </>
+                      ) : (
+                        <>
+                          {till.code} has no machine registered to it — this licence names it,
+                          but the till itself is still unclaimed, so it will be refused.
+                          Press <b className="font-semibold">Unlink</b> and then{' '}
+                          <b className="font-semibold">Use this machine</b> to set both together.
+                        </>
+                      )}
                     </p>
                   )}
                 </div>
@@ -301,6 +324,24 @@ function trialLive(spot: LicenceSpot): boolean {
 }
 
 /** Paid, on trial, or not entitled — the state that decides whether it trades. */
+/**
+ * The NAME of whichever machine holds a device id.
+ *
+ * The refusal above used to say "a different machine" and stop there, which is
+ * the one thing a person reading it already knows. What they need is WHICH —
+ * and the licence list on this very screen has the answer, because every
+ * licensed machine appears in it with the name it was given ("POS1", "POS2").
+ *
+ * Returns null when the id matches no licence at all. That is a real state
+ * rather than a lookup failure: a machine can claim a till without ever having
+ * been licensed, and saying "another machine" is then the honest answer — so
+ * the caller falls back to the till's own `deviceLabel`, then to that phrase.
+ */
+function terminalHolder(deviceId: string, licences: LicenceSpot[]): string | null {
+  const holder = licences.find((l) => l.serial === deviceId)
+  return holder?.name?.trim() || null
+}
+
 function LicenceBadge({ spot }: { spot: LicenceSpot }) {
   if (spot.status !== 'active') return <Badge tone="neutral">Retired</Badge>
   if (spot.isPaid) return <Badge tone="success">Licensed</Badge>
