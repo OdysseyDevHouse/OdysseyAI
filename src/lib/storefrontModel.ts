@@ -43,6 +43,15 @@ import {
   SECTION_CATALOG,
   SECTION_KINDS,
   kindsFor as catalogKindsFor,
+  MAX_SECTIONS,
+  MAX_SECTION_CARDS,
+  MAX_SECTION_ITEMS,
+  MAX_SECTION_TEXT,
+  PRODUCT_SOURCES,
+  SPACE_SIZES,
+  SPLIT_SIDES,
+  type SectionDef,
+  type SectionField,
 } from './storefront/catalog'
 
 /**
@@ -64,15 +73,7 @@ export type SectionKind = (typeof SECTION_KINDS)[number]
  * Hand-picking that row means re-picking it every time a special starts or
  * ends, which is how a front page ends up advertising last month's prices.
  */
-export const PRODUCT_SOURCES = [
-  'manual',
-  'department',
-  'newest',
-  'special',
-  'popular',
-  'together',
-  'sameDepartment',
-] as const
+export { PRODUCT_SOURCES } from './storefront/catalog'
 export type ProductSource = (typeof PRODUCT_SOURCES)[number]
 
 /**
@@ -253,11 +254,11 @@ export type VideoProvider = (typeof VIDEO_PROVIDERS)[number]
  * nothing anybody can see, and 400px, which is a broken-looking page. The
  * names map to the same spacing scale the rest of the shop uses.
  */
-export const SPACE_SIZES = ['small', 'medium', 'large'] as const
+export { SPACE_SIZES } from './storefront/catalog'
 export type SpaceSize = (typeof SPACE_SIZES)[number]
 
 /** Which side the picture sits on in a split section. */
-export const SPLIT_SIDES = ['left', 'right'] as const
+export { SPLIT_SIDES } from './storefront/catalog'
 export type SplitSide = (typeof SPLIT_SIDES)[number]
 
 /**
@@ -438,11 +439,11 @@ export type HomeSection = {
 }
 
 /** Hard caps, enforced on WRITE. A draft is untrusted. */
-export const MAX_SECTIONS = 20
-export const MAX_SECTION_ITEMS = 24
-export const MAX_SECTION_CARDS = 12
+export { MAX_SECTIONS } from './storefront/catalog'
+export { MAX_SECTION_ITEMS } from './storefront/catalog'
+export { MAX_SECTION_CARDS } from './storefront/catalog'
 /** A paragraph, not an essay — the front page is a shop window. */
-export const MAX_SECTION_TEXT = 1200
+export { MAX_SECTION_TEXT } from './storefront/catalog'
 /**
  * How many pictures one rotating banner may hold.
  *
@@ -1398,6 +1399,79 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number) =>
 }
 
 /**
+ * Apply one declared field to the section being built.
+ *
+ * One coercion per field TYPE, rather than one branch per section kind. That
+ * is the whole point: there is no per-kind branch left that could forget a
+ * field, write it in the wrong order, or coerce it differently from the way
+ * the same field is coerced on another kind.
+ */
+function applyField(
+  section: HomeSection,
+  field: SectionField,
+  s: Record<string, unknown>,
+): void {
+  const raw = s[field.key]
+  const target = section as Record<string, unknown>
+
+  switch (field.type) {
+    case 'text':
+      target[field.key] = String(raw ?? '').slice(0, field.max)
+      return
+    case 'textOrDefault':
+      target[field.key] = String(raw ?? '').slice(0, field.max) || field.fallback
+      return
+    case 'link':
+      target[field.key] = safeLinkTarget(raw).slice(0, field.max)
+      return
+    case 'url':
+      target[field.key] = safeUrl(raw).slice(0, field.max)
+      return
+    case 'idChars':
+      target[field.key] = String(raw ?? '')
+        .trim()
+        .replace(/[^A-Za-z0-9_-]/g, '')
+        .slice(0, field.max)
+      return
+    case 'int':
+      target[field.key] = clampInt(raw, field.min, field.max, field.fallback)
+      return
+    case 'ref': {
+      const n = typeof raw === 'number' ? raw : Number(raw)
+      target[field.key] = Number.isInteger(n) && n > 0 ? n : null
+      return
+    }
+    case 'refList':
+      target[field.key] = Array.isArray(raw)
+        ? [
+            ...new Set(
+              raw
+                .map((v) => (typeof v === 'number' ? v : Number(v)))
+                .filter((v) => Number.isInteger(v) && v > 0),
+            ),
+          ].slice(0, field.max)
+        : []
+      return
+    case 'choice': {
+      const value = String(raw ?? field.fallback)
+      target[field.key] = field.of.includes(value) ? value : field.fallback
+      return
+    }
+    case 'choiceOrNull': {
+      const value = String(raw ?? '')
+      target[field.key] = field.of.includes(value) ? value : null
+      return
+    }
+    case 'date':
+      target[field.key] = safeDate(raw)
+      return
+    case 'dateTime':
+      target[field.key] = safeDateTime(raw)
+      return
+  }
+}
+
+/**
  * Coerce whatever arrived into the exact shape we store.
  *
  * Key order matters as well as content: the builder decides whether it has
@@ -1405,9 +1479,22 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number) =>
  * must serialise identically. Spreading the input would preserve whatever key
  * order it happened to have and show a permanent "unsaved changes" that no
  * amount of saving clears.
+ *
+ * ── WHY THE FIELDS ARE WALKED, NOT BRANCHED ─────────────────────────────
+ *
+ * This used to be sixteen `if (kind === …)` blocks. The order a field was
+ * written in was then a property of where somebody happened to type it, and
+ * the failure was silent in both directions: a field written on one kind and
+ * not another produced the permanent unsaved-changes badge, and a field nobody
+ * remembered to coerce reached storage untouched. Walking the declared list
+ * makes the order a stated fact and leaves no branch to forget.
+ *
+ * The list-shaped values keep their own code below: a carousel's slides, rich
+ * text's block tree, quotes, logos and cards each need per-item de-duplication
+ * and their own rules, and a field type expressive enough to describe them
+ * would be a worse language than the code it replaced.
  */
 export function normaliseSections(input: unknown): HomeSection[] {
-  const known = new Set<string>(SECTION_KINDS)
   const list = Array.isArray(input) ? input : []
   const out: HomeSection[] = []
   const seenIds = new Set<string>()
@@ -1419,7 +1506,8 @@ export function normaliseSections(input: unknown): HomeSection[] {
     const s = raw as Record<string, unknown>
     const kind = String(s.kind ?? '')
     // A kind this build cannot draw never reaches the preview or the shop.
-    if (!known.has(kind)) continue
+    const def = (SECTION_CATALOG as Record<string, SectionDef | undefined>)[kind]
+    if (!def) continue
 
     // Duplicate ids would make two sections share a React key and a drag
     // handle, so the later one is re-identified rather than dropped.
@@ -1442,50 +1530,8 @@ export function normaliseSections(input: unknown): HomeSection[] {
       showUntil: safeDate(s.showUntil),
     }
 
-    if (kind === 'products') {
-      const source = String(s.source ?? 'manual')
-      section.source = (PRODUCT_SOURCES as readonly string[]).includes(source)
-        ? (source as ProductSource)
-        : 'manual'
-      // Same reasoning as productIds: an unusable value becomes "no
-      // department" rather than department 1.
-      const dept = typeof s.departmentId === 'number' ? s.departmentId : Number(s.departmentId)
-      section.departmentId = Number.isInteger(dept) && dept > 0 ? dept : null
-      // DISCARD junk rather than clamping it. Clamping would turn 'abc' and
-      // -5 into id 1 — inventing a reference to a real product nobody picked,
-      // several times over. An id is an identity, not a quantity.
-      section.productIds = Array.isArray(s.productIds)
-        ? [
-            ...new Set(
-              s.productIds
-                .map((v) => (typeof v === 'number' ? v : Number(v)))
-                .filter((v) => Number.isInteger(v) && v > 0),
-            ),
-          ].slice(0, MAX_SECTION_ITEMS)
-        : []
-      section.maxItems = clampInt(s.maxItems, 0, MAX_SECTION_ITEMS, 8)
-      // Null is a real value here — "follow the shop" — so an unrecognised
-      // layout becomes null rather than defaulting to a grid the owner never
-      // chose.
-      section.layout = s.layout === 'grid' || s.layout === 'list' ? s.layout : null
-    }
-
-    if (kind === 'categories') {
-      section.maxItems = clampInt(s.maxItems, 0, MAX_SECTION_ITEMS, 0)
-    }
-
-    if (kind === 'banner') {
-      const image = typeof s.imageId === 'number' ? s.imageId : Number(s.imageId)
-      section.imageId = Number.isInteger(image) && image > 0 ? image : null
-      section.imageAlt = String(s.imageAlt ?? '').slice(0, 190)
-      // Through safeUrl: this lands in an href on a public page, so a
-      // `javascript:` link here would be stored XSS on a shop that takes
-      // payments. An in-shop path is allowed through separately — see
-      // safeLinkTarget.
-      section.linkUrl = safeLinkTarget(s.linkUrl).slice(0, 300)
-      section.bodyText = String(s.bodyText ?? '').slice(0, 300)
-      section.buttonLabel = String(s.buttonLabel ?? '').slice(0, 40)
-    }
+    // The declared fields, in the declared order.
+    for (const field of def.fields) applyField(section, field, s)
 
     if (kind === 'carousel') {
       const seenSlideIds = new Set<string>()
@@ -1530,11 +1576,6 @@ export function normaliseSections(input: unknown): HomeSection[] {
         : seconds <= 0
           ? 0
           : Math.min(Math.max(seconds, MIN_AUTOPLAY_SECONDS), MAX_AUTOPLAY_SECONDS)
-    }
-
-    if (kind === 'text') {
-      section.text = String(s.text ?? '').slice(0, MAX_SECTION_TEXT)
-      section.align = s.align === 'center' ? 'center' : 'left'
     }
 
     if (kind === 'richtext') {
@@ -1600,24 +1641,6 @@ export function normaliseSections(input: unknown): HomeSection[] {
         })
     }
 
-    if (kind === 'reviews') {
-      section.maxItems = clampInt(s.maxItems, 1, MAX_SECTION_ITEMS, 6)
-      section.minRating = clampInt(s.minRating, 1, 5, 4)
-      const dept = typeof s.departmentId === 'number' ? s.departmentId : Number(s.departmentId)
-      section.departmentId = Number.isInteger(dept) && dept > 0 ? dept : null
-    }
-
-    if (kind === 'countdown') {
-      const special = typeof s.specialId === 'number' ? s.specialId : Number(s.specialId)
-      section.specialId = Number.isInteger(special) && special > 0 ? special : null
-      // A junk deadline becomes '' — no deadline — which `sectionIsEmpty`
-      // reads as "draws nothing". Failing that way round is right: a
-      // half-parsed date would put a wrong clock on a public page, and a
-      // countdown to the wrong moment is worse than no countdown.
-      section.endsAt = safeDateTime(s.endsAt)
-      section.finishedText = String(s.finishedText ?? '').slice(0, 120)
-    }
-
     if (kind === 'testimonial') {
       const seenQuoteIds = new Set<string>()
       section.quotes = (Array.isArray(s.quotes) ? s.quotes : [])
@@ -1650,62 +1673,6 @@ export function normaliseSections(input: unknown): HomeSection[] {
             ),
           ].slice(0, MAX_LOGOS)
         : []
-    }
-
-    if (kind === 'video') {
-      const provider = String(s.videoProvider ?? 'youtube')
-      section.videoProvider = (VIDEO_PROVIDERS as readonly string[]).includes(provider)
-        ? (provider as VideoProvider)
-        : 'youtube'
-      /*
-       * An ID, and only the characters an id can contain.
-       *
-       * This lands inside a URL the renderer builds, so the narrow character
-       * class IS the validation — it makes "../", a query string and a second
-       * host unrepresentable rather than something to strip. A pasted full URL
-       * is reduced to its id by the inspector before it reaches here; anything
-       * still carrying a slash at this point is not an id.
-       */
-      section.videoId = String(s.videoId ?? '')
-        .trim()
-        .replace(/[^A-Za-z0-9_-]/g, '')
-        .slice(0, 40)
-    }
-
-    if (kind === 'map') {
-      section.addressText = String(s.addressText ?? '').slice(0, 300)
-      // Through safeUrl rather than safeLinkTarget: directions go to a mapping
-      // service, which is by definition off-site, so a relative path here
-      // would be a link to a page of the shop that does not exist.
-      section.mapUrl = safeUrl(s.mapUrl).slice(0, 500)
-    }
-
-    if (kind === 'signup') {
-      section.bodyText = String(s.bodyText ?? '').slice(0, 300)
-      section.buttonLabel = String(s.buttonLabel ?? '').slice(0, 40)
-      // Falls back to a default rather than to '', because an empty consent
-      // line is a form collecting addresses with nothing on the record about
-      // what was agreed to — which is the one state 071 exists to prevent.
-      section.consentText =
-        String(s.consentText ?? '').slice(0, 300) || DEFAULT_CONSENT_TEXT
-      section.thanksText = String(s.thanksText ?? '').slice(0, 200)
-    }
-
-    if (kind === 'spacer') {
-      const size = String(s.size ?? 'medium')
-      section.size = (SPACE_SIZES as readonly string[]).includes(size)
-        ? (size as SpaceSize)
-        : 'medium'
-    }
-
-    if (kind === 'split') {
-      const image = typeof s.imageId === 'number' ? s.imageId : Number(s.imageId)
-      section.imageId = Number.isInteger(image) && image > 0 ? image : null
-      section.imageAlt = String(s.imageAlt ?? '').slice(0, 190)
-      section.bodyText = String(s.bodyText ?? '').slice(0, MAX_SECTION_TEXT)
-      section.buttonLabel = String(s.buttonLabel ?? '').slice(0, 40)
-      section.linkUrl = safeLinkTarget(s.linkUrl).slice(0, 300)
-      section.side = s.side === 'right' ? 'right' : 'left'
     }
 
     if (kind === 'cards') {

@@ -110,6 +110,125 @@ export const DEFAULT_CONSENT_TEXT =
  */
 export type SectionIconName = string
 
+/* ── The value sets and caps a field may name ───────────────────────────── */
+
+/** Hard caps, enforced on WRITE. A draft is untrusted. */
+export const MAX_SECTIONS = 20
+export const MAX_SECTION_ITEMS = 24
+export const MAX_SECTION_CARDS = 12
+/** A paragraph, not an essay — the front page is a shop window. */
+export const MAX_SECTION_TEXT = 1200
+
+/** How a product row is filled. */
+export const PRODUCT_SOURCES = [
+  'manual',
+  'department',
+  'newest',
+  'special',
+  'popular',
+  'together',
+  'sameDepartment',
+] as const
+
+/** How much room a spacer leaves. */
+export const SPACE_SIZES = ['small', 'medium', 'large'] as const
+
+/** Which side the picture sits on in a split section. */
+export const SPLIT_SIDES = ['left', 'right'] as const
+
+/** How a paragraph lines up. */
+export const TEXT_ALIGNS = ['left', 'center'] as const
+
+/**
+ * How ONE product row draws, overriding the shop-wide choice.
+ *
+ * Absent/null is a third answer — "follow the shop" — which is why the field
+ * is a `choiceOrNull` and not a `choice` with a fallback.
+ */
+export const ROW_LAYOUTS = ['grid', 'list'] as const
+
+/** Where a video is hosted. Never a URL — see the `idChars` field type. */
+export const VIDEO_PROVIDERS = ['youtube', 'vimeo'] as const
+
+/**
+ * One stored field on a section, and how untrusted input becomes it.
+ *
+ * ── THIS IS THE WRITE BOUNDARY, NOT A FORM DESCRIPTION ──────────────────
+ *
+ * A draft is posted by a browser, so every field here says what survives
+ * contact with a hostile payload: how long a string may be, what an integer
+ * clamps to, which of a fixed set of words is acceptable, and which values
+ * go through the URL validators. `normaliseSections` walks this list; there
+ * is no branch it can forget, because there are no branches.
+ *
+ * ── ORDER IS PART OF THE CONTRACT ───────────────────────────────────────
+ *
+ * Fields are written in the order declared, because the builder decides
+ * whether it has unsaved changes by comparing serialised JSON. Two objects
+ * with identical values and different key order are "different", and the
+ * symptom is an unsaved-changes badge that no amount of saving clears.
+ * Declaring the order is what makes that impossible to get wrong by hand.
+ */
+export type SectionField =
+  /** Plain text, truncated. */
+  | { key: FieldKey; type: 'text'; max: number }
+  /**
+   * A URL an owner typed, through `safeLinkTarget`.
+   *
+   * Never a plain string: this lands in an href on a public page that takes
+   * payments, so a `javascript:` link here would be stored XSS. Getting this
+   * right twice and wrong the third time is exactly what a declared type
+   * prevents.
+   */
+  | { key: FieldKey; type: 'link'; max: number }
+  /** A whole number, clamped into range. Junk becomes the fallback. */
+  | { key: FieldKey; type: 'int'; min: number; max: number; fallback: number }
+  /**
+   * A reference to a row elsewhere — a picture, a department, a special.
+   *
+   * DISCARDED when unusable rather than clamped. Clamping would turn "abc"
+   * and -5 into id 1, inventing a reference to a real row nobody chose. An
+   * id is an identity, not a quantity.
+   */
+  | { key: FieldKey; type: 'ref' }
+  /** One of a fixed set of words. Anything else becomes the fallback. */
+  | { key: FieldKey; type: 'choice'; of: readonly string[]; fallback: string }
+  /**
+   * Like `choice`, but null is a real answer rather than a failure.
+   *
+   * A product row’s layout is the case: null means "follow the shop", so an
+   * unrecognised value must become null and not a grid the owner never chose.
+   */
+  | { key: FieldKey; type: 'choiceOrNull'; of: readonly string[] }
+  /** A wall-clock date, YYYY-MM-DD. Junk becomes ‘’ — no bound. */
+  | { key: FieldKey; type: 'date' }
+  /** A wall-clock moment, YYYY-MM-DDTHH:mm. Junk becomes ‘’ — no deadline. */
+  | { key: FieldKey; type: 'dateTime' }
+  /** Text that falls back to a default rather than to ‘’ when blank. */
+  | { key: FieldKey; type: 'textOrDefault'; max: number; fallback: string }
+  /** A list of row ids, de-duplicated, junk dropped rather than clamped. */
+  | { key: FieldKey; type: 'refList'; max: number }
+  /**
+   * A URL that is by definition off-site, through `safeUrl`.
+   *
+   * Distinct from `link`: directions go to a mapping service, so a relative
+   * path here would be a link to a page of the shop that does not exist.
+   */
+  | { key: FieldKey; type: 'url'; max: number }
+  /**
+   * An id, reduced to the characters an id can contain.
+   *
+   * This lands inside a URL the renderer builds, so the narrow character
+   * class IS the validation — it makes "../", a query string and a second
+   * host unrepresentable rather than something to strip. A pasted full URL is
+   * reduced to its id by the inspector before it reaches here; anything still
+   * carrying a slash at this point is not an id.
+   */
+  | { key: FieldKey; type: 'idChars'; max: number }
+
+/** A key on HomeSection. Typed so a field cannot name one that does not exist. */
+export type FieldKey = keyof HomeSection
+
 /**
  * What answering "is this section empty?" needs.
  *
@@ -164,6 +283,30 @@ export type SectionDef = {
    * within a session.
    */
   defaults: (make: DefaultsHelpers) => Omit<HomeSection, 'id' | 'kind'>
+  /**
+   * The stored fields this kind writes, in the order they are written.
+   *
+   * `normaliseSections` walks exactly this list. A kind with no fields of
+   * its own beyond the shared base declares an empty array — the base is
+   * written for every kind regardless, so key order never depends on which
+   * branch ran.
+   *
+   * Not every stored value appears here: the list-shaped ones (a carousel’s
+   * slides, rich text’s block tree, quotes, cards) each need their own
+   * de-duplication and per-item rules, and a field type expressive enough to
+   * describe them would be a worse language than the code it replaced. Those
+   * stay hand-written in `normaliseSections` and are named in `extras` so it
+   * is visible here that they exist.
+   */
+  fields: readonly SectionField[]
+  /**
+   * Stored values this kind writes that `fields` cannot describe.
+   *
+   * Documentation, not behaviour — it exists so a reader of the catalog can
+   * see that a carousel stores slides, without having to discover it in the
+   * normaliser.
+   */
+  extras?: readonly string[]
   /**
    * Would a section of this kind draw anything at all?
    *
@@ -261,6 +404,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: '', ...BASE }),
     // Draws the theme's greeting, so it is empty when the shop never wrote one.
     isEmpty: (f) => !f.heroHeadline && !f.heroSubtext,
+    fields: [],
   },
   banner: {
     kind: 'banner',
@@ -278,6 +422,13 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       buttonLabel: '',
     }),
     isEmpty: (f) => !f.image,
+    fields: [
+      { key: 'imageId', type: 'ref' },
+      { key: 'imageAlt', type: 'text', max: 190 },
+      { key: 'linkUrl', type: 'link', max: 300 },
+      { key: 'bodyText', type: 'text', max: 300 },
+      { key: 'buttonLabel', type: 'text', max: 40 },
+    ],
   },
   carousel: {
     kind: 'carousel',
@@ -299,6 +450,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // A carousel whose slides have all lost their pictures is as empty as one
     // with no slides at all.
     isEmpty: (f) => f.liveSlideCount() === 0,
+    fields: [],
+    extras: ['slides', 'autoplaySeconds'],
   },
   split: {
     kind: 'split',
@@ -320,6 +473,14 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // section is the PAIRING, so it needs both — with one missing it would
     // silently render as a worse version of a section that already exists.
     isEmpty: (f) => !f.image || !(f.section.bodyText?.trim() || f.section.title),
+    fields: [
+      { key: 'imageId', type: 'ref' },
+      { key: 'imageAlt', type: 'text', max: 190 },
+      { key: 'bodyText', type: 'text', max: MAX_SECTION_TEXT },
+      { key: 'buttonLabel', type: 'text', max: 40 },
+      { key: 'linkUrl', type: 'link', max: 300 },
+      { key: 'side', type: 'choice', of: SPLIT_SIDES, fallback: 'left' },
+    ],
   },
   categories: {
     kind: 'categories',
@@ -329,6 +490,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     pages: NOT_DEPARTMENT_OR_PRODUCT,
     defaults: () => ({ title: 'Shop by department', ...BASE, maxItems: 0 }),
     isEmpty: (f) => !f.departments || f.departments.length === 0,
+    fields: [{ key: 'maxItems', type: 'int', min: 0, max: MAX_SECTION_ITEMS, fallback: 0 }],
   },
   products: {
     kind: 'products',
@@ -346,6 +508,13 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       layout: null,
     }),
     isEmpty: (f) => !f.products || f.products.length === 0,
+    fields: [
+      { key: 'source', type: 'choice', of: PRODUCT_SOURCES, fallback: 'manual' },
+      { key: 'departmentId', type: 'ref' },
+      { key: 'productIds', type: 'refList', max: MAX_SECTION_ITEMS },
+      { key: 'maxItems', type: 'int', min: 0, max: MAX_SECTION_ITEMS, fallback: 8 },
+      { key: 'layout', type: 'choiceOrNull', of: ROW_LAYOUTS },
+    ],
   },
   reviews: {
     kind: 'reviews',
@@ -363,6 +532,11 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // Correctly empty for a shop nobody has reviewed yet, which is every new
     // shop. The builder says so rather than calling it a fault.
     isEmpty: (f) => !f.reviews || f.reviews.length === 0,
+    fields: [
+      { key: 'maxItems', type: 'int', min: 1, max: MAX_SECTION_ITEMS, fallback: 6 },
+      { key: 'minRating', type: 'int', min: 1, max: 5, fallback: 4 },
+      { key: 'departmentId', type: 'ref' },
+    ],
   },
   countdown: {
     kind: 'countdown',
@@ -386,6 +560,15 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       if (!ends) return true
       return ends <= f.now() && !(f.section.finishedText?.trim() ?? '')
     },
+    fields: [
+      { key: 'specialId', type: 'ref' },
+      // A junk deadline becomes '' — no deadline — which sectionIsEmpty reads
+      // as "draws nothing". Failing that way round is right: a half-parsed
+      // date would put a wrong clock on a public page, and a countdown to the
+      // wrong moment is worse than no countdown.
+      { key: 'endsAt', type: 'dateTime' },
+      { key: 'finishedText', type: 'text', max: 120 },
+    ],
   },
   recent: {
     kind: 'recent',
@@ -404,6 +587,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
      * nothing when the list turns out to be short; see RecentlyViewed.
      */
     isEmpty: () => false,
+    fields: [],
   },
   cards: {
     kind: 'cards',
@@ -419,6 +603,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // A card with nothing written on it is not worth a tile, so a section of
     // blank cards is as empty as one with none.
     isEmpty: (f) => (f.section.cards ?? []).filter((c) => c.heading || c.text).length === 0,
+    fields: [],
+    extras: ['cards'],
   },
   text: {
     kind: 'text',
@@ -428,6 +614,10 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     pages: ALL_PAGES,
     defaults: () => ({ title: '', ...BASE, text: '', align: 'left' }),
     isEmpty: (f) => !(f.section.text?.trim() ?? '') && !f.section.title,
+    fields: [
+      { key: 'text', type: 'text', max: MAX_SECTION_TEXT },
+      { key: 'align', type: 'choice', of: TEXT_ALIGNS, fallback: 'left' },
+    ],
   },
   richtext: {
     kind: 'richtext',
@@ -440,6 +630,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // is a step nobody should need.
     defaults: () => ({ title: '', ...BASE, blocks: [{ type: 'p', spans: [{ text: '' }] }] }),
     isEmpty: (f) => !f.hasRichText(),
+    fields: [],
+    extras: ['blocks'],
   },
   signup: {
     kind: 'signup',
@@ -460,6 +652,15 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // Never empty: the form IS the content, and a heading is optional. An owner
     // who added one meant to collect addresses.
     isEmpty: () => false,
+    fields: [
+      { key: 'bodyText', type: 'text', max: 300 },
+      { key: 'buttonLabel', type: 'text', max: 40 },
+      // Falls back to a default rather than to '', because an empty consent
+      // line is a form collecting addresses with nothing on the record about
+      // what was agreed to — the one state 071 exists to prevent.
+      { key: 'consentText', type: 'textOrDefault', max: 300, fallback: DEFAULT_CONSENT_TEXT },
+      { key: 'thanksText', type: 'text', max: 200 },
+    ],
   },
   testimonial: {
     kind: 'testimonial',
@@ -469,6 +670,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     pages: ALL_PAGES,
     defaults: (make) => ({ title: 'In their words', ...BASE, quotes: [make.quote()] }),
     isEmpty: (f) => (f.section.quotes ?? []).filter((q) => q.quote.trim()).length === 0,
+    fields: [],
+    extras: ['quotes'],
   },
   logos: {
     kind: 'logos',
@@ -480,6 +683,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // Counted against what actually RESOLVED, not against the stored ids: a
     // strip whose pictures were all deleted is as empty as one with none.
     isEmpty: (f) => (f.logoImages?.size ?? 0) === 0,
+    fields: [],
+    extras: ['logoImageIds'],
   },
   video: {
     kind: 'video',
@@ -489,6 +694,10 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     pages: NOT_PRODUCT,
     defaults: () => ({ title: '', ...BASE, videoProvider: 'youtube', videoId: '' }),
     isEmpty: (f) => !(f.section.videoId ?? '').trim(),
+    fields: [
+      { key: 'videoProvider', type: 'choice', of: VIDEO_PROVIDERS, fallback: 'youtube' },
+      { key: 'videoId', type: 'idChars', max: 40 },
+    ],
   },
   map: {
     kind: 'map',
@@ -498,6 +707,10 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     pages: NOT_PRODUCT,
     defaults: () => ({ title: 'Where to find us', ...BASE, addressText: '', mapUrl: '' }),
     isEmpty: (f) => !(f.section.addressText?.trim() ?? ''),
+    fields: [
+      { key: 'addressText', type: 'text', max: 300 },
+      { key: 'mapUrl', type: 'url', max: 500 },
+    ],
   },
   divider: {
     kind: 'divider',
@@ -509,6 +722,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // Draws exactly itself and is never empty — that IS its content. Returning
     // true here would make it impossible to add.
     isEmpty: () => false,
+    fields: [],
   },
   spacer: {
     kind: 'spacer',
@@ -519,6 +733,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: '', ...BASE, size: 'medium' }),
     // As above: the gap is the point.
     isEmpty: () => false,
+    fields: [{ key: 'size', type: 'choice', of: SPACE_SIZES, fallback: 'medium' }],
   },
 }
 
