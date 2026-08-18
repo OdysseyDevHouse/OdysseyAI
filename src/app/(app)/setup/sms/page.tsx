@@ -1,16 +1,21 @@
 import { requireCapability } from '@/lib/auth'
 import { getSettings } from '@/lib/site/settings'
-import { SMS_SECRET_MASK } from '@/lib/sms/types'
+import { SMS_SECRET_MASK, WHATSAPP_SECRET_MASK } from '@/lib/sms/types'
 import { PageHeader, PageBody } from '@/components/ui'
 import SmsSettingsForm from './SmsSettingsForm'
+import WhatsAppSettingsForm from './WhatsAppSettingsForm'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Text messages.
+ * Text messages and WhatsApp.
+ *
+ * Both on one screen because from the shop's side they are one decision — how
+ * we reach somebody on their phone — and a second page would mean discovering
+ * WhatsApp by accident.
  *
  * Email has no setup page (SMTP is env-driven, set once per install by whoever
- * hosts it) — SMS gets one because the credentials belong to the SHOP: each
+ * hosts it) — these get one because the credentials belong to the SHOP: each
  * site signs up with SMSPortal itself, pays per message itself, and pastes its
  * own keys here.
  */
@@ -25,6 +30,9 @@ export default async function SmsSetupPage() {
     'statement_sms_notify',
     'layby_reminder_days',
     'layby_reminder_sms',
+    'whatsapp_enabled',
+    'whatsapp_phone_id',
+    'whatsapp_token',
   ])
 
   const provider =
@@ -35,8 +43,8 @@ export default async function SmsSetupPage() {
   return (
     <>
       <PageHeader
-        title="Text messages"
-        subtitle="The provider that sends them, and the reminders that use it."
+        title="Text messages & WhatsApp"
+        subtitle="How this shop reaches people on their phone — text messages and WhatsApp."
       />
       <PageBody>
         <SmsSettingsForm
@@ -49,6 +57,16 @@ export default async function SmsSetupPage() {
             statementNotify: settings.statement_sms_notify === '1',
             laybyReminderDays: Number(settings.layby_reminder_days) || 7,
             laybyReminderSms: settings.layby_reminder_sms ?? '',
+          }}
+        />
+
+        <WhatsAppSettingsForm
+          settings={{
+            enabled: settings.whatsapp_enabled === '1',
+            phoneId: settings.whatsapp_phone_id ?? '',
+            // Masked for the same reason the SMS secret is: the token never
+            // travels to the browser, and an untouched mask means "keep it".
+            token: settings.whatsapp_token ? WHATSAPP_SECRET_MASK : '',
           }}
         />
       </PageBody>

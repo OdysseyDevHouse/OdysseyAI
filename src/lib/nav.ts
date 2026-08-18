@@ -586,7 +586,7 @@ export const SUBPAGE_LABELS = {
   '/setup/opening-balances': 'Opening balances',
   '/setup/import': 'Import data',
   '/setup/laybys': 'Lay-bys',
-  '/setup/sms': 'Text messages',
+  '/setup/sms': 'Text messages & WhatsApp',
   /* "Alerts & automations", both halves named: the same screen sets up a rule
      that only TELLS somebody and one that also ACTS (a low-stock check that
      drafts the orders), and a person looking for either should find it. */

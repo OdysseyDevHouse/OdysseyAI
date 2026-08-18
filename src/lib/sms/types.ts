@@ -40,3 +40,13 @@ export function truncateSms(body: string): string {
  * never corrupt working credentials.
  */
 export const SMS_SECRET_MASK = '••••••••'
+
+/**
+ * The same device for the WhatsApp access token, which shares the setup screen.
+ *
+ * It lives HERE rather than in lib/whatsapp.ts because that module is
+ * `server-only` and the form needs this value in the browser — and it cannot
+ * live in the form either, because exports of a `'use client'` module become
+ * client references, so the server action reading it would get a stub.
+ */
+export const WHATSAPP_SECRET_MASK = SMS_SECRET_MASK
