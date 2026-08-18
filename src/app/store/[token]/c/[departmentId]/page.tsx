@@ -8,6 +8,7 @@ import {
   catalogueFacets,
   publishedDepartments,
   publishedProducts,
+  bestSellerIds,
   publishedProductsCount,
   safeSort,
   resolveSectionContent,
@@ -27,7 +28,7 @@ import PreviewBar from '../../PreviewBar'
 import CategoryBrowser from './CategoryBrowser'
 import FacetBar, { priceBands } from './FacetBar'
 import SortBar from './SortBar'
-import { listingPresetFor } from '@/lib/site/listingPresets'
+import { listingPresetFor, shopBadgeRules } from '@/lib/site/listingPresets'
 
 /**
  * One department.
@@ -186,7 +187,7 @@ export default async function DepartmentPage({
   const pageNumber = Number.isFinite(requested) && requested > 1 ? requested : 1
   const offset = (pageNumber - 1) * perPage
 
-  const [products, total, layout, found2, facets] = await Promise.all([
+  const [products, total, layout, found2, facets, badgeRules, bestSellers] = await Promise.all([
     publishedProducts(context, {
       departmentId: department.id,
       limit: perPage,
@@ -209,6 +210,12 @@ export default async function DepartmentPage({
     // with neither still gets null and renders exactly as it always has.
     departmentPageFor(context.siteId, department.id),
     catalogueFacets(context, department.id).catch(() => null),
+    // Shop-wide, never a department’s — see 187 on why "New" cannot mean
+    // thirty days in one aisle and seven in another.
+    shopBadgeRules(context.catalogueSiteId),
+    // Ids only: this page already has the products and just needs to know
+    // which of them wear the badge.
+    bestSellerIds(context).catch(() => new Set<number>()),
   ])
   /*
    * A page past the end goes back to the last real one.
@@ -344,6 +351,8 @@ export default async function DepartmentPage({
         // The department’s own choice, which falls back to the shop’s.
         layout={listing.layout}
         listing={listing}
+        badgeRules={badgeRules}
+        bestSellers={bestSellers}
         showStock={context.settings.showStock}
         showPhotos={context.settings.showPhotos}
         showBrands={context.settings.showBrands}

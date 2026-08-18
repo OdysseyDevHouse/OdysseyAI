@@ -17,6 +17,8 @@ import {
   listListingPresets,
   listingPresetFor,
   saveListingPreset,
+  saveBadgeRules,
+  shopBadgeRules,
   shopListingPreset,
 } from '../src/lib/site/listingPresets'
 import {
@@ -206,6 +208,63 @@ async function main() {
     ok('every card field is a real string', CARD_FIELDS.every((f) => typeof f === 'string' && f.length > 0))
     ok('every facet is', LISTING_FACETS.every((f) => typeof f === 'string' && f.length > 0))
     ok('every page size divides a row evenly', PER_PAGE_CHOICES.every((n) => n % 12 === 0))
+  }
+
+  console.log('\n— Badge rules, stored and read back —')
+  {
+    const before = await shopBadgeRules(SITE)
+
+    /*
+     * Write, then READ BACK. Not "the write returned ok" — that is what the
+     * NULL-key bug in 185 passed while storing three rows, and a round-trip is
+     * the only assertion that catches it.
+     */
+    await saveBadgeRules(
+      SITE,
+      { ...DEFAULT_BADGE_RULES, newLabel: 'Fresh in', newDays: 14, lowStockLabel: 'Last few', lowStockAt: 2 },
+      'test',
+    )
+    const stored = await shopBadgeRules(SITE)
+    ok('a rule survives the round trip', stored.newLabel === 'Fresh in', stored.newLabel)
+    ok('and its number does', stored.newDays === 14, String(stored.newDays))
+    ok('and the second rule too', stored.lowStockLabel === 'Last few' && stored.lowStockAt === 2)
+
+    /*
+     * Saving the rules must not disturb the listing settings on the same row.
+     *
+     * Compared against what the listing held a moment ago, NOT against
+     * `shopBefore` — the cascade block above deliberately moved the shop to 2
+     * columns, so the original value is the wrong thing to expect and the first
+     * version of this assertion failed on its own setup.
+     */
+    const listingBeforeRules = await shopListingPreset(SITE)
+    await saveBadgeRules(SITE, { ...DEFAULT_BADGE_RULES, newLabel: 'Fresh in' }, 'test')
+    const listingAfter = await shopListingPreset(SITE)
+    ok(
+      'saving rules leaves the listing alone',
+      listingAfter.columnsDesktop === listingBeforeRules.columnsDesktop,
+      `${listingAfter.columnsDesktop} vs ${listingBeforeRules.columnsDesktop}`,
+    )
+
+    // And the reverse: saving the listing must not wipe the rules.
+    await saveListingPreset(SITE, { ...listingAfter, departmentId: null }, 'test')
+    const rulesAfter = await shopBadgeRules(SITE)
+    ok('saving the listing leaves the rules alone', rulesAfter.newLabel === 'Fresh in', rulesAfter.newLabel)
+
+    // An empty label is the off switch, and must read back as off.
+    await saveBadgeRules(SITE, DEFAULT_BADGE_RULES, 'test')
+    const off = await shopBadgeRules(SITE)
+    ok('clearing a label switches the rule off', off.newLabel === '' && off.lowStockLabel === '')
+    ok('and then nothing draws', badgesFor({ addedDaysAgo: 1, stockOnHand: 1 }, off).length === 0)
+
+    // Still ONE row for the shop default afterwards — see 186.
+    const rows = await siteQuery<{ n: number }>(
+      SITE,
+      `SELECT COUNT(*) AS n FROM online_listing_presets WHERE department_id = 0`,
+    )
+    ok('the shop default is still a single row', Number(rows[0]?.n) === 1, String(rows[0]?.n))
+
+    await saveBadgeRules(SITE, before, 'test')
   }
 
   console.log('\n— Cleanup —')

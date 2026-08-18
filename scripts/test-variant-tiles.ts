@@ -43,6 +43,11 @@ function product(
     // On the menu. These fixtures are about how variants tile, not about what
     // a kitchen has run out of.
     soldOutNote: null,
+    // No badges: these fixtures are about how variants tile, and a badge on
+    // one would only prove the fixture set it.
+    onlineBadge: null,
+    onlineBadgeTone: null,
+    addedDaysAgo: null,
     departmentId: 1,
     departmentName: 'Clothing',
     priceIncl,

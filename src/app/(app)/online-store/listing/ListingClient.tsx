@@ -29,6 +29,7 @@ import {
   CardHeader,
   Checkbox,
   Field,
+  Input,
   PageBody,
   Select,
   SettingRow,
@@ -39,12 +40,16 @@ import {
   LISTING_FACETS,
   LISTING_LAYOUTS,
   PER_PAGE_CHOICES,
+  BADGE_TONES,
+  MAX_TILE_BADGES,
+  type BadgeRules,
+  type BadgeTone,
   type CardField,
   type ListingFacet,
   type ListingPreset,
 } from '@/lib/storefront/listing'
 import { CATALOGUE_SORTS, type CatalogueSort } from '@/lib/storefront/sorts'
-import { clearListingAction, saveListingAction } from './actions'
+import { clearListingAction, saveBadgeRulesAction, saveListingAction } from './actions'
 
 /** The words an owner reads. The keys are ours; these are theirs. */
 const FIELD_LABEL: Record<CardField, string> = {
@@ -72,6 +77,15 @@ const SORT_LABEL: Record<CatalogueSort, string> = {
   newest: 'Newest first',
 }
 
+/** A tone is a MEANING. These are the meanings, not the colours. */
+const TONE_LABEL: Record<BadgeTone, string> = {
+  brand: 'Your shop’s colour',
+  success: 'Green — good news',
+  warning: 'Amber — hurry',
+  danger: 'Red — urgent',
+  neutral: 'Grey — quiet',
+}
+
 const LAYOUT_LABEL: Record<(typeof LISTING_LAYOUTS)[number], string> = {
   grid: 'Grid of tiles',
   list: 'A list',
@@ -88,9 +102,11 @@ export type DepartmentRow = {
 export default function ListingClient({
   shop,
   departments,
+  badgeRules,
 }: {
   shop: ListingPreset
   departments: DepartmentRow[]
+  badgeRules: BadgeRules
 }) {
   return (
     <PageBody>
@@ -102,6 +118,16 @@ export default function ListingClient({
           />
           <CardBody>
             <ListingForm preset={shop} departmentId={null} name="the whole shop" />
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Badges"
+            description="Small labels on a product tile. Shop-wide — a shopper cannot tell that “New” means something different in one aisle."
+          />
+          <CardBody>
+            <BadgeForm rules={badgeRules} />
           </CardBody>
         </Card>
 
@@ -324,6 +350,146 @@ function ListingForm({
         >
           {busy ? 'Saving…' : 'Save'}
         </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The three rules, and the wording each one uses.
+ *
+ * ── THE LABEL IS THE OFF SWITCH ──────────────────────────────────────────
+ *
+ * Rather than a tick box beside each. A rule with nothing to say cannot draw
+ * anything, so "off" and "blank" are one state — and two controls that can
+ * disagree about whether a badge shows is a bug waiting for somebody to set one
+ * and not the other. The hint says so, because an empty field that means
+ * something is worth explaining.
+ */
+function BadgeForm({ rules }: { rules: BadgeRules }) {
+  const [draft, setDraft] = useState<BadgeRules>(rules)
+  const [busy, startAction] = useTransition()
+  const toast = useToast()
+
+  const set = <K extends keyof BadgeRules>(key: K, value: BadgeRules[K]) =>
+    setDraft((d) => ({ ...d, [key]: value }))
+
+  return (
+    <div className="flex flex-col gap-4">
+      <BadgeRule
+        label="New arrivals"
+        hint="Leave the wording blank to switch this off."
+        text={draft.newLabel}
+        onText={(v) => set('newLabel', v)}
+        tone={draft.newTone}
+        onTone={(v) => set('newTone', v)}
+        extra={
+          <Field label="Added within" hint="Days.">
+            <Select value={String(draft.newDays)} onChange={(e) => set('newDays', Number(e.target.value))}>
+              {[7, 14, 30, 60, 90].map((n) => (
+                <option key={n} value={n}>
+                  {n} days
+                </option>
+              ))}
+            </Select>
+          </Field>
+        }
+      />
+
+      <BadgeRule
+        label="Best sellers"
+        hint="Worked out from the last 90 days of sales."
+        text={draft.bestSellerLabel}
+        onText={(v) => set('bestSellerLabel', v)}
+        tone={draft.bestSellerTone}
+        onTone={(v) => set('bestSellerTone', v)}
+      />
+
+      <BadgeRule
+        label="Nearly out"
+        hint="Only shows where you publish stock levels."
+        text={draft.lowStockLabel}
+        onText={(v) => set('lowStockLabel', v)}
+        tone={draft.lowStockTone}
+        onTone={(v) => set('lowStockTone', v)}
+        extra={
+          <Field label="When this many are left">
+            <Select value={String(draft.lowStockAt)} onChange={(e) => set('lowStockAt', Number(e.target.value))}>
+              {[1, 2, 3, 5, 10].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        }
+      />
+
+      {/* Said once, at the bottom: a product can qualify for all three at
+          once, and an owner setting the third rule should know what happens
+          before they see a tile that dropped one. */}
+      <p className="text-sm text-muted">
+        A product shows at most {MAX_TILE_BADGES} badges. Rules come first, then anything you
+        wrote on the product itself.
+      </p>
+
+      <div className="flex justify-end">
+        <Button
+          disabled={busy}
+          onClick={() =>
+            startAction(async () => {
+              const result = await saveBadgeRulesAction(draft)
+              if (result.ok) toast.success('Saved.')
+              else toast.error(result.error)
+            })
+          }
+        >
+          {busy ? 'Saving…' : 'Save badges'}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function BadgeRule({
+  label,
+  hint,
+  text,
+  onText,
+  tone,
+  onTone,
+  extra,
+}: {
+  label: string
+  hint: string
+  text: string
+  onText: (value: string) => void
+  tone: BadgeTone
+  onTone: (value: BadgeTone) => void
+  extra?: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-card border border-border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium text-ink">{label}</span>
+        {/* The real thing, not a description of it. An owner picking a tone
+            from a list of words is guessing; one looking at the badge is not. */}
+        {text.trim() ? <Badge tone={tone}>{text}</Badge> : <span className="text-xs text-faint">Off</span>}
+      </div>
+      <div className="grid gap-2 @sm:grid-cols-2">
+        <Field label="Wording" hint={hint}>
+          <Input value={text} maxLength={24} placeholder="e.g. New" onChange={(e) => onText(e.target.value)} />
+        </Field>
+        <Field label="Colour">
+          <Select value={tone} onChange={(e) => onTone(e.target.value as BadgeTone)}>
+            {BADGE_TONES.map((t) => (
+              <option key={t} value={t}>
+                {TONE_LABEL[t]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {extra}
       </div>
     </div>
   )

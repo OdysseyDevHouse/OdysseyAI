@@ -20,6 +20,10 @@ import {
   gridClass,
   type CardField,
   type ListingPreset,
+  DEFAULT_BADGE_RULES,
+  badgesFor,
+  type BadgeRules,
+  type ProductBadge,
 } from '@/lib/storefront/listing'
 
 /**
@@ -58,6 +62,8 @@ export default function ProductGrid({
   showPhotos = true,
   showBrands = true,
   listing,
+  badgeRules,
+  bestSellers,
   reviews,
 }: {
   token: string
@@ -77,6 +83,16 @@ export default function ProductGrid({
    * built-in default, which is what every listing did before this existed.
    */
   listing?: ListingPreset
+  /**
+   * The shop’s badge rules, or absent for none.
+   *
+   * Optional for the same reason `listing` is: a product row inside a built
+   * page is arranged by the builder, and a "New" badge appearing there
+   * because a department screen was configured would be a surprise.
+   */
+  badgeRules?: BadgeRules
+  /** Which ids are best sellers. Absent means that rule cannot fire. */
+  bestSellers?: Set<number>
 }) {
   const asGrid = layout === 'grid' && showPhotos
 
@@ -85,6 +101,7 @@ export default function ProductGrid({
   const settings = listing ?? DEFAULT_LISTING
   const cols = { phone: settings.columnsPhone, desktop: settings.columnsDesktop }
   const shows = (field: CardField) => settings.cardFields.includes(field)
+  const rules = badgeRules ?? DEFAULT_BADGE_RULES
 
   /*
    * ── SIBLINGS COLLAPSE INTO ONE TILE ─────────────────────────────────────
@@ -132,6 +149,10 @@ export default function ProductGrid({
             showStock={showStock}
             showBrands={showBrands}
             shows={shows}
+            badges={badgesFor(
+              { ...tile.product, isBestSeller: bestSellers?.has(tile.product.id) },
+              rules,
+            )}
             review={reviews?.get(tile.product.id)}
             // The first two are the phone's visible row, so they load eagerly
             // and everything below them waits until it is scrolled to.
@@ -170,6 +191,7 @@ function Tile({
   showStock,
   showBrands,
   shows,
+  badges,
   review,
   eager,
 }: {
@@ -185,6 +207,8 @@ function Tile({
   showBrands: boolean
   /** Whether this listing draws a given part of the tile. */
   shows: (field: CardField) => boolean
+  /** What this product is wearing. Already capped and ordered — see badgesFor. */
+  badges: ProductBadge[]
   review?: ReviewSummary
   eager: boolean
 }) {
@@ -241,6 +265,16 @@ function Tile({
             )}
             {shows('saving') && saving !== null && <Badge tone="danger">Save {saving}%</Badge>}
             {shows('stock') && <StockBadge product={product} showStock={showStock} />}
+            {/* After the shop’s own badges, because those answer "can I have
+                it" and these answer "is it worth having" — and a shopper
+                reading a tile decides the first one first. Already capped at
+                two by badgesFor; three on a 160px tile is the one nobody
+                reads. */}
+            {badges.map((badge) => (
+              <Badge key={badge.label} tone={badge.tone}>
+                {badge.label}
+              </Badge>
+            ))}
           </span>
         </span>
 

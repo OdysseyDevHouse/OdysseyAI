@@ -1,7 +1,11 @@
 import { PageHeader } from '@/components/ui'
 import { requireModuleCapability } from '@/lib/auth'
 import { listDepartmentVisibility } from '@/lib/site/onlineStore'
-import { listListingPresets, shopListingPreset } from '@/lib/site/listingPresets'
+import {
+  listListingPresets,
+  shopBadgeRules,
+  shopListingPreset,
+} from '@/lib/site/listingPresets'
 import ListingClient, { type DepartmentRow } from './ListingClient'
 
 export const dynamic = 'force-dynamic'
@@ -19,13 +23,15 @@ export default async function OnlineListingPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireModuleCapability('online_store', 'online.edit')
 
-  const [shop, presets, departments] = await Promise.all([
+  const [shop, presets, departments, badgeRules] = await Promise.all([
     shopListingPreset(siteId),
     // Every configured row in one query rather than one per department: the
     // screen lists every aisle with its effective settings, and doing that a
     // row at a time is a query per aisle for a table holding a handful.
     listListingPresets(siteId),
     listDepartmentVisibility(siteId),
+    // Shop-wide, and read from the same row the listing settings live on.
+    shopBadgeRules(siteId),
   ])
 
   /*
@@ -46,7 +52,7 @@ export default async function OnlineListingPage() {
   return (
     <>
       <PageHeader title="Listings" subtitle="How your products are arranged" />
-      <ListingClient shop={shop} departments={rows} />
+      <ListingClient shop={shop} departments={rows} badgeRules={badgeRules} />
     </>
   )
 }

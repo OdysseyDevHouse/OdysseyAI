@@ -80,6 +80,17 @@ export type StorefrontProduct = {
    */
   stockOnHand: number | null
   /**
+   * A badge the owner wrote on this product by hand, or null.
+   *
+   * "Halaal", "Made here", "Award winner" — the things no rule infers. The
+   * rule badges are computed from the two fields below and the shop’s
+   * settings; see badgesFor, which is the one place both are combined.
+   */
+  onlineBadge: string | null
+  onlineBadgeTone: string | null
+  /** Days since it was added, for the "New" rule. Null when unknown. */
+  addedDaysAgo: number | null
+  /**
    * What the shop OWNS, before holds and regardless of `showStock`.
    *
    * Never rendered — it exists so the order path can ask "is there enough
@@ -275,6 +286,12 @@ const PRODUCT_COLUMNS = `
   parent.description AS group_description,
   dep.name AS department_name,
   br.name AS brand_name,
+  p.online_badge, p.online_badge_tone,
+  -- Days since it was added, computed in SQL rather than sent as a date.
+  -- The comparison is "is this newer than N days", and doing it here means
+  -- one answer rather than every caller re-deriving it against whichever
+  -- clock it happens to hold.
+  DATEDIFF(CURDATE(), p.created_at) AS added_days_ago,
   pp.selling_price_incl AS price_incl,
   -- ── What the SHOP may promise, not what the shop owns ──────────────────
   --
@@ -829,6 +846,42 @@ export async function productsOnSpecial(
 }
 
 /**
+ * Which products are best sellers, as a set of ids.
+ *
+ * ── IDS, NOT PRODUCTS ────────────────────────────────────────────────────
+ *
+ * The caller already has the products — it is about to render them — and only
+ * needs to know which of them wear the badge. `popularProducts` beside this
+ * one answers a different question ("what should this row contain?") and pays
+ * for the joins to do it; asking it here would fetch a second copy of every
+ * column to compare an id against.
+ *
+ * The same 90-day window and the same basket-counting rule as the popular
+ * ROW, so "best seller" means one thing in a shop rather than two.
+ */
+export async function bestSellerIds(
+  context: StorefrontContext,
+  limit = 20,
+): Promise<Set<number>> {
+  const capped = Math.min(Math.max(limit, 1), 100)
+  const rows = await siteQuery<Row>(
+    context.catalogueSiteId,
+    `SELECT l.product_id, SUM(l.qty) AS sold
+       FROM sales_document_lines l
+       JOIN sales_documents d ON d.id = l.document_id
+      WHERE d.status = 'finalised'
+        AND d.doc_type IN ('invoice','credit_note')
+        AND d.document_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+        AND l.product_id IS NOT NULL
+      GROUP BY l.product_id
+      HAVING sold > 0
+      ORDER BY sold DESC
+      LIMIT ${capped}`,
+  )
+  return new Set(rows.map((r) => Number(r.product_id)))
+}
+
+/**
  * The published products that have sold most recently.
  *
  * ── NINETY DAYS, AND WHY IT IS NOT "EVER" ────────────────────────────────
@@ -996,6 +1049,12 @@ function mapStorefrontProduct(r: Row, settings: OnlineSettings): StorefrontProdu
     description: String(r.description),
     departmentId: r.department_id === null ? null : Number(r.department_id),
     departmentName: (r.department_name as string | null) ?? null,
+    onlineBadge: (r.online_badge as string | null) ?? null,
+    onlineBadgeTone: (r.online_badge_tone as string | null) ?? null,
+    addedDaysAgo:
+      r.added_days_ago === null || r.added_days_ago === undefined
+        ? null
+        : Number(r.added_days_ago),
     brand: (r.brand_name as string | null) ?? null,
     priceIncl: toNum(r.price_incl),
     inStock: !!r.in_stock,

@@ -296,3 +296,27 @@ export const DEFAULT_BADGE_RULES: BadgeRules = {
   lowStockAt: 3,
   lowStockTone: 'warning',
 }
+
+/**
+ * Coerce a stored row into badge rules.
+ *
+ * Read from the SHOP'S preset row only, never a department's — "New" meaning
+ * 30 days in one aisle and 7 in another is not a distinction a shopper can
+ * perceive, and it is how a shop ends up with badges that contradict each
+ * other. See 187.
+ */
+export function readBadgeRules(row: Record<string, unknown> | null | undefined): BadgeRules {
+  if (!row) return { ...DEFAULT_BADGE_RULES }
+  return {
+    // An empty label IS the off switch — a rule with no wording cannot draw
+    // anything, so there is no separate boolean to disagree with it.
+    newLabel: String(row.badge_new_label ?? '').slice(0, 24),
+    newDays: clamp(row.badge_new_days, 1, 365, DEFAULT_BADGE_RULES.newDays),
+    newTone: safeBadgeTone(row.badge_new_tone),
+    bestSellerLabel: String(row.badge_best_label ?? '').slice(0, 24),
+    bestSellerTone: safeBadgeTone(row.badge_best_tone),
+    lowStockLabel: String(row.badge_low_label ?? '').slice(0, 24),
+    lowStockAt: clamp(row.badge_low_at, 1, 99, DEFAULT_BADGE_RULES.lowStockAt),
+    lowStockTone: safeBadgeTone(row.badge_low_tone),
+  }
+}

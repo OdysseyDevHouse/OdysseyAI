@@ -2,8 +2,10 @@ import 'server-only'
 import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
 import {
   DEFAULT_LISTING,
+  readBadgeRules,
   readListingPreset,
   writeSet,
+  type BadgeRules,
   type ListingPreset,
 } from '../storefront/listing'
 
@@ -50,7 +52,10 @@ export async function listListingPresets(siteId: number): Promise<Map<number, Li
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT department_id, columns_desktop, columns_phone, per_page, default_sort,
-            layout, card_fields, facets
+            layout, card_fields, facets,
+            badge_new_label, badge_new_days, badge_new_tone,
+            badge_best_label, badge_best_tone,
+            badge_low_label, badge_low_at, badge_low_tone
        FROM online_listing_presets`,
   )
   const out = new Map<number, ListingPreset>()
@@ -66,7 +71,10 @@ export async function shopListingPreset(siteId: number): Promise<ListingPreset> 
   const row = await siteQueryOne<Row>(
     siteId,
     `SELECT department_id, columns_desktop, columns_phone, per_page, default_sort,
-            layout, card_fields, facets
+            layout, card_fields, facets,
+            badge_new_label, badge_new_days, badge_new_tone,
+            badge_best_label, badge_best_tone,
+            badge_low_label, badge_low_at, badge_low_tone
        FROM online_listing_presets WHERE department_id = 0`,
   )
   return readListingPreset(row)
@@ -86,7 +94,10 @@ export async function listingPresetFor(
   const row = await siteQueryOne<Row>(
     siteId,
     `SELECT department_id, columns_desktop, columns_phone, per_page, default_sort,
-            layout, card_fields, facets
+            layout, card_fields, facets,
+            badge_new_label, badge_new_days, badge_new_tone,
+            badge_best_label, badge_best_tone,
+            badge_low_label, badge_low_at, badge_low_tone
        FROM online_listing_presets WHERE department_id = ?`,
     [departmentId],
   )
@@ -163,3 +174,80 @@ export async function clearListingPreset(siteId: number, departmentId: number): 
 }
 
 export { DEFAULT_LISTING }
+
+/**
+ * The shop's badge rules.
+ *
+ * Its own function rather than a field on the preset, because the two have
+ * different scopes: a listing's settings are per department and these are
+ * shop-wide, and folding them together would invite a department screen to
+ * offer controls that quietly do nothing.
+ */
+export async function shopBadgeRules(siteId: number): Promise<BadgeRules> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT badge_new_label, badge_new_days, badge_new_tone,
+            badge_best_label, badge_best_tone,
+            badge_low_label, badge_low_at, badge_low_tone
+       FROM online_listing_presets WHERE department_id = 0`,
+  )
+  return readBadgeRules(row)
+}
+
+/** Store them. Normalised on the way in, like everything a form sends. */
+export async function saveBadgeRules(
+  siteId: number,
+  rules: BadgeRules,
+  actor: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const clean = readBadgeRules({
+    badge_new_label: rules.newLabel,
+    badge_new_days: rules.newDays,
+    badge_new_tone: rules.newTone,
+    badge_best_label: rules.bestSellerLabel,
+    badge_best_tone: rules.bestSellerTone,
+    badge_low_label: rules.lowStockLabel,
+    badge_low_at: rules.lowStockAt,
+    badge_low_tone: rules.lowStockTone,
+  })
+
+  /*
+   * INSERT ... ON DUPLICATE, not UPDATE.
+   *
+   * A shop that has never opened the listings screen has no default row at
+   * all, and an UPDATE against nothing succeeds while changing nothing — the
+   * failure that looks like the form not working. The sentinel makes the
+   * duplicate key real; see 186 on why it cannot be NULL.
+   */
+  await siteExecute(
+    siteId,
+    `INSERT INTO online_listing_presets
+       (department_id, badge_new_label, badge_new_days, badge_new_tone,
+        badge_best_label, badge_best_tone, badge_low_label, badge_low_at,
+        badge_low_tone, updated_at, updated_by)
+     VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+     ON DUPLICATE KEY UPDATE
+       badge_new_label = VALUES(badge_new_label),
+       badge_new_days = VALUES(badge_new_days),
+       badge_new_tone = VALUES(badge_new_tone),
+       badge_best_label = VALUES(badge_best_label),
+       badge_best_tone = VALUES(badge_best_tone),
+       badge_low_label = VALUES(badge_low_label),
+       badge_low_at = VALUES(badge_low_at),
+       badge_low_tone = VALUES(badge_low_tone),
+       updated_at = NOW(),
+       updated_by = VALUES(updated_by)`,
+    [
+      clean.newLabel,
+      clean.newDays,
+      clean.newTone,
+      clean.bestSellerLabel,
+      clean.bestSellerTone,
+      clean.lowStockLabel,
+      clean.lowStockAt,
+      clean.lowStockTone,
+      actor.slice(0, 120),
+    ],
+  )
+  return { ok: true }
+}

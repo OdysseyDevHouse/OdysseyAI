@@ -3,8 +3,12 @@
 import { revalidatePath } from 'next/cache'
 import { actorForModule } from '@/lib/auth'
 import { logActivity } from '@/lib/site/activityLog'
-import { clearListingPreset, saveListingPreset } from '@/lib/site/listingPresets'
-import { readListingPreset, writeSet } from '@/lib/storefront/listing'
+import {
+  clearListingPreset,
+  saveBadgeRules,
+  saveListingPreset,
+} from '@/lib/site/listingPresets'
+import { readBadgeRules, readListingPreset, writeSet } from '@/lib/storefront/listing'
 
 type SaveResult = { ok: true } | { ok: false; error: string }
 
@@ -73,6 +77,44 @@ export async function clearListingAction(departmentId: number, name: string): Pr
     entityId: departmentId,
     action: 'listing',
     detail: `“${name}” follows the shop’s listing settings again`,
+  })
+
+  revalidatePath('/online-store/listing')
+  return { ok: true }
+}
+
+/**
+ * Store the shop's badge rules.
+ *
+ * Shop-wide, so no departmentId: "New" meaning thirty days in one aisle and
+ * seven in another is not a distinction a shopper can perceive, and it is how
+ * a shop ends up with badges that contradict each other. See 187.
+ */
+export async function saveBadgeRulesAction(input: unknown): Promise<SaveResult> {
+  const ctx = await actorForModule('online_store', 'online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const raw = (input ?? {}) as Record<string, unknown>
+  const rules = readBadgeRules({
+    badge_new_label: raw.newLabel,
+    badge_new_days: raw.newDays,
+    badge_new_tone: raw.newTone,
+    badge_best_label: raw.bestSellerLabel,
+    badge_best_tone: raw.bestSellerTone,
+    badge_low_label: raw.lowStockLabel,
+    badge_low_at: raw.lowStockAt,
+    badge_low_tone: raw.lowStockTone,
+  })
+
+  const result = await saveBadgeRules(siteId, rules, actor.userName)
+  if (!result.ok) return result
+
+  await logActivity(siteId, actor, {
+    entity: 'online_store',
+    entityId: null,
+    action: 'listing',
+    detail: 'Product badge rules changed',
   })
 
   revalidatePath('/online-store/listing')
