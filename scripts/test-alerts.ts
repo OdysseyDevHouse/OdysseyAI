@@ -45,7 +45,7 @@ import {
   type AlertRuleInput,
 } from '../src/lib/alerts/types'
 
-const SITE = 1
+const SITE = Number(process.env.ALERTS_TEST_SITE) || 1
 let failures = 0
 const createdRules: number[] = []
 
@@ -544,6 +544,28 @@ async function theAutomationDrafts(ownerId: number, ownerName: string) {
   const after = await orderCount()
   const ids = acting.createdOrders.map((o) => o.documentId)
   createdOrders.push(...ids)
+
+  /*
+   * How many drafts are POSSIBLE depends on the site: a product with no
+   * preferred supplier cannot be ordered from anyone, so a site with shortages
+   * and no supplier links legitimately drafts nothing.
+   *
+   * Asserting "at least one order" would fail on such a site for the data's
+   * reasons rather than the code's — so the expectation is derived from what
+   * the check itself found, and the case is stated either way rather than
+   * quietly passing over an empty set.
+   */
+  const orderable = acting.groups.filter((g) => g.supplierId !== null).length
+  if (orderable === 0) {
+    console.log('       (nothing here has a preferred supplier, so drafting cannot be exercised)')
+    eq('and nothing is drafted without a supplier to draft it for', ids.length, 0)
+    check(
+      'which is reported rather than passed over silently',
+      acting.problems.length > 0,
+      acting.problems.join(' ') || '(nothing said)',
+    )
+    return
+  }
 
   check('drafting raises at least one order', ids.length > 0, `${ids.length} order(s)`)
   eq('and the count of orders moves by exactly that many', after - before, ids.length)
