@@ -1,0 +1,169 @@
+import { formatMoney, formatQty } from '../decimals'
+import { getDocType, getSection, findToken, type TokenFormat } from './catalog'
+
+/**
+ * Turning a designed template into the HTML that goes on paper.
+ *
+ * ── THE DATA IS NEVER TRUSTED EITHER ──────────────────────────────────────
+ *
+ * sanitise.ts guards the TEMPLATE — markup a person wrote. This module guards
+ * the VALUES — a supplier name, a product description, a note someone typed
+ * into a purchase order weeks ago. Both are needed and neither substitutes for
+ * the other: a template can be spotless while a product called
+ * `<img onerror=…>` turns the document it lands on into a script.
+ *
+ * So every value is HTML-escaped on the way in, always, with one deliberate
+ * exception — `multiline`, which converts newlines to <br> AFTER escaping, so
+ * a typed address still breaks across lines without the text ever being able
+ * to introduce a tag.
+ *
+ * ── VALUES COME FROM A FLAT BAG, NOT THE MODEL ────────────────────────────
+ *
+ * The caller hands over `Record<string, unknown>` keyed by catalog token, built
+ * by a per-document adapter. The renderer therefore cannot reach anything the
+ * adapter did not deliberately put there — no walking a `doc.` path into an
+ * object that happens to carry a cost field. It is the same reason the report
+ * builder makes the catalog own every expression.
+ *
+ * ── WHY THE TEMPLATE LANGUAGE STOPS HERE ──────────────────────────────────
+ *
+ * Substitution and one repeat. No conditionals, no expressions, no nesting.
+ * `{#if}` is the door to a template language, and a template language is a
+ * second product to support — with its own bugs, its own escaping rules and its
+ * own way of failing at 5pm on a Friday when an order will not print. Where a
+ * document genuinely needs "show this only when set", the value carries it:
+ * `doc.statusBanner` prints DRAFT or nothing, decided in TypeScript where it
+ * can be tested.
+ */
+
+export type TokenValues = Record<string, unknown>
+
+export type RenderInput = {
+  /** Document-level values, keyed by catalog token. */
+  values: TokenValues
+  /** One bag per row, per repeating section. */
+  sections: Partial<Record<string, TokenValues[]>>
+  /** Decides which permission-gated tokens resolve to a value. */
+  capabilities: { isOwner: boolean; granted: ReadonlySet<string> }
+}
+
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
+ * One value as the text that will appear on paper.
+ *
+ * Formatting is the catalog's decision, not the template's, so a money field
+ * cannot print as `1234.5` because someone wrote the token in the wrong place.
+ * An absent value is an empty string rather than "null" or "0" — a blank on a
+ * document reads as "not applicable", while a zero is a claim about an amount.
+ */
+export function formatValue(value: unknown, format: TokenFormat): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string' && value.trim() === '') return ''
+
+  switch (format) {
+    case 'money':
+      return escapeHtml(formatMoney(value))
+    case 'qty':
+      return escapeHtml(formatQty(value))
+    case 'percent': {
+      const n = typeof value === 'number' ? value : Number(value)
+      if (!Number.isFinite(n) || n === 0) return ''
+      return escapeHtml(`${formatQty(n)}%`)
+    }
+    case 'multiline':
+      // Escaped FIRST, then newlines become breaks: the text can never
+      // introduce a tag, but a typed address still lays out as written.
+      return escapeHtml(String(value)).replace(/\r?\n/g, '<br>')
+    case 'date':
+    case 'text':
+    default:
+      return escapeHtml(String(value))
+  }
+}
+
+/** Whether this caller may see what a token carries. */
+function permitted(
+  key: string,
+  docKey: string,
+  capabilities: RenderInput['capabilities'],
+): boolean {
+  const doc = getDocType(docKey)
+  if (!doc) return false
+  const def = findToken(doc, key)
+  if (!def) return false
+  if (!def.permission) return true
+  return capabilities.isOwner || capabilities.granted.has(def.permission)
+}
+
+/**
+ * Substitute every `{token}` in one fragment.
+ *
+ * A token that is unknown, or that this caller may not see, resolves to an
+ * empty string — never to the literal `{token}`, which would print braces on a
+ * document going to a customer, and never to an error. This is the silent
+ * degradation the catalog header describes: the junior gets the same purchase
+ * order without the cost column, not a failed print.
+ */
+function substitute(
+  fragment: string,
+  docKey: string,
+  values: TokenValues,
+  capabilities: RenderInput['capabilities'],
+): string {
+  const doc = getDocType(docKey)
+  if (!doc) return ''
+
+  return fragment.replace(/\{([a-zA-Z][a-zA-Z0-9.]*)\}/g, (_m, key: string) => {
+    const def = findToken(doc, key)
+    if (!def) return ''
+    if (!permitted(key, docKey, capabilities)) return ''
+    return formatValue(values[key], def.format)
+  })
+}
+
+/**
+ * A template plus its data, as printable HTML.
+ *
+ * Repeating sections are expanded first — an `{#each lines}` block is cut out,
+ * rendered once per row with the row's own values merged over the document's,
+ * and spliced back — then the whole result is substituted. Doing the rows first
+ * means a row can use `{site.name}` without any special case.
+ */
+export function renderTemplate(body: string, docKey: string, input: RenderInput): string {
+  const doc = getDocType(docKey)
+  if (!doc) return ''
+
+  const expanded = body.replace(
+    /\{#each\s+([a-zA-Z]+)\s*\}([\s\S]*?)\{\/each\}/g,
+    (_m, sectionKey: string, inner: string) => {
+      const section = getSection(doc, sectionKey)
+      if (!section) return ''
+
+      const rows = input.sections[sectionKey] ?? []
+      return rows
+        .map((row) => substitute(inner, docKey, { ...input.values, ...row }, input.capabilities))
+        .join('')
+    },
+  )
+
+  return substitute(expanded, docKey, input.values, input.capabilities)
+}
+
+/**
+ * Whether a template will render anything for a given token.
+ *
+ * Used by the adapters to decide whether an optional column deserves a heading:
+ * a "Discount" column of dashes on a document going to the person who set the
+ * prices is noise, so the default templates ask before drawing one.
+ */
+export function usesToken(body: string, key: string): boolean {
+  return new RegExp(`\\{${key.replace(/\./g, '\\.')}\\}`).test(body)
+}

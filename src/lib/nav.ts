@@ -121,7 +121,7 @@ export const NAV: NavSection[] = [
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
          filter on this screen now, and /sales redirects here. */
-      { label: 'Invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history quote quotes order orders sales orders lay-by lay-bys laybys', description: 'Invoices, quotes, orders and lay-bys' },
+      { label: 'Invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history quote quotes order orders sales lay-by lay-bys laybys', description: 'Invoices, quotes, orders and lay-bys' },
       /*
        * Orders, Quotes and Lay-bys are NOT rows here.
        *
@@ -587,6 +587,7 @@ export const SUBPAGE_LABELS = {
   '/setup/laybys': 'Lay-bys',
   '/setup/sms': 'Text messages',
   '/setup/printing': 'Printing',
+  '/setup/stationery': 'Stationery',
   '/setup/expense-categories': 'Expense categories',
   '/setup/databases': 'Site & databases',
   '/setup/training': 'Training mode',
@@ -794,6 +795,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/laybys': 'deposit cancellation fee terms instalments',
   '/setup/sms': 'sms text message smsportal reminders dunning notify phone mobile',
   '/setup/printing': 'receipt printer thermal esc pos slip 80mm cash drawer kick kitchen bridge',
+  '/setup/stationery': 'stationery template design document layout letterhead logo purchase order invoice quote print custom html branding terms footer unit cost',
   '/setup/expense-categories': 'chart of accounts spending overheads account codes',
   '/setup/databases': 'connection health server site details',
   '/setup/training': 'training practice demo test sandbox learn staff dummy trial reset clear',

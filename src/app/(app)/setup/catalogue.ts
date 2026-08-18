@@ -530,6 +530,15 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/stationery',
+        description: 'How printed documents are laid out — your letterhead, columns and wording.',
+        keywords:
+          'stationery template design document layout letterhead logo purchase order invoice quote print custom html branding terms footer unit cost columns',
+        icon: 'FileText',
+        tone: 'amber',
+        capability: 'setup.stationery',
+      },
+      {
         href: '/setup/style-guide',
         description: 'Every component the app is built from, rendered live.',
         keywords: 'design system components reference ui kit',

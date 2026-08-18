@@ -255,6 +255,13 @@ export const CAPABILITY_GROUPS = [
          standing access with no person behind it, and minting one should not
          come free with ordinary settings. */
       { key: 'setup.api', label: 'Manage API keys and webhooks', hint: 'Mint keys that let outside programs read this store, and choose where events are sent.' },
+      /* Its own switch, like setup.audit and setup.api, and for a sharper
+         reason than either: stationery is the only setting where what a person
+         types is MARKUP that leaves the building on a document a customer or a
+         supplier reads. Getting it wrong is a wrong invoice rather than a wrong
+         screen, so "may change the VAT rate" must not come with "may redesign
+         the tax invoice". */
+      { key: 'setup.stationery', label: 'Design printed documents', hint: 'Change how orders, invoices and slips are laid out when they print.' },
     ],
   },
 ] as const
