@@ -12,65 +12,100 @@ import type { DocumentSpec } from '../blocks'
  * Ids are literal rather than minted, because a shipped default is a constant:
  * two shops forking it should get the same document, and a random id would make
  * every stored copy differ from every other for no reason anyone could see.
+ *
+ * ── THE HEADER IS A ROW ───────────────────────────────────────────────────
+ *
+ * Two columns, uneven: the letterhead carries an address and four contact lines
+ * and wants the room, while the document title is a number and a date. That is
+ * the case per-cell widths exist for.
  */
 export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
   version: 1,
   blocks: [
     {
-      id: 'po-letterhead',
-      kind: 'letterhead',
-      span: 'left',
-      tokens: [
-        'site.logo',
-        'site.name',
-        'site.address',
-        'site.vatLine',
-        'site.registrationLine',
-        'site.phone',
-        'site.email',
+      id: 'po-header',
+      kind: 'row',
+      cells: [
+        {
+          id: 'po-header-l',
+          width: 60,
+          blocks: [
+            {
+              id: 'po-letterhead',
+              kind: 'letterhead',
+              tokens: [
+                'site.logo',
+                'site.name',
+                'site.address',
+                'site.vatLine',
+                'site.registrationLine',
+                'site.phone',
+                'site.email',
+              ],
+            },
+          ],
+        },
+        {
+          id: 'po-header-r',
+          width: 40,
+          blocks: [
+            {
+              id: 'po-title',
+              kind: 'docTitle',
+              align: 'right',
+              title: 'PURCHASE ORDER',
+              tokens: ['doc.number', 'doc.date', 'doc.statusBanner'],
+            },
+          ],
+        },
       ],
-    },
-    {
-      id: 'po-title',
-      kind: 'docTitle',
-      span: 'right',
-      title: 'PURCHASE ORDER',
-      tokens: ['doc.number', 'doc.date', 'doc.statusBanner'],
     },
 
     { id: 'po-rule-1', kind: 'rule' },
 
     {
-      id: 'po-supplier',
-      kind: 'partyBlock',
-      span: 'left',
-      title: 'TO',
-      tokens: [
-        'supplier.name',
-        'supplier.contactName',
-        'supplier.address',
-        'supplier.email',
-        'supplier.phone',
-        'supplier.accountLine',
-      ],
-    },
-    {
-      id: 'po-deliver',
-      kind: 'partyBlock',
-      span: 'right',
-      align: 'left',
-      title: 'DELIVER TO',
-      tokens: ['deliverTo'],
-    },
-
-    {
-      id: 'po-details',
-      kind: 'detailList',
-      rows: [
-        { token: 'doc.expectedDate', label: 'Required by' },
-        { token: 'doc.reference', label: 'Reference' },
-        { token: 'supplier.paymentTermsLine', label: 'Terms' },
-        { token: 'doc.orderedBy', label: 'Ordered by' },
+      id: 'po-parties',
+      kind: 'row',
+      cells: [
+        {
+          id: 'po-parties-l',
+          blocks: [
+            {
+              id: 'po-supplier',
+              kind: 'partyBlock',
+              title: 'TO',
+              tokens: [
+                'supplier.name',
+                'supplier.contactName',
+                'supplier.address',
+                'supplier.email',
+                'supplier.phone',
+                'supplier.accountLine',
+              ],
+            },
+          ],
+        },
+        {
+          id: 'po-parties-r',
+          blocks: [
+            {
+              id: 'po-deliver',
+              kind: 'partyBlock',
+              title: 'DELIVER TO',
+              tokens: ['deliverTo'],
+            },
+            {
+              id: 'po-details',
+              kind: 'detailList',
+              rows: [
+                { token: 'doc.expectedDate', label: 'Required by' },
+                { token: 'doc.reference', label: 'Reference' },
+                { token: 'supplier.paymentTermsLine', label: 'Terms' },
+                { token: 'doc.orderedBy', label: 'Ordered by' },
+              ],
+            },
+          ],
+        },
       ],
     },
 

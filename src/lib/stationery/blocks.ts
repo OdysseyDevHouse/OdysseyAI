@@ -33,6 +33,7 @@ import { getDocType, type DocTypeDef } from './catalog'
  */
 
 export const DOC_BLOCK_KINDS = [
+  'row',
   'letterhead',
   'docTitle',
   'partyBlock',
@@ -50,16 +51,26 @@ export const DOC_BLOCK_KINDS = [
 
 export type DocBlockKind = (typeof DOC_BLOCK_KINDS)[number]
 
-/**
- * Where a block sits across the page.
- *
- * `full` spans it; `left` and `right` pair up into one row. Two columns and no
- * more: a printed page is a flow, and free positioning breaks the moment an
- * order runs to forty lines and the blocks below it are pinned.
- */
-export type DocBlockSpan = 'full' | 'left' | 'right'
-
 export type DocBlockAlign = 'left' | 'center' | 'right'
+
+/**
+ * One column of a split row.
+ *
+ * A STACK, not a slot: a cell holds however many blocks are dropped into it, so
+ * "the logo with the business name under it" is one cell rather than two rows.
+ *
+ * `width` is a percentage and optional. Cells without one share whatever the
+ * others leave — a letterhead usually wants more room than a date, and forcing
+ * even thirds would make that impossible to express.
+ */
+export type RowCell = {
+  id: string
+  width?: number
+  blocks: DocBlock[]
+}
+
+/** A page is a flow of full-width things; a row is how several sit side by side. */
+export const MAX_ROW_CELLS = 6
 
 /** One column of the line table, as the customer has arranged it. */
 export type ColumnSpec = {
@@ -96,8 +107,16 @@ export type DetailRow = {
 export type DocBlock = {
   id: string
   kind: DocBlockKind
-  span?: DocBlockSpan
   align?: DocBlockAlign
+  /**
+   * `row` only: the columns, left to right.
+   *
+   * The one nesting in this model, and deliberately one level deep — a cell
+   * holds ordinary blocks and a row cannot contain another row. Nested columns
+   * on a printed page are a layout nobody can predict once a line table runs
+   * onto a second sheet.
+   */
+  cells?: RowCell[]
   /** A heading above the block — "BILL TO", "NOTES". Empty prints none. */
   title?: string
   /** letterhead / partyBlock / detailList: which fields, in the order shown. */
@@ -133,6 +152,13 @@ export type DocBlockDef = {
 }
 
 export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
+  row: {
+    kind: 'row',
+    label: 'Side by side',
+    hint: 'Split the page into columns and drop blocks into each.',
+    docTypes: 'all',
+    repeatable: true,
+  },
   letterhead: {
     kind: 'letterhead',
     label: 'Your letterhead',
@@ -259,6 +285,101 @@ export function newBlock(kind: DocBlockKind, over: Partial<DocBlock> = {}): DocB
   return { id: newBlockId(kind), kind, ...over }
 }
 
+let cellCounter = 0
+export function newCellId(): string {
+  return `c-${++cellCounter}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+/** A row of `n` empty columns. */
+export function newRow(n: number): DocBlock {
+  const count = Math.min(Math.max(n, 2), MAX_ROW_CELLS)
+  return newBlock('row', {
+    cells: Array.from({ length: count }, () => ({ id: newCellId(), blocks: [] })),
+  })
+}
+
+/* ── walking a document that has one level of nesting ────────────────────── */
+
+/**
+ * Every block on the page, rows included, flattened.
+ *
+ * For the questions that do not care about layout — "is this kind already
+ * used", "how many blocks are there", "does the document have a line table".
+ * Callers that DO care about layout walk `spec.blocks` themselves.
+ */
+export function allBlocks(spec: DocumentSpec): DocBlock[] {
+  const out: DocBlock[] = []
+  for (const b of spec.blocks) {
+    out.push(b)
+    if (b.kind === 'row') for (const c of b.cells ?? []) out.push(...c.blocks)
+  }
+  return out
+}
+
+/** Find a block anywhere in the document, and where it lives. */
+export function locate(
+  spec: DocumentSpec,
+  id: string,
+): { block: DocBlock; cellId: string | null } | null {
+  for (const b of spec.blocks) {
+    if (b.id === id) return { block: b, cellId: null }
+    if (b.kind === 'row') {
+      for (const c of b.cells ?? []) {
+        const hit = c.blocks.find((x) => x.id === id)
+        if (hit) return { block: hit, cellId: c.id }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Replace one block wherever it is.
+ *
+ * The inspector edits by id and should not have to know whether the block it is
+ * changing sits on the page or inside a cell.
+ */
+export function patchBlock(
+  spec: DocumentSpec,
+  id: string,
+  changes: Partial<DocBlock>,
+): DocumentSpec {
+  return {
+    version: 1,
+    blocks: spec.blocks.map((b) => {
+      if (b.id === id) return { ...b, ...changes }
+      if (b.kind !== 'row') return b
+      return {
+        ...b,
+        cells: (b.cells ?? []).map((c) => ({
+          ...c,
+          blocks: c.blocks.map((x) => (x.id === id ? { ...x, ...changes } : x)),
+        })),
+      }
+    }),
+  }
+}
+
+/** Remove one block wherever it is. A row goes with everything in it. */
+export function removeBlock(spec: DocumentSpec, id: string): DocumentSpec {
+  return {
+    version: 1,
+    blocks: spec.blocks
+      .filter((b) => b.id !== id)
+      .map((b) =>
+        b.kind === 'row'
+          ? {
+              ...b,
+              cells: (b.cells ?? []).map((c) => ({
+                ...c,
+                blocks: c.blocks.filter((x) => x.id !== id),
+              })),
+            }
+          : b,
+      ),
+  }
+}
+
 /* ── validation ──────────────────────────────────────────────────────────── */
 
 export type SpecValidation = { ok: boolean; errors: string[] }
@@ -276,14 +397,17 @@ export function validateSpec(spec: DocumentSpec, docType: string): SpecValidatio
   if (!spec || typeof spec !== 'object' || !Array.isArray(spec.blocks)) {
     return { ok: false, errors: ['That design cannot be read.'] }
   }
-  if (spec.blocks.length > MAX_BLOCKS) {
+  const flat = allBlocks(spec)
+  if (flat.length > MAX_BLOCKS) {
     errors.push(`A document may have at most ${MAX_BLOCKS} blocks.`)
   }
 
   const allowed = new Set(blockKindsFor(docType))
   const seen = new Set<DocBlockKind>()
 
-  for (const b of spec.blocks) {
+  // Counted across the WHOLE document, cells included: a totals box inside a
+  // row and another outside it is still two totals boxes.
+  for (const b of flat) {
     const def = DOC_BLOCK_CATALOG[b.kind]
     if (!def) {
       errors.push('The design contains a block this version does not understand.')
@@ -303,6 +427,22 @@ export function validateSpec(spec: DocumentSpec, docType: string): SpecValidatio
       if (cols.length > MAX_COLUMNS) {
         errors.push(`The items table may have at most ${MAX_COLUMNS} columns.`)
       }
+    }
+  }
+
+  // A row is only ever a container, so a row of nothing is a gap the designer
+  // can see and nobody else can — it prints as a blank strip.
+  for (const b of spec.blocks) {
+    if (b.kind !== 'row') continue
+    const cells = b.cells ?? []
+    if (cells.length < 2) errors.push('A side-by-side row needs at least two columns.')
+    if (cells.length > MAX_ROW_CELLS) {
+      errors.push(`A row may have at most ${MAX_ROW_CELLS} columns.`)
+    }
+    // Nested rows are refused rather than flattened: a cell that quietly lost
+    // its contents would be worse than a message saying why.
+    if (cells.some((c) => c.blocks.some((x) => x.kind === 'row'))) {
+      errors.push('A row cannot contain another row.')
     }
   }
 
@@ -402,37 +542,39 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
 
     const doc = getDocType(docType)
     const allowed = new Set<string>(blockKindsFor(docType))
+    // Ids are unique across the WHOLE document, cells included: two blocks
+    // sharing one would share a React key and a drag handle, so dragging one
+    // would move the other.
     const seenIds = new Set<string>()
-    const out: DocBlock[] = []
 
-    for (const b of blocks.slice(0, MAX_BLOCKS)) {
-      if (!b || typeof b !== 'object') continue
+    /** One block, cleaned. `null` for anything this build cannot use. */
+    function cleanBlock(b: unknown, allowRow: boolean): DocBlock | null {
+      if (!b || typeof b !== 'object') return null
       const kind = (b as { kind?: unknown }).kind
-      if (typeof kind !== 'string' || !KIND_SET.has(kind) || !allowed.has(kind)) continue
+      if (typeof kind !== 'string' || !KIND_SET.has(kind) || !allowed.has(kind)) return null
+      // A row inside a cell is refused rather than flattened — see validateSpec.
+      if (kind === 'row' && !allowRow) return null
 
       const rawId = (b as { id?: unknown }).id
       let id = typeof rawId === 'string' && rawId ? rawId : newBlockId(kind as DocBlockKind)
-      // Duplicates are re-identified rather than dropped: two blocks sharing an
-      // id would share a React key and a drag handle, so dragging one moves the
-      // other. Losing the block would be worse than renaming it.
-      while (seenIds.has(id)) id = `${id}-${out.length}`
+      while (seenIds.has(id)) id = `${id}-${seenIds.size}`
       seenIds.add(id)
 
-      const span = (b as { span?: unknown }).span
       const align = (b as { align?: unknown }).align
       const title = (b as { title?: unknown }).title
       const tokens = (b as { tokens?: unknown }).tokens
       const text = (b as { text?: unknown }).text
       const columns = cleanColumns((b as { columns?: unknown }).columns, doc)
       const rows = cleanRows((b as { rows?: unknown }).rows, doc)
+      const cells = kind === 'row' ? cleanCells((b as { cells?: unknown }).cells) : undefined
 
-      out.push({
+      return {
         id,
         kind: kind as DocBlockKind,
-        ...(typeof span === 'string' && SPANS.has(span) ? { span: span as DocBlockSpan } : {}),
         ...(typeof align === 'string' && ALIGNS.has(align)
           ? { align: align as DocBlockAlign }
           : {}),
+        ...(cells ? { cells } : {}),
         ...(typeof title === 'string' ? { title: title.slice(0, 60) } : {}),
         ...(Array.isArray(tokens)
           ? { tokens: tokens.filter((t): t is string => typeof t === 'string').slice(0, 20) }
@@ -440,7 +582,40 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
         ...(columns ? { columns } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
-      })
+      }
+    }
+
+    function cleanCells(raw: unknown): RowCell[] | undefined {
+      if (!Array.isArray(raw)) return undefined
+      const out: RowCell[] = []
+      for (const c of raw.slice(0, MAX_ROW_CELLS)) {
+        if (!c || typeof c !== 'object') continue
+        const rawId = (c as { id?: unknown }).id
+        let id = typeof rawId === 'string' && rawId ? rawId : newCellId()
+        while (seenIds.has(id)) id = `${id}-${seenIds.size}`
+        seenIds.add(id)
+
+        const width = (c as { width?: unknown }).width
+        const inner = (c as { blocks?: unknown }).blocks
+        out.push({
+          id,
+          ...(typeof width === 'number' && width > 0 && width <= 100
+            ? { width: Math.round(width) }
+            : {}),
+          blocks: Array.isArray(inner)
+            ? inner
+                .map((x) => cleanBlock(x, false))
+                .filter((x): x is DocBlock => x !== null)
+            : [],
+        })
+      }
+      return out
+    }
+
+    const out: DocBlock[] = []
+    for (const b of blocks.slice(0, MAX_BLOCKS)) {
+      const clean = cleanBlock(b, true)
+      if (clean) out.push(clean)
     }
 
     return { version: 1, blocks: out }

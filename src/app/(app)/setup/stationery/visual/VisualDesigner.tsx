@@ -20,15 +20,21 @@ import { Badge, Callout, Card, CardBody, CardHeader } from '@/components/ui'
 import {
   DOC_BLOCK_CATALOG,
   MAX_BLOCKS,
+  allBlocks,
   blockKindsFor,
+  locate,
   newBlock,
+  newRow,
+  patchBlock,
+  removeBlock,
   serialiseSpec,
+  type DocBlock,
   type DocBlockKind,
   type DocumentSpec,
 } from '@/lib/stationery/blocks'
 import { previewBlocksAction } from '../actions'
 import BlockPalette, { PALETTE_PREFIX, paletteKind } from './BlockPalette'
-import DocumentCanvas, { gapIndex } from './DocumentCanvas'
+import DocumentCanvas, { parseGap } from './DocumentCanvas'
 import BlockInspector, { type TokenChoice } from './BlockInspector'
 
 /**
@@ -87,8 +93,9 @@ export default function VisualDesigner({
   const placing = placingKind !== null
 
   const blocks = spec.blocks
-  const atLimit = blocks.length >= MAX_BLOCKS
-  const used = useMemo(() => new Set(blocks.map((b) => b.kind)), [blocks])
+  const flat = useMemo(() => allBlocks(spec), [spec])
+  const atLimit = flat.length >= MAX_BLOCKS
+  const used = useMemo(() => new Set(flat.map((b) => b.kind)), [flat])
   const kinds = useMemo(() => blockKindsFor(docType), [docType])
 
   /* ── the rendered page ─────────────────────────────────────────────────── */
@@ -163,43 +170,123 @@ export default function VisualDesigner({
     return () => document.removeEventListener('keydown', onKey)
   }, [undo])
 
+  /**
+   * Put a block into the page or into a cell, at an index.
+   *
+   * One function for both, because "a column of blocks" is the same shape
+   * whether the column is the page or a sixth of it — the only difference is
+   * which array gets spliced.
+   */
+  const insertAt = useCallback(
+    (block: DocBlock, cellId: string | null, index: number) => {
+      if (cellId === null) {
+        const next = [...spec.blocks]
+        next.splice(index, 0, block)
+        commit({ version: 1, blocks: next })
+        return
+      }
+      commit({
+        version: 1,
+        blocks: spec.blocks.map((b) => {
+          if (b.kind !== 'row') return b
+          return {
+            ...b,
+            cells: (b.cells ?? []).map((c) => {
+              if (c.id !== cellId) return c
+              const inner = [...c.blocks]
+              inner.splice(index, 0, block)
+              return { ...c, blocks: inner }
+            }),
+          }
+        }),
+      })
+    },
+    [spec, commit],
+  )
+
   const insert = useCallback(
-    (kind: DocBlockKind, index: number) => {
-      if (blocks.length >= MAX_BLOCKS) return
-      const block = newBlock(kind, defaultsFor(kind))
-      const next = [...blocks]
-      next.splice(index, 0, block)
-      commit({ version: 1, blocks: next })
+    (kind: DocBlockKind, cellId: string | null, index: number) => {
+      if (allBlocks(spec).length >= MAX_BLOCKS) return
+      // A row is a container for the page, not something to nest in a cell.
+      if (kind === 'row' && cellId !== null) return
+      const block = kind === 'row' ? newRow(2) : newBlock(kind, defaultsFor(kind))
+      insertAt(block, cellId, index)
       setSelectedId(block.id)
     },
-    [blocks, commit],
+    [spec, insertAt],
   )
 
   const remove = useCallback(
     (id: string) => {
-      commit({ version: 1, blocks: blocks.filter((b) => b.id !== id) })
+      commit(removeBlock(spec, id))
       if (selectedId === id) setSelectedId(null)
     },
-    [blocks, commit, selectedId],
+    [spec, commit, selectedId],
   )
 
   const patch = useCallback(
-    (id: string, changes: Partial<(typeof blocks)[number]>) => {
-      commit({ version: 1, blocks: blocks.map((b) => (b.id === id ? { ...b, ...changes } : b)) })
-    },
-    [blocks, commit],
+    (id: string, changes: Partial<DocBlock>) => commit(patchBlock(spec, id, changes)),
+    [spec, commit],
   )
 
-  /** A splice, not a swap: moving one block must not displace another. */
-  const move = useCallback(
-    (from: number, to: number) => {
-      if (from === to) return
-      const next = [...blocks]
-      const [moved] = next.splice(from, 1)
-      next.splice(to, 0, moved)
-      commit({ version: 1, blocks: next })
+  /**
+   * Move a block to a gap, wherever both are.
+   *
+   * Lift then drop, rather than a splice in place: the block may be leaving one
+   * cell for another, or leaving a cell for the page, and "remove it, then put
+   * it where it is going" is the only version of that with one code path.
+   *
+   * The index correction is the same one every sortable list needs — a gap
+   * counts positions in the array as it is NOW, so a block moving DOWN within
+   * the same column passes its own slot on the way.
+   */
+  const moveTo = useCallback(
+    (id: string, toCell: string | null, toIndex: number) => {
+      const found = locate(spec, id)
+      if (!found) return
+
+      const sameColumn = found.cellId === toCell
+      const fromIndex = sameColumn
+        ? (toCell === null
+            ? spec.blocks
+            : (spec.blocks
+                .find((b) => b.kind === 'row' && (b.cells ?? []).some((c) => c.id === toCell))
+                ?.cells?.find((c) => c.id === toCell)?.blocks ?? [])
+          ).findIndex((b) => b.id === id)
+        : -1
+
+      if (sameColumn && fromIndex !== -1 && toIndex > fromIndex) toIndex--
+      if (sameColumn && fromIndex === toIndex) return
+
+      const without = removeBlock(spec, id)
+      const next = { ...without }
+      // Re-insert into the pruned document, so the index means what it says.
+      const withBlock = (() => {
+        if (toCell === null) {
+          const arr = [...next.blocks]
+          arr.splice(toIndex, 0, found.block)
+          return { version: 1 as const, blocks: arr }
+        }
+        return {
+          version: 1 as const,
+          blocks: next.blocks.map((b) => {
+            if (b.kind !== 'row') return b
+            return {
+              ...b,
+              cells: (b.cells ?? []).map((c) => {
+                if (c.id !== toCell) return c
+                const inner = [...c.blocks]
+                inner.splice(toIndex, 0, found.block)
+                return { ...c, blocks: inner }
+              }),
+            }
+          }),
+        }
+      })()
+
+      commit(withBlock)
     },
-    [blocks, commit],
+    [spec, commit],
   )
 
   /* ── drag ──────────────────────────────────────────────────────────────── */
@@ -217,28 +304,29 @@ export default function VisualDesigner({
     if (!target) return
 
     const kind = paletteKind(active)
-    const gap = gapIndex(target)
+    const gap = parseGap(target)
+
+    /*
+     * Only a GAP is a landing place, for a new block and a moved one alike.
+     *
+     * Dropping onto another block would have to guess before or after, and with
+     * cells in play it would also have to guess whether "onto the row" means
+     * beside it or inside one of its columns. A gap says exactly where.
+     */
+    if (!gap) return
 
     if (kind) {
-      // A new block. Only a gap is a legal landing place — dropping onto an
-      // existing block would have to guess before or after, and a guess here
-      // puts the letterhead in the middle of the totals.
-      if (gap !== null) insert(kind, gap)
+      insert(kind, gap.cellId, gap.index)
       return
     }
 
-    const from = blocks.findIndex((b) => b.id === active)
-    if (from === -1) return
+    // A row cannot go inside a cell — the model forbids it, and the drop should
+    // simply not take rather than silently landing somewhere else.
+    const found = locate(spec, active)
+    if (!found) return
+    if (found.block.kind === 'row' && gap.cellId !== null) return
 
-    if (gap !== null) {
-      // A gap index counts positions in the CURRENT array, so a block moving
-      // DOWN passes its own slot on the way.
-      move(from, gap > from ? gap - 1 : gap)
-      return
-    }
-
-    const to = blocks.findIndex((b) => b.id === target)
-    if (to !== -1) move(from, to)
+    moveTo(active, gap.cellId, gap.index)
   }
 
   const draggedLabel = placingKind
@@ -286,7 +374,7 @@ export default function VisualDesigner({
               out, changing what a block shows is the work; adding another is
               the occasional thing. */}
           <BlockInspector
-            block={blocks.find((b) => b.id === selectedId) ?? null}
+            block={selectedId ? (locate(spec, selectedId)?.block ?? null) : null}
             tokens={tokens}
             onChange={(changes) => {
               if (selectedId) patch(selectedId, changes)
@@ -306,7 +394,7 @@ export default function VisualDesigner({
                 kinds={kinds}
                 used={used}
                 atLimit={atLimit}
-                onAdd={(k) => insert(k, blocks.length)}
+                onAdd={(k) => insert(k, null, spec.blocks.length)}
               />
             </CardBody>
           </Card>
@@ -334,7 +422,6 @@ export default function VisualDesigner({
               dragging={dragging !== null}
               placing={placing}
               over={over}
-              atLimit={atLimit}
               onSelect={setSelectedId}
               onRemove={remove}
             />
@@ -358,8 +445,8 @@ export default function VisualDesigner({
 function nameOf(id: string, blocks: DocumentSpec['blocks']): string {
   const kind = paletteKind(id)
   if (kind) return DOC_BLOCK_CATALOG[kind].label
-  const gap = gapIndex(id)
-  if (gap !== null) return `position ${gap + 1}`
+  const gap = parseGap(id)
+  if (gap) return gap.cellId ? `a column, position ${gap.index + 1}` : `position ${gap.index + 1}`
   const block = blocks.find((b) => b.id === id)
   return block ? DOC_BLOCK_CATALOG[block.kind].label : 'the page'
 }

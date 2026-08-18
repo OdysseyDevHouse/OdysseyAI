@@ -7,10 +7,12 @@ import { CSS } from '@dnd-kit/utilities'
 import { Badge, Button, Icons } from '@/components/ui'
 import {
   DOC_BLOCK_CATALOG,
+  allBlocks,
   type DocBlock,
   type DocumentSpec,
+  type RowCell,
 } from '@/lib/stationery/blocks'
-import { rowsOf } from '@/lib/stationery/compile'
+import { cellWidths } from '@/lib/stationery/compile'
 
 /**
  * The page, as a thing you drag blocks around on.
@@ -18,14 +20,16 @@ import { rowsOf } from '@/lib/stationery/compile'
  * ── THE PREVIEW IS THE CANVAS ─────────────────────────────────────────────
  *
  * What is drawn here is the SERVER's render of the real compiled document,
- * handed down as HTML — not a mock of it. The storefront builder learned this
- * one the hard way and states it plainly: a second implementation of the
+ * handed down per block — not a mock of it. A second implementation of the
  * document exists only to agree with the first, and it stops agreeing at the
  * moment somebody trusts it.
  *
- * So each block's markup is sliced out of that render by id and wrapped in the
- * selection chrome. The page a designer moves things around on is the page that
- * prints.
+ * ── ONE LEVEL OF NESTING, AND ONLY ONE ────────────────────────────────────
+ *
+ * The page is a column of blocks; a `row` block is a strip of cells; a cell is
+ * another column of blocks. That is the whole geometry. Everything here that
+ * looks recursive is really two cases — the page and a cell — which is why
+ * `BlockColumn` can serve both.
  *
  * ── NOT AN IFRAME ─────────────────────────────────────────────────────────
  *
@@ -33,13 +37,24 @@ import { rowsOf } from '@/lib/stationery/compile'
  * began out here would go deaf the moment the pointer crossed a frame boundary.
  */
 
-/** The id a gap answers to while a block is in flight. */
+/** The id a gap answers to. `gap:` for the page, `gap:<cellId>:` inside a cell. */
 export const GAP_PREFIX = 'gap:'
 
-export function gapIndex(id: string | null): number | null {
+export function gapId(index: number, cellId: string | null): string {
+  return cellId ? `${GAP_PREFIX}${cellId}:${index}` : `${GAP_PREFIX}${index}`
+}
+
+/** Where a gap drop lands: which cell (null = the page) and at what index. */
+export function parseGap(id: string | null): { cellId: string | null; index: number } | null {
   if (!id || !id.startsWith(GAP_PREFIX)) return null
-  const n = Number(id.slice(GAP_PREFIX.length))
-  return Number.isFinite(n) ? n : null
+  const rest = id.slice(GAP_PREFIX.length)
+  const split = rest.lastIndexOf(':')
+  if (split === -1) {
+    const n = Number(rest)
+    return Number.isFinite(n) ? { cellId: null, index: n } : null
+  }
+  const n = Number(rest.slice(split + 1))
+  return Number.isFinite(n) ? { cellId: rest.slice(0, split), index: n } : null
 }
 
 /**
@@ -52,49 +67,39 @@ export function gapIndex(id: string | null): number | null {
  */
 function InsertPoint({
   index,
+  cellId,
   dragging,
-  placing,
   over,
-  atLimit,
+  /** An empty cell has nothing to sit between, so its one gap is always shown. */
+  always = false,
 }: {
   index: number
-  /** Anything in flight, new or moved. */
+  cellId: string | null
   dragging: boolean
-  /** Specifically a NEW block from the palette. */
-  placing: boolean
   over: string | null
-  atLimit: boolean
+  always?: boolean
 }) {
-  const id = `${GAP_PREFIX}${index}`
-  /*
-   * Live for a MOVE as well as for a new block.
-   *
-   * Gated on `placing` alone at first, which meant a block being dragged had no
-   * gap to land on — it lifted, and dropped back exactly where it started. The
-   * page is the drop target for both gestures; only the limit differs, and only
-   * for a new block, since moving one adds nothing.
-   */
-  const disabled = !dragging || (placing && atLimit)
-  const { setNodeRef } = useDroppable({ id, disabled })
+  const id = gapId(index, cellId)
+  const { setNodeRef } = useDroppable({ id, disabled: !dragging })
 
-  if (placing && atLimit) return null
   const active = over === id
+  const show = dragging || always
 
   return (
     <div
       ref={setNodeRef}
       className={`relative flex items-center justify-center transition-all ${
-        dragging ? 'my-1 h-9' : '-my-1.5 h-3'
+        show ? 'my-1 h-9' : '-my-1.5 h-3'
       }`}
     >
-      {dragging && (
+      {show && (
         <span
           className={`pointer-events-none absolute inset-x-0 flex h-full items-center justify-center rounded-control border border-dashed transition ${
             active ? 'border-brand bg-brand-soft' : 'border-border-strong bg-surface-2/40'
           }`}
         >
           <span className={`text-xs font-medium ${active ? 'text-brand-ink' : 'text-muted'}`}>
-            {active ? 'Drop it here' : 'Here'}
+            {active ? 'Drop it here' : always && !dragging ? 'Empty' : 'Here'}
           </span>
         </span>
       )}
@@ -103,7 +108,7 @@ function InsertPoint({
 }
 
 /**
- * One block on the page, with the chrome that makes it selectable and draggable.
+ * One block, with the chrome that makes it selectable and draggable.
  *
  * The rendered document goes inside `pointer-events-none` so a click cannot
  * land on something in the preview, and an invisible full-size button sits over
@@ -114,18 +119,19 @@ function CanvasBlock({
   block,
   html,
   selected,
-  removable,
   placing,
   onSelect,
   onRemove,
+  children,
 }: {
   block: DocBlock
   html: string
   selected: boolean
-  removable: boolean
   placing: boolean
   onSelect: () => void
   onRemove: () => void
+  /** A row draws its cells here instead of rendered markup. */
+  children?: React.ReactNode
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: block.id,
@@ -150,26 +156,25 @@ function CanvasBlock({
         ref={box}
         className="relative rounded-control"
         style={
-          selected
-            ? { outline: '2px solid var(--color-brand)', outlineOffset: 4 }
-            : undefined
+          selected ? { outline: '2px solid var(--color-brand)', outlineOffset: 4 } : undefined
         }
       >
-        {/* The document itself. Inert, so the preview cannot be interacted
-            with by accident — a link in a footer must not navigate away from
-            the designer. */}
-        <div className="pointer-events-none" dangerouslySetInnerHTML={{ __html: html }} />
+        {children ?? (
+          <div className="pointer-events-none" dangerouslySetInnerHTML={{ __html: html }} />
+        )}
 
         {/* Nothing to look at is still something to select — a notes block on
             an order with no notes renders empty, and a designer who cannot see
             it cannot move it. */}
-        {html.trim() === '' && (
+        {!children && html.trim() === '' && (
           <p className="rounded-control border border-dashed border-border-strong px-3 py-2 text-xs text-muted">
             {def.label} — nothing to show on this example document.
           </p>
         )}
 
-        {!placing && (
+        {/* A row's own click target must not cover its cells, or nothing inside
+            one could ever be selected. */}
+        {!placing && !children && (
           <button
             type="button"
             aria-label={`Select ${def.label}`}
@@ -179,14 +184,12 @@ function CanvasBlock({
           />
         )}
 
-        {/* The toolbar. Above the block so it never covers the first line of
-            what it labels. */}
         <div
           className={`absolute -top-3 right-2 z-[2] flex items-center gap-1 rounded-pill border border-border bg-surface px-1.5 py-0.5 shadow-card transition ${
             selected ? 'opacity-100' : 'opacity-0 focus-within:opacity-100 hover:opacity-100'
           }`}
         >
-          {/* Spread first so our own role and label win — see BlockPalette. */}
+          {/* Spread first so our own role and label win. */}
           <span
             {...attributes}
             {...listeners}
@@ -198,9 +201,18 @@ function CanvasBlock({
           >
             <Icons.DragHandle aria-hidden className="h-3.5 w-3.5" />
           </span>
-          <span className="px-1 text-xs text-muted">{def.label}</span>
+          {/* A row's label is also how you select it, since its body belongs to
+              its cells. */}
+          <button
+            type="button"
+            onClick={onSelect}
+            className="px-1 text-xs text-muted hover:text-ink"
+            data-kit-ok
+          >
+            {def.label}
+          </button>
           {def.required && <Badge tone="brand">Required</Badge>}
-          {removable && (
+          {!def.required && (
             <Button
               size="sm"
               variant="danger-ghost"
@@ -217,6 +229,65 @@ function CanvasBlock({
   )
 }
 
+/**
+ * A column of blocks with a gap above each — the page, or one cell.
+ *
+ * One component for both, because they are the same thing at different widths.
+ * The only difference a caller passes is which cell it is (null for the page),
+ * and that only decides what the gap ids say.
+ */
+function BlockColumn({
+  blocks,
+  cellId,
+  blockHtml,
+  selectedId,
+  dragging,
+  placing,
+  over,
+  onSelect,
+  onRemove,
+  renderRow,
+}: {
+  blocks: DocBlock[]
+  cellId: string | null
+  blockHtml: Record<string, string>
+  selectedId: string | null
+  dragging: boolean
+  placing: boolean
+  over: string | null
+  onSelect: (id: string) => void
+  onRemove: (id: string) => void
+  /** Only the page draws rows; a cell cannot contain one. */
+  renderRow?: (block: DocBlock) => React.ReactNode
+}) {
+  return (
+    <>
+      <InsertPoint
+        index={0}
+        cellId={cellId}
+        dragging={dragging}
+        over={over}
+        always={blocks.length === 0}
+      />
+      {blocks.map((b, i) => (
+        <div key={b.id}>
+          <CanvasBlock
+            block={b}
+            html={blockHtml[b.id] ?? ''}
+            selected={selectedId === b.id}
+            placing={placing}
+            onSelect={() => onSelect(b.id)}
+            onRemove={() => onRemove(b.id)}
+          >
+            {b.kind === 'row' ? renderRow?.(b) : undefined}
+          </CanvasBlock>
+          <InsertPoint index={i + 1} cellId={cellId} dragging={dragging} over={over} />
+        </div>
+      ))}
+    </>
+  )
+}
+
 export default function DocumentCanvas({
   spec,
   blockHtml,
@@ -224,7 +295,6 @@ export default function DocumentCanvas({
   dragging,
   placing,
   over,
-  atLimit,
   onSelect,
   onRemove,
 }: {
@@ -236,87 +306,64 @@ export default function DocumentCanvas({
   dragging: boolean
   placing: boolean
   over: string | null
-  atLimit: boolean
   onSelect: (id: string) => void
   onRemove: (id: string) => void
 }) {
-  const ids = spec.blocks.map((b) => b.id)
-
   /*
-   * Blocks are laid out in ROWS so a left/right pair sits side by side, exactly
-   * as it will print — the same grouping compile.ts does. Dragging still works
-   * on the flat list underneath: `SortableContext` is given every id in order,
-   * so a block can be pulled out of a pair and dropped anywhere.
+   * Every block id, page and cells alike, in one SortableContext.
+   *
+   * A block can be dragged out of a cell and onto the page, or from one cell to
+   * another, so they all have to be sortable siblings as far as dnd-kit is
+   * concerned. Where a drop LANDS is decided by the gap it hit, not by this
+   * list.
    */
-  const rows = rowsOf(spec.blocks)
+  const ids = allBlocks(spec).map((b) => b.id)
 
-  const removableCount = (kind: DocBlock['kind']) => !DOC_BLOCK_CATALOG[kind].required
-
-  let flatIndex = 0
+  const renderRow = (row: DocBlock) => {
+    const cells = row.cells ?? []
+    const widths = cellWidths(cells)
+    return (
+      <div className="flex items-start gap-4">
+        {cells.map((cell: RowCell, i: number) => (
+          <div
+            key={cell.id}
+            style={{ width: `${widths[i].toFixed(2)}%`, minWidth: 0 }}
+            className="rounded-control border border-dashed border-border/60 px-2"
+          >
+            <BlockColumn
+              blocks={cell.blocks}
+              cellId={cell.id}
+              blockHtml={blockHtml}
+              selectedId={selectedId}
+              dragging={dragging}
+              placing={placing}
+              over={over}
+              onSelect={onSelect}
+              onRemove={onRemove}
+            />
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <SortableContext items={ids} strategy={verticalListSortingStrategy}>
       {/* The paper. A fixed maximum width at the proportions the document
-          prints at, on the page's own surface, so what is being arranged looks
-          like a sheet rather than like a form. */}
+          prints at, so what is being arranged looks like a sheet. */}
       <div className="mx-auto w-full max-w-[52rem] rounded-card border border-border bg-surface p-8">
-        <InsertPoint index={0} dragging={dragging} placing={placing} over={over} atLimit={atLimit} />
-
-        {rows.map((row) => {
-          if ('full' in row) {
-            const i = ++flatIndex
-            return (
-              <div key={row.full.id}>
-                <CanvasBlock
-                  block={row.full}
-                  html={blockHtml[row.full.id] ?? ''}
-                  selected={selectedId === row.full.id}
-                  removable={removableCount(row.full.kind)}
-                  placing={placing}
-                  onSelect={() => onSelect(row.full.id)}
-                  onRemove={() => onRemove(row.full.id)}
-                />
-                <InsertPoint index={i} dragging={dragging} placing={placing} over={over} atLimit={atLimit} />
-              </div>
-            )
-          }
-
-          // A pair. Two gaps are skipped deliberately: dropping BETWEEN a
-          // left and its right would break the pair, and there is no way to
-          // say "into the left half" that a designer would predict. Pull one
-          // out first, then place it.
-          flatIndex += 2
-          const i = flatIndex
-          return (
-            <div key={row.left.id}>
-              <div className="flex items-start justify-between gap-8">
-                <div className="min-w-0 flex-1">
-                  <CanvasBlock
-                    block={row.left}
-                    html={blockHtml[row.left.id] ?? ''}
-                    selected={selectedId === row.left.id}
-                    removable={removableCount(row.left.kind)}
-                    placing={placing}
-                    onSelect={() => onSelect(row.left.id)}
-                    onRemove={() => onRemove(row.left.id)}
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <CanvasBlock
-                    block={row.right}
-                    html={blockHtml[row.right.id] ?? ''}
-                    selected={selectedId === row.right.id}
-                    removable={removableCount(row.right.kind)}
-                    placing={placing}
-                    onSelect={() => onSelect(row.right.id)}
-                    onRemove={() => onRemove(row.right.id)}
-                  />
-                </div>
-              </div>
-              <InsertPoint index={i} dragging={dragging} placing={placing} over={over} atLimit={atLimit} />
-            </div>
-          )
-        })}
+        <BlockColumn
+          blocks={spec.blocks}
+          cellId={null}
+          blockHtml={blockHtml}
+          selectedId={selectedId}
+          dragging={dragging}
+          placing={placing}
+          over={over}
+          onSelect={onSelect}
+          onRemove={onRemove}
+          renderRow={renderRow}
+        />
       </div>
     </SortableContext>
   )

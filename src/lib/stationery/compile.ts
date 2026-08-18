@@ -1,5 +1,10 @@
 import { getDocType, findToken } from './catalog'
-import { DOC_BLOCK_CATALOG, type DocBlock, type DocumentSpec } from './blocks'
+import {
+  DOC_BLOCK_CATALOG,
+  type DocBlock,
+  type DocumentSpec,
+  type RowCell,
+} from './blocks'
 
 /**
  * A block document, compiled to the markup the existing renderer consumes.
@@ -255,6 +260,11 @@ function compileBlock(b: DocBlock, docKey: string): string {
       return `<hr class="border-border">`
     case 'spacer':
       return `<div class="h-6"></div>`
+    case 'row':
+      // Handled by compileDocument, which knows the widths. A row reached
+      // here would be a row inside a cell, which the validator refuses.
+      return ''
+
     case 'html':
       // Passed through as written. sanitiseTemplate runs over the whole
       // compiled document at save, so this is no more trusted than any other
@@ -268,32 +278,22 @@ function compileBlock(b: DocBlock, docKey: string): string {
 /* ── laying blocks out ───────────────────────────────────────────────────── */
 
 /**
- * Group the flat list into rows.
+ * The widths of a row's cells, as percentages that add to 100.
  *
- * A `left` block pairs with the `right` block that follows it into one
- * two-column row; anything else spans the page. Two columns and no more,
- * because a printed document is a flow: three columns of an unknown-length
- * table is a page that reflows differently on every order.
+ * A cell may set its own; the ones that do not share what is left, evenly. That
+ * is what makes "a wide letterhead beside a narrow date" expressible without
+ * making every designer do arithmetic.
  *
- * A `left` with nothing after it, or a `right` on its own, simply spans — a
- * half-width block alone on a row looks like a mistake, and dragging its
- * partner away should not leave a hole.
+ * If the explicit widths already reach or exceed 100 there is nothing to share,
+ * so the remainder is spread as a minimum rather than as zero — a column of
+ * zero width is a column whose contents vanish, and vanishing is never the
+ * answer a designer was reaching for.
  */
-type Row = { left: DocBlock; right: DocBlock } | { full: DocBlock }
-
-export function rowsOf(blocks: DocBlock[]): Row[] {
-  const rows: Row[] = []
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i]
-    const next = blocks[i + 1]
-    if (b.span === 'left' && next?.span === 'right') {
-      rows.push({ left: b, right: next })
-      i++
-      continue
-    }
-    rows.push({ full: b })
-  }
-  return rows
+export function cellWidths(cells: RowCell[]): number[] {
+  const fixed = cells.reduce((sum, c) => sum + (c.width ?? 0), 0)
+  const autos = cells.filter((c) => c.width === undefined).length
+  const each = autos > 0 ? Math.max((100 - fixed) / autos, 4) : 0
+  return cells.map((c) => c.width ?? each)
 }
 
 /**
@@ -308,27 +308,44 @@ export function compileDocument(spec: DocumentSpec, docKey: string): string {
 
   const parts: string[] = []
 
-  for (const row of rowsOf(spec.blocks)) {
-    if ('full' in row) {
-      const html = compileBlock(row.full, docKey)
-      if (!html) continue
-      const align = row.full.align ? ALIGN_CLASS[row.full.align] : ''
-      const wrap = needsWrapper(row.full) ? 'sd-block' : ''
-      parts.push(`<section class="${wrap} py-4 ${align}">${html}</section>`)
+  for (const block of spec.blocks) {
+    if (block.kind === 'row') {
+      const cells = block.cells ?? []
+      if (cells.length === 0) continue
+
+      const widths = cellWidths(cells)
+      const columns = cells
+        .map((cell, i) => {
+          // Each cell is a STACK, so its blocks are compiled and joined the
+          // same way the page compiles its own — one code path for "a column
+          // of things", whether the column is the page or a sixth of it.
+          const inner = cell.blocks
+            .map((b) => {
+              const html = compileBlock(b, docKey)
+              if (!html) return ''
+              const align = b.align ? ALIGN_CLASS[b.align] : ''
+              const wrap = needsWrapper(b) ? 'sd-block' : ''
+              return `<div class="${wrap} ${align}">${html}</div>`
+            })
+            .filter(Boolean)
+            .join('')
+
+          // `min-width:0` is load-bearing: without it a long product
+          // description in one cell refuses to wrap and pushes the others off
+          // the page, which is the classic flex-child overflow.
+          return `<div style="width:${widths[i].toFixed(2)}%;min-width:0">${inner}</div>`
+        })
+        .join('')
+
+      parts.push(`<section class="flex items-start gap-6 py-4">${columns}</section>`)
       continue
     }
 
-    const l = compileBlock(row.left, docKey)
-    const r = compileBlock(row.right, docKey)
-    const lAlign = row.left.align ? ALIGN_CLASS[row.left.align] : ''
-    const rAlign = row.right.align ? ALIGN_CLASS[row.right.align] : 'text-right'
-
-    parts.push(
-      `<section class="flex items-start justify-between gap-8 py-4">` +
-        `<div class="${lAlign}">${l}</div>` +
-        `<div class="${rAlign}">${r}</div>` +
-        `</section>`,
-    )
+    const html = compileBlock(block, docKey)
+    if (!html) continue
+    const align = block.align ? ALIGN_CLASS[block.align] : ''
+    const wrap = needsWrapper(block) ? 'sd-block' : ''
+    parts.push(`<section class="${wrap} py-4 ${align}">${html}</section>`)
   }
 
   return `${STYLE}<article class="${PAGE}">${parts.join('')}</article>`
@@ -360,7 +377,14 @@ function needsWrapper(b: DocBlock): boolean {
 export function compileBlocks(spec: DocumentSpec, docKey: string): Record<string, string> {
   const out: Record<string, string> = {}
   if (!spec || !Array.isArray(spec.blocks)) return out
-  for (const b of spec.blocks) out[b.id] = compileBlock(b, docKey)
+  for (const b of spec.blocks) {
+    out[b.id] = compileBlock(b, docKey)
+    if (b.kind === 'row') {
+      for (const c of b.cells ?? []) {
+        for (const inner of c.blocks) out[inner.id] = compileBlock(inner, docKey)
+      }
+    }
+  }
   return out
 }
 

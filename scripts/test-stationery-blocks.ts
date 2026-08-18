@@ -17,13 +17,17 @@
  */
 import { PURCHASE_ORDER_DEFAULT } from '../src/lib/stationery/defaults/purchaseOrder'
 import { PURCHASE_ORDER_BLOCKS } from '../src/lib/stationery/defaults/purchaseOrderBlocks'
-import { compileDocument, rowsOf, supportsBlocks } from '../src/lib/stationery/compile'
+import { cellWidths, compileDocument, supportsBlocks } from '../src/lib/stationery/compile'
 import {
   parseSpec,
   serialiseSpec,
   validateSpec,
   blockKindsFor,
+  allBlocks,
+  locate,
   newBlock,
+  patchBlock,
+  removeBlock,
   MAX_BLOCKS,
   type DocumentSpec,
 } from '../src/lib/stationery/blocks'
@@ -215,18 +219,109 @@ console.log('\n-- the line table columns --')
 
 /* ── layout ──────────────────────────────────────────────────────────────── */
 
-console.log('\n-- two columns, and only two --')
+console.log('\n-- rows and cells --')
 {
-  const rows = rowsOf(PURCHASE_ORDER_BLOCKS.blocks)
-  ok('a left/right pair becomes one row',
-    rows.some((r) => 'left' in r && r.left.kind === 'letterhead' && r.right.kind === 'docTitle'))
+  // Widths: the point of the feature. Explicit ones are honoured, the rest
+  // share what is left, and nothing is ever given zero — a column of zero
+  // width is a column whose contents vanish.
+  ok('columns with no width share evenly',
+    JSON.stringify(cellWidths([{ id: 'a', blocks: [] }, { id: 'b', blocks: [] }])) === '[50,50]')
 
-  // A half-width block whose partner was dragged away must not leave a hole.
-  const orphan = rowsOf([newBlock('letterhead', { span: 'left' }), newBlock('lineTable')])
-  ok('a left block with no partner spans the page', 'full' in orphan[0])
+  ok('an explicit width is honoured and the rest share the remainder',
+    JSON.stringify(
+      cellWidths([
+        { id: 'a', width: 60, blocks: [] },
+        { id: 'b', blocks: [] },
+        { id: 'c', blocks: [] },
+      ]),
+    ) === '[60,20,20]')
 
-  const strayRight = rowsOf([newBlock('lineTable'), newBlock('totals', { span: 'right' })])
-  ok('a stray right block spans too', strayRight.every((r) => 'full' in r))
+  const crowded = cellWidths([
+    { id: 'a', width: 90, blocks: [] },
+    { id: 'b', width: 30, blocks: [] },
+    { id: 'c', blocks: [] },
+  ])
+  ok('a column left with nothing to share still gets a width', crowded[2] > 0, String(crowded))
+
+  // Three columns is the thing the two-block model could not express at all.
+  const three: DocumentSpec = {
+    version: 1,
+    blocks: [
+      ...PURCHASE_ORDER_BLOCKS.blocks,
+      {
+        id: 'r3',
+        kind: 'row',
+        cells: [
+          { id: 'c1', blocks: [newBlock('text', { text: 'One' })] },
+          { id: 'c2', blocks: [newBlock('text', { text: 'Two' })] },
+          { id: 'c3', blocks: [newBlock('text', { text: 'Three' })] },
+        ],
+      },
+    ],
+  }
+  const html = compileDocument(three, 'purchase_order')
+  ok('a three-column row compiles to three columns',
+    (html.match(/width:33\.33%/g) ?? []).length === 3, html.slice(-260))
+  ok('...with all three blocks in it', /One/.test(html) && /Two/.test(html) && /Three/.test(html))
+
+  // A cell is a STACK, which is what makes "the name under the logo" one cell.
+  const stacked: DocumentSpec = {
+    version: 1,
+    blocks: [
+      ...PURCHASE_ORDER_BLOCKS.blocks,
+      {
+        id: 'r2',
+        kind: 'row',
+        cells: [
+          {
+            id: 'cA',
+            blocks: [newBlock('text', { text: 'Top' }), newBlock('text', { text: 'Bottom' })],
+          },
+          { id: 'cB', blocks: [] },
+        ],
+      },
+    ],
+  }
+  const stackedHtml = compileDocument(stacked, 'purchase_order')
+  ok('a cell holds more than one block',
+    stackedHtml.indexOf('Top') < stackedHtml.indexOf('Bottom') &&
+      stackedHtml.includes('Top') && stackedHtml.includes('Bottom'))
+
+  ok('the shipped default uses a row for its header',
+    PURCHASE_ORDER_BLOCKS.blocks.some(
+      (b) => b.kind === 'row' && (b.cells ?? []).length === 2,
+    ))
+}
+
+/* ── the helpers the designer edits through ──────────────────────────────── */
+
+console.log('\n-- finding and changing a block anywhere --')
+{
+  const spec = PURCHASE_ORDER_BLOCKS
+
+  ok('a block on the page is found', locate(spec, 'po-lines')?.cellId === null)
+  ok('a block inside a cell is found, with its cell',
+    locate(spec, 'po-letterhead')?.cellId === 'po-header-l')
+  ok('a block that does not exist is null', locate(spec, 'nope') === null)
+
+  ok('allBlocks reaches into cells',
+    allBlocks(spec).some((b) => b.id === 'po-letterhead') &&
+      allBlocks(spec).length > spec.blocks.length)
+
+  const renamed = patchBlock(spec, 'po-title', { title: 'ORDER' })
+  ok('a block inside a cell can be patched by id',
+    locate(renamed, 'po-title')?.block.title === 'ORDER')
+  ok('...without disturbing the page-level blocks',
+    locate(renamed, 'po-lines')?.block.columns?.length === 4)
+
+  const pruned = removeBlock(spec, 'po-deliver')
+  ok('a block inside a cell can be removed by id', locate(pruned, 'po-deliver') === null)
+  ok('...leaving its neighbours in the same cell',
+    locate(pruned, 'po-details')?.cellId === 'po-parties-r')
+
+  const noRow = removeBlock(spec, 'po-header')
+  ok('removing a row takes its contents with it',
+    locate(noRow, 'po-letterhead') === null && locate(noRow, 'po-title') === null)
 }
 
 /* ── reading a stored spec ───────────────────────────────────────────────── */
@@ -277,10 +372,16 @@ console.log('\n-- validation --')
     JSON.stringify(validateSpec(PURCHASE_ORDER_BLOCKS, 'purchase_order').errors))
 
   for (const kind of ['docTitle', 'lineTable', 'totals'] as const) {
-    const without: DocumentSpec = {
-      version: 1,
-      blocks: PURCHASE_ORDER_BLOCKS.blocks.filter((b) => b.kind !== kind),
-    }
+    /*
+     * Removed from the WHOLE document, cells included.
+     *
+     * Filtering only the top level used to be enough; with rows it is not —
+     * docTitle lives inside a cell in the shipped design, so a top-level filter
+     * left it in place and the "is it refused" check passed vacuously. Found by
+     * this suite failing once docTitle moved into the header row.
+     */
+    const target = allBlocks(PURCHASE_ORDER_BLOCKS).find((b) => b.kind === kind)!
+    const without = removeBlock(PURCHASE_ORDER_BLOCKS, target.id)
     ok(`a document without "${kind}" is refused`, !validateSpec(without, 'purchase_order').ok)
   }
 

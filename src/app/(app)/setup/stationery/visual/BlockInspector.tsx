@@ -11,6 +11,7 @@ import {
   Field,
   Icons,
   Input,
+  NumberInput,
   Select,
   Textarea,
 } from '@/components/ui'
@@ -18,8 +19,10 @@ import {
   DOC_BLOCK_CATALOG,
   type DetailRow,
   type DocBlock,
+  MAX_ROW_CELLS,
+  newCellId,
   type DocBlockAlign,
-  type DocBlockSpan,
+  type RowCell,
 } from '@/lib/stationery/blocks'
 import ColumnEditor from './ColumnEditor'
 
@@ -72,34 +75,29 @@ export default function BlockInspector({
     <Card>
       <CardHeader title={def.label} description={def.hint} />
       <CardBody className="flex flex-col gap-4">
-        {/* Where it sits. Not offered for a rule or a spacer, which span by
-            nature and would only ever be half a hairline. */}
-        {block.kind !== 'rule' && block.kind !== 'spacer' && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field
-              label="Across the page"
-              hint="Two half-width blocks in a row sit side by side."
+        {/* A row is a container: it has columns, not text. */}
+        {block.kind === 'row' && (
+          <RowCells
+            cells={block.cells ?? []}
+            onChange={(cells) => onChange({ cells })}
+          />
+        )}
+
+        {/* Where a block sits across the page is now decided by WHICH COLUMN it
+            was dropped into, so there is nothing to set here — only how its own
+            text lines up inside whatever width it has. */}
+        {block.kind !== 'rule' && block.kind !== 'spacer' && block.kind !== 'row' && (
+          <Field label="Text">
+            <Select
+              className="w-40"
+              value={block.align ?? 'left'}
+              onChange={(e) => onChange({ align: e.target.value as DocBlockAlign })}
             >
-              <Select
-                value={block.span ?? 'full'}
-                onChange={(e) => onChange({ span: e.target.value as DocBlockSpan })}
-              >
-                <option value="full">Full width</option>
-                <option value="left">Left half</option>
-                <option value="right">Right half</option>
-              </Select>
-            </Field>
-            <Field label="Text">
-              <Select
-                value={block.align ?? 'left'}
-                onChange={(e) => onChange({ align: e.target.value as DocBlockAlign })}
-              >
-                <option value="left">Left</option>
-                <option value="center">Centred</option>
-                <option value="right">Right</option>
-              </Select>
-            </Field>
-          </div>
+              <option value="left">Left</option>
+              <option value="center">Centred</option>
+              <option value="right">Right</option>
+            </Select>
+          </Field>
         )}
 
         {/* A heading above the block, where one makes sense. */}
@@ -184,6 +182,97 @@ export default function BlockInspector({
         )}
       </CardBody>
     </Card>
+  )
+}
+
+/**
+ * How many columns a row has, and how wide each is.
+ *
+ * ── SPLITTING IS THE WHOLE POINT ──────────────────────────────────────────
+ *
+ * Choose 2 to 6 and the row becomes that many columns; blocks are then dragged
+ * into them on the page. Removing a column would strand whatever is in it, so a
+ * reduction moves those blocks into the last surviving column rather than
+ * deleting them — losing a designer's work to a dropdown is never the right
+ * answer, and an unexpected block in the wrong column is visible and fixable.
+ *
+ * Widths are optional percentages. A column without one shares whatever the
+ * others leave, so the common case — even columns — needs no arithmetic, and
+ * "a wide letterhead beside a narrow date" is two numbers.
+ */
+function RowCells({
+  cells,
+  onChange,
+}: {
+  cells: RowCell[]
+  onChange: (next: RowCell[]) => void
+}) {
+  const setCount = (n: number) => {
+    if (n === cells.length) return
+    if (n > cells.length) {
+      const extra = Array.from({ length: n - cells.length }, () => ({
+        id: newCellId(),
+        blocks: [],
+      }))
+      onChange([...cells, ...extra])
+      return
+    }
+    // Shrinking: everything from the columns being removed lands in the last
+    // one that survives.
+    const kept = cells.slice(0, n)
+    const orphaned = cells.slice(n).flatMap((c) => c.blocks)
+    const last = kept[kept.length - 1]
+    onChange([
+      ...kept.slice(0, -1),
+      { ...last, blocks: [...last.blocks, ...orphaned] },
+    ])
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Field label="Columns" hint="Drop blocks into each one on the page.">
+        <Select
+          className="w-40"
+          value={String(cells.length)}
+          onChange={(e) => setCount(Number(e.target.value))}
+        >
+          {Array.from({ length: MAX_ROW_CELLS - 1 }, (_, i) => i + 2).map((n) => (
+            <option key={n} value={n}>
+              {n} columns
+            </option>
+          ))}
+        </Select>
+      </Field>
+
+      <Field
+        label="Widths"
+        hint="A percentage each, or leave blank to share what is left evenly."
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          {cells.map((c, i) => (
+            <NumberInput
+              key={c.id}
+              aria-label={`Width of column ${i + 1}`}
+              className="w-20"
+              value={c.width ?? ''}
+              placeholder="auto"
+              min={1}
+              max={100}
+              onChange={(e) => {
+                const n = Number(e.target.value)
+                onChange(
+                  cells.map((x, j) =>
+                    j === i
+                      ? { ...x, width: Number.isFinite(n) && n > 0 ? n : undefined }
+                      : x,
+                  ),
+                )
+              }}
+            />
+          ))}
+        </div>
+      </Field>
+    </div>
   )
 }
 
