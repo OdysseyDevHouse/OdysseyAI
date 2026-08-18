@@ -740,6 +740,21 @@ export const SETTING_DEFAULTS = {
   sms_client_id: '',
   sms_client_secret: '',
 
+  /*
+   * ── WhatsApp ───────────────────────────────────────────────────────────
+   * The Meta WhatsApp Business Cloud API, per site rather than per
+   * deployment: the phone number belongs to the SHOP, not to the platform, so
+   * env vars would force every site to share one sender. Same storage rule as
+   * SMS above — plain settings rows, rendered masked, said out loud on the
+   * setup screen.
+   *
+   * '0' is off. Off is the only defensible default: switching it on sends
+   * messages from a business's own WhatsApp number, and Meta charges for them.
+   */
+  whatsapp_enabled: '0',
+  whatsapp_phone_id: '',
+  whatsapp_token: '',
+
   /** Text the customer when their statement has been emailed. */
   statement_sms_notify: '0',
 

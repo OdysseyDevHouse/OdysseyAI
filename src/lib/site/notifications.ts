@@ -28,6 +28,16 @@ export type NotificationEvent =
   | 'job_part_received'
   /** A promise was missed and nobody has replied yet (164). To one manager. */
   | 'sla_escalation'
+  /**
+   * An alert rule found something. Always addressed to a named person: a rule
+   * NAMES its recipients, so an audience-wide row would tell the whole shop
+   * about something one person asked to watch.
+   *
+   * One event for every rule kind rather than one per kind, because the kind is
+   * the rule's business and not the bell's — what the bell needs is a title, a
+   * line and somewhere to go, and all three come from the rule's own message.
+   */
+  | 'alert_fired'
 
 export type NotificationInput = {
   event: NotificationEvent
