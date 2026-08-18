@@ -1,0 +1,331 @@
+# Storefront customization: making a shop look and feel like its owner's
+
+A plan, partly implemented. Scope: take the online store from *one page builder
+with a brand colour* to **a shop an owner can make theirs** — the look, the
+listings, the navigation, and the ways of grouping stock that a catalogue needs
+and a department tree cannot express.
+
+Ordered in phases. Each ends shippable; no phase depends on a later one.
+
+---
+
+## What already existed, and what it meant for this
+
+The page builder is in unusually good shape — 19 section kinds, four page kinds,
+draft and publish per page, version history, scheduled publish, saved sections,
+presets, and a canvas that renders the *real* storefront component rather than a
+mock. Five phases of `page-builder-next.md` shipped. The **content** of a page
+was genuinely customizable.
+
+What was not customizable was **everything around the content**. Three gaps,
+found by reading the code rather than the summary:
+
+**Every shop resolved to the same picture.** `StoreChrome` overrode exactly one
+CSS variable — `--color-brand`. The other ~30 tokens were the back office's, so
+surfaces, corner radius, spacing, control height and header layout were
+identical for every store. A butchery and a boutique differed by an accent and a
+logo.
+
+**A department page could not show a department.** `publishedProducts` clamped
+to `Math.min(Math.max(limit ?? 60, 1), 120)` and ordered by `p.description`; the
+`offset` parameter existed and no route passed it. A department with 400
+products showed 120, alphabetically, forever, under a footnote telling the
+shopper to search. On the site the storefront suite runs against, that is 120 of
+**40,000**.
+
+**A merchant could not say what a group of products *is*.** There is no tag, no
+collection, no merchandising attribute. Departments are the inventory tree,
+shared with the till and the stockroom. "Gifts under R300", "Summer" and "New
+arrivals" are not departments and never will be.
+
+**The system is not live.** No customers, no data to migrate, no backwards
+compatibility — which is why Phase 0 was a refactor, and why it had to be first.
+
+---
+
+## What must survive every phase
+
+- **The preview IS the shop.** `BuilderCanvas` renders the same `HomeSections` a
+  shopper gets, via the `renderSection` seam.
+- **One resolver, two callers.** `resolveSectionContent` decides what a section
+  contains, for shop and builder alike.
+- **One emptiness rule**, now `SECTION_CATALOG[kind].isEmpty`.
+- **`normaliseSections` is the security boundary**, run on write, with hard caps.
+- **Key order is load-bearing.** The builder's dirty check compares
+  `JSON.stringify`; a field written in one branch and not another is a permanent
+  "unsaved changes" no saving clears. Phase 0 made this structural.
+- **Every owner-supplied URL goes through `safeLinkTarget`.**
+- **No raw HTML, no third-party scripts.**
+- **House rules** (`AGENTS.md`): kit components, tokens only, no raw colour.
+- **Migrations get applied, not written** — `site-migrate.mjs` per site, verified
+  against `information_schema`.
+
+---
+
+## Phase 0 — The section catalog ✅ DONE
+
+> **Shipped.** `src/lib/storefront/catalog.ts` declares each of the 19 kinds:
+> label, hint, icon, legal page kinds, starting values, emptiness rule, and the
+> stored fields with their coercions. `SECTION_LABEL`, `SECTION_HINT`,
+> `kindsFor`, `newSection`, `sectionIsEmpty` and `normaliseSections` all read it.
+> `Builder.tsx` fell from 4,207 lines to ~4,000 while absorbing new features.
+>
+> Verified as byte-identical at every step: all 19 kinds serialise exactly as
+> before (6,472 bytes over 20 sections, including hostile input), `kindsFor`
+> returns the same list for all four page kinds, and `sectionIsEmpty` agrees
+> across 57 cases.
+>
+> Three decisions worth recording, all found by testing rather than reading:
+>
+> - **The catalog owns `SECTION_KINDS` and the shared defaults; the model
+>   re-exports them.** Importing runtime values back from the model made a
+>   cycle, and whichever module node loaded second read `undefined` and threw
+>   before a line of the app ran. `tsc` was silent, and the builder suite passed
+>   because it happens to import the model first.
+> - **`BASE` spreads AFTER `title`, never before.** The two orders hold identical
+>   values and serialise differently — the permanent unsaved-changes bug, caught
+>   on all nineteen kinds by a parity check.
+> - **`HomeSection` stays flat.** A discriminated union would force narrowing at
+>   nine call sites; sections are interchangeable everywhere except rendering and
+>   editing, which is why drag/drop, versioning and the diff are simple.
+
+**One correction to the original plan.** It predicted a generic renderer would
+replace ~700 lines of inspector. It does not: that chain is 33 plain controls
+tangled with 29 conditionals, 14 contextual warnings and 7 bespoke editors — a
+product row's options depend on the page kind and the published departments, a
+banner back-fills alt text from the library, a video reduces a pasted URL to an
+id as it is typed. A schema able to express that would be a worse language than
+the JSX. Three genuinely plain kinds are declarative; sixteen keep their panels,
+and `ui` is optional on a field so the write boundary stays complete either way.
+
+---
+
+## Phase 1 — The theme layer ✅ DONE
+
+> **Shipped.** `sql/site/183_storefront_design_tokens.sql` applied to both active
+> sites and verified against `information_schema`.
+> `src/lib/storefront/tokens.ts` holds the tokens, palettes, presets and
+> `themeVars`; `ThemePicker.tsx` is the panel; `StoreChrome` applies the whole
+> set. `npm run test:storefront-theme` walks the space.
+
+Eight controls, each a key into a curated list: surface, ink, corners, density,
+button style, page width, product density, and a heading font that can differ
+from the body. Six ready-made looks set them together, because eight separate
+pickers is a colour wheel by another name — every individual choice is safe and
+the COMBINATION is where a shop looks assembled rather than designed.
+
+**Stored as JSON, not columns.** 040 and 077 chose columns and were right then;
+the reasoning inverted. The theme scalars are read whole, written whole, never
+filtered or joined — already a document spread across seventeen columns. The
+type safety a column would give was never there: `readTheme` has always been the
+coercion layer.
+
+**Draft and published**, unlike the rest of the theme. A single colour is safe
+to apply on save; eight controls that restyle every page are not, because an
+owner will change half a look and be interrupted. It publishes *after* the
+layout — a publish that half-succeeded should leave the shop looking as it did,
+not restyled to match a page that never landed.
+
+Two findings, both from checking rather than looking:
+
+- **The first palettes failed AA in eight places**, all `muted` on a tinted fill
+  — the "slightly grey on slightly beige" that looks fine to whoever picked it
+  and is unreadable on a phone in daylight. Tightest surviving pairing: 4.84.
+- **Three of six presets shipped a brand colour unreadable as a link on their
+  own background**, worst at 2.27. A brand colour has two jobs that pull
+  opposite ways: filling a button under a white label, and colouring text on the
+  page. One hex cannot always do both. The fill keeps exactly what the owner
+  chose — that is the one they hold against their signage — and the text shade is
+  derived from it and the surface, stepping darker on a light shop and lighter on
+  a dark one until it clears AA. Verified over every swatch and seven typed
+  colours including white, black and pure yellow: tightest 4.52.
+
+**Every variable is written, including unchanged ones.** The storefront sits
+inside the app's stylesheet, which redefines them all under
+`prefers-color-scheme` — so emitting only the diff would leave the rest
+following the shopper's phone, and a shop that chose "paper" would render as
+paper cards on a near-black canvas for everyone with dark mode on. The shop's
+look wins; `color-scheme` goes with it. Neither Shopify nor WooCommerce flips a
+storefront because a visitor's OS is set that way.
+
+Two bugs a browser pass caught and no test would have: the `<body>` sits outside
+the themed subtree and kept the app's canvas, showing as a white band under
+short pages and behind every overscroll; and an import landed above the
+`'use client'` directive in `BuilderCanvas` and 500'd the whole screen.
+
+---
+
+## Phase 2 — Listing pages that can show a department
+
+### Done: paging, sorting, and an honest count ✅
+
+> **Shipped.** Four sorts mapped through a literal record; `p.id` as a tie-break
+> on every one; `publishedProductsCount` sharing ONE extracted filter with the
+> listing; `PER_PAGE = 24` with a numbered `Pager`; a redirect for pages past the
+> end; `SortBar` chips beside the facets. 13 assertions added.
+
+Every sort ends with `p.id`. Without it two products at the same price have no
+defined order *between* pages, so one shows twice and another never appears —
+which reads as the catalogue losing stock rather than as a sort bug.
+
+The count is a second query over the *same* filter, extracted rather than
+copied: two copies drift on the first facet anybody adds, and the symptom is a
+pager promising pages the grid comes back empty for.
+
+Two test bugs worth recording, both mine:
+
+- **"by name really is" compared a field that does not exist**, so it compared
+  `undefined` to `undefined` and passed for every possible input. A check that
+  reports success without looking is worse than one that fails.
+- **Corrected, it then failed a correct `ORDER BY`.** JavaScript's `<=` sorts by
+  code unit; MySQL's collation is case- and accent-insensitive. It uses
+  `localeCompare` now.
+
+### Remaining: the listing preset
+
+`online_listing_presets`, one row per department plus a NULL-department row that
+is the shop's default. Columns: `columns_desktop`, `columns_phone`, `per_page`,
+`default_sort`, `card_fields` (CSV), `facets` (CSV), `layout`.
+
+**Shop-wide default with per-department override, not per-department only.** A
+shop with forty departments will not configure forty rows, and forty rows that
+drifted apart is a shop assembled from parts. Resolution mirrors
+`departmentPageFor`'s existing cascade.
+
+**Grid columns must not become a constructed class name** — Tailwind extracts
+statically, so `grid-cols-${n}` is a class the stylesheet does not contain and
+the grid silently collapses to one column. `PRODUCT_GRID_CLASS` in `tokens.ts`
+is the pattern: a literal string per key.
+
+**Card fields matter more than they sound.** `Tile` always draws the department
+chip, save-% badge, stock badge, brand, title, variant count, stars, price, Add
+and Favourite — nine things on a tile 160px wide on a phone.
+
+### Remaining: product badges
+
+Two sources, one renderer. **Rule badges** on the shop default row ("added in
+the last N days", "top N sellers", "stock ≤ N"), each with a merchant-chosen
+label and an existing `Badge` tone. **Manual badges** — `online_badge` and
+`online_badge_tone` on `products` — because no rule infers "Halaal" or "Made
+here". Cap at two per tile. `badgesFor(product, rules)` stays a pure function in
+the model so the builder canvas shows what the shop shows.
+
+---
+
+## Phase 3 — Per-section styling and a columns block
+
+Replace `tone: plain|tinted` with five role-based controls: `background`
+(`none|tinted|surface|contrast`), `padding`, `width`
+(`contained|wide|full`), `align`, `divider`. Everything resolves through theme
+roles, never hex — the rule rich-text colours already establish. The constraint
+was never "two options", it was "from the palette".
+
+`width: 'full'` is the notable addition: a full-bleed hero is table stakes and
+currently impossible, because `main` is `max-w-6xl`. It needs the bleed outside
+the content column — generalise `toned()` into a `banded()` wrapper and move the
+width cap onto the sections that want it.
+
+**The columns block, depth 1 and non-recursive.** The documented refusal targets
+*recursive* containers — a tree of unbounded depth, undraggable and uncappable.
+That failure mode does not require refusing columns; it requires refusing
+nesting. Four rules make it safe: `columns` is legal only on kind `'columns'` and
+a child may never be one (checked before recursion, so depth is capped
+*structurally*); child kinds are a whitelist, not "everything minus columns";
+`MAX_COLUMN_CHILDREN = 4` and children count against `MAX_SECTIONS` via a running
+budget; ids stay globally unique so drag/drop, the diff and version history work
+unchanged. `describeLayoutChanges` and `pageWarnings` need a `flattenSections()`
+walk, or a banner with no alt text inside a column skips the publish warning.
+
+---
+
+## Phase 4 — Menus and collections
+
+**The menu editor.** `storefront_menus` (two fixed slugs, `main` and `footer` —
+this has one masthead and one footer, so an arbitrary-menu concept would need
+explaining for no gain) and `storefront_menu_items` with one level of nesting,
+enforced in the write path because a cycle here is an infinite render.
+
+The migration is the interesting part: if the table is empty the shop must
+render exactly as it does now, so `resolveMenu` returns the *generated* rail when
+there are no rows, and the screen's first action materialises the current
+departments and nav pages into rows. That is the only honest way to hand over an
+editor without a day where the menu is empty.
+
+**Collections** — the missing merchandising primitive. `storefront_collections`
+with `rule_kind` (`manual|special|newest|popular|brand|department`) plus a join
+table for manual picks. Manual *and* rule-based because both are real: a summer
+lookbook is hand-picked and must stay so, while "on special" must maintain
+itself — the argument `PRODUCT_SOURCES` already makes.
+
+Route `/store/[token]/k/[slug]`, a readable slug because a collection URL gets
+shared. `'collection'` joins `PAGE_KINDS`, bound by `collection_id` the way
+`'department'` is bound by `department_id`. **That combination is a lookbook, and
+a `split` over a `products` row sourced from the collection is shop-the-look** —
+no new block kinds needed.
+
+---
+
+## Phase 5 — The pages nobody can touch
+
+**A real cart page.** `/checkout` is the cart today, and no page says "here is
+your basket" without immediately asking for an address. The cart drawer is
+`md:hidden`, so desktop shoppers have no cart view at all. Add `/cart` (already
+in `RESERVED_SLUGS`) with a builder-editable strip below it, `kind='cart'`,
+restricted to `cards|text|richtext|products|testimonial|divider|spacer`.
+
+**The thank-you page.** `done/page.tsx` is 90 lines of fixed content on the
+highest-attention page in the funnel. Add `'thankyou'` to `PAGE_KINDS`, one row
+per site. The fixed confirmation block stays fixed — it carries the signed token
+— with sections below. **Constraint:** the page looks nothing up, deliberately,
+because the shopper is anonymous; `together` and `sameDepartment` are excluded.
+
+**Checkout, the safe subset only.** Policy links, one trust line, and a
+configurable order-note field. Nothing else. **No section-builder freedom on
+checkout, ever** — that is how a shop ships a Pay button below three product
+rows.
+
+Also cheap and embarrassing when a merchant finds them first:
+`page/[slug]/page.tsx` hard-codes `robots: { index: false }` while every other
+route calls `catalogueRobots`, so enabling indexing indexes products and
+silently excludes About/Delivery/Returns. And currency is hard-coded — `'R'` in
+`formatMoney`, `'ZAR'` in `productJsonLd`.
+
+---
+
+## Deliberately not in this plan
+
+- **A custom CSS field.** The safety half is already answered in
+  `storefrontModel.ts`. The stronger argument is support: a merchant with custom
+  CSS has a shop you cannot safely change, and every later fix becomes "did we
+  break someone's CSS?", unknowably. Shopify absorbs that with a theme
+  marketplace; a single-vendor retail product cannot. **Phase 1's presets are the
+  pressure valve.**
+- **Third-party embeds.** If demand appears, a validated `embed` kind with a
+  provider whitelist — the `video` pattern extended. Never a free `<script>` on a
+  page that takes payments.
+- **Bundles.** A pricing and stock construct, not a storefront one.
+  `productComposition.ts` is where it belongs; a storefront-only bundle sells
+  stock the till does not know left.
+- **A/B testing.** A small retailer lacks the traffic to reach significance.
+- **Per-breakpoint overrides.** Doubles every field for a case the container
+  queries already handle.
+- **Per-department product layouts** and **product-detail knobs** are real and
+  small, but wait until a shop has a reason to differ.
+
+---
+
+## Verification
+
+1. `npx tsc --noEmit` — zero errors in the files being changed.
+2. `npm run test:storefront`, `test:builder`, `test:storefront-theme`. Grepping
+   for FAIL misses a suite that throws — check the exit code and the tail.
+3. **Migrations applied, not written.** `site-migrate.mjs` per active site,
+   verified with `information_schema`. Schema drifts between sites.
+4. **A browser pass over the real screens**, every time. Phases 0, 1 and 2 each
+   produced a bug that `tsc` and the suites were silent on: an import above
+   `'use client'`, a body background outside the themed subtree, and a pager
+   reading "Showing 3993–14 of 14". Drive Chrome over CDP against :4100; the
+   storefront needs a token from `createPublicStoreToken`, and site 1's shop is
+   switched off, so use site 2.
+5. **Say what a cap covers.** The paging walk stops at 12 pages and prints it —
+   a silent cap reads as full coverage.
