@@ -153,7 +153,12 @@ async function runOne(
 
   /* 3. Run the check. */
   try {
-    const found = await evaluateRule(siteId, rule)
+    // Under the owner's name, not a system pseudo-user: anything an automation
+    // creates must answer "who raised this" with somebody you can go and ask.
+    const found = await evaluateRule(siteId, rule, {
+      userId: owner.id,
+      userName: owner.name,
+    })
 
     // A clean bill of health is a SUCCESSFUL run, not a notification. This is
     // the whole difference between an alert and a scheduled report: nothing was

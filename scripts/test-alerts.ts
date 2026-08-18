@@ -36,6 +36,7 @@ import {
 import { tickSite } from '../src/lib/alerts/tick'
 import { evaluateRule } from '../src/lib/alerts/registry'
 import { evaluateNegativeStock } from '../src/lib/alerts/kinds/negativeStock'
+import { evaluateLowStock } from '../src/lib/alerts/kinds/lowStock'
 import {
   ALERT_KINDS,
   defaultConfigFor,
@@ -50,6 +51,9 @@ const createdRules: number[] = []
 
 /** When this run began — the handle cleanup uses to find its own bell rows. */
 const startedAt = new Date()
+
+/** Draft orders the automation test raised, removed again on the way out. */
+const createdOrders: number[] = []
 
 function check(label: string, condition: boolean, detail = '') {
   console.log(`${condition ? '  ok  ' : ' FAIL '} ${label}${detail ? ` — ${detail}` : ''}`)
@@ -130,6 +134,7 @@ async function main() {
   await staleness(owner.id)
   await abandonedRunsAreReclaimed(owner.id)
   await theCheckItself()
+  await theAutomationDrafts(owner.id, owner.name)
   await everyKindIsRegistered(owner.id)
 }
 
@@ -429,6 +434,135 @@ async function theCheckItself() {
   check('and the read is capped', result.items.length <= 500, `${result.items.length} rows`)
 }
 
+/* ── the automation half ───────────────────────────────────────────────────── */
+
+/**
+ * The only kind that WRITES.
+ *
+ * Two properties matter, and neither is "did it make an order":
+ *
+ *   IT DRAFTS. A draft is a proposal somebody deletes; an issued order is a
+ *   commitment to spend money. An unattended process must never make the
+ *   second, so the status is asserted directly rather than assumed from the
+ *   function that was called.
+ *
+ *   IT SAYS WHAT IT DID. The document number goes on the ledger, which is the
+ *   only way anyone answers "where did this order come from" next month.
+ */
+async function theAutomationDrafts(ownerId: number, ownerName: string) {
+  console.log('\nthe automation half')
+
+  const rule = await getRule(SITE, await makeRule({ kind: 'low_stock' }))
+  if (!rule) {
+    check('the low-stock rule was stored', false)
+    return
+  }
+
+  const dryRun = await evaluateRule(
+    SITE,
+    { ...rule, config: { ...rule.config, createOrders: false } },
+    { userId: ownerId, userName: ownerName },
+  )
+  console.log(`       (this site has ${dryRun.itemCount} product(s) below minimum)`)
+  eq('reporting alone creates nothing', dryRun.createdDocs.length, 0)
+
+  if (dryRun.itemCount === 0) {
+    console.log('       (nothing is below minimum here, so drafting is not exercised)')
+    return
+  }
+
+  const before = await orderCount()
+  // The evaluator, not just the registry: this needs the document IDS back, and
+  // a draft has no document number to look them up by — the number is allocated
+  // at ISSUE time, so every draft this raises carries document_number NULL.
+  const acting = await evaluateLowStock(
+    SITE,
+    { ...rule, config: { ...rule.config, createOrders: true } },
+    { userId: ownerId, userName: ownerName },
+  )
+  const after = await orderCount()
+  const ids = acting.createdOrders.map((o) => o.documentId)
+  createdOrders.push(...ids)
+
+  check('drafting raises at least one order', ids.length > 0, `${ids.length} order(s)`)
+  eq('and the count of orders moves by exactly that many', after - before, ids.length)
+  check(
+    'the cap on drafts per run is respected',
+    ids.length <= 20,
+    `${ids.length} raised of ${acting.groups.length} supplier group(s)`,
+  )
+  check(
+    'and what was NOT drafted is said out loud',
+    acting.groups.length <= ids.length || acting.problems.length > 0,
+    acting.problems.join(' ') || '(nothing said)',
+  )
+
+  if (ids.length === 0) return
+
+  // The property worth the test: DRAFT, never issued. An unattended process
+  // must not commit a shop to spending money.
+  const raised = await siteQuery<{ id: number; status: string; user_name: string }>(
+    SITE,
+    `SELECT id, status, user_name FROM purchase_documents WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  )
+  check(
+    'every order it raised is a draft, not issued',
+    raised.length === ids.length && raised.every((r) => r.status === 'draft'),
+    raised.map((r) => r.status).join(', ') || '(none found)',
+  )
+  check(
+    "and is attributed to the rule's owner",
+    raised.every((r) => r.user_name === ownerName),
+    raised.map((r) => r.user_name)[0] ?? '(none)',
+  )
+
+  /*
+   * The property that stops a daily rule stacking drafts.
+   *
+   * Deliberately NOT "the second run sees fewer shortages": it does not, and
+   * should not. The shop is still short until the goods ARRIVE, so the report
+   * keeps saying so — reorderSuggestions counts only ISSUED orders as on the
+   * way, and a draft nobody sent is not stock coming.
+   *
+   * What must not happen is a SECOND draft for the same shortfall. Run daily
+   * for a week, that is five orders per supplier for one shortage.
+   */
+  const beforeSecond = await orderCount()
+  const second = await evaluateLowStock(
+    SITE,
+    { ...rule, config: { ...rule.config, createOrders: true } },
+    { userId: ownerId, userName: ownerName },
+  )
+  createdOrders.push(...second.createdOrders.map((o) => o.documentId))
+  const afterSecond = await orderCount()
+
+  check(
+    'the shop is still reported short until the goods arrive',
+    second.total > 0,
+    `${second.total} still short`,
+  )
+  // The 18 suppliers drafted a moment ago are fully covered, so the cap now
+  // reaches suppliers it could not get to before — but never the same ones.
+  const redrafted = second.createdOrders.filter((o) =>
+    acting.createdOrders.some((first) => first.supplierName === o.supplierName),
+  )
+  eq('and no supplier is drafted a second time for the same shortfall', redrafted.length, 0)
+  check(
+    'so the drafts that do appear are for suppliers the cap had not reached',
+    afterSecond - beforeSecond === second.createdOrders.length,
+    `${second.createdOrders.length} new draft(s)`,
+  )
+}
+
+async function orderCount(): Promise<number> {
+  const rows = await siteQuery<{ n: number }>(
+    SITE,
+    `SELECT COUNT(*) AS n FROM purchase_documents WHERE doc_type = 'purchase_order'`,
+  )
+  return Number(rows[0]?.n) || 0
+}
+
 /* ── every kind in the union is either wired up or honestly refused ────────── */
 
 async function everyKindIsRegistered(ownerId: number) {
@@ -446,7 +580,14 @@ async function everyKindIsRegistered(ownerId: number) {
     // the silent one: a default branch running some other rule's check under
     // this rule's name, which somebody would then believe.
     try {
-      const found = await evaluateRule(SITE, { ...rule, kind, config: defaultConfigFor(kind) })
+      const found = await evaluateRule(
+        SITE,
+        // createOrders deliberately OFF: this loop runs every kind against the
+        // live site, and a test that quietly raised real purchase orders would
+        // be indistinguishable from a buyer's own work by tomorrow.
+        { ...rule, kind, config: { ...defaultConfigFor(kind), createOrders: false } },
+        { userId: ownerId, userName: 'Test' },
+      )
       check(`${kind} runs and reports a count`, Number.isFinite(found.itemCount), `${found.itemCount} found`)
       check(`${kind} says something a person can read`, found.message.title.length > 0)
     } catch (e) {
@@ -465,6 +606,25 @@ async function cleanup() {
   for (const id of createdRules) await deleteRule(SITE, id).catch(() => {})
 
   /*
+   * The drafts the automation test raised are CANCELLED, not deleted.
+   *
+   * Deleting them would take their document numbers out of existence and leave
+   * gaps in the purchase-order sequence — which fails test:sequences, in an
+   * unrelated suite, for a reason nobody would connect to this file.
+   * verifySequence counts a cancelled document as accounted for, which is
+   * exactly the state a withdrawn order should be in anyway.
+   */
+  for (const id of createdOrders) {
+    await siteExecute(
+      SITE,
+      `UPDATE purchase_documents
+          SET status = 'cancelled', cancel_reason = 'Raised by test:alerts', cancelled_at = NOW()
+        WHERE id = ? AND status = 'draft'`,
+      [id],
+    ).catch(() => {})
+  }
+
+  /*
    * The bell rows the test's own rules wrote.
    *
    * NOT matched on the title: a notification carries the MESSAGE's title
@@ -480,7 +640,7 @@ async function cleanup() {
     [startedAt],
   ).catch(() => null)
   console.log(
-    `removed ${createdRules.length} rule(s), ${removed?.affectedRows ?? 0} notification(s)`,
+    `removed ${createdRules.length} rule(s), ${removed?.affectedRows ?? 0} notification(s), cancelled ${createdOrders.length} draft order(s)`,
   )
 }
 

@@ -1,7 +1,14 @@
 import 'server-only'
 import type { AlertMessage } from './message'
 import type { AlertRule } from './types'
+import { cashupVarianceMessage, evaluateCashupVariance } from './kinds/cashupVariance'
+import { creditLimitMessage, evaluateCreditLimit } from './kinds/creditLimit'
+import { deadStockMessage, evaluateDeadStock } from './kinds/deadStock'
+import { evaluateLowStock, lowStockMessage } from './kinds/lowStock'
+import { evaluateMissingCashup, missingCashupMessage } from './kinds/missingCashup'
 import { evaluateNegativeStock, negativeStockMessage } from './kinds/negativeStock'
+import { evaluatePriceBelowCost, priceBelowCostMessage } from './kinds/priceBelowCost'
+import { evaluateUnprocessedGrvs, unprocessedGrvsMessage } from './kinds/unprocessedGrvs'
 
 /**
  * The rule-kind registry: run one rule's check, and say what it found.
@@ -16,13 +23,42 @@ import { evaluateNegativeStock, negativeStockMessage } from './kinds/negativeSto
 export type Finding = {
   /** What the check found. 0 means all clear — nobody is interrupted. */
   itemCount: number
-  /** What the check DID: document numbers created in the owner's name. */
+  /**
+   * What the check DID, in the owner's name — one readable label per document.
+   *
+   * Not document NUMBERS: the only kind that writes leaves drafts, and a draft
+   * has no number until it is issued. See LowStockOrder.label.
+   */
   createdDocs: string[]
   message: AlertMessage
 }
 
-export async function evaluateRule(siteId: number, rule: AlertRule): Promise<Finding> {
+/**
+ * The rule's owner, passed to the kinds that WRITE.
+ *
+ * An automation's work is attributed to the person whose rule it is, never to
+ * a system pseudo-user: a draft order that appears overnight must answer the
+ * question "who raised this" with a name somebody can go and ask.
+ */
+export type RuleActor = { userId: number; userName: string }
+
+export async function evaluateRule(
+  siteId: number,
+  rule: AlertRule,
+  actor: RuleActor,
+): Promise<Finding> {
   switch (rule.kind) {
+    case 'low_stock': {
+      const result = await evaluateLowStock(siteId, rule, actor)
+      return {
+        itemCount: result.total,
+        // The drafts this run raised — the ledger's audit answer to "where did
+        // this order come from".
+        createdDocs: result.createdOrders.map((o) => o.label),
+        message: lowStockMessage(rule, result),
+      }
+    }
+
     case 'negative_stock': {
       const result = await evaluateNegativeStock(siteId)
       return {
@@ -32,17 +68,59 @@ export async function evaluateRule(siteId: number, rule: AlertRule): Promise<Fin
       }
     }
 
-    // Not yet written. Listed rather than left to the default branch below, so
-    // adding a kind to the union is a compile error here until its evaluator
-    // exists — which is the point of having no default.
-    case 'low_stock':
-    case 'price_below_cost':
-    case 'dead_stock':
-    case 'cashup_variance':
-    case 'missing_cashup':
-    case 'credit_limit':
-    case 'unprocessed_grvs':
-      break
+    case 'price_below_cost': {
+      const result = await evaluatePriceBelowCost(siteId, rule)
+      return {
+        itemCount: result.total,
+        createdDocs: [],
+        message: priceBelowCostMessage(rule, result),
+      }
+    }
+
+    case 'dead_stock': {
+      const result = await evaluateDeadStock(siteId, rule)
+      return {
+        itemCount: result.total,
+        createdDocs: [],
+        message: deadStockMessage(rule, result),
+      }
+    }
+
+    case 'cashup_variance': {
+      const result = await evaluateCashupVariance(siteId, rule)
+      return {
+        itemCount: result.total,
+        createdDocs: [],
+        message: cashupVarianceMessage(rule, result),
+      }
+    }
+
+    case 'missing_cashup': {
+      const result = await evaluateMissingCashup(siteId)
+      return {
+        itemCount: result.total,
+        createdDocs: [],
+        message: missingCashupMessage(rule, result),
+      }
+    }
+
+    case 'credit_limit': {
+      const result = await evaluateCreditLimit(siteId, rule)
+      return {
+        itemCount: result.total,
+        createdDocs: [],
+        message: creditLimitMessage(rule, result),
+      }
+    }
+
+    case 'unprocessed_grvs': {
+      const result = await evaluateUnprocessedGrvs(siteId, rule)
+      return {
+        itemCount: result.total,
+        createdDocs: [],
+        message: unprocessedGrvsMessage(rule, result),
+      }
+    }
   }
 
   /*
