@@ -3,6 +3,9 @@
 import { actorFor, withTillOperator } from '@/lib/auth'
 import { can, type CapabilitySet } from '@/lib/site/permissions'
 import { listUsers } from '@/lib/site/users'
+import { listTerminals } from '@/lib/site/terminals'
+import { openEntryFor } from '@/lib/site/staffTime'
+import { getBooleanSetting } from '@/lib/site/settings'
 import {
   cashupMode,
   openShift,
@@ -52,6 +55,17 @@ export type TillShiftStatus = {
   mode: 'terminal' | 'user'
   /** Whether the OPERATOR may open/close/move money. The modal states it. */
   canCashup: boolean
+  /**
+   * Whether THIS operator must clock on before trading, and whether they have.
+   *
+   * Answered per sign-in rather than per till: the drawer's shift is shared,
+   * but being on duty is not. See `pos_force_clock_in` in settings.ts.
+   *
+   * `required` is false when the shop has the rule off, and also when this
+   * person does not hold `staff.clock` — their hours are not being recorded, so
+   * there is nothing for them to be missing.
+   */
+  clock: { required: boolean; clockedIn: boolean; operatorName: string }
   shift: {
     id: number
     openedAt: string
@@ -76,6 +90,25 @@ export async function tillShiftStatusAction(
   const operator = await withTillOperator(ctx)
   const mode = await cashupMode(siteId)
 
+  /*
+   * Is this PERSON on duty?
+   *
+   * Only asked when the shop turned the rule on AND this person is somebody
+   * whose hours are recorded — see pos_force_clock_in. Someone without
+   * `staff.clock` cannot clock on at all, so gating them would be a door with
+   * no handle.
+   */
+  const clockRule = await getBooleanSetting(siteId, 'pos_force_clock_in')
+  const clocks = can(operator.capabilities, 'staff.clock')
+  const clockRequired = clockRule && clocks
+  const clock = {
+    required: clockRequired,
+    clockedIn: clockRequired
+      ? (await openEntryFor(siteId, operator.actor.userId)) !== null
+      : true,
+    operatorName: operator.actor.userName,
+  }
+
   const shift =
     mode === 'terminal'
       ? terminalId
@@ -87,6 +120,7 @@ export async function tillShiftStatusAction(
     return {
       mode,
       canCashup: can(operator.capabilities, 'sales.cashup'),
+      clock,
       shift: null,
       tenders: [],
     }
@@ -96,6 +130,7 @@ export async function tillShiftStatusAction(
   return {
     mode,
     canCashup: can(operator.capabilities, 'sales.cashup'),
+    clock,
     shift: {
       id: shift.id,
       openedAt: shift.openedAt.toISOString(),
@@ -184,12 +219,19 @@ export async function tillCloseShiftAction(
  * the same `sales.till` + `withTillOperator` + `sales.cashup` path as every
  * other action in this file: the person holding the PIN is the person signing.
  *
- * ── THE COUNT IS STILL BLIND ────────────────────────────────────────────────
+ * ── THE COUNT IS BLIND UNLESS THE OPERATOR MAY SEE ──────────────────────────
  *
  * `visibleFor` does the stripping, on the server, exactly as it does for the
- * back office. A tender's expected figure is withheld from the payload until a
- * number has been committed for it — which is why `tillRevealTenderAction`
- * exists rather than the modal simply reading the view.
+ * back office, and the same capability decides it in both places:
+ * `sales.cashup_expected`. Without it a tender's expected figure is withheld
+ * until a number has been committed — which is why `tillRevealTenderAction`
+ * exists rather than the modal simply reading the view. With it every figure
+ * ships up front and the modal's reveal never has to fire.
+ *
+ * A till is not automatically the blind case. A one-person shop where the owner
+ * works the counter should be able to grant themselves the figures; a busy shop
+ * with juniors on the tills should not. That is a shop's decision about PEOPLE,
+ * which is what a permission is for.
  */
 
 /** Resolves the till operator and confirms they may cash up. */
@@ -213,7 +255,11 @@ export async function tillDeclarationViewAction(
 
   const view = await declarationView(ctx.siteId, shiftId)
   if (!view) return { ok: false, error: 'That shift no longer exists.' }
-  return visibleFor(view)
+  /* The OPERATOR's permission, not the browser session's. At a till those are
+     different people — the machine was unlocked by whoever opened up, and the
+     person counting is whoever's PIN is in. cashupOperator resolves the
+     latter, which is the one this question is about. */
+  return visibleFor(view, !can(ctx.capabilities, 'sales.cashup_expected'))
 }
 
 /**
@@ -232,6 +278,74 @@ export async function tillSupervisorsAction(): Promise<
 
   const users = await listUsers(ctx.siteId)
   return users.filter((u) => u.isActive).map((u) => ({ id: u.id, name: u.name }))
+}
+
+export type CashupOwners = {
+  /** What a choice here MEANS — a till in terminal mode, a person in user mode. */
+  mode: 'terminal' | 'user'
+  /** Everything that could own a cash-up, for whoever may choose. */
+  options: { id: number; label: string }[]
+  /** The one this operator owns: their till, or themselves. */
+  defaultId: number | null
+  /** Whether they may pick a different one. Otherwise the field is locked. */
+  canChoose: boolean
+}
+
+/**
+ * Whose takings are being counted, and whether this person may say.
+ *
+ * ── WHY THE ANSWER DEPENDS ON THE MODE ──────────────────────────────────────
+ *
+ * A cash-up belongs to whatever the site reconciles. In terminal mode that is a
+ * TILL — the drawer sitting on a counter, whoever happens to be on it — so the
+ * list is tills and the default is the one this machine claimed. In user mode
+ * it is a PERSON and their own float, so the list is people and the default is
+ * whoever's PIN is in.
+ *
+ * Asking the server rather than working it out in the browser: the default is
+ * the till session's own identity, and a screen that decided that for itself
+ * could be told a different one by anybody with devtools.
+ *
+ * ── WHY `canChoose` IS A PERMISSION AND NOT A SETTING ───────────────────────
+ *
+ * Because the owner is who the variance belongs to. A drawer signed off short
+ * is a question for a named person, and a cashier who can retype that name can
+ * point the question elsewhere. Counting your own is `sales.cashup`; naming
+ * somebody else's is `sales.cashup_other`.
+ */
+export async function tillCashupOwnersAction(
+  terminalId: number | null,
+): Promise<CashupOwners | Denied> {
+  const ctx = await cashupOperator()
+  if ('ok' in ctx) return ctx
+
+  const mode = await cashupMode(ctx.siteId)
+  const canChoose = can(ctx.capabilities, 'sales.cashup_other')
+
+  if (mode === 'terminal') {
+    const terminals = await listTerminals(ctx.siteId, false)
+    return {
+      mode,
+      options: terminals.map((t) => ({
+        id: t.id,
+        /* The till number is what is written on the machine and on the bag, so
+           it goes in the label rather than the id nobody sees. */
+        label: t.tillNumber ? `${t.code} · Till ${t.tillNumber}` : t.code,
+      })),
+      /* The machine's own claimed till. Null on an unclaimed machine, which the
+         screen shows as "not linked" rather than guessing at one. */
+      defaultId: terminalId,
+      canChoose,
+    }
+  }
+
+  const users = await listUsers(ctx.siteId)
+  return {
+    mode,
+    options: users.filter((u) => u.isActive).map((u) => ({ id: u.id, label: u.name })),
+    defaultId: ctx.actor.userId,
+    canChoose,
+  }
 }
 
 /**
@@ -265,6 +379,9 @@ export async function tillRevealTenderAction(
   const saved = await saveDeclaration(ctx.siteId, ctx.actor, shiftId, {
     supervisorId: null,
     supervisorName: view.supervisorName,
+    /* Carried through unchanged: this action commits ONE tender and must not
+       quietly rewrite the rest of the declaration around it. */
+    smallChange: view.smallChange,
     denominations,
     tenders: {
       ...Object.fromEntries(

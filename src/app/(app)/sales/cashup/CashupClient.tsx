@@ -3,7 +3,6 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Badge,
   Button,
   ButtonLink,
   Card,
@@ -26,7 +25,6 @@ import {
   openShiftAction,
   closeShiftAction,
   drawerMovementAction,
-  setCashupModeAction,
 } from './actions'
 
 /**
@@ -65,13 +63,11 @@ type OpenShift = {
 
 export default function CashupClient({
   mode,
-  canSetMode,
   terminals,
   shifts,
   tolerance,
 }: {
   mode: CashupMode
-  canSetMode: boolean
   terminals: { id: number; code: string; name: string }[]
   shifts: OpenShift[]
   tolerance: number
@@ -113,13 +109,6 @@ export default function CashupClient({
 
   return (
     <>
-      {canSetMode && (
-        <ModeCard
-          mode={mode}
-          disabled={pending || shifts.length > 0}
-          onChange={(next) => run(() => setCashupModeAction(next))}
-        />
-      )}
 
       {shifts.length === 0 ? (
         <Card>
@@ -249,68 +238,6 @@ export default function CashupClient({
  * may be switched is the moment every shift is closed, which is what this
  * screen already shows.
  */
-function ModeCard({
-  mode,
-  disabled,
-  onChange,
-}: {
-  mode: CashupMode
-  disabled: boolean
-  onChange: (mode: CashupMode) => void
-}) {
-  return (
-    <Card>
-      <CardHeader
-        title="How this site cashes up"
-        description="Sales bank into whichever shift owns them. Changing this needs every shift closed first."
-      />
-      <CardBody>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          {(
-            [
-              {
-                value: 'terminal',
-                title: 'By till',
-                blurb:
-                  'One drawer, counted by whoever is on it. Retail, where a cashier stands at a register.',
-                icon: <Icons.Terminal size={16} />,
-              },
-              {
-                value: 'user',
-                title: 'By person',
-                blurb:
-                  'One person and their own float, across whatever tills they work. Hospitality, where waiters share registers.',
-                icon: <Icons.Users size={16} />,
-              },
-            ] as const
-          ).map((option) => {
-            const active = mode === option.value
-            return (
-              <button
-                key={option.value}
-                type="button"
-                disabled={disabled || active}
-                onClick={() => onChange(option.value)}
-                className={`flex flex-1 flex-col gap-1 rounded-card border p-3 text-left transition-colors ${
-                  active
-                    ? 'border-brand bg-brand-soft'
-                    : 'border-border hover:border-brand disabled:hover:border-border'
-                } disabled:cursor-not-allowed`}
-              >
-                <span className="flex items-center gap-2 text-sm font-medium text-ink">
-                  {option.icon}
-                  {option.title}
-                  {active && <Badge tone="brand">In use</Badge>}
-                </span>
-                <span className="text-xs text-muted">{option.blurb}</span>
-              </button>
-            )
-          })}
-        </div>
-      </CardBody>
-    </Card>
-  )
-}
 
 function OpenModal({
   open,

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  ButtonLink,
   Callout,
   Card,
   CardHeader,
@@ -214,6 +215,15 @@ export default function LeaveScreen({
       <TableToolbar
         actions={
           <div className="flex items-center gap-2">
+            {/* The configuration behind every balance on this screen. Reachable
+                from Setup too, but somebody asking "why is this person's
+                entitlement wrong" is standing HERE, not in the setup hub. */}
+            {canEdit && (
+              <ButtonLink href="/staff/leave-types" variant="ghost">
+                <Icons.Settings size={15} />
+                Leave types
+              </ButtonLink>
+            )}
             {canEdit && (
               <Button
                 variant="ghost"

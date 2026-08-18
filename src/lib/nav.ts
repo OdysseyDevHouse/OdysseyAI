@@ -563,6 +563,7 @@ export const SUBPAGE_LABELS = {
   '/setup/customer-groups': 'Customer groups',
   '/setup/purchasing': 'Purchasing & cost',
   '/setup/tender-types': 'Tender types',
+  '/setup/cashup': 'Cash-up',
   '/setup/tips': 'Tips',
   // "Tills", not "Terminals" — it is what the screen's own heading says, and
   // what somebody in a shop calls the thing. The keyword search still has
@@ -596,6 +597,7 @@ export const SUBPAGE_LABELS = {
      setup hub: each is set once and decides what the daily screens above it
      come to. The route is not moved — only where it is listed. */
   '/staff/pay-rules': 'Pay rules',
+  '/staff/leave-types': 'Leave types',
   '/staff/cost': 'Cost per employee',
   '/credit/levels': 'Credit levels',
   '/loyalty/programme': 'Loyalty programme',
@@ -703,6 +705,7 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
   '/credit/runs': '/accounting',
   '/sales/offline': '/accounting',
   '/staff/pay-rules': '/setup',
+  '/staff/leave-types': '/setup',
   '/staff/cost': '/setup',
   '/credit/levels': '/setup',
   '/loyalty/programme': '/setup',
@@ -804,6 +807,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
      types "commission" or "overtime" into the sidebar gets nothing back for
      the screens that actually decide those figures. */
   '/staff/pay-rules': 'overtime rates wages salary hourly bcea holidays sunday',
+  '/staff/leave-types': 'leave days annual sick family maternity unpaid entitlement accrual bcea allowance',
   '/staff/cost': 'wages salary labour cost payroll per employee',
   '/commission/rules': 'commission rates rules percentage sales rep earnings targets',
   '/credit/levels': 'credit limit terms account hold blocked risk dunning reminders',

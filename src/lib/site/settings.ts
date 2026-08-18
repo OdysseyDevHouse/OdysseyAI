@@ -86,6 +86,24 @@ export const SETTING_DEFAULTS = {
    * rather than in next month's margin report. Zero switches it off.
    */
   purchase_cost_change_warn_pct: '20',
+
+  /**
+   * What an order may total before somebody else has to sign it off.
+   *
+   * VAT-inclusive, because that is the figure the business actually pays and
+   * the one written on the order. A threshold read excluding VAT would let
+   * every order through at 15% over whatever number the owner typed.
+   *
+   * ZERO IS OFF, and is the default — the same convention
+   * purchase_cost_change_warn_pct uses. A shop of three people does not want
+   * a second signature on a case of milk, and a control that arrives switched
+   * on is a control that gets switched off in a hurry on the first busy
+   * morning, usually for good.
+   *
+   * Enforced in issueOrder(), not on the screen: issuing is what commits the
+   * business to the spend, and a button hidden in the UI is a suggestion.
+   */
+  purchase_approval_threshold: '0',
   /**
    * What a cash-up reconciles.
    *
@@ -178,6 +196,38 @@ export const SETTING_DEFAULTS = {
    * see the till's finalise path.
    */
   pos_warn_out_of_stock: '0',
+  /**
+   * Whether each person must be clocked on before they may trade.
+   *
+   * ── WHAT THIS IS, AND WHAT THE SHIFT GATE ALREADY DOES ────────────────────
+   *
+   * They are different questions and both are worth asking:
+   *
+   *   THE SHIFT is the DRAWER. In terminal mode it is opened once, by whoever
+   *   starts the day, and every cashier afterwards trades on it. That gate is
+   *   unconditional and stays that way — a sale rung up with no shift banks
+   *   into no reconciliation.
+   *
+   *   THIS is the PERSON. The till is open, the drawer is counted, and the
+   *   question is whether the individual now standing at it is on duty. After
+   *   the first cashier of the day the shift gate has no opinion about that at
+   *   all, which is precisely the hole this fills.
+   *
+   * So with this on, signing in with a PIN that has no open time entry gets a
+   * gate rather than the sale screen, and the way past it is to clock on.
+   *
+   * ── WHY IT IS OFF BY DEFAULT ──────────────────────────────────────────────
+   *
+   * Because turning it on means a cashier who forgets to clock in cannot sell,
+   * and at 07:00 with a queue the person who can fix that is a manager. That is
+   * the right trade for a shop running payroll off these hours and an expensive
+   * one for a shop that does not — and nobody should inherit it by upgrade.
+   *
+   * Someone without `staff.clock` is never gated: their hours are not what this
+   * records, so demanding they clock on would lock out the very people the
+   * capability exists to exempt. See `tillShiftStatusAction`.
+   */
+  pos_force_clock_in: '0',
   /**
    * Whether a till with no connection may still sell ON ACCOUNT.
    *
@@ -898,6 +948,14 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       // genuinely move on every delivery.
       if (!Number.isFinite(pct) || pct < 0) return 'The percentage cannot be negative.'
       if (pct > 1000) return 'A threshold that high would never warn about anything.'
+      return null
+    }
+
+    case 'purchase_approval_threshold': {
+      const amount = Number(value)
+      // Zero is meaningful: it switches approval off entirely, which is the
+      // default and the right answer for a shop where everyone is the owner.
+      if (!Number.isFinite(amount) || amount < 0) return 'The amount cannot be negative.'
       return null
     }
 

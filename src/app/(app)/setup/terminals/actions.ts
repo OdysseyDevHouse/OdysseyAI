@@ -253,6 +253,28 @@ export async function setWarnOutOfStockAction(on: boolean): Promise<TerminalActi
 }
 
 /**
+ * Whether each person must be clocked on before the till will trade.
+ *
+ * Distinct from the shift gate, which is unconditional — see
+ * `pos_force_clock_in` in settings.ts for why both exist.
+ */
+export async function setForceClockInAction(on: boolean): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setSetting(ctx.siteId, 'pos_force_clock_in', on ? '1' : '0')
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/setup/terminals')
+  return {
+    ok: true,
+    message: on
+      ? 'Cashiers must now clock on before they can ring up a sale.'
+      : 'Cashiers can trade without clocking on.',
+  }
+}
+
+/**
  * Whether a disconnected till may still sell ON ACCOUNT.
  *
  * ── WHAT THE OWNER IS ACTUALLY AGREEING TO ────────────────────────────────

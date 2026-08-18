@@ -21,6 +21,7 @@ export type PurchasingSettings = {
   costBasis: 'average' | 'last'
   invoiceTolerance: string
   costWarnPct: string
+  approvalThreshold: string
 }
 
 export type PurchasingSettingsResult =
@@ -28,10 +29,11 @@ export type PurchasingSettingsResult =
   | { ok: false; error: string }
 
 async function state(siteId: number): Promise<PurchasingSettingsResult> {
-  const [costBasis, invoiceTolerance, costWarnPct] = await Promise.all([
+  const [costBasis, invoiceTolerance, costWarnPct, approvalThreshold] = await Promise.all([
     getSetting(siteId, 'cost_basis'),
     getSetting(siteId, 'purchase_invoice_tolerance'),
     getSetting(siteId, 'purchase_cost_change_warn_pct'),
+    getSetting(siteId, 'purchase_approval_threshold'),
   ])
 
   return {
@@ -43,6 +45,7 @@ async function state(siteId: number): Promise<PurchasingSettingsResult> {
       costBasis: costBasis === 'last' ? 'last' : 'average',
       invoiceTolerance,
       costWarnPct,
+      approvalThreshold,
     },
   }
 }
@@ -67,6 +70,7 @@ export async function savePurchasingSettingsAction(input: {
   costBasis: string
   invoiceTolerance: string
   costWarnPct: string
+  approvalThreshold: string
 }): Promise<PurchasingSettingsResult> {
   const ctx = await actorFor('setup.edit')
   if ('ok' in ctx) return ctx
@@ -75,6 +79,7 @@ export async function savePurchasingSettingsAction(input: {
     ['cost_basis', input.costBasis],
     ['purchase_invoice_tolerance', input.invoiceTolerance],
     ['purchase_cost_change_warn_pct', input.costWarnPct],
+    ['purchase_approval_threshold', input.approvalThreshold],
   ] as const
 
   for (const [key, value] of writes) {
@@ -89,6 +94,10 @@ export async function savePurchasingSettingsAction(input: {
   revalidatePath('/purchasing/receive')
   revalidatePath('/products')
   revalidatePath('/pos')
+  /* The approval threshold decides whether a draft's Issue button is live, and
+     that is computed on the document page. Without this, raising the limit
+     leaves a buyer still blocked on an order that no longer needs signing. */
+  revalidatePath('/purchasing', 'layout')
 
   return state(ctx.siteId)
 }

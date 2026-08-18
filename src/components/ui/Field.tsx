@@ -290,6 +290,28 @@ export function NumberInput({
     <Input
       type="text"
       inputMode="decimal"
+      /*
+        NO BROWSER HISTORY ON A MONEY BOX.
+
+        Chrome offers previously-typed values on any text input it recognises,
+        which on a cash-up drops a list of old figures over the very field being
+        counted — and the top of that list is one tap from being accepted as
+        this shift's declaration. A number chosen from a dropdown of past counts
+        is not a count.
+
+        `autoComplete` alone is not enough: Chrome ignores "off" on fields it
+        thinks it recognises, so the other three go with it. `data-1p-ignore`
+        and `data-lpignore` keep 1Password and LastPass icons out of the box.
+
+        Before `...rest`, so a caller that genuinely wants a suggestion list can
+        still pass its own `autoComplete`.
+      */
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      data-1p-ignore
+      data-lpignore="true"
       value={shown}
       defaultValue={value === undefined ? format(defaultValue) : undefined}
       onFocus={(e) => {
@@ -357,6 +379,28 @@ export function CurrencyInput({
     <Input
       type="text"
       inputMode="decimal"
+      /*
+        NO BROWSER HISTORY ON A MONEY BOX.
+
+        Chrome offers previously-typed values on any text input it recognises,
+        which on a cash-up drops a list of old figures over the very field being
+        counted — and the top of that list is one tap from being accepted as
+        this shift's declaration. A number chosen from a dropdown of past counts
+        is not a count.
+
+        `autoComplete` alone is not enough: Chrome ignores "off" on fields it
+        thinks it recognises, so the other three go with it. `data-1p-ignore`
+        and `data-lpignore` keep 1Password and LastPass icons out of the box.
+
+        Before `...rest`, so a caller that genuinely wants a suggestion list can
+        still pass its own `autoComplete`.
+      */
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      data-1p-ignore
+      data-lpignore="true"
       value={shown}
       defaultValue={value === undefined ? format(defaultValue) : undefined}
       onFocus={(e) => {

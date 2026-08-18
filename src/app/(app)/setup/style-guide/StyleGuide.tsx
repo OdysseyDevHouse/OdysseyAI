@@ -2976,7 +2976,7 @@ function WordmarkSection() {
     <Card>
       <CardHeader
         title="The wordmark"
-        description="The typeface the Odyssey logo is lettered in (Archivo, self-hosted by next/font). ONLY for headings that sit beside the logo — the till header, the login lockup. Body text stays on the system stack: it is what the OS hints best at small sizes, and a till must be readable the instant it opens."
+        description="The treatment for headings that sit beside the logo — the till header, the login lockup. The whole app is set in Inter (self-hosted by next/font), so these are no longer a separate typeface: what remains is the uppercasing, the weight and the tracking, measured against the logo artwork."
       />
       <CardBody className="grid gap-5">
         <div className="grid gap-2">

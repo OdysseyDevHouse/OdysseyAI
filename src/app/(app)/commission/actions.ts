@@ -9,6 +9,8 @@ import {
   calculateRun,
   lockRun,
   unlockRun,
+  deleteRun,
+  updateRunPeriod,
 } from '@/lib/site/commissionRuns'
 
 /**
@@ -114,4 +116,54 @@ export async function unlockRunAction(runId: number): Promise<Result> {
   revalidatePath('/commission')
   revalidatePath(`/commission/${runId}`)
   return { ok: true, message: 'Reopened. Recalculate before locking it again.' }
+}
+
+/**
+ * Deletes a period.
+ *
+ * Gated on `commission.run` like the rest, and refused outright on a locked run
+ * by `deleteRun` itself — the screen hides the button there, but the screen is
+ * not the boundary.
+ */
+export async function deleteRunAction(runId: number): Promise<Result> {
+  const ctx = await needs('commission.run')
+  if (!ctx) return DENIED
+
+  const result = await deleteRun(ctx.site.id, runId)
+  if (!result.ok) return result
+
+  revalidatePath('/commission')
+  revalidatePath(`/commission/${runId}`)
+  return {
+    ok: true,
+    message: result.entries
+      ? `Period deleted, along with ${result.entries} calculated line${result.entries === 1 ? '' : 's'}.`
+      : 'Period deleted.',
+  }
+}
+
+/** Moves an open period's dates, or edits its note. */
+export async function updateRunPeriodAction(
+  runId: number,
+  periodStart: string,
+  periodEnd: string,
+  note: string,
+): Promise<Result> {
+  const ctx = await needs('commission.run')
+  if (!ctx) return DENIED
+
+  const result = await updateRunPeriod(ctx.site.id, runId, periodStart, periodEnd, note)
+  if (!result.ok) return result
+
+  revalidatePath('/commission')
+  revalidatePath(`/commission/${runId}`)
+  return {
+    ok: true,
+    // Said plainly rather than silently: moving the dates throws away figures
+    // that belonged to the old ones, and somebody who had already calculated
+    // needs to know to do it again.
+    message: result.cleared
+      ? `Period moved. The ${result.cleared} previously calculated line${result.cleared === 1 ? '' : 's'} were cleared — calculate it again.`
+      : 'Period updated.',
+  }
 }

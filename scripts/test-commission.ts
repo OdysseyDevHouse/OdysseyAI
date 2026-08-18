@@ -30,6 +30,8 @@ import {
   calculateRun,
   lockRun,
   unlockRun,
+  deleteRun,
+  updateRunPeriod,
   getRun,
   runSummary,
   statement,
@@ -605,6 +607,124 @@ async function main() {
   if (paidTo) eq('and it is 10% of the turnover', paidTo.amount, 100)
 
   await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [attrInv.insertId])
+
+  /* ── Deleting and moving a period ──────────────────────────────────── */
+  //
+  // A period opened with the wrong dates has to be correctable, because
+  // createRun refuses overlaps — so a typo does not just look untidy, it blocks
+  // the right period from being opened at all. The gating is the point: a
+  // LOCKED run is somebody's pay record and must survive.
+  console.log('\ndeleting and moving a period')
+
+  const delRun = await createRun(SITE, '2019-09-01', '2019-09-30', 'To delete')
+  if (!delRun.ok) {
+    check('the delete-test run was created', false, delRun.error)
+    return
+  }
+  const delGone = await deleteRun(SITE, delRun.id)
+  check('an uncalculated period deletes', delGone.ok, delGone.ok ? '' : delGone.error)
+  check('and is really gone', (await getRun(SITE, delRun.id)) === null)
+
+  // A locked run refuses, and unlocking is the way through — the same audited
+  // path as every other correction, rather than a second quieter one.
+  const lockedRun = await createRun(SITE, '2019-09-01', '2019-09-30', 'Locked')
+  if (!lockedRun.ok) {
+    check('the lock-test run was created', false, lockedRun.error)
+    return
+  }
+  createdRuns.push(lockedRun.id)
+  await calculateRun(SITE, lockedRun.id)
+  await lockRun(SITE, lockedRun.id, { userId: user.id, userName: user.name })
+
+  const refused = await deleteRun(SITE, lockedRun.id)
+  check('a LOCKED period refuses to delete', !refused.ok, refused.ok ? '' : refused.error)
+  check('and survives the attempt', (await getRun(SITE, lockedRun.id))?.status === 'locked')
+
+  const movedWhileLocked = await updateRunPeriod(SITE, lockedRun.id, '2019-10-01', '2019-10-31', null)
+  check('a LOCKED period refuses to move', !movedWhileLocked.ok)
+
+  await unlockRun(SITE, lockedRun.id)
+  const afterUnlock = await deleteRun(SITE, lockedRun.id)
+  check('once reopened it deletes', afterUnlock.ok, afterUnlock.ok ? '' : afterUnlock.error)
+
+  // Moving the dates must throw away figures that belonged to the old ones —
+  // August's entries under a November heading is the kind of thing nobody
+  // notices until payday.
+  //
+  // It gets its own sale so there is something real to clear: an assertion that
+  // the entries went away proves nothing if there were never any.
+  const moveInv = await siteExecute(
+    SITE,
+    `INSERT INTO sales_documents
+       (doc_type, status, document_number, document_date, user_id, user_name,
+        subtotal_excl, vat_total, total_incl)
+     VALUES ('invoice','finalised','TESTMOVE1','2019-08-15',?,?,1000,150,1150)`,
+    [user.id, user.name],
+  )
+  await siteExecute(
+    SITE,
+    `INSERT INTO sales_document_lines
+       (document_id, line_number, product_id, product_code, description, department_id,
+        qty, unit_price_incl, vat_rate_pct,
+        line_total_incl, line_total_excl, line_vat, unit_cost_excl)
+     VALUES (?,1,?,?,'Move test',?,1,1150,15,1150,1000,150,400)`,
+    [moveInv.insertId, product.id, product.code, product.department_id],
+  )
+
+  const moveRun = await createRun(SITE, '2019-08-01', '2019-08-31', 'To move')
+  if (!moveRun.ok) {
+    check('the move-test run was created', false, moveRun.error)
+    return
+  }
+  createdRuns.push(moveRun.id)
+  const moveCalc = await calculateRun(SITE, moveRun.id)
+  const entriesBefore = moveCalc.ok ? moveCalc.entries : 0
+  check('the move-test run calculated something', entriesBefore > 0, `${entriesBefore} entries`)
+
+  const moved = await updateRunPeriod(SITE, moveRun.id, '2019-11-01', '2019-11-30', 'Moved')
+  check('the dates move', moved.ok, moved.ok ? '' : moved.error)
+  if (moved.ok) eq('and the old entries are cleared', moved.cleared, entriesBefore)
+  const afterMove = await getRun(SITE, moveRun.id)
+  check('the period really changed', afterMove?.periodStart === '2019-11-01')
+  check('and it is uncalculated again', afterMove?.calculatedAt === null)
+  eq('with the total reset', afterMove?.totalAmount ?? -1, 0)
+
+  // But editing only the note must not discard a calculation that is still
+  // correct for its dates.
+  //
+  // Moved back onto August first, because that is where this section's sale
+  // is: asserting that entries survived a note edit proves nothing while the
+  // run sits on a month with no sales in it.
+  await updateRunPeriod(SITE, moveRun.id, '2019-08-01', '2019-08-31', 'Back on August')
+  const noteCalc = await calculateRun(SITE, moveRun.id)
+  const noteEntries = noteCalc.ok ? noteCalc.entries : 0
+  check('the note-only test has entries to keep', noteEntries > 0, `${noteEntries} entries`)
+  const beforeNote = await getRun(SITE, moveRun.id)
+  const noteOnly = await updateRunPeriod(SITE, moveRun.id, '2019-08-01', '2019-08-31', 'Note only')
+  check('a note-only edit succeeds', noteOnly.ok)
+  if (noteOnly.ok) eq('and clears nothing', noteOnly.cleared, 0)
+  const afterNote = await getRun(SITE, moveRun.id)
+  check(
+    'the calculation survives a note edit',
+    afterNote?.calculatedAt !== null && afterNote?.totalAmount === beforeNote?.totalAmount,
+    `${noteEntries} entries, total ${afterNote?.totalAmount}`,
+  )
+  check('and the note is updated', afterNote?.note === 'Note only', String(afterNote?.note))
+
+  // Overlap is refused on a move for the same reason it is on create — but a
+  // run must not clash with itself, which is the off-by-one this guards.
+  const otherRun = await createRun(SITE, '2019-12-01', '2019-12-31', 'Neighbour')
+  if (otherRun.ok) {
+    createdRuns.push(otherRun.id)
+    const clashing = await updateRunPeriod(SITE, otherRun.id, '2019-08-15', '2019-12-31', null)
+    check('moving onto another period is refused', !clashing.ok, clashing.ok ? '' : clashing.error)
+    const itself = await updateRunPeriod(SITE, otherRun.id, '2019-12-01', '2019-12-31', 'Neighbour')
+    check('but a run does not clash with itself', itself.ok, itself.ok ? '' : itself.error)
+    const backwards = await updateRunPeriod(SITE, otherRun.id, '2019-12-31', '2019-12-01', null)
+    check('and a backwards period is refused', !backwards.ok)
+  }
+
+  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [moveInv.insertId])
 }
 
 async function cleanup() {

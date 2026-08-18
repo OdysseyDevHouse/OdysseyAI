@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import {
+  Accordion,
   Badge,
   Button,
   Callout,
   Field,
+  Icons,
   Input,
   Modal,
   NumPad,
@@ -21,6 +23,8 @@ import { formatMoney, round } from '@/lib/decimals'
 import {
   tillDeclarationViewAction,
   tillSupervisorsAction,
+  tillCashupOwnersAction,
+  type CashupOwners,
   tillRevealTenderAction,
   tillSaveDeclarationAction,
   tillFinalizeDeclarationAction,
@@ -81,11 +85,14 @@ type Target =
   | { kind: 'denomination'; id: number }
   | { kind: 'tender'; id: number }
   | { kind: 'bank' }
+  /* The coppers box. No id: there is one of it. */
+  | { kind: 'smallChange' }
   | null
 
 export default function DeclarationModal({
   open,
   shiftId,
+  terminalId,
   pendingSales,
   onClose,
   onFinalized,
@@ -93,6 +100,8 @@ export default function DeclarationModal({
   open: boolean
   /** Null while there is no open shift — the dialog simply says so. */
   shiftId: number | null
+  /** The till this machine claimed, or null when it has claimed none. */
+  terminalId: number | null
   /** Outbox depth. A close while sales are queued reads over by their value. */
   pendingSales: number
   onClose: () => void
@@ -101,9 +110,29 @@ export default function DeclarationModal({
 }) {
   const toast = useToast()
   const [pending, startTransition] = useTransition()
+
+  /**
+   * Whether the denomination grid is what declares the cash.
+   *
+   * Open by default — counting the drawer out pile by pile is what this screen
+   * is FOR, and the quick count on the till's shift menu is where a total gets
+   * typed. Folding it away hands the cash box back to the pad so a shift that
+   * does not count by denomination can declare one figure and move on.
+   *
+   * The two are EITHER/OR. Before this, the grid and the cash tender were
+   * separate fields written to separate columns, so a drawer could be signed
+   * off declaring R1 000 with a grid adding to R950 and nothing on screen
+   * disagreed with itself.
+   */
+  const [countingCash, setCountingCash] = useState(true)
   const [loading, setLoading] = useState(false)
   const [view, setView] = useState<VisibleDeclaration | null>(null)
   const [supervisors, setSupervisors] = useState<{ id: number; name: string }[]>([])
+  /* Whose takings these are — a till in terminal mode, a person in user mode.
+     Answered by the server, which also says whether this operator may change
+     it; see tillCashupOwnersAction. */
+  const [owners, setOwners] = useState<CashupOwners | null>(null)
+  const [ownerId, setOwnerId] = useState('')
 
   const [supervisorId, setSupervisorId] = useState('')
   const [qty, setQty] = useState<Record<number, number>>({})
@@ -112,6 +141,15 @@ export default function DeclarationModal({
   const [revealed, setRevealed] = useState<
     Record<number, { expected: number; floatIncluded: number }>
   >({})
+  /**
+   * Coppers, declared as one amount.
+   *
+   * Not a denomination row: the grid counts QUANTITIES and 1c/2c/5c are swept
+   * together rather than counted, so the figure that matters is the rand value
+   * of the handful. See sql/site/184_cashup_small_change.sql.
+   */
+  const [smallChange, setSmallChange] = useState(0)
+
   const [bankDeclared, setBankDeclared] = useState(0)
   const [bankReference, setBankReference] = useState('')
   const [varianceNote, setVarianceNote] = useState('')
@@ -124,6 +162,26 @@ export default function DeclarationModal({
      "5." or a trailing zero mid-entry. It is parsed on commit. */
   const [target, setTarget] = useState<Target>(null)
   const [entry, setEntry] = useState('')
+  /**
+   * Whether the empty buffer is a live edit or a finished one.
+   *
+   * An empty `entry` is ambiguous on its own, and the two readings want
+   * opposite things on screen:
+   *
+   *   MID-EDIT — the cashier backspaced the box to nothing and is about to type
+   *     a new figure. The box must look EMPTY, or the old number reappears
+   *     under their fingers and the next digit appends to a figure they thought
+   *     they had deleted.
+   *
+   *   POST-COMMIT — Enter banked the figure and reset the buffer. The box must
+   *     show the COMMITTED value, or a cashier who has just pressed Enter
+   *     watches their count vanish and types it again.
+   *
+   * Telling them apart is what this flag is for. It is not derivable from
+   * `entry` — both states are the empty string — which is why guessing from the
+   * buffer alone produced one bug or the other every time.
+   */
+  const [editing, setEditing] = useState(false)
 
   /* Loaded on open rather than held: a shift's takings move with every sale,
      so a view cached from the last time this was opened would be counting
@@ -133,8 +191,12 @@ export default function DeclarationModal({
     setTarget(null)
     setEntry('')
     setLoading(true)
-    void Promise.all([tillDeclarationViewAction(shiftId), tillSupervisorsAction()])
-      .then(([result, people]) => {
+    void Promise.all([
+      tillDeclarationViewAction(shiftId),
+      tillSupervisorsAction(),
+      tillCashupOwnersAction(terminalId ?? null),
+    ])
+      .then(([result, people, ownerList]) => {
         if ('ok' in result) {
           toast.error(result.error)
           return
@@ -146,6 +208,13 @@ export default function DeclarationModal({
             : '',
         )
         setSupervisors(Array.isArray(people) ? people : [])
+        if (ownerList && !('ok' in ownerList)) {
+          setOwners(ownerList)
+          /* Their own till or their own name, filled in for them. Somebody
+             without `sales.cashup_other` never changes it, and somebody with it
+             starts from the same sensible answer rather than an empty box. */
+          setOwnerId(ownerList.defaultId !== null ? String(ownerList.defaultId) : '')
+        }
         /* Seeded from the stored draft so a resumed count shows the work
            already done rather than an empty grid somebody has to redo. */
         setQty(Object.fromEntries(result.counted.map((c) => [c.denominationId, c.qty])))
@@ -180,11 +249,16 @@ export default function DeclarationModal({
      disagree with them. */
   const declaredCash = useMemo(
     () =>
-      (view?.denominations ?? []).reduce(
-        (sum, d) => round(sum + d.value * (qty[d.id] ?? 0), 2),
-        0,
+      /* The piles PLUS the sweepings: what the drawer holds is both, and the
+         split only matters when reading the count back. */
+      round(
+        (view?.denominations ?? []).reduce(
+          (sum, d) => round(sum + d.value * (qty[d.id] ?? 0), 2),
+          0,
+        ) + smallChange,
+        2,
       ),
-    [qty, view],
+    [qty, view, smallChange],
   )
 
   /* `every` over an empty list is TRUE, which on a shift that took nothing read
@@ -196,23 +270,99 @@ export default function DeclarationModal({
     view.tenders.length > 0 &&
     view.tenders.every((t) => declared[t.tenderTypeId] !== undefined)
 
+/*
+    Whether this operator was given the targets up front.
+
+    `sales.cashup_expected` decides it, and the server says so by shipping the
+    expected figures or withholding them — an undeclared tender that still knows
+    what it should hold means they may see. Derived rather than passed, so the
+    permission is answered in ONE place (visible.ts) and this only reflects it.
+  */
+  const sighted =
+    view !== null &&
+    view.tenders.length > 0 &&
+    view.tenders.every((t) => revealed[t.tenderTypeId] !== undefined)
+
+  /**
+   * The difference, as it stands right now.
+   *
+   * ── WHY IT RUNS FOR A SIGHTED COUNT AND WAITS FOR A BLIND ONE ─────────────
+   *
+   * Sighted, every target is already on screen, so a running total is simply
+   * the arithmetic the cashier is doing in their head anyway — and watching it
+   * close on zero as each tender goes in is the whole point of showing the
+   * figures. Waiting for the last box before saying anything made the headline
+   * dead weight for the entire count.
+   *
+   * Blind, the figures arrive one at a time as tenders are committed, so a
+   * running total would leak: a cashier could type a number into card, read the
+   * difference move, and work backwards to what card was expected to hold. So
+   * that count still says nothing until every tender is in, at which point
+   * there is nothing left to infer.
+   */
   const liveVariance = useMemo(() => {
-    if (!view || !everyTenderDeclared) return null
+    if (!view || view.tenders.length === 0) return null
+
+    /*
+      SIGHTED: every tender counts, and an uncounted one counts as ZERO.
+
+      The boxes read 0.00 from the moment the dialog opens, so the difference
+      says what those boxes claim — a drawer nobody has touched IS short by
+      everything the shift took, and that figure closing on zero as each pile
+      goes in is the reconciliation happening in front of the cashier.
+
+      Summing only the tenders already typed into was the wrong reading of the
+      same screen: it showed "short by R460" while five boxes sat at 0.00,
+      which is a different arithmetic from the one on display.
+    */
+    if (sighted) {
+      return view.tenders.reduce(
+        (sum, t) =>
+          round(sum + ((declared[t.tenderTypeId] ?? 0) - (revealed[t.tenderTypeId]?.expected ?? 0)), 2),
+        0,
+      )
+    }
+
+    /*
+      BLIND: nothing until every tender is in.
+
+      A running figure here would leak the targets — type a number into card,
+      watch the difference move, and card's expectation is arithmetic away.
+      Once every tender is declared there is nothing left to infer.
+    */
+    if (!everyTenderDeclared) return null
     if (view.tenders.some((t) => revealed[t.tenderTypeId] === undefined)) return null
     return view.tenders.reduce(
       (sum, t) =>
         round(sum + ((declared[t.tenderTypeId] ?? 0) - revealed[t.tenderTypeId].expected), 2),
       0,
     )
-  }, [view, declared, revealed, everyTenderDeclared])
+  }, [view, declared, revealed, everyTenderDeclared, sighted])
 
-  const outside = liveVariance !== null && view !== null && Math.abs(liveVariance) > view.tolerance
+  /* How much of the count the headline is speaking for. A running figure that
+     does not say "3 of 5" reads as the final answer, and a cashier three
+     tenders in would think the shift was R400 short when it is merely
+     unfinished. */
+  const countedTenders = view
+    ? view.tenders.filter((t) => declared[t.tenderTypeId] !== undefined).length
+    : 0
+
+  /* Only once the count is COMPLETE. A running difference wanders past the
+     tolerance halfway through — one tender in, the shift always looks wildly
+     short — and demanding an explanation for a figure that is still moving
+     would ask the cashier to explain their own unfinished work. */
+  const outside =
+    liveVariance !== null &&
+    view !== null &&
+    everyTenderDeclared &&
+    Math.abs(liveVariance) > view.tolerance
 
   function input() {
     return {
       supervisorId: supervisorId ? Number(supervisorId) : null,
       supervisorName: supervisors.find((s) => s.id.toString() === supervisorId)?.name ?? '',
       denominations: qty,
+      smallChange,
       tenders: Object.fromEntries(
         Object.entries(declared)
           .filter(([, v]) => v !== undefined)
@@ -279,6 +429,8 @@ export default function DeclarationModal({
           commitTender(t.id, value, q)
           return q
         })
+      } else if (t.kind === 'smallChange') {
+        setSmallChange(round(n, 2))
       } else {
         setBankDeclared(round(n, 2))
       }
@@ -294,11 +446,42 @@ export default function DeclarationModal({
           if (current && typed !== '') commit(current, typed)
           return seed
         })
+        /* A fresh box is not mid-edit: it shows what is committed until a key
+           is pressed. */
+        setEditing(false)
         return next
       })
     },
     [commit],
   )
+
+  /**
+   * What the pad is editing.
+   *
+   * The live buffer while one is being typed; otherwise the figure the aimed
+   * box is showing — so backspace cuts a digit off the number on screen rather
+   * than off an empty string it cannot see.
+   */
+  const padValue = useMemo(() => {
+    if (editing) return entry
+    if (!target) return entry
+    if (target.kind === 'tender') {
+      const v = declared[target.id]
+      return v === undefined ? '' : String(v)
+    }
+    if (target.kind === 'denomination') {
+      const q = qty[target.id]
+      return q ? String(q) : ''
+    }
+    if (target.kind === 'smallChange') return smallChange ? String(smallChange) : ''
+    return String(bankDeclared)
+  }, [editing, entry, target, declared, qty, bankDeclared, smallChange])
+
+  /** The pad wrote to the buffer, so it is a live edit from here. */
+  const typeInto = useCallback((next: string) => {
+    setEditing(true)
+    setEntry(next)
+  }, [])
 
   /* Enter commits and drops to the next denomination down, which is how a
      drawer is actually counted — R200s, then R100s, then R50s, without ever
@@ -310,14 +493,36 @@ export default function DeclarationModal({
 
   const onEnter = useCallback(() => {
     setTarget((current) => {
+      /*
+        THE BUFFER ALWAYS CLEARS; WHERE THE AIM GOES IS WHAT DIFFERS.
+
+        On a denomination, Enter moves DOWN a row — the buffer empties for the
+        pile about to be counted and the row just left renders its committed
+        quantity.
+
+        Otherwise the aim is DROPPED entirely. It used to stay put with the
+        typed string retained, so the box would not look empty — but the buffer
+        belongs to whatever is aimed, so that "100" followed the cashier to the
+        next tender they touched and committed itself there a second time.
+
+        With no target the box falls back to its committed value, which is the
+        same figure on screen and nothing left to leak. The pad greys out until
+        another box is tapped, which is honest: there is nothing to type into.
+      */
+      const movingOn =
+        current?.kind === 'denomination' &&
+        denominationOrder.indexOf(current.id) < denominationOrder.length - 1
+
       setEntry((typed) => {
         if (current && typed !== '') commit(current, typed)
         return ''
       })
-      if (current?.kind !== 'denomination') return current
-      const at = denominationOrder.indexOf(current.id)
-      const next = denominationOrder[at + 1]
-      return next === undefined ? current : { kind: 'denomination', id: next }
+      /* Committed, not cleared — the box goes back to showing its figure. */
+      setEditing(false)
+
+      if (!movingOn) return current
+      const at = denominationOrder.indexOf((current as { kind: 'denomination'; id: number }).id)
+      return { kind: 'denomination', id: denominationOrder[at + 1] }
     })
   }, [commit, denominationOrder])
 
@@ -367,37 +572,22 @@ export default function DeclarationModal({
 
   const signed = view?.finalizedAt != null
 
-  /*
-   * The totals tiles, numbered in one pass.
-   *
-   * Panels 1–4 are fixed and always render, so these continue from 5. Computing
-   * the numbers here rather than as arithmetic at each call site is what stops
-   * a gap appearing: a shift with no cash tender used to skip straight from 4
-   * to 6, and a supervisor reading "panel 6" down the phone would be pointing
-   * at a panel the other person could not find.
-   *
-   * Cash leads because it is the tender the drawer in front of the cashier
-   * actually holds; the machine-settled ones follow in the order the site
-   * defined them.
-   */
-  const totalsPanels = useMemo(() => {
-    const tenders = view?.tenders ?? []
-    const ordered = [
-      ...tenders.filter((t) => t.countsAsDrawerCash),
-      ...tenders.filter((t) => !t.countsAsDrawerCash),
-    ]
-    return ordered.map((t, i) => ({
-      tenderTypeId: t.tenderTypeId,
-      n: 5 + i,
-      title: t.countsAsDrawerCash ? 'Cash totals' : `${t.tenderName} totals`,
-      label: t.tenderName,
-      /* Null until this tender has been declared — the tile renders an em dash
-         rather than the target the count is meant to test. */
-      expected: revealed[t.tenderTypeId]?.expected ?? null,
-    }))
-  }, [view, revealed])
+  /* The drawer tender — the one the grid counts. Found by the flag rather
+     than by name so a site that renamed it still works. */
+  const cashTender = view?.tenders.find((t) => t.countsAsDrawerCash) ?? null
+  const otherTenders = view?.tenders.filter((t) => !t.countsAsDrawerCash) ?? []
 
-  const countersPanelNumber = 5 + totalsPanels.length
+  /**
+   * What cash is being declared as, whichever way it was entered.
+   *
+   * The single figure the rest of the screen reads, so the grid and the typed
+   * total cannot reach the record as two different numbers.
+   */
+  const cashDeclared = cashTender
+    ? countingCash
+      ? declaredCash
+      : declared[cashTender.tenderTypeId]
+    : undefined
 
   return (
     <Modal
@@ -405,7 +595,17 @@ export default function DeclarationModal({
       onClose={onClose}
       size="full"
       bodyFills
+      /* The pad bar spends a fixed ~250px of the body on touch-size keys, so
+         the content above it needs more than 70vh to stay readable. */
+      bodyTall
       title="Cash-up / Cash declaration"
+      /* The screen's crest. `titleMedia` is the kit's own slot for this, so the
+         title and close button keep the positions every other dialog uses. */
+      titleMedia={
+        <span className="flex h-12 w-12 items-center justify-center rounded-card bg-brand-soft text-brand">
+          <Icons.Calculator size={24} />
+        </span>
+      }
       description={
         view
           ? `${view.ownerLabel} · trading since ${new Date(view.openedAt).toLocaleString('en-ZA')}`
@@ -431,6 +631,7 @@ export default function DeclarationModal({
                 }
                 onClick={finalizeNow}
               >
+                {!pending && <Icons.Check size={16} />}
                 {pending ? 'Signing off…' : 'Finalize cash-up'}
               </Button>
             </>
@@ -449,7 +650,12 @@ export default function DeclarationModal({
           Every figure was committed at the time. The back office holds the record.
         </Callout>
       ) : (
-        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
+        /* `min-h-0` and NOT `overflow-y-auto`: the body no longer scrolls as
+           one piece. Panel 1 pins its pad to its own bottom, and a pad inside a
+           scrolling parent slides away with everything else however it is
+           positioned — the parent is what moves. So the height stops here and
+           each column overflows inside itself. */
+        <div className="flex min-h-0 flex-col gap-4">
           {pendingSales > 0 && (
             <Callout
               tone="warning"
@@ -462,124 +668,45 @@ export default function DeclarationModal({
 
           {/* Three columns on a till screen, stacking on anything narrower.
               The left one is the count and never moves; the middle and right
-              are what the count is being measured against. */}
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)_minmax(0,1fr)]">
-            {/* ── 1 · The drawer, counted by pile ─────────────────────────
-                The pad sits BESIDE the grid, not under it. Under it, the pad
-                either falls off the bottom of an eleven-row drawer or — made
-                sticky to fix that — floats over the very row being counted.
-                Side by side, the whole drawer and every key are on screen at
-                once, which is the only arrangement where a cashier can work
-                down the piles without hunting for either. */}
-            <Panel n={1} title="Declare cash by denomination">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-              {/* The grid takes the room that is left; the pad beside it is a
-                  fixed width, so `min-w-0` is what stops the table forcing the
-                  pair wider than the column. */}
-              <div className="min-w-0 flex-1">
-              {/* table-fixed so the three columns divide the width they are
-                  GIVEN. Left to itself the table sizes to its content and
-                  spills under the pad, which put the Amount column behind the
-                  keys — the one figure the count is checked against. */}
-              <table className={`${TABLE} table-fixed`}>
-                <thead>
-                  <tr className={TABLE_HEAD_ROW}>
-                    <th className={TABLE_TH}>Denomination</th>
-                    {/* Fixed, or the qty inputs are the first thing the browser
-                        squeezes when the pad takes its width beside them. */}
-                    <th className={`${TABLE_TH} w-24 text-right`}>Qty</th>
-                    <th className={`${TABLE_TH} text-right`}>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {view.denominations.map((d) => {
-                    const aimed = target?.kind === 'denomination' && target.id === d.id
-                    const n = qty[d.id] ?? 0
-                    return (
-                      <tr key={d.id}>
-                        <td className={TABLE_TD}>{d.label}</td>
-                        <td className={`${TABLE_TD} text-right`}>
-                          {/*
-                            A plain Input, deliberately NOT NumberInput.
-                            NumberInput keeps its own buffer while focused and
-                            ignores `value` until blur — which is right when a
-                            keyboard is the only writer, and wrong here: the pad
-                            writes to `entry`, so the focused box would go on
-                            showing its stale buffer and a touch-only cashier
-                            would watch their taps do nothing. This screen
-                            already holds the decimal string itself.
-                          */}
-                          <Input
-                            className="numeric w-full min-w-14 text-right"
-                            inputMode="numeric"
-                            /* While aimed at, the box shows the string being
-                               typed — including "1" on the way to "11". */
-                            value={aimed ? entry : n === 0 ? '' : String(n)}
-                            disabled={pending}
-                            onFocus={() =>
-                              aim({ kind: 'denomination', id: d.id }, n === 0 ? '' : String(n))
-                            }
-                            onChange={(e) => setEntry(e.target.value.replace(/[^0-9]/g, ''))}
-                          />
-                        </td>
-                        {/* Zero stays faint: a column of 0.00 competes with the
-                            three rows that actually hold money. */}
-                        <td className={`${TABLE_TD} ${TABLE_NUMERIC} ${n === 0 ? 'text-faint' : ''}`}>
-                          {formatMoney(round(d.value * n, 2))}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+              are what the count is being measured against.
 
-              {/* The running total belongs under the grid it sums, not beside
-                  the pad — it is the answer to the counting, not part of it. */}
-              <div className="mt-3 flex items-baseline justify-between rounded-card bg-warning-soft px-4 py-3">
-                <span className="text-sm font-medium text-ink">Total cash (declared)</span>
-                <span className="numeric text-xl font-bold text-ink">
-                  {formatMoney(declaredCash)}
-                </span>
-              </div>
-              </div>
+              `min-h-0 xl:flex-1` so the row takes the height the body has left
+              rather than its content's height — which is what lets panel 1 be a
+              fixed-height box with a scroller in it. Below xl the columns stack
+              and the whole thing scrolls normally, because a stacked pad at the
+              bottom of a phone-shaped modal would cover the boxes it types
+              into. */}
+          {/* The middle and right columns are wider than an equal split:
+              "Direct deposit" wrapped onto two lines in the tender table and
+              the supervisor's name truncated mid-word, both because a third
+              each is not what this content needs. The count column is the one
+              with a fixed-width pad in it, so it is the one that can be pinned. */}
+          <div className="grid min-h-0 flex-1 auto-rows-fr gap-4 xl:grid-cols-[minmax(0,25rem)_minmax(0,1fr)_minmax(0,1.1fr)]">
+            {/* ── 1 · Everything being declared, and the pad that types it ──
+                THE PAD IS FIXED TO THE BOTTOM; THE DECLARATION SCROLLS ABOVE IT.
 
-              {/* `sm:w-48` and not a fraction: a numpad's keys want a stable
-                  size under the thumb, and a percentage width would resize them
-                  every time the column did. */}
-              <div className="shrink-0 sm:w-48">
-                <NumPad
-                  value={entry}
-                  onChange={setEntry}
-                  /* Whole numbers when counting a pile of notes, decimals when
-                     declaring a machine slip. The pad reshapes to its target. */
-                  maxDecimals={target?.kind === 'denomination' ? 0 : 2}
-                  disabled={pending || target === null}
-                />
-                <Button
-                  variant="primary"
-                  size="touch"
-                  className="mt-2 w-full"
-                  disabled={pending || target === null}
-                  onClick={onEnter}
-                >
-                  Enter
-                </Button>
-                <p className="mt-2 text-xs text-muted">
-                  {target === null
-                    ? 'Tap a box to start counting — the pad types into it.'
-                    : 'Enter drops to the next row down.'}
-                </p>
-              </div>
-              </div>
-            </Panel>
+                The pad used to sit beside the boxes, which kept both on screen
+                but cost the count half its width — and once cash, its
+                denomination grid and every other tender lived in one panel,
+                the column beside a 12rem pad was too narrow to read.
 
-            {/* ── The middle column: what was taken, and the banking ────── */}
-            <div className="flex flex-col gap-4">
-              <Panel n={2} title="Declare each tender">
-                <p className="mb-3 text-sm text-muted">
-                  The drawer for cash, the machine&rsquo;s own slip for card. What was expected
-                  appears once you have committed your figure.
-                </p>
+                Below and fixed is the arrangement a till actually wants: the
+                keys never move, they are near the thumb at the bottom of the
+                screen, and the list above scrolls to whatever is being counted.
+                `shrink-0` on the pad and `min-h-0 overflow-y-auto` on the list
+                is what splits them — without `min-h-0` the list refuses to
+                shrink below its content and pushes the pad off the panel, which
+                is the flex-column trap this codebase has hit before. */}
+            <Panel n={1} title="Declare your takings" fills>
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
+              {/* The whole declaration in one scroller. The pad is no longer in
+                  here competing for the height — it spans the modal's own
+                  bottom, under all three columns. */}
+              {/* `till-pane`: a 12px thumb and contained overscroll, because
+                  this is read at arm's length and dragged with a finger. The
+                  app's 8px default is both invisible and unhittable on a
+                  counter screen. */}
+              <div className="till-pane min-w-0 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
                 {/*
                   "Nothing was taken" is only true if nothing was taken.
 
@@ -587,9 +714,6 @@ export default function DeclarationModal({
                   that took a lay-by deposit and rang up no sale showed this
                   beside a drawer holding the deposit — telling a cashier to
                   expect the float when the right answer was the float plus it.
-                  The same fix as the back office's declaration screen; this is
-                  the copy a cashier actually reads, and now that the till can
-                  take lay-by payments it is the one that would be wrong.
                 */}
                 {view.tenders.length === 0 && (
                   <p className="text-sm text-muted">
@@ -607,57 +731,382 @@ export default function DeclarationModal({
                     )}
                   </p>
                 )}
-                <div className="flex flex-col gap-3">
-                  {view.tenders.map((tender) => {
-                    const aimed = target?.kind === 'tender' && target.id === tender.tenderTypeId
-                    const value = declared[tender.tenderTypeId]
-                    return (
-                      <Field
-                        key={tender.tenderTypeId}
-                        label={tender.tenderName}
-                        hint={
-                          tender.countsAsDrawerCash
-                            ? 'The drawer, including the float.'
-                            : 'What the machine or bank reports.'
-                        }
-                      >
-                        {/* Plain Input for the same reason as the grid above —
-                            the pad is the writer, so the box must render
-                            `entry` rather than a buffer of its own. Blurred, it
-                            shows the committed figure at two decimals. */}
-                        <Input
-                          className="numeric text-right"
-                          inputMode="decimal"
-                          value={
-                            aimed ? entry : value === undefined ? '' : value.toFixed(2)
-                          }
-                          /* "Not counted", never "0.00" — a blank box must not
-                             look declared before anybody has counted it. */
-                          placeholder="Not counted"
-                          disabled={pending}
-                          onFocus={() =>
-                            aim(
-                              { kind: 'tender', id: tender.tenderTypeId },
-                              value === undefined ? '' : String(value),
+
+                {/* ── Cash first, with its breakdown folded underneath ──── */}
+                {cashTender && (
+                  <>
+                    <TenderBox
+                      label={cashTender.tenderName}
+                      aimed={target?.kind === 'tender' && target.id === cashTender.tenderTypeId}
+                      editing={editing}
+                      entry={entry}
+                      value={cashDeclared}
+                      /* Read-only while the grid drives it: two editable fields
+                         for one figure is how they come to disagree. */
+                      readOnly={countingCash}
+                      disabled={pending}
+                      onAim={() =>
+                        aim(
+                          { kind: 'tender', id: cashTender.tenderTypeId },
+                          cashDeclared === undefined ? '' : String(cashDeclared),
+                        )
+                      }
+                      onEntry={typeInto}
+                      onCommit={() => {
+                        if (
+                          countingCash ||
+                          target?.kind !== 'tender' ||
+                          target.id !== cashTender.tenderTypeId ||
+                          entry === ''
+                        )
+                          return
+                        commit({ kind: 'tender', id: cashTender.tenderTypeId }, entry)
+                      }}
+                    />
+
+                    <Accordion
+                      title="Count it out by denomination"
+                      description={
+                        countingCash
+                          ? 'This count decides the cash figure.'
+                          : 'Optional — count the drawer out instead.'
+                      }
+                      badge={
+                        countingCash ? (
+                          <Badge tone="brand">{formatMoney(declaredCash)}</Badge>
+                        ) : undefined
+                      }
+                      open={countingCash}
+                      /* Folding it away hands the figure back to the box,
+                         seeded with what the grid last added to so the number
+                         does not jump when somebody collapses it. */
+                      onToggle={() => {
+                        setCountingCash((wasOpen) => {
+                          if (wasOpen) {
+                            commit(
+                              { kind: 'tender', id: cashTender.tenderTypeId },
+                              String(declaredCash),
                             )
                           }
-                          onChange={(e) =>
-                            setEntry(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))
-                          }
-                          onBlur={() => {
-                            if (!aimed || entry === '') return
-                            commit({ kind: 'tender', id: tender.tenderTypeId }, entry)
-                          }}
-                        />
-                      </Field>
-                    )
-                  })}
-                </div>
-                {declaredCash > 0 && (
-                  <p className="mt-3 text-xs text-muted">
-                    The denomination grid totals {formatMoney(declaredCash)}.
-                  </p>
+                          return !wasOpen
+                        })
+                      }}
+                    >
+                      {/* No cap: panel 1 has its whole column now that the pad
+                          spans the modal instead of sitting in here, so the
+                          drawer's rows take their room in the column's scroller
+                          rather than fighting the tender boxes for a sliver. */}
+                      <div>
+                      {/* table-fixed so the three columns divide the width they
+                          are GIVEN. Left to itself the table sizes to its
+                          content and spills under the pad, which put the Amount
+                          column behind the keys — the one figure the count is
+                          checked against. */}
+                      <table className={`${TABLE} table-fixed`}>
+                        <thead>
+                          <tr className={TABLE_HEAD_ROW}>
+                            <th className={TABLE_TH}>Denomination</th>
+                            {/* Fixed, or the qty inputs are the first thing the
+                                browser squeezes when the pad takes its width. */}
+                            <th className={`${TABLE_TH} w-24 text-right`}>Qty</th>
+                            <th className={`${TABLE_TH} text-right`}>Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {view.denominations.map((d) => {
+                            const aimed = target?.kind === 'denomination' && target.id === d.id
+                            const n = qty[d.id] ?? 0
+                            return (
+                              <tr key={d.id}>
+                                <td className={TABLE_TD}>{d.label}</td>
+                                <td className={`${TABLE_TD} text-right`}>
+                                  {/*
+                                    A plain Input, deliberately NOT NumberInput.
+                                    NumberInput keeps its own buffer while
+                                    focused and ignores `value` until blur —
+                                    right when a keyboard is the only writer,
+                                    wrong here: the pad writes to `entry`, so a
+                                    touch-only cashier would watch their taps do
+                                    nothing.
+                                  */}
+                                  <Input
+                                    className="numeric w-full min-w-14 text-right"
+                                    inputMode="numeric"
+                                    autoComplete="off"
+                                    data-1p-ignore
+                                    data-lpignore="true"
+                                    /* Aimed, the buffer is the box — see the
+                                        note on TenderBox. Unaimed, an empty
+                                        pile stays blank rather than showing a
+                                        column of noisy zeros. */
+                                    value={aimed ? entry : n === 0 ? '' : String(n)}
+                                    disabled={pending}
+                                    onFocus={() =>
+                                      aim(
+                                        { kind: 'denomination', id: d.id },
+                                        n === 0 ? '' : String(n),
+                                      )
+                                    }
+                                    onChange={(e) =>
+                                      typeInto(e.target.value.replace(/[^0-9]/g, ''))
+                                    }
+                                  />
+                                </td>
+                                {/* Zero stays faint: a column of 0.00 competes
+                                    with the rows that actually hold money. */}
+                                <td
+                                  className={`${TABLE_TD} ${TABLE_NUMERIC} ${n === 0 ? 'text-faint' : ''}`}
+                                >
+                                  {formatMoney(round(d.value * n, 2))}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                      </div>
+
+                      {/*
+                        ── SMALL CHANGE, AT THE BOTTOM ─────────────────────────
+
+                        Every row above counts a PILE — a quantity, multiplied by
+                        what that coin is worth. This one takes the money
+                        directly, because the coppers at the bottom of a drawer
+                        are not counted that way: 1c, 2c and 5c pieces are swept
+                        together and declared as one amount, and asking "how many
+                        2c" gets either a guess or a cashier on their knees.
+
+                        Last, and separated by a rule, because it is the sweeping
+                        up after the counting rather than another pile.
+                      */}
+                      <div className="mt-3 border-t border-border pt-3">
+                        <div className="flex items-center gap-3">
+                          <label
+                            htmlFor="small-change"
+                            className="min-w-0 flex-1 basis-24 text-sm font-medium text-ink-2"
+                          >
+                            Small change
+                            <span className="block text-xs font-normal text-muted">
+                              1c, 2c, 5c — as one amount
+                            </span>
+                          </label>
+                          <div className="w-32 shrink-0">
+                            <Input
+                              id="small-change"
+                              icon={<span className="text-sm font-medium text-muted">R</span>}
+                              className="numeric text-right"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              data-1p-ignore
+                              data-lpignore="true"
+                              value={
+                                target?.kind === 'smallChange' && editing
+                                  ? entry
+                                  : smallChange.toFixed(2)
+                              }
+                              disabled={pending}
+                              onFocus={() => aim({ kind: 'smallChange' }, String(smallChange))}
+                              onChange={(e) =>
+                                typeInto(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))
+                              }
+                              onBlur={() => {
+                                if (target?.kind !== 'smallChange' || entry === '') return
+                                commit({ kind: 'smallChange' }, entry)
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                    </Accordion>
+                  </>
                 )}
+
+                {/* ── Then the machines and the bank ──────────────────────── */}
+                {otherTenders.map((tender) => (
+                  <TenderBox
+                    key={tender.tenderTypeId}
+                    label={tender.tenderName}
+                    aimed={target?.kind === 'tender' && target.id === tender.tenderTypeId}
+                    editing={editing}
+                    entry={entry}
+                    value={declared[tender.tenderTypeId]}
+                    disabled={pending}
+                    onAim={() =>
+                      aim(
+                        { kind: 'tender', id: tender.tenderTypeId },
+                        declared[tender.tenderTypeId] === undefined
+                          ? ''
+                          : String(declared[tender.tenderTypeId]),
+                      )
+                    }
+                    onEntry={typeInto}
+                    onCommit={() => {
+                      if (
+                        target?.kind !== 'tender' ||
+                        target.id !== tender.tenderTypeId ||
+                        entry === ''
+                      )
+                        return
+                      commit({ kind: 'tender', id: tender.tenderTypeId }, entry)
+                    }}
+                  />
+                ))}
+              </div>
+
+              {/*
+                ── THE PAD, ANCHORED TO THIS PANEL ───────────────────────────
+
+                `shrink-0` under a `min-h-0 overflow-y-auto` list: the list gives
+                way, the keys never do. It briefly spanned the whole dialog
+                instead, which bought the declaration height but put the pad at
+                the bottom of a modal whose columns scroll — so on a short screen
+                you could scroll the keys out of reach, which is the one thing a
+                numpad must never do.
+
+                Here it cannot move at all. The panel owns its height, the list
+                inside it scrolls, and the keys sit under that list wherever the
+                scroll happens to be.
+              */}
+              <div className="shrink-0 border-t border-border pt-3">
+                <div className="flex items-start justify-center gap-3">
+                  {/* A stable key size under the thumb — not a fraction, which
+                      would resize the keys every time the column did. */}
+                  <div className="w-[13rem] shrink-0">
+                    <NumPad
+                      value={padValue}
+                      onChange={typeInto}
+                      /* Whole numbers when counting a pile of notes, decimals
+                         when declaring a machine slip. */
+                      maxDecimals={target?.kind === 'denomination' ? 0 : 2}
+                      disabled={pending || target === null}
+                    />
+                  </div>
+                  {/* Beside the keys rather than under them: stacked, the button
+                      and its hint were the first things pushed off the panel. */}
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <Button
+                      variant="primary"
+                      size="touch"
+                      disabled={pending || target === null}
+                      onClick={onEnter}
+                    >
+                      Enter
+                      {/* The arrow says what the key DOES — drops to the next
+                         row — which the word alone does not. */}
+                      <Icons.ArrowRight size={16} />
+                    </Button>
+                    <p className="text-xs text-muted">
+                      {target === null
+                        ? 'Tap a box to start counting — the pad types into it.'
+                        : 'Enter drops to the next row down.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              </div>
+            </Panel>
+
+            {/* ── The middle column: what each tender came to, and the bank ──
+                The totals sit BESIDE the boxes that feed them rather than in
+                the far column: a cashier declaring card wants the card tile in
+                the same glance, and across two columns it was a head-turn away.
+                Scrolls itself now that the body does not. */}
+            <div className="till-pane flex flex-col gap-4 xl:min-h-0 xl:overflow-y-auto">
+              {/*
+                ── ONE TABLE, NOT A TILE PER TENDER ──────────────────────────
+
+                There used to be a tile each for cash, card, account and the
+                rest, every one of them stacking expected / declared /
+                difference down the card. The table below carries the same four
+                figures — and the transaction count besides — with the tenders
+                as rows, so five tiles became five lines.
+
+                They were not merely redundant, they were WORSE for the job:
+                reconciling means comparing tenders against each other, and a
+                figure in the same column two rows down is a glance where the
+                same figure in another card is a hunt.
+              */}
+              <Panel n={2} title="Every tender, side by side">
+                <div className="overflow-x-auto">
+                  <table className={TABLE}>
+                    <thead>
+                      <tr className={TABLE_HEAD_ROW}>
+                        <th className={TABLE_TH}>Tender</th>
+                        {/* No transaction count here any more — it moved to
+                            the Counters panel. This table compares MONEY,
+                            expected against declared, and a count was the one
+                            column in it that never took part in that. */}
+                        <th className={`${TABLE_TH} text-right`}>Expected</th>
+                        <th className={`${TABLE_TH} text-right`}>Declared</th>
+                        <th className={`${TABLE_TH} text-right`}>Difference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {view.tenders.map((t) => {
+                        const value = declared[t.tenderTypeId]
+                        const shown = revealed[t.tenderTypeId]
+                        /*
+                          Sighted, an uncounted tender reads 0.00 in its box, so
+                          it reads 0.00 here and its difference is the whole
+                          expectation. The table and the boxes are the same
+                          claim; showing an em dash beside a 0.00 box made them
+                          look like two different screens.
+
+                          Blind, it stays an em dash: there is no expected
+                          figure to difference against yet.
+                        */
+                        const effective = sighted ? (value ?? 0) : value
+                        const variance =
+                          effective !== undefined && shown
+                            ? round(effective - shown.expected, 2)
+                            : null
+                        return (
+                          <tr key={t.tenderTypeId}>
+                            <td className={TABLE_TD}>{t.tenderName}</td>
+                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                              {/* An em dash: this browser has not been told the
+                                  figure, rather than being styled out of view. */}
+                              {!shown ? (
+                                <span className="text-faint">—</span>
+                              ) : (
+                                formatMoney(shown.expected)
+                              )}
+                            </td>
+                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                              {effective === undefined ? (
+                                <span className="text-faint">—</span>
+                              ) : (
+                                /* Faint while nobody has counted it, so a
+                                   zero-by-default still reads differently from
+                                   a zero somebody counted. */
+                                <span className={value === undefined ? 'text-faint' : ''}>
+                                  {formatMoney(effective)}
+                                </span>
+                              )}
+                            </td>
+                            {/* A pill per row: the difference is the one
+                                column carrying a judgement, and a tinted chip
+                                is findable down a column of plain figures in a
+                                way coloured text is not. */}
+                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                              {variance === null ? (
+                                <span className="text-faint">—</span>
+                              ) : variance === 0 ? (
+                                <Badge tone="success">0.00</Badge>
+                              ) : (
+                                <Badge tone={variance < 0 ? 'danger' : 'warning'}>
+                                  {variance < 0 ? '−' : '+'}
+                                  {formatMoney(Math.abs(variance))}
+                                </Badge>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </Panel>
 
               <Panel n={3} title="Other transactions">
@@ -688,13 +1137,17 @@ export default function DeclarationModal({
                 <div className="flex flex-wrap items-end gap-4">
                   <Field label="Bank declared" className="w-40">
                     <Input
+                      icon={<span className="text-sm font-medium text-muted">R</span>}
                       className="numeric text-right"
                       inputMode="decimal"
+                      autoComplete="off"
+                      data-1p-ignore
+                      data-lpignore="true"
                       value={target?.kind === 'bank' ? entry : bankDeclared.toFixed(2)}
                       disabled={pending}
                       onFocus={() => aim({ kind: 'bank' }, String(bankDeclared))}
                       onChange={(e) =>
-                        setEntry(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))
+                        typeInto(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))
                       }
                       onBlur={() => {
                         if (target?.kind !== 'bank' || entry === '') return
@@ -725,28 +1178,87 @@ export default function DeclarationModal({
               </Panel>
             </div>
 
-            {/* ── The right column: what it all comes to ─────────────────── */}
-            <div className="flex flex-col gap-4">
+            {/* ── The right column: what it all comes to ───────────────────
+                Scrolls itself now that the body does not. */}
+            <div className="till-pane flex flex-col gap-4 xl:min-h-0 xl:overflow-y-auto">
               {/* The bottom line sits FIRST in this column and not in a tab,
                   because it is the answer the whole dialog exists to produce. */}
-              <div className="rounded-card border border-border bg-surface-2 px-4 py-4">
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <Field label="Supervisor" className="w-56">
-                    <Select
-                      value={supervisorId}
-                      disabled={pending}
-                      onFocus={() => aim(null)}
-                      onChange={(e) => setSupervisorId(e.target.value)}
-                    >
-                      <option value="">— Who witnessed the count —</option>
-                      {supervisors.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <div className="text-right">
+              {/* WHO is signing this off — its own card, because it is answered
+                  once at the start and then left alone. The figure below changes
+                  on every keystroke; keeping the two apart stops a moving number
+                  sitting inside the box somebody has already filled in. */}
+              <div className="shrink-0 rounded-card border border-border bg-surface px-4 py-4">
+                <div className="flex flex-wrap items-end gap-3 [&>*]:min-w-0 [&>*]:flex-1">
+                  <div className="contents">
+                    {/*
+                      WHOSE TAKINGS THESE ARE.
+
+                      Beside the supervisor because the two answer the halves of
+                      the same question — whose money, and who watched it
+                      counted. The label follows the site's mode: a till is what
+                      a terminal-mode shift belongs to, a person is what a
+                      user-mode one does.
+
+                      Locked unless `sales.cashup_other`. Disabled rather than
+                      hidden: a cashier should SEE which drawer they are
+                      counting, and an absent field would leave them guessing at
+                      a machine several people share.
+                    */}
+                    {owners && (
+                      <Field
+                        label={owners.mode === 'terminal' ? 'Till' : 'Cashier'}
+                        className="min-w-0"
+                        hint={
+                          owners.canChoose
+                            ? undefined
+                            : owners.mode === 'terminal'
+                              ? 'This machine’s own till.'
+                              : 'Your own takings.'
+                        }
+                      >
+                        <Select
+                          value={ownerId}
+                          disabled={pending || !owners.canChoose}
+                          onFocus={() => aim(null)}
+                          onChange={(e) => setOwnerId(e.target.value)}
+                        >
+                          {/* Only ever offered to somebody who may choose — for
+                              everyone else the field is already filled in, and
+                              an empty option would invite clearing it. */}
+                          {owners.canChoose && <option value="">— Whose takings —</option>}
+                          {owners.options.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    )}
+                    <Field label="Supervisor" className="min-w-0">
+                      <Select
+                        value={supervisorId}
+                        disabled={pending}
+                        onFocus={() => aim(null)}
+                        onChange={(e) => setSupervisorId(e.target.value)}
+                      >
+                        <option value="">— Who witnessed the count —</option>
+                        {supervisors.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                </div>
+              </div>
+
+              {/* WHAT IT CAME TO, and the two boxes that explain it. Left
+                  aligned rather than right: this card is read top to bottom —
+                  the label, the figure, then why — and a right-aligned headline
+                  over left-aligned fields reads as two unrelated things. */}
+              <div className="shrink-0 rounded-card border border-border bg-surface px-4 py-4">
+                  <div>
                     <span className="block text-sm text-ink-2">
                       {liveVariance === null
                         ? 'Declare every tender to see the difference'
@@ -755,6 +1267,17 @@ export default function DeclarationModal({
                           : liveVariance < 0
                             ? 'Short by'
                             : 'Over by'}
+                      {/* The figure below counts every tender, treating an
+                          uncounted one as zero — so it is the real difference
+                          for what is on screen, but not yet the shift's final
+                          answer. Saying how much has been counted is what keeps
+                          those two readings apart. */}
+                      {liveVariance !== null && !everyTenderDeclared && view !== null && (
+                        <span className="text-muted">
+                          {' '}
+                          · {countedTenders} of {view.tenders.length} tenders counted
+                        </span>
+                      )}
                     </span>
                     <span
                       className={`numeric text-3xl font-bold ${
@@ -770,7 +1293,6 @@ export default function DeclarationModal({
                       {liveVariance === null ? '—' : formatMoney(Math.abs(liveVariance))}
                     </span>
                   </div>
-                </div>
 
                 {outside && (
                   <div className="mt-3">
@@ -801,100 +1323,87 @@ export default function DeclarationModal({
                 </div>
               </div>
 
-              {/* One totals tile per tender, numbered in sequence off whatever
-                  came before. Built from the tender list rather than hardcoded,
-                  because a site that adds a tender type must get a tile for it
-                  without anyone editing this file — and a shift that took
-                  nothing must not leave a hole where panel 5 should be. */}
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                {totalsPanels.map((p) => (
-                  <TotalsPanel
-                    key={p.tenderTypeId}
-                    n={p.n}
-                    title={p.title}
-                    label={p.label}
-                    expected={p.expected}
-                    declaredValue={declared[p.tenderTypeId]}
-                  />
-                ))}
-              </div>
-
-              <Panel n={countersPanelNumber} title="Counters">
-                <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
-                  <Count label="Sales" value={view.counters.salesCount} />
-                  <Count label="Cash only" value={view.counters.cashSales} />
-                  <Count label="Card only" value={view.counters.cardSales} />
-                  <Count label="Account" value={view.counters.accountSales} />
-                  <Count label="Refunds" value={view.counters.refundCount} />
+              <Panel n={5} title="Counters">
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
                   <Count
-                    label="Voided sales"
-                    value={view.counters.voidedSales}
-                    tone={view.counters.voidedSales > 0 ? 'warning' : undefined}
+                    icon={<Icons.Receipt size={18} />}
+                    label="Sales"
+                    value={view.counters.salesCount}
                   />
-                  <Count label="Payouts" value={view.counters.payoutCount} />
+                  <Count
+                    icon={<Icons.Banknote size={18} />}
+                    label="Cash only"
+                    value={view.counters.cashSales}
+                  />
+                  <Count
+                    icon={<Icons.CreditCard size={18} />}
+                    label="Card only"
+                    value={view.counters.cardSales}
+                  />
+                  <Count
+                    icon={<Icons.Users size={18} />}
+                    label="Account"
+                    value={view.counters.accountSales}
+                  />
+                  <Count
+                    icon={<Icons.RotateCw size={18} />}
+                    label="Refunds"
+                    value={view.counters.refundCount}
+                  />
+                  {/* Three void figures, not one. An item void is a mis-scan
+                      and happens all day; a sale void is a whole basket
+                      abandoned. The old single "Voided sales" rolled those
+                      together with finalised sales reversed after the fact,
+                      and answered none of the three questions. */}
+                  <Count
+                    icon={<Icons.Ban size={18} />}
+                    label="Void items"
+                    value={view.counters.voidItems}
+                  />
+                  <Count
+                    icon={<Icons.Ban size={18} />}
+                    label="Void lines"
+                    value={view.counters.voidLines}
+                  />
+                  <Count
+                    icon={<Icons.Ban size={18} />}
+                    label="Void sales"
+                    value={view.counters.voidSales}
+                    tone={view.counters.voidSales > 0 ? 'warning' : undefined}
+                  />
+                  <Count
+                    icon={<Icons.RotateCw size={18} />}
+                    label="Cancelled sales"
+                    value={view.counters.cancelledSales}
+                    tone={view.counters.cancelledSales > 0 ? 'warning' : undefined}
+                  />
+                  <Count
+                    icon={<Icons.HandCoins size={18} />}
+                    label="Payouts"
+                    value={view.counters.payoutCount}
+                  />
                 </dl>
+
+                {/* Transactions per tender, off the money table.
+
+                    "Txns" and not "sales": a split sale puts a row under each
+                    tender it used, so these sum to MORE than the sale count
+                    above. Keeping them in their own group under a rule is what
+                    stops the two being read as the same kind of number. */}
+                {view.counters.tenderTxns.length > 0 && (
+                  <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-border pt-4">
+                    {view.counters.tenderTxns.map((t) => (
+                      <Count
+                        key={t.tenderName}
+                        icon={<Icons.Receipt size={18} />}
+                        label={`${t.tenderName} txns`}
+                        value={t.count}
+                      />
+                    ))}
+                  </dl>
+                )}
               </Panel>
 
-              <Panel n={countersPanelNumber + 1} title="Every tender, side by side">
-                <div className="overflow-x-auto">
-                  <table className={TABLE}>
-                    <thead>
-                      <tr className={TABLE_HEAD_ROW}>
-                        <th className={TABLE_TH}>Tender</th>
-                        {/* "Txns", not "Sales": a split sale puts a row under
-                            each tender, so these sum to more than the sale
-                            count. */}
-                        <th className={`${TABLE_TH} text-right`}>Txns</th>
-                        <th className={`${TABLE_TH} text-right`}>Expected</th>
-                        <th className={`${TABLE_TH} text-right`}>Declared</th>
-                        <th className={`${TABLE_TH} text-right`}>Difference</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {view.tenders.map((t) => {
-                        const value = declared[t.tenderTypeId]
-                        const shown = revealed[t.tenderTypeId]
-                        const variance =
-                          value !== undefined && shown ? round(value - shown.expected, 2) : null
-                        return (
-                          <tr key={t.tenderTypeId}>
-                            <td className={TABLE_TD}>{t.tenderName}</td>
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{t.transactionCount}</td>
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                              {/* An em dash: this browser has not been told the
-                                  figure, rather than being styled out of view. */}
-                              {!shown ? (
-                                <span className="text-faint">—</span>
-                              ) : (
-                                formatMoney(shown.expected)
-                              )}
-                            </td>
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                              {value === undefined ? (
-                                <span className="text-faint">—</span>
-                              ) : (
-                                formatMoney(value)
-                              )}
-                            </td>
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                              {variance === null ? (
-                                <span className="text-faint">—</span>
-                              ) : variance === 0 ? (
-                                <Badge tone="success">0.00</Badge>
-                              ) : (
-                                <Badge tone={variance < 0 ? 'danger' : 'warning'}>
-                                  {variance < 0 ? '−' : '+'}
-                                  {formatMoney(Math.abs(variance))}
-                                </Badge>
-                              )}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </Panel>
             </div>
           </div>
         </div>
@@ -910,89 +1419,146 @@ export default function DeclarationModal({
  * phone, and "panel 8" is a shorter thing to say than "the card totals box on
  * the right". The legacy till numbered them for the same reason.
  */
+/**
+ * One tender's box, with the pad as its writer.
+ *
+ * Extracted because cash and the machines are the same control and differ only
+ * in where their figure comes from — cash may be driven by the grid, the rest
+ * are always typed. Two copies of this is how the cash row quietly drifts into
+ * looking like a different thing from the ones under it.
+ */
+function TenderBox({
+  label,
+  aimed,
+  editing,
+  entry,
+  value,
+  readOnly = false,
+  disabled,
+  onAim,
+  onEntry,
+  onCommit,
+}: {
+  label: string
+  aimed: boolean
+  /** Whether the buffer is a live edit — see the note on `editing`. */
+  editing: boolean
+  entry: string
+  value: number | undefined
+  readOnly?: boolean
+  disabled: boolean
+  onAim: () => void
+  onEntry: (v: string) => void
+  onCommit: () => void
+}) {
+  const id = `tender-${label.replace(/\s+/g, '-').toLowerCase()}`
+
+  return (
+    /*
+      ── LABEL BESIDE THE BOX, NOT ABOVE IT ────────────────────────────────
+      Every one of these rows was three lines tall — name, box, and a line of
+      helper text — for one number. Six tenders spent the panel on captions.
+      Inline, a row is one line, and the count fits without scrolling on the
+      till this ships to.
+
+      Laid out here rather than through `Field`, which stacks by design and is
+      used on every form in the app; a variant of it for this one screen would
+      be a second answer to "where does a label go".
+
+      The <label> keeps `htmlFor`, so tapping the name still focuses the box —
+      which on a touch till is a bigger target than the box's own edge.
+    */
+    <div className="flex min-w-0 items-center gap-3">
+      <label
+        htmlFor={id}
+        className="min-w-0 flex-1 basis-24 truncate text-sm font-medium text-ink-2"
+      >
+        {label}
+      </label>
+      {/* Plain Input, not NumberInput: the PAD is the writer here, so the box
+          must render `entry` rather than a buffer of its own. Blurred, it shows
+          the committed figure at two decimals. */}
+      <div className="w-32 shrink-0">
+      <Input
+        id={id}
+        /* The R sits INSIDE the box, so a column of figures reads as money
+           without a label repeating the currency on every row. */
+        icon={<span className="text-sm font-medium text-muted">R</span>}
+        className={`numeric text-right ${value === undefined && !aimed ? 'text-faint' : ''}`}
+        inputMode="decimal"
+        autoComplete="off"
+        data-1p-ignore
+        data-lpignore="true"
+        /*
+          ALWAYS A FIGURE, NEVER AN EMPTY BOX.
+
+          An uncounted tender reads 0.00 like every other. That is a DISPLAY
+          choice and nothing more — `value === undefined` still means "nobody
+          counted this", it is still what `everyTenderDeclared` tests, and
+          sign-off still refuses by name rather than banking a zero somebody
+          never counted. Only the empty box is gone, not the distinction.
+
+          The faint tone is what carries that distinction on screen: an
+          untouched 0.00 is muted, a counted one is full-strength ink. So a
+          cashier can still see at a glance which tenders they have been to.
+        */
+        value={aimed && editing ? entry : (value ?? 0).toFixed(2)}
+        readOnly={readOnly}
+        disabled={disabled}
+        onFocus={readOnly ? undefined : onAim}
+        onChange={(e) => onEntry(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))}
+        onBlur={onCommit}
+      />
+      </div>
+    </div>
+  )
+}
+
 function Panel({
   n,
   title,
+  fills = false,
   children,
 }: {
   n: number
   title: string
+  /**
+   * Take the column's height and let the children do the scrolling.
+   *
+   * For the one panel that pins a control to its own bottom. `min-h-0` is the
+   * load-bearing half: a flex child will not shrink below its content without
+   * it, so the panel would grow past the column and take the pinned pad off the
+   * screen with it — which is exactly the bug this mode exists to fix.
+   */
+  fills?: boolean
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-card border border-border bg-surface p-4">
-      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-        <span className="numeric flex h-5 w-5 shrink-0 items-center justify-center rounded-pill bg-brand-soft text-xs font-bold text-brand">
+    <section
+      className={`rounded-card border border-border bg-surface p-4 ${
+        /* `shrink-0`, NOT `self-start`. Only the panel that pins a control to
+           its own bottom wants the row's full height; the rest should keep
+           their natural height and let the column scroll past them.
+
+           self-start looked right and was the wrong axis: in a flex COLUMN the
+           cross axis is horizontal, so it stopped each panel filling the
+           column's width and every one shrank to its own content — panel 3 came
+           out visibly narrower than panel 2 directly above it. */
+        fills ? 'flex min-h-0 flex-col h-full self-stretch' : 'shrink-0'
+      }`}
+    >
+      <h3 className="mb-3 flex shrink-0 items-center gap-2 text-sm font-semibold text-ink">
+        {/* A FILLED disc, not a tint. These are the numbers a supervisor
+            reads down the phone — "what does panel 8 say" — so they have to be
+            findable at a glance across a busy screen, and a pale chip full of
+            pale type is the one thing on the panel that disappears. */}
+        <span className="numeric flex h-6 w-6 shrink-0 items-center justify-center rounded-pill bg-brand text-xs font-bold text-white">
           {n}
         </span>
         {title}
       </h3>
       {children}
     </section>
-  )
-}
-
-/**
- * Expected / declared / difference, for one tender.
- *
- * The difference row is the only coloured thing in the tile, because it is the
- * only one that carries a judgement — and it stays neutral until the tender has
- * been declared rather than showing a scary red figure against a count nobody
- * has made yet. That was the mockup's one real flaw: a −160.00 in danger red
- * before the cashier has touched the drawer reads as an error they caused.
- */
-function TotalsPanel({
-  n,
-  title,
-  label,
-  expected,
-  declaredValue,
-}: {
-  n: number
-  title: string
-  label: string
-  expected: number | null
-  declaredValue: number | undefined
-}) {
-  const variance =
-    expected !== null && declaredValue !== undefined ? round(declaredValue - expected, 2) : null
-
-  return (
-    <Panel n={n} title={title}>
-      <dl className="flex flex-col gap-1.5">
-        <Line label={label} value={expected} />
-        <Line label="Declared" value={declaredValue ?? null} />
-      </dl>
-      <div
-        className={`mt-2 flex items-baseline justify-between rounded-control px-3 py-2 ${
-          variance === null
-            ? 'bg-surface-2'
-            : variance === 0
-              ? 'bg-success-soft'
-              : 'bg-danger-soft'
-        }`}
-      >
-        <span className="text-xs font-medium text-ink">Difference</span>
-        <span
-          className={`numeric text-sm font-bold ${
-            variance === null ? 'text-faint' : variance === 0 ? 'text-success' : 'text-danger'
-          }`}
-        >
-          {variance === null ? '—' : formatMoney(variance)}
-        </span>
-      </div>
-    </Panel>
-  )
-}
-
-function Line({ label, value }: { label: string; value: number | null }) {
-  return (
-    <div className="flex items-baseline justify-between">
-      <dt className="text-xs text-muted">{label}</dt>
-      <dd className="numeric text-sm font-semibold text-ink">
-        {value === null ? <span className="text-faint">—</span> : formatMoney(value)}
-      </dd>
-    </div>
   )
 }
 
@@ -1011,25 +1577,44 @@ function Figure({ label, value }: { label: string; value: number }) {
   )
 }
 
+/**
+ * One counter: a glyph, what it counts, and how many.
+ *
+ * The icon is not decoration. These are six near-identical figures — "how many
+ * sales, how many of them cash, how many refunds" — and a column of bare
+ * numbers under grey labels has nothing to aim at when somebody is reading one
+ * out. A glyph gives each row a shape to find it by.
+ *
+ * The tile stays NEUTRAL whatever the number: a count is not a judgement, and a
+ * refund count in danger red would read as an error rather than a fact. Only
+ * the figure itself takes a tone, and only where one was asked for.
+ */
 function Count({
+  icon,
   label,
   value,
   tone,
 }: {
+  icon: React.ReactNode
   label: string
   value: number
   tone?: 'warning'
 }) {
   return (
-    <div className="flex flex-col">
-      <dt className="text-xs text-muted">{label}</dt>
-      <dd
-        className={`numeric text-sm font-semibold ${
-          tone === 'warning' ? 'text-warning' : value === 0 ? 'text-faint' : 'text-ink'
-        }`}
-      >
-        {value}
-      </dd>
+    <div className="flex items-center gap-3">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-surface-2 text-muted">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <dt className="truncate text-xs text-muted">{label}</dt>
+        <dd
+          className={`numeric text-sm font-semibold ${
+            tone === 'warning' ? 'text-warning' : value === 0 ? 'text-faint' : 'text-ink'
+          }`}
+        >
+          {value}
+        </dd>
+      </div>
     </div>
   )
 }

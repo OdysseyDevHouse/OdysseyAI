@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { listUsers } from '@/lib/site/users'
 import {
   declarationView,
@@ -16,10 +17,11 @@ import { visibleFor, type VisibleDeclaration } from './[shiftId]/declare/visible
  * The detailed cash-up, from the back office.
  *
  * Thin wrappers over cashupDeclaration.ts — the arithmetic, the freeze and the
- * refusals all live there. What this file adds is GATING (every entry point
- * re-checks `sales.cashup`, because a hidden button is not a boundary) and the
- * blind-count strip, which lives in ./[shiftId]/declare/visible.ts so the page
- * and these actions cannot apply it differently.
+ * refusals all live there. What this file adds is GATING: every entry point
+ * re-checks `sales.cashup`, because a hidden button is not a boundary.
+ *
+ * The payload the browser gets is shaped by ./[shiftId]/declare/visible.ts,
+ * which the page and these actions share so the two cannot disagree about it.
  */
 
 export type DeclarationResult =
@@ -34,26 +36,28 @@ export async function declarationViewAction(
 
   const view = await declarationView(ctx.siteId, shiftId)
   if (!view) return { ok: false, error: 'That shift no longer exists.' }
-  return visibleFor(view)
+  /* Blind unless this person may see the targets. Decided from THEIR
+     capabilities, not from which screen asked — see visible.ts. */
+  return visibleFor(view, !can(ctx.capabilities, 'sales.cashup_expected'))
 }
 
 /**
- * Reveals ONE tender's expected figure, in exchange for a declared one.
+ * Persists ONE tender's declared figure, mid-count.
  *
  * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
  *
- * The blind count is enforced by withholding expected figures from the payload,
- * which means the screen genuinely does not know them — so it cannot show the
- * reconciliation the moment a cashier commits a number. Waiting for a full save
- * makes the reveal feel broken, and a cashier who types a count and gets nothing
- * back will assume the screen is broken and stop trusting it.
+ * A drawer count takes real minutes and gets interrupted. Saving each tender as
+ * it is entered means a browser that dies half way through loses nothing that
+ * was already counted, rather than the whole declaration.
  *
- * So the exchange is explicit and one-way: hand over what you counted, and only
- * then learn what was expected. The declared figure is PERSISTED here rather
- * than merely echoed — otherwise somebody could read every expected figure by
- * typing and discarding, which is the copying this whole design prevents.
+ * It used to do a second job: hand back the expected figure the screen was not
+ * otherwise allowed to know, in exchange for a committed count. Expected
+ * figures now ship with the page, so the reconciliation is worked out in the
+ * browser as somebody types and this call is purely about durability. It still
+ * returns the tender's figures so a caller can reconcile against the SAVED
+ * state rather than what is on screen.
  */
-export async function revealTenderAction(
+export async function saveTenderAction(
   shiftId: number,
   tenderTypeId: number,
   declared: number,
@@ -85,6 +89,8 @@ export async function revealTenderAction(
   const saved = await saveDeclaration(ctx.siteId, ctx.actor, shiftId, {
     supervisorId: null,
     supervisorName: view.supervisorName,
+    /* Carried through unchanged — see the note in the till's own action. */
+    smallChange: view.smallChange,
     // What is on the SCREEN, not what was last saved. See the parameter's note.
     denominations,
     tenders: {

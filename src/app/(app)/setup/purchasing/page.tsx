@@ -18,10 +18,11 @@ export default async function PurchasingSetupPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('setup.edit')
 
-  const [costBasis, invoiceTolerance, costWarnPct] = await Promise.all([
+  const [costBasis, invoiceTolerance, costWarnPct, approvalThreshold] = await Promise.all([
     getSetting(siteId, 'cost_basis'),
     getSetting(siteId, 'purchase_invoice_tolerance'),
     getSetting(siteId, 'purchase_cost_change_warn_pct'),
+    getSetting(siteId, 'purchase_approval_threshold'),
   ])
 
   return (
@@ -38,6 +39,7 @@ export default async function PurchasingSetupPage() {
             costBasis: costBasis === 'last' ? 'last' : 'average',
             invoiceTolerance,
             costWarnPct,
+            approvalThreshold,
           }}
         />
       </PageBody>

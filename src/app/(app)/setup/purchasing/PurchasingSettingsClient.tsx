@@ -44,12 +44,14 @@ export default function PurchasingSettingsClient({
   const [costBasis, setCostBasis] = useState(initial.costBasis)
   const [invoiceTolerance, setInvoiceTolerance] = useState(Number(initial.invoiceTolerance))
   const [costWarnPct, setCostWarnPct] = useState(Number(initial.costWarnPct))
+  const [approvalThreshold, setApprovalThreshold] = useState(Number(initial.approvalThreshold))
 
   const basisChanged = costBasis !== saved.costBasis
   const dirty =
     basisChanged ||
     invoiceTolerance !== Number(saved.invoiceTolerance) ||
-    costWarnPct !== Number(saved.costWarnPct)
+    costWarnPct !== Number(saved.costWarnPct) ||
+    approvalThreshold !== Number(saved.approvalThreshold)
 
   function save() {
     startTransition(async () => {
@@ -62,6 +64,7 @@ export default function PurchasingSettingsClient({
            cosmetic difference never presents itself as an unsaved change. */
         invoiceTolerance: String(invoiceTolerance),
         costWarnPct: String(costWarnPct),
+        approvalThreshold: String(approvalThreshold),
       })
 
       if (!result.ok) {
@@ -150,6 +153,37 @@ export default function PurchasingSettingsClient({
             <span className="text-sm text-muted">%</span>
           </div>
         </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup
+        title="Approval"
+        description="Who may commit the shop to a large order. Checked when an order is ISSUED — the act that claims a number and lets a supplier hold us to it."
+      >
+        <SettingRow
+          icon={<Icons.Coins size={16} />}
+          label="Orders needing approval"
+          description="An order over this total (including VAT) stays a draft until someone with 'Approve large orders' issues it. Zero switches it off."
+          htmlFor="approval-threshold"
+        >
+          <CurrencyInput
+            id="approval-threshold"
+            className="w-40"
+            value={approvalThreshold}
+            onChange={(e) =>
+              setApprovalThreshold(Number(String(e.target.value).replace(',', '.')) || 0)
+            }
+          />
+        </SettingRow>
+
+        {/* Only while it is being turned on, and only from off — the same rule
+            the cost-basis warning follows. A note that is always on screen is
+            furniture; one that appears when you touch the control gets read. */}
+        {approvalThreshold > 0 && Number(saved.approvalThreshold) === 0 && (
+          <Callout tone="brand" title="Nobody can approve yet">
+            Give someone the &ldquo;Approve large orders&rdquo; permission in Setup &rarr; Roles,
+            or orders over this amount cannot be issued by anyone but an owner.
+          </Callout>
+        )}
       </SettingGroup>
 
       <div className="flex items-center justify-end gap-3">

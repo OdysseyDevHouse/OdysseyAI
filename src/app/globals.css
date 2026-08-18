@@ -451,11 +451,16 @@ body {
   height: 100%;
 }
 
+/* The UI face is Inter (src/app/bodyFont.ts), with the OLD system stack behind
+   it as the fallback — so a machine still fetching the font, or one that cannot,
+   renders exactly what the app rendered before. Segoe UI, SF Pro and Roboto are
+   close enough in metrics that the swap is a change of texture, not a reflow. */
 body {
   background: var(--color-canvas);
   color: var(--color-ink);
   font-family:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    var(--font-body), ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    'SF Pro Display', Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
@@ -468,15 +473,26 @@ body {
 /* ----------------------------------------------------------------------------
    The wordmark — headings that sit beside the Odyssey logo.
 
-   The logo artwork is lettered in a heavy grotesque, and a heading next to it in
-   the UI stack made the brand and the app look like two different products. This
-   is the same face the logo is drawn in (see src/app/brandFont.ts), tuned to
-   match the artwork rather than merely to use the font:
+   ── ONE FACE FOR THE WHOLE PRODUCT ─────────────────────────────────────────
+
+   These used to be set in Archivo, chosen by overlaying candidates on the logo
+   artwork so a heading beside the mark matched its lettering. That solved a
+   real problem — the app then set body text in whatever the OS offered, so the
+   brand and the app looked like two different products — but it solved it by
+   adding a SECOND face.
+
+   The app is now set in Inter throughout, which answers the same problem the
+   other way: nothing sits beside the logo in a different typeface because
+   nothing is in a different typeface. One face, one download, one answer to
+   "what does this product look like".
+
+   What survives is the TREATMENT, and it is worth keeping because it was tuned
+   against the artwork rather than against Archivo:
 
      - UPPERCASE, because the logo is. "Odyssey POS" in mixed case beside an
        all-caps wordmark is the mismatch this exists to remove.
-     - -0.01em, because measuring Archivo against the logo showed the artwork
-       set very slightly tighter than the font's own default tracking.
+     - -0.01em, because the artwork sets very slightly tighter than a text face
+       does at the same size.
      - Weight 800: the logo's stroke, and the reason 700 is not used here.
 
    The WORD SPACE is widened to put back what the negative tracking takes out.
@@ -489,7 +505,8 @@ body {
    the way the artwork's subline is.
    ------------------------------------------------------------------------- */
 .wordmark {
-  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  /* No font-family: the wordmark inherits the app's own face. Naming Inter
+     again here would be a second place to edit the day it changes. */
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: -0.01em;
@@ -497,7 +514,6 @@ body {
 }
 
 .wordmark-sub {
-  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.34em;
@@ -522,7 +538,6 @@ body {
    compounding the two pushed "AI" far enough from "ODYSSEY" to read as a
    separate label rather than part of the name. */
 .wordmark-lockup {
-  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;

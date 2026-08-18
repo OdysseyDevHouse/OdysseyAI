@@ -47,6 +47,30 @@ export const CAPABILITY_GROUPS = [
       { key: 'sales.discount_override', label: 'Discount beyond the product limit', hint: 'Exceed a product’s maximum discount percentage.' },
       { key: 'sales.price_override', label: 'Change a price at the till', hint: 'Sell at something other than the price structure figure.' },
       { key: 'sales.cashup', label: 'Cash up', hint: 'Close a shift and record the drawer count.' },
+      // Separate from sales.cashup deliberately, and OFF for a cashier.
+      //
+      // Counting a drawer against a figure you can already see is copying, not
+      // counting — so by default the cash-up withholds what each tender should
+      // hold until a number has been committed for it. This grants the other
+      // way of working: the expected figures are on screen from the start and
+      // the difference resolves as you type.
+      //
+      // That is right for the person CHECKING a shift and wrong for the person
+      // being checked, which is exactly why it is a permission rather than a
+      // setting — the same screen has to behave differently for two people.
+      { key: 'sales.cashup_expected', label: 'See expected figures while cashing up', hint: 'Show what each tender should hold before it is counted, instead of a blind count.' },
+      // Separate from sales.cashup deliberately, and OFF for a cashier.
+      //
+      // Everyone who may cash up may cash up THEIR OWN drawer — that is
+      // `sales.cashup`, and the till fills the owner in for them. This is the
+      // right to name somebody else: to count till 3 while signed in on till 1,
+      // or to close a colleague's takings when they have gone home.
+      //
+      // It matters because the owner is who the variance belongs to. A shift
+      // signed off R200 short is a question somebody has to answer, and letting
+      // any cashier put a different name on that is how the question reaches
+      // the wrong person. Without this the field is filled in and locked.
+      { key: 'sales.cashup_other', label: 'Cash up on behalf of someone else', hint: 'Choose whose takings are being counted, instead of only your own till or drawer.' },
       { key: 'contracts.view', label: 'View contracts', hint: 'Open recurring billing agreements and see what they have billed.' },
       { key: 'contracts.edit', label: 'Create and edit contracts', hint: 'Set up recurring billing, its products, escalation and billing day.' },
       // Separate from contracts.edit deliberately. Editing a contract changes
@@ -97,6 +121,7 @@ export const CAPABILITY_GROUPS = [
     capabilities: [
       { key: 'purchasing.view', label: 'View purchasing', hint: 'Open orders, goods received and supplier invoices.' },
       { key: 'purchasing.edit', label: 'Create and edit purchases', hint: 'Raise orders and receive stock.' },
+      { key: 'purchasing.approve', label: 'Approve large orders', hint: 'Issue orders over the approval threshold set in Setup → Purchasing.' },
       { key: 'purchasing.pay', label: 'Pay suppliers', hint: 'Allocate payments and run payment batches.' },
     ],
   },

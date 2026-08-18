@@ -8,6 +8,7 @@ import TerminalsClient from './TerminalsClient'
 import LicencesPanel from './LicencesPanel'
 import UndoLimitPanel from './UndoLimitPanel'
 import StockWarningPanel from './StockWarningPanel'
+import ForceClockInPanel from './ForceClockInPanel'
 import OfflineAccountPanel from './OfflineAccountPanel'
 
 import UnlockPanel from './UnlockPanel'
@@ -35,6 +36,9 @@ export default async function TerminalsPage() {
      till may extend credit against a limit it cannot check, which nobody should
      inherit by upgrade. See pos_offline_account_sales. */
   const offlineAccountSales = (await getSetting(siteId, 'pos_offline_account_sales')) === '1'
+  /* Absent means OFF. Turning it on can stop a cashier trading, which is not a
+     rule anybody should inherit by upgrade — see pos_force_clock_in. */
+  const forceClockIn = (await getSetting(siteId, 'pos_force_clock_in')) === '1'
   /* NO SHOP-WIDE MODE READ HERE ANY MORE. Which screen a till runs is a
      property of that till, carried on its own row — see TerminalsClient and
      sql/site/180_terminal_pos_mode.sql. */
@@ -65,6 +69,10 @@ export default async function TerminalsPage() {
           {/* Beside the stock warning because both answer "what does the till do
               when it cannot be sure" — one about counts, one about credit. */}
           <OfflineAccountPanel offlineAccountSales={offlineAccountSales} />
+          {/* Beside the till-behaviour panels rather than under Staff: the rule
+              is about what the TILL does when somebody signs in, and this is the
+              screen a manager is on when they set up how the tills behave. */}
+          <ForceClockInPanel forceClockIn={forceClockIn} />
           {/* BELOW the tills, because a manager comes here to add a till far
               more often than to release a licence — and the licence list is the
               one they need when something is already wrong. */}

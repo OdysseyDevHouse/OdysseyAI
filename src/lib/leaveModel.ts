@@ -197,6 +197,57 @@ export function entitlementToDate(
   }
 }
 
+/**
+ * The BCEA floor for a seeded type, or null for one the Act does not govern.
+ *
+ * Keyed on `code` rather than name, because a store may rename "Annual leave"
+ * to "Holiday" and the entitlement it is measured against does not change.
+ *
+ * WARN, DO NOT REFUSE. These figures assume a FIVE-DAY WEEK, and a store on six
+ * days needs MORE than the number here (1.75 a month, not 1.25) — so treating
+ * this as a hard minimum would be wrong in the one direction that matters and
+ * would also refuse legitimate configurations outside South Africa. It exists
+ * to make a likely mistake visible, not to overrule the person typing.
+ */
+export function bceaFloor(code: string): { days: number; note: string } | null {
+  switch (code) {
+    case 'ANNUAL':
+      return {
+        days: 1.25,
+        note: 'BCEA s20 gives 21 consecutive days a cycle — 1.25 days a month on a five-day week, or 1.75 on a six-day week.',
+      }
+    case 'SICK':
+      return {
+        days: 30,
+        note: 'BCEA s22 gives six weeks per 36-month cycle — 30 days on a five-day week, or 36 on a six-day week.',
+      }
+    case 'FAMILY':
+      return { days: 3, note: 'BCEA s27 gives 3 days a year, once somebody has been employed four months.' }
+    default:
+      // MATERNITY and UNPAID accrue nothing by design, and a custom type has no
+      // statutory figure to be measured against.
+      return null
+  }
+}
+
+/**
+ * Whether an entitlement falls under the Act, for the warning on the setup
+ * screen. Returns null when there is nothing to say.
+ */
+export function belowStatutoryMinimum(
+  type: Pick<LeaveType, 'code' | 'accrualMethod' | 'accrualDays'>,
+): string | null {
+  const floor = bceaFloor(type.code)
+  if (!floor) return null
+  // A seeded type switched to 'none' stops accruing entirely, which is a bigger
+  // departure than a low rate and worth saying plainly.
+  if (type.accrualMethod === 'none') {
+    return `This type no longer accrues anything. ${floor.note}`
+  }
+  if (type.accrualDays >= floor.days) return null
+  return `${type.accrualDays} is below the statutory minimum of ${floor.days}. ${floor.note}`
+}
+
 /** Half-cent-safe rounding to two places, matching the DECIMAL(6,2) columns. */
 export function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100

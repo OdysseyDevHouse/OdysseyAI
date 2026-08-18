@@ -175,6 +175,7 @@ import TransferTableModal from './TransferTableModal'
 import ShiftModal from './ShiftModal'
 import DeclarationModal from './DeclarationModal'
 import OpenTillGate from './OpenTillGate'
+import ClockInGate from './ClockInGate'
 import { tillShiftStatusAction } from './shiftActions'
 import OverrideModal from './OverrideModal'
 import { kvPut, KV } from '@/lib/posOffline/db'
@@ -627,6 +628,10 @@ export default function PosShell({
     mode: 'terminal' | 'user'
     canCashup: boolean
     open: boolean
+    /* Whether THIS operator still has to clock on. Null-safe by construction:
+       the server answers `required: false` when the shop has the rule off, so
+       a site that never turns it on behaves exactly as before. */
+    clock: { required: boolean; clockedIn: boolean; operatorName: string }
   } | null>(null)
 
   const [pending, startTransition] = useTransition()
@@ -3689,6 +3694,7 @@ export default function PosShell({
           mode: result.mode,
           canCashup: result.canCashup,
           open: result.shift !== null,
+          clock: result.clock,
         })
       })
       .catch(() => {})
@@ -3706,6 +3712,45 @@ export default function PosShell({
    */
   const closedGate =
     till.online && shiftStatus !== null && !shiftStatus.open ? shiftStatus : null
+
+  /**
+   * Does the clock-on gate stand in front of the sale right now?
+   *
+   * AFTER the shift gate, never instead of it. The drawer being open is a fact
+   * about the till and the operator being on duty is a fact about the person —
+   * both have to be true, and asking them in the other order would have the
+   * first cashier of the day clock on to a till that is still shut.
+   *
+   * OFFLINE IS NOT GATED, for the same reason the shift gate is not: a time
+   * entry is a server record, so a till that lost the line could not clear this
+   * gate however long the cashier stood there. Turning a network outage into a
+   * closed shop is the failure the offline path exists to prevent.
+   */
+  const clockGate =
+    till.online &&
+    shiftStatus !== null &&
+    shiftStatus.open &&
+    shiftStatus.clock.required &&
+    !shiftStatus.clock.clockedIn
+      ? shiftStatus.clock
+      : null
+
+  /** Re-reads the status, so clearing a gate takes the gate down. */
+  const refreshShiftStatus = useCallback(() => {
+    void tillShiftStatusAction(terminal?.id ?? null)
+      .then((result) => {
+        if ('ok' in result) return
+        noteShift(result.shift?.id ?? null, result.shift?.userName)
+        setShiftStatus({
+          mode: result.mode,
+          canCashup: result.canCashup,
+          open: result.shift !== null,
+          clock: result.clock,
+        })
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminal?.id])
 
   /**
    * Send-to-kitchen: fetch the delta, PRINT, then mark — in that order, so a
@@ -4420,7 +4465,7 @@ export default function PosShell({
          * naming the paperwork instead of the job.
          */
         screenTitle={
-          choosingTable || closedGate
+          choosingTable || closedGate || clockGate
             ? null
             : state.docType === 'invoice'
               ? 'Current Sale'
@@ -4436,13 +4481,13 @@ export default function PosShell({
         pendingSales={till.pending}
         failedSales={till.failed}
         catalogAgeHours={till.catalogAgeHours}
-        itemCount={choosingTable || closedGate ? null : state.lines.length}
+        itemCount={choosingTable || closedGate || clockGate ? null : state.lines.length}
         onShowOutbox={() => setShowingOutbox(true)}
         shiftLabel={shiftLabel}
-        /* No shift chip on the closed-till gate: the whole screen under it is
-           already the answer, and a "No shift" warning beside a screen saying
-           the till is closed is the same sentence twice. */
-        onShift={closedGate ? undefined : () => setManagingShift(true)}
+        /* No shift chip on either gate: the whole screen under it is already
+           the answer, and a "No shift" warning beside a screen saying the till
+           is closed is the same sentence twice. */
+        onShift={closedGate || clockGate ? undefined : () => setManagingShift(true)}
         /*
          * WHICH BILL IS ON SCREEN — and nothing at all when that question has no
          * answer yet. A waiter needs to know which bill they are adding to before
@@ -4454,7 +4499,9 @@ export default function PosShell({
          * and a quick sale shows nothing — "Walk-in" was a word standing in for
          * "no table", which is already what an empty slot says.
          */
-        tableLabel={choosingTable || closedGate ? null : table ? table.code : tabLabel}
+        tableLabel={
+          choosingTable || closedGate || clockGate ? null : table ? table.code : tabLabel
+        }
         /* Undefined ON either gate: a "back to the floor" button on the floor is
            a control that can only ever do nothing, and one on a closed till
            would walk past the very thing that gate exists to insist on. */
@@ -4479,10 +4526,12 @@ export default function PosShell({
          * nothing, and the space belongs to the table label instead.
          */
         onOpenModules={
-          hospitality || choosingTable || closedGate ? undefined : () => setShowingModules(true)
+          hospitality || choosingTable || closedGate || clockGate
+            ? undefined
+            : () => setShowingModules(true)
         }
         onChangeTable={
-          hospitality && !choosingTable && !closedGate
+          hospitality && !choosingTable && !closedGate && !clockGate
             ? () => {
                 /* Walking back to the floor with the bill still on screen. The basket
                    is already on the server via the debounce, so the only thing left to
@@ -4537,6 +4586,32 @@ export default function PosShell({
             /* Straight to the floor in hospitality, straight to the basket in
                retail — the same place a sign-in lands, because opening the till
                is the step BEFORE that rather than a detour off it. */
+            if (hospitality) setChoosingTable(true)
+          }}
+          onExit={() => {
+            startTransition(async () => {
+              await tillSignOutAction()
+              router.refresh()
+            })
+          }}
+        />
+      ) : /*
+        ── THIS PERSON IS NOT ON DUTY ────────────────────────────────────────
+        After the till is open and before anything can be sold. The drawer is a
+        fact about the machine; being clocked on is a fact about whoever is
+        standing at it, and in terminal mode the shift gate stopped asking after
+        the first cashier of the day. Only stands where the shop asked for it.
+      */
+      clockGate ? (
+        <ClockInGate
+          operatorName={clockGate.operatorName}
+          terminalId={terminal?.id ?? null}
+          online={till.online}
+          onClockedIn={() => {
+            refreshShiftStatus()
+            /* Same landing as opening the till: the floor in hospitality, the
+               basket in retail. Clocking on is the step before trading rather
+               than a detour off it. */
             if (hospitality) setChoosingTable(true)
           }}
           onExit={() => {
@@ -4945,7 +5020,7 @@ export default function PosShell({
          * answer restores a basket onto a screen that is not showing. It waits
          * until there is a sale to restore it INTO.
          */
-        open={recoverable !== null && !closedGate && !choosingTable}
+        open={recoverable !== null && !closedGate && !clockGate && !choosingTable}
         title="Pick up where the till left off?"
         confirmLabel="Restore it"
         cancelLabel="Start fresh"
@@ -5159,6 +5234,9 @@ export default function PosShell({
       <DeclarationModal
         open={declaringCashup}
         shiftId={shiftId}
+        /* Which till this machine is, for the owner picker. Null on an
+           unclaimed machine, which the dialog shows rather than guesses. */
+        terminalId={terminal?.id ?? null}
         pendingSales={till.pending}
         onClose={() => setDeclaringCashup(false)}
         onFinalized={() => noteShift(null)}

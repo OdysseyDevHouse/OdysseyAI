@@ -27,6 +27,7 @@ export function Modal({
   footer,
   size = 'md',
   bodyFills = false,
+  bodyTall = false,
   closeOnBackdrop = true,
 }: {
   open: boolean
@@ -62,6 +63,16 @@ export function Modal({
    * Rare on purpose: most dialogs should grow to fit their content.
    */
   bodyFills?: boolean
+  /**
+   * A taller body, for a bodyFills dialog that also carries a fixed bar.
+   *
+   * 70vh is right when the whole height belongs to the content. A dialog with a
+   * pinned toolbar spends a fixed ~250px of it on touch-size keys, and what is
+   * left of 70vh is not enough to read the content above them. Opt-in rather
+   * than raised for everyone: a short dialog stretched to 85vh is a lot of empty
+   * panel.
+   */
+  bodyTall?: boolean
   /** Off for a dialog holding half-typed work, where a stray click would lose it. */
   closeOnBackdrop?: boolean
 }) {
@@ -139,7 +150,7 @@ export function Modal({
               ? /* The body owns the height and its children do the scrolling. `min-h-0`
                    because a flex child will not shrink below its content without it —
                    the panes would grow past the panel instead of overflowing. */
-                'flex h-[70vh] min-h-0 flex-col'
+                `flex min-h-0 flex-col ${bodyTall ? 'h-[82vh]' : 'h-[70vh]'}`
               : 'max-h-[60vh] overflow-y-auto'
           }`}
         >

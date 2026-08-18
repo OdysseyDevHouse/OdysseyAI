@@ -434,6 +434,119 @@ export async function unlockRun(
   return { ok: true }
 }
 
+/**
+ * Deletes a run.
+ *
+ * WHY THIS IS GATED RATHER THAN JUST OFFERED. A run is the record of what
+ * people were paid, so an unrestricted delete would quietly undo the one
+ * guarantee the lock exists to make. But a period opened with the wrong dates
+ * had to be correctable: `createRun` refuses any overlapping period, so a typo
+ * does not merely sit there looking untidy — it blocks the right period from
+ * being opened at all.
+ *
+ * So: a LOCKED run is refused outright, and unlocking it first is the only way
+ * through. That keeps the audited path — `unlockRun` is deliberately a decision
+ * somebody makes — rather than adding a second, quieter way to erase a paid
+ * figure.
+ *
+ * `commission_entries.run_id` is ON DELETE CASCADE, so the entries of a merely
+ * calculated run go with it and nothing is left orphaned.
+ */
+export async function deleteRun(
+  siteId: number,
+  runId: number,
+): Promise<{ ok: true; entries: number } | { ok: false; error: string }> {
+  const run = await getRun(siteId, runId)
+  if (!run) return { ok: false, error: 'That run no longer exists.' }
+  if (run.status === 'locked') {
+    return {
+      ok: false,
+      error: 'This run is locked, because somebody has been paid on it. Reopen it first if it really must go.',
+    }
+  }
+
+  // Counted before the delete so the caller can tell the user what went with
+  // it. A run with entries is not refused — nobody has been paid yet — but it
+  // is worth naming, because "delete" on a calculated period is a bigger
+  // action than on an empty one.
+  const counted = await siteQueryOne<RowDataPacket & { n: number }>(
+    siteId,
+    'SELECT COUNT(*) AS n FROM commission_entries WHERE run_id = ?',
+    [runId],
+  )
+
+  await siteExecute(siteId, "DELETE FROM commission_runs WHERE id = ? AND status = 'open'", [runId])
+  return { ok: true, entries: Number(counted?.n ?? 0) }
+}
+
+/**
+ * Moves an open run's period.
+ *
+ * The reason this exists alongside delete: somebody who opened 30 June–30 July
+ * when they meant August wants the period to say August, not to lose it and
+ * retype the note. Same overlap rule as `createRun` — every sale must fall in
+ * exactly one period — excluding this run from its own clash check.
+ *
+ * Entries are NOT recalculated here. They belong to the old dates and would be
+ * wrong for the new ones, so they are cleared and `calculated_at` reset: the
+ * run returns to plain "open", and the figures must be worked out again. The
+ * alternative — silently leaving June's entries under an August heading — is
+ * the kind of thing nobody notices until payday.
+ */
+export async function updateRunPeriod(
+  siteId: number,
+  runId: number,
+  periodStart: string,
+  periodEnd: string,
+  note: string | null,
+): Promise<{ ok: true; cleared: number } | { ok: false; error: string }> {
+  const run = await getRun(siteId, runId)
+  if (!run) return { ok: false, error: 'That run no longer exists.' }
+  if (run.status === 'locked') {
+    return { ok: false, error: 'This run is locked. Reopen it first if the period really must change.' }
+  }
+  if (!periodStart || !periodEnd) return { ok: false, error: 'Choose a period.' }
+  if (periodEnd < periodStart) return { ok: false, error: 'The period ends before it starts.' }
+
+  const clash = await siteQueryOne<RowDataPacket & { id: number; period_start: string; period_end: string }>(
+    siteId,
+    `SELECT id, period_start, period_end FROM commission_runs
+      WHERE id <> ? AND period_start <= ? AND period_end >= ? LIMIT 1`,
+    [runId, periodEnd, periodStart],
+  )
+  if (clash) {
+    return {
+      ok: false,
+      error: `That overlaps the run for ${clash.period_start} to ${clash.period_end}. Every sale must fall in exactly one period.`,
+    }
+  }
+
+  const unchanged = run.periodStart === periodStart && run.periodEnd === periodEnd
+  const counted = await siteQueryOne<RowDataPacket & { n: number }>(
+    siteId,
+    'SELECT COUNT(*) AS n FROM commission_entries WHERE run_id = ?',
+    [runId],
+  )
+  const cleared = unchanged ? 0 : Number(counted?.n ?? 0)
+
+  await siteTransaction(siteId, async (tx) => {
+    // Only when the dates actually moved: editing just the note must not throw
+    // away a calculation that is still correct.
+    if (!unchanged) {
+      await tx.execute('DELETE FROM commission_entries WHERE run_id = ?', [runId])
+    }
+    await tx.execute(
+      `UPDATE commission_runs
+          SET period_start = ?, period_end = ?, note = ?
+              ${unchanged ? '' : ', calculated_at = NULL, total_amount = 0'}
+        WHERE id = ? AND status = 'open'`,
+      [periodStart, periodEnd, note?.trim() || null, runId],
+    )
+  })
+
+  return { ok: true, cleared }
+}
+
 export type RunSummaryRow = {
   userId: number
   userName: string

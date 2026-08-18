@@ -189,6 +189,7 @@ async function main() {
     const committed = await saveDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: null,
       supervisorName: '',
+      smallChange: 0,
       denominations: grid,
       tenders: { [cash.id]: 600 },
       bankDeclared: 0,
@@ -229,6 +230,7 @@ async function main() {
     const blank = await finalizeDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: SUPER.name,
+      smallChange: 0,
       denominations: grid,
       tenders: { [cash.id]: 600 },
       bankDeclared: 0,
@@ -245,6 +247,7 @@ async function main() {
     const noSupervisor = await finalizeDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: null,
       supervisorName: '',
+      smallChange: 0,
       denominations: grid,
       tenders: { [cash.id]: 600, [card.id]: 300 },
       bankDeclared: 0,
@@ -261,6 +264,7 @@ async function main() {
     const signed = await finalizeDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: SUPER.name,
+      smallChange: 0,
       denominations: grid,
       tenders: { [cash.id]: 600, [card.id]: 300 },
       bankDeclared: 100,

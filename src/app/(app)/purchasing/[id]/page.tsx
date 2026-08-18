@@ -1,14 +1,16 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
-import { getPurchaseDocument, purchaseAudit } from '@/lib/site/purchaseDocuments'
+import { approvalGate, getPurchaseDocument, purchaseAudit } from '@/lib/site/purchaseDocuments'
+import { can } from '@/lib/site/permissions'
+import { invoiceMatchState } from '@/lib/site/purchaseInvoiceMatch'
 import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
 import { lastOrderEmail } from '@/lib/site/purchaseOrderEmail'
 import { getSupplier } from '@/lib/site/suppliers'
 import { isConfigured as isMailConfigured } from '@/lib/mail'
 import { listLocations } from '@/lib/site/stockLocations'
 import { today as localToday } from '@/lib/site/ledger'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatMoney, formatQty, round } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
@@ -39,7 +41,7 @@ export default async function PurchaseDocumentPage({
   params: Promise<{ id: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('purchasing.edit')
+  const { siteId, capabilities } = await requireCapability('purchasing.edit')
   const { id } = await params
 
   const documentId = Number(id)
@@ -105,6 +107,23 @@ export default async function PurchaseDocumentPage({
   const [orderSupplier, lastSent] = mailConfigured
     ? await Promise.all([getSupplier(siteId, doc.supplierId), lastOrderEmail(siteId, documentId)])
     : [null, null]
+  // Whether this draft is over the site's approval limit, and whether the
+  // person looking at it may issue it anyway. Only asked of a draft: once
+  // issued the question is settled, and asking it of a GRV is meaningless.
+  const gate =
+    isOrder && doc.status === 'draft'
+      ? await approvalGate(siteId, doc.totalIncl)
+      : { needed: false, threshold: 0 }
+  const canApprove = can(capabilities, 'purchasing.approve')
+  const blockedByApproval = gate.needed && !canApprove
+
+  // Whether this receipt is still standing on our own GRV number rather than
+  // the supplier's. Only asked of a posted GRV — an order has no creditor
+  // entry, and a draft has not raised one yet.
+  const matchState = isGrv ? await invoiceMatchState(siteId, documentId) : null
+  const awaitingInvoice = !!matchState?.awaitingInvoice &&
+    round(matchState.outstanding, 2) === round(matchState.amountGross, 2)
+
   const supplierEmail = orderSupplier?.email ?? ''
   const lastSentNote = lastSent
     ? `${lastSent.detail ?? ''} · ${lastSent.userName} · ${stamp(lastSent.at)}`.replace(/^ · /, '')
@@ -156,12 +175,37 @@ export default async function PurchaseDocumentPage({
               mailConfigured={mailConfigured}
               supplierEmail={supplierEmail}
               lastSentNote={lastSentNote}
+              blockedByApproval={blockedByApproval}
+              awaitingInvoice={awaitingInvoice}
+              creditorNumber={matchState?.docNumber ?? null}
+              creditorDate={matchState?.docDate ?? null}
             />
           </>
         }
       />
 
       <PageBody>
+        {/* Said on the page, not only in a tooltip on a disabled button. The
+            buyer's next move is to fetch somebody, and they need the figure
+            and the reason to explain why. Worded differently for the person
+            who CAN sign it off: to them this is not an obstacle, it is the
+            thing they were called over for. */}
+        {gate.needed && (
+          <Callout
+            tone={canApprove ? 'brand' : 'warning'}
+            icon={<Icons.StatusWarning size={18} />}
+            title={
+              canApprove
+                ? `Over the ${formatMoney(gate.threshold)} approval limit — yours to issue`
+                : `Needs approval — over the ${formatMoney(gate.threshold)} limit`
+            }
+          >
+            {canApprove
+              ? `This order comes to ${formatMoney(doc.totalIncl)}. Issuing it is the approval.`
+              : `This order comes to ${formatMoney(doc.totalIncl)}. It stays a draft until someone who can approve large orders issues it. Nothing is lost — it can still be edited in the meantime.`}
+          </Callout>
+        )}
+
         {doc.status === 'cancelled' && (
           <Callout
             tone="danger"
@@ -288,8 +332,17 @@ export default async function PurchaseDocumentPage({
                 value={doc.supplierName ?? '—'}
                 href={`/suppliers/${doc.supplierId}`}
               />
-              {doc.supplierInvoiceNo && (
+              {doc.supplierInvoiceNo ? (
                 <Row label="Their invoice" value={doc.supplierInvoiceNo} />
+              ) : (
+                // Said out loud rather than left blank. Without this the card
+                // shows nothing where the invoice number goes, and the fact
+                // that the CREDITOR ENTRY is still standing on our own GRV
+                // number — the thing "Record invoice" exists to fix — is
+                // invisible on the one screen where it should be obvious.
+                awaitingInvoice && (
+                  <Row label="Their invoice" value="Not received yet" muted />
+                )
               )}
               {doc.dueDate && <Row label="Due" value={doc.dueDate} />}
               {doc.expectedDate && <Row label="Expected" value={doc.expectedDate} />}
@@ -390,6 +443,7 @@ const AUDIT_LABEL: Record<string, string> = {
   closed_short: 'Closed short',
   emailed: 'Emailed',
   re_emailed: 'Emailed again',
+  invoice_matched: 'Invoice recorded',
 }
 
 const AUDIT_TONE: Record<string, 'success' | 'danger' | 'brand' | 'neutral' | 'warning'> = {
@@ -405,6 +459,7 @@ const AUDIT_TONE: Record<string, 'success' | 'danger' | 'brand' | 'neutral' | 'w
   // Somebody decided goods that were ordered are never coming. That is a fact
   // about the supplier worth seeing when the next order to them is raised.
   closed_short: 'warning',
+  invoice_matched: 'brand',
 }
 
 /** The pool parses DATETIME as UTC, so wall-clock comes back out with getUTC*. */
@@ -413,11 +468,22 @@ function stamp(value: Date): string {
   return `${value.getUTCFullYear()}-${p(value.getUTCMonth() + 1)}-${p(value.getUTCDate())} ${p(value.getUTCHours())}:${p(value.getUTCMinutes())}`
 }
 
-function Row({ label, value, href }: { label: string; value: string; href?: string }) {
+function Row({
+  label,
+  value,
+  href,
+  muted = false,
+}: {
+  label: string
+  value: string
+  href?: string
+  /** For a value that is an ABSENCE — "not received yet" is a state, not data. */
+  muted?: boolean
+}) {
   return (
     <div className="flex justify-between gap-4">
       <dt className="text-muted">{label}</dt>
-      <dd className="text-ink-2">
+      <dd className={muted ? 'text-muted' : 'text-ink-2'}>
         {href ? (
           <Link href={href} className="text-brand hover:underline">
             {value}

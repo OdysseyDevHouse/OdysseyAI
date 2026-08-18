@@ -92,6 +92,17 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'amber',
         capability: 'staff.cost',
       },
+      /* Leave entitlement is configuration for the same reason pay rules are:
+         it decides what every balance on the leave screen comes to, and it is
+         set once rather than touched in a normal week. */
+      {
+        href: '/staff/leave-types',
+        description: 'Annual, sick and family leave — how many days each grants, and how they arrive.',
+        keywords: 'leave days annual sick family maternity unpaid entitlement accrual bcea holiday allowance',
+        icon: 'Clock',
+        tone: 'sky',
+        capability: 'staff.edit',
+      },
       {
         href: '/staff/cost',
         description: 'What each employee costs the business, once the rules are applied.',
@@ -144,6 +155,14 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         keywords: 'cash card eft payment methods vouchers',
         icon: 'CreditCard',
         tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/setup/cashup',
+        description: 'What a drawer is counted against, and how far out it may be before somebody explains it.',
+        keywords: 'cashup cash up drawer variance tolerance shortage over short till float shift blind count reconcile',
+        icon: 'Coins',
+        tone: 'emerald',
         capability: 'setup.edit',
       },
       {

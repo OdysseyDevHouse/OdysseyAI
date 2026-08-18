@@ -1,8 +1,10 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
-import { round, toNum } from '../decimals'
+import { formatMoney, round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
+import { getNumericSetting } from './settings'
+import { can, type CapabilitySet } from './permissions'
 import type { Actor } from './activityLog'
 
 /**
@@ -638,11 +640,57 @@ export async function saveOrder(
  * This is where a PO gets its number — not at draft. An order that was never
  * sent should not consume one, for the same reason a saved sale does not.
  */
-export async function issueOrder(siteId: number, actor: Actor, id: number): Promise<SaveResult> {
+/**
+ * Issues an order, subject to the site's approval threshold.
+ *
+ * ── WHY THE CHECK IS HERE AND NOT ON THE SCREEN ──────────────────────────
+ *
+ * Because issuing is the act that commits the business to the spend. It claims
+ * the document number, and it is the moment the order becomes something a
+ * supplier can hold us to. A button greyed out in the UI is a suggestion — the
+ * action behind it is the boundary, and this is that action.
+ *
+ * ── WHY A DRAFT IS THE PENDING STATE ─────────────────────────────────────
+ *
+ * There is no 'awaiting approval' status, deliberately. A draft that cannot be
+ * issued IS an order awaiting approval, and it already behaves correctly
+ * everywhere: it holds no document number, counts as nothing on order, appears
+ * in the drafts filter, and can still be edited or cancelled. Adding a status
+ * would mean touching the enum, the list filters, the badges and every query
+ * that reads status — to express something the existing state already says.
+ *
+ * The approver does not "approve" and hand back; they issue it themselves.
+ * Approval and issuing are the same act performed by the person entitled to do
+ * it, and splitting them would invent a second thing to forget to do.
+ */
+export async function issueOrder(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  /**
+   * What the caller may do. Optional so existing callers — and any path where
+   * the question does not arise — keep working; absent means "not checked
+   * here", and the ACTION is the layer that supplies it. The threshold is only
+   * ever enforced when a caller passes this.
+   */
+  capabilities?: CapabilitySet,
+): Promise<SaveResult> {
   const doc = await getPurchaseDocument(siteId, id)
   if (!doc) return { ok: false, error: 'That order no longer exists.' }
   if (doc.status !== 'draft') return { ok: false, error: `A ${doc.status} order cannot be issued.` }
   if (doc.lines.length === 0) return { ok: false, error: 'Add at least one line first.' }
+
+  if (capabilities) {
+    const gate = await approvalGate(siteId, doc.totalIncl)
+    if (gate.needed && !can(capabilities, 'purchasing.approve')) {
+      return {
+        ok: false,
+        error: `This order comes to ${formatMoney(doc.totalIncl)}, over the ${formatMoney(
+          gate.threshold,
+        )} approval limit. Someone who can approve large orders has to issue it.`,
+      }
+    }
+  }
 
   // Probed outside the transaction — information_schema does not change
   // mid-flight, and a site 139 has not reached must still be able to issue.
@@ -669,6 +717,34 @@ export async function issueOrder(siteId: number, actor: Actor, id: number): Prom
   })
 
   return { ok: true, id }
+}
+
+/**
+ * Whether an order of this size needs somebody else's signature.
+ *
+ * VAT-INCLUSIVE, because that is what the business actually pays and what is
+ * written on the order. Reading the exclusive figure against a threshold the
+ * owner typed as a real-money number would wave through every order at 15%
+ * over the line they meant to draw.
+ *
+ * A zero or unreadable threshold means OFF rather than "everything needs
+ * approval". A setting that fails open is the right call here: the failure
+ * mode is a shop that can still buy stock, not a shop that cannot.
+ */
+export async function approvalGate(
+  siteId: number,
+  totalIncl: number,
+): Promise<{ needed: boolean; threshold: number }> {
+  let threshold = 0
+  try {
+    threshold = await getNumericSetting(siteId, 'purchase_approval_threshold')
+  } catch {
+    return { needed: false, threshold: 0 }
+  }
+  if (!Number.isFinite(threshold) || threshold <= 0) return { needed: false, threshold: 0 }
+  // Half a cent of slack, so an order that lands exactly on the threshold from
+  // a sum of rounded lines is not pushed over by floating point.
+  return { needed: totalIncl > threshold + 0.005, threshold }
 }
 
 export type DeleteResult = { ok: true } | { ok: false; error: string }

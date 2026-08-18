@@ -192,6 +192,7 @@ async function main() {
     const saved = await saveDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: SUPER.name,
+      smallChange: 0,
       denominations: firstCount,
       tenders: { [cash.id]: 590, [card.id]: 300 },
       bankDeclared: 0,
@@ -218,6 +219,7 @@ async function main() {
     await saveDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: SUPER.name,
+      smallChange: 0,
       denominations: recount,
       tenders: { [cash.id]: 550, [card.id]: 300 },
       bankDeclared: 0,
@@ -247,6 +249,7 @@ async function main() {
     await saveDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: SUPER.name,
+      smallChange: 0,
       denominations: recount,
       tenders: { [cash.id]: 550 },
       bankDeclared: 0,
@@ -269,6 +272,7 @@ async function main() {
     const noSupervisor = await finalizeDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: null,
       supervisorName: '   ',
+      smallChange: 0,
       denominations: recount,
       tenders: { [cash.id]: 550, [card.id]: 300 },
       bankDeclared: 0,
@@ -282,6 +286,7 @@ async function main() {
     const blankTender = await finalizeDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: SUPER.name,
+      smallChange: 0,
       denominations: recount,
       tenders: { [cash.id]: 550 }, // card left blank
       bankDeclared: 0,
@@ -297,6 +302,7 @@ async function main() {
     const short = await finalizeDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: SUPER.name,
+      smallChange: 0,
       denominations: recount,
       tenders: { [cash.id]: 550, [card.id]: 300 },
       bankDeclared: 50,
@@ -346,6 +352,7 @@ async function main() {
     const afterSigning = await saveDeclaration(SITE, ACTOR, shiftId, {
       supervisorId: SUPER.id,
       supervisorName: 'Someone Else',
+      smallChange: 0,
       denominations: firstCount,
       tenders: { [cash.id]: 590, [card.id]: 300 },
       bankDeclared: 0,

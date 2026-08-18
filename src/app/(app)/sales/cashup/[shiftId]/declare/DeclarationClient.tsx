@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  Accordion,
   Badge,
   Button,
   Card,
@@ -27,7 +28,7 @@ import {
   saveDeclarationAction,
   prePrintAction,
   finalizeDeclarationAction,
-  revealTenderAction,
+  saveTenderAction,
 } from '../../declarationActions'
 import type { VisibleDeclaration } from './visible'
 
@@ -41,23 +42,38 @@ import type { VisibleDeclaration } from './visible'
  * notes and coins were physically there, what each card machine's own slip
  * reported, and what is going to the bank.
  *
- * ── BLIND, THEN REVEALED ────────────────────────────────────────────────────
+ * ── EXPECTED FIGURES DEPEND ON WHO IS COUNTING ──────────────────────────────
  *
- * Expected figures are not merely hidden here — the SERVER withholds them until
- * a tender has been declared (see declarationActions.ts). So a column reading
- * "—" is a figure this browser has genuinely never been told, not one styled
- * out of view. The moment a number is committed the whole row appears: expected,
- * declared, difference.
+ * With `sales.cashup_expected`, every tender arrives with what it took already
+ * on it and the difference resolves live as each box is filled in — nothing has
+ * to be committed to see what you are counting against.
  *
- * That is the resolution of a real tension. A blind count stops a cashier
- * counting toward a target; the legacy screen's difference columns are what
- * make the count worth doing. Committing per tender gets both.
+ * Without it the count is BLIND: the server sends no expected figure until a
+ * tender has been declared, so a column reading "—" is one this browser has
+ * genuinely never been told rather than one styled out of view. Committing a
+ * tender earns its figure, which is why `saveTender` refreshes in that mode.
  *
- * ── DENOMINATIONS ARE THE AUDITABLE HALF ────────────────────────────────────
+ * The screen therefore has to render both, and the rule is that a withheld
+ * figure is ABSENT, never zero — see `expectedByTender`. visible.ts owns the
+ * decision; this file only reflects it.
+ *
+ * ── ONE CARD, CASH FIRST ────────────────────────────────────────────────────
+ *
+ * Every tender is declared in one place, cash at the top because it is the one
+ * that needs counting. The denomination grid folds away underneath it.
+ *
+ * ── THE TOTAL AND THE GRID ARE EITHER/OR ────────────────────────────────────
  *
  * "The drawer held R693" is a conclusion. "Eleven R50s, six R20s and R23 in
- * coin" is a COUNT, and only the second can be checked by recounting. The grid
- * totals into the cash declaration rather than the cashier typing a total.
+ * coin" is a COUNT, and only the second can be checked by recounting. Both are
+ * legitimate — a shop in a hurry types the total, a shop that wants the audit
+ * trail counts it out — so the screen offers both and insists on ONE.
+ *
+ * That insistence is the point. Before it, the typed total and the grid were
+ * separate fields saved to separate columns, so a drawer could be signed off
+ * declaring R1 000 with a grid adding to R950 and nothing on screen would
+ * disagree with itself. Now expanding the grid takes the total over: the box
+ * goes read-only and shows what the counts add to.
  */
 
 type Tab = 'general' | 'payments'
@@ -93,24 +109,55 @@ export default function DeclarationClient({
     ),
   )
   /**
-   * Expected figures this browser has EARNED, by committing a count for them.
+   * What each tender was expected to take, straight off the payload.
    *
-   * Seeded from whatever the server already revealed (a returning draft), then
-   * added to one tender at a time as each is committed. Held here rather than
-   * re-fetching the page so the reveal is immediate — see revealTenderAction.
+   * Derived rather than held in state: a second copy in `useState` could only
+   * go stale against a router.refresh() that brought back a different one.
+   *
+   * A tender the server WITHHELD is absent from this map rather than present as
+   * zero. Those are different claims — "nobody may tell you yet" against "it
+   * took nothing" — and collapsing them would print "Expected R0.00" over a
+   * blind count, along with a variance measured against a number that is not
+   * the target. Absent means the row renders an em dash.
    */
-  const [revealed, setRevealed] = useState<
-    Record<number, { expected: number; floatIncluded: number }>
-  >(() =>
-    Object.fromEntries(
-      view.tenders
-        .filter((t) => t.expected !== null)
-        .map((t) => [
-          t.tenderTypeId,
-          { expected: t.expected!, floatIncluded: t.floatIncluded ?? 0 },
-        ]),
-    ),
+  const expectedByTender = useMemo(
+    () =>
+      new Map(
+        view.tenders
+          .filter((t) => t.expected !== null)
+          .map((t) => [
+            t.tenderTypeId,
+            { expected: t.expected!, floatIncluded: t.floatIncluded ?? 0 },
+          ]),
+      ),
+    [view.tenders],
   )
+
+  /* Whether this person may see the targets at all. The server decides it by
+     permission and says so by sending the figures or not; an undeclared tender
+     with an expected figure means they may. */
+  const blind = view.tenders.some((t) => t.declared === null && t.expected === null)
+
+  /**
+   * Whether the denomination grid is the source of the cash figure.
+   *
+   * Open by default, because counting the drawer out note by note is what this
+   * screen is FOR — the quick count on the list is where a total gets typed.
+   * Starting folded hid the grid behind a click on the one screen whose whole
+   * purpose is the breakdown.
+   *
+   * Fold it away to type a total instead; the two are either/or, and collapsing
+   * hands the figure back to the box. A signed declaration follows the record
+   * rather than the default: no counts means it was totalled, and showing an
+   * empty grid over a signed cash-up would invent a count nobody made.
+   */
+  const [countingCash, setCountingCash] = useState(
+    signed ? view.counted.length > 0 : true,
+  )
+
+  /* Coppers, declared as one amount rather than counted by pile — see
+     sql/site/184_cashup_small_change.sql. */
+  const [smallChange, setSmallChange] = useState(view.smallChange)
 
   const [bankDeclared, setBankDeclared] = useState(view.bankDeclared)
   const [bankReference, setBankReference] = useState(view.bankReference ?? '')
@@ -122,22 +169,53 @@ export default function DeclarationClient({
      figure that can silently disagree with them. */
   const declaredCash = useMemo(
     () =>
-      view.denominations.reduce(
-        (sum, d) => round(sum + d.value * (qty[d.id] ?? 0), 2),
-        0,
+      /* The piles PLUS the sweepings — see smallChange. */
+      round(
+        view.denominations.reduce(
+          (sum, d) => round(sum + d.value * (qty[d.id] ?? 0), 2),
+          0,
+        ) + smallChange,
+        2,
       ),
-    [qty, view.denominations],
+    [qty, view.denominations, smallChange],
   )
 
   const notes = view.denominations.filter((d) => d.isNote)
   const coins = view.denominations.filter((d) => !d.isNote)
 
+  /* The drawer tender — the one the grid counts. Usually "Cash"; found by the
+     flag rather than by name so a site that renamed it still works. */
+  const cashTender = view.tenders.find((t) => t.countsAsDrawerCash) ?? null
+  const otherTenders = view.tenders.filter((t) => !t.countsAsDrawerCash)
+
+  /**
+   * What cash is being declared as, whichever way it was entered.
+   *
+   * This is the single figure the rest of the screen reads — the variance, the
+   * finalize guard and the save all go through it, so the grid and the typed
+   * total cannot reach the record as two different numbers.
+   */
+  const cashDeclared = cashTender
+    ? countingCash
+      ? declaredCash
+      : declared[cashTender.tenderTypeId]
+    : undefined
+
   const input = () => ({
     supervisorId: supervisorId ? Number(supervisorId) : null,
     supervisorName: supervisors.find((s) => s.id.toString() === supervisorId)?.name ?? '',
-    denominations: qty,
+    /* Only when the grid IS the count. A typed total with a stale grid behind
+       it would store a breakdown that contradicts the figure being signed. */
+    denominations: countingCash ? qty : {},
+    smallChange,
     tenders: Object.fromEntries(
-      Object.entries(declared)
+      Object.entries({
+        ...declared,
+        /* The grid wins while it is open — see cashDeclared. */
+        ...(cashTender && cashDeclared !== undefined
+          ? { [cashTender.tenderTypeId]: cashDeclared }
+          : {}),
+      })
         .filter(([, v]) => v !== undefined)
         .map(([k, v]) => [Number(k), v as number]),
     ),
@@ -164,45 +242,75 @@ export default function DeclarationClient({
   }
 
   /**
-   * Commits one tender and asks for its expected figure in exchange.
+   * Persists one tender's count on blur.
    *
-   * On BLUR rather than per keystroke: revealing while somebody is still typing
-   * would hand them the target half way through entering their own number,
-   * which is precisely the copying the blind count exists to prevent.
+   * The difference on screen is worked out locally as you type, so this is
+   * about DURABILITY rather than display: a drawer count takes real minutes and
+   * a browser that dies half way through should not lose the tenders already
+   * counted. Saved per tender rather than on one submit at the end for exactly
+   * that reason.
+   *
+   * On blur rather than per keystroke — a save per digit would write "4",
+   * "42", "420" on the way to R4 200.
    */
-  function commitTender(tenderTypeId: number, value: number | undefined) {
-    if (signed || value === undefined || revealed[tenderTypeId]) return
+  function saveTender(tenderTypeId: number, value: number | undefined) {
+    if (signed || value === undefined) return
     startTransition(async () => {
-      /* `qty` goes with it: committing a tender saves the whole declaration,
-         so the grid as typed must travel or it is silently discarded. */
-      const result = await revealTenderAction(view.shiftId, tenderTypeId, value, qty)
+      /* `qty` goes with it: saving a tender writes the whole declaration, so
+         the grid as typed must travel or it is silently discarded. */
+      const result = await saveTenderAction(view.shiftId, tenderTypeId, value, qty)
       if (!result.ok) {
         toast.error(result.error)
         return
       }
-      setRevealed((r) => ({
-        ...r,
-        [tenderTypeId]: { expected: result.expected, floatIncluded: result.floatIncluded },
-      }))
+      /* Blind: the figure this tender was measured against only becomes
+         publishable once a count exists for it, so go and fetch it. Committing
+         is what earns the reveal — which is why this refreshes rather than
+         reading the number out of the result: the server decides, per tender,
+         what may now be seen.
+
+         Not blind: everything is already on screen and a refresh would only
+         re-render the same figures mid-count. */
+      if (blind) router.refresh()
     })
   }
 
-  const everyTenderDeclared = view.tenders.every(
-    (t) => declared[t.tenderTypeId] !== undefined,
+  /**
+   * Persists the drawer count as the cash tender's declared figure.
+   *
+   * Reads `declaredCash` rather than `cashDeclared` deliberately: this only
+   * ever runs from the grid, and going through the same derived value would
+   * make it depend on the accordion still being open at the moment the blur
+   * lands — which it is not, if the blur was caused by collapsing it.
+   */
+  function commitCountedCash() {
+    if (!cashTender || signed) return
+    saveTender(cashTender.tenderTypeId, declaredCash)
+  }
+
+  const everyTenderDeclared = view.tenders.every((t) =>
+    t.countsAsDrawerCash ? cashDeclared !== undefined : declared[t.tenderTypeId] !== undefined,
   )
 
   /* Recomputed from what is on screen rather than from the server's snapshot:
-     the server figure is one save behind whatever is being typed now. Only
-     available once every expected figure has been revealed. */
+     the server figure is one save behind whatever is being typed now.
+
+     Still gated on a COMPLETE count. A running total over the tenders done so
+     far reads as "the shift is R40 short" when the truth is "two of four
+     tenders are counted", and that is the figure somebody signs under. */
   const liveVariance = useMemo(() => {
     if (!everyTenderDeclared) return null
-    if (view.tenders.some((t) => revealed[t.tenderTypeId] === undefined)) return null
     return view.tenders.reduce(
       (sum, t) =>
-        round(sum + ((declared[t.tenderTypeId] ?? 0) - revealed[t.tenderTypeId].expected), 2),
+        round(
+          sum +
+            ((t.countsAsDrawerCash ? (cashDeclared ?? 0) : (declared[t.tenderTypeId] ?? 0)) -
+              (expectedByTender.get(t.tenderTypeId)?.expected ?? 0)),
+          2,
+        ),
       0,
     )
-  }, [declared, revealed, view.tenders, everyTenderDeclared])
+  }, [declared, cashDeclared, expectedByTender, view.tenders, everyTenderDeclared])
 
   const outside = liveVariance !== null && Math.abs(liveVariance) > view.tolerance
 
@@ -280,42 +388,10 @@ export default function DeclarationClient({
         <div className="flex flex-col gap-5">
           <Card>
             <CardHeader
-              title="Declare cash by denomination"
-              description="Count what is physically in the drawer. The total is worked out for you."
+              title="Declare every tender"
+              description="What was in the drawer, what the card machine's slip says, and the rest."
             />
             <CardBody className="flex flex-col gap-4">
-              <DenominationGrid
-                title="Notes"
-                rows={notes}
-                qty={qty}
-                disabled={signed || pending}
-                onChange={(id, n) => setQty((q) => ({ ...q, [id]: n }))}
-              />
-              <DenominationGrid
-                title="Coin"
-                rows={coins}
-                qty={qty}
-                disabled={signed || pending}
-                onChange={(id, n) => setQty((q) => ({ ...q, [id]: n }))}
-              />
-
-              {/* The one figure on this card that is not typed. Loud, because it
-                  is what the whole grid exists to produce. */}
-              <div className="flex items-baseline justify-between rounded-card bg-warning-soft px-4 py-3">
-                <span className="text-sm font-medium text-ink">Total cash (declared)</span>
-                <span className="numeric text-xl font-bold text-ink">
-                  {formatMoney(declaredCash)}
-                </span>
-              </div>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader
-              title="Declare every tender"
-              description="What the card machine's own slip says, and the rest."
-            />
-            <CardBody className="flex flex-col gap-3">
               {/*
                 "Nothing was taken" is only true if nothing was taken.
 
@@ -342,63 +418,129 @@ export default function DeclarationClient({
                   )}
                 </p>
               )}
-              {view.tenders.map((tender) => {
-                const value = declared[tender.tenderTypeId]
-                const shown = revealed[tender.tenderTypeId]
-                const variance =
-                  value !== undefined && shown ? round(value - shown.expected, 2) : null
-                return (
-                  <div key={tender.tenderTypeId} className="flex flex-col gap-1">
-                    <Field
-                      label={tender.tenderName}
-                      hint={
-                        tender.countsAsDrawerCash
-                          ? 'The drawer, including the float.'
-                          : 'What the machine or bank reports.'
-                      }
-                    >
-                      <CurrencyInput
-                        value={value ?? ''}
-                        /* "Not counted", never "0.00" — the box must not look
-                           declared before anybody has counted it. */
-                        placeholder="Not counted"
-                        disabled={signed || pending}
-                        onChange={(e) =>
+
+              {/* ── Cash, first, with its breakdown folded underneath ───── */}
+              {cashTender && (
+                <div className="flex flex-col gap-2">
+                  <TenderRow
+                    tender={cashTender}
+                    value={cashDeclared}
+                    expected={expectedByTender.get(cashTender.tenderTypeId)}
+                    /* Read-only while the grid drives it: two editable fields
+                       for one figure is how they come to disagree. */
+                    readOnly={countingCash}
+                    hint={
+                      countingCash
+                        ? 'Added up from the denominations below.'
+                        : 'The drawer, including the float.'
+                    }
+                    disabled={signed || pending}
+                    onChange={(v) =>
+                      setDeclared((d) => ({ ...d, [cashTender.tenderTypeId]: v }))
+                    }
+                    onBlur={() => saveTender(cashTender.tenderTypeId, cashDeclared)}
+                  />
+
+                  <Accordion
+                    title="Count it out by denomination"
+                    description={
+                      countingCash
+                        ? 'This count decides the cash figure.'
+                        : 'Optional — count the drawer out instead.'
+                    }
+                    badge={
+                      countingCash ? (
+                        <Badge tone="brand">{formatMoney(declaredCash)}</Badge>
+                      ) : undefined
+                    }
+                    open={countingCash}
+                    /* Folding it away hands the figure back to the typed box,
+                       seeded with what the grid last added to so the number on
+                       screen does not jump when somebody collapses it. */
+                    onToggle={() => {
+                      if (signed) return
+                      setCountingCash((open) => {
+                        if (open) {
                           setDeclared((d) => ({
                             ...d,
-                            [tender.tenderTypeId]:
-                              e.target.value === ''
-                                ? undefined
-                                : Number(String(e.target.value).replace(',', '.')) || 0,
+                            [cashTender.tenderTypeId]: declaredCash,
                           }))
                         }
-                        /* The exchange: hand over the count, get the target. */
-                        onBlur={() => commitTender(tender.tenderTypeId, value)}
+                        return !open
+                      })
+                    }}
+                  >
+                    <div className="flex flex-col gap-4">
+                      {/* Each grid commits the CASH tender on blur: the box
+                          above is read-only while counting, so it never blurs
+                          and would otherwise leave the count unsaved until
+                          somebody pressed Save. */}
+                      <DenominationGrid
+                        title="Notes"
+                        rows={notes}
+                        qty={qty}
+                        disabled={signed || pending}
+                        onChange={(id, n) => setQty((q) => ({ ...q, [id]: n }))}
+                        onCommit={commitCountedCash}
                       />
-                    </Field>
-                    {/* Appears only once a figure is committed — the reveal the
-                        whole blind-count design turns on. */}
-                    {shown && (
-                      <p className="text-xs text-muted">
-                        Expected {formatMoney(shown.expected)}
-                        {shown.floatIncluded ? ` (float ${formatMoney(shown.floatIncluded)})` : ''}
-                        {variance !== null && (
-                          <>
-                            {' · '}
-                            {variance === 0 ? (
-                              <span className="text-success">exact</span>
-                            ) : (
-                              <span className={variance < 0 ? 'text-danger' : 'text-warning'}>
-                                {variance < 0 ? 'short' : 'over'} {formatMoney(Math.abs(variance))}
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </p>
-                    )}
-                  </div>
-                )
-              })}
+                      <DenominationGrid
+                        title="Coin"
+                        rows={coins}
+                        qty={qty}
+                        disabled={signed || pending}
+                        onChange={(id, n) => setQty((q) => ({ ...q, [id]: n }))}
+                        onCommit={commitCountedCash}
+                      />
+
+                      {/* SMALL CHANGE, at the bottom. Every row above counts a
+                          PILE — a quantity times what the coin is worth — and
+                          the coppers in a drawer are not counted that way: 1c,
+                          2c and 5c are swept together and declared as one
+                          amount. See sql/site/184_cashup_small_change.sql. */}
+                      <div className="border-t border-border pt-3">
+                        <Field
+                          label="Small change"
+                          hint="1c, 2c, 5c — as one amount rather than a count."
+                        >
+                          <CurrencyInput
+                            value={smallChange}
+                            disabled={signed || pending}
+                            onChange={(e) =>
+                              setSmallChange(
+                                Number(String(e.target.value).replace(',', '.')) || 0,
+                              )
+                            }
+                            onBlur={commitCountedCash}
+                          />
+                        </Field>
+                      </div>
+
+                      {/* The one figure here that is not typed. Loud, because it
+                          is what the whole grid exists to produce. */}
+                      <div className="flex items-baseline justify-between rounded-card bg-warning-soft px-4 py-3">
+                        <span className="text-sm font-medium text-ink">Total cash (declared)</span>
+                        <span className="numeric text-xl font-bold text-ink">
+                          {formatMoney(declaredCash)}
+                        </span>
+                      </div>
+                    </div>
+                  </Accordion>
+                </div>
+              )}
+
+              {/* ── Then the machines and the bank ──────────────────────── */}
+              {otherTenders.map((tender) => (
+                <TenderRow
+                  key={tender.tenderTypeId}
+                  tender={tender}
+                  value={declared[tender.tenderTypeId]}
+                  expected={expectedByTender.get(tender.tenderTypeId)}
+                  hint="What the machine or bank reports."
+                  disabled={signed || pending}
+                  onChange={(v) => setDeclared((d) => ({ ...d, [tender.tenderTypeId]: v }))}
+                  onBlur={() => saveTender(tender.tenderTypeId, declared[tender.tenderTypeId])}
+                />
+              ))}
             </CardBody>
           </Card>
         </div>
@@ -427,11 +569,10 @@ export default function DeclarationClient({
                     <thead>
                       <tr className={TABLE_HEAD_ROW}>
                         <th className={TABLE_TH}>Tender</th>
-                        {/* "Txns", not "Sales": a split sale puts a row under
-                            each tender, so these sum to more than the sale count
-                            in the panel below. Naming them the same thing made
-                            two correct figures look like a contradiction. */}
-                        <th className={`${TABLE_TH} text-right`}>Txns</th>
+                        {/* No transaction count here any more — it moved to the
+                            Counters panel. This table compares MONEY, expected
+                            against declared, and a count never took part in
+                            that comparison. */}
                         <th className={`${TABLE_TH} text-right`}>Expected</th>
                         <th className={`${TABLE_TH} text-right`}>Declared</th>
                         <th className={`${TABLE_TH} text-right`}>Difference</th>
@@ -440,22 +581,19 @@ export default function DeclarationClient({
                     <tbody>
                       {view.tenders.map((t) => {
                         const value = declared[t.tenderTypeId]
-                        const shown = revealed[t.tenderTypeId]
+                        const shown = expectedByTender.get(t.tenderTypeId)
                         const variance =
                           value !== undefined && shown ? round(value - shown.expected, 2) : null
                         return (
                           <tr key={t.tenderTypeId}>
                             <td className={TABLE_TD}>{t.tenderName}</td>
                             <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                              {t.transactionCount}
-                            </td>
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                               {/* An em dash, because the browser has not been
-                                  told this figure yet. */}
-                              {!shown ? (
-                                <span className="text-faint">—</span>
-                              ) : (
+                                  told this figure — see expectedByTender. */}
+                              {shown ? (
                                 formatMoney(shown.expected)
+                              ) : (
+                                <span className="text-faint">—</span>
                               )}
                             </td>
                             <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
@@ -511,16 +649,46 @@ export default function DeclarationClient({
                     <Count label="Card only" value={view.counters.cardSales} />
                     <Count label="Account" value={view.counters.accountSales} />
                     <Count label="Refunds" value={view.counters.refundCount} />
+                    {/* Three void figures, not one. A mis-scanned item, a line
+                        a customer changed their mind about, and a whole basket
+                        abandoned are three different events; the old single
+                        "Voided sales" rolled them together with finalised sales
+                        reversed afterwards and answered none of them. */}
+                    <Count label="Void items" value={view.counters.voidItems} />
+                    <Count label="Void lines" value={view.counters.voidLines} />
                     <Count
-                      label="Voided sales"
-                      value={view.counters.voidedSales}
-                      tone={view.counters.voidedSales > 0 ? 'warning' : undefined}
+                      label="Void sales"
+                      value={view.counters.voidSales}
+                      tone={view.counters.voidSales > 0 ? 'warning' : undefined}
+                    />
+                    <Count
+                      label="Cancelled sales"
+                      value={view.counters.cancelledSales}
+                      tone={view.counters.cancelledSales > 0 ? 'warning' : undefined}
                     />
                     <Count label="Payouts" value={view.counters.payoutCount} />
                     {view.printCount > 0 && (
                       <Count label="Times pre-printed" value={view.printCount} />
                     )}
                   </dl>
+
+                  {/* Transactions per tender, moved off the money table.
+
+                      A split sale puts a row under each tender it used, so
+                      these sum to MORE than the sale count above — their own
+                      group under a rule is what stops the two being read as
+                      the same kind of number. */}
+                  {view.counters.tenderTxns.length > 0 && (
+                    <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border pt-4 sm:grid-cols-3">
+                      {view.counters.tenderTxns.map((t) => (
+                        <Count
+                          key={t.tenderName}
+                          label={`${t.tenderName} txns`}
+                          value={t.count}
+                        />
+                      ))}
+                    </dl>
+                  )}
                 </CardBody>
               </Card>
             </>
@@ -681,18 +849,92 @@ export default function DeclarationClient({
  * a drawer — one pile at a time — and a single interleaved list invites reading
  * the R20 row while holding the 20c pile.
  */
+/**
+ * One tender's declaration: the box, and what it is being measured against.
+ *
+ * Extracted because cash and the machines render identically and only DIFFER in
+ * where their figure comes from — cash may be driven by the grid, the rest are
+ * always typed. Two copies of this markup is how the cash row quietly drifts
+ * into looking like a different control from the ones under it.
+ */
+function TenderRow({
+  tender,
+  value,
+  expected,
+  hint,
+  readOnly = false,
+  disabled,
+  onChange,
+  onBlur,
+}: {
+  tender: VisibleDeclaration['tenders'][number]
+  value: number | undefined
+  expected: { expected: number; floatIncluded: number } | undefined
+  hint: string
+  readOnly?: boolean
+  disabled: boolean
+  onChange: (v: number | undefined) => void
+  onBlur: () => void
+}) {
+  const variance = value !== undefined && expected ? round(value - expected.expected, 2) : null
+
+  return (
+    <div className="flex flex-col gap-1">
+      <Field label={tender.tenderName} hint={hint}>
+        <CurrencyInput
+          value={value ?? ''}
+          /* "Not counted", never "0.00" — the box must not look declared
+             before anybody has counted it. */
+          placeholder="Not counted"
+          readOnly={readOnly}
+          disabled={disabled}
+          onChange={(e) =>
+            onChange(
+              e.target.value === ''
+                ? undefined
+                : Number(String(e.target.value).replace(',', '.')) || 0,
+            )
+          }
+          onBlur={onBlur}
+        />
+      </Field>
+      {expected && (
+        <p className="text-xs text-muted">
+          Expected {formatMoney(expected.expected)}
+          {expected.floatIncluded ? ` (float ${formatMoney(expected.floatIncluded)})` : ''}
+          {variance !== null && (
+            <>
+              {' · '}
+              {variance === 0 ? (
+                <span className="text-success">exact</span>
+              ) : (
+                <span className={variance < 0 ? 'text-danger' : 'text-warning'}>
+                  {variance < 0 ? 'short' : 'over'} {formatMoney(Math.abs(variance))}
+                </span>
+              )}
+            </>
+          )}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function DenominationGrid({
   title,
   rows,
   qty,
   disabled,
   onChange,
+  onCommit,
 }: {
   title: string
   rows: { id: number; label: string; value: number }[]
   qty: Record<number, number>
   disabled: boolean
   onChange: (id: number, qty: number) => void
+  /** Fired on blur, so a counted drawer persists without waiting for Save. */
+  onCommit: () => void
 }) {
   if (rows.length === 0) return null
   return (
@@ -720,6 +962,7 @@ function DenominationGrid({
                     step={1}
                     disabled={disabled}
                     onChange={(e) => onChange(row.id, Math.max(0, Number(e.target.value) || 0))}
+                    onBlur={onCommit}
                   />
                 </td>
                 {/* Zero stays faint: a column of 0.00 competes with the three

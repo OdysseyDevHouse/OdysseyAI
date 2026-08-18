@@ -73,6 +73,17 @@ export default async function CashupPage() {
             ? 'What each person took, against what they handed over.'
             : 'What the drawer should hold, against what was counted.'
         }
+        /* The tolerance behind every "an explanation is required" on this
+           screen. Somebody asking why a R3 difference was waved through is
+           standing HERE, not in the setup hub. */
+        action={
+          can(capabilities, 'setup.edit') ? (
+            <ButtonLink href="/setup/cashup" variant="secondary">
+              <Icons.Settings size={15} />
+              Cash-up settings
+            </ButtonLink>
+          ) : undefined
+        }
       />
       <PageBody>
         {(open.length > 0 || closed.length > 0) && (
@@ -105,7 +116,6 @@ export default async function CashupPage() {
 
         <CashupClient
           mode={mode}
-          canSetMode={can(capabilities, 'setup.edit')}
           terminals={terminals.map((t) => ({ id: t.id, code: t.code, name: t.name }))}
           shifts={open.flatMap((shift, index) => {
             const position = positions[index]

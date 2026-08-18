@@ -78,6 +78,197 @@ export async function listLeaveTypes(siteId: number, activeOnly = false): Promis
   return rows.map(mapType)
 }
 
+/* ── Configuring a type ────────────────────────────────────────────────── */
+
+export type LeaveTypeInput = {
+  name: string
+  code: string
+  isPaid: boolean
+  accrualMethod: LeaveType['accrualMethod']
+  accrualDays: number
+  cycleMonths: number
+  maxBalanceDays: number | null
+  isActive: boolean
+  notes: string | null
+}
+
+export type LeaveTypeResult = { ok: true; id: number } | { ok: false; error: string }
+
+/**
+ * What a store may not type.
+ *
+ * Note what is NOT here: a floor under the accrual days. The BCEA minimums are
+ * a WARNING on the screen (see `belowStatutoryMinimum`), not a refusal — they
+ * assume a five-day week, so a six-day store legitimately needs different
+ * numbers and a store outside South Africa needs its own entirely.
+ */
+function validateType(input: LeaveTypeInput): string | null {
+  if (!input.name.trim()) return 'Give the leave type a name.'
+  if (input.name.length > 60) return 'That name is too long.'
+  if (!input.code.trim()) return 'Give the leave type a code.'
+  if (input.code.length > 24) return 'That code is too long.'
+  if (!/^[A-Z0-9_]+$/.test(input.code.trim())) {
+    return 'A code may only use capital letters, numbers and underscores.'
+  }
+  if (input.accrualDays < 0) return 'Days cannot be negative.'
+  if (input.accrualDays > 365) return 'That is more days than a year holds.'
+  if (input.cycleMonths < 1 || input.cycleMonths > 120) {
+    return 'A cycle runs between 1 and 120 months.'
+  }
+  if (input.maxBalanceDays !== null) {
+    if (input.maxBalanceDays < 0) return 'A cap cannot be negative.'
+    if (input.maxBalanceDays > 9999) return 'That cap is too large.'
+  }
+  return null
+}
+
+export async function createLeaveType(
+  siteId: number,
+  input: LeaveTypeInput,
+): Promise<LeaveTypeResult> {
+  const problem = validateType(input)
+  if (problem) return { ok: false, error: problem }
+
+  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+    siteId,
+    'SELECT id FROM leave_types WHERE code = ? LIMIT 1',
+    [input.code.trim()],
+  )
+  if (clash) return { ok: false, error: `The code ${input.code.trim()} is already in use.` }
+
+  const next = await siteQueryOne<RowDataPacket & { n: number | null }>(
+    siteId,
+    'SELECT MAX(sort_order) AS n FROM leave_types',
+  )
+
+  const res = await siteExecute(
+    siteId,
+    `INSERT INTO leave_types
+       (name, code, is_paid, accrual_method, accrual_days, cycle_months,
+        max_balance_days, is_system, is_active, sort_order, notes)
+     VALUES (?,?,?,?,?,?,?,0,?,?,?)`,
+    [
+      input.name.trim(),
+      input.code.trim(),
+      input.isPaid ? 1 : 0,
+      input.accrualMethod,
+      input.accrualDays.toFixed(3),
+      input.cycleMonths,
+      input.maxBalanceDays === null ? null : input.maxBalanceDays.toFixed(2),
+      input.isActive ? 1 : 0,
+      Number(next?.n ?? 0) + 10,
+      input.notes?.trim() || null,
+    ],
+  )
+  return { ok: true, id: res.insertId }
+}
+
+/**
+ * Edits a type.
+ *
+ * A SYSTEM type keeps its code. Everything else about it — name, rate, cycle,
+ * paid or not — is the store's to change, because the seed is a default and
+ * not a ceiling. The code is held back because `bceaFloor` is keyed on it and
+ * because the seed's whole promise is that a store which configures nothing is
+ * still compliant; letting ANNUAL be renamed to STUDY would quietly break both.
+ */
+export async function updateLeaveType(
+  siteId: number,
+  typeId: number,
+  input: LeaveTypeInput,
+): Promise<LeaveTypeResult> {
+  const problem = validateType(input)
+  if (problem) return { ok: false, error: problem }
+
+  const existing = await siteQueryOne<TypeRow>(
+    siteId,
+    'SELECT * FROM leave_types WHERE id = ? LIMIT 1',
+    [typeId],
+  )
+  if (!existing) return { ok: false, error: 'That leave type no longer exists.' }
+
+  const code = existing.is_system ? existing.code : input.code.trim()
+
+  if (code !== existing.code) {
+    const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+      siteId,
+      'SELECT id FROM leave_types WHERE code = ? AND id <> ? LIMIT 1',
+      [code, typeId],
+    )
+    if (clash) return { ok: false, error: `The code ${code} is already in use.` }
+  }
+
+  // A system type must stay available: it is the only way to record sick or
+  // maternity leave, and deactivating it would leave a store unable to book
+  // something the Act requires them to give.
+  const isActive = existing.is_system ? true : input.isActive
+
+  await siteExecute(
+    siteId,
+    `UPDATE leave_types
+        SET name = ?, code = ?, is_paid = ?, accrual_method = ?, accrual_days = ?,
+            cycle_months = ?, max_balance_days = ?, is_active = ?, notes = ?
+      WHERE id = ?`,
+    [
+      input.name.trim(),
+      code,
+      input.isPaid ? 1 : 0,
+      input.accrualMethod,
+      input.accrualDays.toFixed(3),
+      input.cycleMonths,
+      input.maxBalanceDays === null ? null : input.maxBalanceDays.toFixed(2),
+      isActive ? 1 : 0,
+      input.notes?.trim() || null,
+      typeId,
+    ],
+  )
+  return { ok: true, id: typeId }
+}
+
+/**
+ * Deletes a type a store added itself.
+ *
+ * Refused for a seeded type, and refused for one with any history: both FKs on
+ * `leave_types` are ON DELETE RESTRICT, so the database would refuse anyway —
+ * this checks first only so the answer is a sentence rather than a constraint
+ * name. Deactivating is the way to retire a type that has been used.
+ */
+export async function deleteLeaveType(
+  siteId: number,
+  typeId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const existing = await siteQueryOne<TypeRow>(
+    siteId,
+    'SELECT * FROM leave_types WHERE id = ? LIMIT 1',
+    [typeId],
+  )
+  if (!existing) return { ok: false, error: 'That leave type no longer exists.' }
+  if (existing.is_system) {
+    return {
+      ok: false,
+      error: 'This is one of the standard types and cannot be deleted. Edit what it grants instead.',
+    }
+  }
+
+  const used = await siteQueryOne<RowDataPacket & { requests: number; ledger: number }>(
+    siteId,
+    `SELECT
+       (SELECT COUNT(*) FROM leave_requests WHERE leave_type_id = ?) AS requests,
+       (SELECT COUNT(*) FROM leave_ledger   WHERE leave_type_id = ?) AS ledger`,
+    [typeId, typeId],
+  )
+  if (Number(used?.requests ?? 0) || Number(used?.ledger ?? 0)) {
+    return {
+      ok: false,
+      error:
+        'Somebody has already taken leave under this type, so deleting it would leave that history unexplained. Switch it off instead.',
+    }
+  }
+
+  await siteExecute(siteId, 'DELETE FROM leave_types WHERE id = ?', [typeId])
+  return { ok: true }
+}
+
 /* ── Balances ──────────────────────────────────────────────────────────── */
 
 /**

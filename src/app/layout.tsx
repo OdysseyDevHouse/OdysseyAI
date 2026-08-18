@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
-import { brandFont } from './brandFont'
+import { bodyFont } from './bodyFont'
 import InlineScript from '@/components/InlineScript'
 
 export const metadata: Metadata = {
@@ -30,10 +30,10 @@ try {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    /* The wordmark face is declared on <html> so every route group — the back
-       office AND the till, which has its own layout — can reach it through the
-       `.wordmark` class without each one remembering to add it. */
-    <html lang="en" className={brandFont.variable} suppressHydrationWarning>
+    /* The UI face is declared on <html> so every route group — the back office
+       AND the till, which has its own layout — reaches it through the body rule
+       in globals.css without each one remembering to add it. */
+    <html lang="en" className={bodyFont.variable} suppressHydrationWarning>
       <head>
         {/* Extracted to a CLIENT component, which is the shape Next documents
             for this (preventing-flash-before-hydration.md). The type switch

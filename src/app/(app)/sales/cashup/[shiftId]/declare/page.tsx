@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { listUsers } from '@/lib/site/users'
 import { declarationView } from '@/lib/site/cashupDeclaration'
 import { PageHeader, PageBody, ButtonLink, Icons } from '@/components/ui'
@@ -22,7 +23,8 @@ export default async function DeclarePage({
   params: Promise<{ shiftId: string }>
 }) {
   // A hidden button is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('sales.cashup')
+  const { siteId, capabilities } = await requireCapability('sales.cashup')
+  const blind = !can(capabilities, 'sales.cashup_expected')
   const { shiftId: raw } = await params
 
   const shiftId = Number(raw)
@@ -55,9 +57,10 @@ export default async function DeclarePage({
       />
       <PageBody>
         <DeclarationClient
-          /* Stripped HERE, on the server, so an undeclared tender's expected
-             figure never reaches the browser at all. See declarationActions. */
-          view={visibleFor(view)}
+          /* Stripped HERE, on the server, per THIS person's permission — an
+             expected figure a cashier may not see never reaches their browser
+             at all, so it cannot be read out of devtools. See visible.ts. */
+          view={visibleFor(view, blind)}
           supervisors={users.filter((u) => u.isActive).map((u) => ({ id: u.id, name: u.name }))}
           canFinalize={view.finalizedAt === null}
         />

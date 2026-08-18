@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Button, ButtonLink, ConfirmModal, Field, Icons, Input, useToast } from '@/components/ui'
 import { formatQty } from '@/lib/decimals'
 import { EmailOrderDialog } from './EmailOrderDialog'
+import { MatchInvoiceDialog } from './MatchInvoiceDialog'
 import {
   issueOrderAction,
   cancelOrderAction,
@@ -33,6 +34,10 @@ export default function PurchaseActions({
   mailConfigured = false,
   supplierEmail = '',
   lastSentNote = null,
+  blockedByApproval = false,
+  awaitingInvoice = false,
+  creditorNumber = null,
+  creditorDate = null,
 }: {
   documentId: number
   documentNumber: string | null
@@ -62,6 +67,19 @@ export default function PurchaseActions({
   /** The last send, so a resend is an informed act. Null if never sent. */
   lastSentNote?: string | null
   /**
+   * This order is over the approval limit and this person cannot approve.
+   * Disables the button; the action refuses it regardless.
+   */
+  blockedByApproval?: boolean
+  /**
+   * This receipt's creditor entry is still on our own GRV number rather than
+   * the supplier's. True only for a posted GRV with nothing paid against it.
+   */
+  awaitingInvoice?: boolean
+  /** What the creditor ledger calls it now, and the date it sits on. */
+  creditorNumber?: string | null
+  creditorDate?: string | null
+  /**
    * A finalised GRV with something still left to send back. False once every
    * line has gone, so the button does not lead to a screen that can only say
    * there is nothing to do.
@@ -71,6 +89,7 @@ export default function PurchaseActions({
   const [cancelling, setCancelling] = useState(false)
   const [closing, setClosing] = useState(false)
   const [emailing, setEmailing] = useState(false)
+  const [matching, setMatching] = useState(false)
   const [voiding, setVoiding] = useState(false)
   const [discarding, setDiscarding] = useState(false)
   const [reason, setReason] = useState('')
@@ -109,8 +128,18 @@ export default function PurchaseActions({
         </ButtonLink>
       )}
 
+      {/* Still SHOWN when approval is needed and this person cannot give it,
+          rather than hidden: a buyer who cannot find the button assumes the
+          screen is broken, where one that says why leads them to the person
+          who can. The action refuses it either way — that is the real
+          boundary; this only stops the press being a surprise. */}
       {isOrder && status === 'draft' && (
-        <Button variant="primary" onClick={() => run(() => issueOrderAction(documentId))} disabled={pending}>
+        <Button
+          variant="primary"
+          onClick={() => run(() => issueOrderAction(documentId))}
+          disabled={pending || blockedByApproval}
+          title={blockedByApproval ? 'Someone who can approve large orders has to issue it.' : undefined}
+        >
           <Icons.Send size={15} />
           Issue to supplier
         </Button>
@@ -170,6 +199,16 @@ export default function PurchaseActions({
         </Button>
       )}
 
+      {/* Only while the creditor row still answers to OUR number. Once their
+          invoice is on it there is nothing to record, and a button that only
+          re-opens a settled question is one more thing to read past. */}
+      {awaitingInvoice && (
+        <Button variant="ghost" onClick={() => setMatching(true)} disabled={pending}>
+          <Icons.Receipt size={15} />
+          Record invoice
+        </Button>
+      )}
+
       {/* Offered alongside the same-day void, not instead of it: on the day
           itself both are legitimate, and they mean different things to a VAT
           return. Voiding says it never happened; returning says it did and the
@@ -210,6 +249,14 @@ export default function PurchaseActions({
             </Field>
           </div>
         }
+      />
+
+      <MatchInvoiceDialog
+        open={matching}
+        onClose={() => setMatching(false)}
+        documentId={documentId}
+        currentNumber={creditorNumber}
+        currentDate={creditorDate}
       />
 
       <EmailOrderDialog

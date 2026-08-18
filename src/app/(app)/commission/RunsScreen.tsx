@@ -4,8 +4,10 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
+  ButtonLink,
   Callout,
   Card,
+  ConfirmModal,
   DataTable,
   Badge,
   Modal,
@@ -19,7 +21,14 @@ import {
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { CommissionRun } from '@/lib/site/commissionRuns'
-import { createRunAction, calculateRunAction, lockRunAction, unlockRunAction } from './actions'
+import {
+  createRunAction,
+  calculateRunAction,
+  lockRunAction,
+  unlockRunAction,
+  deleteRunAction,
+  updateRunPeriodAction,
+} from './actions'
 
 /**
  * Commission periods.
@@ -28,8 +37,18 @@ import { createRunAction, calculateRunAction, lockRunAction, unlockRunAction } f
  * still move, locked means somebody has been paid on them. Everything else is
  * detail.
  */
-export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; canRun: boolean }) {
+export default function RunsScreen({
+  runs,
+  canRun,
+  canEdit,
+}: {
+  runs: CommissionRun[]
+  canRun: boolean
+  canEdit: boolean
+}) {
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<CommissionRun | null>(null)
+  const [removing, setRemoving] = useState<CommissionRun | null>(null)
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -86,17 +105,29 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
 
   return (
     <>
-      {/* The toolbar hides while the list is empty — the empty state below
-          carries the same primary, and one primary per screen is the rule. */}
-      {canRun && runs.length > 0 && (
-        <TableToolbar
-          actions={
+      {/* Both controls sit on the LEFT — TableToolbar's `children` slot — so
+          they read as one group at the start of the line rather than being
+          split across the width of the screen.
+
+          The bar still hides while the list is empty and the user cannot edit
+          rules: the empty state below carries the same primary, and one
+          primary per screen is the rule. It DOES show for an empty list when
+          Rules is available, because that button has nowhere else to live. */}
+      {(canEdit || (canRun && runs.length > 0)) && (
+        <TableToolbar>
+          {canRun && runs.length > 0 && (
             <Button variant="primary" onClick={() => setAdding(true)}>
               <Icons.Plus size={16} />
               Open a period
             </Button>
-          }
-        />
+          )}
+          {canEdit && (
+            <ButtonLink href="/commission/rules" variant="secondary">
+              <Icons.Percent size={16} />
+              Manage rules
+            </ButtonLink>
+          )}
+        </TableToolbar>
       )}
 
       <Card>
@@ -125,6 +156,17 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
                           variant="ghost"
                           size="sm"
                           iconOnly
+                          disabled={pending}
+                          aria-label="Edit this period"
+                          title="Change the dates or the note"
+                          onClick={() => setEditing(r)}
+                        >
+                          <Icons.Pencil size={15} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
                           disabled={pending || !r.calculatedAt}
                           aria-label="Lock this period"
                           title={
@@ -135,6 +177,20 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
                           onClick={() => run(() => lockRunAction(r.id))}
                         >
                           <Icons.Lock size={15} />
+                        </Button>
+                        {/* Only on an open run. A locked period is somebody's
+                            pay record — reopening it first is the audited way
+                            through, and the action refuses it regardless. */}
+                        <Button
+                          variant="danger-ghost"
+                          size="sm"
+                          iconOnly
+                          disabled={pending}
+                          aria-label="Delete this period"
+                          title="Delete this period"
+                          onClick={() => setRemoving(r)}
+                        >
+                          <Icons.Trash size={15} />
                         </Button>
                       </>
                     ) : (
@@ -169,11 +225,60 @@ export default function RunsScreen({ runs, canRun }: { runs: CommissionRun[]; ca
       </Card>
 
       {adding && <RunForm onClose={() => setAdding(false)} />}
+      {editing && <RunForm run={editing} onClose={() => setEditing(null)} />}
+
+      <ConfirmModal
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => {
+          const target = removing
+          if (!target) return
+          startTransition(async () => {
+            const result = await deleteRunAction(target.id)
+            if (!result.ok) return toast.error(result.error)
+            toast.success(result.message)
+            setRemoving(null)
+            router.refresh()
+          })
+        }}
+        busy={pending}
+        title="Delete this period?"
+        confirmLabel="Delete period"
+        message={
+          removing?.calculatedAt ? (
+            <>
+              <p>
+                {removing.periodStart} to {removing.periodEnd} has been calculated
+                — deleting it throws those figures away.
+              </p>
+              <p className="mt-2 text-muted">
+                Nobody has been paid on it, because it was never locked. You can
+                open the period again and recalculate.
+              </p>
+            </>
+          ) : (
+            <>
+              <p>
+                {removing?.periodStart} to {removing?.periodEnd} will be removed.
+              </p>
+              <p className="mt-2 text-muted">
+                Nothing has been calculated for it yet, so nothing is lost.
+              </p>
+            </>
+          )
+        }
+      />
     </>
   )
 }
 
-function RunForm({ onClose }: { onClose: () => void }) {
+/**
+ * Opens a period, or edits one that is already open.
+ *
+ * One form for both because the fields are identical — and because a period
+ * typed wrongly is corrected by the same shape of thought that created it.
+ */
+function RunForm({ run, onClose }: { run?: CommissionRun; onClose: () => void }) {
   // Defaults to last month, which is what anyone opening this screen on the
   // first of the month is almost certainly about to pay.
   const now = new Date()
@@ -181,9 +286,9 @@ function RunForm({ onClose }: { onClose: () => void }) {
   const last = new Date(now.getFullYear(), now.getMonth(), 0)
   const iso = (d: Date) => d.toISOString().slice(0, 10)
 
-  const [periodStart, setPeriodStart] = useState(iso(first))
-  const [periodEnd, setPeriodEnd] = useState(iso(last))
-  const [note, setNote] = useState('')
+  const [periodStart, setPeriodStart] = useState(run?.periodStart ?? iso(first))
+  const [periodEnd, setPeriodEnd] = useState(run?.periodEnd ?? iso(last))
+  const [note, setNote] = useState(run?.note ?? '')
   const [error, setError] = useState<string | null>(null)
 
   const [pending, startTransition] = useTransition()
@@ -193,7 +298,9 @@ function RunForm({ onClose }: { onClose: () => void }) {
   function submit() {
     setError(null)
     startTransition(async () => {
-      const result = await createRunAction(periodStart, periodEnd, note)
+      const result = run
+        ? await updateRunPeriodAction(run.id, periodStart, periodEnd, note)
+        : await createRunAction(periodStart, periodEnd, note)
       if (!result.ok) {
         setError(result.error)
         return
@@ -208,8 +315,12 @@ function RunForm({ onClose }: { onClose: () => void }) {
     <Modal
       open
       onClose={onClose}
-      title="Open a commission period"
-      description="Every sale must fall in exactly one period, so periods cannot overlap."
+      title={run ? 'Edit this commission period' : 'Open a commission period'}
+      description={
+        run
+          ? 'Moving the dates clears any figures already calculated for the old ones.'
+          : 'Every sale must fall in exactly one period, so periods cannot overlap.'
+      }
       closeOnBackdrop={false}
       footer={
         <div className="flex justify-end gap-2">
@@ -217,7 +328,7 @@ function RunForm({ onClose }: { onClose: () => void }) {
             Cancel
           </Button>
           <Button variant="primary" onClick={submit} disabled={pending}>
-            {pending ? 'Opening…' : 'Open'}
+            {pending ? (run ? 'Saving…' : 'Opening…') : run ? 'Save' : 'Open'}
           </Button>
         </div>
       }

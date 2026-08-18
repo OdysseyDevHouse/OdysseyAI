@@ -98,7 +98,25 @@ export type CountedDenomination = {
 /** The counters panel — every figure a legacy cash-up reports beside the money. */
 export type DeclarationCounters = {
   salesCount: number
-  voidedSales: number
+  /**
+   * Voids, by what was taken off — see sql/site/169_pos_void_events.sql.
+   *
+   * Three figures because they are three different events and a shop reads
+   * them differently: an ITEM void is a mis-scan and happens all day, a LINE
+   * void is a customer changing their mind, and a SALE void is a whole basket
+   * abandoned — the one worth asking about.
+   *
+   * Distinct from `cancelledSales`, which is a FINALISED sale reversed after
+   * the fact. The old single "Voided sales" figure rolled the two together and
+   * answered neither question.
+   */
+  voidItems: number
+  voidLines: number
+  voidSales: number
+  /** A finalised sale reversed. Was the whole of the old "Voided sales". */
+  cancelledSales: number
+  /** Transactions per tender — moved here off the tender table. */
+  tenderTxns: { tenderName: string; count: number }[]
   refundCount: number
   payoutCount: number
   /** Sales whose ONLY tender was this kind. Not the same as tender rows. */
@@ -125,8 +143,17 @@ export type DeclarationView = {
   denominations: Denomination[]
   counted: CountedDenomination[]
 
-  /** Sum of the counted grid. The auditable half of the cash count. */
+  /** Sum of the counted grid PLUS small change. What the drawer declared. */
   declaredCash: number
+  /**
+   * Coppers, declared as one amount rather than counted by pile.
+   *
+   * The grid counts quantities, which is the wrong shape for the handful of
+   * 1c/2c/5c at the bottom of a drawer — nobody counts those individually. This
+   * is that money, and it is kept SEPARATE from the grid's own total so a
+   * report can still say what was counted pile by pile.
+   */
+  smallChange: number
   expectedCash: number
 
   payoutsTotal: number
@@ -196,11 +223,12 @@ export async function declarationView(
     tenderOnly,
     mode,
     tolerance,
+    voidCounts,
   ] = await Promise.all([
     siteQueryOne<Row>(
       siteId,
       `SELECT id, supervisor_name, user_name, bank_declared, bank_expected, bank_reference,
-              variance_note, note, finalized_at, print_count
+              variance_note, note, finalized_at, print_count, small_change
          FROM shift_declarations WHERE shift_id = ? LIMIT 1`,
       [shiftId],
     ),
@@ -321,6 +349,19 @@ export async function declarationView(
     ),
     cashupMode(siteId),
     getNumericSetting(siteId, 'cashup_variance_tolerance'),
+    /* One pass over the shift's voids, split by kind. Read from its own
+       table rather than joined onto the documents: a void usually has no
+       document to join to, because a retail counter sale never reaches the
+       database before it is paid. See 169_pos_void_events.sql. */
+    siteQueryOne<Row>(
+      siteId,
+      `SELECT
+         SUM(CASE WHEN void_type = 'item' THEN 1 ELSE 0 END) AS items,
+         SUM(CASE WHEN void_type = 'line' THEN 1 ELSE 0 END) AS lines_voided,
+         SUM(CASE WHEN void_type = 'sale' THEN 1 ELSE 0 END) AS sales_voided
+       FROM pos_void_events WHERE shift_id = ?`,
+      [shiftId],
+    ),
   ])
 
   const declaredByTender = new Map<number, number>()
@@ -364,7 +405,14 @@ export async function declarationView(
     amount: toNum(r.amount),
   }))
 
-  const declaredCash = countedRows.reduce((sum, r) => round(sum + r.amount, 2), 0)
+  /* The piles, and then the sweepings. Added rather than kept apart, because
+     what the drawer HOLDS is both — the split only matters for reading the
+     count back, not for reconciling it. */
+  const smallChange = toNum(header?.small_change)
+  const declaredCash = round(
+    countedRows.reduce((sum, r) => round(sum + r.amount, 2), 0) + smallChange,
+    2,
+  )
 
   const byCode = new Map(tenderOnly.map((r) => [String(r.code), Number(r.n)]))
 
@@ -386,6 +434,7 @@ export async function declarationView(
     counted: countedRows,
 
     declaredCash,
+    smallChange,
     expectedCash: position.expectedCash,
 
     payoutsTotal: toNum(movements?.payouts),
@@ -417,7 +466,17 @@ export async function declarationView(
 
     counters: {
       salesCount: position.salesCount,
-      voidedSales: Number(docTotals?.voided ?? 0),
+      voidItems: Number(voidCounts?.items ?? 0),
+      voidLines: Number(voidCounts?.lines_voided ?? 0),
+      voidSales: Number(voidCounts?.sales_voided ?? 0),
+      cancelledSales: Number(docTotals?.voided ?? 0),
+      /* Off the tender table and onto the counters: the table is about
+         MONEY — expected against declared — and a transaction count is the
+         one column in it that never took part in that comparison. */
+      tenderTxns: tenders.map((t) => ({
+        tenderName: t.tenderName,
+        count: t.transactionCount,
+      })),
       refundCount: Number(docTotals?.refund_count ?? 0),
       payoutCount: Number(movements?.n ?? 0),
       cashSales: byCode.get('CASH') ?? 0,
@@ -437,6 +496,8 @@ export type DeclarationInput = {
   supervisorName: string
   /** Quantity per denomination id. Absent ids count as zero. */
   denominations: Record<number, number>
+  /** Coppers, as one amount. See `smallChange` on the view. */
+  smallChange: number
   /** Declared amount per tender type id. */
   tenders: Record<number, number>
   bankDeclared: number
@@ -479,7 +540,8 @@ export async function saveDeclaration(
   const denominations = await listDenominations(siteId, true)
   const byId = new Map(denominations.map((d) => [d.id, d]))
 
-  let declaredCash = 0
+  const smallChange = round(Number(input.smallChange) || 0, 2)
+  let declaredCash = smallChange
   const countRows: { id: number; label: string; value: number; qty: number; amount: number }[] = []
   for (const [rawId, rawQty] of Object.entries(input.denominations)) {
     const denomination = byId.get(Number(rawId))
@@ -504,13 +566,14 @@ export async function saveDeclaration(
     await tx.execute(
       `INSERT INTO shift_declarations
          (shift_id, user_id, user_name, supervisor_id, supervisor_name,
-          declared_cash, expected_cash, opening_float, bank_declared, bank_expected,
-          bank_reference, variance_note, note)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+          declared_cash, small_change, expected_cash, opening_float, bank_declared,
+          bank_expected, bank_reference, variance_note, note)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE
          supervisor_id  = VALUES(supervisor_id),
          supervisor_name = VALUES(supervisor_name),
          declared_cash  = VALUES(declared_cash),
+         small_change   = VALUES(small_change),
          expected_cash  = VALUES(expected_cash),
          opening_float  = VALUES(opening_float),
          bank_declared  = VALUES(bank_declared),
@@ -525,6 +588,7 @@ export async function saveDeclaration(
         input.supervisorId,
         input.supervisorName.slice(0, 120),
         declaredCash.toFixed(4),
+        smallChange.toFixed(4),
         view.expectedCash.toFixed(4),
         view.openingFloat.toFixed(4),
         round(input.bankDeclared, 2).toFixed(4),

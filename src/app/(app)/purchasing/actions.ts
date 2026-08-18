@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireActor, requireSite, requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import { isEmail } from '@/lib/site/customerLookups'
 import { emailPurchaseOrder } from '@/lib/site/purchaseOrderEmail'
+import { matchSupplierInvoice } from '@/lib/site/purchaseInvoiceMatch'
 import {
   saveOrder,
   issueOrder,
@@ -53,8 +54,11 @@ export async function saveOrderAction(
 export async function issueOrderAction(id: number): Promise<PurchaseResult> {
   const ctx = await actorFor('purchasing.edit')
   if ('ok' in ctx) return ctx
-  const { siteId, actor } = ctx
-  const result = await issueOrder(siteId, actor, id)
+  const { siteId, actor, capabilities } = ctx
+  // The capabilities are what makes the approval threshold real — issueOrder
+  // only enforces it for a caller that supplies them, and this is the caller
+  // that stands between a person and the spend.
+  const result = await issueOrder(siteId, actor, id, capabilities)
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidatePath('/purchasing')
@@ -145,6 +149,40 @@ export async function emailPurchaseOrderAction(
 
   revalidatePath(`/purchasing/${documentId}`)
   return { ok: true, message: `Emailed to ${result.to}.` }
+}
+
+/**
+ * Records the supplier's invoice against a receipt taken on a delivery note.
+ *
+ * Nothing is posted and no amount moves — see the header of
+ * purchaseInvoiceMatch.ts. It is guarded on purchasing.edit rather than
+ * purchasing.pay because it is a receiving correction: the person who keyed
+ * the delivery is the one holding the invoice when it turns up, and they are
+ * not being allowed to move money.
+ */
+export async function matchSupplierInvoiceAction(
+  documentId: number,
+  input: { invoiceNo: string; invoiceDate?: string | null },
+): Promise<PurchaseResult> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  const result = await matchSupplierInvoice(siteId, actor, documentId, input)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/purchasing')
+  revalidatePath(`/purchasing/${documentId}`)
+  /* The creditor row's number and due date just changed, so the age analysis
+     and the payment run are both looking at stale figures until these. */
+  revalidatePath('/suppliers/age-analysis')
+  revalidatePath('/suppliers/remittances')
+
+  return {
+    ok: true,
+    id: documentId,
+    message: result.changed.length === 0 ? 'Nothing to change.' : 'Invoice recorded.',
+  }
 }
 
 export type ReceiveActionResult =
