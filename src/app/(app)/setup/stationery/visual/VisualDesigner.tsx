@@ -29,6 +29,7 @@ import {
 import { previewBlocksAction } from '../actions'
 import BlockPalette, { PALETTE_PREFIX, paletteKind } from './BlockPalette'
 import DocumentCanvas, { gapIndex } from './DocumentCanvas'
+import BlockInspector, { type TokenChoice } from './BlockInspector'
 
 /**
  * The visual stationery designer.
@@ -63,10 +64,13 @@ const HISTORY_LIMIT = 50
 export default function VisualDesigner({
   docType,
   spec,
+  tokens,
   onChange,
 }: {
   docType: string
   spec: DocumentSpec
+  /** Every field this caller may use. Already permission-filtered. */
+  tokens: TokenChoice[]
   onChange: (next: DocumentSpec) => void
 }) {
   const sensors = useSensors(
@@ -179,6 +183,13 @@ export default function VisualDesigner({
     [blocks, commit, selectedId],
   )
 
+  const patch = useCallback(
+    (id: string, changes: Partial<(typeof blocks)[number]>) => {
+      commit({ version: 1, blocks: blocks.map((b) => (b.id === id ? { ...b, ...changes } : b)) })
+    },
+    [blocks, commit],
+  )
+
   /** A splice, not a swap: moving one block must not displace another. */
   const move = useCallback(
     (from: number, to: number) => {
@@ -260,8 +271,28 @@ export default function VisualDesigner({
         },
       }}
     >
-      <div className="grid gap-5 xl:grid-cols-[18rem_minmax(0,1fr)]">
-        <div className="flex flex-col gap-5 xl:sticky xl:top-4 xl:self-start">
+      {/*
+       * Palette, page, inspector.
+       *
+       * FOUR columns of chrome around an A4 page is one too many: at 1600px the
+       * paper was squeezed to about 200px and the heading fields in the column
+       * editor collapsed to nothing. So the palette and the inspector share the
+       * left rail — only one of them is ever being used — and the page keeps
+       * the rest. It is the subject; the panels serve it.
+       */}
+      <div className="grid gap-5 lg:grid-cols-[22rem_minmax(0,1fr)]">
+        <div className="flex flex-col gap-5 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto [&>*]:shrink-0">
+          {/* The selected block's settings come FIRST. Once a document is laid
+              out, changing what a block shows is the work; adding another is
+              the occasional thing. */}
+          <BlockInspector
+            block={blocks.find((b) => b.id === selectedId) ?? null}
+            tokens={tokens}
+            onChange={(changes) => {
+              if (selectedId) patch(selectedId, changes)
+            }}
+          />
+
           <Card>
             <CardHeader
               title="Blocks"

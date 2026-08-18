@@ -507,9 +507,8 @@ export default function StationeryClient({
            wants the split. Same row, two shapes. */
         <div
           className={`grid gap-5 ${
-            format === 'blocks'
-              ? 'xl:grid-cols-[minmax(0,1fr)_22rem]'
-              : 'xl:grid-cols-[minmax(0,1fr)_26rem]'
+            // The visual designer carries its own rails; it wants the whole row.
+            format === 'blocks' ? '' : 'xl:grid-cols-[minmax(0,1fr)_26rem]'
           }`}
         >
           {/* The VISUAL designer owns the whole left column: it carries its own
@@ -520,6 +519,7 @@ export default function StationeryClient({
             <VisualDesigner
               docType={docType}
               spec={blockSpec ?? { version: 1, blocks: [] }}
+              tokens={doc?.tokens.map((t) => ({ key: t.key, label: t.label, section: t.section })) ?? []}
               onChange={(next) => {
                 setBody(serialiseSpec(next))
                 setDirty(true)
