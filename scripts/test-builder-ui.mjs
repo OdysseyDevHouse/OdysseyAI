@@ -160,6 +160,17 @@ async function main() {
 
     await page.goto(`${BASE}/online-store/builder`, { waitUntil: 'networkidle' })
 
+    /*
+     * Open the outline panel before anything reads it.
+     *
+     * Every accordion in the builder starts shut, so the outline list is not
+     * merely hidden — it is not in the DOM at all, and `ol li button` matches
+     * nothing. Two checks were failing for that reason and reporting it as the
+     * builder losing sections, and the four reorder assertions below had never
+     * run at all: the suite aborted here every time.
+     */
+    await page.getByRole('button', { name: /Everything on this page/ }).click()
+
     console.log('\n— The page loads and hydrates —')
     ok('every section is drawn', (await sectionCount(page)) === START, String(await sectionCount(page)))
     ok('the page threw nothing on load', problems.length === 0, problems[0] ?? '')
