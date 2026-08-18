@@ -181,25 +181,31 @@ Two test bugs worth recording, both mine:
   code unit; MySQL's collation is case- and accent-insensitive. It uses
   `localeCompare` now.
 
-### Remaining: the listing preset
+### Done: the listing preset ✅
 
-`online_listing_presets`, one row per department plus a NULL-department row that
-is the shop's default. Columns: `columns_desktop`, `columns_phone`, `per_page`,
-`default_sort`, `card_fields` (CSV), `facets` (CSV), `layout`.
+> **Shipped.** `sql/site/185_online_listing_presets.sql` and `186`, applied to
+> both sites. `src/lib/storefront/listing.ts` holds the vocabulary and
+> coercion, `src/lib/site/listingPresets.ts` the cascade, and
+> `/online-store/listing` is the screen. 37 assertions in
+> `npm run test:listing-presets`.
 
-**Shop-wide default with per-department override, not per-department only.** A
-shop with forty departments will not configure forty rows, and forty rows that
-drifted apart is a shop assembled from parts. Resolution mirrors
-`departmentPageFor`'s existing cascade.
+Columns, page size, default order, grid-or-list, which parts of a tile draw
+and which facets appear — per department, falling back to a shop-wide row,
+falling back to today’s behaviour. Clearing an override is a DELETE rather
+than a flag, so following keeps meaning it as the shop changes later.
 
-**Grid columns must not become a constructed class name** — Tailwind extracts
-statically, so `grid-cols-${n}` is a class the stylesheet does not contain and
-the grid silently collapses to one column. `PRODUCT_GRID_CLASS` in `tokens.ts`
-is the pattern: a literal string per key.
+The card-field ORDER comes from the vocabulary, not the stored string:
+otherwise a tile draws its price above its name because of the sequence
+somebody’s tick boxes were saved in.
 
-**Card fields matter more than they sound.** `Tile` always draws the department
-chip, save-% badge, stock badge, brand, title, variant count, stars, price, Add
-and Favourite — nine things on a tile 160px wide on a phone.
+**The bug worth recording.** 185 marked the shop default with
+`department_id IS NULL` and put a UNIQUE index on the column to keep it
+single. MySQL does not constrain NULLs in a unique index — so
+`ON DUPLICATE KEY UPDATE` never matched, every save INSERTED another default
+row, and the read (which has no ORDER BY) returned whichever the engine felt
+like. Saving 2 columns and reading back 3 looks like a caching bug and is a
+schema one. 186 collapses the duplicates and switches to 0 as the sentinel,
+safe because `departments.id` is AUTO_INCREMENT and never 0.
 
 ### Remaining: product badges
 
