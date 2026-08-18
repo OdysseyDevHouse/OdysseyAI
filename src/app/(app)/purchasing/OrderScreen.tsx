@@ -26,6 +26,10 @@ import { useColumnPrefs } from '@/lib/useColumnPrefs'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import { LineImportDialog } from '@/components/import/LineImportDialog'
 import type { LineDraft as ImportedLine } from '@/lib/import/documentLines'
+import {
+  DocumentScanDialog,
+  type ScannedDraft,
+} from '@/components/import/DocumentScanDialog'
 import PurchaseLineGrid, {
   ORDER_DEFAULT_COLUMNS,
   PURCHASE_COLUMNS,
@@ -111,6 +115,7 @@ export default function OrderScreen({
   sellingVatRate,
   locations,
   existing,
+  scanConfigured = false,
 }: {
   suppliers: {
     id: number
@@ -137,6 +142,11 @@ export default function OrderScreen({
     notes: string | null
     lines: OrderScreenLine[]
   }
+  /**
+   * Whether reading a PDF is set up at all. Decided on the server because the
+   * key lives there — a client check would either leak it or lie.
+   */
+  scanConfigured?: boolean
 }) {
   // Every new line starts here, so a single-location site never sees the
   // control and a multi-location one gets the sensible default rather than an
@@ -161,6 +171,7 @@ export default function OrderScreen({
      supplier's catalogue for things they cannot spell. */
   const [pickerOpen, setPickerOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
   const [pickerTerm, setPickerTerm] = useState('')
   const [pickerDept, setPickerDept] = useState<number | null>(null)
   const [pickerResults, setPickerResults] = useState<TillProduct[]>([])
@@ -346,6 +357,34 @@ export default function OrderScreen({
         imported.map((row) => ({ productId: row.productId }) as OrderScreenLine),
       )
     }
+  }
+
+  /**
+   * Lines read off a supplier's quote.
+   *
+   * Routed through addImportedLines rather than repeating it: once resolved, a
+   * scanned line and an imported one are the same thing, and two copies of the
+   * mapping would drift the first time the grid gained a column. That also
+   * means a scan gets the agreed-price pass for free, which matters more here
+   * than on a delivery — a quote is a proposal, and what we have agreed with
+   * them beats what their PDF happens to print.
+   */
+  function addScannedLines(scanned: ScannedDraft[]) {
+    addImportedLines(
+      scanned.map((row, index) => ({
+        line: index + 1,
+        reference: row.code,
+        productId: row.productId,
+        code: row.code,
+        description: row.description,
+        productType: row.productType,
+        qty: row.qty,
+        unitCostExcl: row.unitCostExcl,
+        discountPct: row.discountPct,
+        locationCode: null,
+        serials: [],
+      })),
+    )
   }
 
   /** A location named in the file, by code or by name. Null falls back. */
@@ -549,6 +588,15 @@ export default function OrderScreen({
               <Icons.Upload size={16} />
               Import
             </Button>
+            {/* And a fourth, for the supplier who sends a quote as a PDF.
+                Hidden rather than disabled with no API key: a button that can
+                only explain why it does not work is worse than no button. */}
+            {scanConfigured && (
+              <Button variant="ghost" onClick={() => setScanOpen(true)}>
+                <Icons.Sparkles size={16} />
+                Read a PDF
+              </Button>
+            )}
           </div>
 
           {/* Most orders are for one place. Setting each line separately is
@@ -759,6 +807,17 @@ export default function OrderScreen({
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onLines={addImportedLines}
+        noun="order lines"
+      />
+
+      {/* No onHeader: an order has nowhere to put their invoice number or
+          total, and the supplier's own reference is the buyer's to type. */}
+      <DocumentScanDialog
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onLines={addScannedLines}
+        supplierId={supplierId ? Number(supplierId) : null}
+        searchProducts={searchProductsForPurchaseAction}
         noun="order lines"
       />
     </PageBody>

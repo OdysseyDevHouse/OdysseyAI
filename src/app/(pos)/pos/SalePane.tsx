@@ -45,6 +45,7 @@ export function SalePane({
   docType = 'invoice',
   onDocDiscount,
   onFindReceipt,
+  depositHeld = 0,
   exchange = null,
   busy,
 }: {
@@ -89,6 +90,18 @@ export function SalePane({
   onDocDiscount?: () => void
   /** Opens the receipted-return flow. Shown in return mode only. */
   onFindReceipt?: () => void
+  /**
+   * Money already taken up front against this basket — Σ of the deposit rows
+   * the server holds for this document.
+   *
+   * NOT part of `totals`, deliberately. The totals are arithmetic over the
+   * LINES; a deposit is a fact recorded on the server about the DOCUMENT, and
+   * folding it into the line maths would make the VAT and discount figures
+   * disagree with the document that eventually posts. It is netted off at the
+   * last moment instead — the same place, and in the same order, the tender pad
+   * nets it. See the deposit row below.
+   */
+  depositHeld?: number
   /** Exchange credit held from a return — shown as a banner until Pay. */
   exchange?: { label: string; onClear: () => void } | null
   busy: boolean
@@ -113,6 +126,32 @@ export function SalePane({
   const tendered = !returning && docType === 'invoice'
   const finishLabel = returning ? 'Refund' : tendered ? 'Pay' : 'Save'
   const finishTone = returning ? 'warning' : tendered ? 'success' : 'primary'
+
+  /*
+   * ── WHAT A DEPOSIT DOES TO THIS PANE ──────────────────────────────────────
+   *
+   * Two changes, and they belong together: the basket says how much has already
+   * been paid, and the Pay button says what is left. Showing one without the
+   * other is worse than showing neither — a cashier who can see a deposit on
+   * screen and a full total on the button has been handed two numbers and no
+   * answer to the only question they are being asked, which is how much money
+   * to take right now.
+   *
+   * CAPPED AT THE TOTAL, exactly as `tenderAtFinalise` caps it on the server and
+   * the tender pad caps it on the way in. A deposit larger than the total is
+   * refused at the point of taking, so an over-held figure here can only mean
+   * the basket was edited downward afterwards — and the honest answer then is
+   * that nothing is owed, with the excess going back as its own refund event
+   * rather than as change out of this drawer.
+   *
+   * Rounded to the cent before it is subtracted, so the row a cashier reads and
+   * the figure on the button are computed from the same number rather than from
+   * DECIMAL(12,4) dust that would eventually make them differ by a cent.
+   */
+  const depositCredit =
+    Math.round(Math.min(Math.max(depositHeld, 0), Math.max(totals.doc.totalIncl, 0)) * 100) / 100
+  const hasDeposit = depositCredit > 0
+  const balanceDue = Math.round(Math.max(0, totals.doc.totalIncl - depositCredit) * 100) / 100
 
   const now = useMinuteClock()
 
@@ -265,6 +304,30 @@ export function SalePane({
           included" as an item somebody is buying. */}
       <div className="border-t border-border px-3 pb-2 pt-3 text-sm">
         <div className="rounded-card border border-border">
+          {/*
+            ── DEPOSIT PAID ───────────────────────────────────────────────────
+            Shown ONLY when there is one, which is the opposite rule to the
+            discount row directly below — and the difference is deliberate. A
+            cashier checks a discount row to confirm a discount is ABSENT, so it
+            has to be there at zero. Nobody checks a basket to confirm no deposit
+            was paid; a permanent "Deposit paid 0.00" on every counter sale would
+            be a line of furniture on the one part of the screen that is supposed
+            to carry only live figures.
+
+            Above the discount because it reads in the order the money moved:
+            what they have already put down, then what comes off, then the VAT in
+            what remains. Green, because this is money the shop has already
+            received — the same meaning green carries on the Pay key below.
+          */}
+          {hasDeposit ? (
+            <div className="flex items-center justify-between px-3.5 py-2.5 text-success">
+              <span className="flex items-center gap-1.5">
+                <Icons.Check size={14} />
+                Deposit paid
+              </span>
+              <span className="numeric font-medium">−{formatMoney(depositCredit)}</span>
+            </div>
+          ) : null}
           {/* Always shown, even at zero. A discount row that appears only when a
               discount exists means the row a cashier is checking for is missing
               exactly when they want to confirm there is no discount. */}
@@ -277,7 +340,11 @@ export function SalePane({
               data-kit-ok /* a full-width row-button matching the Row skin — a kit Button would break the box's rhythm */
               onClick={onDocDiscount}
               disabled={empty || busy}
-              className="flex w-full items-center justify-between px-3.5 py-2 text-left hover:bg-surface-2 disabled:pointer-events-none"
+              /* The hairline belongs to whichever row is NOT first in the box —
+                 so it appears here only once a deposit row has taken that place. */
+              className={`flex w-full items-center justify-between px-3.5 py-2 text-left hover:bg-surface-2 disabled:pointer-events-none ${
+                hasDeposit ? 'border-t border-border' : ''
+              }`}
             >
               <span className="flex items-center gap-1.5 text-muted">
                 Sale discount
@@ -290,7 +357,7 @@ export function SalePane({
               </span>
             </button>
           ) : (
-            <Row label="Sale discount">
+            <Row label="Sale discount" divided={hasDeposit}>
               {totals.doc.discountTotal > 0
                 ? `−${formatMoney(totals.doc.discountTotal)}`
                 : formatMoney(0)}
@@ -349,8 +416,23 @@ export function SalePane({
           disabled={empty || busy}
           onClick={onPay}
         >
+          {/*
+            WHAT IS LEFT TO PAY, not the sale total.
+
+            The comment at the top of this pane says the total sits directly above
+            the Pay button carrying the same figure, because the moment a cashier
+            reads a total is the moment before they take money for it. A deposit
+            does not weaken that rule — it decides which figure the rule is about.
+            The number on this key is the number the cashier is about to ask a
+            customer for, and on a sale with money already down that is the
+            BALANCE. Printing the gross here would have them collect the deposit
+            a second time.
+
+            Unchanged on every other basket: with no deposit `balanceDue` is the
+            total, to the cent.
+          */}
           <span>{busy ? 'Working…' : finishLabel}</span>
-          <span className="numeric">{formatMoney(totals.doc.totalIncl)}</span>
+          <span className="numeric">{formatMoney(balanceDue)}</span>
         </Button>
       </div>
     </section>

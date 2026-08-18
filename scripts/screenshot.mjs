@@ -90,6 +90,22 @@ if (THEME && THEME !== 'light' && THEME !== 'dark') {
   process.exit(1)
 }
 
+// SHOT_MEDIA=print renders the page as the PRINTER sees it rather than the
+// screen. Without it a print stylesheet is never exercised, and the whole
+// class of bug it guards against — a dark-mode document printing pale ink on a
+// dark ground, a toolbar that should have dropped out — is invisible in a
+// screenshot that looks perfect.
+const MEDIA = process.env.SHOT_MEDIA
+if (MEDIA && MEDIA !== 'print' && MEDIA !== 'screen') {
+  console.error(`SHOT_MEDIA must be "print" or "screen", got "${MEDIA}"`)
+  process.exit(1)
+}
+
+async function applyMedia() {
+  if (!MEDIA) return
+  await send('Emulation.setEmulatedMedia', { media: MEDIA }, sessionId)
+}
+
 async function applyTheme() {
   if (!THEME) return
   await evaluate(
@@ -271,6 +287,8 @@ const CLICK = process.env.SHOT_CLICK
 // localStorage needs an origin, so this can only be written once a page from
 // the app has loaded — hence after sign-in rather than before the first goto.
 await applyTheme()
+// Session-level, so it survives every navigation below — set once.
+await applyMedia()
 
 for (const p of paths) {
   let landedOn = await goto(p)

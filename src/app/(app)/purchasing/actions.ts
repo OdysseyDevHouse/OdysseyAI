@@ -1,11 +1,14 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
+import { requireActor, requireSite, requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
+import { isEmail } from '@/lib/site/customerLookups'
+import { emailPurchaseOrder } from '@/lib/site/purchaseOrderEmail'
 import {
   saveOrder,
   issueOrder,
   cancelOrder,
+  closeOrderShort,
   getPurchaseDocument,
   productPositions,
   type OrderInput,
@@ -23,6 +26,7 @@ import {
   type ReorderBasis,
   type SupplierGroup,
 } from '@/lib/site/reorderSuggestions'
+import { formatQty } from '@/lib/decimals'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { availableSerials } from '@/lib/site/serials'
 import { searchForTill, browseForTill } from '@/lib/site/tillSearch'
@@ -67,6 +71,80 @@ export async function cancelOrderAction(id: number, reason: string): Promise<Pur
 
   revalidatePath('/purchasing')
   return { ok: true, id, message: 'Order cancelled.' }
+}
+
+/**
+ * Gives up on the rest of an order.
+ *
+ * Revalidates the suggestion screen as well as the list: closing an order is
+ * the one act here that CHANGES WHAT TO BUY, and leaving a cached "what to
+ * order" showing the old on-order figure would hide the very effect the buyer
+ * pressed the button for.
+ */
+export async function closeOrderShortAction(
+  id: number,
+  reason: string,
+): Promise<PurchaseResult> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+  const result = await closeOrderShort(siteId, actor, id, reason)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/purchasing')
+  revalidatePath(`/purchasing/${id}`)
+  revalidatePath('/purchasing/suggest')
+  return {
+    ok: true,
+    id,
+    message: `Order closed. ${formatQty(result.outstanding)} outstanding written off.`,
+  }
+}
+
+/**
+ * Sends an issued order to the supplier.
+ *
+ * purchasing.edit rather than a right of its own: raising and issuing the
+ * order are the acts that commit the business to the spend, and anyone who
+ * may do those may put the same document in an inbox. A new capability here
+ * would be one more switch for every shop to get wrong, guarding a step
+ * strictly less consequential than the one before it.
+ */
+export async function emailPurchaseOrderAction(
+  documentId: number,
+  input: { to: string; message?: string },
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+
+  if (!isEmail(input.to.trim())) {
+    return { ok: false, error: 'That does not look like an email address.' }
+  }
+
+  const site = await requireSite()
+
+  const result = await emailPurchaseOrder(
+    siteId,
+    {
+      name: site.displayName,
+      vatNumber: site.vatNumber,
+      registrationNumber: site.registrationNumber,
+      address1: site.address1,
+      address2: site.address2,
+      address3: site.address3,
+      postalCode: site.postalCode,
+      phone: site.phone,
+      email: site.email,
+    },
+    actor,
+    documentId,
+    { to: input.to, message: input.message ?? null },
+  )
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath(`/purchasing/${documentId}`)
+  return { ok: true, message: `Emailed to ${result.to}.` }
 }
 
 export type ReceiveActionResult =

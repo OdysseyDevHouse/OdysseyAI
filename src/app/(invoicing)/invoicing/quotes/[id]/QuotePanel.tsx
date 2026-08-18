@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   CardBody,
+  CardHeader,
   Field,
   Input,
   Badge,
@@ -20,7 +21,6 @@ import { formatMoney } from '@/lib/decimals'
 // this screen behind.
 import type { QuoteOutcome, QuoteState } from '@/lib/quotesModel'
 import {
-  setValidUntilAction,
   declineQuoteAction,
   reopenQuoteAction,
   convertQuoteAction,
@@ -40,25 +40,27 @@ type Quote = {
 }
 
 /**
- * Everything a quote has that an invoice does not.
+ * What was DECIDED about this quote.
  *
- * Sits BESIDE the shared editor rather than inside it: validity, outcome and
- * conversion are the three things that make a quote a quote, and keeping them
- * out of the grid is what lets one editor serve every document without growing
- * conditionals through its middle.
+ * Sits BESIDE the shared editor rather than inside it: outcome and conversion
+ * are what make a quote a quote, and keeping them out of the grid is what lets
+ * one editor serve every document without growing conditionals through its
+ * middle.
  *
- * Below it, specifically. This rendered first for a long time, which put
- * "Valid until" in a card above the quote's own heading and back arrow — the
- * first thing on the screen was a detail about a document that had not been
- * named yet. The lines are the work; validity and outcome are what you decide
- * once you have read them, which is also why the deposit panel sits down there.
+ * Below it, specifically. The lines are the work; accepting, losing and
+ * converting are what you decide once you have read them, which is also why
+ * the deposit panel sits down there.
+ *
+ * Validity used to live here too, but "Valid until" is captured, not decided —
+ * it belongs with the date and the customer reference in the document header,
+ * and QuoteValidUntilField now renders it there. All that remains of it here
+ * is the read-only line for a quote nobody can change any more.
  */
 export function QuotePanel({ quote, canEdit }: { quote: Quote; canEdit: boolean }) {
   const router = useRouter()
   const toast = useToast()
   const [pending, startTransition] = useTransition()
 
-  const [validUntil, setValidUntil] = useState(quote.validUntil ?? '')
   const [declining, setDeclining] = useState(false)
   const [reason, setReason] = useState('')
   const [warnings, setWarnings] = useState<string[]>([])
@@ -99,67 +101,90 @@ export function QuotePanel({ quote, canEdit }: { quote: Quote; canEdit: boolean 
 
   return (
     <>
-      <div className="px-6 pt-4">
+      {/* No gutter and no top padding of its own any more: the quote page wraps
+          every section below the editor in ONE block that carries `px-6` and
+          `gap-5`. A panel bringing its own padding as well is what made the
+          seam under the grid three times the gap used everywhere else. */}
+      <div className="flex flex-col gap-5">
         <Card>
-          <CardBody className="flex flex-wrap items-end justify-between gap-4">
+          {/*
+            A titled section like every other card on the screen.
+
+            This was a bare `CardBody` holding a lone badge and two buttons —
+            an unlabelled box below the totals that gave no clue what it was
+            for, and on an open quote with the validity moved out it had almost
+            nothing left in it. The heading says what the decision IS, the
+            badge beside it says where the quote has got to, and the buttons
+            that change it sit in the header's action slot.
+          */}
+          <CardHeader
+            icon={<Icons.FileText size={18} />}
+            title="Outcome"
+            description={
+              isDecided
+                ? 'What was decided, and the invoice it became.'
+                : 'Accept it to raise the invoice, or record why it was lost.'
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <Badge
+                  tone={
+                    quote.state === 'accepted'
+                      ? 'success'
+                      : quote.state === 'expired'
+                        ? 'danger'
+                        : quote.state === 'declined'
+                          ? 'default'
+                          : 'warning'
+                  }
+                >
+                  {quote.state === 'accepted'
+                    ? 'Accepted'
+                    : quote.state === 'declined'
+                      ? 'Lost'
+                      : quote.state === 'expired'
+                        ? 'Expired'
+                        : quote.state === 'draft'
+                          ? 'Draft'
+                          : 'Awaiting a decision'}
+                </Badge>
+              </div>
+            }
+          />
+          {/*
+            A draft has nothing to decide yet.
+
+            Accept and Mark lost both need a document number — an offer nobody
+            has been given cannot be accepted or lost — so on a draft this body
+            rendered as a padded empty box under a heading, which reads as a
+            section that failed to load. It now says what has to happen first
+            and names the button that does it.
+          */}
+          {!isDecided && canEdit && !quote.documentNumber ? (
+            <CardBody>
+              <p className="text-sm text-muted">
+                Issue the quote before it can be accepted or marked lost — use “Issue quote”
+                at the top of the screen.
+              </p>
+            </CardBody>
+          ) : (
+          <CardBody className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-3">
-              <Badge
-                tone={
-                  quote.state === 'accepted'
-                    ? 'success'
-                    : quote.state === 'expired'
-                      ? 'danger'
-                      : quote.state === 'declined'
-                        ? 'default'
-                        : 'warning'
-                }
-              >
-                {quote.state === 'accepted'
-                  ? 'Accepted'
-                  : quote.state === 'declined'
-                    ? 'Lost'
-                    : quote.state === 'expired'
-                      ? 'Expired'
-                      : quote.state === 'draft'
-                        ? 'Draft'
-                        : 'Awaiting a decision'}
-              </Badge>
-
-              {/* Only shown while it can still be changed — a decided quote's
-                  validity is history. */}
-              {!isDecided && canEdit ? (
-                <Field label="Valid until" hint="Blank means it does not expire.">
-                  <Input
-                    type="date"
-                    value={validUntil}
-                    disabled={pending}
-                    onChange={(e) => {
-                      setValidUntil(e.target.value)
-                      run(() => setValidUntilAction(quote.id, e.target.value || null))
-                    }}
-                    className="w-44"
-                  />
-                </Field>
-              ) : quote.validUntil ? (
+              {/* The EDITABLE "Valid until" now sits in the document header,
+                  beside the date and the customer reference — it is captured
+                  with those, not decided with these. What stays here is the
+                  read-only fact for a quote that can no longer be changed,
+                  where the validity is history rather than a setting. */}
+              {(isDecided || !canEdit) && quote.validUntil && (
                 <span className="text-sm text-muted">Valid until {quote.validUntil}</span>
-              ) : null}
-
-              {quote.state === 'open' &&
-                quote.daysRemaining !== null &&
-                quote.daysRemaining <= 7 && (
-                  <span className="text-sm text-warning-ink">
-                    {quote.daysRemaining <= 0
-                      ? 'Expires today'
-                      : `${quote.daysRemaining} day${quote.daysRemaining === 1 ? '' : 's'} left`}
-                  </span>
-                )}
+              )}
 
               {quote.lostReason && (
                 <span className="text-sm text-muted">Lost: {quote.lostReason}</span>
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-2">
               {quote.convertedToId ? (
                 <Link
                   href={`/invoicing/${quote.convertedToId}`}
@@ -200,12 +225,15 @@ export function QuotePanel({ quote, canEdit }: { quote: Quote; canEdit: boolean 
               )}
             </div>
           </CardBody>
+          )}
         </Card>
 
         {/* What conversion found. Deliberately persistent: these change what
             somebody should do next on the invoice that was just created. */}
         {warnings.length > 0 && (
-          <Card className="mt-4">
+          /* No mt-4 — the column's own gap-5 spaces this from the card above,
+             and carrying both stacked two margins into one seam. */
+          <Card>
             <CardBody>
               <p className="text-sm font-medium text-warning-ink">
                 Converted — but check these before finalising the invoice

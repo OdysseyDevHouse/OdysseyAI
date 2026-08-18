@@ -76,6 +76,20 @@ const SKIP = new Set([
    *   npm run test:multi-store-device
    */
   'test:multi-store-device',
+  /*
+   * SPENDS MONEY — one Opus call per run, reading a real PDF.
+   *
+   * The thing it protects is the model's reading of a supplier invoice, so a
+   * recorded response would only ever prove the parsing half still works. That
+   * makes it worth having and not worth running on reflex: in the chain, every
+   * `npm test` on every machine would bill an API call, and a machine with no
+   * ANTHROPIC_API_KEY would skip the half that matters and still report green.
+   *
+   * Run it when documentScan.ts changes:
+   *
+   *   npm run test:document-scan
+   */
+  'test:document-scan',
 ])
 const suites = Object.keys(pkg.scripts)
   .filter((k) => k.startsWith('test:') && !SKIP.has(k))

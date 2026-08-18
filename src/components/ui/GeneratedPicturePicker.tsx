@@ -134,10 +134,21 @@ export function GeneratedPictureGallery({
     }
   }
 
-  const action = (
-    <Button variant="primary" disabled={blocked} onClick={() => void generate()}>
-      {busy || rendering ? 'Working…' : 'Use this picture'}
-    </Button>
+  // The button is handed UP to a parent (see renderAction), so a fresh element
+  // every render would make the parent set state, re-render us, and build
+  // another one — forever. Memoise it on the only two things it actually shows,
+  // and reach the click handler through a ref so the closure staying current
+  // does not count as a change.
+  const generateRef = useRef(generate)
+  generateRef.current = generate
+  const label = busy || rendering ? 'Working…' : 'Use this picture'
+  const action = useMemo(
+    () => (
+      <Button variant="primary" disabled={blocked} onClick={() => void generateRef.current()}>
+        {label}
+      </Button>
+    ),
+    [blocked, label],
   )
 
   return (

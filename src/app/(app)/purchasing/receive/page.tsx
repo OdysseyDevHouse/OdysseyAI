@@ -9,6 +9,7 @@ import {
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { listLocations } from '@/lib/site/stockLocations'
 import { getNumericSetting } from '@/lib/site/settings'
+import { isScanConfigured } from '@/lib/import/documentScan'
 import ReceiveScreen from './ReceiveScreen'
 
 export const dynamic = 'force-dynamic'
@@ -149,6 +150,7 @@ export default async function ReceivePage({
           name: l.name,
           isMain: l.isMain,
         }))}
+        scanConfigured={isScanConfigured()}
       />
     </>
   )

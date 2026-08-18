@@ -18,3 +18,46 @@
     display: none !important;
   }
 }
+
+/*
+ * Paper is white, whatever the screen is.
+ *
+ * The whole app themes by swapping custom properties, so a user on dark mode
+ * printing a document gets pale ink on a dark ground — which a printer renders
+ * as an unreadable page, or a black one if the driver honours backgrounds.
+ * Re-asserting the LIGHT values of the surface and text tokens at print time
+ * fixes every page in this group at once, and costs nothing on a light screen
+ * because these are already the values in play.
+ *
+ * Kept in sync with the light defaults at the top of globals.css. Only the
+ * surface and text ramps are restated: the accent colours (brand, danger,
+ * success) are legible on white in both themes and are what a badge still
+ * needs to mean something.
+ */
+@media print {
+  /* Specificity has to beat :root[data-theme='dark'] and the
+     prefers-color-scheme block, both of which are more specific than a bare
+     :root — an override written as :root alone loses to them and the page
+     prints dark anyway. */
+  :root,
+  :root:not([data-theme]),
+  :root[data-theme='dark'],
+  :root[data-theme='light'] {
+    --color-canvas: #ffffff;
+    --color-surface: #ffffff;
+    --color-surface-2: #f2f4f7;
+    --color-border: #e4e7ec;
+    --color-border-strong: #d0d5dd;
+    --color-ink: #16191d;
+    --color-ink-2: #344054;
+    --color-muted: #667085;
+    --color-faint: #98a2b3;
+    color-scheme: light;
+  }
+  /* Tints and rules are meaning here — a table header that drops out takes the
+     document's structure with it. */
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

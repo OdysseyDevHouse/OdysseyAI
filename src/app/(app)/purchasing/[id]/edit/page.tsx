@@ -5,6 +5,7 @@ import { listSuppliers } from '@/lib/site/suppliers'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { listLocations } from '@/lib/site/stockLocations'
 import { PageHeader } from '@/components/ui'
+import { isScanConfigured } from '@/lib/import/documentScan'
 import OrderScreen from '../../OrderScreen'
 
 export const dynamic = 'force-dynamic'
@@ -121,6 +122,7 @@ export default async function EditOrderPage({
             jobCardLineId: l.jobCardLineId,
           })),
         }}
+        scanConfigured={isScanConfigured()}
       />
     </>
   )

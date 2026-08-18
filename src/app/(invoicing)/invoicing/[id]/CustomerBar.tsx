@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Button,
-  Card,
   Icons,
   Input,
   Modal,
@@ -20,6 +19,10 @@ import type { TillCustomer } from '@/lib/site/tillCustomers'
  * A back-office invoice posts to an account, so the credit position is shown
  * as soon as a customer is attached — finding out at Finalise that the account
  * is blocked is finding out one screen too late.
+ *
+ * Renders CELLS, not a card: the identity and the "Select customer" button are
+ * two children of the editor's header strip, which is what lets the customer
+ * and the terms share one band. See the note above the fragment below.
  */
 export default function CustomerBar({
   customerId,
@@ -96,39 +99,60 @@ export default function CustomerBar({
 
   return (
     <>
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
-          <div className="flex items-center gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand">
-              <Icons.Users size={18} />
-            </span>
-            <div>
-              <p className="text-sm font-medium text-ink">Customer</p>
-              <p className="text-xs text-muted">
-                {customerName
-                  ? customerId
-                    ? customerName
-                    : `${customerName} · once-off, not an account`
-                  : 'None selected'}
-              </p>
-            </div>
-          </div>
+      {/*
+        No Card of its own any more.
 
-          {editable && (
-            <div className="flex flex-wrap items-center gap-2">
-              {(customerId || customerName) && (
-                <Button variant="secondary" size="sm" onClick={() => onPick(null)}>
-                  Clear
-                </Button>
-              )}
-              <Button variant="secondary" size="sm" onClick={() => setPicking(true)}>
-                <Icons.Users size={15} />
-                Select customer
-              </Button>
-            </div>
+        Who the document is for and the terms it is on — price type, their
+        reference, the date — are one thought, and they were being read as
+        three: a card, then another card, then the grid. This renders as a
+        CELL, and the editor sits it in the same strip as the rest of the
+        header, divided rather than boxed. Same content, one band to scan
+        instead of two to hop between.
+      */}
+      {/* No max-width, unlike the term cells beside it (HEADER_CELL): a
+          customer name is the longest thing in the strip and is the one field
+          here worth spending spare room on. */}
+      <div className="flex min-w-56 flex-1 items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+          <Icons.Users size={18} />
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs text-muted">Customer</p>
+          <p className="truncate text-sm font-medium text-ink">
+            {customerName || 'None selected'}
+          </p>
+          {/* The account/once-off distinction on its own line rather than
+              appended with a middot: it decides whether this sale can go on
+              account at all, and it was disappearing into the end of a
+              truncated name. */}
+          {customerName && !customerId && (
+            <p className="text-xs text-muted">once-off, not an account</p>
           )}
         </div>
-      </Card>
+      </div>
+
+      {/* ml-auto: the buttons are pushed to the far right of the strip, so the
+          terms read as one uninterrupted run of fields and the two controls
+          live in the corner where the eye goes looking for them. Without it
+          they landed between the customer and "Price type", cutting the band
+          in half. */}
+      {/* mt-5 drops the buttons onto the same line as the inputs to their
+          right: the strip aligns its cells at the top, and a field is a label
+          plus a control, so a button with no label above it would otherwise
+          float level with the LABELS rather than with the boxes. */}
+      {editable && (
+        <div className="ml-auto mt-5 flex shrink-0 flex-wrap items-center gap-2">
+          {(customerId || customerName) && (
+            <Button variant="ghost" size="sm" onClick={() => onPick(null)}>
+              Clear
+            </Button>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => setPicking(true)}>
+            <Icons.Users size={15} />
+            Select customer
+          </Button>
+        </div>
+      )}
 
       <Modal
         open={picking}

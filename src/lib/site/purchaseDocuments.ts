@@ -715,6 +715,114 @@ export async function cancelOrder(
   return { ok: true }
 }
 
+/**
+ * Closes an order that will never be completed.
+ *
+ * ── WHY THIS IS NOT cancelOrder ──────────────────────────────────────────
+ *
+ * Because something ARRIVED. cancelOrder refuses a part-received order on
+ * purpose — cancelling it would say the order never happened, while a GRV,
+ * stock movements and a creditor entry all say it did. This does the opposite:
+ * it accepts that what came is all that is coming, and stops the order asking
+ * for the rest.
+ *
+ * ── WHAT IT ACTUALLY FIXES ───────────────────────────────────────────────
+ *
+ * An issued order counts as incoming stock in TWO places, both keyed on
+ * `fulfilment_status IN ('open','part_received')`:
+ *
+ *   · openOrders(), which is what receiving offers and what the "On order"
+ *     tile totals;
+ *   · the `on_order` subquery in reorderSuggestions, which subtracts what is
+ *     already coming from what to buy.
+ *
+ * So a supplier who short-ships three of ten and never sends the rest leaves
+ * an order that permanently claims three units are on their way. The reorder
+ * screen then quietly suggests three too few, FOREVER, and nobody connects the
+ * empty shelf to a delivery from months ago. Marking the order 'received' —
+ * meaning "as received as it is going to get" — removes it from both.
+ *
+ * The lines are left ALONE. qty_ordered stays ten and qty_received stays three,
+ * because that is what happened, and it is the difference between the two that
+ * a supplier-performance question is asking about later. Rewriting the order
+ * down to what arrived would make every short delivery invisible.
+ */
+export type CloseShortResult = { ok: true; outstanding: number } | { ok: false; error: string }
+
+export async function closeOrderShort(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  reason: string,
+): Promise<CloseShortResult> {
+  const doc = await getPurchaseDocument(siteId, id)
+  if (!doc) return { ok: false, error: 'That order no longer exists.' }
+  if (doc.docType !== 'purchase_order') {
+    return { ok: false, error: `A ${doc.docLabel.toLowerCase()} is not closed from here.` }
+  }
+  // A draft was never sent, so there is nothing outstanding to give up on —
+  // that is a cancel. A cancelled order is already closed.
+  if (doc.status !== 'issued') {
+    return { ok: false, error: 'Only an issued order can be closed short.' }
+  }
+
+  // Checked BEFORE the line arithmetic, because closing leaves the lines
+  // exactly as they were — that is the point of it. An order already marked
+  // received still shows three outstanding on its lines, so a guard that only
+  // read the quantities would happily close it a second time and write a
+  // duplicate audit row saying the same three units were written off twice.
+  if (doc.fulfilmentStatus === 'received' || doc.fulfilmentStatus === 'cancelled') {
+    return { ok: false, error: 'This order is already closed.' }
+  }
+
+  const outstanding = doc.lines.reduce(
+    (sum, line) => sum + Math.max(line.qtyOrdered - line.qtyReceived, 0),
+    0,
+  )
+  // Nothing outstanding means it is already fully received; refreshOrderFulfilment
+  // would have said so. Offering to close it would be offering to do nothing.
+  if (outstanding <= 0.0005) {
+    return { ok: false, error: 'Everything on this order has arrived.' }
+  }
+
+  await siteExecute(
+    siteId,
+    "UPDATE purchase_order_details SET fulfilment_status = 'received' WHERE document_id = ?",
+    [id],
+  )
+  // An order with no details row yet — raised before 017, or never received
+  // against — still needs one, or COALESCE(…, 'open') keeps it in both queries.
+  await siteExecute(
+    siteId,
+    `INSERT INTO purchase_order_details (document_id, fulfilment_status) VALUES (?, 'received')
+     ON DUPLICATE KEY UPDATE fulfilment_status = 'received'`,
+    [id],
+  )
+
+  if (await purchaseAuditTableExists(siteId)) {
+    await siteExecute(
+      siteId,
+      `INSERT INTO purchase_document_audit (document_id, action, detail, user_id, user_name)
+       VALUES (?, 'closed_short', ?, ?, ?)`,
+      [
+        id,
+        `${doc.documentNumber ?? `#${id}`} · ${formatQtyShort(outstanding)} outstanding written off · ${
+          reason.trim().slice(0, 200) || 'Closed short'
+        }`.slice(0, 300),
+        actor.userId,
+        actor.userName.slice(0, 120),
+      ],
+    )
+  }
+
+  return { ok: true, outstanding: round(outstanding, 3) }
+}
+
+/** Trailing zeroes off a quantity, for an audit line read by a person. */
+function formatQtyShort(qty: number): string {
+  return String(round(qty, 3))
+}
+
 /** One purchase document's audit trail, newest last — the sales-side read. */
 export type PurchaseAuditRow = {
   action: string
@@ -738,6 +846,39 @@ export async function purchaseAudit(siteId: number, documentId: number): Promise
     userName: String(r.user_name ?? ''),
     createdAt: r.created_at as Date,
   }))
+}
+
+/**
+ * Records that an order was pulled up on paper.
+ *
+ * The first print and every one after it are separate actions, because the
+ * question asked afterwards is never "was this printed" — it is "did this
+ * supplier get two copies of the same order", and that is answered by the
+ * count of REPRINTS and who made them.
+ *
+ * Silent when 139 has not reached this site: schema drifts between sites, and
+ * an order that would not print because a history table is missing is a far
+ * worse failure than an order whose history panel is short a line.
+ */
+export async function recordOrderPrint(
+  siteId: number,
+  actor: Actor,
+  doc: Pick<PurchaseDocument, 'id' | 'documentNumber' | 'supplierName'>,
+  isReprint: boolean,
+): Promise<void> {
+  if (!(await purchaseAuditTableExists(siteId))) return
+  await siteExecute(
+    siteId,
+    `INSERT INTO purchase_document_audit (document_id, action, detail, user_id, user_name)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      doc.id,
+      isReprint ? 'reprinted' : 'printed',
+      `${doc.documentNumber ?? `#${doc.id}`} · ${doc.supplierName ?? ''}`.slice(0, 300),
+      actor.userId,
+      actor.userName.slice(0, 120),
+    ],
+  )
 }
 
 async function purchaseAuditTableExists(siteId: number): Promise<boolean> {

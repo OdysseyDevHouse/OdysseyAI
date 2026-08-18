@@ -3,9 +3,12 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, ButtonLink, ConfirmModal, Field, Icons, Input, useToast } from '@/components/ui'
+import { formatQty } from '@/lib/decimals'
+import { EmailOrderDialog } from './EmailOrderDialog'
 import {
   issueOrderAction,
   cancelOrderAction,
+  closeOrderShortAction,
   voidReceiptAction,
   deleteDraftReceiptAction,
 } from '../actions'
@@ -25,12 +28,39 @@ export default function PurchaseActions({
   docType,
   voidable,
   returnable = false,
+  outstanding = 0,
+  received = 0,
+  mailConfigured = false,
+  supplierEmail = '',
+  lastSentNote = null,
 }: {
   documentId: number
   documentNumber: string | null
   status: string
   docType: string
   voidable: boolean
+  /**
+   * Ordered but not yet arrived, summed across the lines. Drives whether
+   * closing short is offered at all, and is quoted in the confirmation —
+   * "those 3" is a figure someone can check against the delivery note.
+   */
+  outstanding?: number
+  /**
+   * How much HAS arrived. An order with nothing received is a cancel, not a
+   * close: closing it would leave an issued order claiming a delivery that
+   * never started.
+   */
+  received?: number
+  /**
+   * Whether SMTP is set up at all. Decided on the server, and the button is
+   * hidden rather than disabled without it: one that can only explain why it
+   * does not work is worse than no button.
+   */
+  mailConfigured?: boolean
+  /** The supplier's own address, seeding the dialog. '' when they have none. */
+  supplierEmail?: string
+  /** The last send, so a resend is an informed act. Null if never sent. */
+  lastSentNote?: string | null
   /**
    * A finalised GRV with something still left to send back. False once every
    * line has gone, so the button does not lead to a screen that can only say
@@ -39,6 +69,8 @@ export default function PurchaseActions({
   returnable?: boolean
 }) {
   const [cancelling, setCancelling] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const [emailing, setEmailing] = useState(false)
   const [voiding, setVoiding] = useState(false)
   const [discarding, setDiscarding] = useState(false)
   const [reason, setReason] = useState('')
@@ -52,6 +84,7 @@ export default function PurchaseActions({
       if (result.ok) {
         toast.success('message' in result && result.message ? result.message : 'Done.')
         setCancelling(false)
+        setClosing(false)
         setVoiding(false)
         setReason('')
         router.refresh()
@@ -109,6 +142,27 @@ export default function PurchaseActions({
         </ButtonLink>
       )}
 
+      {/* An issued order can be sent, and sent again. Not offered on a draft:
+          a draft has no number for the supplier to quote back, so the useful
+          act there is Issue — which sits right beside it. */}
+      {isOrder && status === 'issued' && mailConfigured && (
+        <Button variant="ghost" onClick={() => setEmailing(true)} disabled={pending}>
+          <Icons.Mail size={15} />
+          Email
+        </Button>
+      )}
+
+      {/* Only where there is something to give up on. An order still fully
+          outstanding can simply be cancelled, and one fully received has
+          nothing left — offering "close short" on either is offering a button
+          that can only explain why it does not apply. */}
+      {isOrder && status === 'issued' && outstanding > 0 && received > 0 && (
+        <Button variant="ghost" onClick={() => setClosing(true)} disabled={pending}>
+          <Icons.Check size={15} />
+          Close short
+        </Button>
+      )}
+
       {isOrder && (status === 'draft' || status === 'issued') && (
         <Button variant="danger-ghost" onClick={() => setCancelling(true)} disabled={pending}>
           <Icons.Close size={15} />
@@ -152,6 +206,45 @@ export default function PurchaseActions({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="e.g. Ordered in error"
+              />
+            </Field>
+          </div>
+        }
+      />
+
+      <EmailOrderDialog
+        open={emailing}
+        onClose={() => setEmailing(false)}
+        documentId={documentId}
+        documentNumber={documentNumber}
+        defaultTo={supplierEmail}
+        lastSentNote={lastSentNote}
+      />
+
+      <ConfirmModal
+        open={closing}
+        onClose={() => setClosing(false)}
+        onConfirm={() => run(() => closeOrderShortAction(documentId, reason))}
+        title={`Close ${documentNumber ?? 'this order'} short?`}
+        confirmLabel="Close it"
+        cancelLabel="Keep it open"
+        busy={pending}
+        message={
+          <div className="flex flex-col gap-3">
+            <p>
+              What arrived stays exactly as it is — nothing is reversed and no stock moves. The
+              order simply stops asking for the rest.
+            </p>
+            <p>
+              Until it does, those{' '}
+              <span className="numeric font-medium text-ink">{formatQty(outstanding)}</span> count
+              as stock on its way in, so the reorder suggestions keep buying that much less.
+            </p>
+            <Field label="Reason">
+              <Input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. Supplier discontinued the line"
               />
             </Field>
           </div>

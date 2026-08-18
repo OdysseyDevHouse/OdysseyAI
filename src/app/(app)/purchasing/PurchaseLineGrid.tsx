@@ -24,6 +24,8 @@ import { addVat, removeVat, sellExclFromGp, sellExclFromMarkup } from '@/lib/pri
 import {
   purchaseLineFigures,
   purchaseLineMargin,
+  unitCostFromLineTotal,
+  unitCostFromLineTotalIncl,
   type PurchaseLineValues,
 } from './purchaseLine'
 
@@ -169,13 +171,21 @@ export const PURCHASE_COLUMNS: readonly (ColumnOption & { id: GridColumnId })[] 
   { id: 'lineTotalIncl', label: 'Line total (incl.)', group: 'Line' },
 ]
 
-/** What a receiving screen opens with — the five columns it always had. */
+/**
+ * What a receiving screen opens with.
+ *
+ * Both line totals, because they are the fastest way to key a delivery: a
+ * supplier invoice states the line rather than the unit, and one supplier
+ * quotes it exclusive while the next quotes it inclusive. Whichever box matches
+ * the paper in hand gets typed into, and the unit cost falls out of it.
+ */
 export const RECEIVE_DEFAULT_COLUMNS: GridColumnId[] = [
   'received',
   'costExcl',
   'supplierCode',
   'location',
   'lineTotalExcl',
+  'lineTotalIncl',
 ]
 
 /**
@@ -302,6 +312,19 @@ export default function PurchaseLineGrid({
             const setSellFromExcl = (sellExcl: number | null) => {
               if (sellExcl === null) return
               onPatch(line.key, { sellIncl: addVat(sellExcl, sellingVatPct) })
+            }
+
+            /**
+             * Writes a unit cost back from a line total the user typed.
+             *
+             * Null means the figure could not be inverted — no quantity to
+             * divide by, or a discount that makes the target unreachable. The
+             * box then simply keeps its old value rather than writing NaN into
+             * the line and poisoning every figure derived from it.
+             */
+            const setCostFromTotal = (unitCostExcl: number | null) => {
+              if (unitCostExcl === null) return
+              onPatch(line.key, { unitCostExcl })
             }
 
             const cell = (id: GridColumnId) => {
@@ -516,12 +539,42 @@ export default function PurchaseLineGrid({
                 case 'onHand':
                   return <span className="text-muted">{formatQty(line.currentStock)}</span>
 
+                /*
+                 * BOTH LINE TOTALS ARE EDITABLE, AND THEY WRITE THE UNIT COST.
+                 *
+                 * A supplier invoice frequently states the line and not the
+                 * unit — "10 of these, R120" — and a receiver keying that had
+                 * to divide it by hand, at four decimal places, on every line.
+                 * Typing 120 against a quantity of 10 now settles the cost at
+                 * 12 and everything downstream (landed cost, average cost
+                 * after, GP) recomputes from it, because the cost is still the
+                 * one stored figure. These boxes are a way IN to it, not a
+                 * second source of truth — which is why they keep rendering
+                 * the computed total and never hold a value of their own.
+                 *
+                 * The charges note stays: freight is apportioned across the
+                 * document and is not part of what this line was invoiced at,
+                 * so it is shown beside the total rather than folded into the
+                 * figure being inverted.
+                 */
                 case 'lineTotalExcl':
                   return (
                     <>
-                      <div className="text-ink">{formatMoney(figures.taxableExcl)}</div>
+                      <CurrencyInput
+                        value={figures.taxableExcl}
+                        aria-label={`Line total for ${line.description}, excluding VAT`}
+                        onChange={(e) =>
+                          setCostFromTotal(
+                            unitCostFromLineTotal(
+                              line,
+                              num(e.target.value),
+                              documentDiscounts[index] ?? 0,
+                            ),
+                          )
+                        }
+                      />
                       {figures.chargeExcl > 0 && (
-                        <div className="text-xs text-muted">
+                        <div className="mt-0.5 text-xs text-muted">
                           +{formatMoney(figures.chargeExcl)} charges
                         </div>
                       )}
@@ -529,7 +582,21 @@ export default function PurchaseLineGrid({
                   )
 
                 case 'lineTotalIncl':
-                  return <span className="text-ink">{formatMoney(figures.lineTotalIncl)}</span>
+                  return (
+                    <CurrencyInput
+                      value={figures.lineTotalIncl}
+                      aria-label={`Line total for ${line.description}, including VAT`}
+                      onChange={(e) =>
+                        setCostFromTotal(
+                          unitCostFromLineTotalIncl(
+                            line,
+                            num(e.target.value),
+                            documentDiscounts[index] ?? 0,
+                          ),
+                        )
+                      }
+                    />
+                  )
               }
             }
 
@@ -645,6 +712,8 @@ const INPUT_COLUMNS = new Set<GridColumnId>([
   'vat',
   'supplierCode',
   'location',
+  'lineTotalExcl',
+  'lineTotalIncl',
 ])
 
 const HEAD_ALIGN: Partial<Record<GridColumnId, string>> = {

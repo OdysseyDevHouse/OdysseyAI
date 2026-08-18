@@ -3,6 +3,9 @@ import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { getPurchaseDocument, purchaseAudit } from '@/lib/site/purchaseDocuments'
 import { returnableLines, returnsFor } from '@/lib/site/purchaseReversal'
+import { lastOrderEmail } from '@/lib/site/purchaseOrderEmail'
+import { getSupplier } from '@/lib/site/suppliers'
+import { isConfigured as isMailConfigured } from '@/lib/mail'
 import { listLocations } from '@/lib/site/stockLocations'
 import { today as localToday } from '@/lib/site/ledger'
 import { formatMoney, formatQty } from '@/lib/decimals'
@@ -85,6 +88,28 @@ export default async function PurchaseDocumentPage({
     : [null, []]
   const returnable = (returnLines ?? []).some((l) => l.returnable > 0)
 
+  // What an order is still waiting for, and what has already turned up. Both
+  // read off the lines rather than the fulfilment status: the status says
+  // "part received" without saying how much, and the confirmation quotes a
+  // figure the buyer can check against their delivery note.
+  const outstanding = doc.lines.reduce(
+    (sum, line) => sum + Math.max(line.qtyOrdered - line.qtyReceived, 0),
+    0,
+  )
+  const receivedSoFar = doc.lines.reduce((sum, line) => sum + line.qtyReceived, 0)
+
+  // Emailing, for an order only. Both reads are skipped for a GRV or a return,
+  // which are our own records rather than something a supplier is sent.
+  const isOrder = doc.docType === 'purchase_order'
+  const mailConfigured = isOrder && isMailConfigured()
+  const [orderSupplier, lastSent] = mailConfigured
+    ? await Promise.all([getSupplier(siteId, doc.supplierId), lastOrderEmail(siteId, documentId)])
+    : [null, null]
+  const supplierEmail = orderSupplier?.email ?? ''
+  const lastSentNote = lastSent
+    ? `${lastSent.detail ?? ''} · ${lastSent.userName} · ${stamp(lastSent.at)}`.replace(/^ · /, '')
+    : null
+
   return (
     <>
       <PageHeader
@@ -94,6 +119,20 @@ export default async function PurchaseDocumentPage({
         backLabel="Purchasing"
         action={
           <>
+            {/* The supplier's copy. Offered on a cancelled order too: working
+                out what a supplier was sent is exactly when the cancelled one
+                needs looking at, and the paper says CANCELLED across it. */}
+            {doc.docType === 'purchase_order' && (
+              <ButtonLink
+                href={`/purchasing/${doc.id}/order`}
+                variant="secondary"
+                target="_blank"
+              >
+                <Icons.Printer size={15} />
+                Print order
+              </ButtonLink>
+            )}
+
             {/* Labels for what just arrived — the moment shelf edges go stale. */}
             {doc.docType === 'grv' && doc.status === 'finalised' && (
               <ButtonLink
@@ -112,6 +151,11 @@ export default async function PurchaseDocumentPage({
               docType={doc.docType}
               voidable={voidable}
               returnable={returnable}
+              outstanding={outstanding}
+              received={receivedSoFar}
+              mailConfigured={mailConfigured}
+              supplierEmail={supplierEmail}
+              lastSentNote={lastSentNote}
             />
           </>
         }
@@ -341,14 +385,26 @@ const AUDIT_LABEL: Record<string, string> = {
   issued: 'Issued',
   cancelled: 'Cancelled',
   edited: 'Edited',
+  printed: 'Printed',
   reprinted: 'Reprinted',
+  closed_short: 'Closed short',
+  emailed: 'Emailed',
+  re_emailed: 'Emailed again',
 }
 
-const AUDIT_TONE: Record<string, 'success' | 'danger' | 'brand' | 'neutral'> = {
+const AUDIT_TONE: Record<string, 'success' | 'danger' | 'brand' | 'neutral' | 'warning'> = {
   finalised: 'success',
   void: 'danger',
   issued: 'brand',
   cancelled: 'neutral',
+  printed: 'neutral',
+  // A reprint is the entry someone is looking FOR when they are working out
+  // how a supplier came to deliver the same order twice, so it does not read
+  // as routine.
+  reprinted: 'warning',
+  // Somebody decided goods that were ordered are never coming. That is a fact
+  // about the supplier worth seeing when the next order to them is raised.
+  closed_short: 'warning',
 }
 
 /** The pool parses DATETIME as UTC, so wall-clock comes back out with getUTC*. */

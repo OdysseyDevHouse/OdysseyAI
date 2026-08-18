@@ -129,6 +129,35 @@ const STATUS_TONE: Record<SalesDocument['status'], BadgeTone> = {
  */
 const PICKER_LIMIT = 500
 
+/**
+ * One cell of the document's header strip — a glyph beside a field.
+ *
+ * The left hairline belongs to the CELL rather than to the strip. Tailwind's
+ * `divide-x` puts a border on every child but the first, which the strip's own
+ * `gap` then holds away from anything, so the rules were drawn floating in the
+ * gutter instead of between the columns.
+ *
+ * Dropped below `lg`, where the cells stack into a single column and a
+ * left-hand border would be drawing an edge that is no longer there.
+ *
+ * Exported so the quote screen's "Valid until" can be shaped identically —
+ * a cell that came from another file has to match its neighbours exactly, and
+ * a second copy of these classes is how that quietly stops being true.
+ *
+ * ── WHY BOTH A MIN AND A MAX ──────────────────────────────────────────────
+ *
+ * `flex-1` from `min-w-56` lets the cells share the row and wrap in step
+ * rather than each demanding a fixed width and shoving one sibling onto a line
+ * of its own — which is what the fifth cell did on a quote at 1280px.
+ *
+ * `max-w-72` is the other half of that. A cell that DOES wrap ends up alone on
+ * its row, where `flex-1` would stretch it edge to edge and print a date box
+ * the width of the page. Bounded, a wrapped cell keeps the same size it had
+ * beside its siblings.
+ */
+export const HEADER_CELL =
+  'flex min-w-56 max-w-72 flex-1 items-start gap-3 lg:border-l lg:border-border lg:pl-5 lg:ml-5'
+
 export default function InvoiceEditor({
   document,
   structures,
@@ -148,6 +177,8 @@ export default function InvoiceEditor({
   canVoid = false,
   canCredit = false,
   depositHeld = 0,
+  detailsSlot = null,
+  hasSectionsBelow = false,
 }: {
   document: SalesDocument
   structures: PriceStructure[]
@@ -198,6 +229,26 @@ export default function InvoiceEditor({
    * which is the overwhelming majority. See TenderPad's `depositHeld`.
    */
   depositHeld?: number
+  /**
+   * Extra fields for the details card, from the screen that owns the document.
+   *
+   * A quote's "Valid until" is one of the things you set while capturing the
+   * header — same breath as the date and the customer's reference — so it
+   * belongs in the same card as those, not in a panel below the lines. The
+   * editor cannot own it (an invoice has no validity), so the quote screen
+   * hands the field down and the editor just gives it the last cell.
+   */
+  detailsSlot?: ReactNode
+  /**
+   * Whether the owning screen renders more sections below this editor.
+   *
+   * The editor's PageBody normally ends the page and so carries `pb-10`. On
+   * the invoice, quote and order screens it does not — a deposit panel, an
+   * outcome panel and proof of delivery follow it — and that trailing 40px
+   * doubled the seam under the grid. Set it where those sections exist; the
+   * screen that sets it owns the real bottom padding instead.
+   */
+  hasSectionsBelow?: boolean
 }) {
   const toast = useToast()
   const router = useRouter()
@@ -642,6 +693,48 @@ export default function InvoiceEditor({
   }
 
   /**
+   * Saves the document, then opens its printable copy in a new tab.
+   *
+   * ── SAVING FIRST IS THE WHOLE POINT ───────────────────────────────────
+   *
+   * The print route renders from the STORED document, because paper that
+   * disagrees with the database is worse than no paper. Every figure in this
+   * editor lives in component state until a save, so printing a pro forma with
+   * an unsaved line on screen would hand a customer a document missing the
+   * item they just asked for. Same reasoning as takePayment below.
+   *
+   * A FINALISED document has nothing to save — it is immutable, and
+   * saveInvoiceAction would refuse — so that case opens the tab directly.
+   *
+   * The tab is opened BEFORE the await when there is a save to do: a popup
+   * blocker allows `window.open` only inside the gesture that asked for it,
+   * and opening it after an awaited action is what gets a print silently
+   * swallowed. It is pointed at the route once the save succeeds, and closed
+   * again if the save fails, so a refusal never leaves a blank tab behind.
+   */
+  function printDocument() {
+    const href = `/sales/${document.id}/document`
+
+    if (!editable) {
+      window.open(href, '_blank')
+      return
+    }
+
+    const tab = window.open('', '_blank')
+    startTransition(async () => {
+      const saved = await saveInvoiceAction(payload())
+      if (!saved.ok) {
+        tab?.close()
+        toast.error(saved.error)
+        return
+      }
+      if (tab) tab.location.href = href
+      else window.open(href, '_blank')
+      router.refresh()
+    })
+  }
+
+  /**
    * Saves the draft, then asks for payment.
    *
    * Saving first is not a nicety: the tender pad settles against a total, and
@@ -728,20 +821,61 @@ export default function InvoiceEditor({
   const title = document.documentNumber ?? `${noun} #${document.id}`
 
   /*
-   * Everything that sits at the right of the header: the owning screen's status
-   * where there is one, this document's own, and the two save controls.
+   * ── STATE ON THE LEFT, ACTIONS ON THE RIGHT ───────────────────────────
    *
-   * One row, because they are one thought — what this document IS and what you
-   * can do about it. An order shows all four: Open, Draft, Save (draft), Save
-   * order.
+   * The two status badges used to sit in the same row as Save and Finalise,
+   * which put what this document IS inside the group of things you can DO to
+   * it — and left the buttons reading as a four-item row where only two were
+   * pressable. PageHeader has a `status` slot between the title and subtitle
+   * built for precisely this, so the state now sits against the name it
+   * describes and the right-hand side is buttons only.
+   *
+   * The owning screen's own state first — see `extraStatus`. On an order that
+   * is "Open" or "Part delivered", which is a different question from the
+   * "Draft" beside it.
    */
-  const actions = (
+  const status = (
     <>
-      {/* The owning screen's own state first — see `extraStatus`. On an order
-          that is "Open" or "Part delivered", which is a different question from
-          the "Draft" beside it. */}
       {extraStatus}
       <Badge tone={STATUS_TONE[document.status]}>{STATUS_LABELS[document.status]}</Badge>
+    </>
+  )
+
+  /*
+   * What the Print button will actually put on paper.
+   *
+   * Named rather than left as a bare "Print" because the four documents this
+   * editor produces are not interchangeable: somebody handing a customer a
+   * PRO FORMA needs to know that is what came out, and the difference between
+   * that and a tax invoice is the whole reason the route decides the heading
+   * from status. The button says the same word the paper does.
+   *
+   * Kept in step with printKindFor in SalesDocumentPrint — that function is
+   * the authority, this only labels the button that opens it.
+   */
+  const printLabel = isQuote
+    ? 'Print quote'
+    : isOrder
+      ? 'Print order'
+      : document.status === 'finalised'
+        ? 'Print invoice'
+        : 'Print pro forma'
+
+  const actions = (
+    <>
+      {/* Outside the `editable` gate: a finalised invoice is exactly the one
+          you most often need on paper, and it was the only state with no way
+          to print an A4 copy at all. Nothing to print on an empty document,
+          which is why the line count still gates it. */}
+      <Button
+        variant="ghost"
+        onClick={printDocument}
+        disabled={pending || lines.length === 0}
+      >
+        <Icons.Printer size={16} />
+        {printLabel}
+      </Button>
+
       {editable && (
         <>
           <Button variant="secondary" onClick={save} disabled={pending || lines.length === 0}>
@@ -778,6 +912,7 @@ export default function InvoiceEditor({
     <>
       <PageHeader
         title={title}
+        status={status}
         subtitle={`${customerName || 'No customer'} · ${documentDate}`}
         /* Back to the register this document belongs to. It always said
            "invoicing", which sent somebody editing a quote to the wrong list. */
@@ -786,33 +921,77 @@ export default function InvoiceEditor({
         action={actions}
       />
 
-      <PageBody>
-        <CustomerBar
-          customerId={customerId}
-          customerName={customerName}
-          editable={editable}
-          onPick={(picked) => {
-            setCustomerId(picked?.id ?? null)
-            setCustomerName(picked?.name ?? '')
-          }}
-        />
+      {/*
+        `flush` when the owning screen has more to put below the editor.
 
+        PageBody ends in `pb-10` because it is normally the last thing on a
+        page — but on the invoice, quote and order screens it is not: a deposit
+        panel, an outcome panel and proof of delivery all follow. That trailing
+        40px then landed on top of the next section's own spacing, making the
+        seam under the grid three times the `gap-5` between every other card,
+        which is what made the screen look like it came apart there.
+
+        The screens that follow the editor supply their own `pb-10` at the true
+        bottom of the page, so nothing ends flush against the window.
+      */}
+      <PageBody flush={hasSectionsBelow}>
+        {/*
+          ── WHO, AND ON WHAT TERMS — ONE BAND ────────────────────────────
+
+          The customer and the document's terms (price type, their reference,
+          the date, a quote's validity) answer one question between them, and
+          they were being read as two: a customer card, then a details card,
+          then the grid. Three separate boxes for what is really one header.
+
+          So they share a strip, divided rather than boxed. Each terms cell
+          draws its OWN left hairline (see CELL below) rather than the strip
+          using `divide-x`: Tailwind's divide utility puts the border on every
+          child but the first, which a `gap` then holds away from anything —
+          the rules were there and invisible, floating in the gutter. A border
+          that belongs to the cell sits against the cell.
+
+          Chrome, so it is roomy: this is touched once per document, unlike
+          the grid below it which is scanned line by line.
+        */}
         <Card>
-          <div className="flex flex-wrap items-end justify-between gap-4 px-4 py-3.5">
-            {/* Not the primary — Finalise is. Opens the search dialog, because
-                the dashed entry box below already covers the case where the
-                code is known; this is for when it is not. */}
-            <Button variant="ghost" onClick={openSearch} disabled={!editable || pending}>
-              <Icons.Search size={16} />
-              Add product
-            </Button>
+          {/* items-START. One cell can carry a hint under its field ("Blank
+              means it does not expire") and the others cannot, so centring
+              floated the taller cell's glyph and label above its neighbours'.
+              Aligned at the top, every glyph and every label sits on one line
+              and the hint hangs below where it belongs.
 
-            <div className="flex flex-wrap items-end gap-3">
-              <Field label="Price type" className="w-44">
+              data-brand-rule marks the card's left edge the way CardHeader
+              does — see globals.css. This strip IS the card's header, it just
+              has no heading text, so it was the one card on the screen without
+              the rule down its edge while Products, Comment and Summary all
+              had one. The attribute is what the CSS looks for, not the
+              component, so saying it directly is the whole fix. */}
+          <div data-brand-rule className="flex flex-wrap items-start gap-y-4 px-5 py-4">
+            <CustomerBar
+              customerId={customerId}
+              customerName={customerName}
+              editable={editable}
+              onPick={(picked) => {
+                setCustomerId(picked?.id ?? null)
+                setCustomerName(picked?.name ?? '')
+              }}
+            />
+
+            {/* Each term is its own cell and owns the hairline on its left, so
+                the rule sits against the content rather than floating in a
+                gap. Dropped below `lg`, where the cells stack and a left-hand
+                border would be drawing a column that is no longer there. */}
+            <div className={HEADER_CELL}>
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+                <Icons.Tag size={18} />
+              </span>
+              <Field label="Price type" className="min-w-0 flex-1">
                 <Select
                   value={priceStructureId ?? ''}
                   disabled={!editable}
-                  onChange={(e) => setPriceStructureId(e.target.value ? Number(e.target.value) : null)}
+                  onChange={(e) =>
+                    setPriceStructureId(e.target.value ? Number(e.target.value) : null)
+                  }
                 >
                   {structures.map((s) => (
                     <option key={s.id} value={s.id}>
@@ -821,13 +1000,18 @@ export default function InvoiceEditor({
                   ))}
                 </Select>
               </Field>
+            </div>
 
-              {/* The CUSTOMER's own reference — their purchase-order number, their job
-                  number, whatever they quote back at you. "Invoice order number"
-                  read oddly on a quote, and templating the noun in produced
-                  "Order order number" on an order. It is one thing whatever the
-                  document is, so it is named for what it IS. */}
-              <Field label="Customer reference" className="w-56">
+            {/* The CUSTOMER's own reference — their purchase-order number, their job
+                number, whatever they quote back at you. "Invoice order number"
+                read oddly on a quote, and templating the noun in produced
+                "Order order number" on an order. It is one thing whatever the
+                document is, so it is named for what it IS. */}
+            <div className={HEADER_CELL}>
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+                <Icons.Contact size={18} />
+              </span>
+              <Field label="Customer reference" className="min-w-0 flex-1">
                 <Input
                   value={reference}
                   disabled={!editable}
@@ -835,8 +1019,13 @@ export default function InvoiceEditor({
                   onChange={(e) => setReference(e.target.value)}
                 />
               </Field>
+            </div>
 
-              <Field label={`${noun} date`} className="w-44">
+            <div className={HEADER_CELL}>
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+                <Icons.Calendar size={18} />
+              </span>
+              <Field label={`${noun} date`} className="min-w-0 flex-1">
                 <Input
                   type="date"
                   value={documentDate}
@@ -845,7 +1034,30 @@ export default function InvoiceEditor({
                 />
               </Field>
             </div>
+
+            {/* A quote's "Valid until", passed down by the quote screen. It
+                brings its own glyph so the cell matches its neighbours. */}
+            {detailsSlot}
           </div>
+        </Card>
+
+        <Card>
+          {/* The grid says what it is. It was the one unlabelled card on the
+              screen — a bare "Add product" button floating above a table —
+              while every other section carried a heading. */}
+          <CardHeader
+            icon={<Icons.ShoppingCart size={18} />}
+            title="Products & line items"
+            action={
+              /* Not the primary — Finalise is. Opens the search dialog, because
+                 the dashed entry box below already covers the case where the
+                 code is known; this is for when it is not. */
+              <Button variant="secondary" onClick={openSearch} disabled={!editable || pending}>
+                <Icons.Plus size={16} />
+                Add product
+              </Button>
+            }
+          />
 
           <div className="overflow-x-auto">
             <table className={TABLE}>
@@ -861,7 +1073,11 @@ export default function InvoiceEditor({
                 <col className="w-28" />
                 <col className="w-12" />
               </colgroup>
-              <thead>
+              {/* No column headings over an empty grid. Seven labels above
+                  nothing describe a table that is not there, and they sat
+                  between the code box and the "No lines yet" state that is
+                  supposed to be the thing you read. */}
+              <thead hidden={lines.length === 0}>
                 <tr className={TABLE_HEAD_ROW}>
                   <th className={TABLE_TH}>Product</th>
                   {/* "Salesperson", not "Clerk": this decides who earns
@@ -1029,7 +1245,11 @@ export default function InvoiceEditor({
 
         <div className="grid gap-5 lg:grid-cols-2">
           <Card>
-            <CardHeader title="Comment" description="Printed on the invoice." />
+            <CardHeader
+              icon={<Icons.MessageSquare size={18} />}
+              title="Comment"
+              description="Printed on the invoice."
+            />
             <CardBody>
               <Textarea
                 rows={5}
@@ -1046,6 +1266,7 @@ export default function InvoiceEditor({
               state is the inclusive total. GP goes danger when the sale would
               lose money. */}
           <Card>
+            <CardHeader icon={<Icons.Calculator size={18} />} title="Summary" />
             <CardBody>
               <SummaryList>
                 {/* What the shop paid and what it makes are a different

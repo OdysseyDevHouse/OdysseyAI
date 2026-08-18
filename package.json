@@ -60,6 +60,8 @@
     "test:purchase-guards": "tsx --conditions=react-server --env-file=.env scripts/test-purchase-guards.ts",
     "test:supplier-prices": "tsx --conditions=react-server --env-file=.env scripts/test-supplier-prices.ts",
     "test:purchase-orders": "tsx --conditions=react-server --env-file=.env scripts/test-purchase-orders.ts",
+    "test:close-short": "tsx --conditions=react-server --env-file=.env scripts/test-close-short.ts",
+    "test:order-email": "tsx --conditions=react-server --env-file=.env scripts/test-order-email.ts",
     "test:purchasing": "tsx --conditions=react-server --env-file=.env scripts/test-purchasing.ts",
     "test:statement-runs": "tsx --conditions=react-server --env-file=.env scripts/test-statement-runs.ts",
     "test:statement-periods": "tsx --conditions=react-server --env-file=.env scripts/test-statement-periods.ts",

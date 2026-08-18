@@ -17,6 +17,8 @@ import {
   purchaseDocumentFigures,
   purchaseLineFigures,
   purchaseLineMargin,
+  unitCostFromLineTotal,
+  unitCostFromLineTotalIncl,
   type PurchaseLineValues,
 } from '../src/app/(app)/purchasing/purchaseLine'
 import { round } from '../src/lib/decimals'
@@ -227,6 +229,118 @@ function main() {
     }
   }
   ok('no combination produces NaN or Infinity', bad === 0, `${bad} bad values`)
+
+  console.log('\n── Line total, run backwards into a unit cost ──')
+
+  // The case the feature exists for: ten units, a line the buyer wants to come
+  // to 120, and a cost of 12 falling out of it.
+  ok(
+    '*** a line total divides back into the unit cost ***',
+    unitCostFromLineTotal(line({ qty: 10, unitCostExcl: 10 }), 120) === 12,
+    String(unitCostFromLineTotal(line({ qty: 10, unitCostExcl: 10 }), 120)),
+  )
+
+  // It must round-trip: the cost it returns, run forwards, has to produce the
+  // total that was typed. A one-cent drift here is a line that will not settle.
+  for (const [qty, target] of [
+    [10, 120],
+    [3, 100],
+    [7.5, 999.99],
+    [1, 0.01],
+  ] as const) {
+    const cost = unitCostFromLineTotal(line({ qty }), target)
+    const back = purchaseLineFigures(line({ qty, unitCostExcl: cost ?? 0 }))
+    ok(
+      `${qty} @ total ${target} round-trips`,
+      cost !== null && Math.abs(back.taxableExcl - target) <= 0.01,
+      `cost ${cost}, back ${back.taxableExcl}`,
+    )
+  }
+
+  // A PERCENTAGE discount scales with the cost, so the gross must be divided
+  // up rather than having a percentage of the target added back — that would
+  // land short and settle the line at the wrong figure.
+  const pctBack = unitCostFromLineTotal(line({ qty: 10, discountPct: 10 }), 900)
+  const pctForward = purchaseLineFigures(line({ qty: 10, unitCostExcl: pctBack ?? 0, discountPct: 10 }))
+  ok(
+    '*** a percentage discount is divided out, not added back ***',
+    pctBack === 100 && pctForward.taxableExcl === 900,
+    `cost ${pctBack}, forward ${pctForward.taxableExcl}`,
+  )
+
+  // An ABSOLUTE discount is a rand figure off the invoice. It does not move
+  // when the cost does, so it goes back on flat.
+  const absBack = unitCostFromLineTotal(line({ qty: 10, discountAmount: 50 }), 950)
+  const absForward = purchaseLineFigures(
+    line({ qty: 10, unitCostExcl: absBack ?? 0, discountAmount: 50 }),
+  )
+  ok(
+    'an absolute discount is added back flat',
+    absBack === 100 && absForward.taxableExcl === 950,
+    `cost ${absBack}, forward ${absForward.taxableExcl}`,
+  )
+
+  // The document discount came off this line flat, so it goes back on flat too.
+  const docBack = unitCostFromLineTotal(line({ qty: 10 }), 900, 100)
+  const docForward = purchaseLineFigures(line({ qty: 10, unitCostExcl: docBack ?? 0 }), 100)
+  ok(
+    'a document-discount share is carried through the inversion',
+    docBack === 100 && docForward.taxableExcl === 900,
+    `cost ${docBack}, forward ${docForward.taxableExcl}`,
+  )
+
+  // BONUS UNITS ARE NOT PAID FOR. The total is divided across qty alone, so a
+  // free unit must not drag the cost down — the mirror of the landed-cost rule.
+  ok(
+    '*** bonus units do not share the line total ***',
+    unitCostFromLineTotal(line({ qty: 10, qtyBonus: 5 }), 120) === 12,
+    String(unitCostFromLineTotal(line({ qty: 10, qtyBonus: 5 }), 120)),
+  )
+
+  console.log('\n── The inclusive box strips VAT and hands over ──')
+
+  ok(
+    '*** an inclusive line total reaches the same cost ***',
+    unitCostFromLineTotalIncl(line({ qty: 10, vatRatePct: 15 }), 138) === 12,
+    String(unitCostFromLineTotalIncl(line({ qty: 10, vatRatePct: 15 }), 138)),
+  )
+  const inclForward = purchaseLineFigures(
+    line({ qty: 10, unitCostExcl: unitCostFromLineTotalIncl(line({ qty: 10 }), 138) ?? 0 }),
+  )
+  ok(
+    'and the inclusive total comes back out',
+    inclForward.lineTotalIncl === 138,
+    String(inclForward.lineTotalIncl),
+  )
+  ok(
+    'a zero-rated line inverts on the exclusive figure',
+    unitCostFromLineTotalIncl(line({ qty: 10, vatRatePct: 0 }), 120) === 12,
+  )
+
+  console.log('\n── It refuses rather than returning nonsense ──')
+
+  ok('no quantity to divide by', unitCostFromLineTotal(line({ qty: 0 }), 120) === null)
+  ok('a negative total', unitCostFromLineTotal(line({ qty: 10 }), -5) === null)
+  ok('a 100% discount', unitCostFromLineTotal(line({ qty: 10, discountPct: 100 }), 120) === null)
+  ok('NaN in, null out', unitCostFromLineTotal(line({ qty: 10 }), Number.NaN) === null)
+  ok('a zero total is legitimate, not a refusal', unitCostFromLineTotal(line({ qty: 10 }), 0) === 0)
+  ok('no quantity, inclusive box too', unitCostFromLineTotalIncl(line({ qty: 0 }), 138) === null)
+
+  let badBack = 0
+  for (const qty of [0, 1, 7.5, 1000]) {
+    for (const target of [0, 0.01, 120, 999999]) {
+      for (const pct of [0, 12.5, 100]) {
+        for (const amount of [0, 50]) {
+          const v = unitCostFromLineTotal(
+            line({ qty, discountPct: pct, discountAmount: amount }),
+            target,
+          )
+          if (v !== null && !Number.isFinite(v)) badBack++
+        }
+      }
+    }
+  }
+  ok('no combination inverts to NaN or Infinity', badBack === 0, `${badBack} bad values`)
 
   console.log(`\n${fails === 0 ? 'All good.' : `${fails} FAILED`}\n`)
   process.exit(fails === 0 ? 0 : 1)

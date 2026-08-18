@@ -86,8 +86,35 @@ export function PageHeader({
  * it the first element — usually a toolbar or a New button — sits flush against
  * the header's bottom border and looks wedged there.
  */
-export function PageBody({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`flex flex-col gap-5 px-6 pt-5 pb-10 ${className}`}>{children}</div>
+export function PageBody({
+  children,
+  className = '',
+  flush = false,
+}: {
+  children: ReactNode
+  className?: string
+  /**
+   * Drop the bottom padding, for a body that is NOT the end of the page.
+   *
+   * `pb-10` exists so the last card does not sit flush against the window,
+   * which is right whenever this is the final thing on the screen — nearly
+   * always. The invoicing editor is the exception: it renders its own
+   * PageBody and the screen then adds a deposit panel, an outcome panel or
+   * proof of delivery below it, so that trailing 40px landed on top of the
+   * next section's own spacing and made one seam three times every other gap.
+   *
+   * A PROP rather than `className="pb-0"` at the call site: Tailwind resolves
+   * conflicting utilities by stylesheet order, not by the order they appear in
+   * a class string, so an appended `pb-0` loses to the `pb-10` in here and
+   * silently does nothing. The class has to not be emitted at all.
+   */
+  flush?: boolean
+}) {
+  return (
+    <div className={`flex flex-col gap-5 px-6 pt-5 ${flush ? '' : 'pb-10'} ${className}`}>
+      {children}
+    </div>
+  )
 }
 
 /**

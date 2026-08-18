@@ -216,3 +216,93 @@ export function purchaseLineMargin(
     profit: round(sellExcl - landedCostExcl, 4),
   }
 }
+
+/**
+ * The line total, run backwards into a unit cost.
+ *
+ * A buyer with a supplier invoice in hand often has the LINE total and not the
+ * unit price: "ten of these, R120 the lot". Typing 120 into the line total and
+ * having the cost come out at 12 is the same arithmetic the grid already does
+ * forwards, so it lives beside it rather than inside a cell handler — and the
+ * test script can then check the awkward cases without rendering a table.
+ *
+ * ── UNDOING THE STEPS IN REVERSE ──────────────────────────────────────────
+ *
+ * The figure on screen is `taxableExcl`: gross, less the line's own discount,
+ * less this line's share of the DOCUMENT discount. So the target is walked back
+ * up through both before it is divided by the quantity:
+ *
+ *   1. add the document-discount share back  — it was subtracted flat
+ *   2. undo the line discount                — see the two cases below
+ *   3. divide by qty                         — NOT qty + bonus
+ *
+ * Step 2 has two shapes because the two discount inputs are different kinds of
+ * claim. An ABSOLUTE amount is a rand figure the supplier put on the invoice;
+ * it does not move when the cost does, so it is simply added back. A PERCENTAGE
+ * is a proportion of the gross, so the gross that yields the target is
+ * `target / (1 - pct/100)` — adding a percentage of the *target* back would
+ * land short, and the line would settle at the wrong figure while looking
+ * arithmetically plausible.
+ *
+ * Step 3 divides by qty alone, unlike landedCostExcl which divides by qty plus
+ * bonus. That is not an inconsistency: bonus units are free, so they are not
+ * part of what the line total is paying for. Dividing the target across them
+ * would silently inflate the unit cost on every promotional buy — the same trap
+ * landedCostExcl exists to avoid, arrived at from the other direction.
+ *
+ * Returns null when the answer would be meaningless — no quantity to divide by,
+ * a discount of 100%, or a target that cannot be reached without a negative
+ * cost. The caller leaves the line alone rather than writing NaN into it.
+ */
+export function unitCostFromLineTotal(
+  values: PurchaseLineValues,
+  /** What the line should come to, excluding VAT and after every discount. */
+  targetExcl: number,
+  /** This line's share of the document discount, as the grid renders it. */
+  documentDiscountExcl = 0,
+): number | null {
+  if (!Number.isFinite(targetExcl) || targetExcl < 0) return null
+  if (values.qty <= 0) return null
+
+  // 1. The document discount came off flat, so it goes back on flat.
+  const netExcl = round(targetExcl + documentDiscountExcl, 2)
+
+  // 2. Undo whichever discount is in force — absolute wins, exactly as it does
+  //    in lineDiscount() going the other way.
+  let grossExcl: number
+  if (values.discountAmount > 0) {
+    grossExcl = round(netExcl + values.discountAmount, 2)
+  } else if (values.discountPct > 0) {
+    if (values.discountPct >= 100) return null
+    grossExcl = round(netExcl / (1 - values.discountPct / 100), 2)
+  } else {
+    grossExcl = netExcl
+  }
+
+  if (grossExcl < 0) return null
+
+  // 3. Across the units actually paid for. Four places, matching landedCostExcl
+  //    — a unit cost is not a money figure, it is the input to one.
+  return round(grossExcl / values.qty, 4)
+}
+
+/**
+ * The same, from a line total that INCLUDES VAT.
+ *
+ * A supplier invoice quotes one or the other depending on the supplier, and the
+ * grid offers both boxes for that reason. This only strips the VAT and hands
+ * over: keeping one inversion means a change to the discount rules cannot fix
+ * the exclusive box and leave the inclusive one wrong.
+ */
+export function unitCostFromLineTotalIncl(
+  values: PurchaseLineValues,
+  targetIncl: number,
+  documentDiscountExcl = 0,
+): number | null {
+  if (!Number.isFinite(targetIncl) || targetIncl < 0) return null
+  return unitCostFromLineTotal(
+    values,
+    removeVat(targetIncl, values.vatRatePct),
+    documentDiscountExcl,
+  )
+}

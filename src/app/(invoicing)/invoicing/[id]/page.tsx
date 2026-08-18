@@ -14,7 +14,7 @@ import { DepositPanel } from '@/app/(app)/sales/DepositPanel'
 import { listAttachments } from '@/lib/site/attachments'
 import { listSalesReasons } from '@/lib/site/salesReasons'
 import { AttachmentsPanel } from '@/components/attachments/AttachmentsPanel'
-import { PageBody, Card, CardHeader, CardBody } from '@/components/ui'
+import { Card, CardHeader, CardBody, Icons } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -110,16 +110,30 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
            figure: it must ask for the BALANCE, because finaliseDocument adds
            the held deposit as a tender of its own. */
         depositHeld={deposits.held}
+        /* The deposit panel — and, once finalised, proof of delivery — follow
+           below, so the editor must not close the page with its own pb-10. */
+        hasSectionsBelow
       />
 
-      {/* Money already paid against this invoice. Below the grid: the lines are
-          what somebody opened this screen to work on, and the deposit is what
-          they check once they know what the invoice is worth.
+      {/*
+        ── EVERYTHING BELOW THE EDITOR, IN ONE BLOCK ──────────────────────
 
-          In a PageBody like every other section on this page — it carries the
-          page gutter and the gap between sections, so a bare Card here sits
-          flush against the editor above it and runs to the window edges. */}
-      <PageBody>
+        NOT a second and third PageBody, which is what this was. PageBody
+        carries `pt-5 pb-10` as well as the gutter, so stacking them put 60px
+        between the editor and the deposit — three times the `gap-5` that
+        separates every other section — and the same again before proof of
+        delivery. The screen visibly came apart at those two seams.
+
+        One block wearing PageBody's own numbers — `px-6 pt-5 pb-10 gap-5` —
+        so every seam on the page is the same 20px. The editor is told
+        `hasSectionsBelow`, which drops its trailing `pb-10`; without that its
+        40px and this block's 20px stacked into a 60px gap. Same shape the
+        order screen uses.
+      */}
+      <div className="flex flex-col gap-5 px-6 pt-5 pb-10">
+        {/* Money already paid against this invoice. Below the grid: the lines
+            are what somebody opened this screen to work on, and the deposit is
+            what they check once they know what the invoice is worth. */}
         <DepositPanel
           documentId={documentId}
           docType="invoice"
@@ -130,14 +144,13 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
           hasCustomer={document.customerId !== null}
           canEdit={can(capabilities, 'sales.edit') && isEditable(document.status)}
         />
-      </PageBody>
 
-      {/* The signed delivery note. This is the answer when a customer says the
-          delivery was short — the exact dispute credit control now tracks. */}
-      {!isEditable(document.status) && (
-        <PageBody>
+        {/* The signed delivery note. This is the answer when a customer says the
+            delivery was short — the exact dispute credit control now tracks. */}
+        {!isEditable(document.status) && (
           <Card>
             <CardHeader
+              icon={<Icons.FileText size={18} />}
               title="Proof of delivery"
               description="Anything signed or sent that supports this invoice."
             />
@@ -158,8 +171,8 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
               />
             </CardBody>
           </Card>
-        </PageBody>
-      )}
+        )}
+      </div>
     </>
   )
 }

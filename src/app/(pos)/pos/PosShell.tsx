@@ -831,7 +831,20 @@ export default function PosShell({
    * is not a register — but it is invisible unless the till says so, and a shop
    * that traded a day before noticing has a day of invoices in the wrong run.
    */
-  const [device, setDevice] = useState<string | null>(null)
+  /*
+   * `undefined` is NOT READ YET; `null` is read, and this machine has no id.
+   *
+   * They were one value before, and the conflation is what put the closed-till
+   * gate on screen for a blink after every sign-in — see the shift-status
+   * effect. Two different facts sharing one `null` meant nothing downstream
+   * could tell "ask me again in a tick" from "the answer is nothing".
+   *
+   * `null` is a real, permanent answer: `deviceId()` returns it when
+   * localStorage is blocked (private browsing, locked-down kiosk), and the till
+   * is deliberately allowed to trade on. So a reader must not simply wait for a
+   * non-null id — it would wait forever on exactly those machines.
+   */
+  const [device, setDevice] = useState<string | null | undefined>(undefined)
   useEffect(() => setDevice(deviceId()), [])
 
   /* The offline shell. Registered from here rather than the layout so it starts
@@ -843,6 +856,62 @@ export default function PosShell({
      "offline" beside a queue count from before the line dropped would be worse than
      either fact alone. */
   const till = useOfflineTill(siteId)
+
+  /*
+   * ── THE HELD DEPOSIT FOLLOWS THE DOCUMENT ─────────────────────────────────
+   *
+   * Read from the DOCUMENT ON SCREEN rather than written by each of the two
+   * dozen places that swap the basket. `depositHeld` used to be set only when
+   * the deposit dialog opened, which was sound while it was that dialog's own
+   * number — but the basket now shows the figure and the Pay key nets it off, so
+   * a stale one is no longer a cosmetic slip. It is money.
+   *
+   * Both directions were wrong, and they failed opposite ways:
+   *
+   *   · RECALLING a parked sale that had a deposit taken against it read zero,
+   *     so the till asked for the full amount and took the deposit twice.
+   *   · CLEARING after a deposit sale left the figure behind, so the NEXT
+   *     customer's basket came up already credited with a stranger's money.
+   *
+   * Keying it on `state.documentId` fixes both at once: LOAD brings a new id and
+   * this re-reads, CLEAR nulls it and this zeroes. Every future path that puts a
+   * basket on screen inherits the guarantee without knowing this exists — which
+   * is the point, since remembering to call a setter in twenty-four places is
+   * not a guarantee at all.
+   *
+   * Placed AFTER `till` deliberately: it reads `till.online`, and a hook above
+   * that line would touch the const in its temporal dead zone and take the whole
+   * till down on first render.
+   *
+   * `ignore` because the read is async and a cashier can recall, clear and
+   * recall again faster than a round trip — without it a slow reply for a basket
+   * that has since left the screen would land on the one now showing.
+   */
+  useEffect(() => {
+    const documentId = state.documentId
+    /* Offline reads nothing and holds nothing. A deposit needs the server (see
+       DepositModal), so there is no figure to trust here and zero is the honest
+       answer rather than a cached one from before the line dropped. */
+    if (!documentId || !till.online) {
+      setDepositHeld(0)
+      return
+    }
+    let ignore = false
+    void depositSummaryAction(documentId)
+      .then((summary) => {
+        if (ignore) return
+        setDepositHeld(summary && !('ok' in summary) ? summary.held : 0)
+      })
+      /* A failed read must not invent a credit. Zero is the safe direction: it
+         asks for the full amount, which a cashier can see is wrong and put
+         right — where a phantom deposit sends a customer home underpaid. */
+      .catch(() => {
+        if (!ignore) setDepositHeld(0)
+      })
+    return () => {
+      ignore = true
+    }
+  }, [state.documentId, till.online])
 
   /*
    * Baskets parked on THIS machine, with no server involved.
@@ -874,9 +943,10 @@ export default function PosShell({
   }, [reloadLocalBaskets])
 
   const terminal = device ? terminals.find((t) => t.deviceId === device) : undefined
-  // `device === null` only means "not resolved yet", so the warning waits for it
-  // rather than flashing on every load.
-  const unclaimed = device !== null && terminal === undefined
+  /* Waits for the read rather than flashing the warning on every load — but only
+     for the READ, not for an id. `undefined` is unread; `null` is a machine that
+     has no id and never will, and that one IS unclaimed and should say so. */
+  const unclaimed = device !== undefined && terminal === undefined
 
   /**
    * What to CALL this machine — "TILL001 • till 01".
@@ -1553,7 +1623,10 @@ export default function PosShell({
             /* Which machine is ringing this up. The server re-checks its licence
                rather than trusting the screen that already did — see
                requireLicensedDevice. */
-            deviceSerial: device,
+            /* `?? null`: unread and no-id both travel as null. A sale cannot be
+               rung up before the effect that reads it has run, so in practice
+               this is the no-id case. */
+            deviceSerial: device ?? null,
             priceStructureId,
             lines: salePayloadLines(
               state.lines,
@@ -3583,6 +3656,31 @@ export default function PosShell({
      different question for each one who signs in at this machine. */
   useEffect(() => {
     if (!till.online) return
+    /*
+     * WAIT FOR THE DEVICE ID, exactly as `unclaimed` does above.
+     *
+     * `device` is browser-only and resolves an effect-tick after mount, so on
+     * the first pass `terminal` is undefined for EVERY machine — the claimed
+     * ones included. Asking then sent `terminalId: null`, and in terminal mode
+     * `tillShiftStatusAction` reads a null till as "no shift" (it cannot look
+     * one up without knowing which drawer to look in). That answer is not
+     * wrong, it is premature: it set `shiftStatus.open` false, `closedGate`
+     * went true, and the till showed OpenTillGate — "This till is closed",
+     * float pad and all — to a cashier whose till was open all along. A tick
+     * later `device` resolved, this re-ran with the real id, found the shift
+     * and tore the gate down again. That was the flicker, and the length of it
+     * was however long that first doomed round trip took.
+     *
+     * It is worst on the screen that can least afford it: the first thing after
+     * sign-in, at a counter, in front of a customer, telling the operator to
+     * count a float they have already counted.
+     *
+     * Waits for the READ, not for an id. A machine with no id at all (blocked
+     * localStorage) resolves to `null` and asks straight away — it is genuinely
+     * unclaimed, and it still needs `mode` and `canCashup` for the gate's
+     * unclaimed branch. Waiting for a non-null id would hang it forever.
+     */
+    if (device === undefined) return
     void tillShiftStatusAction(terminal?.id ?? null)
       .then((result) => {
         if ('ok' in result) return
@@ -3595,7 +3693,7 @@ export default function PosShell({
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [till.online, terminal?.id, operatorUserId])
+  }, [till.online, device, terminal?.id, operatorUserId])
 
   /**
    * Does the closed-till gate stand in front of the sale right now?
@@ -4333,7 +4431,7 @@ export default function PosShell({
         unclaimed={unclaimed}
         /* Only once the device has resolved AND the shell has had its say — before
            that, "offline unavailable" would flash on every load and mean nothing. */
-        offlineReason={device !== null && !shell.ready ? shell.reason : null}
+        offlineReason={device !== undefined && !shell.ready ? shell.reason : null}
         online={till.online}
         pendingSales={till.pending}
         failedSales={till.failed}
@@ -4591,6 +4689,10 @@ export default function PosShell({
              instead of every till carrying a strip it may never press. */
           onDocDiscount={() => setDiscountingDoc(true)}
           onFindReceipt={() => setReceiptReturn(true)}
+          /* Money already down against this basket, so the pane can say so and
+             the Pay key can carry the balance rather than the gross. Same figure
+             the tender pad is given below — one number, read in both places. */
+          depositHeld={depositHeld}
           exchange={
             exchangeCredit
               ? {

@@ -11,6 +11,7 @@ import { getNumericSetting } from '@/lib/site/settings'
 import { getTillCustomer } from '@/lib/site/tillCustomers'
 import InvoiceEditor from '@/app/(invoicing)/invoicing/[id]/InvoiceEditor'
 import { QuotePanel } from './QuotePanel'
+import { QuoteValidUntilField } from './QuoteValidUntilField'
 import { depositSummary } from '@/lib/site/deposits'
 import { DepositPanel } from '@/app/(app)/sales/DepositPanel'
 
@@ -86,9 +87,30 @@ export default async function QuoteEditorPage({
         // record of what was offered, and the invoice it became is where any
         // change belongs.
         editable={isEditable(document.status) && quote.outcome === 'open'}
+        /*
+          "Valid until", in the document header rather than the panel below.
+          It is captured alongside the date and the customer's reference — the
+          same breath — so it belongs in that card; the panel keeps what was
+          DECIDED about the quote. Only while it can still be changed: a
+          decided quote's validity is history, and QuotePanel prints it as a
+          plain line in that case.
+        */
+        detailsSlot={
+          quote.outcome === 'open' && can(capabilities, 'sales.edit') ? (
+            <QuoteValidUntilField
+              quoteId={quote.id}
+              validUntil={quote.validUntil}
+              daysRemaining={quote.daysRemaining}
+              showDaysLeft={quote.state === 'open'}
+            />
+          ) : null
+        }
         canOverrideDiscount={can(capabilities, 'sales.discount_override')}
-      canOverridePrice={can(capabilities, 'sales.price_override')}
-      showCost={can(capabilities, 'products.cost')}
+        canOverridePrice={can(capabilities, 'sales.price_override')}
+        showCost={can(capabilities, 'products.cost')}
+        /* The outcome and deposit panels follow below, so the editor must not
+           close the page with its own pb-10. */
+        hasSectionsBelow
       />
 
       {/*
@@ -102,38 +124,37 @@ export default async function QuoteEditorPage({
         the lines are the work, and validity, outcome and conversion are what
         you decide once you have read them.
 
-        No wrapper: QuotePanel already carries its own `px-6`, matching the
-        editor's PageBody above it. Adding another would indent it past the
-        grid, which is the double-padding that made the order screen look
-        squashed.
+        Both trailing sections share ONE block wearing PageBody's own numbers —
+        `px-6 pt-5 pb-10 gap-5` — rather than each bringing its own padding.
+        Separate wrappers put `pt-4` under the editor's `pb-10` and then `pt-5`
+        again before the deposit, so the two seams below the grid were three
+        times the gap used everywhere else and the screen came apart at them.
+        The editor is told `hasSectionsBelow`, which drops its trailing
+        `pb-10`, so every seam here is the same 20px.
       */}
-      <QuotePanel
-        quote={{
-          id: quote.id,
-          documentNumber: quote.documentNumber,
-          state: quote.state,
-          validUntil: quote.validUntil,
-          daysRemaining: quote.daysRemaining,
-          outcome: quote.outcome,
-          lostReason: quote.lostReason,
-          convertedToId: quote.convertedToId,
-          convertedToNumber: quote.convertedToNumber,
-          totalIncl: quote.totalIncl,
-        }}
-        canEdit={can(capabilities, 'sales.edit')}
-      />
+      <div className="flex flex-col gap-5 px-6 pt-5 pb-10">
+        <QuotePanel
+          quote={{
+            id: quote.id,
+            documentNumber: quote.documentNumber,
+            state: quote.state,
+            validUntil: quote.validUntil,
+            daysRemaining: quote.daysRemaining,
+            outcome: quote.outcome,
+            lostReason: quote.lostReason,
+            convertedToId: quote.convertedToId,
+            convertedToNumber: quote.convertedToNumber,
+            totalIncl: quote.totalIncl,
+          }}
+          canEdit={can(capabilities, 'sales.edit')}
+        />
 
-      {/* Money put down to secure this quote. Below the grid for the same reason
-          as on an invoice: the lines are the work, the deposit is the check.
+        {/* Money put down to secure this quote. Below the grid for the same
+            reason as on an invoice: the lines are the work, the deposit is the
+            check.
 
-          Editable while the quote is still open — once it is accepted the
-          deposit belongs to the invoice it became, and is managed there.
-
-          The gutter matches QuotePanel above rather than using PageBody, so the
-          two cards on this screen line up; pb-10 because this is the last thing
-          on the page and a card flush against the window bottom reads as cut
-          off. */}
-      <div className="px-6 pt-5 pb-10">
+            Editable while the quote is still open — once it is accepted the
+            deposit belongs to the invoice it became, and is managed there. */}
         <DepositPanel
           documentId={documentId}
           docType="quote"

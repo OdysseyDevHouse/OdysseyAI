@@ -1,0 +1,15 @@
+/*
+ * A quote, sales order or invoice on a sheet.
+ *
+ * This SEGMENT css loads after the (print) group's print.css, so its @page
+ * wins by cascade order — the group defaults to 80mm for till slips, and a
+ * document that goes to a customer is a sheet of paper.
+ *
+ * Same file, same reasoning, as the purchase order's order-a4.css.
+ */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}

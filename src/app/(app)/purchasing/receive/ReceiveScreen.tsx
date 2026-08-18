@@ -31,6 +31,11 @@ import ChargesEditor, { type ChargeRow } from './ChargesEditor'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import { LineImportDialog } from '@/components/import/LineImportDialog'
 import type { LineDraft as ImportedLine } from '@/lib/import/documentLines'
+import {
+  DocumentScanDialog,
+  type ScannedDraft,
+} from '@/components/import/DocumentScanDialog'
+import type { ScannedHeader } from '@/lib/import/documentScan'
 import PurchaseLineGrid, {
   PURCHASE_COLUMNS,
   PURCHASE_COLUMN_IDS,
@@ -122,6 +127,7 @@ export default function ReceiveScreen({
   costWarnPct = 0,
   draft,
   locations,
+  scanConfigured = false,
 }: {
   suppliers: { id: number; code: string; name: string; terms: number }[]
   openOrders: {
@@ -154,6 +160,11 @@ export default function ReceiveScreen({
   } | null
   /** Active stock locations. Always at least one — the main location. */
   locations: StockLocationOption[]
+  /**
+   * Whether reading a PDF is set up at all. Decided on the server because the
+   * key lives there — a client check would either leak it or lie.
+   */
+  scanConfigured?: boolean
 }) {
   // Every new line starts here, so a single-location site never sees the
   // control and a multi-location one gets the sensible default rather than an
@@ -187,6 +198,7 @@ export default function ReceiveScreen({
      they cannot spell. */
   const [pickerOpen, setPickerOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
   const [pickerTerm, setPickerTerm] = useState('')
   const [pickerDept, setPickerDept] = useState<number | null>(null)
   const [pickerResults, setPickerResults] = useState<TillProduct[]>([])
@@ -407,6 +419,51 @@ export default function ReceiveScreen({
         })),
       ]
     })
+  }
+
+  /**
+   * Lines read off a supplier's PDF.
+   *
+   * The same rows addImportedLines builds, and it goes through that function
+   * rather than repeating it — a scanned line and an imported line are the same
+   * thing once resolved, and two copies of this mapping would drift the first
+   * time the grid gained a column. What a scan cannot say is which room a line
+   * lands in or what serials came with it; both fall back exactly as an import
+   * with those columns missing does.
+   */
+  function addScannedLines(scanned: ScannedDraft[]) {
+    addImportedLines(
+      scanned.map((row, index) => ({
+        line: index + 1,
+        reference: row.code,
+        productId: row.productId,
+        code: row.code,
+        description: row.description,
+        productType: row.productType,
+        qty: row.qty,
+        unitCostExcl: row.unitCostExcl,
+        discountPct: row.discountPct,
+        locationCode: null,
+        serials: [],
+      })),
+    )
+  }
+
+  /**
+   * What the PDF said about the document itself.
+   *
+   * Only fills what is still EMPTY. A buyer who has already typed the invoice
+   * number has typed it off the paper in their hand, and a scan quietly
+   * replacing it — with a figure read from the same paper, but by a machine —
+   * would be the one place this feature could overwrite a person's work.
+   *
+   * The supplier is deliberately not applied here even when it was matched:
+   * changing it mid-capture would reprice every line already on the grid
+   * against a different agreed price list.
+   */
+  function applyScannedHeader(header: ScannedHeader) {
+    if (header.documentNumber && !invoiceNo) setInvoiceNo(header.documentNumber)
+    if (header.totalIncl !== null && invoiceTotal <= 0) setInvoiceTotal(header.totalIncl)
   }
 
   /** A location named in the file, by code or by name. Null falls back. */
@@ -820,6 +877,16 @@ export default function ReceiveScreen({
               <Icons.Plus size={16} />
               Add stock
             </Button>
+            {/* Beside the two hands-on ways in, because it is a third answer to
+                the same question — how do lines get onto this delivery. Hidden
+                rather than disabled when there is no API key: a button that can
+                only explain why it does not work is worse than no button. */}
+            {scanConfigured && (
+              <Button variant="ghost" onClick={() => setScanOpen(true)}>
+                <Icons.Sparkles size={16} />
+                Read a PDF
+              </Button>
+            )}
           </div>
 
           {/* Most deliveries go to one place. Setting each line separately is
@@ -1104,6 +1171,16 @@ export default function ReceiveScreen({
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onLines={addImportedLines}
+        noun="delivery lines"
+      />
+
+      <DocumentScanDialog
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onLines={addScannedLines}
+        onHeader={applyScannedHeader}
+        supplierId={supplierId ? Number(supplierId) : null}
+        searchProducts={searchProductsForPurchaseAction}
         noun="delivery lines"
       />
       </PageBody>

@@ -172,12 +172,15 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           canOverrideDiscount={can(capabilities, 'sales.discount_override')}
           canOverridePrice={can(capabilities, 'sales.price_override')}
           showCost={can(capabilities, 'products.cost')}
+          /* The delivery panel and callouts follow below, so the editor must
+             not close the page with its own pb-10. */
+          hasSectionsBelow
         />
       )}
 
       {/* The gutter matches the editor's own PageBody above, so the delivery
           panel lines up with the grid rather than sitting wider than it. */}
-      <div className="flex flex-col gap-5 px-6 pb-10">
+      <div className="flex flex-col gap-5 px-6 pt-5 pb-10">
         {/* A cancelled order is a closed fact, not a problem — neutral. */}
         {status === 'cancelled' && (
           <Callout tone="neutral" icon={<Icons.Ban size={18} />} title="This order was cancelled.">

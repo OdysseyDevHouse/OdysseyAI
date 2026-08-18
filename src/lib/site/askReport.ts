@@ -158,6 +158,34 @@ function specSchema(source: CatalogSource, fieldKeys: string[]) {
   } as const
 }
 
+/**
+ * The structured output, from wherever the SDK put it.
+ *
+ * `output_config.format` CONSTRAINS what the model may emit, but only
+ * `messages.parse()` pre-parses it into `parsed_output`. This module calls
+ * `messages.create()`, which leaves the JSON in an ordinary text block — so
+ * reading `parsed_output` alone found nothing and every question answered
+ * "could not turn that into a report" no matter how good the response was.
+ *
+ * Reading both means an SDK upgrade that starts populating `parsed_output`
+ * cannot break this, and neither can one that stops.
+ */
+function readJson<T>(response: { content: unknown[] }): T | null {
+  const withParsed = response as { parsed_output?: T }
+  if (withParsed.parsed_output) return withParsed.parsed_output
+
+  for (const block of response.content) {
+    const text = block as { type?: string; text?: string }
+    if (text.type !== 'text' || !text.text) continue
+    try {
+      return JSON.parse(text.text) as T
+    } catch {
+      // Not the payload — a thinking summary or preamble. Keep looking.
+    }
+  }
+  return null
+}
+
 /** Picking the dataset is its own decision, made before the fields are shown. */
 function sourceSchema(sources: CatalogSource[]) {
   return {
@@ -283,8 +311,7 @@ export async function askForReport(
     throw new Error('That question could not be processed. Try rephrasing it.')
   }
 
-  const picked = (sourcePick as { parsed_output?: { source: string; reasoning: string } })
-    .parsed_output
+  const picked = readJson<{ source: string; reasoning: string }>(sourcePick)
   const source = picked ? available.find((s) => s.key === picked.source) : undefined
   if (!source) throw new Error('Could not work out which data answers that. Try rephrasing it.')
 
@@ -320,7 +347,7 @@ export async function askForReport(
     throw new Error('That question could not be processed. Try rephrasing it.')
   }
 
-  const raw = (specPick as { parsed_output?: RawSpec }).parsed_output
+  const raw = readJson<RawSpec>(specPick)
   if (!raw) throw new Error('Could not turn that into a report. Try rephrasing it.')
 
   const spec = toSpec(raw, source.key, today)
