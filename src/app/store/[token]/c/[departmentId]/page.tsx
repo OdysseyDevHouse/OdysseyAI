@@ -1,4 +1,6 @@
+import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import Pager from '../../Pager'
 import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { resolveStorefront } from '@/lib/storeRouting'
@@ -6,6 +8,8 @@ import {
   catalogueFacets,
   publishedDepartments,
   publishedProducts,
+  publishedProductsCount,
+  safeSort,
   resolveSectionContent,
   storefrontContext,
 } from '@/lib/site/storefront'
@@ -41,7 +45,16 @@ import FacetBar, { priceBands } from './FacetBar'
 export const dynamic = 'force-dynamic'
 
 /** Enough to browse without paging; far short of rendering a 900-product wall. */
-const MAX_PRODUCTS = 120
+/**
+ * Products per page.
+ *
+ * A PAGE size now, not a ceiling. This was 120 with a footnote telling the
+ * shopper to search — which meant a department of 400 showed 120 of them,
+ * alphabetically, with no way to reach the rest. 24 fills a grid evenly at
+ * every column count the theme offers (2, 3, 4, 5 and 6 all divide it or
+ * leave one short row), and the pager below reaches everything.
+ */
+const PER_PAGE = 24
 
 async function resolve(token: string, departmentId: string) {
   const resolved = await resolveStorefront(token)
@@ -122,10 +135,13 @@ export default async function DepartmentPage({
     min?: string
     max?: string
     band?: string
+    page?: string
+    sort?: string
   }>
 }) {
   const { token, departmentId } = await params
-  const { q, preview: previewToken, brand, min, max, band } = await searchParams
+  const { q, preview: previewToken, brand, min, max, band, page: pageParam, sort: sortParam } =
+    await searchParams
   const found = await resolve(token, departmentId)
 
   /*
@@ -157,10 +173,33 @@ export default async function DepartmentPage({
   const minPriceIncl = Number(min) > 0 ? Number(min) : undefined
   const maxPriceIncl = Number(max) > 0 ? Number(max) : undefined
 
-  const [products, layout, found2, facets] = await Promise.all([
+  /*
+   * The page number, and the order.
+   *
+   * Both come from the URL rather than from state, so a filtered page can be
+   * shared, bookmarked and crawled — the same reasoning FacetBar already
+   * gives for being links. A junk page number reads as page 1 instead of
+   * throwing: these arrive from stale links and search-engine probes.
+   */
+  const sort = safeSort(sortParam)
+  const requested = Math.floor(Number(pageParam))
+  const pageNumber = Number.isFinite(requested) && requested > 1 ? requested : 1
+  const offset = (pageNumber - 1) * PER_PAGE
+
+  const [products, total, layout, found2, facets] = await Promise.all([
     publishedProducts(context, {
       departmentId: department.id,
-      limit: MAX_PRODUCTS,
+      limit: PER_PAGE,
+      offset,
+      sort,
+      brand: activeBrand || undefined,
+      minPriceIncl,
+      maxPriceIncl,
+    }),
+    // The same filter, so the pager can never promise a page the grid
+    // cannot fill — see publishedProductsCount.
+    publishedProductsCount(context, {
+      departmentId: department.id,
       brand: activeBrand || undefined,
       minPriceIncl,
       maxPriceIncl,
@@ -171,6 +210,28 @@ export default async function DepartmentPage({
     departmentPageFor(context.siteId, department.id),
     catalogueFacets(context, department.id).catch(() => null),
   ])
+  /*
+   * A page past the end goes back to the last real one.
+   *
+   * Reachable from a stale bookmark, from a crawler that kept an old link,
+   * and from anybody editing the number by hand — and left alone it renders
+   * an empty grid under a pager reading "Showing 3993–14 of 14", which is
+   * the shop looking broken over a typo. A redirect rather than a clamp so
+   * there is ONE address per page: rendering page 3 at ?page=999 would be a
+   * second URL for the same content, which is a duplicate a search engine
+   * has to be told about.
+   */
+  const lastPage = Math.max(1, Math.ceil(total / PER_PAGE))
+  if (pageNumber > lastPage) {
+    const next = new URLSearchParams()
+    for (const [key, value] of Object.entries({ q, brand, min, max, band, sort: sortParam })) {
+      if (value) next.set(key, value)
+    }
+    if (lastPage > 1) next.set('page', String(lastPage))
+    const qs = next.toString()
+    redirect(`/store/${token}/c/${department.id}${qs ? `?${qs}` : ''}`)
+  }
+
   const page = found2?.page ?? null
 
   /*
@@ -277,13 +338,15 @@ export default async function DepartmentPage({
         initialQuery={q ?? ''}
       />
 
-      {/* Said only when the cap actually bit, so a small department never sees
-          a message about paging that does not apply to it. */}
-      {products.length === MAX_PRODUCTS && (
-        <p className="mt-5 text-center text-xs text-muted">
-          Showing the first {MAX_PRODUCTS}. Use the search above to narrow it down.
-        </p>
-      )}
+      <Pager
+        page={pageNumber}
+        perPage={PER_PAGE}
+        total={total}
+        basePath={`/store/${token}/c/${department.id}`}
+        // Everything else the URL is carrying, so paging keeps the filters
+        // rather than dropping a shopper back into the unfiltered aisle.
+        params={{ q, brand, min, max, band, sort: sortParam }}
+      />
     </div>
   )
 }

@@ -31,6 +31,9 @@ import {
   productsOnSpecial,
   publishedProduct,
   publishedProducts,
+  publishedProductsCount,
+  safeSort,
+  CATALOGUE_SORTS,
   resolveSectionContent,
   publishedDepartments,
   quoteDeliveryFor,
@@ -545,6 +548,117 @@ async function main() {
   ok('the best-seller rule is wired into the resolver', Array.isArray(popularRow.products))
 
   /* ── Restore ──────────────────────────────────────────────────────────── */
+  console.log('\n— Paging a listing —')
+  {
+    const total = await publishedProductsCount(context, {})
+    ok('the catalogue can be counted', total > 0, String(total))
+
+    /*
+     * The count and the listing share one filter, so they cannot disagree.
+     * Compared over a PAGE rather than the whole catalogue: this shop has
+     * forty thousand products and the listing caps a single page at 120, so
+     * "count equals rows" is only a fair question when the page can hold them.
+     */
+    const firstPage = await publishedProducts(context, { limit: 10 })
+    const pageCount = Math.min(total, 10)
+    ok(
+      'the count agrees with the page it filters',
+      firstPage.length === pageCount,
+      `${firstPage.length} of a possible ${pageCount}`,
+    )
+
+    // And the filter really is shared: a narrower one must move BOTH.
+    const narrowTotal = await publishedProductsCount(context, { search: 'a' })
+    ok('a filter narrows the count too', narrowTotal <= total, `${narrowTotal} <= ${total}`)
+
+    /*
+     * Walk the pages and check the ids are disjoint. Without the id
+     * tie-break in every ORDER BY, two products with the same price have no
+     * defined order BETWEEN pages, so one appears twice and another never —
+     * the bug that looks like a product vanishing from the catalogue.
+     */
+    /*
+     * A BOUNDED walk. This shop carries forty thousand products, and paging
+     * all of them five at a time is eight thousand queries for a property the
+     * first few pages already demonstrate. Capped at what is enough to catch a
+     * boundary that repeats or skips, and the cap is said out loud below
+     * rather than left to look like full coverage.
+     */
+    const per = 5
+    const walkPages = Math.min(Math.ceil(total / per), 12)
+    const seen = new Set<number>()
+    let repeats = 0
+    for (let page = 0; page < walkPages; page++) {
+      const rows = await publishedProducts(context, { limit: per, offset: page * per, sort: 'priceAsc' })
+      for (const r of rows) {
+        if (seen.has(r.id)) repeats++
+        seen.add(r.id)
+      }
+    }
+    ok('paging repeats nothing', repeats === 0, `${repeats} repeated`)
+    ok(
+      'paging reaches every row it walked',
+      seen.size === Math.min(total, walkPages * per),
+      `${seen.size} over ${walkPages} pages of ${total}`,
+    )
+    // Past the end is empty rather than an error — the route redirects, but
+    // the query underneath must not throw for a caller that does not.
+    const beyond = await publishedProducts(context, { limit: per, offset: total + 100 })
+    ok('a page past the end is simply empty', beyond.length === 0)
+  }
+
+  console.log('\n— Ordering a listing —')
+  {
+    const rows = await publishedProducts(context, { limit: 20 })
+    if (rows.length >= 2) {
+      const asc = await publishedProducts(context, { limit: 20, sort: 'priceAsc' })
+      const desc = await publishedProducts(context, { limit: 20, sort: 'priceDesc' })
+      const rising = asc.every((r, i) => i === 0 || toNum(asc[i - 1].priceIncl) <= toNum(r.priceIncl))
+      const falling = desc.every((r, i) => i === 0 || toNum(desc[i - 1].priceIncl) >= toNum(r.priceIncl))
+      ok('cheapest first really is', rising)
+      ok('dearest first really is', falling)
+
+      /*
+       * `description`, not `name` — a StorefrontProduct has no `name`, and the
+       * first version of this compared undefined to undefined on every row.
+       * That passes for every input, which is worse than failing: it is a check
+       * that reports the sort is right without ever having looked at it.
+       *
+       * Compared with localeCompare and not `<=`. JavaScript's operators sort
+       * by code unit, so "Zebra" precedes "apple" and "Éclair" lands after both;
+       * MySQL's collation is case- and accent-insensitive, and disagreeing with
+       * it here would fail a correct ORDER BY on the first shop that stocks a
+       * capital letter in the wrong place.
+       */
+      const byName = await publishedProducts(context, { limit: 20, sort: 'name' })
+      const alphabetical = byName.every(
+        (r, i) =>
+          i === 0 ||
+          byName[i - 1].description.localeCompare(r.description, 'en', { sensitivity: 'base' }) <= 0,
+      )
+      ok('by name really is', alphabetical, byName[0]?.description ?? '(no rows)')
+    }
+
+    /*
+     * The value decides an ORDER BY and arrives from a query string, which is
+     * the classic place an injection gets in. A fixed vocabulary makes one
+     * unrepresentable rather than something to escape.
+     */
+    ok('a junk sort falls back', safeSort('; DROP TABLE products--') === 'name')
+    ok('an absent sort falls back', safeSort(undefined) === 'name')
+    ok('every declared sort survives its own check',
+      CATALOGUE_SORTS.every((s) => safeSort(s) === s))
+
+    // Each one has to actually run: a name in the list with no SQL behind it
+    // would only fail the day somebody picked it.
+    let ran = 0
+    for (const s of CATALOGUE_SORTS) {
+      const out = await publishedProducts(context, { limit: 2, sort: s })
+      if (Array.isArray(out)) ran++
+    }
+    ok('every sort runs', ran === CATALOGUE_SORTS.length, `${ran} of ${CATALOGUE_SORTS.length}`)
+  }
+
   console.log('\n— Cleanup —')
   await cleanup()
   for (const z of await listDeliveryZones(SITE)) {

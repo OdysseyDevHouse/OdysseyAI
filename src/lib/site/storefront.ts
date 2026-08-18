@@ -424,6 +424,43 @@ export async function storefrontContext(
   }
 }
 
+/**
+ * How a listing is ordered.
+ *
+ * ── A FIXED SET, MAPPED TO LITERAL SQL ───────────────────────────────────
+ *
+ * The value arrives from a query string, and the thing it decides is an
+ * ORDER BY. Those two facts together are why this is a union mapped through
+ * a literal record and never a string reaching the query: a sort parameter
+ * is the classic place an injection gets in, and a fixed vocabulary makes
+ * one unrepresentable rather than something to escape.
+ */
+export const CATALOGUE_SORTS = ['name', 'priceAsc', 'priceDesc', 'newest'] as const
+export type CatalogueSort = (typeof CATALOGUE_SORTS)[number]
+
+/**
+ * Each sort's ORDER BY, written out here and never built.
+ *
+ * Every one ends with `p.id` as a tie-break. Without it, two products with
+ * the same price or the same name have no defined order between pages, and
+ * a shopper paging through a department can see one product twice and miss
+ * another entirely — the bug that looks like the catalogue losing stock.
+ */
+const SORT_SQL: Record<CatalogueSort, string> = {
+  name: 'p.description, p.id',
+  priceAsc: 'pp.selling_price_incl, p.id',
+  priceDesc: 'pp.selling_price_incl DESC, p.id',
+  // Newest by id, not by a date column: a product has no "added on" field,
+  // and the id is monotonic, which is the same thing for this purpose.
+  newest: 'p.id DESC',
+}
+
+/** Anything else — a stale link, a typo, a probe — reads as the default. */
+export function safeSort(value: unknown): CatalogueSort {
+  const raw = String(value ?? '')
+  return (CATALOGUE_SORTS as readonly string[]).includes(raw) ? (raw as CatalogueSort) : 'name'
+}
+
 export type CatalogueOptions = {
   departmentId?: number
   search?: string
@@ -445,12 +482,25 @@ export type CatalogueOptions = {
   brand?: string
   minPriceIncl?: number
   maxPriceIncl?: number
+  /** How to order the page. Absent reads as `name`, which is what it was. */
+  sort?: CatalogueSort
 }
 
-export async function publishedProducts(
+/**
+ * The WHERE and its parameters, for one set of catalogue options.
+ *
+ * ── ONE DEFINITION, TWO CALLERS ───────────────────────────────────
+ *
+ * The listing and its COUNT have to agree exactly, or the pager promises
+ * pages the grid cannot fill — "1–24 of 380" over a department that runs out
+ * at 200 is a shopper clicking into empty pages and concluding the shop is
+ * broken. Two copies of a filter this long would drift on the first facet
+ * anybody added, so there is one.
+ */
+function catalogueFilter(
   context: StorefrontContext,
-  options: CatalogueOptions = {},
-): Promise<StorefrontProduct[]> {
+  options: CatalogueOptions,
+): { where: string[]; params: unknown[]; picked: number[] | null } | null {
   const where: string[] = [SELLABLE, publishFilter(context.settings.publishMode)]
   const params: unknown[] = [context.settings.priceStructureId]
 
@@ -464,7 +514,10 @@ export async function publishedProducts(
     picked = [...new Set(options.ids.filter((id) => Number.isInteger(id) && id > 0))]
     // Asked for nothing, get nothing — an empty IN () is a syntax error, and
     // silently dropping the clause would return the entire catalogue.
-    if (picked.length === 0) return []
+    // Asked for nothing, get nothing. Null rather than an empty list: the
+    // caller has to distinguish "no matches" from "nothing was asked for",
+    // and only one of those is a page worth drawing.
+    if (picked.length === 0) return null
     where.push(`p.id IN (${picked.join(',')})`)
   }
 
@@ -503,20 +556,66 @@ export async function publishedProducts(
     params.push(options.maxPriceIncl)
   }
 
+  return { where, params, picked }
+}
+
+export async function publishedProducts(
+  context: StorefrontContext,
+  options: CatalogueOptions = {},
+): Promise<StorefrontProduct[]> {
+  const filter = catalogueFilter(context, options)
+  if (!filter) return []
+  const { where, params, picked } = filter
   const limit = Math.min(Math.max(options.limit ?? 60, 1), 120)
   const offset = Math.max(options.offset ?? 0, 0)
 
+  // A picked row keeps the owner’s order — that IS the choice — and
+  // everything else takes the sort.
   const rows = await siteQuery<Row>(
     context.catalogueSiteId,
     `SELECT ${PRODUCT_COLUMNS}
      ${PRODUCT_JOINS}
       WHERE ${where.join(' AND ')}
-      ORDER BY ${picked ? `FIELD(p.id, ${picked.join(',')})` : 'p.description'}
+      ORDER BY ${picked ? `FIELD(p.id, ${picked.join(',')})` : SORT_SQL[options.sort ?? 'name']}
       LIMIT ${limit} OFFSET ${offset}`,
     params,
   )
 
   return withSpecials(context, rows.map((r) => mapStorefrontProduct(r, context.settings)))
+}
+
+/**
+ * How many products a listing would hold, unpaged.
+ *
+ * ── WHY THE PAGER NEEDS ITS OWN QUERY ────────────────────────────────────
+ *
+ * A department used to stop at 120 products, ordered by description, with a
+ * footnote telling the shopper to search. That is not a cap on a page — it is
+ * a shop with 400 products showing 120 of them, permanently, with no way to
+ * reach the rest. Paging fixes it, and paging needs a total: without one a
+ * pager can only say "next" until a page comes back short, which is how a
+ * shopper ends up on an empty page deciding the shop is broken.
+ *
+ * Runs the SAME filter as the listing — see catalogueFilter. COUNT(DISTINCT)
+ * because the joins can multiply a row, and a total larger than the pages can
+ * fill is the exact failure this exists to prevent.
+ */
+export async function publishedProductsCount(
+  context: StorefrontContext,
+  options: CatalogueOptions = {},
+): Promise<number> {
+  const filter = catalogueFilter(context, options)
+  if (!filter) return 0
+  const { where, params } = filter
+
+  const row = await siteQueryOne<{ total: number }>(
+    context.catalogueSiteId,
+    `SELECT COUNT(DISTINCT p.id) AS total
+     ${PRODUCT_JOINS}
+      WHERE ${where.join(' AND ')}`,
+    params,
+  )
+  return Number(row?.total ?? 0)
 }
 
 /**
