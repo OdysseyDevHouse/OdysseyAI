@@ -38,7 +38,26 @@ import type { Capability } from '../site/permissions'
  */
 
 /** How a value is turned into text. Never raw interpolation. */
-export type TokenFormat = 'text' | 'money' | 'qty' | 'percent' | 'date' | 'multiline'
+export type TokenFormat =
+  | 'text'
+  | 'money'
+  | 'qty'
+  | 'percent'
+  | 'date'
+  | 'multiline'
+  /**
+   * Markup the SERVER composed, emitted without escaping.
+   *
+   * The one exception to "every value is escaped", and it is deliberately not
+   * available to arbitrary fields: a token may only carry this format if its
+   * value is built in TypeScript from something already proved safe. Today that
+   * is exactly one token — `site.logo`, whose tag is assembled by
+   * lib/site/documentLogo.ts around a UUID filename this site uploaded and
+   * which was verified by magic bytes to be a picture.
+   *
+   * No value that originated as user text may ever be given this format.
+   */
+  | 'markup'
 
 export type TokenDef = {
   /** What a template writes between braces. */
@@ -117,7 +136,7 @@ const SITE_TOKENS: readonly TokenDef[] = [
   {
     key: 'site.logo',
     label: 'Logo',
-    format: 'text',
+    format: 'markup',
     hint: 'The uploaded logo, as an image. Prints nothing when none is set.',
   },
 ]

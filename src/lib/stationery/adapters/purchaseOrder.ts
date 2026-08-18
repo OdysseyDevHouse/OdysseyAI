@@ -55,8 +55,15 @@ export type PurchaseOrderSources = {
   deliverTo: string[]
   printedAt: string
   isReprint: boolean
-  /** The site's logo as a site-relative upload path, when one is set. */
-  logoPath?: string | null
+  /**
+   * The site's logo as a ready-made `<img>` tag, from
+   * lib/site/documentLogo.ts, or empty when there is none.
+   *
+   * A tag rather than a URL: the token then carries its own sizing, so a
+   * letterhead cannot be broken by a 3000px original, and there is no way for a
+   * template to point the `src` somewhere else.
+   */
+  logoHtml?: string | null
 }
 
 const lines = (v: (string | null | undefined)[]) =>
@@ -99,9 +106,9 @@ export function purchaseOrderTokens(src: PurchaseOrderSources): RenderInput {
       : '',
     'site.phone': site.phone,
     'site.email': site.email,
-    // Rendered by the route as markup when set; blank keeps the header tidy
-    // rather than leaving a broken image on a document going to a supplier.
-    'site.logo': src.logoPath ?? '',
+    // Composed by lib/site/documentLogo.ts, or blank — which keeps the header
+    // tidy rather than leaving a broken image on a document going to a supplier.
+    'site.logo': src.logoHtml ?? '',
 
     // A draft has no number, so the paper says which draft it is rather than
     // printing an empty box a supplier might mistake for a real order.

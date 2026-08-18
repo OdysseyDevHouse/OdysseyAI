@@ -47,6 +47,16 @@ export type RenderInput = {
   capabilities: { isOwner: boolean; granted: ReadonlySet<string> }
 }
 
+/**
+ * The only markup a `markup` token may emit: a single `<img>` whose `src` is
+ * this app's own logo route, plus inline sizing.
+ *
+ * Written as one narrow shape rather than "no script tags", because an
+ * allowlist of the thing we actually produce cannot be widened by an encoding
+ * nobody thought of.
+ */
+const SAFE_MARKUP = /^<img src="\/api\/document-logo\?v=[A-Za-z0-9._%-]+" alt="" style="[a-z0-9:;\-\s]*">$/
+
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -82,6 +92,18 @@ export function formatValue(value: unknown, format: TokenFormat): string {
       // Escaped FIRST, then newlines become breaks: the text can never
       // introduce a tag, but a typed address still lays out as written.
       return escapeHtml(String(value)).replace(/\r?\n/g, '<br>')
+    case 'markup':
+      /*
+       * The one unescaped path. See the note on TokenFormat: only a value the
+       * SERVER composed may carry this format.
+       *
+       * Narrowed anyway, to exactly the shape the one such token produces. A
+       * future token wrongly marked `markup`, or an adapter bug that let user
+       * text reach here, then emits nothing rather than whatever it was handed
+       * — the check costs one regex and removes the whole category of mistake
+       * this format would otherwise re-open.
+       */
+      return SAFE_MARKUP.test(String(value)) ? String(value) : ''
     case 'date':
     case 'text':
     default:

@@ -704,6 +704,21 @@ export const SETTING_DEFAULTS = {
   receipt_footer_text: '',
 
   /**
+   * The business's logo, for the letterhead on printed documents.
+   *
+   * The generated disk name from lib/uploads.ts (a UUID plus an extension) —
+   * never a path and never the name the browser sent, both of which are
+   * attacker-controlled. Empty means no logo, which every template handles by
+   * printing nothing rather than a broken image.
+   *
+   * A scalar belongs here rather than in a table: it is one answer per site
+   * that nothing joins to. The stationery TEMPLATES earned a table because they
+   * carry behaviour (validation, draft/published, one-active-per-type); "which
+   * file is our logo" carries none.
+   */
+  document_logo_file: '',
+
+  /**
    * Ask the customer to rate the work when a job closes.
    *
    * OFF, and for a stronger reason than the automations above: switching this on

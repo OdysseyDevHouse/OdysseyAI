@@ -2,6 +2,7 @@ import 'server-only'
 import { getPurchaseDocument, listPurchaseDocuments } from '../site/purchaseDocuments'
 import { getSupplier } from '../site/suppliers'
 import { purchaseOrderTokens } from './adapters/purchaseOrder'
+import { logoImgTag } from '../site/documentLogo'
 import type { RenderInput } from './render'
 import type { PurchaseDocument } from '../site/purchaseDocuments'
 
@@ -163,6 +164,9 @@ export async function purchaseOrderPreview(
   const deliverTo = [site.name, site.address1, site.address2, site.address3, site.postalCode].filter(
     (l): l is string => !!l && l.trim() !== '',
   )
+  // The real logo, so a designer positioning {site.logo} is moving the actual
+  // picture rather than a placeholder that will turn out to be a different size.
+  const logoHtml = await logoImgTag(siteId)
 
   try {
     const recent = await listPurchaseDocuments(siteId, {
@@ -175,7 +179,7 @@ export async function purchaseOrderPreview(
       if (doc && doc.lines.length > 0) {
         const supplier = await getSupplier(siteId, doc.supplierId).catch(() => null)
         return {
-          input: purchaseOrderTokens({ doc, site, supplier, deliverTo, printedAt, isReprint: false }),
+          input: purchaseOrderTokens({ doc, site, supplier, deliverTo, printedAt, isReprint: false, logoHtml }),
           label: `Previewing ${doc.documentNumber ?? `draft #${doc.id}`} — one of your real orders.`,
         }
       }
@@ -194,6 +198,7 @@ export async function purchaseOrderPreview(
       deliverTo,
       printedAt,
       isReprint: false,
+      logoHtml,
     }),
     label: 'Sample data — this shop has no purchase orders yet.',
   }

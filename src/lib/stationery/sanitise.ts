@@ -114,6 +114,16 @@ function safeImageSrc(value: string): string | null {
   if (collapsed.startsWith('//')) return null
   // A site-owned upload path, and nothing else. No traversal.
   if (trimmed.includes('..')) return null
+  /*
+   * The site's own uploads, and the logo route.
+   *
+   * The logo has no trailing slash because it takes no id — the route resolves
+   * the site from the session, so there is nothing in the URL to point
+   * elsewhere. Permitted for a designer who writes the tag by hand; the
+   * {site.logo} token does not come through here at all, being substituted
+   * after this pass.
+   */
+  if (/^\/api\/document-logo(\?|$)/.test(trimmed)) return trimmed
   if (!/^\/(uploads|api\/(product-images|store-images|storefront-images))\//.test(trimmed)) {
     return null
   }

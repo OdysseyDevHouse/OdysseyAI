@@ -22,6 +22,8 @@ import {
   resetToDefaultAction,
   previewTemplateAction,
   deleteTemplateAction,
+  uploadLogoAction,
+  clearLogoAction,
 } from './actions'
 
 type TokenInfo = { key: string; label: string; hint: string; section: string | null }
@@ -67,10 +69,13 @@ type TemplateInfo = {
  */
 export default function StationeryClient({
   siteName,
+  logoFile,
   docs,
   templates: initialTemplates,
 }: {
   siteName: string
+  /** The stored disk name, or '' — used only to know whether one exists. */
+  logoFile: string
   docs: DocInfo[]
   templates: TemplateInfo[]
 }) {
@@ -259,6 +264,40 @@ export default function StationeryClient({
 
   const blocking = warnings.filter((w) => /must show|must carry/i.test(w))
 
+  /* The stored name doubles as a cache-buster: the URL is constant per site, so
+     without it a replaced logo would keep showing the old picture. */
+  const [logo, setLogo] = useState(logoFile)
+  const fileInput = useRef<HTMLInputElement>(null)
+
+  function uploadLogo(file: File) {
+    const form = new FormData()
+    form.set('logo', file)
+    start(async () => {
+      const res = await uploadLogoAction(form)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success(res.message)
+      // A new token, so the <img> and the preview both refetch.
+      setLogo(`${Date.now()}`)
+      if (body.trim()) runPreview(body)
+    })
+  }
+
+  function removeLogo() {
+    start(async () => {
+      const res = await clearLogoAction()
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success(res.message)
+      setLogo('')
+      if (body.trim()) runPreview(body)
+    })
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <Card>
@@ -333,6 +372,58 @@ export default function StationeryClient({
               ))}
             </ul>
           )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Your logo"
+          description="Put it on any document by writing {site.logo} where it should go."
+        />
+        <CardBody>
+          <div className="flex flex-wrap items-center gap-4">
+            {logo ? (
+              // eslint-disable-next-line @next/next/no-img-element -- served by an
+              // authenticated route that streams bytes off disk; Next's optimiser
+              // cannot fetch it, and a logo needs no responsive variants.
+              <img
+                src={`/api/document-logo?v=${encodeURIComponent(logo)}`}
+                alt=""
+                className="max-h-14 w-auto rounded-control border border-border bg-surface p-2"
+              />
+            ) : (
+              <p className="text-sm text-muted">No logo yet — documents print the name only.</p>
+            )}
+
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) uploadLogo(f)
+                e.target.value = ''
+              }}
+            />
+            <Button
+              variant="secondary"
+              onClick={() => fileInput.current?.click()}
+              disabled={pending}
+            >
+              <Icons.Upload aria-hidden className="h-4 w-4" />
+              {logo ? 'Replace' : 'Upload a logo'}
+            </Button>
+            {logo && (
+              <Button variant="danger-ghost" onClick={removeLogo} disabled={pending}>
+                Remove
+              </Button>
+            )}
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            PNG, JPEG, GIF or WebP. It is printed at about 56px tall, so a wide image reads
+            better than a tall one.
+          </p>
         </CardBody>
       </Card>
 

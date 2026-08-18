@@ -14,6 +14,7 @@ import { sanitiseTemplate, unsupportedIn } from '@/lib/stationery/sanitise'
 import { validateTemplate } from '@/lib/stationery/validate'
 import { renderTemplate } from '@/lib/stationery/render'
 import { purchaseOrderPreview } from '@/lib/stationery/preview'
+import { setLogo, clearLogo } from '@/lib/site/documentLogo'
 
 /**
  * The stationery designer's server half.
@@ -173,6 +174,40 @@ export async function previewTemplateAction(input: {
         : []),
     ],
   }
+}
+
+/**
+ * Upload the business's logo.
+ *
+ * Takes a FormData rather than a typed object because a File cannot cross a
+ * server-action boundary any other way. The bytes are proved to be a picture by
+ * magic-byte sniffing in lib/uploads.ts — an .svg renamed to .png dies there,
+ * which matters more here than elsewhere: an SVG executes script when opened
+ * from the same origin, and this file is rendered into a document.
+ */
+export async function uploadLogoAction(form: FormData): Promise<ActionResult> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const file = form.get('logo')
+  if (!(file instanceof File)) return { ok: false, error: 'Choose an image to upload.' }
+
+  const result = await setLogo(ctx.siteId, file)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/stationery')
+  return { ok: true, message: 'Logo uploaded.' }
+}
+
+export async function clearLogoAction(): Promise<ActionResult> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const result = await clearLogo(ctx.siteId)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/stationery')
+  return { ok: true, message: 'Logo removed. Documents will print without one.' }
 }
 
 export async function discardDraftAction(id: number): Promise<ActionResult> {

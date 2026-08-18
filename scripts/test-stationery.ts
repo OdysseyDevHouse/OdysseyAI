@@ -267,6 +267,33 @@ const rows = [
   ok('percent of zero is blank, not "0%"', formatValue(0, 'percent') === '')
 }
 
+/* ── the one unescaped format ────────────────────────────────────────────── */
+{
+  // `markup` exists for exactly one token, whose value the SERVER composes.
+  // These prove it cannot become a general-purpose hole.
+  const realLogo = '<img src="/api/document-logo?v=abc-123.png" alt="" style="max-height:56px;width:auto">'
+  ok('the composed logo tag survives', formatValue(realLogo, 'markup') === realLogo)
+
+  ok('a script tag in a markup value is refused',
+    formatValue('<script>alert(1)</script>', 'markup') === '')
+  ok('an off-site image in a markup value is refused',
+    formatValue('<img src="https://evil.example/x.gif">', 'markup') === '')
+  ok('an onerror on the right-looking src is refused',
+    formatValue('<img src="/api/document-logo?v=a.png" onerror="alert(1)">', 'markup') === '')
+  ok('a second tag appended to a valid one is refused',
+    formatValue(realLogo + '<script>x</script>', 'markup') === '')
+  ok('plain user text in a markup value is refused',
+    formatValue('Acme Trading', 'markup') === '')
+
+  // And end to end: a hostile value on the real token prints nothing.
+  const out = renderTemplate('<header>{site.logo}</header>', 'purchase_order', {
+    values: { 'site.logo': '<img src=x onerror=alert(1)>' },
+    sections: {},
+    capabilities: OWNER,
+  })
+  ok('a hostile site.logo renders empty, not raw', out === '<header></header>', out)
+}
+
 /* ── catalog ─────────────────────────────────────────────────────────────── */
 
 console.log('\n-- catalog --')

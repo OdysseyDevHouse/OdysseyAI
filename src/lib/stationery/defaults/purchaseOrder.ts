@@ -44,6 +44,7 @@ export const PURCHASE_ORDER_DEFAULT = `<style>
 <article class="mx-auto w-full max-w-[52rem] bg-surface p-8 text-ink">
   <header class="flex items-start justify-between gap-8 border-b border-border pb-5">
     <div>
+      {site.logo}
       <h1 class="text-lg font-semibold text-ink">{site.name}</h1>
       <p class="mt-1 text-xs leading-relaxed text-muted">{site.address}</p>
       <p class="mt-1 text-xs text-muted">
