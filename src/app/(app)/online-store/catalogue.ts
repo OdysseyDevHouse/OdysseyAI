@@ -88,6 +88,14 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
         capability: 'online.edit',
       },
       {
+        href: '/online-store/listing',
+        description: 'How many products a row shows, what each tile says, and the order.',
+        keywords: 'grid columns tiles layout sort order per page filters facets badges',
+        icon: 'LayoutGrid',
+        tone: 'violet',
+        capability: 'online.edit',
+      },
+      {
         href: '/online-store/reviews',
         description: 'What shoppers said about a product, and what is shown.',
         keywords: 'ratings stars feedback comments moderation approve',
