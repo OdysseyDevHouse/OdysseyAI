@@ -56,6 +56,37 @@ const REQUIRED: Record<string, { tokens: string[]; literals: string[] }> = {
     tokens: ['doc.number', 'site.name', 'supplier.name'],
     literals: [],
   },
+  /*
+   * VAT Act s20(4), and this one is a statute rather than good sense.
+   *
+   * A tax invoice must carry the words "tax invoice", both parties' names, the
+   * supplier's VAT number, a serial number, the date, and the VAT shown
+   * separately or stated as included. A customer cannot claim input VAT on a
+   * document missing any of them, so an invoice designed without one does not
+   * merely look wrong — it comes back, and the shop finds out weeks later.
+   *
+   * `doc.heading` covers the words: it prints TAX INVOICE for a vendor and
+   * INVOICE for a non-vendor, decided in the adapter from whether the business
+   * has a VAT number. Requiring the literal string instead would force a
+   * non-vendor to print a claim about itself that is not true.
+   *
+   * `totals.vatSummary` rather than `totals.vat`: the analysis by rate is what
+   * the section asks for, and a document with two rates on it cannot satisfy
+   * that with a single summed figure.
+   */
+  invoice: {
+    tokens: [
+      'doc.heading',
+      'doc.number',
+      'doc.date',
+      'site.name',
+      'site.vatLine',
+      'customer.name',
+      'totals.vatSummary',
+      'totals.totalIncl',
+    ],
+    literals: [],
+  },
 }
 
 /** Every `{token}` in the template, with where it sits. */

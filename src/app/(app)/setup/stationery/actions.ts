@@ -13,7 +13,7 @@ import { isDocType } from '@/lib/stationery/catalog'
 import { sanitiseTemplate, unsupportedIn } from '@/lib/stationery/sanitise'
 import { validateTemplate } from '@/lib/stationery/validate'
 import { renderTemplate } from '@/lib/stationery/render'
-import { purchaseOrderPreview, sampleReceipt } from '@/lib/stationery/preview'
+import { purchaseOrderPreview, invoicePreview, sampleReceipt } from '@/lib/stationery/preview'
 import { parseSlip, validateSlip } from '@/lib/stationery/slip'
 import { slipPreviewHtml } from '@/lib/stationery/slipHtml'
 import { setLogo, clearLogo } from '@/lib/site/documentLogo'
@@ -158,17 +158,13 @@ export async function previewTemplateAction(input: {
     }
   }
 
-  if (input.docType !== 'purchase_order') {
-    return { ok: false, error: 'That document cannot be previewed yet.' }
-  }
-
   // Cleaned first, then rendered — so the preview shows what would actually be
   // STORED, not what was typed. A designer whose <script> silently vanishes at
   // save should see it vanish here.
   const clean = sanitiseTemplate(input.body)
   const check = validateTemplate(input.docType, clean)
 
-  const source = await purchaseOrderPreview(ctx.siteId, {
+  const letterhead = {
     name: site.displayName,
     vatNumber: site.vatNumber,
     registrationNumber: site.registrationNumber,
@@ -178,7 +174,12 @@ export async function previewTemplateAction(input: {
     postalCode: site.postalCode,
     phone: site.phone,
     email: site.email,
-  })
+  }
+
+  const source =
+    input.docType === 'invoice'
+      ? await invoicePreview(ctx.siteId, letterhead)
+      : await purchaseOrderPreview(ctx.siteId, letterhead)
 
   const html = renderTemplate(clean, input.docType, {
     ...source.input,

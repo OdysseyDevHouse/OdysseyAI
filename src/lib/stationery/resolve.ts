@@ -1,4 +1,5 @@
 import { PURCHASE_ORDER_DEFAULT } from './defaults/purchaseOrder'
+import { INVOICE_DEFAULT } from './defaults/invoice'
 import { SLIP_DEFAULT, serialiseSlip } from './slip'
 import { validateTemplate } from './validate'
 
@@ -28,6 +29,7 @@ import { validateTemplate } from './validate'
 
 export const DEFAULT_TEMPLATES: Record<string, string> = {
   purchase_order: PURCHASE_ORDER_DEFAULT,
+  invoice: INVOICE_DEFAULT,
   /* The slip's default is a block spec, not markup — serialised so this map
      stays one shape and the designer can hand it straight to the editor. */
   slip: serialiseSlip(SLIP_DEFAULT),

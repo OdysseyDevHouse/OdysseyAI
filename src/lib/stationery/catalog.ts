@@ -262,6 +262,71 @@ const PURCHASE_ORDER: DocTypeDef = {
   ],
 }
 
+/* ── invoice ───────────────────────────────────────────────────────────────
+ *
+ * The customer's copy, and the one document in this catalog with a STATUTE
+ * behind it. Section 20(4) of the VAT Act requires a tax invoice to carry the
+ * words "tax invoice", both parties' names and addresses, the supplier's VAT
+ * number, a serial number, the date, and the VAT either shown separately or
+ * stated as included. A customer cannot claim input VAT on a document missing
+ * any of them, so those are not decoration — an invoice without them comes
+ * back. validate.ts refuses to save a template that drops one.
+ *
+ * Cost and margin are absent from this catalog entirely, and unlike the
+ * purchase order that is not a permission question: what a shop paid for the
+ * goods is nobody's business but the shop's, and there is no capability that
+ * should put it on a document going to the person buying them.
+ */
+
+const INVOICE: DocTypeDef = {
+  key: 'invoice',
+  label: 'Invoice',
+  medium: 'a4',
+  tokens: [
+    ...SITE_TOKENS,
+    ...DOC_TOKENS,
+    { key: 'doc.dueDate', label: 'Due date', format: 'date' },
+    { key: 'doc.heading', label: 'Document heading', format: 'text', hint: 'Prints TAX INVOICE, or INVOICE when the business is not a VAT vendor.' },
+    { key: 'doc.soldBy', label: 'Served by', format: 'text' },
+    { key: 'doc.closing', label: 'Closing line', format: 'text', hint: 'What the reader should do — pay by the due date, accept the quote. Set by the document kind.' },
+    { key: 'customer.name', label: 'Customer name', format: 'text' },
+    { key: 'customer.code', label: 'Customer account code', format: 'text' },
+    { key: 'customer.address', label: 'Customer address', format: 'multiline' },
+    { key: 'customer.phone', label: 'Customer phone', format: 'text' },
+    { key: 'customer.vatNumber', label: 'Customer VAT number', format: 'text' },
+    /*
+     * Banking is all or nothing, as lib/invoices/build.ts puts it: "an invoice
+     * with a half-filled banking block is worse than one with none, because it
+     * looks like enough information to pay against." So it is ONE token, not
+     * four — a template cannot print a bank name without an account number.
+     */
+    { key: 'banking', label: 'Banking details', format: 'multiline', hint: 'Bank, account name, number and branch. Prints nothing unless all are set.' },
+    { key: 'totals.goodsExcl', label: 'Subtotal (excl.)', format: 'money' },
+    { key: 'totals.discountIncl', label: 'Discount', format: 'money' },
+    { key: 'totals.vat', label: 'VAT', format: 'money' },
+    { key: 'totals.roundingAdj', label: 'Rounding', format: 'money' },
+    { key: 'totals.totalIncl', label: 'Total', format: 'money' },
+    { key: 'totals.vatSummary', label: 'VAT by rate', format: 'multiline', hint: 'One line per VAT rate — the analysis a vendor must show.' },
+  ],
+  sections: [
+    {
+      key: 'lines',
+      label: 'Invoice lines',
+      tokens: [
+        { key: 'line.number', label: 'Line number', format: 'text' },
+        { key: 'line.description', label: 'Description', format: 'text' },
+        { key: 'line.productCode', label: 'Product code', format: 'text' },
+        { key: 'line.qty', label: 'Quantity', format: 'qty' },
+        { key: 'line.unitPriceIncl', label: 'Unit price (incl.)', format: 'money' },
+        { key: 'line.discountPct', label: 'Discount %', format: 'percent' },
+        { key: 'line.vatRatePct', label: 'VAT rate %', format: 'percent' },
+        { key: 'line.totalExcl', label: 'Line total (excl.)', format: 'money' },
+        { key: 'line.totalIncl', label: 'Line total (incl.)', format: 'money' },
+      ],
+    },
+  ],
+}
+
 /*
  * The till slip.
  *
@@ -283,7 +348,7 @@ const TILL_SLIP: DocTypeDef = {
   sections: [],
 }
 
-export const DOC_TYPES: readonly DocTypeDef[] = [PURCHASE_ORDER, TILL_SLIP]
+export const DOC_TYPES: readonly DocTypeDef[] = [PURCHASE_ORDER, INVOICE, TILL_SLIP]
 
 /* ── lookups ─────────────────────────────────────────────────────────────── */
 

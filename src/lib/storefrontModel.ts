@@ -35,27 +35,21 @@
  * payload cannot put 10 000 sections in a row that later has to be read.
  */
 
-export const SECTION_KINDS = [
-  'hero',
-  'banner',
-  'carousel',
-  'split',
-  'categories',
-  'products',
-  'reviews',
-  'countdown',
-  'recent',
-  'cards',
-  'text',
-  'richtext',
-  'signup',
-  'testimonial',
-  'logos',
-  'video',
-  'map',
-  'divider',
-  'spacer',
-] as const
+import {
+  DEFAULT_AUTOPLAY_SECONDS,
+  DEFAULT_CONSENT_TEXT,
+  MAX_AUTOPLAY_SECONDS,
+  MIN_AUTOPLAY_SECONDS,
+  SECTION_CATALOG,
+  SECTION_KINDS,
+  kindsFor as catalogKindsFor,
+} from './storefront/catalog'
+
+/**
+ * The section kinds. Declared in the catalog and re-exported here, so the
+ * dependency runs one way only — see the note in storefront/catalog.ts.
+ */
+export { SECTION_KINDS } from './storefront/catalog'
 export type SectionKind = (typeof SECTION_KINDS)[number]
 
 /**
@@ -229,8 +223,7 @@ export type RichBlock = {
  * line is the one thing this section must never be — see 071. It is plain, it
  * says who is emailing and why, and it says the way out.
  */
-export const DEFAULT_CONSENT_TEXT =
-  'Yes, email me news and offers from this shop. I can unsubscribe at any time.'
+export { DEFAULT_CONSENT_TEXT } from './storefront/catalog'
 
 /** One quote from a customer, written by the shop. */
 export type Testimonial = {
@@ -467,9 +460,11 @@ export const MAX_SLIDES = 8
  * place. Thirty at the top because beyond that the second slide may as well
  * not exist. 0 sits outside the range and means "do not rotate".
  */
-export const MIN_AUTOPLAY_SECONDS = 4
-export const MAX_AUTOPLAY_SECONDS = 30
-export const DEFAULT_AUTOPLAY_SECONDS = 6
+export {
+  MIN_AUTOPLAY_SECONDS,
+  MAX_AUTOPLAY_SECONDS,
+  DEFAULT_AUTOPLAY_SECONDS,
+} from './storefront/catalog'
 /** Blocks in one piece of formatted writing, and characters in one span. */
 export const MAX_RICH_BLOCKS = 60
 export const MAX_RICH_SPANS = 20
@@ -478,49 +473,20 @@ export const MAX_SPAN_TEXT = 600
 export const MAX_QUOTES = 12
 export const MAX_LOGOS = 16
 
-export const SECTION_LABEL: Record<SectionKind, string> = {
-  hero: 'Welcome banner',
-  banner: 'Picture banner',
-  carousel: 'Rotating banners',
-  split: 'Picture beside words',
-  categories: 'Shop by department',
-  products: 'A row of products',
-  recent: 'Recently viewed',
-  reviews: 'What customers say',
-  countdown: 'Countdown to a deadline',
-  cards: 'Info cards',
-  text: 'A paragraph',
-  richtext: 'Formatted writing',
-  signup: 'Email sign-up',
-  testimonial: 'Quotes',
-  logos: 'A row of logos',
-  video: 'A video',
-  map: 'Where to find us',
-  divider: 'A dividing line',
-  spacer: 'A gap',
-}
+/**
+ * The palette label and its one-line hint, per kind.
+ *
+ * Derived from SECTION_CATALOG rather than restated here: two lists of the
+ * same nineteen strings is one list that goes stale, and the stale copy is
+ * whichever one the next person does not open.
+ */
+export const SECTION_LABEL: Record<SectionKind, string> = Object.fromEntries(
+  SECTION_KINDS.map((kind) => [kind, SECTION_CATALOG[kind].label]),
+) as Record<SectionKind, string>
 
-export const SECTION_HINT: Record<SectionKind, string> = {
-  hero: 'Your headline and a line under it.',
-  banner: 'A photograph across the page, with words over it.',
-  carousel: 'Several pictures in the same spot, one after another.',
-  split: 'A picture on one side, your words on the other.',
-  categories: 'Tiles linking to each department you publish.',
-  products: 'Pick the products yourself, or let a rule fill the row.',
-  recent: 'The last few things this shopper looked at. Nothing to set.',
-  reviews: 'Real reviews you have approved. Fills itself.',
-  countdown: 'A ticking clock — “sale ends in…”.',
-  cards: 'Your own tiles — delivery info, opening hours, anything.',
-  text: 'A note to shoppers — delivery days, a holiday message.',
-  richtext: 'Headings, bold, colour, alignment, lists and links. For a longer page.',
-  signup: 'Collect email addresses, with permission on the record.',
-  testimonial: 'Quotes you write yourself, not from the review queue.',
-  logos: 'Brands you stock, or badges you have earned.',
-  video: 'A YouTube or Vimeo video.',
-  map: 'Your address, and a link to directions.',
-  divider: 'A line between two parts of the page.',
-  spacer: 'Empty room, to let a page breathe.',
-}
+export const SECTION_HINT: Record<SectionKind, string> = Object.fromEntries(
+  SECTION_KINDS.map((kind) => [kind, SECTION_CATALOG[kind].hint]),
+) as Record<SectionKind, string>
 
 export const SOURCE_LABEL: Record<ProductSource, string> = {
   manual: 'Products I pick',
@@ -1928,46 +1894,7 @@ export type PageKind = (typeof PAGE_KINDS)[number]
  * between-sections insert point, and the empty-state menu in the inspector.
  */
 export function kindsFor(pageKind: PageKind): readonly SectionKind[] {
-  return SECTION_KINDS.filter((kind) => {
-    // See above: the welcome banner draws the theme's hero text, which only
-    // the front page has.
-    if (kind === 'hero' && pageKind !== 'home') return false
-    /*
-     * A PRODUCT page's sections sit BELOW the product itself, in the space for
-     * "what else" — so the blocks that make sense there are the ones that
-     * relate to it: more products, trust cards, a note. A carousel or a
-     * department grid under one product is a second front page, and the shop
-     * already has one of those.
-     *
-     * A restriction rather than a warning because the alternative is a page
-     * that looks fine in the builder and reads as a mistake on the shop.
-     */
-    /*
-     * A DEPARTMENT page already sits under a department heading, with that
-     * department's products drawn beneath it by the route itself. A department
-     * grid there offers the shopper every OTHER aisle at the top of the aisle
-     * they just walked into — a way out of the page rather than a way through
-     * it. The shop's front page is where that grid belongs.
-     *
-     * Everything else stays available: a banner explaining the aisle, a row of
-     * picks, a note about delivery all read fine above a product grid.
-     */
-    if (pageKind === 'department' && kind === 'categories') return false
-    if (pageKind === 'product') {
-      return (
-        kind === 'products' ||
-        kind === 'recent' ||
-        kind === 'cards' ||
-        kind === 'text' ||
-        kind === 'richtext' ||
-        kind === 'reviews' ||
-        kind === 'testimonial' ||
-        kind === 'divider' ||
-        kind === 'spacer'
-      )
-    }
-    return true
-  })
+  return catalogKindsFor(pageKind)
 }
 
 /**

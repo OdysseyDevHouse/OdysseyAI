@@ -25,6 +25,9 @@ import { renderTemplate, formatValue, escapeHtml } from '../src/lib/stationery/r
 import { getDocType, tokensFor, allTokens } from '../src/lib/stationery/catalog'
 import { resolveTemplate } from '../src/lib/stationery/resolve'
 import { PURCHASE_ORDER_DEFAULT } from '../src/lib/stationery/defaults/purchaseOrder'
+import { INVOICE_DEFAULT } from '../src/lib/stationery/defaults/invoice'
+import { invoiceTokens } from '../src/lib/stationery/adapters/invoice'
+import type { SalesDocument } from '../src/lib/site/salesDocuments'
 
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -351,6 +354,117 @@ console.log('\n-- shipped default --')
   const stale = GOOD_PO + '<p>{doc.somethingRemoved}</p>'
   ok('resolve keeps a design that merely names an unknown token',
     resolveTemplate('purchase_order', stale).source === 'custom')
+}
+
+/* ── the invoice, where the requirements are a statute ───────────────────── */
+
+console.log('\n-- the invoice --')
+{
+  const r = validateTemplate('invoice', INVOICE_DEFAULT)
+  ok('the shipped invoice validates', r.ok, JSON.stringify(r.errors))
+
+  const cleaned = sanitiseTemplate(INVOICE_DEFAULT)
+  ok('it survives the sanitiser with its markup intact',
+    cleaned.includes('<article') && cleaned.includes('{#each lines}'))
+  ok('...and its empty-row rules', cleaned.includes('.inv-row:has(dd:empty)'))
+
+  /*
+   * VAT Act s20(4). Each of these makes the document one a customer cannot
+   * claim input VAT against, so each must block the save — not warn.
+   */
+  const required: [string, string][] = [
+    ['{doc.heading}', 'the words TAX INVOICE'],
+    ['{doc.number}', 'a serial number'],
+    ['{doc.date}', 'the date'],
+    ['{site.name}', "the supplier's name"],
+    ['{site.vatLine}', "the supplier's VAT number"],
+    ['{customer.name}', "the customer's name"],
+    ['{totals.vatSummary}', 'the VAT analysis'],
+    ['{totals.totalIncl}', 'the total'],
+  ]
+  for (const [token, what] of required) {
+    const without = INVOICE_DEFAULT.split(token).join('')
+    const res = validateTemplate('invoice', without)
+    ok(`an invoice without ${what} is refused`,
+      !res.ok && res.errors.some((e) => e.kind === 'missing-required'),
+      JSON.stringify(res.errors.map((e) => e.token)))
+  }
+
+  // Cost must not be reachable at all — not gated, absent.
+  const inv = getDocType('invoice')!
+  ok('no cost or margin token exists on an invoice',
+    !allTokens(inv).some((t) => /cost|margin|profit/i.test(t.key)),
+    allTokens(inv).filter((t) => /cost|margin|profit/i.test(t.key)).map((t) => t.key).join(','))
+  ok('an owner is offered no cost token either',
+    !tokensFor(inv, OWNER).some((t) => /cost|margin|profit/i.test(t.key)))
+
+  // Banking is one token, so a template cannot print half of it.
+  ok('banking is a single token, never four',
+    allTokens(inv).filter((t) => /bank|branch|account/i.test(t.key)).length === 1)
+}
+
+/* ── the invoice adapter, against a document ─────────────────────────────── */
+
+console.log('\n-- the invoice adapter --')
+{
+  const doc = {
+    id: 5, docType: 'invoice', status: 'finalised', documentNumber: 'INV000900',
+    documentDate: '2026-08-18', dueDate: '2026-09-17', customerId: 3,
+    customerCode: 'ACME', customerName: 'Acme Buyers', customerVatNo: '4111111111',
+    customerPhone: '021 555 0300', customerAddress: '9 Long Street\nCape Town',
+    userName: 'Sam', subtotalExcl: 215, vatTotal: 15, discountTotal: 0,
+    totalIncl: 230, roundingAdj: 0, reference: 'PO-77', notes: 'Thanks.',
+    lines: [
+      { id: 1, lineNumber: 1, productCode: 'A-1', description: 'Widget', qty: 2,
+        unitPriceIncl: 57.5, discountPct: 0, vatRatePct: 15, lineTotalIncl: 115,
+        lineTotalExcl: 100, lineVat: 15, unitCostExcl: 40 },
+      { id: 2, lineNumber: 2, productCode: 'B-2', description: 'Bread', qty: 5,
+        unitPriceIncl: 23, discountPct: 0, vatRatePct: 0, lineTotalIncl: 115,
+        lineTotalExcl: 115, lineVat: 0, unitCostExcl: 60 },
+    ],
+  } as unknown as SalesDocument
+
+  const site = {
+    name: 'Odyssey Test', vatNumber: '4123456789', registrationNumber: '2019/1/07',
+    address1: 'Unit 4', address2: null, address3: 'George', postalCode: '6529',
+    phone: '044 555 0100', email: 'hi@test.co.za',
+  }
+  type Banking = NonNullable<Parameters<typeof invoiceTokens>[0]['banking']>
+  const FULL: Banking = {
+    bank: 'FNB', accountName: 'Odyssey Test', accountNumber: '62012345678', branchCode: '250655',
+  }
+  const render = (banking: Banking | null, over: Partial<Parameters<typeof invoiceTokens>[0]> = {}) =>
+    renderTemplate(
+      INVOICE_DEFAULT,
+      'invoice',
+      { ...invoiceTokens({ doc, site, banking, printedAt: 'now', ...over }), capabilities: OWNER },
+    )
+
+  const full = render(FULL)
+  ok('complete banking prints', /FNB/.test(full) && /62012345678/.test(full))
+  ok('half-filled banking prints NOTHING, not a partial block',
+    !/FNB/.test(render({ ...FULL, accountName: null, branchCode: null })))
+  ok('absent banking prints nothing', !/FNB/.test(render(null)))
+
+  // The line the whole feature turns on for a customer-facing document.
+  ok('unit cost never reaches the customer copy', !/R40\.00|R60\.00/.test(full), full.slice(0, 100))
+
+  // A document with two VAT rates must show both, or it is not a valid
+  // analysis — the reason vatSummary is derived rather than read off a column.
+  const text = full.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+  ok('both VAT rates appear separately',
+    /VAT @ 15% on R100\.00/.test(text) && /VAT @ 0% on R115\.00/.test(text), text.slice(-220))
+
+  ok('a VAT vendor gets the words TAX INVOICE', /TAX INVOICE/.test(full))
+  ok('a non-vendor gets INVOICE, never TAX INVOICE',
+    !/TAX INVOICE/.test(
+      renderTemplate(INVOICE_DEFAULT, 'invoice', {
+        ...invoiceTokens({ doc, site: { ...site, vatNumber: null }, banking: null, printedAt: 'now' }),
+        capabilities: OWNER,
+      }),
+    ))
+  ok("the route's own heading wins where it gave one",
+    /QUOTATION/.test(render(null, { heading: 'QUOTATION' })))
 }
 
 console.log(`\n${fails === 0 ? 'All stationery checks passed.' : `${fails} FAILED`}`)

@@ -2,9 +2,11 @@ import 'server-only'
 import { getPurchaseDocument, listPurchaseDocuments } from '../site/purchaseDocuments'
 import { getSupplier } from '../site/suppliers'
 import { purchaseOrderTokens } from './adapters/purchaseOrder'
+import { invoiceTokens, type InvoiceSources } from './adapters/invoice'
 import { logoImgTag } from '../site/documentLogo'
 import type { RenderInput } from './render'
 import type { PurchaseDocument } from '../site/purchaseDocuments'
+import type { SalesDocument } from '../site/salesDocuments'
 import type { ReceiptData } from '../receiptData'
 
 /**
@@ -191,6 +193,85 @@ export function sampleReceipt(siteName: string, vatNumber: string | null): Recei
     copyNumber: 0,
     footerText: '',
   } as unknown as ReceiptData
+}
+
+/**
+ * An invoice to preview a design against.
+ *
+ * Invented, like the slip and unlike the purchase order — and for the same
+ * reason. An invoice names a customer and lists what they bought; putting a
+ * real one on a setup screen that can sit open on a back-office monitor is a
+ * use of that record nobody agreed to. A purchase order names a supplier and
+ * carries no such problem.
+ *
+ * Two VAT rates on purpose: a shop selling zero-rated food beside standard-rated
+ * goods is the case where a single summed VAT figure is not a lawful analysis,
+ * and a designer should see both lines while laying the document out.
+ */
+export async function invoicePreview(
+  siteId: number,
+  site: InvoiceSources['site'],
+): Promise<PreviewSource> {
+  const doc = {
+    id: 0,
+    docType: 'invoice',
+    status: 'finalised',
+    documentNumber: 'INV000481',
+    documentDate: new Date().toISOString().slice(0, 10),
+    dueDate: null,
+    customerId: 1,
+    customerCode: 'ACC001',
+    customerName: 'A. Customer',
+    customerVatNo: '4987654321',
+    customerPhone: '021 555 0300',
+    customerAddress: '9 Long Street\nCape Town\n8001',
+    userName: 'Sam',
+    subtotalExcl: 304.9,
+    vatTotal: 45.73,
+    discountTotal: 15,
+    totalIncl: 350.63,
+    roundingAdj: 0,
+    reference: null,
+    notes: 'Please quote the invoice number with your payment.',
+    lines: [
+      {
+        id: 1, lineNumber: 1, productCode: 'BRD-WHT', description: 'Bread, white',
+        qty: 2, unitPriceIncl: 21.99, discountPct: 0, vatRatePct: 0,
+        lineTotalIncl: 43.98, lineTotalExcl: 43.98, lineVat: 0, unitCostExcl: 14,
+      },
+      {
+        id: 2, lineNumber: 2, productCode: 'CHS-MAT',
+        description: 'Cheese, mature cheddar, vacuum packed 500g',
+        qty: 1.42, unitPriceIncl: 189.9, discountPct: 10, vatRatePct: 15,
+        lineTotalIncl: 269.66, lineTotalExcl: 234.49, lineVat: 35.17, unitCostExcl: 120,
+      },
+      {
+        id: 3, lineNumber: 3, productCode: 'MLK-2L', description: 'Milk 2L',
+        qty: 1, unitPriceIncl: 34.99, discountPct: 0, vatRatePct: 15,
+        lineTotalIncl: 34.99, lineTotalExcl: 30.43, lineVat: 4.56, unitCostExcl: 22,
+      },
+    ],
+  } as unknown as SalesDocument
+
+  const logoHtml = await logoImgTag(siteId)
+
+  return {
+    input: invoiceTokens({
+      doc,
+      site,
+      // Shown complete, so a designer can position the block. A shop with no
+      // bank account on file prints nothing there — see the adapter.
+      banking: {
+        bank: 'Your Bank',
+        accountName: site.name,
+        accountNumber: '62000000000',
+        branchCode: '250655',
+      },
+      printedAt: new Date().toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' }),
+      logoHtml,
+    }),
+    label: 'A sample invoice, with two VAT rates.',
+  }
 }
 
 /**

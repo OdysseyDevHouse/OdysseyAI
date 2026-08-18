@@ -105,6 +105,7 @@ import { BuilderCanvas, gapIndex, type PreviewWidth } from './BuilderCanvas'
 import ProductPicker from './ProductPicker'
 import Outline from './Outline'
 import SectionPalette, { PALETTE_PREFIX, paletteKind } from './SectionPalette'
+import { SECTION_CATALOG } from '@/lib/storefront/catalog'
 import PicturePicker from '@/components/PicturePicker'
 import {
   deleteSavedSectionAction,
@@ -195,88 +196,19 @@ function newId(kind: SectionKind): string {
   return `s-${kind}-${++idCounter}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+/**
+ * A brand-new section of one kind.
+ *
+ * The shape comes from SECTION_CATALOG; this supplies only the things the
+ * catalog cannot, because they are impure — the id, and the ids inside a
+ * carousel’s starting slides or a testimonial’s starting quote.
+ */
 function newSection(kind: SectionKind): HomeSection {
-  const base = { id: newId(kind), kind, title: SECTION_LABEL[kind], enabled: true, tone: 'plain' as const }
-  if (kind === 'products') {
-    return {
-      ...base,
-      title: 'Products',
-      source: 'newest',
-      productIds: [],
-      maxItems: 8,
-      departmentId: null,
-      layout: null,
-    }
+  return {
+    id: newId(kind),
+    kind,
+    ...SECTION_CATALOG[kind].defaults({ slide: newSlide, quote: newQuote }),
   }
-  if (kind === 'categories') return { ...base, title: 'Shop by department', maxItems: 0 }
-  if (kind === 'cards') return { ...base, title: '', cards: [{ icon: '🚚', heading: 'Delivery', text: '' }] }
-  if (kind === 'banner') {
-    return { ...base, title: '', imageId: null, imageAlt: '', linkUrl: '', bodyText: '', buttonLabel: '' }
-  }
-  if (kind === 'carousel') {
-    // TWO empty slides, not one: a carousel of one is drawn as a plain banner,
-    // so starting with one would show the owner something that is not what
-    // they added. Two makes the arrows and dots appear the moment both have
-    // pictures, which is the thing they came for.
-    return {
-      ...base,
-      title: '',
-      slides: [newSlide(), newSlide()],
-      autoplaySeconds: DEFAULT_AUTOPLAY_SECONDS,
-    }
-  }
-  if (kind === 'text') return { ...base, title: '', text: '', align: 'left' }
-  if (kind === 'split') {
-    return {
-      ...base,
-      title: 'A word about us',
-      imageId: null,
-      imageAlt: '',
-      bodyText: '',
-      buttonLabel: '',
-      linkUrl: '',
-      side: 'left',
-    }
-  }
-  if (kind === 'reviews') {
-    return { ...base, title: 'What customers say', maxItems: 6, minRating: 4, departmentId: null }
-  }
-  if (kind === 'countdown') {
-    return {
-      ...base,
-      title: 'Sale ends soon',
-      specialId: null,
-      endsAt: '',
-      bodyText: '',
-      finishedText: '',
-    }
-  }
-  if (kind === 'richtext') {
-    // One empty paragraph, not zero: an editor with no rows shows the owner
-    // nothing to type into, and "add a paragraph" before you can write a word
-    // is a step nobody should need.
-    return { ...base, title: '', blocks: [{ type: 'p', spans: [{ text: '' }] }] }
-  }
-  if (kind === 'testimonial') {
-    return { ...base, title: 'In their words', quotes: [newQuote()] }
-  }
-  if (kind === 'signup') {
-    return {
-      ...base,
-      title: 'Keep in touch',
-      bodyText: 'News, offers and what is fresh — straight to your inbox.',
-      buttonLabel: 'Sign up',
-      // The default wording, not blank — a form collecting addresses with no
-      // consent line is the one thing this section must never be.
-      consentText: DEFAULT_CONSENT_TEXT,
-      thanksText: '',
-    }
-  }
-  if (kind === 'logos') return { ...base, title: 'Brands we stock', logoImageIds: [] }
-  if (kind === 'video') return { ...base, title: '', videoProvider: 'youtube', videoId: '' }
-  if (kind === 'map') return { ...base, title: 'Where to find us', addressText: '', mapUrl: '' }
-  if (kind === 'spacer') return { ...base, title: '', size: 'medium' }
-  return { ...base, title: '' }
 }
 
 /** A blank quote. Same id reasoning as `newSlide` — date-free. */

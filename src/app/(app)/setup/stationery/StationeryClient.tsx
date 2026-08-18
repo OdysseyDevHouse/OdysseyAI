@@ -347,6 +347,18 @@ export default function StationeryClient({
             </p>
           </div>
 
+          {/* Said plainly, on the screen, rather than discovered by a customer
+              who redesigns their invoice and then emails one. An emailed
+              invoice renders through lib/invoices/pdf.ts, which is drawn by
+              hand and reads no template. */}
+          {docType === 'invoice' && (
+            <Callout tone="warning" className="mt-4">
+              This design is used when an invoice is <strong>printed</strong>. Invoices{' '}
+              <strong>emailed</strong> to a customer, and statements, still use the standard
+              layout — they are built a different way and cannot follow a design yet.
+            </Callout>
+          )}
+
           {forDoc.length > 0 && (
             <ul className="mt-4 flex flex-col gap-1.5">
               {forDoc.map((t) => (
