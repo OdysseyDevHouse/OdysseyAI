@@ -16,6 +16,7 @@ import {
 } from '@/lib/site/storefrontImages'
 import {
   saveTheme,
+  saveThemeTokensDraft,
   type SaveResult,
   type StorefrontTheme,
 } from '@/lib/site/storefrontLayout'
@@ -167,6 +168,30 @@ export async function saveThemeAction(theme: Partial<StorefrontTheme>): Promise<
     action: 'theme',
     detail: 'Storefront appearance changed',
   })
+
+  revalidatePath('/online-store/builder')
+  return result
+}
+
+/**
+ * Store the look the owner is editing.
+ *
+ * A DRAFT, unlike saveThemeAction beside it. The colour, logo and footer text
+ * still go live on save — they always have, and each is a single value whose
+ * effect an owner can see in the preview beside them. The design tokens are
+ * the opposite: eight controls that restyle every page at once, and an owner
+ * WILL change half a look and be interrupted. They publish with the front
+ * page, so the shop changes shape once, deliberately.
+ */
+export async function saveThemeTokensAction(tokens: unknown): Promise<SaveResult> {
+  const ctx = await actorForModule('online_store', 'online.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+  // No activity log: this fires on every keystroke of an autosaved draft, and
+  // a log that records twenty entries for one decision is one nobody reads.
+  // The publish is the event worth recording, and publishDraftAction logs it.
+  const result = await saveThemeTokensDraft(siteId, tokens)
+  if (!result.ok) return result
 
   revalidatePath('/online-store/builder')
   return result

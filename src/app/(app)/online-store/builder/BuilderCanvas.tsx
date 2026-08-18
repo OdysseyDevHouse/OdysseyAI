@@ -5,6 +5,7 @@ import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Button, Icons, SegmentedControl, Switch } from '@/components/ui'
+import { themeVars, type DesignTokens } from '@/lib/storefront/tokens'
 import {
   MAX_SECTIONS,
   isScheduledNow,
@@ -82,6 +83,7 @@ export function BuilderCanvas({
   sections,
   content,
   theme,
+  tokens,
   display,
   storeName,
   blurb,
@@ -103,6 +105,15 @@ export function BuilderCanvas({
   sections: HomeSection[]
   content: SectionContent[]
   theme: StorefrontTheme
+  /**
+   * The look being edited, so the preview shows what publishing would do.
+   *
+   * The draft’s, not the published one: the whole point of the canvas is
+   * that it is the shop as it WOULD be, and a preview still wearing the live
+   * palette while the panel beside it says "Dark" is the one thing this
+   * screen must never do.
+   */
+  tokens: DesignTokens
   /** The shop's display choices, so the preview matches the shop. */
   display: ProductDisplay
   storeName: string
@@ -144,8 +155,8 @@ export function BuilderCanvas({
       {/* The shop's own colour, scoped to the preview so `text-brand` inside
           follows the store's theme rather than the app's. */}
       <div
-        className="min-h-full bg-canvas"
-        style={{ '--color-brand': theme.brandColour } as React.CSSProperties}
+        className="min-h-full"
+        style={themeVars(tokens, theme.brandColour) as React.CSSProperties}
       >
         {/* The phone frame. A plain max-width with the page centred inside —
             see WIDTHS on why this is approximate and why that is said out

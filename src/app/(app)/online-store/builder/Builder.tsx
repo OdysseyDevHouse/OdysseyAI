@@ -107,6 +107,8 @@ import Outline from './Outline'
 import SectionPalette, { PALETTE_PREFIX, paletteKind } from './SectionPalette'
 import { SECTION_CATALOG } from '@/lib/storefront/catalog'
 import SectionFields from './SectionFields'
+import ThemePicker from './ThemePicker'
+import { type DesignTokens } from '@/lib/storefront/tokens'
 import PicturePicker from '@/components/PicturePicker'
 import {
   deleteSavedSectionAction,
@@ -117,6 +119,7 @@ import {
   schedulePublishAction,
   publishDraftAction,
   saveDraftAction,
+  saveThemeTokensAction,
   saveThemeAction,
 } from './actions'
 
@@ -293,6 +296,8 @@ export default function Builder({
   page,
   pages,
   theme: initialTheme,
+  tokens: initialTokens,
+  publishedTokens,
   published,
   draft,
   initialContent,
@@ -321,6 +326,15 @@ export default function Builder({
   /** Every page, for the switcher. */
   pages: StorefrontPage[]
   theme: StorefrontTheme
+  /**
+   * The look being edited: the draft if there is one, else what is live.
+   *
+   * Unlike the rest of the theme, this is part of the draft — eight controls
+   * that restyle every page at once are not something to apply mid-decision.
+   */
+  tokens: DesignTokens
+  /** What shoppers see now, so "unpublished changes" can mean the look too. */
+  publishedTokens: DesignTokens
   published: HomeSection[]
   draft: HomeSection[] | null
   /** The sections with their real products, resolved server-side. */
@@ -382,6 +396,7 @@ export default function Builder({
   const sections = history.present
 
   const [theme, setTheme] = useState(initialTheme)
+  const [tokens, setTokens] = useState(initialTokens)
   const [selectedId, setSelectedId] = useState<string | null>(sections[0]?.id ?? null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [width, setWidth] = useState<PreviewWidth>('desktop')
@@ -587,9 +602,21 @@ export default function Builder({
   // What is on the server right now, so the dirty check compares like with
   // like. Normalised on both sides — see normaliseSections' key-order note.
   const savedJson = useRef(JSON.stringify(normaliseSections(draft ?? published)))
+  // What the server already holds, so an autosave that changed nothing does
+  // not fire. Seeded from the value the page was rendered with.
+  const savedTokensJson = useRef(JSON.stringify(initialTokens))
   const publishedJson = useMemo(() => JSON.stringify(normaliseSections(published)), [published])
   const currentJson = JSON.stringify(sections)
-  const hasUnpublished = currentJson !== publishedJson
+  /*
+   * The look counts as an unpublished change, exactly as the layout does.
+   *
+   * Otherwise an owner who restyled the shop and published would be told
+   * there was nothing to publish, and the change would sit in the draft
+   * column until they happened to move a section.
+   */
+  const tokensJson = JSON.stringify(tokens)
+  const publishedTokensJson = useMemo(() => JSON.stringify(publishedTokens), [publishedTokens])
+  const hasUnpublished = currentJson !== publishedJson || tokensJson !== publishedTokensJson
 
   // Autosave the draft. Debounced, because this fires on every keystroke in
   // the inspector and a write per character would be absurd.
@@ -608,6 +635,18 @@ export default function Builder({
     }, AUTOSAVE_MS)
     return () => clearTimeout(timer)
   }, [currentJson, sections, toast, page.id])
+
+  // The look, on the same debounce and for the same reason: this fires on
+  // every change of a dropdown, and a preset moves eight of them at once.
+  useEffect(() => {
+    if (tokensJson === savedTokensJson.current) return
+    const timer = setTimeout(async () => {
+      const result = await saveThemeTokensAction(tokens)
+      if (result.ok) savedTokensJson.current = tokensJson
+      else toast.error(result.error)
+    }, AUTOSAVE_MS)
+    return () => clearTimeout(timer)
+  }, [tokensJson, tokens, toast])
 
   /*
    * The panel, so the selection can bring its own settings back into view.
@@ -1541,6 +1580,7 @@ export default function Builder({
               sections={sections}
               content={content}
               theme={theme}
+            tokens={tokens}
               display={display}
               storeName={storeName}
               blurb={blurb}
@@ -2543,10 +2583,21 @@ export default function Builder({
             </Accordion>
           )}
 
-          {/* Appearance is NOT part of the draft — see saveThemeChanges. */}
+          {/*
+            Two halves with different timing, deliberately.
+
+            The LOOK is part of the draft and publishes with the page — eight
+            controls that restyle every page at once are not something to
+            apply mid-decision, and a preset moves all eight in one click.
+
+            The logo, colour and footer text still save straight to live, as
+            they always have: each is a single value whose effect is visible
+            in the preview beside it, and an owner correcting a wrong phone
+            number in the footer should not have to publish a page to do it.
+          */}
           <Accordion
             title="Appearance"
-            description="Applies to your shop as soon as you save it."
+            description="Your shop’s look, logo and footer."
             open={openPanels.has('appearance')}
             onToggle={() => togglePanel('appearance')}
           >
@@ -2554,6 +2605,17 @@ export default function Builder({
                 column of eight fields is where these settings got lost. */}
             <div className="flex flex-col gap-4">
               <FieldGroup title="Look">
+                <ThemePicker
+                  tokens={tokens}
+                  onChange={setTokens}
+                  onPreset={(next, brandColour) => {
+                    setTokens(next)
+                    // A preset sets the colour too, or six looks would all
+                    // arrive wearing whatever colour the shop already had.
+                    setTheme({ ...theme, brandColour })
+                  }}
+                />
+
                 {/* From the SAME library the banners use, so a shop uploads
                     its logo once and can reuse it anywhere. */}
                 <Field

@@ -1,4 +1,5 @@
 import { requireModuleCapability } from '@/lib/auth'
+import { getThemeTokens } from '@/lib/site/storefrontLayout'
 import { getTheme } from '@/lib/site/storefrontLayout'
 import {
   getPageLayout,
@@ -86,13 +87,15 @@ export default async function BuilderPage({
     )
   }
 
-  const [layoutState, versions, savedSections] = await Promise.all([
+  const [layoutState, versions, savedSections, themeTokens] = await Promise.all([
     getPageLayout(siteId, current.id),
     // Per PAGE — a version belongs to the page it replaced.
     listVersions(siteId, current.id),
     // Shop-wide, deliberately: the whole point is to use one page's section on
     // another, so scoping these per page would defeat them.
     listSavedSections(siteId),
+    // The look, published and draft, so the panel opens on what is being edited.
+    getThemeTokens(siteId),
   ])
   const layout = { theme, published: layoutState.published, draft: layoutState.draft }
 
@@ -187,6 +190,8 @@ export default async function BuilderPage({
           page={current}
           pages={pages}
           theme={layout.theme}
+          tokens={themeTokens.draft ?? themeTokens.published}
+          publishedTokens={themeTokens.published}
           published={layout.published}
           draft={layout.draft}
           initialContent={editing.map((section, i) => ({
