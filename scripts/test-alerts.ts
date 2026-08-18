@@ -134,6 +134,7 @@ async function main() {
   await staleness(owner.id)
   await abandonedRunsAreReclaimed(owner.id)
   await theCheckItself()
+  await storedTimesAreWallClock(owner.id)
   await theAutomationDrafts(owner.id, owner.name)
   await everyKindIsRegistered(owner.id)
 }
@@ -434,6 +435,66 @@ async function theCheckItself() {
   check('and the read is capped', result.items.length <= 500, `${result.items.length} rows`)
 }
 
+/* ── a stored time is a wall clock, not an instant ─────────────────────────── */
+
+/**
+ * The bug this guards was visible on the screen and invisible to every other
+ * test: a check that had just run showed as "Tomorrow 01:09".
+ *
+ * The pool sets the connection timezone to 'Z', so the UTC parts of a DATETIME
+ * Date ARE the stored wall clock. toISOString() re-stamps that wall clock AS
+ * UTC, and the browser shifts it again by the local offset — so on any machine
+ * east of Greenwich a timestamp lands in the future. It reads as a scheduling
+ * bug in the engine, which is where somebody would go looking.
+ */
+async function storedTimesAreWallClock(ownerId: number) {
+  console.log('\nstored times')
+
+  const { sendTime } = justNow()
+  const id = await makeRule({ recipientUserIds: [ownerId], sendTime }, ownerId)
+  await tickSite(SITE)
+
+  const rule = await getRule(SITE, id)
+  const lastRunAt = rule?.lastRunAt ?? null
+  if (!lastRunAt) {
+    check('the rule recorded a run to check', false)
+    return
+  }
+
+  // The driver's Date read as WALL CLOCK — the UTC parts — must be within a
+  // couple of minutes of now. Read as an instant it would be off by the local
+  // offset, which is the whole bug.
+  const now = new Date()
+  const wallMinutes =
+    lastRunAt.getUTCHours() * 60 + lastRunAt.getUTCMinutes()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const drift = Math.abs(wallMinutes - nowMinutes)
+
+  check(
+    'a run just recorded reads as the current wall clock',
+    drift <= 2 || drift >= 1438,
+    `stored ${pad(lastRunAt.getUTCHours())}:${pad(lastRunAt.getUTCMinutes())}, clock ${pad(now.getHours())}:${pad(now.getMinutes())}`,
+  )
+
+  // And the naive conversion is genuinely wrong wherever the offset is not
+  // zero — stated so the test cannot quietly pass on a UTC machine.
+  const offsetMinutes = -now.getTimezoneOffset()
+  if (offsetMinutes === 0) {
+    console.log('       (this machine is on UTC, so the naive conversion cannot be caught here)')
+  } else {
+    const naive = new Date(lastRunAt.toISOString())
+    check(
+      'while toISOString() would put it in the wrong hour',
+      naive.getHours() !== lastRunAt.getUTCHours(),
+      `naive ${pad(naive.getHours())}:00 vs stored ${pad(lastRunAt.getUTCHours())}:00`,
+    )
+  }
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
 /* ── the automation half ───────────────────────────────────────────────────── */
 
 /**
@@ -630,13 +691,24 @@ async function cleanup() {
    * NOT matched on the title: a notification carries the MESSAGE's title
    * ("Negative stock: 23 450 products below zero"), never the rule's name, so
    * a name filter silently deletes nothing and leaves litter in a real
-   * person's inbox. The run that produced them is already gone by now, which
-   * leaves the window they were written in as the only honest handle.
+   * person's inbox.
+   *
+   * And NOT on the time window alone, which is how this was wrong before:
+   * `created_at >= startedAt` also swept up a row a REAL rule wrote while the
+   * suite happened to be running, deleting somebody's notification in order to
+   * tidy up after a test.
+   *
+   * The honest handle is the TITLE the test's own rules produce, inside the
+   * window. Every rule here watches negative stock, so the title is that
+   * check's headline — narrow enough that a real rule's row survives, and
+   * exact enough that the test's own rows do not.
    */
   const removed = await siteExecute(
     SITE,
     `DELETE FROM notifications
-      WHERE event = 'alert_fired' AND created_at >= ?`,
+      WHERE event = 'alert_fired'
+        AND created_at >= ?
+        AND title LIKE 'Negative stock:%'`,
     [startedAt],
   ).catch(() => null)
   console.log(

@@ -541,6 +541,15 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        href: '/setup/alerts',
+        description: 'Watch for something, tell the right people, and offer the fix.',
+        keywords:
+          'alert automation notify watch warn tell me email whatsapp low stock reorder automatic rule trigger',
+        icon: 'Bell',
+        tone: 'amber',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/printing',
         description: 'The slip’s footer, and the thermal printer plugged into each till.',
         keywords: 'receipt printer thermal esc pos slip 80mm cash drawer kick kitchen bridge print',

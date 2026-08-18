@@ -6,10 +6,18 @@ import { sendLowStockDigest } from '@/lib/site/lowStockAlert'
 /**
  * The alerts heartbeat — call this every hour or so.
  *
- * TWO jobs ride it: the low-stock digest, and SLA escalation (164). One secret
- * rather than the basket one, so a shop can rotate either without breaking the
- * other — and one route rather than three, because both jobs want the same
- * hourly cadence and the same per-site try/catch.
+ * THREE jobs ride it: the alert rules, the low-stock digest, and SLA
+ * escalation (164). One secret rather than the basket one, so a shop can rotate
+ * either without breaking the other — and one route rather than three, because
+ * every job wants the same hourly cadence and the same per-site try/catch.
+ *
+ * ── THE RULES AND THE DIGEST BOTH STAY ───────────────────────────────────
+ *
+ * A `low_stock` alert rule is the digest's richer successor — per recipient,
+ * over four channels, and able to draft the orders. But the standalone digest
+ * is configured and working on sites today, and switching it off underneath
+ * them would stop an email somebody relies on without asking. They coexist:
+ * a shop that builds a rule can clear low_stock_alert_email itself.
  *
  * ── IT NEEDS A PUBLIC_PREFIXES ENTRY ─────────────────────────────────────
  *
@@ -57,8 +65,37 @@ async function handle(request: NextRequest) {
   let sent = 0
 
   let escalated = 0
+  let fired = 0
 
   for (const siteId of siteIds) {
+    /*
+     * The alert rules — the biggest of the three jobs, and first, because a
+     * rule is a thing somebody deliberately asked for.
+     *
+     * Its own try/catch like the others: a site whose rules throw must not
+     * stop the digest for every site after it. tickSite never throws for a
+     * single BAD RULE (it records the failure on that rule's ledger row and
+     * carries on) — this catches the site-wide failures instead, an
+     * unreachable database or a schema that has not been migrated.
+     *
+     * Safe to call often, and this is the one that has to be: the run ledger's
+     * UNIQUE (rule_id, due_at) means an occurrence is claimed exactly once, so
+     * calling hourly changes how promptly somebody hears, never how many times.
+     */
+    try {
+      const { tickSite } = await import('@/lib/alerts/tick')
+      const alerts = await tickSite(siteId)
+      if (alerts.claimed > 0) {
+        fired += alerts.fired
+        results.push({ siteId, alerts })
+      }
+    } catch (e) {
+      results.push({
+        siteId,
+        error: e instanceof Error ? e.message : 'The alert rules failed for this site.',
+      })
+    }
+
     try {
       const result = await sendLowStockDigest(siteId)
       if (result.sent) sent++
@@ -105,6 +142,7 @@ async function handle(request: NextRequest) {
     sites: siteIds.length,
     sent,
     escalated,
+    fired,
     results,
   })
 }
