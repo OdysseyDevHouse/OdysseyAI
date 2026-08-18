@@ -279,6 +279,42 @@ export async function previewBlocksAction(input: {
 }
 
 /**
+ * Turn a block design into markup, so it can be edited by hand.
+ *
+ * ── IT ONLY GOES THIS WAY ─────────────────────────────────────────────────
+ *
+ * Compiling blocks to markup is a function; recovering blocks from markup is a
+ * parser, and a parser is exactly what this whole design exists to avoid — a
+ * customer hand-edits one thing, their markup stops being parseable, and their
+ * document becomes undraggable. So the conversion is one-way, the screen says
+ * so before it happens, and the block version is left as a saved design that
+ * can be made active again.
+ *
+ * The compiled markup is handed BACK rather than written: it lands in the
+ * editor as unsaved work, so a shop that converts by accident closes the screen
+ * and nothing has changed. Converting and saving are two decisions.
+ */
+export async function toMarkupAction(input: {
+  docType: string
+  spec: string
+}): Promise<{ ok: true; body: string } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  if (!isDocType(input.docType)) return { ok: false, error: 'Unknown document type.' }
+
+  const spec = parseSpec(input.spec, input.docType)
+  if (!spec) return { ok: false, error: 'That design cannot be read.' }
+
+  // Through the sanitiser, like anything else that becomes a template — the
+  // compiler is trusted, but the html blocks inside the spec are not.
+  const body = sanitiseTemplate(compileDocument(spec, input.docType))
+  if (body.trim() === '') return { ok: false, error: 'That design compiles to nothing.' }
+
+  return { ok: true, body }
+}
+
+/**
  * Upload the business's logo.
  *
  * Takes a FormData rather than a typed object because a File cannot cross a

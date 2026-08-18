@@ -9,6 +9,7 @@ import {
   CardBody,
   CardHeader,
   CodeArea,
+  ConfirmModal,
   EmptyState,
   Field,
   Icons,
@@ -24,6 +25,7 @@ import {
   deleteTemplateAction,
   uploadLogoAction,
   clearLogoAction,
+  toMarkupAction,
 } from './actions'
 import SlipBlockEditor from './SlipBlockEditor'
 import { parseSlip, serialiseSlip } from '@/lib/stationery/slip'
@@ -112,6 +114,29 @@ export default function StationeryClient({
    * to READ it.
    */
   const [format, setFormat] = useState<'html' | 'slip' | 'blocks'>('html')
+  const [convertOpen, setConvertOpen] = useState(false)
+
+  /**
+   * Turn the open block design into markup.
+   *
+   * The result lands in the editor as UNSAVED work rather than being written,
+   * so converting by accident costs nothing — close the screen and the stored
+   * design is untouched. Converting and saving stay two decisions.
+   */
+  function convertToMarkup() {
+    start(async () => {
+      const res = await toMarkupAction({ docType, spec: body })
+      setConvertOpen(false)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      setBody(res.body)
+      setFormat('html')
+      setDirty(true)
+      toast.success('Converted. Save to keep it — the block version is still in your list.')
+    })
+  }
 
   const [html, setHtml] = useState('')
   const [previewLabel, setPreviewLabel] = useState('')
@@ -641,6 +666,17 @@ export default function StationeryClient({
                       Use this when printing
                     </Button>
                   )}
+                  {/* The escape hatch out of the visual editor, for a change
+                      the blocks cannot express. One-way — see the dialog. */}
+                  {format === 'blocks' && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => setConvertOpen(true)}
+                      disabled={pending || !body.trim()}
+                    >
+                      Edit as HTML
+                    </Button>
+                  )}
                 </div>
               </CardBody>
             </Card>
@@ -671,6 +707,31 @@ export default function StationeryClient({
           </div>
         </div>
       )}
+
+      {/* Said before it happens, because it cannot be undone: recovering blocks
+          from markup would need the parser this design exists to avoid. */}
+      <ConfirmModal
+        open={convertOpen}
+        onClose={() => setConvertOpen(false)}
+        onConfirm={convertToMarkup}
+        busy={pending}
+        tone="primary"
+        title="Edit this design as HTML?"
+        confirmLabel="Convert to HTML"
+        message={
+          <>
+            <p>
+              You will get the same document as markup, and full control over it. The
+              drag-and-drop editor cannot open it afterwards — there is no reliable way to
+              turn markup back into blocks.
+            </p>
+            <p className="mt-2 text-muted">
+              Your block version stays in the list, so you can go back to it by making it the
+              one that prints.
+            </p>
+          </>
+        }
+      />
     </div>
   )
 }

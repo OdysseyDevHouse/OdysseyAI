@@ -292,19 +292,26 @@ export async function saveTemplate(
   }
 
   if (id) {
-    // A draft edit leaves what prints alone; a publish replaces it and clears
-    // the draft, so "what is on paper" and "what I am editing" cannot drift.
+    /*
+     * FORMAT IS WRITTEN ON EVERY UPDATE, not only on insert.
+     *
+     * "Edit as HTML" converts a block design to markup in place, and a row left
+     * saying 'blocks' while holding markup would be read back as a spec, fail
+     * to parse, and silently print the shipped default instead of the shop's
+     * own document. The body and the word for how to read it must move
+     * together or not at all.
+     */
     if (input.asDraft) {
       await siteExecute(
         siteId,
-        'UPDATE stationery_templates SET name = ?, draft_body = ? WHERE id = ?',
-        [name, clean, id],
+        'UPDATE stationery_templates SET name = ?, format = ?, draft_body = ? WHERE id = ?',
+        [name, format, clean, id],
       )
     } else {
       await siteExecute(
         siteId,
-        'UPDATE stationery_templates SET name = ?, body = ?, draft_body = NULL WHERE id = ?',
-        [name, clean, id],
+        'UPDATE stationery_templates SET name = ?, format = ?, body = ?, draft_body = NULL WHERE id = ?',
+        [name, format, clean, id],
       )
     }
     return { ok: true, id }

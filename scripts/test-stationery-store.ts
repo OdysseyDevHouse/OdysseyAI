@@ -31,6 +31,7 @@ import { PURCHASE_ORDER_DEFAULT } from '../src/lib/stationery/defaults/purchaseO
 import { PURCHASE_ORDER_BLOCKS } from '../src/lib/stationery/defaults/purchaseOrderBlocks'
 import { serialiseSpec, type DocumentSpec } from '../src/lib/stationery/blocks'
 import { resolveTemplate } from '../src/lib/stationery/resolve'
+import { compileDocument } from '../src/lib/stationery/compile'
 import type { RowDataPacket } from 'mysql2'
 
 const SITE = Number(process.env.TEST_SITE_ID || 1)
@@ -236,6 +237,31 @@ async function main() {
       // a later version this build cannot read.
       const broken = resolveTemplate('purchase_order', '{"version":1,"blocks":"not-an-array"}', 'blocks')
       ok('an unreadable spec falls back to the shipped design', broken.source === 'default')
+
+      /*
+       * "Edit as HTML" converts a stored design IN PLACE, so the format has to
+       * move with the body. It did not: the update path wrote name and body and
+       * left format alone, which would have left a row saying 'blocks' while
+       * holding markup — read back as a spec, failing to parse, and silently
+       * printing the shipped default instead of the shop's own document.
+       */
+      const markup = compileDocument(designed, 'purchase_order')
+      const converted = await saveTemplate(
+        SITE,
+        { docType: 'purchase_order', name: `${MARK} blocks`, body: markup, format: 'html' },
+        ACTOR,
+        blocksSaved.id,
+      )
+      ok('a block design can be converted to markup in place', converted.ok, JSON.stringify(converted))
+
+      const afterConvert = await getTemplate(SITE, blocksSaved.id)
+      ok('...and the row now says it is markup', afterConvert?.format === 'html')
+      ok('...holding markup, not JSON', afterConvert?.body.includes('<article') === true)
+
+      const readBack = await activeTemplate(SITE, 'purchase_order')
+      const stillPrints = resolveTemplate('purchase_order', readBack?.body ?? null, readBack?.format)
+      ok('...and it still prints as the site’s own design', stillPrints.source === 'custom')
+      ok('...with the changes that were designed', stillPrints.body.includes('Amount'))
     }
   }
 }

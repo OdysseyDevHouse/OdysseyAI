@@ -350,5 +350,48 @@ console.log('\n-- text blocks --')
     !/<img/.test(renderBlocks(hostile)) && /&lt;img/.test(renderBlocks(hostile)))
 }
 
+/* ── converting a design to markup ───────────────────────────────────────── */
+
+console.log('\n-- "Edit as HTML" --')
+{
+  /*
+   * The one-way door. Compiling blocks to markup is a function; recovering
+   * blocks from markup would be a parser, and a parser is what this design
+   * exists to avoid. So the conversion must at least be LOSSLESS in the
+   * direction it goes — a shop that converts and saves must get the document
+   * they were looking at, not an approximation of it.
+   */
+  const compiled = compileDocument(PURCHASE_ORDER_BLOCKS, 'purchase_order')
+  const converted = sanitiseTemplate(compiled)
+
+  const before = textOf(
+    renderTemplate(compiled, 'purchase_order', { ...inputFor(order()), capabilities: OWNER }),
+  )
+  const after = textOf(
+    renderTemplate(converted, 'purchase_order', { ...inputFor(order()), capabilities: OWNER }),
+  )
+
+  ok('converting to markup changes nothing on the page', before === after,
+    before === after ? '' : `\n   before: ${before}\n   after : ${after}`)
+  ok('...and the result is a template the validator accepts',
+    validateTemplate('purchase_order', converted).ok,
+    JSON.stringify(validateTemplate('purchase_order', converted).errors))
+  ok('...that the markup editor can actually edit',
+    converted.includes('{#each lines}') && converted.includes('{site.name}'))
+
+  // The html block is the one part a designer typed, and it stays untrusted.
+  const withScript: DocumentSpec = {
+    version: 1,
+    blocks: [
+      ...PURCHASE_ORDER_BLOCKS.blocks,
+      { id: 'x', kind: 'html', text: '<p>Keep</p><script>alert(1)</script>' },
+    ],
+  }
+  const cleaned = sanitiseTemplate(compileDocument(withScript, 'purchase_order'))
+  ok('a script inside a custom-HTML block does not survive conversion',
+    !/<\s*script/i.test(cleaned) && !/alert\s*\(/.test(cleaned))
+  ok('...while the rest of that block does', /<p>Keep<\/p>/.test(cleaned))
+}
+
 console.log(`\n${fails === 0 ? 'All block-model checks passed.' : `${fails} FAILED`}`)
 process.exit(fails === 0 ? 0 : 1)
