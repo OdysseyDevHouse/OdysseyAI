@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BLOCK_STYLE } from '@/lib/stationery/compile'
 import {
   BAND_INFO,
   BAND_KEYS,
@@ -57,12 +58,20 @@ import {
  * That measurement is also the honest one: it is the height of the real compiled
  * markup, so what the guides promise is what the paper does.
  *
- * ── PERCENTAGES OUT, PIXELS IN ────────────────────────────────────────────
+ * ── PERCENTAGES OUT, PIXELS IN — ON TWO DIFFERENT SCALES ──────────────────
  *
- * A pointer delta arrives in pixels and is divided by the live canvas width to
- * become percent. The canvas measures itself rather than assuming a size, for
- * the reason floorGeometry gives: hard-coding a scale is how a layout ends up
- * correct on exactly one monitor.
+ * A pointer delta arrives in pixels and has to be converted, and the two axes do
+ * NOT convert the same way. Across the page, a percent is a percent of the live
+ * measured width. Down the page, a percent is a percent of the BAND, which is a
+ * fixed number of pixels — `BAND_PX`, shared with the compiler so the screen and
+ * the paper cannot disagree.
+ *
+ * Conflating them is not a subtle bug: it made vertical drags a hundred times
+ * too large. See `toPercent`.
+ *
+ * The canvas measures itself rather than assuming a size, for the reason
+ * floorGeometry gives: hard-coding a scale is how a layout ends up correct on
+ * exactly one monitor.
  */
 
 type Mode = 'move' | 'resize-l' | 'resize-r' | 'marquee'
@@ -497,6 +506,13 @@ export default function DocumentCanvas({
       onPointerUp={end}
       onPointerCancel={end}
     >
+      {/*
+        The compiler's own hide-when-empty rules, so a block that prints nothing
+        shows nothing here either. Without them the canvas kept a "NOTES" caption
+        over an empty value that the printed page correctly dropped.
+      */}
+      <style>{BLOCK_STYLE}</style>
+
       {/* The coordinate space. Percentages resolve against THIS, so the pointer
           is measured against it too — see the note on the two refs. */}
       <div ref={sheetRef} className="relative">
@@ -626,12 +642,18 @@ function BlockBox({
   const def = DOC_BLOCK_CATALOG[block.kind]
   const flow = block.band === 'body'
 
+  /*
+   * No alignment class on the box: `blockMarkup` carries it, so the canvas and
+   * the printed page take it from one place rather than each applying their own.
+   * The divergence that captioned an empty notes block on screen and left it
+   * blank on paper started exactly that way.
+   */
   return (
     <div
       ref={register}
       className={`group cursor-move rounded-sm ring-offset-2 ${
         selected ? 'ring-2 ring-brand' : 'hover:ring-1 hover:ring-border-strong'
-      } ${block.align === 'center' ? 'text-center' : block.align === 'right' ? 'text-right' : ''}`}
+      }`}
       style={
         flow
           ? { width: `${rect.w}%` }

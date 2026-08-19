@@ -59,16 +59,21 @@ const TD = 'px-4 py-1.5'
 /**
  * Rows and blocks that came out empty remove themselves.
  *
+ * EXPORTED, because the designer's canvas needs the very same rules. It renders
+ * each block on its own rather than the whole document, so without them an empty
+ * notes block showed a "NOTES" caption over nothing on screen while correctly
+ * disappearing on paper — the canvas lying about the printed page, which is the
+ * one failure this whole compile-don't-render design exists to prevent.
+ *
  * The same rule the hand-written defaults carry, and for the same reason:
  * "Reference" over a blank reads as a reference someone forgot to type. Done in
  * CSS because the template language has no conditionals on purpose — one rule
  * covers every such row, and it needs no feature that then needs supporting.
  */
-const STYLE = `<style>
+export const BLOCK_STYLE = `
 .sd-row:has(dd:empty) { display: none; }
 .sd-block:has(> .sd-value:empty) { display: none; }
-.sd-line:empty { display: none; }
-</style>`
+.sd-line:empty { display: none; }`
 
 const ALIGN_CLASS: Record<string, string> = {
   left: 'text-left',
@@ -315,18 +320,38 @@ function bandHeight(blocks: DocBlock[]): number {
  * the designer is looking at the same HTML the printer gets. Only the wrapper
  * differs, which is the property that keeps the preview honest.
  */
-function positioned(b: DocBlock, docKey: string): string {
+/**
+ * A block's own markup, wrapper and all.
+ *
+ * THE ONE PLACE a block becomes HTML, so the canvas and the printed page cannot
+ * disagree about it. They did: the document path put `sd-block` on the
+ * positioned box while the canvas path put it on an inner div, and an empty notes
+ * block kept its caption on screen and lost it on paper. Same rendering,
+ * different markup — which is the drift that becomes a real divergence next time
+ * somebody edits one of them.
+ *
+ * Everything OUTSIDE this — where the block sits, how wide it is, whether it is
+ * selected — belongs to whoever is placing it, because a canvas needs a
+ * draggable box and a page needs a printed one.
+ */
+export function blockMarkup(b: DocBlock, docKey: string): string {
   const html = compileBlock(b, docKey)
   if (!html) return ''
-
   const align = b.align ? ALIGN_CLASS[b.align] : ''
-  const wrap = needsWrapper(b) ? 'sd-block' : ''
+  const inner = align ? `<div class="${align}">${html}</div>` : html
+  return needsWrapper(b) ? `<div class="sd-block">${inner}</div>` : inner
+}
+
+function positioned(b: DocBlock, docKey: string): string {
+  const html = blockMarkup(b, docKey)
+  if (!html) return ''
+
   const style =
     `position:absolute;left:${b.x.toFixed(2)}%;` +
     `top:${(b.y * BAND_REM).toFixed(2)}rem;` +
     `width:${b.w.toFixed(2)}%`
 
-  return `<div class="${wrap} ${align}" style="${style}">${html}</div>`
+  return `<div style="${style}">${html}</div>`
 }
 
 /**
@@ -338,13 +363,10 @@ function positioned(b: DocBlock, docKey: string): string {
  * another means it to print first.
  */
 function flowed(b: DocBlock, docKey: string): string {
-  const html = compileBlock(b, docKey)
+  const html = blockMarkup(b, docKey)
   if (!html) return ''
-
-  const align = b.align ? ALIGN_CLASS[b.align] : ''
-  const wrap = needsWrapper(b) ? 'sd-block' : ''
   const style = b.w < 100 ? ` style="width:${b.w.toFixed(2)}%"` : ''
-  return `<div class="${wrap} ${align}"${style}>${html}</div>`
+  return `<div${style}>${html}</div>`
 }
 
 /**
@@ -390,7 +412,7 @@ export function compileDocument(spec: DocumentSpec, docKey: string): string {
     )
   }
 
-  return `${STYLE}<article class="${PAGE}">${sections.join('')}</article>`
+  return `<style>${BLOCK_STYLE}</style><article class="${PAGE}">${sections.join('')}</article>`
 }
 
 /**
@@ -430,7 +452,8 @@ function needsWrapper(b: DocBlock): boolean {
 export function compileBlocks(spec: DocumentSpec, docKey: string): Record<string, string> {
   const out: Record<string, string> = {}
   if (!spec || !Array.isArray(spec.blocks)) return out
-  for (const b of spec.blocks) out[b.id] = compileBlock(b, docKey)
+  // The very same markup the printed page gets — see blockMarkup.
+  for (const b of spec.blocks) out[b.id] = blockMarkup(b, docKey)
   return out
 }
 

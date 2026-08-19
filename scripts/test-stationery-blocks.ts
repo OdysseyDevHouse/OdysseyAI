@@ -17,7 +17,13 @@
  */
 import { PURCHASE_ORDER_DEFAULT } from '../src/lib/stationery/defaults/purchaseOrder'
 import { PURCHASE_ORDER_BLOCKS } from '../src/lib/stationery/defaults/purchaseOrderBlocks'
-import { bandExtent, compileDocument, supportsBlocks } from '../src/lib/stationery/compile'
+import {
+  BLOCK_STYLE,
+  bandExtent,
+  compileBlocks,
+  compileDocument,
+  supportsBlocks,
+} from '../src/lib/stationery/compile'
 import {
   parseSpec,
   serialiseSpec,
@@ -154,6 +160,55 @@ console.log('\n-- what compiles is an ordinary template --')
 
   ok('the block model is offered for A4 documents', supportsBlocks('purchase_order'))
   ok('...and not for the till slip, whose blocks are ESC/POS', !supportsBlocks('slip'))
+}
+
+/* ── the canvas must not lie about the paper ─────────────────────────────── */
+
+console.log('\n-- what the designer sees is what prints --')
+{
+  /*
+   * THE POINT OF COMPILING RATHER THAN RENDERING.
+   *
+   * The canvas draws each block on its own so it can be selected and dragged;
+   * the printer gets the whole document. Two paths, and the entire architecture
+   * rests on them producing the same markup for the same block — the moment they
+   * differ, the preview is a lie and the designer finds out on paper.
+   *
+   * They DID differ, and it took a browser to notice: compileBlocks returned the
+   * bare fragment while compileDocument wrapped the hide-when-empty blocks in
+   * `sd-block`. So an empty notes block kept its "NOTES" caption on the canvas
+   * and correctly dropped it when printed. Untested, so nothing caught it.
+   */
+  const perBlock = compileBlocks(PURCHASE_ORDER_BLOCKS, 'purchase_order')
+  const whole = compileDocument(PURCHASE_ORDER_BLOCKS, 'purchase_order')
+
+  ok('every block compiles for the canvas',
+    PURCHASE_ORDER_BLOCKS.blocks.every((b) => perBlock[b.id] !== undefined))
+
+  /*
+   * Every fragment must appear VERBATIM in the printed document. That is a
+   * stronger check than "both mention NOTES": it fails on a wrapper, a class or
+   * an attribute that only one side adds.
+   */
+  const missing = PURCHASE_ORDER_BLOCKS.blocks.filter(
+    (b) => perBlock[b.id] !== '' && !whole.includes(perBlock[b.id]),
+  )
+  ok('each block\'s canvas markup appears verbatim in the printed page',
+    missing.length === 0,
+    missing.map((b) => b.id).join(', '))
+
+  // The specific one that was wrong, named so a regression reads clearly.
+  ok('a hide-when-empty block carries its wrapper on the canvas too',
+    perBlock['po-notes'].startsWith('<div class="sd-block">'),
+    perBlock['po-notes'].slice(0, 60))
+
+  ok('...and the rules that hide it are exported for the canvas to apply',
+    BLOCK_STYLE.includes('.sd-block:has(> .sd-value:empty)'))
+
+  // A block with nothing to hide is not wrapped, because a wrapper that never
+  // does anything is a class someone later has to work out the purpose of.
+  ok('a block with nothing to hide is not wrapped',
+    !perBlock['po-letterhead'].includes('sd-block'))
 }
 
 /* ── permissions still degrade silently ─────────────────────────────────── */
