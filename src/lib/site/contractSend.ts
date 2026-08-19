@@ -140,7 +140,7 @@ export async function emailContractInvoice(
 
   let pdf: Buffer
   try {
-    pdf = await renderInvoicePdf(data)
+    pdf = await renderInvoicePdf(data, siteId)
   } catch (error) {
     return await record(
       siteId,

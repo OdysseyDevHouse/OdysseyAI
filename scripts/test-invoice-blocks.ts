@@ -460,6 +460,9 @@ console.log('\n-- storage, structure and the canvas --')
     'inv-rule-2': 4,
     'inv-banking': 26,
     'inv-notes': 11,
+    // A text block, one line tall when it prints and gone when it does not.
+    'inv-paylink': 4,
+    'inv-footnote': 4,
     'inv-rule-3': 4,
     'inv-closing': 4,
     'inv-printed': 4,

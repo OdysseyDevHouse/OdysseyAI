@@ -200,14 +200,29 @@ export const INVOICE_BLOCKS: DocumentSpec = {
 
     // Clear of the banking block, which is the tallest thing above it and grows
     // with a longer bank name. Measured at 66; 72 leaves room for that.
-    { id: 'inv-rule-3', kind: 'rule', band: 'footer', x: 0, y: 72, w: 100 },
+    /*
+     * ── TWO BLOCKS THAT PRINT NOTHING ON PAPER ──────────────────────────
+     *
+     * A pay-online link and a foot note naming the contract a recurring invoice
+     * came from. Neither exists on a printed copy, so both resolve to empty
+     * there and a lone-token text block drops itself — the design carries them
+     * without the printed page ever showing a gap.
+     *
+     * They are here rather than only in the emailed layout because there is only
+     * ONE layout now. A shop that wants the link on its printed copy too simply
+     * leaves it where it is.
+     */
+    { id: 'inv-paylink', kind: 'text', band: 'footer', x: 0, y: 66, w: 100, text: '{doc.paymentUrl}' },
+    { id: 'inv-footnote', kind: 'text', band: 'footer', x: 0, y: 70, w: 100, text: '{doc.footNote}' },
+
+    { id: 'inv-rule-3', kind: 'rule', band: 'footer', x: 0, y: 76, w: 100 },
 
     {
       id: 'inv-closing',
       kind: 'text',
       band: 'footer',
       x: 0,
-      y: 78,
+      y: 82,
       w: 100,
       // A token rather than typed words: the closing line differs between an
       // invoice and a quote, and the document kind decides it.
@@ -218,7 +233,7 @@ export const INVOICE_BLOCKS: DocumentSpec = {
       kind: 'text',
       band: 'footer',
       x: 0,
-      y: 84,
+      y: 88,
       w: 100,
       text: 'Printed {doc.printedAt}',
     },

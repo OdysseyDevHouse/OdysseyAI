@@ -501,8 +501,9 @@ export default function StationeryClient({
             )}
           </div>
           <p className="mt-3 text-xs text-muted">
-            PNG, JPEG, GIF or WebP. Upload it larger than you need — it is scaled down to
-            fit, so a big file stays sharp and a small one cannot be made bigger. In the
+            PNG or JPEG reads everywhere; GIF and WebP print but are left off emailed
+            invoices. Keep it under 500&nbsp;KB — an emailed PDF carries the file itself, so a
+            larger logo is skipped there rather than attached to every invoice. In the
             designer, add a <span className="font-medium text-ink">Your logo</span> block to
             put it where you like and set how tall it prints.
           </p>

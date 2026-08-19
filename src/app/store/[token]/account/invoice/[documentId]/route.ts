@@ -37,7 +37,7 @@ export async function GET(
   const data = await buildInvoice(siteId, site, id, {})
   if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const pdf = await renderInvoicePdf(data)
+  const pdf = await renderInvoicePdf(data, siteId)
   return new NextResponse(new Uint8Array(pdf), {
     headers: {
       'content-type': 'application/pdf',

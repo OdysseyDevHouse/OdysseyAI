@@ -108,7 +108,37 @@ export type InvoiceData = {
   generatedAt: Date
 }
 
-export function renderInvoicePdf(data: InvoiceData): Promise<Buffer> {
+/**
+ * An invoice as a PDF — from the site's own design where it has one.
+ *
+ * ── THE DESIGN NOW REACHES THE EMAIL ──────────────────────────────────────
+ *
+ * A shop that redesigned its invoice used to change the PRINTED copy and not
+ * the one that lands in the customer's inbox, because this file drew a fixed
+ * layout that read no template. Passing a siteId resolves that site's active
+ * design and draws it instead; the hand-drawn layout below stays as the fallback
+ * for a site that has designed nothing, and for the case where reading the
+ * design fails.
+ *
+ * ── FAILURE FALLS BACK, IT DOES NOT THROW ─────────────────────────────────
+ *
+ * An invoice that will not send because a template row is unreadable is a worse
+ * failure than one that sends looking ordinary. So every step of resolving the
+ * design is caught, and a miss lands on `draw` — the same document this function
+ * has always produced.
+ *
+ * Omitting the siteId keeps the old behaviour exactly, which is what makes this
+ * safe to adopt one caller at a time.
+ */
+export async function renderInvoicePdf(
+  data: InvoiceData,
+  siteId?: number,
+): Promise<Buffer> {
+  if (siteId !== undefined) {
+    const designed = await renderDesignedInvoice(data, siteId).catch(() => null)
+    if (designed) return designed
+  }
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: MARGIN, bufferPages: true })
     const chunks: Buffer[] = []
@@ -124,6 +154,77 @@ export function renderInvoicePdf(data: InvoiceData): Promise<Buffer> {
       reject(error)
     }
   })
+}
+
+/**
+ * The site's design, drawn — or null to fall back.
+ *
+ * Null rather than a throw for anything that goes wrong, because the caller is
+ * sending an invoice to a customer and the shipped layout is a perfectly good
+ * invoice. The one thing that must not happen is no invoice at all.
+ */
+async function renderDesignedInvoice(
+  data: InvoiceData,
+  siteId: number,
+): Promise<Buffer | null> {
+  const { activeTemplate } = await import('../site/stationeryTemplates')
+  const custom = await activeTemplate(siteId, 'invoice').catch(() => null)
+
+  /*
+   * Only a BLOCK design can be drawn. A site that chose the HTML editor has
+   * markup this cannot render — there is no honest way to draw arbitrary HTML
+   * with pdfkit — so it keeps the hand-drawn layout, and the setup screen already
+   * says the emailed copy follows the standard layout.
+   */
+  const { parseSpec } = await import('../stationery/blocks')
+  const { INVOICE_BLOCKS } = await import('../stationery/defaults/invoiceBlocks')
+
+  const spec =
+    custom?.format === 'blocks' && custom.body
+      ? parseSpec(custom.body, 'invoice')
+      : custom
+        ? null // markup design: not drawable, keep the hand-drawn layout
+        : INVOICE_BLOCKS // nothing designed: the shipped block layout
+
+  if (!spec || spec.blocks.length === 0) return null
+
+  const { invoiceDataTokens } = await import('../stationery/adapters/invoiceData')
+  const { renderSpecPdf } = await import('../stationery/pdf')
+  const { readLogo } = await import('../site/documentLogo')
+
+  /*
+   * ── TWO REASONS TO LEAVE THE LOGO OFF ──────────────────────────────
+   *
+   * FORMAT: pdfkit reads PNG and JPEG and nothing else — a GIF or a WebP would
+   * throw mid-draw and lose the whole invoice.
+   *
+   * SIZE: a PDF EMBEDS its images, and pdfkit stores a PNG's pixels without
+   * re-compressing them. The 2MB logo on this dev site became a 2.1MB image in
+   * every emailed invoice — the HTML page gets away with the same file because
+   * the browser fetches it once over /api/document-logo and caches it, and a
+   * mailbox does not work that way.
+   *
+   * A logo above the cap is therefore left off rather than sent. The invoice is
+   * a little plainer, it still arrives, and the shop can upload a smaller file —
+   * which is the right trade against attaching two megabytes to every email.
+   */
+  const MAX_LOGO_BYTES = 512 * 1024
+  const found = await readLogo(siteId).catch(() => null)
+  const logo =
+    found && (found.format === 'png' || found.format === 'jpeg') && found.bytes.length <= MAX_LOGO_BYTES
+      ? found
+      : null
+
+  const input = invoiceDataTokens(data, {
+    printedAt: data.generatedAt.toLocaleString('en-ZA', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }),
+    // The token itself is never drawn as text; the bytes go in separately.
+    logoHtml: null,
+  })
+
+  return renderSpecPdf(spec, 'invoice', input, logo?.bytes ?? null)
 }
 
 function draw(doc: PDFKit.PDFDocument, data: InvoiceData) {

@@ -290,6 +290,21 @@ const INVOICE: DocTypeDef = {
     { key: 'doc.soldBy', label: 'Served by', format: 'text' },
 
     /*
+     * ── TWO FIELDS THE EMAILED PDF CARRIES AND THE PRINTED PAGE DOES NOT ──
+     *
+     * A pay-online link is useless on paper and is the point of an emailed
+     * invoice; a foot note names the contract a recurring invoice came from.
+     * Both are tokens rather than a second document shape, so ONE design drives
+     * both media and a shop that wants the link on its printed copy may put it
+     * there.
+     *
+     * Empty on any document that has neither, and a detail row or lone-token
+     * text block drops itself when empty — so the design needs no conditional.
+     */
+    { key: 'doc.paymentUrl', label: 'Pay-online link', format: 'text', hint: 'Where a customer can pay this invoice. Empty when none has been minted, and on a printed copy.' },
+    { key: 'doc.footNote', label: 'Foot note', format: 'text', hint: 'Free text under the totals — the contract a recurring invoice came from, for instance.' },
+
+    /*
      * ── THE FIELDS THE PRINTED PAGE CARRIES THAT THIS CATALOG DID NOT ─────
      *
      * One route prints quotes, sales orders, pro formas and tax invoices, and

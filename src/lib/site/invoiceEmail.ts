@@ -85,7 +85,7 @@ export async function emailInvoiceDocument(
 
   let pdf: Buffer
   try {
-    pdf = await renderInvoicePdf(data)
+    pdf = await renderInvoicePdf(data, siteId)
   } catch (error) {
     return {
       ok: false,
