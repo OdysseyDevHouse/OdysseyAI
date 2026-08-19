@@ -413,30 +413,81 @@ nothing to nothing and passed. They go through `publishedProducts` now, with
 
 ---
 
-## Phase 5 — The pages nobody can touch
+## Phase 5 — The pages nobody can touch ✅ DONE
 
-**A real cart page.** `/checkout` is the cart today, and no page says "here is
-your basket" without immediately asking for an address. The cart drawer is
-`md:hidden`, so desktop shoppers have no cart view at all. Add `/cart` (already
-in `RESERVED_SLUGS`) with a builder-editable strip below it, `kind='cart'`,
-restricted to `cards|text|richtext|products|testimonial|divider|spacer`.
+> **Shipped.** `sql/site/190_storefront_currency.sql`, `191_cart_and_thankyou_pages.sql`
+> and `192_checkout_wording.sql`, applied to both sites. `/cart` is a real page,
+> `done` takes sections, and checkout gained exactly three settings.
 
-**The thank-you page.** `done/page.tsx` is 90 lines of fixed content on the
-highest-attention page in the funnel. Add `'thankyou'` to `PAGE_KINDS`, one row
-per site. The fixed confirmation block stays fixed — it carries the signed token
-— with sections below. **Constraint:** the page looks nothing up, deliberately,
-because the shopper is anonymous; `together` and `sameDepartment` are excluded.
+### A real cart page
 
-**Checkout, the safe subset only.** Policy links, one trust line, and a
-configurable order-note field. Nothing else. **No section-builder freedom on
-checkout, ever** — that is how a shop ships a Pay button below three product
-rows.
+`/checkout` was the basket as well as the checkout, so no page said "here is
+what you are buying" without immediately asking for an address. The drawer is
+`md:hidden` — a shopper on a laptop had no basket view at all, only a count in
+the masthead and a button that jumps to a form.
 
-Also cheap and embarrassing when a merchant finds them first:
-`page/[slug]/page.tsx` hard-codes `robots: { index: false }` while every other
-route calls `catalogueRobots`, so enabling indexing indexes products and
-silently excludes About/Delivery/Returns. And currency is hard-coded — `'R'` in
-`formatMoney`, `'ZAR'` in `productJsonLd`.
+**Checkout is deliberately left alone.** It is a thousand lines holding
+delivery, addresses, discounts, gift cards, loyalty and account credit in one
+interleaved block of state, and its own header argues correctly for one page
+rather than a wizard. Extracting the basket half would risk all of that to avoid
+duplicating a list of lines and a stepper, so `/cart` is written fresh.
+
+Three details that make it a basket page rather than a list: the product name is
+a **link** (somebody hesitating wants to check it, and making them search again
+is how a basket is abandoned rather than corrected); **remove is its own
+button**, not four taps on the minus; and the subtotal **says delivery comes
+later**, because a subtotal presented as a total is the commonest reason a
+basket is abandoned at the payment screen.
+
+Nothing draws until the cart reports `ready` — the basket lives in the browser,
+so without that gate "Your basket is empty" flashes on every load.
+
+### The thank-you page
+
+Ninety lines of fixed text on the highest-attention page in the funnel.
+Sections go **below** the confirmation, never above: somebody who has just paid
+is looking for the order number, and anything between them and it reads as an
+advertisement at the worst moment.
+
+**The page still looks nothing up about the order**, which is the property its
+own header defends. A page, a theme and a layout are the shop's rather than the
+shopper's. `sourcesFor` already refuses `together` and `sameDepartment` outside
+a product page, so nothing can ask "what did they just buy" and quietly answer
+nothing.
+
+### Checkout's safe subset
+
+Policy links, one trust line, and the order note's label — and no more. There is
+no section builder here for the same reason `Checkout.tsx` argues for one page:
+a merchant-arrangeable checkout is how a shop ships a Pay button below three
+product rows.
+
+Policy pages are stored as ids and resolved at render, so a rename keeps the
+link and an unpublished page stops appearing rather than becoming a dead link on
+the page that takes payments. **The write path checks shape only, not
+existence** — validating that a page is published at save time is a check that
+goes stale the moment somebody unpublishes one.
+
+### The two cheap fixes
+
+**`/page/[slug]` hard-coded `noindex`** while every other route asked
+`catalogueRobots`. Quiet and backwards: a shop that turned indexing *on* got its
+products indexed and its About, Delivery and Returns pages silently excluded.
+
+**Currency — and the plan was wrong about this one.** It called it "a day's
+mechanical work"; `formatMoney` has **1,023 call sites** and there was no
+currency setting anywhere. So this is deliberately **storefront-only**, and that
+limit is stated in the migration, the settings type and on the Setup screen
+itself: invoices, statements and till slips still print R. Threading a currency
+through what a shop says it is owed is a different piece of work with a
+different risk profile.
+
+A context rather than a prop, because 53 places draw a price and threading a
+symbol through them is 53 chances to miss one — with the miss being silent, a
+page where most prices say `$` and one says `R`. A symbol *and* an ISO code,
+because neither derives from the other: `$` is eight currencies, and a shop
+selling in dollars with `ZAR` in its structured data is quoted at a twentieth of
+its price in every search result.
 
 ---
 
@@ -477,3 +528,48 @@ silently excludes About/Delivery/Returns. And currency is hard-coded — `'R'` i
    switched off, so use site 2.
 5. **Say what a cap covers.** The paging walk stops at 12 pages and prints it —
    a silent cap reads as full coverage.
+
+---
+
+## Where this left the product
+
+All six phases shipped. A shop can now choose how it looks, how its listings are
+arranged, what its menu says, how it groups what it sells, how each section sits
+on the page, and what its basket, confirmation and checkout say — none of which
+was reachable before.
+
+**What is still not done, and should be said plainly:**
+
+- **Dragging into a column.** A columns section can be added, styled, filled and
+  rendered, but its children are arranged in the inspector rather than dragged
+  between columns. Nested `SortableContext` inside the page-level `DndContext`
+  is the remaining work.
+- **Currency outside the storefront.** Invoices, statements, printed documents
+  and the till all still print R. See Phase 5 on why.
+- **The generic inspector.** Three section kinds are drawn from the catalog;
+  sixteen keep hand-written panels, because their controls depend on each other,
+  on the page kind, or on live data.
+
+**Six bugs the plan predicted or the work uncovered**, each invisible to `tsc`
+and to the suites until something specifically looked:
+
+| Where | What |
+|---|---|
+| Section catalog | A module cycle that threw before a line of the app ran |
+| Section catalog | Key order — a permanent "unsaved changes" badge |
+| Theme layer | Eight palette pairings below AA; three presets whose brand colour was unreadable on their own background |
+| Listing presets | `UNIQUE` does not constrain NULLs, so every save inserted another default row |
+| Columns | `pageWarnings` and `describeLayoutChanges` both skipped column children |
+| Storefront | `/page/[slug]` hard-coded `noindex` against the shop's own setting |
+
+**And three in the tests themselves** — a check comparing `undefined` to
+`undefined`, a fixture selecting products by a flag the shop does not use, and
+an assertion that failed a correct `ORDER BY` because JavaScript sorts by code
+unit and MySQL does not. All three passed while proving nothing, which is the
+failure mode worth naming.
+
+**The verification habit that found most of them:** a browser pass every time,
+not only tests. Phases 0 through 5 each produced at least one defect that `tsc`
+and the suites were silent on — an import above `'use client'`, a body
+background outside the themed subtree, a pager reading "Showing 3993–14 of 14",
+a literal `undefined` in a class list.
