@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Badge, Callout, Card, CardBody, CardHeader, Select } from '@/components/ui'
+import { Badge, Button, Callout, Card, CardBody, CardHeader, Icons } from '@/components/ui'
 import {
   MAX_SLIP_BLOCKS,
+  SLIP_DEFAULT,
   SLIP_BLOCK_INFO,
   SLIP_BLOCK_KINDS,
   serialiseSlip,
@@ -14,6 +15,8 @@ import {
 import { previewSlipBlocksAction } from './actions'
 import SlipCanvas from './SlipCanvas'
 import SlipInspector from './SlipInspector'
+import SlipPalette from './SlipPalette'
+import { useEditHistory } from '@/lib/useEditHistory'
 
 /**
  * The till slip's designer.
@@ -55,6 +58,14 @@ export default function SlipDesigner({
 
   const blocks = spec.blocks
   const atLimit = blocks.length >= MAX_SLIP_BLOCKS
+
+  /*
+   * Undo and redo, in memory only — see lib/useEditHistory. A designer moving
+   * lines around wants "put that back" over the next few seconds, not a record
+   * of last Tuesday, and persisting it would raise three real questions in
+   * exchange for a feature nobody asked for.
+   */
+  const history = useEditHistory(spec, onChange)
 
   /*
    * Debounced, with a stale answer dropped — the same guard the A4 designer
@@ -115,7 +126,15 @@ export default function SlipDesigner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, refresh, blocks.length])
 
-  const set = (next: SlipBlock[]) => onChange({ version: 1, blocks: next })
+  /*
+   * ── EVERY EDIT GOES THROUGH HERE ───────────────────────────────────────
+   *
+   * Undo records from one place, so no change can slip past it. An edit that
+   * called onChange directly would leave the stack describing a past that never
+   * happened, and undo would then jump somewhere the designer never was — worse
+   * than having none, because they would trust it.
+   */
+  const set = (next: SlipBlock[]) => history.commit({ version: 1, blocks: next })
 
   const patch = (i: number, changes: Partial<SlipBlock>) =>
     set(blocks.map((b, j) => (j === i ? { ...b, ...changes } : b)))
@@ -136,19 +155,49 @@ export default function SlipDesigner({
     setSelected(null)
   }
 
-  const add = (kind: SlipBlockKind) => {
+  /** Put a new line in at a position. */
+  const insert = (kind: SlipBlockKind, at: number) => {
     if (atLimit) return
-    /*
-     * A new block lands AFTER the selected one rather than at the end, because
-     * "put a line under this" is what a shop clicking a block and then adding
-     * one means. With nothing selected it goes at the end, which is the only
-     * sensible reading of no context.
-     */
-    const at = selected === null ? blocks.length : selected + 1
     const next = [...blocks]
     next.splice(at, 0, { kind })
     set(next)
     setSelected(at)
+  }
+
+  /*
+   * A plain CLICK on a palette tile, for anyone not dragging — it lands at the
+   * end, which is the only honest reading of a gesture that named no position.
+   * Dragging is how you say where.
+   */
+  const add = (kind: SlipBlockKind) => insert(kind, blocks.length)
+
+  /*
+   * ── A LINE CARRIED IN FROM THE PALETTE ─────────────────────────────────
+   *
+   * The tile starts the gesture and the canvas finishes it: the canvas already
+   * answers "which gap is the pointer over" for a line being moved, and asking
+   * that question twice is how two answers start to disagree.
+   *
+   * Pointer capture is taken on the WINDOW rather than on the tile, because the
+   * pointer has to travel from the palette to the paper and a capture held by
+   * the tile would keep every move event to itself.
+   */
+  const [adding, setAdding] = useState<{ kind: SlipBlockKind; label: string } | null>(null)
+
+  const pickUp = (kind: SlipBlockKind, e: React.PointerEvent) => {
+    e.preventDefault()
+    setAdding({ kind, label: SLIP_BLOCK_INFO[kind].label })
+
+    const end = () => {
+      setAdding(null)
+      window.removeEventListener('pointerup', end)
+    }
+    /*
+     * Cleared on the next pointerup WHEREVER it happens. A drop on the slip is
+     * handled by the canvas, which fires first; this is what stops a line
+     * released over the palette or the page from being carried for ever.
+     */
+    window.addEventListener('pointerup', end)
   }
 
   /* Blocks that may appear more than once — a rule, a blank line, a paragraph.
@@ -177,28 +226,18 @@ export default function SlipDesigner({
 
         <Card>
           <CardHeader
-            title="Add a line"
-            description="It lands under whatever you have selected."
+            title="Lines you can add"
+            description="Drag one onto the slip where you want it."
             action={atLimit ? <Badge tone="warning">Full</Badge> : undefined}
           />
-          <CardBody>
-            <Select
-              aria-label="Add a block"
-              className="w-full"
-              value=""
-              disabled={atLimit}
-              onChange={(e) => {
-                if (e.target.value) add(e.target.value as SlipBlockKind)
-              }}
-            >
-              <option value="">Choose what to add…</option>
-              {offered.map((k) => (
-                <option key={k} value={k}>
-                  {SLIP_BLOCK_INFO[k].label}
-                </option>
-              ))}
-            </Select>
-            <p className="mt-2 text-xs text-muted">
+          <CardBody className="max-h-[26rem] overflow-y-auto">
+            <SlipPalette
+              offered={offered}
+              atLimit={atLimit}
+              onPickUp={pickUp}
+              onAdd={add}
+            />
+            <p className="mt-3 text-xs text-muted">
               {blocks.length} of {MAX_SLIP_BLOCKS} lines
             </p>
           </CardBody>
@@ -206,7 +245,53 @@ export default function SlipDesigner({
       </div>
 
       <Card>
-        <CardHeader title="The slip" description={label || 'A sample sale, on 80mm paper.'} />
+        <CardHeader
+          title="The slip"
+          description={label || 'A sample sale, on 80mm paper.'}
+          action={
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Undo"
+                title="Undo"
+                disabled={!history.canUndo}
+                onClick={history.undo}
+              >
+                <Icons.Undo aria-hidden className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Redo"
+                title="Redo"
+                disabled={!history.canRedo}
+                onClick={history.redo}
+              >
+                <Icons.Redo aria-hidden className="h-4 w-4" />
+              </Button>
+              {/*
+                Reset CLEARS the history rather than recording itself as a step.
+                Undoing back past a reset would land in a design the shop had
+                deliberately thrown away, which is not what "undo" means to
+                anyone — and the shipped layout is always one click away again.
+              */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  onChange(SLIP_DEFAULT)
+                  history.clear()
+                  setSelected(null)
+                }}
+              >
+                Reset to standard
+              </Button>
+            </div>
+          }
+        />
         <CardBody>
           {warnings.length > 0 && (
             <Callout tone="warning" className="mb-4">
@@ -227,6 +312,12 @@ export default function SlipDesigner({
             selected={selected}
             onSelect={setSelected}
             onReorder={reorder}
+            adding={adding}
+            onDrop={(at) => {
+              if (adding) insert(adding.kind, at)
+              setAdding(null)
+            }}
+            onCancelAdd={() => setAdding(null)}
           />
         </CardBody>
       </Card>

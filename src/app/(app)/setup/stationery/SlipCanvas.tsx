@@ -1,7 +1,12 @@
 'use client'
 
 import { useCallback, useRef, useState } from 'react'
-import { SLIP_BLOCK_INFO, type SlipBlock, type SlipSpec } from '@/lib/stationery/slip'
+import {
+  SLIP_BLOCK_INFO,
+  type SlipBlock,
+  type SlipBlockKind,
+  type SlipSpec,
+} from '@/lib/stationery/slip'
 
 /**
  * The slip, as a thing you click on and drag.
@@ -36,6 +41,9 @@ export default function SlipCanvas({
   selected,
   onSelect,
   onReorder,
+  adding = null,
+  onDrop,
+  onCancelAdd,
 }: {
   spec: SlipSpec
   /** Each block's rendered markup, by index. Empty where it prints nothing. */
@@ -44,6 +52,19 @@ export default function SlipCanvas({
   onSelect: (index: number | null) => void
   /** Move the block at `from` so it sits at `to`. */
   onReorder: (from: number, to: number) => void
+  /**
+   * A line being carried in from the palette, or null.
+   *
+   * The palette starts the gesture and hands it over; the canvas tracks the
+   * pointer and decides where it lands, because it already answers "which gap is
+   * this" for a line being MOVED. Two implementations of that would disagree the
+   * first time either changed.
+   */
+  adding?: { kind: SlipBlockKind; label: string } | null
+  /** The carried line was dropped at this position. */
+  onDrop?: (index: number) => void
+  /** The carried line was let go somewhere that is not the slip. */
+  onCancelAdd?: () => void
 }) {
   const listRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState<number | null>(null)
@@ -73,11 +94,25 @@ export default function SlipCanvas({
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (dragging === null) return
+    // A line being carried in from the palette shows a landing strip too — it is
+    // the same question, asked about a block that does not exist yet.
+    if (dragging === null && !adding) return
     setOver(gapAt(e.clientY))
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
+    /*
+     * A line dropped in from the palette lands at the gap under the pointer.
+     * No index correction: it is not in the list yet, so it passes nothing on
+     * the way.
+     */
+    if (adding) {
+      const to = gapAt(e.clientY)
+      setOver(null)
+      onDrop?.(to)
+      return
+    }
+
     if (dragging === null) return
     const to = gapAt(e.clientY)
     listRef.current?.releasePointerCapture?.(e.pointerId)
@@ -102,6 +137,13 @@ export default function SlipCanvas({
       onPointerCancel={() => {
         setDragging(null)
         setOver(null)
+        onCancelAdd?.()
+      }}
+      onPointerLeave={() => {
+        // Only the strip goes: the drag continues, so coming back re-finds a
+        // gap. Ending the gesture here would drop a line the moment the pointer
+        // strayed over the edge of the paper.
+        if (adding) setOver(null)
       }}
     >
       {spec.blocks.map((b, i) => {
@@ -113,7 +155,7 @@ export default function SlipCanvas({
         return (
           <div key={i}>
             {/* The landing strip, drawn only while something is being carried. */}
-            {dragging !== null && over === i && (
+            {(dragging !== null || adding) && over === i && (
               <div className="my-0.5 h-0.5 rounded-full bg-brand" />
             )}
 
@@ -168,7 +210,7 @@ export default function SlipCanvas({
       })}
 
       {/* The gap after the last block. */}
-      {dragging !== null && over === spec.blocks.length && (
+      {(dragging !== null || adding) && over === spec.blocks.length && (
         <div className="my-0.5 h-0.5 rounded-full bg-brand" />
       )}
     </div>

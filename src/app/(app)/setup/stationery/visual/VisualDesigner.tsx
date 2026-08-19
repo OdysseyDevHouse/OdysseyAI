@@ -33,6 +33,8 @@ import {
   type DistributeMode,
 } from '@/lib/site/floorGeometry'
 import { useDeviceToggle } from '@/lib/useDeviceToggle'
+import { useEditHistory } from '@/lib/useEditHistory'
+import { DEFAULT_SPECS } from '@/lib/stationery/resolve'
 import { previewBlocksAction } from '../actions'
 import BlockPalette from './BlockPalette'
 import DocumentCanvas from './DocumentCanvas'
@@ -64,8 +66,6 @@ import BlockInspector, { type TokenChoice } from './BlockInspector'
  * The spec, one mutation funnel with undo behind it, the preview request, and
  * the align/distribute tools. The canvas reports gestures; it stores nothing.
  */
-
-const HISTORY_LIMIT = 50
 
 export default function VisualDesigner({
   docType,
@@ -147,35 +147,40 @@ export default function VisualDesigner({
 
   /*
    * One mutation funnel, so undo has a single place to record from and no edit
-   * can slip past it. The storefront builder's `commit`, minus the redo stack —
-   * this screen is small enough that Ctrl+Z is the whole ask.
+   * can slip past it. An edit that called onChange directly would leave the
+   * stack describing a past that never happened, and undo would then jump
+   * somewhere the designer never was.
+   *
+   * The stack itself is lib/useEditHistory, shared with the slip designer. It
+   * gained a REDO when the slip did, and two implementations of "put that back"
+   * would have drifted apart the first time either was touched.
    */
-  const past = useRef<DocumentSpec[]>([])
-  const commit = useCallback(
-    (next: DocumentSpec) => {
-      past.current = [...past.current.slice(-(HISTORY_LIMIT - 1)), spec]
-      onChange(next)
-    },
-    [spec, onChange],
-  )
+  const history = useEditHistory(spec, onChange)
+  const commit = history.commit
 
-  const undo = useCallback(() => {
-    const prev = past.current.pop()
-    if (prev) onChange(prev)
-  }, [onChange])
+  /*
+   * The design this document type ships with, and what Reset goes back to. A
+   * type with no default has nothing to reset TO — see the header.
+   */
+  const shipped = DEFAULT_SPECS[docType] ?? null
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return
+      if (!(e.ctrlKey || e.metaKey)) return
+      const k = e.key.toLowerCase()
+      if (k !== 'z' && k !== 'y') return
       // A field-level undo inside an input must still work.
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       e.preventDefault()
-      undo()
+      // Ctrl+Y and Ctrl+Shift+Z both redo — Windows and the rest of the world
+      // disagree about which, and a designer should not have to know.
+      if (k === 'y' || e.shiftKey) history.redo()
+      else history.undo()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [undo])
+  }, [history])
 
   const add = useCallback(
     (kind: DocBlockKind) => {
@@ -353,12 +358,60 @@ export default function VisualDesigner({
           title="The page"
           description={label || 'Rendered with your own data.'}
           action={
-            <Switch
-              checked={outlines.on}
-              onChange={outlines.setOn}
-              label="Outlines"
-              hint="Show where every block starts and ends."
-            />
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={outlines.on}
+                onChange={outlines.setOn}
+                label="Outlines"
+                hint="Show where every block starts and ends."
+              />
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Undo"
+                  title="Undo"
+                  disabled={!history.canUndo}
+                  onClick={history.undo}
+                >
+                  <Icons.Undo aria-hidden className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Redo"
+                  title="Redo"
+                  disabled={!history.canRedo}
+                  onClick={history.redo}
+                >
+                  <Icons.Redo aria-hidden className="h-4 w-4" />
+                </Button>
+                {/*
+                  Reset CLEARS the history rather than recording itself as a step.
+                  Undoing back past a reset would land in a design the shop had
+                  deliberately thrown away, which is not what "undo" means to
+                  anyone — and the shipped layout is always one click away again.
+
+                  A document type with no shipped design has nothing to reset TO,
+                  so it gets no button rather than one that empties the page.
+                */}
+                {shipped && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      onChange(shipped)
+                      history.clear()
+                      setSelectedIds([])
+                    }}
+                  >
+                    Reset to standard
+                  </Button>
+                )}
+              </div>
+            </div>
           }
         />
         <CardBody>
