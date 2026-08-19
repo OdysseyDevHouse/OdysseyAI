@@ -246,27 +246,66 @@ run, and reading the diff would not have.
 
 ## Phase 3 — Per-section styling and a columns block
 
-Replace `tone: plain|tinted` with five role-based controls: `background`
-(`none|tinted|surface|contrast`), `padding`, `width`
-(`contained|wide|full`), `align`, `divider`. Everything resolves through theme
-roles, never hex — the rule rich-text colours already establish. The constraint
-was never "two options", it was "from the palette".
+### Done: the section band ✅
 
-`width: 'full'` is the notable addition: a full-bleed hero is table stakes and
-currently impossible, because `main` is `max-w-6xl`. It needs the bleed outside
-the content column — generalise `toned()` into a `banded()` wrapper and move the
-width cap onto the sections that want it.
+> **Shipped.** `STYLE_FIELDS` in the catalog, `SectionBand.tsx` renders it, and
+> the inspector draws the controls from the same list. 16 assertions in
+> `npm run test:section-band`.
 
-**The columns block, depth 1 and non-recursive.** The documented refusal targets
-*recursive* containers — a tree of unbounded depth, undraggable and uncappable.
-That failure mode does not require refusing columns; it requires refusing
-nesting. Four rules make it safe: `columns` is legal only on kind `'columns'` and
-a child may never be one (checked before recursion, so depth is capped
-*structurally*); child kinds are a whitelist, not "everything minus columns";
-`MAX_COLUMN_CHILDREN = 4` and children count against `MAX_SECTIONS` via a running
-budget; ids stay globally unique so drag/drop, the diff and version history work
-unchanged. `describeLayoutChanges` and `pageWarnings` need a `flattenSections()`
-walk, or a banner with no alt text inside a column skips the publish warning.
+`tone: plain | tinted` was one bit. Three fields replace it — `background`,
+`padding`, `width` — and the instinct on widening the first was to offer a
+colour. That is the wrong direction: a section painted with a hex an owner
+typed can fight the shop's palette and cannot follow a theme change, which are
+the two things the token layer exists to prevent. These are **roles**, resolved
+through the theme, exactly as rich-text colours are.
+
+**`contrast` is why it was worth widening at all.** A dark band across a light
+page is the most-used section control in every builder on the market and was
+unreachable with two options. It uses `--color-ink` on `--color-canvas`, so a
+shop that chose the dark theme gets a *light* band — hard-coding a dark colour
+would make "contrast" mean "dark", which is wrong half the time.
+
+**`width: full` needed real work.** The page's cap sits on `<main>`, so bleeding
+past it means escaping a container rather than widening one: 50% of the
+*viewport* minus 50% of the element, because `100vw` alone includes the
+scrollbar and overflows by its width. The content goes back inside a container
+that respects the shop's own page width, and the corners are squared — a card
+radius against the screen edge leaves two slivers of page showing through.
+
+**A section nobody styled gains no wrapper at all**, not a wrapper with no
+classes. Every page saved before this renders through exactly the markup it
+always did, and `tone: 'tinted'` still reads as `background: 'tinted'`.
+
+`banded()` lives apart from `HomeSections`, and that is the point rather than
+tidying: `HomeSections` reaches the database through its imports, so nothing
+beside it can run outside a request. Pure, it is rendered by a test and drawn by
+the builder's canvas through the same function the shop uses.
+
+**The bug worth recording.** An unrecognised padding interpolated straight into
+the class list, emitting `class="rounded-card undefined"` — silent, permanent,
+and exactly what a stored layout from an older build would produce on a live
+shop.
+
+### Remaining: the columns block
+
+Depth 1 and non-recursive. The documented refusal targets *recursive*
+containers — a tree of unbounded depth, undraggable and uncappable — and that
+failure mode does not require refusing columns; it requires refusing nesting.
+
+Four rules make it safe: `columns` is legal only on kind `'columns'` and a child
+may never be one, checked before recursion so depth is capped *structurally*;
+child kinds are a whitelist, not "everything minus columns"; `MAX_COLUMN_CHILDREN
+= 4` with children counting against `MAX_SECTIONS` via a running budget; and ids
+stay globally unique so drag/drop, the publish diff and version history work
+unchanged.
+
+`describeLayoutChanges` and `pageWarnings` need a `flattenSections()` walk, or a
+banner with no alt text inside a column skips the publish warning.
+
+**This is the fiddliest thing left in the programme.** Nested `SortableContext`
+inside the page-level `DndContext` is ~150 lines of drag work, and the drag
+layer is the part of the builder that currently works well. Worth doing on its
+own, not alongside anything else.
 
 ---
 
