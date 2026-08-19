@@ -1033,6 +1033,12 @@ export function TenderPad({
                   full width they left a gap under the tender keys the moment a
                   settled sale had no notes left to offer. */}
               <div className="flex flex-col gap-2">
+                {/* The same heading treatment the tender keys carry, so the two
+                    columns start on the same line rather than one sitting a
+                    heading's height above the other. */}
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Quick amounts
+                </p>
                 <AmountRow
                   owed={owed}
                   entry={entry}
@@ -1045,7 +1051,12 @@ export function TenderPad({
                     would show a cashier nothing back as they key — and Exact
                     and the notes fill this same figure, so it is the one place
                     that answers "what will the next tender key take?". */}
+                {/* `inline`, so the label sits INSIDE the box beside the
+                    figure rather than as a caption above it — one control
+                    rather than a heading and a box, which is what leaves the
+                    notes above and the keys below reading as one column. */}
                 <NumPadDisplay
+                  layout="inline"
                   label={asking ? `${asking.name} — amount` : 'Amount to tender'}
                   value={entry}
                   placeholder="0.00"
