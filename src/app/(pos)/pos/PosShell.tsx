@@ -4573,6 +4573,11 @@ export default function PosShell({
           operatorName={operatorName}
           terminalId={terminal?.id ?? null}
           terminalLabel={terminal?.code ?? null}
+          /* The code is the identity and goes first; the till number is what a
+             shop actually calls the machine out loud ("till 2"), so it trails
+             it. Deliberately not `terminalLabel` — that value bakes in its own
+             bullet for the status bar, and the gate sets the two parts itself. */
+          terminalName={terminal?.tillNumber ? `Till ${terminal.tillNumber}` : null}
           /* NOT `terminalId === null`, which the gate could work out for
              itself. `terminal` is also undefined for the tick before `device`
              resolves, so inferring it there would flash "not set up as a till"

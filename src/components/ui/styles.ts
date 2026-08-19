@@ -228,9 +228,16 @@ export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full'
  * containing block to flex against, so the usual fixed/inset centring does not
  * apply. `p-0` overrides the UA stylesheet's padding, which would otherwise sit
  * outside our own header/body/footer borders and make them stop short.
+ *
+ * `text-left` is not decoration: a <dialog> paints in the top layer but still
+ * INHERITS from wherever it was mounted in the DOM. Mounted from a button in a
+ * right-aligned table cell — a row action, which is where row actions live —
+ * every unaligned label inside the dialog silently came out right-aligned. The
+ * panel has to state its own alignment so its contents never depend on the
+ * markup that happened to open it.
  */
 export const MODAL_PANEL =
-  'm-auto w-[calc(100vw-2rem)] rounded-card border border-border bg-surface p-0 text-ink shadow-pop ' +
+  'm-auto w-[calc(100vw-2rem)] rounded-card border border-border bg-surface p-0 text-left text-ink shadow-pop ' +
   'backdrop:bg-ink/40'
 
 export const MODAL_SIZE: Record<ModalSize, string> = {

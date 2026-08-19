@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import {
   Badge,
+  type BadgeTone,
   Button,
   Callout,
   Card,
@@ -31,7 +32,7 @@ import {
   type TipsState,
   type TipsResult,
 } from './actions'
-import type { PayoutMethod } from '@/lib/site/tips'
+import type { OutstandingTip, PayoutMethod, TipTenderSplit } from '@/lib/site/tips'
 
 /**
  * Paying tips out.
@@ -62,6 +63,70 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: 'Added by hand',
 }
 
+
+/**
+ * The tender split as chips, on a row that already carries a name and an amount.
+ *
+ * Zero-value tenders are OMITTED rather than shown as R0.00. A row reading "Cash R20 ·
+ * Card R0 · EFT R0 · Account R0 · Other R0" buries the single fact it is there to carry,
+ * and most shifts only ever see two of the five.
+ *
+ * Cash comes first because the first thing a manager holding a drawer wants to know is how
+ * much of this is in it. Tone is meaning, not decoration: cash is money in the till,
+ * account is money the shop has NOT been paid yet, and the rest are neither.
+ */
+const TENDER_CHIPS: readonly { key: keyof TipTenderSplit; label: string; tone: BadgeTone }[] = [
+  { key: 'cash', label: 'Cash', tone: 'success' },
+  { key: 'card', label: 'Card', tone: 'neutral' },
+  { key: 'eft', label: 'EFT', tone: 'neutral' },
+  { key: 'account', label: 'Account', tone: 'warning' },
+  { key: 'other', label: 'Other', tone: 'neutral' },
+]
+
+function TenderChips({ split }: { split: TipTenderSplit }) {
+  const shown = TENDER_CHIPS.filter((c) => split[c.key] > 0)
+  if (shown.length === 0) return null
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-1.5">
+      {shown.map((c) => (
+        <Badge key={c.key} tone={c.tone}>
+          {c.label} {formatMoney(split[c.key])}
+        </Badge>
+      ))}
+    </span>
+  )
+}
+
+/**
+ * The modal's tips totalled per tender.
+ *
+ * Grouped in the client because the modal already holds every row it needs — a round trip
+ * to add up ten numbers it is already rendering would be a slower way to get the same
+ * answer. Keyed on `tenderCode`, displayed by `tenderName`: two tenders can never share a
+ * code, but nothing stops a shop giving two of them the same name.
+ *
+ * Insertion-ordered, so the subtotals appear in the order the tips did rather than in some
+ * order of their own that a reader has to reconcile against the list above them.
+ */
+function tenderSubtotals(
+  tips: readonly OutstandingTip[],
+): { code: string; name: string; total: number; inDrawer: boolean }[] {
+  const by = new Map<string, { code: string; name: string; total: number; inDrawer: boolean }>()
+  for (const t of tips) {
+    const found = by.get(t.tenderCode)
+    if (found) {
+      found.total = round(found.total + t.amount, 2)
+      continue
+    }
+    by.set(t.tenderCode, {
+      code: t.tenderCode,
+      name: t.tenderName,
+      total: round(t.amount, 2),
+      inDrawer: t.tipInDrawer,
+    })
+  }
+  return [...by.values()]
+}
 export default function TipsPayoutClient({
   from,
   to,
@@ -87,7 +152,7 @@ export default function TipsPayoutClient({
   const [shares, setShares] = useState<Record<number, number>>({})
 
   const [detail, setDetail] = useState<
-    { name: string; tips: { id: number; amount: number; source: string; documentNumber: string; date: string }[] } | null
+    { name: string; tips: OutstandingTip[] } | null
   >(null)
 
   const apply = (result: TipsResult, done: string) => {
@@ -119,6 +184,13 @@ export default function TipsPayoutClient({
   )
   const totalPaid = round(
     state.payouts.reduce((sum, p) => round(sum + p.amount, 2), 0),
+    2,
+  )
+  /* Of everything owed, how much the till should physically be holding. Read from each
+     row's own inDrawer figure, which follows the shop's tip_in_drawer flag rather than the
+     cash chip — a shop's own cash-like tender counts here too. */
+  const totalInDrawer = round(
+    state.owed.reduce((sum, r) => round(sum + r.byTender.inDrawer, 2), 0),
     2,
   )
 
@@ -216,6 +288,14 @@ export default function TipsPayoutClient({
           <div className="ml-auto">
             <StatStrip>
               <StatTile label="Owed" value={formatMoney(totalOwed)} icon={<Icons.HandCoins />} />
+              {/* "In the drawer", not "in cash": the figure follows each tender's own
+                  tip_in_drawer flag, so a shop's cash-like tender of its own is counted
+                  here too. Asked once at the top rather than five times down the list. */}
+              <StatTile
+                label="Of that, in the drawer"
+                value={formatMoney(totalInDrawer)}
+                icon={<Icons.Banknote />}
+              />
               <StatTile label="Paid in this period" value={formatMoney(totalPaid)} icon={<Icons.Check />} />
             </StatStrip>
           </div>
@@ -249,6 +329,7 @@ export default function TipsPayoutClient({
                       <span className="text-xs text-faint">
                         {row.count} tip{row.count === 1 ? '' : 's'}
                       </span>
+                      <TenderChips split={row.byTender} />
                     </span>
                   }
                   value={
@@ -282,6 +363,7 @@ export default function TipsPayoutClient({
                       <span className="text-xs text-faint">
                         {pool.count} tip{pool.count === 1 ? '' : 's'} nobody is named on
                       </span>
+                      <TenderChips split={pool.byTender} />
                     </span>
                   }
                   value={
@@ -503,11 +585,27 @@ export default function TipsPayoutClient({
                   <span className="flex flex-col">
                     <span className="text-body">{t.documentNumber}</span>
                     <span className="text-xs text-faint">
-                      {String(t.date).slice(0, 10)} · {SOURCE_LABELS[t.source] ?? t.source}
+                      {String(t.date).slice(0, 10)} · {SOURCE_LABELS[t.source] ?? t.source} · {t.tenderName}
                     </span>
                   </span>
                 }
                 value={formatMoney(t.amount)}
+              />
+            ))}
+            {/* Per-tender subtotals, between the individual tips and the total they add to.
+                The "not in the drawer" badge is the fact somebody stuffing an envelope
+                needs: that money is not in the till to be handed over tonight. */}
+            {tenderSubtotals(detail?.tips ?? []).map((s) => (
+              <SummaryRow
+                key={s.code}
+                tone="muted"
+                label={
+                  <span className="flex items-center gap-2">
+                    {s.name}
+                    {!s.inDrawer && <Badge tone="neutral">not in the drawer</Badge>}
+                  </span>
+                }
+                value={formatMoney(s.total)}
               />
             ))}
             <SummaryTotal

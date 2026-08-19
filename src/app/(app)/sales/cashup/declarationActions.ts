@@ -21,7 +21,25 @@ import { visibleFor, type VisibleDeclaration } from './[shiftId]/declare/visible
  * re-checks `sales.cashup`, because a hidden button is not a boundary.
  *
  * The payload the browser gets is shaped by ./[shiftId]/declare/visible.ts,
- * which the page and these actions share so the two cannot disagree about it.
+ * which the till's actions share, so the two cannot disagree about it.
+ *
+ * ── NOTHING CALLS THIS TODAY, AND IT IS NOT DEAD ────────────────────────────
+ *
+ * These wrapped the back-office declaration page, which is gone: the back
+ * office now opens the till's own dialog, so there is one cash-up screen rather
+ * than two renderings of one that had already drifted apart. The till drives
+ * `pos/shiftActions.ts` instead, and it computes the same view from the same
+ * engine behind the same `visibleFor` strip.
+ *
+ * `prePrintAction` is the reason this file stayed. It has no equivalent at the
+ * till: it saves the count AND marks it printed (`notePrint`), which is how a
+ * supervisor signs a paper sheet before the cash-up is finalised — the
+ * `printCount` it increments is still read and still rendered in the dialog's
+ * Counters panel. Deleting this file would delete that capability, not merely
+ * some unused code, so it waits here for a Pre-print control at the till.
+ *
+ * Delete the rest by all means; leave `prePrintAction` until the till grows a
+ * button for it.
  */
 
 export type DeclarationResult =

@@ -26,6 +26,9 @@ import {
   closeShiftAction,
   drawerMovementAction,
 } from './actions'
+/* The till's declaration dialog, reused verbatim — there is one cash-up
+   screen in this product and this is it. See `declaring` below. */
+import DeclarationModal from '@/app/(pos)/pos/DeclarationModal'
 
 /**
  * Counting the drawer.
@@ -75,6 +78,23 @@ export default function CashupClient({
   const [opening, setOpening] = useState(false)
   const [counting, setCounting] = useState<OpenShift | null>(null)
   const [moving, setMoving] = useState<OpenShift | null>(null)
+  /**
+   * The shift whose full declaration is open.
+   *
+   * ── ONE CASH-UP SCREEN, NOT TWO ────────────────────────────────────────
+   *
+   * This used to be a link to /sales/cashup/[id]/declare — a second, separate
+   * rendering of a count the till already knew how to do. Two screens for one
+   * job meant every change to the declaration had to be made twice, and they
+   * had already drifted: the two disagreed about how cash was declared and what
+   * a signed cash-up looked like.
+   *
+   * So the back office now opens the TILL's dialog. It is the same component,
+   * against the same server actions and the same `visibleFor` strip, so there
+   * is exactly one answer to "what does a cash-up look like" — and a change to
+   * it lands in both places because there is only one place.
+   */
+  const [declaring, setDeclaring] = useState<OpenShift | null>(null)
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -149,14 +169,15 @@ export default function CashupClient({
                     <Button variant="secondary" size="sm" onClick={() => setCounting(shift)}>
                       Quick count
                     </Button>
-                    <ButtonLink
-                      href={`/sales/cashup/${shift.id}/declare`}
+                    {/* The same dialog the till uses — see `declaring`. */}
+                    <Button
                       variant="success"
                       size="sm"
+                      onClick={() => setDeclaring(shift)}
                     >
                       <Icons.Check size={15} />
                       Cash up
-                    </ButtonLink>
+                    </Button>
                   </div>
                 }
               />
@@ -225,6 +246,26 @@ export default function CashupClient({
         pending={pending}
         onClose={() => setMoving(null)}
         onRecord={(input) => moving && run(() => drawerMovementAction(moving.id, input))}
+      />
+
+      {/* The till's own declaration, opened from the back office — see
+          `declaring`. `pendingSales` is 0 because an outbox is a property of the
+          MACHINE that took the sales: the back office has none, and claiming a
+          number here would put a warning about queued sales in front of
+          somebody with no way to send them. */}
+      <DeclarationModal
+        open={declaring !== null}
+        shiftId={declaring?.id ?? null}
+        terminalId={
+          terminals.find((t) => t.code === declaring?.terminalCode)?.id ?? null
+        }
+        pendingSales={0}
+        onClose={() => setDeclaring(null)}
+        /* Signing off closes the shift, so the list behind this is now wrong. */
+        onFinalized={() => {
+          setDeclaring(null)
+          router.refresh()
+        }}
       />
     </>
   )

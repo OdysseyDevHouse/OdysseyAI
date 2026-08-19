@@ -1,8 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import {
-  Accordion,
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from 'react'
+import {
   Badge,
   Button,
   Callout,
@@ -11,12 +18,15 @@ import {
   Input,
   Modal,
   NumPad,
+  RowDisclosure,
   Select,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
   TABLE_TD,
+  TABLE_TD_INPUT,
   TABLE_NUMERIC,
+  TABLE_ROW,
   useToast,
 } from '@/components/ui'
 import { formatMoney, round } from '@/lib/decimals'
@@ -34,19 +44,30 @@ import type { VisibleDeclaration } from '@/app/(app)/sales/cashup/[shiftId]/decl
 /**
  * The detailed cash-up, at the till.
  *
- * ── WHY THIS EXISTS RATHER THAN A LINK ──────────────────────────────────────
+ * ── THE ONLY CASH-UP SCREEN IN THE PRODUCT ──────────────────────────────────
  *
- * The same declaration lives in the back office at /sales/cashup/[id]/declare,
- * and sending the cashier there would be wrong twice over: it needs a
- * back-office login the person holding the PIN may not have, and navigating
- * away abandons whatever is on the till screen. A drawer is counted where the
- * drawer is.
+ * There used to be two: this, and a back-office page at
+ * /sales/cashup/[id]/declare rendering the same declaration a second time. Two
+ * screens for one job meant every change had to be made twice, and they had
+ * already drifted — they disagreed about how cash was declared and about what a
+ * signed cash-up looked like.
  *
- * It is a MODAL and not a route for the same reason everything else at this
- * till is: the POS is one screen that never navigates. The count survives the
- * dialog being closed because the draft is saved server-side on every tender
- * commit — so an interruption mid-count loses nothing, which is the property
- * the back office got from having a URL.
+ * The page is gone. The back office opens THIS dialog now, from the cash-up
+ * list and from a signed row in "Recent cash-ups" alike, so a change here lands
+ * everywhere because there is nowhere else. Two consequences worth knowing:
+ *
+ *   - It must render a SIGNED cash-up read-only, not refuse it. Reading a
+ *     committed record back is a back-office job this dialog inherited, and
+ *     `locked` is what makes every control on the board inert.
+ *   - It cannot assume it is running on a till. `terminalId` may be null and
+ *     `pendingSales` zero because the back office has no outbox — see the
+ *     callers in sales/cashup/.
+ *
+ * It stays a MODAL rather than becoming a route because the POS is one screen
+ * that never navigates: sending a cashier away abandons whatever is on the till.
+ * The count survives the dialog being closed because the draft is saved
+ * server-side on every tender commit — so an interruption mid-count loses
+ * nothing, which is the one property the page had that a dialog had to earn.
  *
  * ── ONE BOARD, NOT THREE TABS ───────────────────────────────────────────────
  *
@@ -61,6 +82,20 @@ import type { VisibleDeclaration } from '@/app/(app)/sales/cashup/[shiftId]/decl
  * The numbered panels are deliberate. A supervisor reads a cash-up out loud
  * over the phone ("what does panel 8 say?"), and the legacy till this replaces
  * numbered them too — so the numbers are the shared vocabulary, not decoration.
+ * They must therefore stay CONTIGUOUS: removing a panel renumbers the ones
+ * after it, which is why merging the tender table into panel 1 moved 3, 4 and 5
+ * down rather than leaving a gap where 2 had been.
+ *
+ * ── ONE TABLE, AND ITS DECLARED COLUMN IS THE FORM ──────────────────────────
+ *
+ * Panel 1 held a column of labelled boxes while panel 2 showed the same tenders
+ * again as a read-only table of Expected / Declared / Difference. The box you
+ * typed into and the row that judged it were in different panels, so checking
+ * your own work meant looking away from what you had just typed.
+ *
+ * They are one table now: the Declared column IS the box. Cash keeps its
+ * denomination breakdown, expanded inline beneath its own row rather than in a
+ * panel of its own, because it belongs to the Cash line.
  *
  * ── ONE ENGINE, TWO FACES ───────────────────────────────────────────────────
  *
@@ -218,6 +253,18 @@ export default function DeclarationModal({
         /* Seeded from the stored draft so a resumed count shows the work
            already done rather than an empty grid somebody has to redo. */
         setQty(Object.fromEntries(result.counted.map((c) => [c.denominationId, c.qty])))
+        /*
+          A SIGNED cash-up follows the RECORD rather than the default.
+
+          Counting by denomination is the right default for a drawer somebody is
+          about to count. Reading a signed one back it is a claim about what
+          happened: no counted rows means the cash was declared as a total, and
+          opening an empty grid over it would show eleven blank boxes as though
+          a count had been made and lost. An unsigned draft keeps the default,
+          because there the grid is an invitation rather than a statement.
+        */
+        if (result.finalizedAt != null) setCountingCash(result.counted.length > 0)
+        else setCountingCash(true)
         setDeclared(
           Object.fromEntries(
             result.tenders
@@ -572,10 +619,28 @@ export default function DeclarationModal({
 
   const signed = view?.finalizedAt != null
 
+  /**
+   * Every control's disabled state, in one name.
+   *
+   * A signed cash-up renders the same board so it can be read back, which means
+   * every input on it must be inert — and "inert" has to be one decision rather
+   * than `pending` in some places and `pending || signed` in others. That drift
+   * is how a signed record ends up with one editable box nobody noticed.
+   */
+  const locked = pending || signed
+
   /* The drawer tender — the one the grid counts. Found by the flag rather
      than by name so a site that renamed it still works. */
   const cashTender = view?.tenders.find((t) => t.countsAsDrawerCash) ?? null
-  const otherTenders = view?.tenders.filter((t) => !t.countsAsDrawerCash) ?? []
+
+  /* Cash first, because it is the one that has to be physically counted and
+     the one whose row opens. The rest keep the order the server sent them. */
+  const orderedTenders = view
+    ? [
+        ...view.tenders.filter((t) => t.countsAsDrawerCash),
+        ...view.tenders.filter((t) => !t.countsAsDrawerCash),
+      ]
+    : []
 
   /**
    * What cash is being declared as, whichever way it was entered.
@@ -588,6 +653,23 @@ export default function DeclarationModal({
       ? declaredCash
       : declared[cashTender.tenderTypeId]
     : undefined
+
+  /**
+   * Opens and shuts the drawer count under the Cash row.
+   *
+   * Folding it away commits what the grid last added to as the cash figure, so
+   * the number does not jump when somebody collapses it and the box below is
+   * seeded rather than empty.
+   */
+  function toggleCounting() {
+    if (signed || !cashTender) return
+    setCountingCash((wasOpen) => {
+      if (wasOpen) {
+        commit({ kind: 'tender', id: cashTender.tenderTypeId }, String(declaredCash))
+      }
+      return !wasOpen
+    })
+  }
 
   return (
     <Modal
@@ -645,18 +727,37 @@ export default function DeclarationModal({
         </Callout>
       ) : loading && !view ? (
         <p className="py-8 text-center text-sm text-muted">Reading the shift…</p>
-      ) : !view ? null : signed ? (
-        <Callout tone="success" title="This cash-up is signed off">
-          Every figure was committed at the time. The back office holds the record.
-        </Callout>
-      ) : (
+      ) : !view ? null : (
         /* `min-h-0` and NOT `overflow-y-auto`: the body no longer scrolls as
            one piece. Panel 1 pins its pad to its own bottom, and a pad inside a
            scrolling parent slides away with everything else however it is
            positioned — the parent is what moves. So the height stops here and
            each column overflows inside itself. */
         <div className="flex min-h-0 flex-col gap-4">
-          {pendingSales > 0 && (
+          {/*
+            ── A SIGNED CASH-UP IS THE SAME BOARD, READ-ONLY ──────────────────
+
+            This used to be a dead end: a one-line callout saying the back
+            office held the record, which was true only while a second screen
+            existed to hold it. There is one screen now, so a signed cash-up has
+            to BE readable here — the frozen figures, the count that produced
+            them, the difference somebody signed under.
+
+            Same board, every control inert. Rebuilding it as a separate
+            read-only view would be a third rendering of the same figures, and
+            the two that already existed are exactly what this change removed.
+          */}
+          {signed && (
+            <Callout tone="success" title="This cash-up is signed off">
+              Every figure below was committed at the time and can no longer be changed.
+              {view.finalizedAt
+                ? ` Signed ${new Date(view.finalizedAt).toLocaleString('en-ZA')}.`
+                : ''}
+            </Callout>
+          )}
+
+          {/* Only worth saying while there is still something to sign. */}
+          {!signed && pendingSales > 0 && (
             <Callout
               tone="warning"
               title={`${pendingSales} sale${pendingSales === 1 ? '' : 's'} still to send`}
@@ -681,7 +782,13 @@ export default function DeclarationModal({
               the supervisor's name truncated mid-word, both because a third
               each is not what this content needs. The count column is the one
               with a fixed-width pad in it, so it is the one that can be pinned. */}
-          <div className="grid min-h-0 flex-1 auto-rows-fr gap-4 xl:grid-cols-[minmax(0,25rem)_minmax(0,1fr)_minmax(0,1.1fr)]">
+          {/* Panel 1 got the width the merge needs. At 25rem it was sized for
+              a column of labelled boxes; it now holds a four-column table with
+              the denomination grid nested inside it, and at the old width the
+              Cash row's own label ran into the Expected figure beside it. The
+              other two columns hold read-only figures and give the room up more
+              cheaply than the count can do without it. */}
+          <div className="grid min-h-0 flex-1 auto-rows-fr gap-4 xl:grid-cols-[minmax(0,38rem)_minmax(0,1fr)_minmax(0,1fr)]">
             {/* ── 1 · Everything being declared, and the pad that types it ──
                 THE PAD IS FIXED TO THE BOTTOM; THE DECLARATION SCROLLS ABOVE IT.
 
@@ -732,226 +839,329 @@ export default function DeclarationModal({
                   </p>
                 )}
 
-                {/* ── Cash first, with its breakdown folded underneath ──── */}
-                {cashTender && (
-                  <>
-                    <TenderBox
-                      label={cashTender.tenderName}
-                      aimed={target?.kind === 'tender' && target.id === cashTender.tenderTypeId}
-                      editing={editing}
-                      entry={entry}
-                      value={cashDeclared}
-                      /* Read-only while the grid drives it: two editable fields
-                         for one figure is how they come to disagree. */
-                      readOnly={countingCash}
-                      disabled={pending}
-                      onAim={() =>
-                        aim(
-                          { kind: 'tender', id: cashTender.tenderTypeId },
-                          cashDeclared === undefined ? '' : String(cashDeclared),
-                        )
-                      }
-                      onEntry={typeInto}
-                      onCommit={() => {
-                        if (
-                          countingCash ||
-                          target?.kind !== 'tender' ||
-                          target.id !== cashTender.tenderTypeId ||
-                          entry === ''
-                        )
-                          return
-                        commit({ kind: 'tender', id: cashTender.tenderTypeId }, entry)
-                      }}
-                    />
+                {/*
+                  ── ONE TABLE, AND THE DECLARED COLUMN IS THE FORM ──────────
 
-                    <Accordion
-                      title="Count it out by denomination"
-                      description={
-                        countingCash
-                          ? 'This count decides the cash figure.'
-                          : 'Optional — count the drawer out instead.'
-                      }
-                      badge={
-                        countingCash ? (
-                          <Badge tone="brand">{formatMoney(declaredCash)}</Badge>
-                        ) : undefined
-                      }
-                      open={countingCash}
-                      /* Folding it away hands the figure back to the box,
-                         seeded with what the grid last added to so the number
-                         does not jump when somebody collapses it. */
-                      onToggle={() => {
-                        setCountingCash((wasOpen) => {
-                          if (wasOpen) {
-                            commit(
-                              { kind: 'tender', id: cashTender.tenderTypeId },
-                              String(declaredCash),
-                            )
-                          }
-                          return !wasOpen
-                        })
-                      }}
-                    >
-                      {/* No cap: panel 1 has its whole column now that the pad
-                          spans the modal instead of sitting in here, so the
-                          drawer's rows take their room in the column's scroller
-                          rather than fighting the tender boxes for a sliver. */}
-                      <div>
-                      {/* table-fixed so the three columns divide the width they
-                          are GIVEN. Left to itself the table sizes to its
-                          content and spills under the pad, which put the Amount
-                          column behind the keys — the one figure the count is
-                          checked against. */}
-                      <table className={`${TABLE} table-fixed`}>
-                        <thead>
-                          <tr className={TABLE_HEAD_ROW}>
-                            <th className={TABLE_TH}>Denomination</th>
-                            {/* Fixed, or the qty inputs are the first thing the
-                                browser squeezes when the pad takes its width. */}
-                            <th className={`${TABLE_TH} w-24 text-right`}>Qty</th>
-                            <th className={`${TABLE_TH} text-right`}>Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {view.denominations.map((d) => {
-                            const aimed = target?.kind === 'denomination' && target.id === d.id
-                            const n = qty[d.id] ?? 0
-                            return (
-                              <tr key={d.id}>
-                                <td className={TABLE_TD}>{d.label}</td>
-                                <td className={`${TABLE_TD} text-right`}>
-                                  {/*
-                                    A plain Input, deliberately NOT NumberInput.
-                                    NumberInput keeps its own buffer while
-                                    focused and ignores `value` until blur —
-                                    right when a keyboard is the only writer,
-                                    wrong here: the pad writes to `entry`, so a
-                                    touch-only cashier would watch their taps do
-                                    nothing.
-                                  */}
-                                  <Input
-                                    className="numeric w-full min-w-14 text-right"
-                                    inputMode="numeric"
-                                    autoComplete="off"
-                                    data-1p-ignore
-                                    data-lpignore="true"
-                                    /* Aimed, the buffer is the box — see the
-                                        note on TenderBox. Unaimed, an empty
-                                        pile stays blank rather than showing a
-                                        column of noisy zeros. */
-                                    value={aimed ? entry : n === 0 ? '' : String(n)}
-                                    disabled={pending}
-                                    onFocus={() =>
-                                      aim(
-                                        { kind: 'denomination', id: d.id },
-                                        n === 0 ? '' : String(n),
-                                      )
+                  This panel used to be a column of labelled boxes while panel 2
+                  showed the same tenders again as a read-only table of
+                  Expected / Declared / Difference. Two renderings of one list:
+                  the box you typed into and the row that judged it were in
+                  different panels, so checking your own work meant looking away
+                  from what you had just typed.
+
+                  They are the same thing now. The Declared column IS the box,
+                  so a tender is one row carrying what it should have taken,
+                  what is being said it took, and the gap between them.
+
+                  `table-fixed` so the columns divide the width they are GIVEN.
+                  Left to itself the table sizes to its content and spills under
+                  the pad, which is what put the Amount column behind the keys.
+                */}
+                {view.tenders.length > 0 && (
+                  <table className={`${TABLE} table-fixed`}>
+                    <thead>
+                      <tr className={TABLE_HEAD_ROW}>
+                        <th className={TABLE_TH}>Tender</th>
+                        <th className={`${TABLE_TH} w-24 text-right`}>Expected</th>
+                        <th className={`${TABLE_TH} w-32 text-right`}>Declared</th>
+                        <th className={`${TABLE_TH} w-24 text-right`}>Difference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orderedTenders.map((t) => {
+                        const isCash = t.countsAsDrawerCash
+                        /* Cash may be driven by the grid; every other tender is
+                           only ever what was typed into its own row. */
+                        const value = isCash ? cashDeclared : declared[t.tenderTypeId]
+                        const shown = revealed[t.tenderTypeId]
+                        /*
+                          Sighted, an uncounted tender reads 0.00 in its box, so
+                          it differences against the whole expectation. Blind, it
+                          stays an em dash: there is no target to measure yet.
+                        */
+                        const effective = sighted ? (value ?? 0) : value
+                        const variance =
+                          effective !== undefined && shown
+                            ? round(effective - shown.expected, 2)
+                            : null
+                        const aimed =
+                          target?.kind === 'tender' && target.id === t.tenderTypeId
+
+                        return (
+                          <Fragment key={t.tenderTypeId}>
+                            <tr className={TABLE_ROW}>
+                              <td className={TABLE_TD}>
+                                {/* The cash row carries the fold for its own
+                                    breakdown. A tender with nothing to break
+                                    down gets no chevron rather than a dead one. */}
+                                {isCash ? (
+                                  <RowDisclosure
+                                    label={t.tenderName}
+                                    hint={
+                                      countingCash
+                                        ? 'counted by denomination'
+                                        : 'count it out'
                                     }
-                                    onChange={(e) =>
-                                      typeInto(e.target.value.replace(/[^0-9]/g, ''))
-                                    }
+                                    open={countingCash}
+                                    onToggle={toggleCounting}
+                                    disabled={signed}
                                   />
-                                </td>
-                                {/* Zero stays faint: a column of 0.00 competes
-                                    with the rows that actually hold money. */}
-                                <td
-                                  className={`${TABLE_TD} ${TABLE_NUMERIC} ${n === 0 ? 'text-faint' : ''}`}
-                                >
-                                  {formatMoney(round(d.value * n, 2))}
+                                ) : (
+                                  t.tenderName
+                                )}
+                              </td>
+                              <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                                {/* An em dash: this browser has not been told
+                                    the figure, rather than being styled out of
+                                    view. */}
+                                {!shown ? (
+                                  <span className="text-faint">—</span>
+                                ) : (
+                                  formatMoney(shown.expected)
+                                )}
+                              </td>
+                              <td className={`${TABLE_TD_INPUT} ${TABLE_NUMERIC}`}>
+                                {/* Plain Input, not NumberInput: the PAD is the
+                                    writer here, so the box must render `entry`
+                                    rather than keep a buffer of its own. */}
+                                <Input
+                                  icon={
+                                    <span className="text-sm font-medium text-muted">R</span>
+                                  }
+                                  aria-label={`${t.tenderName} declared`}
+                                  className={`numeric text-right ${
+                                    value === undefined && !aimed ? 'text-faint' : ''
+                                  }`}
+                                  inputMode="decimal"
+                                  autoComplete="off"
+                                  data-1p-ignore
+                                  data-lpignore="true"
+                                  /*
+                                    ALWAYS A FIGURE, NEVER AN EMPTY BOX. An
+                                    uncounted tender reads 0.00 like every
+                                    other; `value === undefined` still means
+                                    "nobody counted this", and sign-off still
+                                    refuses by name rather than banking a zero
+                                    nobody counted. The faint tone is what
+                                    carries the distinction on screen.
+                                  */
+                                  value={
+                                    aimed && editing ? entry : (value ?? 0).toFixed(2)
+                                  }
+                                  /* Read-only while the grid drives it: two
+                                     editable fields for one figure is how they
+                                     come to disagree. */
+                                  readOnly={signed || (isCash && countingCash)}
+                                  disabled={locked}
+                                  onFocus={
+                                    signed || (isCash && countingCash)
+                                      ? undefined
+                                      : () =>
+                                          aim(
+                                            { kind: 'tender', id: t.tenderTypeId },
+                                            value === undefined ? '' : String(value),
+                                          )
+                                  }
+                                  onChange={(e) =>
+                                    typeInto(
+                                      e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''),
+                                    )
+                                  }
+                                  onBlur={() => {
+                                    if (
+                                      (isCash && countingCash) ||
+                                      target?.kind !== 'tender' ||
+                                      target.id !== t.tenderTypeId ||
+                                      entry === ''
+                                    )
+                                      return
+                                    commit({ kind: 'tender', id: t.tenderTypeId }, entry)
+                                  }}
+                                />
+                              </td>
+                              {/* A pill per row: the difference is the one
+                                  column carrying a judgement, and a tinted chip
+                                  is findable down a column of plain figures in
+                                  a way coloured text is not. */}
+                              <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                                {variance === null ? (
+                                  <span className="text-faint">—</span>
+                                ) : variance === 0 ? (
+                                  <Badge tone="success">0.00</Badge>
+                                ) : (
+                                  <Badge tone={variance < 0 ? 'danger' : 'warning'}>
+                                    {variance < 0 ? '−' : '+'}
+                                    {formatMoney(Math.abs(variance))}
+                                  </Badge>
+                                )}
+                              </td>
+                            </tr>
+
+                            {/* ── The drawer, counted out, under its own row ── */}
+                            {isCash && countingCash && (
+                              <tr className="border-b border-border bg-surface-2">
+                                <td colSpan={4} className="px-2 py-3">
+                                  <table className={`${TABLE} table-fixed`}>
+                                    <thead>
+                                      <tr className={TABLE_HEAD_ROW}>
+                                        <th className={TABLE_TH}>Denomination</th>
+                                        {/* Fixed, or the qty inputs are the
+                                            first thing the browser squeezes
+                                            when the pad takes its width. */}
+                                        <th className={`${TABLE_TH} w-24 text-right`}>Qty</th>
+                                        <th className={`${TABLE_TH} text-right`}>Amount</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {view.denominations.map((d) => {
+                                        const dAimed =
+                                          target?.kind === 'denomination' && target.id === d.id
+                                        const n = qty[d.id] ?? 0
+                                        return (
+                                          <tr key={d.id}>
+                                            <td className={TABLE_TD}>{d.label}</td>
+                                            <td className={`${TABLE_TD} text-right`}>
+                                              {/*
+                                                A plain Input, deliberately NOT
+                                                NumberInput. NumberInput keeps
+                                                its own buffer while focused and
+                                                ignores `value` until blur —
+                                                right when a keyboard is the
+                                                only writer, wrong here: the pad
+                                                writes to `entry`, so a
+                                                touch-only cashier would watch
+                                                their taps do nothing.
+                                              */}
+                                              <Input
+                                                className="numeric w-full min-w-14 text-right"
+                                                inputMode="numeric"
+                                                autoComplete="off"
+                                                data-1p-ignore
+                                                data-lpignore="true"
+                                                aria-label={`${d.label} count`}
+                                                /* Aimed, the buffer is the box.
+                                                   Unaimed, an empty pile stays
+                                                   blank rather than showing a
+                                                   column of noisy zeros. */
+                                                value={dAimed ? entry : n === 0 ? '' : String(n)}
+                                                disabled={locked}
+                                                readOnly={signed}
+                                                onFocus={
+                                                  signed
+                                                    ? undefined
+                                                    : () =>
+                                                        aim(
+                                                          { kind: 'denomination', id: d.id },
+                                                          n === 0 ? '' : String(n),
+                                                        )
+                                                }
+                                                onChange={(e) =>
+                                                  typeInto(e.target.value.replace(/[^0-9]/g, ''))
+                                                }
+                                              />
+                                            </td>
+                                            {/* Zero stays faint: a column of
+                                                0.00 competes with the rows that
+                                                actually hold money. */}
+                                            <td
+                                              className={`${TABLE_TD} ${TABLE_NUMERIC} ${n === 0 ? 'text-faint' : ''}`}
+                                            >
+                                              {formatMoney(round(d.value * n, 2))}
+                                            </td>
+                                          </tr>
+                                        )
+                                      })}
+                                    </tbody>
+                                  </table>
+
+                                  {/*
+                                    ── SMALL CHANGE, AT THE BOTTOM ────────────
+
+                                    Every row above counts a PILE — a quantity,
+                                    multiplied by what that coin is worth. This
+                                    one takes the money directly, because the
+                                    coppers at the bottom of a drawer are not
+                                    counted that way: 1c, 2c and 5c pieces are
+                                    swept together and declared as one amount,
+                                    and asking "how many 2c" gets either a guess
+                                    or a cashier on their knees.
+
+                                    Last, and separated by a rule, because it is
+                                    the sweeping up rather than another pile.
+                                  */}
+                                  <div className="mt-3 flex items-center gap-3 border-t border-border px-2 pt-3">
+                                    <label
+                                      htmlFor="small-change"
+                                      className="min-w-0 flex-1 text-sm font-medium text-ink-2"
+                                    >
+                                      Small change
+                                      <span className="block text-xs font-normal text-muted">
+                                        1c, 2c, 5c — as one amount
+                                      </span>
+                                    </label>
+                                    <div className="w-32 shrink-0">
+                                      <Input
+                                        id="small-change"
+                                        icon={
+                                          <span className="text-sm font-medium text-muted">
+                                            R
+                                          </span>
+                                        }
+                                        className="numeric text-right"
+                                        inputMode="decimal"
+                                        autoComplete="off"
+                                        data-1p-ignore
+                                        data-lpignore="true"
+                                        value={
+                                          target?.kind === 'smallChange' && editing
+                                            ? entry
+                                            : smallChange.toFixed(2)
+                                        }
+                                        disabled={locked}
+                                        readOnly={signed}
+                                        onFocus={
+                                          signed
+                                            ? undefined
+                                            : () =>
+                                                aim({ kind: 'smallChange' }, String(smallChange))
+                                        }
+                                        onChange={(e) =>
+                                          typeInto(
+                                            e.target.value
+                                              .replace(',', '.')
+                                              .replace(/[^0-9.]/g, ''),
+                                          )
+                                        }
+                                        onBlur={() => {
+                                          if (target?.kind !== 'smallChange' || entry === '')
+                                            return
+                                          commit({ kind: 'smallChange' }, entry)
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* The one figure here that is not typed.
+                                      Loud, because it is what the whole grid
+                                      exists to produce — and it is what the
+                                      Declared box on the row above is showing. */}
+                                  <div className="mt-3 flex items-baseline justify-between rounded-card bg-warning-soft px-4 py-2.5">
+                                    <span className="text-sm font-medium text-ink">
+                                      Total cash (declared)
+                                    </span>
+                                    <span className="numeric text-lg font-bold text-ink">
+                                      {formatMoney(declaredCash)}
+                                    </span>
+                                  </div>
                                 </td>
                               </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                      </div>
-
-                      {/*
-                        ── SMALL CHANGE, AT THE BOTTOM ─────────────────────────
-
-                        Every row above counts a PILE — a quantity, multiplied by
-                        what that coin is worth. This one takes the money
-                        directly, because the coppers at the bottom of a drawer
-                        are not counted that way: 1c, 2c and 5c pieces are swept
-                        together and declared as one amount, and asking "how many
-                        2c" gets either a guess or a cashier on their knees.
-
-                        Last, and separated by a rule, because it is the sweeping
-                        up after the counting rather than another pile.
-                      */}
-                      <div className="mt-3 border-t border-border pt-3">
-                        <div className="flex items-center gap-3">
-                          <label
-                            htmlFor="small-change"
-                            className="min-w-0 flex-1 basis-24 text-sm font-medium text-ink-2"
-                          >
-                            Small change
-                            <span className="block text-xs font-normal text-muted">
-                              1c, 2c, 5c — as one amount
-                            </span>
-                          </label>
-                          <div className="w-32 shrink-0">
-                            <Input
-                              id="small-change"
-                              icon={<span className="text-sm font-medium text-muted">R</span>}
-                              className="numeric text-right"
-                              inputMode="decimal"
-                              autoComplete="off"
-                              data-1p-ignore
-                              data-lpignore="true"
-                              value={
-                                target?.kind === 'smallChange' && editing
-                                  ? entry
-                                  : smallChange.toFixed(2)
-                              }
-                              disabled={pending}
-                              onFocus={() => aim({ kind: 'smallChange' }, String(smallChange))}
-                              onChange={(e) =>
-                                typeInto(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))
-                              }
-                              onBlur={() => {
-                                if (target?.kind !== 'smallChange' || entry === '') return
-                                commit({ kind: 'smallChange' }, entry)
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                    </Accordion>
-                  </>
+                            )}
+                          </Fragment>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 )}
-
-                {/* ── Then the machines and the bank ──────────────────────── */}
-                {otherTenders.map((tender) => (
-                  <TenderBox
-                    key={tender.tenderTypeId}
-                    label={tender.tenderName}
-                    aimed={target?.kind === 'tender' && target.id === tender.tenderTypeId}
-                    editing={editing}
-                    entry={entry}
-                    value={declared[tender.tenderTypeId]}
-                    disabled={pending}
-                    onAim={() =>
-                      aim(
-                        { kind: 'tender', id: tender.tenderTypeId },
-                        declared[tender.tenderTypeId] === undefined
-                          ? ''
-                          : String(declared[tender.tenderTypeId]),
-                      )
-                    }
-                    onEntry={typeInto}
-                    onCommit={() => {
-                      if (
-                        target?.kind !== 'tender' ||
-                        target.id !== tender.tenderTypeId ||
-                        entry === ''
-                      )
-                        return
-                      commit({ kind: 'tender', id: tender.tenderTypeId }, entry)
-                    }}
-                  />
-                ))}
               </div>
 
               {/*
@@ -968,7 +1178,10 @@ export default function DeclarationModal({
                 inside it scrolls, and the keys sit under that list wherever the
                 scroll happens to be.
               */}
-              <div className="shrink-0 border-t border-border pt-3">
+              {/* Gone entirely on a signed cash-up: a pad that cannot type is
+                  a third of the panel spent telling somebody so, and the
+                  record it sits under is the thing they opened this to read. */}
+              <div className={`shrink-0 border-t border-border pt-3 ${signed ? 'hidden' : ''}`}>
                 <div className="flex items-start justify-center gap-3">
                   {/* A stable key size under the thumb — not a fraction, which
                       would resize the keys every time the column did. */}
@@ -979,7 +1192,7 @@ export default function DeclarationModal({
                       /* Whole numbers when counting a pile of notes, decimals
                          when declaring a machine slip. */
                       maxDecimals={target?.kind === 'denomination' ? 0 : 2}
-                      disabled={pending || target === null}
+                      disabled={locked || target === null}
                     />
                   </div>
                   {/* Beside the keys rather than under them: stacked, the button
@@ -988,7 +1201,7 @@ export default function DeclarationModal({
                     <Button
                       variant="primary"
                       size="touch"
-                      disabled={pending || target === null}
+                      disabled={locked || target === null}
                       onClick={onEnter}
                     >
                       Enter
@@ -1007,109 +1220,14 @@ export default function DeclarationModal({
               </div>
             </Panel>
 
-            {/* ── The middle column: what each tender came to, and the bank ──
-                The totals sit BESIDE the boxes that feed them rather than in
-                the far column: a cashier declaring card wants the card tile in
-                the same glance, and across two columns it was a head-turn away.
+            {/* ── The middle column: everything that is not a tender ────────
+                The per-tender totals used to live here as a table of their own,
+                repeating the boxes in the left column. They are now the same
+                table — see panel 1 — so what is left here is the money that
+                moved WITHOUT being a tender somebody counts, and the bag.
                 Scrolls itself now that the body does not. */}
             <div className="till-pane flex flex-col gap-4 xl:min-h-0 xl:overflow-y-auto">
-              {/*
-                ── ONE TABLE, NOT A TILE PER TENDER ──────────────────────────
-
-                There used to be a tile each for cash, card, account and the
-                rest, every one of them stacking expected / declared /
-                difference down the card. The table below carries the same four
-                figures — and the transaction count besides — with the tenders
-                as rows, so five tiles became five lines.
-
-                They were not merely redundant, they were WORSE for the job:
-                reconciling means comparing tenders against each other, and a
-                figure in the same column two rows down is a glance where the
-                same figure in another card is a hunt.
-              */}
-              <Panel n={2} title="Every tender, side by side">
-                <div className="overflow-x-auto">
-                  <table className={TABLE}>
-                    <thead>
-                      <tr className={TABLE_HEAD_ROW}>
-                        <th className={TABLE_TH}>Tender</th>
-                        {/* No transaction count here any more — it moved to
-                            the Counters panel. This table compares MONEY,
-                            expected against declared, and a count was the one
-                            column in it that never took part in that. */}
-                        <th className={`${TABLE_TH} text-right`}>Expected</th>
-                        <th className={`${TABLE_TH} text-right`}>Declared</th>
-                        <th className={`${TABLE_TH} text-right`}>Difference</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {view.tenders.map((t) => {
-                        const value = declared[t.tenderTypeId]
-                        const shown = revealed[t.tenderTypeId]
-                        /*
-                          Sighted, an uncounted tender reads 0.00 in its box, so
-                          it reads 0.00 here and its difference is the whole
-                          expectation. The table and the boxes are the same
-                          claim; showing an em dash beside a 0.00 box made them
-                          look like two different screens.
-
-                          Blind, it stays an em dash: there is no expected
-                          figure to difference against yet.
-                        */
-                        const effective = sighted ? (value ?? 0) : value
-                        const variance =
-                          effective !== undefined && shown
-                            ? round(effective - shown.expected, 2)
-                            : null
-                        return (
-                          <tr key={t.tenderTypeId}>
-                            <td className={TABLE_TD}>{t.tenderName}</td>
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                              {/* An em dash: this browser has not been told the
-                                  figure, rather than being styled out of view. */}
-                              {!shown ? (
-                                <span className="text-faint">—</span>
-                              ) : (
-                                formatMoney(shown.expected)
-                              )}
-                            </td>
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                              {effective === undefined ? (
-                                <span className="text-faint">—</span>
-                              ) : (
-                                /* Faint while nobody has counted it, so a
-                                   zero-by-default still reads differently from
-                                   a zero somebody counted. */
-                                <span className={value === undefined ? 'text-faint' : ''}>
-                                  {formatMoney(effective)}
-                                </span>
-                              )}
-                            </td>
-                            {/* A pill per row: the difference is the one
-                                column carrying a judgement, and a tinted chip
-                                is findable down a column of plain figures in a
-                                way coloured text is not. */}
-                            <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                              {variance === null ? (
-                                <span className="text-faint">—</span>
-                              ) : variance === 0 ? (
-                                <Badge tone="success">0.00</Badge>
-                              ) : (
-                                <Badge tone={variance < 0 ? 'danger' : 'warning'}>
-                                  {variance < 0 ? '−' : '+'}
-                                  {formatMoney(Math.abs(variance))}
-                                </Badge>
-                              )}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </Panel>
-
-              <Panel n={3} title="Other transactions">
+              <Panel n={2} title="Other transactions">
                 <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
                   <Figure label="Opening float" value={view.openingFloat} />
                   <Figure label="Payouts" value={-view.payoutsTotal} />
@@ -1133,7 +1251,7 @@ export default function DeclarationModal({
 
               {/* Banking is its own question: a drawer can reconcile perfectly
                   and still have the wrong amount put in the bag. */}
-              <Panel n={4} title="To bank">
+              <Panel n={3} title="To bank">
                 <div className="flex flex-wrap items-end gap-4">
                   <Field label="Bank declared" className="w-40">
                     <Input
@@ -1144,7 +1262,7 @@ export default function DeclarationModal({
                       data-1p-ignore
                       data-lpignore="true"
                       value={target?.kind === 'bank' ? entry : bankDeclared.toFixed(2)}
-                      disabled={pending}
+                      disabled={locked}
                       onFocus={() => aim({ kind: 'bank' }, String(bankDeclared))}
                       onChange={(e) =>
                         typeInto(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))
@@ -1158,7 +1276,7 @@ export default function DeclarationModal({
                   <Field label="Bag / reference" className="w-48">
                     <Input
                       value={bankReference}
-                      disabled={pending}
+                      disabled={locked}
                       onFocus={() => aim(null)}
                       onChange={(e) => setBankReference(e.target.value)}
                       placeholder="e.g. BAG-0194"
@@ -1218,7 +1336,7 @@ export default function DeclarationModal({
                       >
                         <Select
                           value={ownerId}
-                          disabled={pending || !owners.canChoose}
+                          disabled={locked || !owners.canChoose}
                           onFocus={() => aim(null)}
                           onChange={(e) => setOwnerId(e.target.value)}
                         >
@@ -1237,7 +1355,7 @@ export default function DeclarationModal({
                     <Field label="Supervisor" className="min-w-0">
                       <Select
                         value={supervisorId}
-                        disabled={pending}
+                        disabled={locked}
                         onFocus={() => aim(null)}
                         onChange={(e) => setSupervisorId(e.target.value)}
                       >
@@ -1302,7 +1420,7 @@ export default function DeclarationModal({
                     >
                       <Input
                         value={varianceNote}
-                        disabled={pending}
+                        disabled={locked}
                         onFocus={() => aim(null)}
                         onChange={(e) => setVarianceNote(e.target.value)}
                         placeholder="e.g. Two R20 notes could not be found. Reported."
@@ -1315,7 +1433,7 @@ export default function DeclarationModal({
                   <Field label="Note" hint="Anything the manager should read with this cash-up.">
                     <Input
                       value={note}
-                      disabled={pending}
+                      disabled={locked}
                       onFocus={() => aim(null)}
                       onChange={(e) => setNote(e.target.value)}
                     />
@@ -1323,7 +1441,7 @@ export default function DeclarationModal({
                 </div>
               </div>
 
-              <Panel n={5} title="Counters">
+              <Panel n={4} title="Counters">
                 <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
                   <Count
                     icon={<Icons.Receipt size={18} />}
@@ -1419,101 +1537,6 @@ export default function DeclarationModal({
  * phone, and "panel 8" is a shorter thing to say than "the card totals box on
  * the right". The legacy till numbered them for the same reason.
  */
-/**
- * One tender's box, with the pad as its writer.
- *
- * Extracted because cash and the machines are the same control and differ only
- * in where their figure comes from — cash may be driven by the grid, the rest
- * are always typed. Two copies of this is how the cash row quietly drifts into
- * looking like a different thing from the ones under it.
- */
-function TenderBox({
-  label,
-  aimed,
-  editing,
-  entry,
-  value,
-  readOnly = false,
-  disabled,
-  onAim,
-  onEntry,
-  onCommit,
-}: {
-  label: string
-  aimed: boolean
-  /** Whether the buffer is a live edit — see the note on `editing`. */
-  editing: boolean
-  entry: string
-  value: number | undefined
-  readOnly?: boolean
-  disabled: boolean
-  onAim: () => void
-  onEntry: (v: string) => void
-  onCommit: () => void
-}) {
-  const id = `tender-${label.replace(/\s+/g, '-').toLowerCase()}`
-
-  return (
-    /*
-      ── LABEL BESIDE THE BOX, NOT ABOVE IT ────────────────────────────────
-      Every one of these rows was three lines tall — name, box, and a line of
-      helper text — for one number. Six tenders spent the panel on captions.
-      Inline, a row is one line, and the count fits without scrolling on the
-      till this ships to.
-
-      Laid out here rather than through `Field`, which stacks by design and is
-      used on every form in the app; a variant of it for this one screen would
-      be a second answer to "where does a label go".
-
-      The <label> keeps `htmlFor`, so tapping the name still focuses the box —
-      which on a touch till is a bigger target than the box's own edge.
-    */
-    <div className="flex min-w-0 items-center gap-3">
-      <label
-        htmlFor={id}
-        className="min-w-0 flex-1 basis-24 truncate text-sm font-medium text-ink-2"
-      >
-        {label}
-      </label>
-      {/* Plain Input, not NumberInput: the PAD is the writer here, so the box
-          must render `entry` rather than a buffer of its own. Blurred, it shows
-          the committed figure at two decimals. */}
-      <div className="w-32 shrink-0">
-      <Input
-        id={id}
-        /* The R sits INSIDE the box, so a column of figures reads as money
-           without a label repeating the currency on every row. */
-        icon={<span className="text-sm font-medium text-muted">R</span>}
-        className={`numeric text-right ${value === undefined && !aimed ? 'text-faint' : ''}`}
-        inputMode="decimal"
-        autoComplete="off"
-        data-1p-ignore
-        data-lpignore="true"
-        /*
-          ALWAYS A FIGURE, NEVER AN EMPTY BOX.
-
-          An uncounted tender reads 0.00 like every other. That is a DISPLAY
-          choice and nothing more — `value === undefined` still means "nobody
-          counted this", it is still what `everyTenderDeclared` tests, and
-          sign-off still refuses by name rather than banking a zero somebody
-          never counted. Only the empty box is gone, not the distinction.
-
-          The faint tone is what carries that distinction on screen: an
-          untouched 0.00 is muted, a counted one is full-strength ink. So a
-          cashier can still see at a glance which tenders they have been to.
-        */
-        value={aimed && editing ? entry : (value ?? 0).toFixed(2)}
-        readOnly={readOnly}
-        disabled={disabled}
-        onFocus={readOnly ? undefined : onAim}
-        onChange={(e) => onEntry(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))}
-        onBlur={onCommit}
-      />
-      </div>
-    </div>
-  )
-}
-
 function Panel({
   n,
   title,

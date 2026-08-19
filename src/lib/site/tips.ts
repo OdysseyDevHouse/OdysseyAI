@@ -293,11 +293,106 @@ export async function recordServiceChargeRemoval(
 
 /* ── What each person is owed ────────────────────────────────────────────── */
 
+/**
+ * A tip total split by how the money arrived.
+ *
+ * Matched on `tender_types.code`, never `name`. The code is the engine's stable handle —
+ * UNIQUE, `/^[A-Z0-9_]{2,24}$/`, and unchangeable on a system tender — while the name is
+ * whatever the shop decided to call it this week. A store renaming "Card" to "Speedpoint"
+ * must not empty the card figure.
+ *
+ * `other` is the NEGATION of the named set rather than a list of the rest, so a tender
+ * added after this was written — including a shop's own — always lands somewhere and
+ *
+ *     cash + card + eft + account + other === total
+ *
+ * holds for every possible configuration. The screen prints these beside the total; a
+ * split that could silently lose a tender would show chips that do not add up to the
+ * figure next to them, which is worse than showing no split at all.
+ */
+export type TipTenderSplit = {
+  cash: number
+  card: number
+  eft: number
+  account: number
+  other: number
+  /**
+   * What the till should physically be holding.
+   *
+   * Read from the shop's `tip_in_drawer` flag, NOT derived from the codes above. The flag
+   * defaults to 1, so a shop's own cash-like tender is in the drawer even though its code
+   * is not CASH — deriving this from the four named codes would quietly understate it.
+   */
+  inDrawer: number
+}
+
 export type TipsOwed = {
   userId: number | null
   userName: string
   total: number
   count: number
+  /** The same total, split by how it arrived. */
+  byTender: TipTenderSplit
+}
+
+/**
+ * Tips by person, split by tender — the body behind `tipsOwed` and `tipsEarned`.
+ *
+ * ── ONE QUERY, ONE payout_id PREDICATE ────────────────────────────────────
+ *
+ * These two questions differ by exactly one clause and are otherwise the same query.
+ * Written out twice, the `payout_id IS NULL` that makes `owed` safe to pay from sits one
+ * careless edit away from being fixed in one copy and not the other — and that failure is
+ * invisible: both totals still look plausible while the money goes out twice. So the
+ * predicate is a PARAMETER of one query, and the two exported functions below are the two
+ * ways of asking.
+ *
+ * The per-tender split rides along free: same GROUP BY, same scan, extra columns.
+ */
+async function tipsByPerson(
+  siteId: number,
+  range: { from: string; to: string },
+  unpaidOnly: boolean,
+): Promise<TipsOwed[]> {
+  /* A boolean-driven constant, never a value — there is no path from user input to here. */
+  const unpaidClause = unpaidOnly ? 'AND t.payout_id IS NULL' : ''
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT t.user_id, COALESCE(NULLIF(t.user_name, ''), 'Pool') AS user_name,
+            SUM(t.amount) AS total, COUNT(*) AS n,
+            SUM(CASE WHEN tt.code = 'CASH'    THEN t.amount ELSE 0 END) AS t_cash,
+            SUM(CASE WHEN tt.code = 'CARD'    THEN t.amount ELSE 0 END) AS t_card,
+            SUM(CASE WHEN tt.code = 'EFT'     THEN t.amount ELSE 0 END) AS t_eft,
+            SUM(CASE WHEN tt.code = 'ACCOUNT' THEN t.amount ELSE 0 END) AS t_account,
+            SUM(CASE WHEN tt.code NOT IN ('CASH','CARD','EFT','ACCOUNT')
+                     THEN t.amount ELSE 0 END) AS t_other,
+            SUM(CASE WHEN tt.tip_in_drawer = 1 THEN t.amount ELSE 0 END) AS t_drawer
+       FROM sales_tips t
+       JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
+       /* INNER, like tipsForShift: tender_type_id is NOT NULL behind an FK, so a tip with
+          no tender cannot exist. A LEFT JOIN here would hide a broken row rather than
+          letting it fail loudly, and would drop it out of the other bucket as well. */
+       JOIN tender_types tt ON tt.id = t.tender_type_id
+      WHERE d.document_date BETWEEN ? AND ?
+        ${unpaidClause}
+      GROUP BY t.user_id, user_name
+      ORDER BY total DESC`,
+    [range.from, range.to],
+  )
+  return rows.map((r) => ({
+    userId: r.user_id === null ? null : Number(r.user_id),
+    userName: r.user_id === null ? 'Pool' : String(r.user_name ?? ''),
+    total: toNum(r.total),
+    count: Number(r.n ?? 0),
+    byTender: {
+      cash: toNum(r.t_cash),
+      card: toNum(r.t_card),
+      eft: toNum(r.t_eft),
+      account: toNum(r.t_account),
+      other: toNum(r.t_other),
+      inDrawer: toNum(r.t_drawer),
+    },
+  }))
 }
 
 /**
@@ -321,24 +416,7 @@ export async function tipsOwed(
   siteId: number,
   range: { from: string; to: string },
 ): Promise<TipsOwed[]> {
-  const rows = await siteQuery<Row>(
-    siteId,
-    `SELECT t.user_id, COALESCE(NULLIF(t.user_name, ''), 'Pool') AS user_name,
-            SUM(t.amount) AS total, COUNT(*) AS n
-       FROM sales_tips t
-       JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
-      WHERE d.document_date BETWEEN ? AND ?
-        AND t.payout_id IS NULL
-      GROUP BY t.user_id, user_name
-      ORDER BY total DESC`,
-    [range.from, range.to],
-  )
-  return rows.map((r) => ({
-    userId: r.user_id === null ? null : Number(r.user_id),
-    userName: r.user_id === null ? 'Pool' : String(r.user_name ?? ''),
-    total: toNum(r.total),
-    count: Number(r.n ?? 0),
-  }))
+  return tipsByPerson(siteId, range, true)
 }
 
 /**
@@ -351,23 +429,7 @@ export async function tipsEarned(
   siteId: number,
   range: { from: string; to: string },
 ): Promise<TipsOwed[]> {
-  const rows = await siteQuery<Row>(
-    siteId,
-    `SELECT t.user_id, COALESCE(NULLIF(t.user_name, ''), 'Pool') AS user_name,
-            SUM(t.amount) AS total, COUNT(*) AS n
-       FROM sales_tips t
-       JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
-      WHERE d.document_date BETWEEN ? AND ?
-      GROUP BY t.user_id, user_name
-      ORDER BY total DESC`,
-    [range.from, range.to],
-  )
-  return rows.map((r) => ({
-    userId: r.user_id === null ? null : Number(r.user_id),
-    userName: r.user_id === null ? 'Pool' : String(r.user_name ?? ''),
-    total: toNum(r.total),
-    count: Number(r.n ?? 0),
-  }))
+  return tipsByPerson(siteId, range, false)
 }
 
 /* ── Paying them out ─────────────────────────────────────────────────────── */
@@ -597,17 +659,38 @@ export async function listPayouts(
   }))
 }
 
+/**
+ * One tip, as the detail behind somebody's outstanding total.
+ *
+ * Carries both halves of the tender: `tenderCode` is what any logic keys off, `tenderName`
+ * is what a manager reads. Same rule as everywhere else in this file — the name is
+ * renameable, the code is not.
+ */
+export type OutstandingTip = {
+  id: number
+  amount: number
+  source: TipSource
+  documentNumber: string
+  date: string
+  tenderCode: string
+  tenderName: string
+  /** Whether this one is cash the till should be holding, per the shop's own flag. */
+  tipInDrawer: boolean
+}
+
 /** The individual tips behind one person's outstanding total — what makes up the envelope. */
 export async function outstandingTipsFor(
   siteId: number,
   userId: number | null,
   range: { from: string; to: string },
-): Promise<{ id: number; amount: number; source: TipSource; documentNumber: string; date: string }[]> {
+): Promise<OutstandingTip[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT t.id, t.amount, t.source, d.document_number, d.document_date
+    `SELECT t.id, t.amount, t.source, d.document_number, d.document_date,
+            tt.code AS tender_code, tt.name AS tender_name, tt.tip_in_drawer
        FROM sales_tips t
        JOIN sales_documents d ON d.id = t.document_id AND d.status = 'finalised'
+       JOIN tender_types tt ON tt.id = t.tender_type_id
       WHERE d.document_date BETWEEN ? AND ?
         AND t.payout_id IS NULL
         AND ${userId === null ? 't.user_id IS NULL' : 't.user_id = ?'}
@@ -620,5 +703,8 @@ export async function outstandingTipsFor(
     source: String(r.source ?? 'manual') as TipSource,
     documentNumber: String(r.document_number ?? ''),
     date: String(r.document_date ?? ''),
+    tenderCode: String(r.tender_code ?? ''),
+    tenderName: String(r.tender_name ?? ''),
+    tipInDrawer: Number(r.tip_in_drawer ?? 0) === 1,
   }))
 }

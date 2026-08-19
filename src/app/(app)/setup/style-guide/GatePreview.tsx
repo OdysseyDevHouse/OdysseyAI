@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui'
+import OpenTillGate from '@/app/(pos)/pos/OpenTillGate'
 import { TableGate } from '@/app/(pos)/pos/TableGate'
 import type { OpenTab } from '@/app/(pos)/pos/actions'
 import type { PosTable } from '@/lib/site/posTables'
@@ -258,6 +259,78 @@ export function FloorPreview() {
           onPickTab={(t) => setNote(`Resumed ${t.label}.`)}
           onPickTable={(t) => setNote(`Picked table ${t.code}.`)}
         />
+      </div>
+    </div>
+  )
+}
+
+/* ── The till before it is open ───────────────────────────────────────────── */
+
+/**
+ * OpenTillGate, on the Style Guide.
+ *
+ * Same argument as the table gate above: this screen lives behind a clerk PIN, so
+ * without a preview the only way to look at it is to close a real till and stand at
+ * it. It is also the screen a shop sees FIRST every morning, which makes it the one
+ * worst served by being hard to look at.
+ *
+ * The toggle exists because the gate has two quite different faces and only one of
+ * them is the happy path. The blocked states — offline, no cash-up right, a machine
+ * never linked to a till — replace the pad entirely with a callout, and each is a
+ * screen somebody will meet on a bad morning without anyone having designed it that
+ * day. They are checked here rather than by unplugging a network cable.
+ *
+ * Nothing here opens a shift: `tillOpenShiftAction` would refuse a preview session
+ * anyway, and the button is left live precisely so that refusal renders in the error
+ * callout where it belongs.
+ */
+export function OpenTillPreview() {
+  const [state, setState] = useState<'ready' | 'offline' | 'noRight' | 'unclaimed'>('ready')
+
+  const STATES = [
+    { key: 'ready', label: 'Ready to open' },
+    { key: 'offline', label: 'Offline' },
+    { key: 'noRight', label: 'No cash-up right' },
+    { key: 'unclaimed', label: 'Machine not linked' },
+  ] as const
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-[13px] text-muted">
+        The first screen of a shop’s day. The greeting, the weekday and the quote are
+        read once when the screen mounts — see <code>lib/tillQuotes</code>; the quote
+        turns over at midnight and there is deliberately no button to shuffle it.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {STATES.map((s) => (
+          <Button
+            key={s.key}
+            variant={state === s.key ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setState(s.key)}
+          >
+            {s.label}
+          </Button>
+        ))}
+      </div>
+      {/* Tall enough for the card at its full height — measured at 744px, plus the
+          gate's own padding. Shorter and the preview crops the button and the hint
+          under it, which is exactly the part worth looking at. */}
+      <div className="h-[800px] overflow-hidden rounded-card border border-border bg-canvas">
+        <div className="flex h-full flex-col">
+          <OpenTillGate
+            mode="terminal"
+            operatorName="Tiaan"
+            terminalId={state === 'unclaimed' ? null : 1}
+            terminalLabel={state === 'unclaimed' ? null : 'TILL001'}
+            terminalName={state === 'unclaimed' ? null : 'Till 1'}
+            unclaimed={state === 'unclaimed'}
+            canCashup={state !== 'noRight'}
+            online={state !== 'offline'}
+            onOpened={() => {}}
+            onExit={() => {}}
+          />
+        </div>
       </div>
     </div>
   )

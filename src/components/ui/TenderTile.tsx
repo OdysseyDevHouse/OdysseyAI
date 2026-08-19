@@ -92,6 +92,7 @@ export function TenderTile({
   icon,
   refusal = null,
   disabled = false,
+  size = 'default',
   onClick,
 }: {
   name: string
@@ -103,10 +104,21 @@ export function TenderTile({
    */
   refusal?: string | null
   disabled?: boolean
+  /**
+   * `compact` is the same key one step down — 96px rather than 120px.
+   *
+   * For a grid sharing its row with something else. The till's tender pad puts
+   * these BESIDE the keypad rather than under it, and at full size two rows of
+   * keys made the pad's body scroll — which on that screen means scrolling to
+   * reach a digit. Still a thumb target by a wide margin; what shrinks is the
+   * empty space around the glyph, not the glyph.
+   */
+  size?: 'default' | 'compact'
   onClick: () => void
 }) {
   const Glyph = icon
   const off = refusal !== null
+  const compact = size === 'compact'
 
   return (
     <button
@@ -122,15 +134,19 @@ export function TenderTile({
        * design rules forbid. It lives in the kit instead, so the till and the
        * desk pad get the same key.
        */
-      className="flex h-full min-h-[7.5rem] flex-col items-center justify-center gap-2 rounded-card border border-border bg-surface px-3 py-4 text-center transition-colors hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border disabled:hover:bg-surface"
+      className={`flex h-full flex-col items-center justify-center rounded-card border border-border bg-surface text-center transition-colors hover:border-border-strong hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border disabled:hover:bg-surface ${
+        compact ? 'min-h-24 gap-1.5 px-2 py-2.5' : 'min-h-[7.5rem] gap-2 px-3 py-4'
+      }`}
     >
       <span
         aria-hidden
-        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-pill bg-brand-soft text-brand"
+        className={`flex shrink-0 items-center justify-center rounded-pill bg-brand-soft text-brand ${
+          compact ? 'h-9 w-9' : 'h-12 w-12'
+        }`}
       >
-        <Glyph size={24} />
+        <Glyph size={compact ? 20 : 24} />
       </span>
-      <span className="text-base font-semibold text-ink">{name}</span>
+      <span className={`font-semibold text-ink ${compact ? 'text-sm' : 'text-base'}`}>{name}</span>
       {/* The reason sits under the name at a smaller step, so a refused key
           still reads as the same key rather than a different control. */}
       {refusal && <span className="text-xs leading-tight text-muted">{refusal}</span>}

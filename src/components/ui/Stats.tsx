@@ -37,10 +37,22 @@ export function StatTile({
   iconTone,
   icon,
   href,
+  density = 'default',
 }: {
   label: string
   value: string
   hint?: string
+  /**
+   * `compact` shrinks the padding, the medallion and the figure by one step.
+   *
+   * For a strip inside a DIALOG rather than on a page. The till's tender pad is
+   * the case this exists for: four of these at page density cost 84px of a body
+   * capped at 60vh, which pushed the keypad under a scrollbar — and a keypad a
+   * cashier has to scroll to reach is the one thing that screen cannot ship
+   * with. A variant here rather than overrides at the call site, so every
+   * in-dialog strip gets the same figure.
+   */
+  density?: 'default' | 'compact'
   /**
    * Colours the VALUE, and so says the figure itself is an exception — over
    * limit, below minimum, unposted. Leave it `default` for a plain number; a
@@ -81,6 +93,8 @@ export function StatTile({
     danger: 'bg-danger-soft text-danger-ink',
   }[iconTone ?? tone]
 
+  const compact = density === 'compact'
+
   /*
    * Medallion left, figures right, hairline between them.
    *
@@ -93,21 +107,27 @@ export function StatTile({
    * the icon floats and the tile looks unfinished at wide column widths.
    */
   const body = (
-    <div className="flex items-center gap-3.5">
+    <div className={`flex items-center ${compact ? 'gap-2.5' : 'gap-3.5'}`}>
       {icon && (
         <span
           aria-hidden
-          className={`flex size-11 shrink-0 items-center justify-center rounded-pill ${medallionClass}`}
+          className={`flex ${compact ? 'size-9' : 'size-11'} shrink-0 items-center justify-center rounded-pill ${medallionClass}`}
         >
           {icon}
         </span>
       )}
-      {icon && <span aria-hidden className="h-9 w-px shrink-0 bg-border" />}
+      {icon && (
+        <span aria-hidden className={`${compact ? 'h-7' : 'h-9'} w-px shrink-0 bg-border`} />
+      )}
       {/* min-w-0 so a long value truncates inside the tile instead of pushing
           the medallion out of the row. */}
       <div className="min-w-0">
         <div className="text-xs font-medium text-muted">{label}</div>
-        <div className={`numeric mt-0.5 truncate text-2xl font-semibold ${toneClass}`}>{value}</div>
+        <div
+          className={`numeric mt-0.5 truncate font-semibold ${compact ? 'text-xl' : 'text-2xl'} ${toneClass}`}
+        >
+          {value}
+        </div>
         {hint && <div className="mt-0.5 truncate text-xs text-muted">{hint}</div>}
       </div>
     </div>
@@ -116,14 +136,14 @@ export function StatTile({
   if (href) {
     return (
       <Card className="p-0">
-        <Link href={href} className="block rounded-card p-4 transition hover:bg-surface-2">
+        <Link href={href} className={`block rounded-card transition hover:bg-surface-2 ${compact ? 'p-3' : 'p-4'}`}>
           {body}
         </Link>
       </Card>
     )
   }
 
-  return <Card className="p-4">{body}</Card>
+  return <Card className={compact ? 'p-3' : 'p-4'}>{body}</Card>
 }
 
 /**

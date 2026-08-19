@@ -290,6 +290,31 @@ await applyTheme()
 // Session-level, so it survives every navigation below — set once.
 await applyMedia()
 
+/*
+ * SHOT_VIEWPORT="1366x768" drives the page at a specific screen size.
+ *
+ * For a screen whose whole job is fitting a fixed height — a till dialog that
+ * must show its keypad without scrolling. Verified at the 1584x905 a desktop
+ * Chrome happens to give, such a screen passes while still being broken on the
+ * 768px till it will actually run on.
+ *
+ * Applied to the probe only: the capture below re-overrides the metrics to the
+ * full document height, which is what makes a long page photographable.
+ */
+const VIEWPORT = process.env.SHOT_VIEWPORT
+if (VIEWPORT) {
+  const [w, h] = VIEWPORT.split('x').map((n) => Number(n.trim()))
+  if (!Number.isFinite(w) || !Number.isFinite(h)) {
+    console.error(`SHOT_VIEWPORT must look like "1366x768", got "${VIEWPORT}"`)
+    process.exit(1)
+  }
+  await send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: w, height: h, deviceScaleFactor: 1, mobile: false },
+    sessionId,
+  )
+}
+
 for (const p of paths) {
   let landedOn = await goto(p)
   // The stored choice is picked up during parsing, so a page navigated to
@@ -425,12 +450,23 @@ for (const p of paths) {
   // component can be looked at closely instead of hunting for it in a
   // 12,000px capture of the style guide. Silently falls back to the whole page
   // when nothing matches — a missing crop should not lose the screenshot.
+  //
+  // An open <dialog> is matched too. It is the one thing a probe can open and
+  // then not photograph: it renders in the top layer, so cropping to the card
+  // that launched it frames the page underneath instead of the modal.
   const CLIP = process.env.SHOT_CLIP
   const clip = CLIP
     ? await evaluate(
         `(() => {
            const wanted = ${JSON.stringify(CLIP)}.trim().toLowerCase()
-           const el = [...document.querySelectorAll('section, article, div')]
+           // An open dialog wins outright when it carries the wanted text. The
+           // "smallest match" rule below is right for a card on a page and
+           // wrong for a modal: it lands on the modal's header, or on one panel
+           // inside it, when what was asked for is the dialog.
+           const modal = [...document.querySelectorAll('dialog[open]')].find((n) =>
+             (n.innerText || '').trim().toLowerCase().includes(wanted),
+           )
+           const el = modal || [...document.querySelectorAll('section, article, div')]
              .filter((n) => (n.innerText || '').trim().toLowerCase().includes(wanted))
              // The smallest element still containing the text WOULD be the
              // obvious pick, but on a card whose heading repeats the name that
@@ -441,7 +477,15 @@ for (const p of paths) {
              .sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height)[0]
            if (!el) return null
            const r = el.getBoundingClientRect()
-           return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height, scale: 1 }
+           // A modal is laid out against the VIEWPORT, not the document, so its
+           // rect is already in the capture's coordinates — adding the page
+           // scroll to it aims the crop hundreds of pixels below the panel and
+           // yields a blank frame. Only document-flow elements get the offset.
+           const fixed =
+             el.tagName === 'DIALOG' || getComputedStyle(el).position === 'fixed'
+           const x = fixed ? r.x : r.x + scrollX
+           const y = fixed ? r.y : r.y + scrollY
+           return { x, y, width: r.width, height: r.height, scale: 1 }
          })()`,
       )
     : null

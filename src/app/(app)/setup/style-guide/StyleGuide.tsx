@@ -12,6 +12,8 @@ import {
   BulkOptionsDialog,
   Button,
   Callout,
+  DeepPanel,
+  QuoteCard,
   Tooltip,
   SettingsHint,
   Card,
@@ -93,10 +95,17 @@ import {
   toneForTileToken,
   TouchRow,
   ProductTile,
+  RowDisclosure,
   Slider,
   Stepper,
   SwatchPicker,
   GeneratedPictureModal,
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_TH,
+  TABLE_TD,
+  TABLE_NUMERIC,
+  TABLE_ROW,
   tileClass,
   ToolbarSearch,
   useChartColors,
@@ -114,7 +123,7 @@ import { LineOptionsModal } from '@/app/(pos)/pos/LineOptionsModal'
 import InstructionsModal from '@/app/(pos)/pos/InstructionsModal'
 import { ReceiptModal } from '@/app/(pos)/pos/ReceiptModal'
 import { SplitPreview } from './SplitPreview'
-import { GatePreview, FloorPreview } from './GatePreview'
+import { GatePreview, FloorPreview, OpenTillPreview } from './GatePreview'
 import { ModuleMenuPreview } from './ModuleMenuPreview'
 import { TenderPreview } from './TenderPreview'
 import type { TillInstructionGroup } from '@/lib/site/instructions'
@@ -155,6 +164,7 @@ export default function StyleGuidePage() {
         <BadgeSection />
         <SectionTitleSection />
         <CalloutSection />
+        <DeepPanelSection />
         <TooltipSection />
         <SettingsHintSection />
         <StatsSection />
@@ -164,6 +174,7 @@ export default function StyleGuidePage() {
         <SettingRowSection />
         <WeekHoursSection />
         <AccordionSection />
+        <RowDisclosureSection />
         <SelectableCardSection />
         <ReasonPickerSection />
         <TileSwatchSection />
@@ -613,6 +624,60 @@ function AccordionSection() {
   )
 }
 
+function RowDisclosureSection() {
+  const [open, setOpen] = useState(true)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Row disclosure"
+        description="<RowDisclosure /> — the label of a table row that folds a detail row open underneath it. Accordion is a card and cannot go in a cell without drawing a second box around a row that already has its own hairline; this is the same interaction stripped to what a row can wear. The expanded content is a sibling <tr> the caller renders, because a row cannot contain another row."
+      />
+      <div className="overflow-x-auto">
+        <table className={TABLE}>
+          <thead>
+            <tr className={TABLE_HEAD_ROW}>
+              <th className={TABLE_TH}>Tender</th>
+              <th className={`${TABLE_TH} text-right`}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className={TABLE_ROW}>
+              <td className={TABLE_TD}>
+                <RowDisclosure
+                  label="Cash"
+                  hint={open ? 'counted by denomination' : 'count it out by denomination'}
+                  open={open}
+                  onToggle={() => setOpen((o) => !o)}
+                />
+              </td>
+              <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>800.00</td>
+            </tr>
+            {open && (
+              <tr className="border-b border-border bg-surface-2">
+                <td colSpan={2} className="px-4 py-4">
+                  <p className="text-sm text-muted">
+                    The detail row. It spans every column, and the caller decides what goes in
+                    it — a grid of inputs, a breakdown, a note.
+                  </p>
+                </td>
+              </tr>
+            )}
+            {/* A row with nothing to fold gets no chevron rather than a dead
+                one — pass `disabled` and it renders as plain row text. */}
+            <tr className={TABLE_ROW}>
+              <td className={TABLE_TD}>
+                <RowDisclosure label="Card" open={false} onToggle={() => {}} disabled />
+              </td>
+              <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>550.00</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
 function SelectableCardSection() {
   const [choice, setChoice] = useState('normal')
 
@@ -897,6 +962,45 @@ function SectionTitleSection() {
   )
 }
 
+
+function DeepPanelSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Deep surfaces"
+        description="The two places the app goes DARKER than its canvas instead of paler. Both are for a screen read from three feet away by somebody standing up, which is a different problem from a back-office table read at arm's length — and both are rare on purpose: the effect is entirely that they are the darkest thing in the viewport, so a second one in the same view cancels the first."
+      />
+      <Row>
+        <Spec
+          name="<DeepPanel label hint value>"
+          note="A plaque, not a card. For the ONE figure a screen exists to capture — the till's opening float. The value is tabular so a number typed digit by digit grows rather than jitters, and the label is set in the panel's own muted step rather than in text-muted, which would vanish against it."
+        />
+        <div className="min-w-[320px] flex-1">
+          <DeepPanel
+            label="Opening float"
+            hint="What is in the drawer?"
+            value={
+              <>
+                <span className="mr-0.5 text-2xl text-deep-muted">R</span>1250.00
+              </>
+            }
+          />
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="<QuoteCard eyebrow footnote>"
+          note="The one thing on a screen that is NOT about the task. Framed rather than left as a loose italic line, because an unframed sentence beside a set of instructions reads as another instruction. The mark behind it is aria-hidden — a reader announcing “quote” before a quote is the same word twice."
+        />
+        <div className="min-w-[320px] max-w-[30rem] flex-1">
+          <QuoteCard eyebrow="Quote of the day" footnote="A little momentum for your day">
+            Your best is always worth bringing.
+          </QuoteCard>
+        </div>
+      </Row>
+    </Card>
+  )
+}
 function CalloutSection() {
   return (
     <Card>
@@ -1014,7 +1118,7 @@ function StatsSection() {
     <Card>
       <CardHeader
         title="Stat strip"
-        description="<StatStrip> of <StatTile> — a list screen's headline numbers. `tone` colours the VALUE and says the figure is an exception; `iconTone` colours only the medallion, for a subject with a natural colour. Tone only the tile that means “act on me”; three tiles all in the same ink is three tiles nobody looks at. <MiniStat> is the compact figure inside other chrome."
+        description="<StatStrip> of <StatTile> — a list screen's headline numbers. `tone` colours the VALUE and says the figure is an exception; `iconTone` colours only the medallion, for a subject with a natural colour. Tone only the tile that means “act on me”; three tiles all in the same ink is three tiles nobody looks at. <MiniStat> is the compact figure inside other chrome. `density=compact` is the same tile one step down, for a strip inside a dialog."
       />
       <CardBody className="flex flex-col gap-4">
         <StatStrip>
@@ -1044,6 +1148,37 @@ function StatsSection() {
             tone="danger"
             hint="Losing sales"
             icon={<Icons.StatusFailure size={20} />}
+          />
+        </StatStrip>
+        {/* density="compact" — the same tile one step down, for a strip inside a
+            DIALOG rather than on a page. The till's tender pad shows four of
+            these above a keypad, where the page-density version cost enough
+            height to push the keys into a scroll. */}
+        <StatStrip>
+          <StatTile
+            density="compact"
+            label="Tender amount"
+            value={rand(0)}
+            icon={<Icons.CreditCard size={18} />}
+          />
+          <StatTile
+            density="compact"
+            label="Amount due"
+            value={rand(344)}
+            icon={<Icons.Receipt size={18} />}
+          />
+          <StatTile
+            density="compact"
+            label="Remaining"
+            value={rand(0)}
+            icon={<Icons.HandCoins size={18} />}
+          />
+          <StatTile
+            density="compact"
+            label="Change"
+            value={rand(56)}
+            tone="success"
+            icon={<Icons.Money size={18} />}
           />
         </StatStrip>
         <div className="flex flex-wrap gap-2">
@@ -2486,6 +2621,13 @@ function TableGateSection() {
         />
       </Row>
       <FloorPreview />
+      <Row>
+        <Spec
+          name="<OpenTillGate mode operatorName terminalLabel>"
+          note="The screen in front of the sale until a shift exists. Two halves that hold different KINDS of thing: the person and the day on the left, none of it pressable, and the one job on the right. Every blocked case — offline, no cash-up right, a machine never linked to a till — replaces the pad rather than refusing the figure after it is typed."
+        />
+      </Row>
+      <OpenTillPreview />
     </Card>
   )
 }
@@ -2501,6 +2643,7 @@ function TenderTileSection() {
         <Spec name="<TenderTile name icon>" note="icon from tenderIcon(tender)" />
         <Spec name="refusal" note="a sentence, not a flag — it disables and explains" />
         <Spec name="tenderIcon(t)" note="icon → code → integrationKey, then Wallet" />
+        <Spec name='size="compact"' note="96px, for a grid sharing its row with a keypad" />
         <div className="grid w-full max-w-2xl auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3">
           <TenderTile name="Cash" icon={Icons.Banknote} onClick={() => {}} />
           <TenderTile name="Card" icon={Icons.CreditCard} onClick={() => {}} />
@@ -2513,6 +2656,20 @@ function TenderTileSection() {
           <TenderTile name="Direct deposit" icon={Icons.Landmark} onClick={() => {}} />
           <TenderTile name="Online payment" icon={Icons.Globe} onClick={() => {}} />
           <TenderTile name="Exchange credit" icon={Icons.ArrowLeftRight} onClick={() => {}} />
+        </div>
+        {/* The compact step, beside the full one so the difference is visible
+            rather than described. The tender pad uses these because its keys sit
+            NEXT TO the keypad, and at full height the pad's body scrolled. */}
+        <div className="grid w-full max-w-2xl auto-rows-fr grid-cols-2 gap-2 sm:grid-cols-3">
+          <TenderTile name="Cash" icon={Icons.Banknote} size="compact" onClick={() => {}} />
+          <TenderTile name="Card" icon={Icons.CreditCard} size="compact" onClick={() => {}} />
+          <TenderTile
+            name="Account"
+            icon={Icons.Users}
+            refusal="Needs a customer"
+            size="compact"
+            onClick={() => {}}
+          />
         </div>
         {/* The whole pad the keys live in, so the amount panel and the footer
             can be looked at too — the POS itself is behind a clerk PIN. */}

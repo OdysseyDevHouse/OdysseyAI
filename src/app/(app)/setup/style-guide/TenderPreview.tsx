@@ -57,7 +57,11 @@ const TENDERS: TenderType[] = [
     allowsChange: true,
     roundsToCashDenomination: true,
   }),
-  tender(2, 'CARD', 'Card', 'CreditCard', { opensCashDrawer: true }),
+  /* `tipOnOverTender` ON, because that is the case worth being able to look at:
+     a card cannot give change, so R400 on a R344 bill is a R56 tip by definition
+     and the pad fills the tip box itself. Without a tender configured this way
+     the preview can only show the half of the tip behaviour a person declares. */
+  tender(2, 'CARD', 'Card', 'CreditCard', { opensCashDrawer: true, tipOnOverTender: true }),
   /* Refused on this preview, because a walk-in has no customer — which is the
      state worth looking at: the key keeps its place and says why. */
   tender(3, 'ACCOUNT', 'Account', 'Users', {
@@ -86,7 +90,9 @@ export function TenderPreview() {
         open={open}
         onClose={() => setOpen(false)}
         tenders={TENDERS}
-        totalIncl={85}
+        /* 344, so the preview matches the worked example in the pad's own
+           notes: R400 on a card that keeps its over-payment is a R56 tip. */
+        totalIncl={344}
         cashRounding={0.1}
         customer={null}
         pending={false}

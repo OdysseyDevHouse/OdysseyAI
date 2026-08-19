@@ -2813,6 +2813,139 @@ const SHIFT_MOVEMENTS_SOURCE: CatalogSource = {
 
 /* ── tips ──────────────────────────────────────────────────────────────────── */
 
+/**
+ * Tips split by TENDER, as SUMmable columns — one row per person, one column per method.
+ *
+ * The same trick as agedBucketFields above, and for the same reason: the engine builds its
+ * column list from the spec BEFORE it reads a row, so columns can never be discovered from
+ * the data. A cross-tab has to be declared, which means declaring which tenders get one.
+ *
+ * Matched on `tt.code`, never `tt.name`. The code is the stable handle — UNIQUE,
+ * /^[A-Z0-9_]{2,24}$/, and unchangeable on a system tender — while the name is what a shop
+ * renames. A store calling its card tender "Speedpoint" must not empty the Card column.
+ *
+ * `tipOther` is the NEGATION of the named set rather than a list of the rest, so a tender
+ * added after this was written always lands somewhere and the columns ALWAYS add up to the
+ * tip total. That identity is the point: a breakdown that can silently lose a column is
+ * worse than no breakdown. Other growing large is a SIGNAL — the shop has a tender that
+ * deserves promoting to its own column — not a bug to fix by hardcoding one more code.
+ *
+ * Why these four: CASH is the only tip physically in the drawer, CARD and EFT settle by two
+ * different routes, and ACCOUNT posts to a debtor so the shop has not been paid yet.
+ * GIFT_CARD, ONLINE and EXCHANGE are low-volume variants of those same stories. DEPOSIT
+ * should read ZERO — that tender is capped at the document total and gives no change, so
+ * there is no excess to become a tip; a non-zero figure is a data smell, and it belongs in
+ * Other where it looks like one rather than in a column that legitimises it.
+ */
+const NAMED_TIP_TENDERS = ['CASH', 'CARD', 'EFT', 'ACCOUNT'] as const
+
+function tipTenderFields(): CatalogField[] {
+  /* NULL-safe because the tender join is a LEFT one: an unmatched row must fall into
+     Other, not drop out of every column and break the adds-up-to-the-total identity. */
+  const code = "COALESCE(tt.`code`, '')"
+  const named = NAMED_TIP_TENDERS.map((c) => `'${c}'`).join(',')
+  const bucket = (key: string, label: string, cond: string, hint?: string): CatalogField => ({
+    key,
+    label,
+    type: 'currency',
+    expr: `(CASE WHEN ${cond} THEN t.\`amount\` ELSE 0 END)`,
+    numeric: true,
+    needs: ['tender'],
+    group: FIELD_GROUPS.TENDER,
+    ...(hint ? { hint } : {}),
+  })
+  return [
+    bucket('tipCash', 'Cash tips', `${code} = 'CASH'`, 'In the drawer — counted at cash-up.'),
+    bucket('tipCard', 'Card tips', `${code} = 'CARD'`, 'Settled by the card machine, so paid out separately.'),
+    bucket('tipEft', 'EFT tips', `${code} = 'EFT'`),
+    bucket('tipAccount', 'Account tips', `${code} = 'ACCOUNT'`, 'On a debtor account — not money received yet.'),
+    bucket(
+      'tipOther',
+      'Other tips',
+      `${code} NOT IN (${named})`,
+      'Every other tender, including a shop’s own — so the columns always add up to the total.',
+    ),
+    /* The drawer question answered from the shop's own flag rather than inferred from the
+       codes above: tip_in_drawer defaults to 1, so a shop's cash-like tender of its own is
+       in the drawer even though its code is not CASH. Deriving this would understate it. */
+    {
+      key: 'tipInDrawer',
+      label: 'Tips in the drawer',
+      type: 'currency',
+      expr: '(CASE WHEN tt.`tip_in_drawer` = 1 THEN t.`amount` ELSE 0 END)',
+      numeric: true,
+      needs: ['tender'],
+      group: FIELD_GROUPS.TENDER,
+      hint: 'How much of this is cash the till should be holding.',
+    },
+  ]
+}
+
+/**
+ * The tip percentage, and the double-count it has to dodge.
+ *
+ * `sales_tips` is one row per tip, so a bill carrying an over-tender tip AND a service
+ * charge is two rows on one document_id. SUM(d.total_incl) over those rows counts that sale
+ * twice and the percentage reads low — which is exactly why `documentTotal` below is marked
+ * noTotal. The engine has no SUM(DISTINCT), no window function and no HAVING.
+ *
+ * So the denominator counts a sale once per person, on the lowest-id tip THAT PERSON left
+ * on it. A correlated subquery inside an authored expr is established practice in this
+ * catalog (see the deducts-product and job-card-lines fields), and it resolves from
+ * ix_tip_document without touching the table. `ratio` then makes summarising emit
+ * SUM(numerator)/SUM(denominator), so the sale enters each person's denominator once.
+ *
+ * ── THE ONE CASE THIS READS HIGH ──────────────────────────────────────────
+ *
+ * The subquery cannot see the report's own filters — they are assembled in buildWhere and
+ * never reach a field's expr. Filter the report to source = 'service' and a person whose
+ * FIRST tip on that bill was an over_tender one loses the total from their denominator
+ * while their service tip stays in the numerator, so the percentage overstates. Not fixable
+ * inside the engine; the hint says so in words a user can act on, which is the honest
+ * option — a caveat a reader can apply beats a number that is quietly wrong.
+ */
+function tipPercentFields(): CatalogField[] {
+  /* Once per document PER PERSON, not once per document.
+   *
+   * The obvious version — the document's lowest tip id, full stop — is wrong, and wrong in
+   * a way that reads as a plausible number: on a bill two waiters both tipped on, only the
+   * FIRST waiter's row carries the sale, so the second one contributes a numerator with a
+   * zero denominator and their percentage collapses to 0%. A split bill is not exotic; it
+   * is a Friday night. Measured, not reasoned about — the test that caught this inserts two
+   * tips on a document that already had two.
+   *
+   * The NULL-safe comparison is what makes the pool work: `user_id` is NULL for pooled
+   * tips, and `=` against NULL is never true, so a plain `t2.user_id = t.user_id` would
+   * give the entire pool a zero denominator. `<=>` is NULL-safe equality in MariaDB. */
+  const firstForPerson =
+    '(SELECT MIN(t2.`id`) FROM `sales_tips` t2 ' +
+    'WHERE t2.`document_id` = t.`document_id` AND t2.`user_id` <=> t.`user_id`)'
+  return [
+    {
+      key: 'tippedSaleTotal',
+      label: 'Tipped sale value (incl.)',
+      type: 'currency',
+      expr: `(CASE WHEN t.\`id\` = ${firstForPerson} THEN d.\`total_incl\` ELSE 0 END)`,
+      numeric: true,
+      needs: ['doc'],
+      group: FIELD_GROUPS.MONEY,
+      hint: 'The value of the sales that carried a tip, each counted ONCE per person however many tips they left on it.',
+    },
+    {
+      key: 'tipPct',
+      label: 'Tip %',
+      type: 'percent',
+      expr: '(CASE WHEN d.`total_incl` = 0 THEN 0 ELSE (t.`amount` / d.`total_incl`) * 100 END)',
+      numeric: true,
+      noTotal: true,
+      ratio: { numerator: 'amount', denominator: 'tippedSaleTotal' },
+      needs: ['doc'],
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Tips as a share of the bills that carried one — NOT of all turnover. When the report is filtered to particular tips, the denominator still counts each tipped sale once from that person’s first tip, which can push this above the true share.',
+    },
+  ]
+}
+
 const TIPS_SOURCE: CatalogSource = {
   key: 'tips',
   label: 'Tips',
@@ -2837,6 +2970,9 @@ const TIPS_SOURCE: CatalogSource = {
       starter: true,
     }),
     { key: 'tenderName', label: 'Tender', type: 'text', expr: 'tt.name', needs: ['tender'], group: FIELD_GROUPS.TENDER },
+    { key: 'tenderCode', label: 'Tender code', type: 'text', expr: 'tt.code', needs: ['tender'], group: FIELD_GROUPS.TENDER },
+    ...tipTenderFields(),
+    ...tipPercentFields(),
     { key: 'documentNumber', label: 'Document', type: 'document', expr: 'd.document_number', needs: ['doc'], group: FIELD_GROUPS.IDENTITY },
     { key: 'documentTotal', label: 'Sale total (incl.)', type: 'currency', expr: 'd.total_incl', numeric: true, noTotal: true, needs: ['doc'], group: FIELD_GROUPS.MONEY },
     /* Reassignment is an audit trail: a tip put on the wrong name and moved

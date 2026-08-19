@@ -28,6 +28,7 @@ export function Modal({
   size = 'md',
   bodyFills = false,
   bodyTall = false,
+  bodyPins = false,
   closeOnBackdrop = true,
 }: {
   open: boolean
@@ -73,6 +74,22 @@ export function Modal({
    * panel.
    */
   bodyTall?: boolean
+  /**
+   * A body that GROWS TO FIT but caps, and whose children do the scrolling.
+   *
+   * For a dialog with something that must never scroll away — a keypad, a fixed
+   * action row — above content that might. Lay the body out as
+   * `flex-1 overflow-y-auto` for the part that may scroll and `shrink-0` for the
+   * part that is pinned.
+   *
+   * The till's tender pad is the case this exists for. Its keypad and tender
+   * keys must stay put while the figures above them scroll, and neither
+   * existing mode does that: the default cap scrolls the whole body as one, so
+   * the overflow lands on the keypad; `bodyFills` pins the row but fixes the
+   * body at 70vh, which on a tall screen leaves a lake of empty panel between
+   * the two halves.
+   */
+  bodyPins?: boolean
   /** Off for a dialog holding half-typed work, where a stray click would lose it. */
   closeOnBackdrop?: boolean
 }) {
@@ -146,12 +163,24 @@ export function Modal({
         <div
           key={open ? 'open' : 'closed'}
           className={`px-5 py-4 text-sm text-ink-2 ${
-            bodyFills
-              ? /* The body owns the height and its children do the scrolling. `min-h-0`
-                   because a flex child will not shrink below its content without it —
-                   the panes would grow past the panel instead of overflowing. */
-                `flex min-h-0 flex-col ${bodyTall ? 'h-[82vh]' : 'h-[70vh]'}`
-              : 'max-h-[60vh] overflow-y-auto'
+            bodyPins
+              ? /* Grows to fit, up to a cap, and its CHILDREN scroll. The middle
+                   ground between the two below: `bodyFills` would leave a tall
+                   screen with a fixed 70vh body and a lake of empty panel above
+                   its pinned row, while the default cap scrolls the pinned row
+                   away with everything else.
+
+                   72vh, not 78: the panel also carries a header and a footer,
+                   and at 78vh on a 1366x768 till the footer's own button landed
+                   one pixel below the fold — which is a button nobody can press
+                   to finish a sale. */
+                'flex max-h-[72vh] min-h-0 flex-col'
+              : bodyFills
+                ? /* The body owns the height and its children do the scrolling. `min-h-0`
+                     because a flex child will not shrink below its content without it —
+                     the panes would grow past the panel instead of overflowing. */
+                  `flex min-h-0 flex-col ${bodyTall ? 'h-[82vh]' : 'h-[70vh]'}`
+                : 'max-h-[60vh] overflow-y-auto'
           }`}
         >
           {children}

@@ -63,6 +63,31 @@
   --color-danger-ink: #b42318;
   --color-danger-soft: #fdeceb;
 
+  /* --- Deep surfaces ----------------------------------------------------- */
+  /* A panel that is DARKER than the page rather than lighter — the opening
+     float on the till gate, and anything else that has to read as a figure on
+     a plaque instead of a value in a form. It exists as a token pair because
+     the till is looked at from three feet away by somebody standing up: the
+     one number on the screen has to survive that distance, and `surface-2`
+     under `ink` does not.
+
+     Note these do NOT invert in dark mode the way every other surface does.
+     A plaque is dark in both themes — that is what makes it a plaque — so the
+     dark overrides only lift it enough to separate it from a dark canvas. */
+  --color-deep: #16233f; /* the plaque itself */
+  --color-deep-2: #1e2f52; /* its lighter end, for a gradient */
+  --color-deep-ink: #ffffff; /* the figure on it */
+  --color-deep-muted: #9db2dc; /* its label and caption */
+
+  /* The quote card's fill. Its own pair rather than `brand` to `brand-ink`,
+     because -ink is defined as the HOVER step and so moves in opposite
+     directions between the themes: darker in light, LIGHTER in dark. A card
+     built from it came out deep blue in one theme and a pale wash carrying
+     white text in the other. These two stay saturated in both, which is what
+     a panel with white text on it needs. */
+  --color-quote: #2f6fed;
+  --color-quote-2: #1b4fc0;
+
   /* Legacy alias — older screens say tone="positive". Points at the same
      green so there is still only one place to change it. */
   --color-positive: #17a34a;
@@ -321,6 +346,13 @@
     --color-danger-ink: #fca5a5;
     --color-danger-soft: #33191a;
 
+    /* Lifted, not inverted — see the note in the light block. */
+    --color-deep: #1b2a49;
+    --color-deep-2: #24375e;
+    /* Pulled DOWN in dark, not up — see the note in the light block. */
+    --color-quote: #2a5fd0;
+    --color-quote-2: #1a3f96;
+
     --color-positive: #4ade80;
 
     /* --color-on-image and --color-image-scrim are deliberately NOT redefined
@@ -400,6 +432,13 @@
   --color-danger: #f87171;
   --color-danger-ink: #fca5a5;
   --color-danger-soft: #33191a;
+
+  /* Lifted, not inverted — see the note in the light block. */
+  --color-deep: #1b2a49;
+  --color-deep-2: #24375e;
+  /* Pulled DOWN in dark, not up — see the note in the light block. */
+  --color-quote: #2a5fd0;
+  --color-quote-2: #1a3f96;
 
   --color-positive: #4ade80;
 

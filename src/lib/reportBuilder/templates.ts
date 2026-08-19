@@ -2106,6 +2106,34 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   {
+    id: 'tips-by-tender',
+    name: 'Tips by person and tender',
+    description:
+      'One row per person with Cash / Card / EFT / Account / Other columns, and what that came to as a share of the bills that carried a tip. Other is every remaining tender, so the columns always add up to the total. Filtering by How can push the percentage above the true share — see the Tip % column.',
+    category: 'Operations',
+    permission: 'sales.cashup',
+    spec: spec({
+      source: 'tips',
+      groupFields: ['userName'],
+      columns: [
+        { field: '__rows' },
+        { field: 'tipCash', agg: 'sum' },
+        { field: 'tipCard', agg: 'sum' },
+        { field: 'tipEft', agg: 'sum' },
+        { field: 'tipAccount', agg: 'sum' },
+        { field: 'tipOther', agg: 'sum' },
+        { field: 'amount', agg: 'sum' },
+        /* `avg` is what makes this the WEIGHTED percentage: isWeightedPercent only fires
+           on a percent field with a ratio under `avg`, and then emits SUM(num)/SUM(den)
+           rather than an aggregate of the row-level rates. With `sum` the engine would
+           emit SUM(<percent expr>) — a nonsense figure that still looks like a
+           percentage, and nothing would flag it. */
+        { field: 'tipPct', agg: 'avg' },
+      ],
+      sort: { key: 'amount_sum', dir: 'desc' },
+    }),
+  },
+  {
     id: 'tip-history',
     name: 'Tip history',
     description:
@@ -2120,6 +2148,7 @@ export const TEMPLATES: ReportTemplate[] = [
         { field: 'documentNumber' },
         { field: 'source' },
         { field: 'tenderName' },
+        { field: 'tenderCode' },
         { field: 'amount' },
         { field: 'reassignedByName' },
         { field: 'reassignReason' },

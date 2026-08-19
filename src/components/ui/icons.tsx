@@ -136,6 +136,9 @@ export {
   // model produced so a generated report is never mistaken for a built one.
   Wand as Wand,
   Sparkles,
+  // The opening mark, set large and pale behind a pull quote. Decorative
+  // only — QuoteCard renders it aria-hidden.
+  Quote,
   Percent,
   Barcode,
   Globe,

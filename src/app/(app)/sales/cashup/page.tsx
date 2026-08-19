@@ -28,6 +28,7 @@ import {
   TABLE_NUMERIC,
 } from '@/components/ui'
 import CashupClient from './CashupClient'
+import ViewDeclarationButton from './ViewDeclarationButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -218,15 +219,10 @@ export default async function CashupPage() {
                           )}
                         </td>
                         {/* Read the signed declaration back, exactly as it was
-                            committed. Hard right, as row actions always are. */}
+                            committed — in the same dialog that counted it.
+                            Hard right, as row actions always are. */}
                         <td className={`${TABLE_TD} text-right`}>
-                          <ButtonLink
-                            href={`/sales/cashup/${shift.id}/declare`}
-                            variant="ghost"
-                            size="sm"
-                          >
-                            View
-                          </ButtonLink>
+                          <ViewDeclarationButton shiftId={shift.id} />
                         </td>
                       </tr>
                     )

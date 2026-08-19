@@ -28,10 +28,13 @@ import {
   payTipsOut,
   splitPoolOut,
   listPayouts,
+  outstandingTipsFor,
   type TenderForTips,
 } from '../src/lib/site/tips'
 import { siteTransaction } from '../src/lib/siteDb'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
+import { TEMPLATES, templateSpec } from '../src/lib/reportBuilder/templates'
+import { runBuilderSpec } from '../src/lib/reportBuilder/run'
 import { saveDraft } from '../src/lib/site/salesDocuments'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
 import { shiftPosition } from '../src/lib/site/shifts'
@@ -848,6 +851,248 @@ async function main() {
     await siteExecute(SITE, 'DELETE FROM tip_payouts WHERE paid_by_name = ?', [ACTOR.userName])
     await siteExecute(SITE, 'DELETE FROM sales_tips WHERE user_id IN (?,?)', [WAITER, 28])
     await siteExecute(SITE, "DELETE FROM sales_tips WHERE document_id = ? AND source = 'service'", [draft.id])
+  }
+
+  /* ── 11. The tender split ──────────────────────────────────────────────────
+     Section 10 puts every fixture tip on CASH, so a per-tender breakdown would pass there
+     without ever being exercised. These are the four properties the split has to hold, and
+     each one fails silently if it breaks: a number that is merely wrong still renders. */
+
+  {
+    const day = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+    const range = { from: day, to: day }
+    const WAITER = 27
+
+    /* A third tender that is deliberately NOT one of the four named ones, so `other` has
+       something real to catch. Whichever of these the site has is fine; if it has none,
+       the identity is still asserted over cash + card alone. */
+    const oddball =
+      (await getTenderByCode(SITE, 'GIFT_CARD')) ??
+      (await getTenderByCode(SITE, 'EXCHANGE')) ??
+      (await getTenderByCode(SITE, 'ONLINE'))
+
+    const rows: string[] = []
+    const args: unknown[] = []
+    const add = (tenderId: number, amount: string) => {
+      rows.push("(?,?,NULL,?, 'declared', ?, 'Nomsa Dlamini')")
+      args.push(draft.id, tenderId, amount, WAITER)
+    }
+    add(cash.id, '20.0000')
+    add(card.id, '35.0000')
+    if (oddball) add(oddball.id, '15.0000')
+
+    await siteExecute(
+      SITE,
+      `INSERT INTO sales_tips (document_id, tender_type_id, shift_id, amount, source, user_id, user_name)
+       VALUES ${rows.join(',')}`,
+      args,
+    )
+
+    const split = (await tipsOwed(SITE, range)).find((r) => r.userId === WAITER)
+    ok('cash tips are counted as cash', split?.byTender.cash === 20, `R${split?.byTender.cash}`)
+    ok('card tips are counted as card', split?.byTender.card === 35, `R${split?.byTender.card}`)
+    if (oddball) {
+      ok(
+        `a tender outside the named four (${oddball.code}) lands in OTHER`,
+        split?.byTender.other === 15,
+        `R${split?.byTender.other}`,
+      )
+    } else {
+      console.log('  (no GIFT_CARD/EXCHANGE/ONLINE tender on this site — `other` not exercised)')
+    }
+
+    /* ── The identity ──
+       This is the assertion the whole design rests on. `other` is written as the NEGATION
+       of the named set, so a tender invented next year still lands somewhere and these
+       always add up. Written as a list of the rest instead, a new tender would vanish from
+       the breakdown while the total stayed right — chips that do not add up to the figure
+       printed beside them, and nothing anywhere to notice. */
+    const s = split?.byTender
+    const sum = round((s?.cash ?? 0) + (s?.card ?? 0) + (s?.eft ?? 0) + (s?.account ?? 0) + (s?.other ?? 0), 2)
+    ok(
+      '*** cash + card + eft + account + other === the total, exactly ***',
+      sum === round(split?.total ?? -1, 2),
+      `${sum} vs ${split?.total}`,
+    )
+
+    /* ── Code, not name ──
+       The reason every CASE WHEN in this feature matches on `code`. A shop renaming its
+       card tender must not empty the Card column. */
+    const cardNameBefore = card.name
+    try {
+      await siteExecute(SITE, 'UPDATE tender_types SET name = ? WHERE id = ?', ['Speedpoint', card.id])
+      const renamed = (await tipsOwed(SITE, range)).find((r) => r.userId === WAITER)
+      ok(
+        '*** renaming a tender does NOT move its tips out of its column ***',
+        renamed?.byTender.card === 35,
+        `R${renamed?.byTender.card} after renaming Card to Speedpoint`,
+      )
+    } finally {
+      await siteExecute(SITE, 'UPDATE tender_types SET name = ? WHERE id = ?', [cardNameBefore, card.id])
+    }
+
+    /* ── inDrawer follows the FLAG, not the code ──
+       tip_in_drawer defaults to 1, so a shop's own cash-like tender is in the drawer even
+       though its code is not CASH. Deriving the figure from the four codes would look
+       right on a default site and understate it on a configured one — which is exactly the
+       kind of bug that only ever appears at a customer. */
+    const drawerBefore = await siteQueryOne<any>(
+      SITE,
+      'SELECT tip_in_drawer FROM tender_types WHERE id = ?',
+      [cash.id],
+    )
+    try {
+      const drawerBaseline = (await tipsOwed(SITE, range)).find((r) => r.userId === WAITER)?.byTender.inDrawer ?? -1
+      await siteExecute(SITE, 'UPDATE tender_types SET tip_in_drawer = 0 WHERE id = ?', [cash.id])
+      const flagged = (await tipsOwed(SITE, range)).find((r) => r.userId === WAITER)
+      /* Asserted as a DROP OF EXACTLY THE CASH TIPS rather than "reads zero", because zero
+         would be the wrong expectation: tip_in_drawer defaults to 1, so the GIFT_CARD tip
+         above is still counted as being in the drawer. That is the behaviour, not a bug —
+         the flag is the shop's answer for each tender, and CASH is only one of them. */
+      ok(
+        '*** inDrawer reads each tender flag, so clearing CASH drops exactly the cash tips ***',
+        round(drawerBaseline - (flagged?.byTender.inDrawer ?? -1), 2) === 20,
+        `R${drawerBaseline} → R${flagged?.byTender.inDrawer}`,
+      )
+      ok(
+        '  ...while the CASH column is untouched by the flag',
+        flagged?.byTender.cash === 20,
+        `R${flagged?.byTender.cash}`,
+      )
+    } finally {
+      /* Restoring matters more than the assertion above it: a leaked tip_in_drawer = 0 on
+         CASH would silently break every cash-up that runs after this script. */
+      await siteExecute(SITE, 'UPDATE tender_types SET tip_in_drawer = ? WHERE id = ?', [
+        drawerBefore?.tip_in_drawer ?? 1,
+        cash.id,
+      ])
+    }
+
+    /* ── The detail rows carry their tender ── */
+    const detail = await outstandingTipsFor(SITE, WAITER, range)
+    ok(
+      'every outstanding tip names the tender it arrived on',
+      detail.length > 0 && detail.every((t) => t.tenderCode.length > 0 && t.tenderName.length > 0),
+      `${detail.length} tip(s): ${detail.map((t) => t.tenderCode).join(', ')}`,
+    )
+    ok(
+      '  and the detail still adds up to the owed total',
+      round(detail.reduce((sum, t) => round(sum + t.amount, 2), 0), 2) === round(split?.total ?? -1, 2),
+      `${detail.reduce((sum, t) => round(sum + t.amount, 2), 0)} vs ${split?.total}`,
+    )
+
+    /* ── The payout filter survived the merge ──
+       tipsOwed and tipsEarned are now one query with the predicate as a parameter. This is
+       the assertion that catches that refactor going wrong, and it is the one that costs
+       real money if it does. */
+    const paidOut = await payTipsOut(SITE, ACTOR, {
+      userId: WAITER,
+      userName: 'Nomsa Dlamini',
+      range,
+      method: 'cash',
+      note: 'Tender split test',
+    })
+    ok('a payout of the split tips succeeds', paidOut.ok === true, paidOut.ok ? `R${paidOut.amount}` : paidOut.error)
+
+    const owedAfterPay = (await tipsOwed(SITE, range)).find((r) => r.userId === WAITER)
+    ok(
+      '*** once paid, the tips leave OWED — split and all ***',
+      owedAfterPay === undefined,
+      owedAfterPay ? `still owed R${owedAfterPay.total}` : 'gone, as it should be',
+    )
+    const earnedAfterPay = (await tipsEarned(SITE, range)).find((r) => r.userId === WAITER)
+    ok(
+      '  ...but EARNED still reports them, with the split intact',
+      earnedAfterPay?.byTender.cash === 20 && earnedAfterPay?.byTender.card === 35,
+      `cash R${earnedAfterPay?.byTender.cash}, card R${earnedAfterPay?.byTender.card}`,
+    )
+
+    await siteExecute(SITE, 'DELETE FROM tip_payouts WHERE paid_by_name = ?', [ACTOR.userName])
+    await siteExecute(SITE, 'DELETE FROM sales_tips WHERE document_id = ? AND user_id = ?', [draft.id, WAITER])
+  }
+
+  /* ── 12. The tip percentage, through the real report engine ────────────────
+     The denominator is the whole difficulty. `sales_tips` is one row per tip, so a bill
+     carrying an over-tender tip AND a service charge joins its document twice — and a naive
+     SUM(d.total_incl) counts that sale twice, quietly halving the percentage on exactly the
+     shops that run a service charge. `tippedSaleTotal` counts a sale only on its LOWEST-id
+     tip to avoid that, which is the kind of claim that has to be measured rather than read:
+     the wrong version still returns a plausible-looking number.
+
+     Run through runBuilderSpec rather than hand-written SQL, because the point is what the
+     ENGINE emits for the shipped template, not what this script can express. */
+
+  {
+    const day = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+    const WAITER = 27
+
+    const saleTotal = toNum(
+      (await siteQueryOne<any>(SITE, 'SELECT total_incl FROM sales_documents WHERE id = ?', [draft.id]))?.total_incl,
+    )
+    /* TWO tips from ONE person on ONE sale — the shape that double-counts — PLUS a tip
+       from a SECOND person on that same bill. The second person is what makes this a real
+       test: with a denominator keyed on the document alone, only whoever tipped first gets
+       the sale counted, and everybody else on a split bill reads 0%. */
+    const OTHER = 28
+    await siteExecute(
+      SITE,
+      `INSERT INTO sales_tips (document_id, tender_type_id, shift_id, amount, source, user_id, user_name)
+       VALUES (?,?,NULL,'6.0000','over_tender',?, 'Nomsa Dlamini'),
+              (?,?,NULL,'4.0000','service',    ?, 'Nomsa Dlamini'),
+              (?,?,NULL,'5.0000','declared',   ?, 'Split Bill Tester')`,
+      [draft.id, cash.id, WAITER, draft.id, card.id, WAITER, draft.id, cash.id, OTHER],
+    )
+
+    const template = TEMPLATES.find((t) => t.id === 'tips-by-tender')
+    ok('the tips-by-tender template exists', !!template)
+
+    if (template) {
+      const result = await runBuilderSpec(
+        SITE,
+        { ...templateSpec(template), period: { key: 'custom', from: day, to: day } },
+        () => true,
+      )
+      const row = result.rows.find((r: any) => String(r.userName ?? '') === 'Nomsa Dlamini') as any
+
+      ok('the waiter appears on the report', !!row, `${result.rows.length} row(s)`)
+      ok(
+        '  with the two tips split across their tenders',
+        toNum(row?.tipCash_sum) === 6 && toNum(row?.tipCard_sum) === 4,
+        `cash R${row?.tipCash_sum}, card R${row?.tipCard_sum}`,
+      )
+
+      /* The assertion this section exists for. Two tips, one sale: the denominator must be
+         the sale ONCE. Counted twice it would read saleTotal * 2, and the percentage would
+         come back at half its true value with nothing to show it had gone wrong. */
+      const den = toNum(row?.tipPct_avg__den)
+      ok(
+        '*** a sale with TWO tips enters the percentage denominator ONCE ***',
+        round(den, 2) === round(saleTotal, 2),
+        `denominator R${den} vs sale R${saleTotal} (double-counted would be R${round(saleTotal * 2, 2)})`,
+      )
+      ok(
+        '  so the percentage is tips over the bill, not over twice the bill',
+        Math.abs(toNum(row?.tipPct_avg) - (10 / saleTotal) * 100) < 0.01,
+        `${toNum(row?.tipPct_avg).toFixed(2)}% on R10 of tips against R${saleTotal}`,
+      )
+      /* ── The split bill ──
+         The regression that made this section worth writing. Keyed on the document alone,
+         the second person's denominator is zero and their percentage reads 0% — a number
+         that looks like an answer. Keyed per person, they get the bill counted too. */
+      const other = result.rows.find((r: any) => String(r.userName ?? '') === 'Split Bill Tester') as any
+      ok(
+        '*** a SECOND person tipping on the same bill also gets a denominator ***',
+        round(toNum(other?.tipPct_avg__den), 2) === round(saleTotal, 2),
+        `R${toNum(other?.tipPct_avg__den)} vs sale R${saleTotal}`,
+      )
+      ok(
+        '  and so a real percentage, not 0%',
+        Math.abs(toNum(other?.tipPct_avg) - (5 / saleTotal) * 100) < 0.01,
+        `${toNum(other?.tipPct_avg).toFixed(2)}% on R5 against R${saleTotal}`,
+      )
+    }
+
+    await siteExecute(SITE, 'DELETE FROM sales_tips WHERE document_id = ? AND user_id IN (?,?)', [draft.id, WAITER, OTHER])
   }
 
   /* ── Clean up ───────────────────────────────────────────────────────────── */
