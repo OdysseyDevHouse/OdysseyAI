@@ -1,8 +1,10 @@
 import { getDocType, findToken } from './catalog'
 import { BAND_REM } from './geometry'
+import { escapeHtml } from './render'
 import {
   BAND_KEYS,
   DEFAULT_IMAGE_H,
+  DEFAULT_QR_PT,
   DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
   type BandKey,
@@ -184,6 +186,33 @@ function imageBlock(b: DocBlock): string {
   return `<div class="sd-block sd-image">{{picture:${b.imageId}:${h}}}</div>`
 }
 
+/**
+ * A QR code, as a placeholder the RENDERER fills in.
+ *
+ * Same shape as a picture and for the same reason: compiling has no idea what
+ * this document's tracking URL is, because the document does not exist yet. The
+ * marker carries the target and the size; renderTemplate resolves the address
+ * and encodes the square.
+ *
+ * The typed URL is NOT in the marker. It goes through as its own escaped
+ * attribute so that a shop's address — the one piece of this a person types —
+ * can never be confused with the marker's own punctuation.
+ */
+function qrBlock(b: DocBlock): string {
+  const target = b.qrTarget ?? 'store'
+  const size = Math.round(b.qrSize ?? DEFAULT_QR_PT)
+  const caption = b.qrCaption?.trim()
+    ? `<div class="sd-qr-caption">${escapeHtml(b.qrCaption.trim())}</div>`
+    : ''
+  const custom = b.qrUrl ? ` data-qr-url="${escapeHtml(b.qrUrl)}"` : ''
+  return (
+    `<div class="sd-block sd-qr"${custom}>` +
+    `{{qr:${target}:${size}}}` +
+    caption +
+    `</div>`
+  )
+}
+
 function letterhead(b: DocBlock): string {
   const tokens = b.tokens ?? []
   // The logo is markup rather than text, so it stands alone above the name
@@ -356,6 +385,8 @@ function compileBlock(b: DocBlock, docKey: string): string {
       return logoBlock(b)
     case 'image':
       return imageBlock(b)
+    case 'qr':
+      return qrBlock(b)
     case 'letterhead':
       return letterhead(b)
     case 'docTitle':

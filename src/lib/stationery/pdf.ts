@@ -4,6 +4,8 @@ import { formatMoney, formatQty } from '../decimals'
 import { BAND_KEYS, DOC_BLOCK_CATALOG, type DocBlock, type DocumentSpec } from './blocks'
 import { findToken, getDocType, type TokenFormat } from './catalog'
 import { conditionHolds } from './conditions'
+import { qrMatrix } from './qr'
+import { resolveQrUrl, type QrContext } from './qrTarget'
 import type { RenderInput, TokenValues } from './render'
 
 /**
@@ -63,6 +65,10 @@ const LINE = '#d0d5dd'
  * stretched version of it.
  */
 const BAND_PT = 4.2
+
+/* A caller that supplied no QR context resolves nothing, which is the same
+   fail-closed direction the A4 path takes. */
+const EMPTY_QR: QrContext = { appUrl: null, storeUrl: null, reviewUrl: null, documentUrl: null }
 
 /** A block's box on the page, in points. */
 type Box = { x: number; y: number; w: number }
@@ -163,6 +169,46 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
   doc.y = box.y
 
   switch (b.kind) {
+    case 'qr': {
+      /*
+       * Drawn as RECTANGLES, not as an image.
+       *
+       * pdfkit has no .svg(), and going through a PNG would mean encoding one
+       * only for pdfkit to decode it again. The module matrix is already the
+       * thing being drawn, so each dark module is a filled square — which is
+       * also resolution-independent in the finished PDF, where a raster would
+       * not be.
+       */
+      const url = b.qrTarget ? resolveQrUrl(b.qrTarget, b.qrUrl, input.qr ?? EMPTY_QR) : null
+      if (!url) return 0
+
+      const pt = Math.min(Math.max(Math.round(b.qrSize ?? 90), 40), 200)
+      const m = qrMatrix(url)
+      /* Four modules of quiet zone, per the QR spec — a code printed hard
+         against other ink is one a scanner will not find. */
+      const quiet = 4
+      const unit = pt / (m.size + quiet * 2)
+
+      doc.save().fillColor('#ffffff').rect(box.x, box.y, pt, pt).fill()
+      doc.fillColor('#000000')
+      for (let row = 0; row < m.size; row++) {
+        for (let col = 0; col < m.size; col++) {
+          if (!m.dark(row, col)) continue
+          doc.rect(box.x + (col + quiet) * unit, box.y + (row + quiet) * unit, unit, unit).fill()
+        }
+      }
+      doc.restore()
+
+      let used = pt
+      const caption = b.qrCaption?.trim()
+      if (caption) {
+        doc.fillColor(MUTED).fontSize(8)
+        doc.text(caption, box.x, box.y + pt + 2, { width: Math.max(box.w, pt), align })
+        used = doc.y - box.y
+      }
+      return used
+    }
+
     case 'image': {
       /*
        * A picture the shop uploaded. The BYTES are handed in by the caller —

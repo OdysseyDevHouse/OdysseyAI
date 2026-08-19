@@ -154,7 +154,18 @@ function sampleDocument(): PurchaseDocument {
  * that must wrap, a discount, cash rounding and two tenders, because those are
  * the things a design breaks on.
  */
-export function sampleReceipt(siteName: string, vatNumber: string | null): ReceiptData {
+export function sampleReceipt(
+  siteName: string,
+  vatNumber: string | null,
+  /**
+   * Where a QR on the sample slip may point.
+   *
+   * Passed in rather than defaulted, so the designer resolves a QR by exactly
+   * the rules the till will — a preview that showed a square the printer would
+   * omit is a preview that lies at the moment somebody trusts it.
+   */
+  qrLinks?: ReceiptData['qrLinks'],
+): ReceiptData {
   return {
     proForma: false,
     gift: false,
@@ -192,6 +203,7 @@ export function sampleReceipt(siteName: string, vatNumber: string | null): Recei
     loyalty: { pointsEarned: 33, balance: 415 },
     copyNumber: 0,
     footerText: '',
+    ...(qrLinks ? { qrLinks } : {}),
   } as unknown as ReceiptData
 }
 

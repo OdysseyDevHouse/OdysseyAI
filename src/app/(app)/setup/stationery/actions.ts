@@ -1,6 +1,9 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { qrContextFor } from '@/lib/site/qrLinks'
+import { setSetting } from '@/lib/site/settings'
+import { cleanCustomUrl, resolveQrUrl, whyNoUrl } from '@/lib/stationery/qrTarget'
 import { actorFor, requireSite } from '@/lib/auth'
 import {
   saveTemplate,
@@ -241,7 +244,7 @@ export async function previewTemplateAction(input: {
     if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
 
     const check = validateSlip(spec)
-    const receipt = sampleReceipt(site.displayName, site.vatNumber)
+    const receipt = sampleReceipt(site.displayName, site.vatNumber, await qrContextFor(ctx.siteId))
 
     return {
       ok: true,
@@ -275,6 +278,7 @@ export async function previewTemplateAction(input: {
     ...source.input,
     capabilities: ctx.capabilities,
     pictures: await pictureIds(ctx.siteId),
+    qr: await qrContextFor(ctx.siteId),
   })
 
   const dropped = unsupportedIn(input.body)
@@ -341,12 +345,14 @@ export async function previewBlocksAction(input: {
   // Read once for the whole design rather than per block: a page of seventeen
   // blocks would otherwise ask the same question seventeen times.
   const pictures = await pictureIds(ctx.siteId)
+  const qr = await qrContextFor(ctx.siteId)
   const blocks: Record<string, string> = {}
   for (const [id, markup] of Object.entries(fragments)) {
     blocks[id] = renderTemplate(markup, input.docType, {
       ...source.input,
       capabilities: ctx.capabilities,
       pictures,
+      qr,
     })
   }
 
@@ -358,11 +364,27 @@ export async function previewBlocksAction(input: {
   const structure = validateSpec(spec, input.docType)
   const legal = validateTemplate(input.docType, compileDocument(spec, input.docType))
 
+  /*
+   * ── A QR WITH NOWHERE TO POINT ──────────────────────────────────────────
+   *
+   * It prints nothing, deliberately — a square that scans to a dead host is
+   * worse than none. But a designer who placed one and sees blank paper is
+   * owed the reason, and the preview is where they are looking. Said once per
+   * target rather than once per block, so three review QRs are one sentence.
+   */
+  const qrProblems = new Set<string>()
+  for (const b of spec.blocks) {
+    if (b.kind !== 'qr') continue
+    const target = b.qrTarget ?? 'store'
+    if (resolveQrUrl(target, b.qrUrl, qr)) continue
+    qrProblems.add(`Your QR code has nothing to point at. ${whyNoUrl(target, qr)}`)
+  }
+
   return {
     ok: true,
     blocks,
     label: source.label,
-    warnings: [...structure.errors, ...legal.errors.map((e) => e.message)],
+    warnings: [...structure.errors, ...legal.errors.map((e) => e.message), ...qrProblems],
   }
 }
 
@@ -415,7 +437,7 @@ export async function previewSlipBlocksAction(input: {
   if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
 
   const site = await requireSite()
-  const receipt = sampleReceipt(site.displayName, site.vatNumber)
+  const receipt = sampleReceipt(site.displayName, site.vatNumber, await qrContextFor(ctx.siteId))
 
   return {
     ok: true,
@@ -556,4 +578,39 @@ async function picturesFor(siteId: number): Promise<PictureInfo[]> {
     filename: i.filename,
     sizeBytes: i.sizeBytes,
   }))
+}
+
+/**
+ * Where a "scan to rate us" QR points.
+ *
+ * Typed once here rather than into every design that wants one: a shop putting
+ * the same square on its invoice, its quote and its till slip should change the
+ * address in one place when it moves.
+ *
+ * Cleaned through the same function the designer and the renderers use, so an
+ * address this accepts is one they will encode — and an address they would
+ * refuse is refused here, where a person can see why.
+ */
+export async function saveReviewUrlAction(url: string): Promise<ActionResult> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const trimmed = url.trim()
+  if (trimmed === '') {
+    const cleared = await setSetting(ctx.siteId, 'document_review_url', '')
+    if (!cleared.ok) return cleared
+    revalidatePath('/setup/stationery')
+    return { ok: true, message: 'Review link cleared. A QR pointing at it will print nothing.' }
+  }
+
+  const clean = cleanCustomUrl(trimmed)
+  if (!clean) {
+    return { ok: false, error: 'That is not an https web address.' }
+  }
+
+  const saved = await setSetting(ctx.siteId, 'document_review_url', clean)
+  if (!saved.ok) return saved
+
+  revalidatePath('/setup/stationery')
+  return { ok: true, message: 'Review link saved.' }
 }

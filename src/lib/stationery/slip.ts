@@ -1,4 +1,5 @@
 import { isConditionRule, type ConditionRule } from './conditions'
+import { isQrTarget, cleanCustomUrl, type QrTarget } from './qrTarget'
 /**
  * The till slip's design, as an ordered list of BLOCKS.
  *
@@ -55,6 +56,7 @@ export const SLIP_BLOCK_KINDS = [
   'tax',
   'loyalty',
   'text',
+  'qr',
   'rule',
   'feed',
 ] as const
@@ -79,6 +81,12 @@ export type SlipBlock = {
    * Absent means always, which is what every design saved before this means.
    */
   showWhen?: ConditionRule
+  /** qr only: what the code points at. See lib/stationery/qrTarget. */
+  qrTarget?: QrTarget
+  /** qr only: the typed address, for the `custom` target and nothing else. */
+  qrUrl?: string
+  /** qr only: words under the square. */
+  qrCaption?: string
 }
 
 export type SlipSpec = {
@@ -119,6 +127,10 @@ export const SLIP_BLOCK_INFO: Record<
     required: true,
   },
   loyalty: { label: 'Loyalty points', hint: 'Points earned and the balance, when the sale had a customer.' },
+  qr: {
+    label: 'A QR code',
+    hint: 'A square customers scan. The printer draws it — see EscPos.qr.',
+  },
   text: { label: 'Your own words', hint: 'A returns policy, a thank-you, opening hours.' },
   rule: { label: 'A dividing line', hint: 'A row of dashes across the slip.' },
   feed: { label: 'Blank space', hint: 'One blank line.' },
@@ -233,6 +245,9 @@ export function parseSlip(json: string): SlipSpec | null {
       const text = (b as { text?: unknown }).text
       // Kept only when this build still has the rule — see parseSpec's note.
       const when = (b as { showWhen?: unknown }).showWhen
+      const rawTarget = (b as { qrTarget?: unknown }).qrTarget
+      const rawQrUrl = (b as { qrUrl?: unknown }).qrUrl
+      const rawQrCaption = (b as { qrCaption?: unknown }).qrCaption
 
       clean.push({
         kind: kind as SlipBlockKind,
@@ -241,6 +256,13 @@ export function parseSlip(json: string): SlipSpec | null {
         ...(typeof text === 'string' ? { text: text.slice(0, 300) } : {}),
         ...((b as { bold?: unknown }).bold === true ? { bold: true } : {}),
         ...(isConditionRule(when) && when !== 'always' ? { showWhen: when } : {}),
+        ...(isQrTarget(rawTarget) ? { qrTarget: rawTarget } : {}),
+        ...(typeof rawQrUrl === 'string' && cleanCustomUrl(rawQrUrl)
+          ? { qrUrl: cleanCustomUrl(rawQrUrl) as string }
+          : {}),
+        ...(typeof rawQrCaption === 'string' && rawQrCaption.trim()
+          ? { qrCaption: rawQrCaption.slice(0, 40) }
+          : {}),
       })
     }
     return { version: 1, blocks: clean }

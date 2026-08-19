@@ -29,6 +29,7 @@ import {
   toMarkupAction,
   uploadPictureAction,
   deletePictureAction,
+  saveReviewUrlAction,
   type PictureInfo,
 } from './actions'
 import SlipDesigner from './SlipDesigner'
@@ -95,6 +96,7 @@ export default function StationeryClient({
   siteName,
   logoFile,
   pictures: initialPictures,
+  reviewUrl: initialReviewUrl,
   docs,
   templates: initialTemplates,
 }: {
@@ -102,6 +104,8 @@ export default function StationeryClient({
   /** The stored disk name, or '' — used only to know whether one exists. */
   logoFile: string
   pictures: PictureInfo[]
+  /** Where a scan-to-rate QR points. Empty means such a QR prints nothing. */
+  reviewUrl: string
   docs: DocInfo[]
   templates: TemplateInfo[]
 }) {
@@ -407,6 +411,18 @@ export default function StationeryClient({
    * what the shop has.
    */
   const [pictures, setPictures] = useState(initialPictures)
+  const [reviewUrl, setReviewUrl] = useState(initialReviewUrl)
+
+  function saveReviewUrl() {
+    start(async () => {
+      const res = await saveReviewUrlAction(reviewUrl)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success(res.message)
+    })
+  }
   const fileInput = useRef<HTMLInputElement>(null)
 
   const pictureInput = useRef<HTMLInputElement>(null)
@@ -702,6 +718,36 @@ export default function StationeryClient({
             large one is attached to everything you send. Pictures print on pages, not on
             till slips: a thermal printer has no useful way to draw one. Deleting a picture
             leaves any design using it printing without it.
+          </p>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Your review link"
+          description="Where a “scan to rate us” QR code sends people."
+        />
+        <CardBody>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field
+              label="Web address"
+              hint="Your Google, Facebook or own review page. Must start with https."
+              className="min-w-[22rem] flex-1"
+            >
+              <Input
+                value={reviewUrl}
+                placeholder="https://g.page/r/your-review-link"
+                onChange={(e) => setReviewUrl(e.target.value)}
+              />
+            </Field>
+            <Button variant="secondary" onClick={saveReviewUrl} disabled={pending}>
+              Save
+            </Button>
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            Typed once here rather than into each design — a shop putting the same square on
+            its invoice and its till slip changes the address in one place when it moves.
+            Leave it empty and a QR pointing at it simply prints nothing.
           </p>
         </CardBody>
       </Card>

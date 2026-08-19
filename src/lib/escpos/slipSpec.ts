@@ -2,6 +2,7 @@ import { EscPos, twoCol, wrapText } from './encoder'
 import { formatMoney, formatQty } from '../decimals'
 import type { ReceiptData } from '../receiptData'
 import { slipConditionHolds } from '../stationery/conditions'
+import { resolveQrUrl, type QrContext } from '../stationery/qrTarget'
 import type { SlipBlock, SlipSpec } from '../stationery/slip'
 
 /**
@@ -34,6 +35,23 @@ import type { SlipBlock, SlipSpec } from '../stationery/slip'
  * shipped design and break the one guarantee that makes the designer safe to
  * turn on. The parity suite compares bytes, and it caught exactly this.
  */
+/**
+ * What a slip's QR may point at.
+ *
+ * A receipt is not a document with a public page, so `documentUrl` is null and
+ * a slip QR aimed at "this document" prints nothing. The store and review links
+ * come from the receipt because the caller put them there — this module reads no
+ * settings of its own, exactly as it reads no database.
+ */
+function qrCtx(data: ReceiptData): QrContext {
+  return {
+    appUrl: data.qrLinks?.appUrl ?? null,
+    storeUrl: data.qrLinks?.storeUrl ?? null,
+    reviewUrl: data.qrLinks?.reviewUrl ?? null,
+    documentUrl: null,
+  }
+}
+
 type Head = { align: 'left' | 'center' | 'right'; bold: boolean }
 
 function setAlign(job: EscPos, head: Head, want: 'left' | 'center' | 'right'): void {
@@ -102,6 +120,14 @@ function blockPrints(block: SlipBlock, data: ReceiptData): boolean {
       return !gift && data.vatByRate.length > 0
     case 'loyalty':
       return !gift && !!data.loyalty
+    case 'qr':
+      /*
+       * A QR prints only if it has somewhere to point. The context comes from
+       * the caller; a till with no APP_URL and no storefront configured has
+       * nothing to encode, and a square that scans to a dead host is worse than
+       * no square at all.
+       */
+      return !!(block.qrTarget && resolveQrUrl(block.qrTarget, block.qrUrl, qrCtx(data)))
     case 'text':
       return !!(block.text?.trim() || data.footerText)
     default:
@@ -138,6 +164,27 @@ function emitBlock(
   if (block.size && block.size > 1) job.size(block.size, block.size)
 
   switch (block.kind) {
+    case 'qr': {
+      const url = block.qrTarget ? resolveQrUrl(block.qrTarget, block.qrUrl, qrCtx(data)) : null
+      // blockPrints already refused a QR with nowhere to point, so this is the
+      // belt to that braces rather than a second decision.
+      if (!url) break
+      /*
+       * THE PRINTER ENCODES IT. Not a raster — GS ( k hands the payload to the
+       * firmware, which lays the modules down at its own dot pitch. See
+       * EscPos.qr for the command sequence and the length trap.
+       *
+       * Centred whatever the block says: a QR is a square on a 48-column roll
+       * and the head positions it as a unit, so left-aligning it would put it
+       * hard against the tear edge for no benefit.
+       */
+      setAlign(job, head, 'center')
+      job.qr(url, { size: 6 })
+      const caption = block.qrCaption?.trim()
+      if (caption) job.line(caption.slice(0, columns))
+      break
+    }
+
     case 'siteName':
       job.line(data.siteName)
       break

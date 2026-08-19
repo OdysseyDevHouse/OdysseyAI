@@ -1,6 +1,8 @@
 import { formatMoney, formatQty } from '../decimals'
 import { escapeHtml } from './render'
 import { slipConditionHolds } from './conditions'
+import { resolveQrUrl, type QrContext } from './qrTarget'
+import { qrDataUri } from './qr'
 import type { ReceiptData } from '../receiptData'
 import type { SlipBlock, SlipSpec } from './slip'
 
@@ -66,6 +68,16 @@ const row = (label: string, value: string, bold = false) =>
   `<span class="numeric shrink-0 text-ink">${escapeHtml(value)}</span></div>`
 
 /** Whether a block shows anything — mirrors blockPrints() in slipSpec.ts. */
+/** Mirrors qrCtx in slipSpec.ts — the two renderers must resolve alike. */
+function slipQrCtx(r: ReceiptData): QrContext {
+  return {
+    appUrl: r.qrLinks?.appUrl ?? null,
+    storeUrl: r.qrLinks?.storeUrl ?? null,
+    reviewUrl: r.qrLinks?.reviewUrl ?? null,
+    documentUrl: null,
+  }
+}
+
 function prints(b: SlipBlock, r: ReceiptData): boolean {
   /*
    * The same first question renderSlipSpec's blockPrints() asks, in the same
@@ -98,6 +110,10 @@ function prints(b: SlipBlock, r: ReceiptData): boolean {
       return !gift && r.vatByRate.length > 0
     case 'loyalty':
       return !gift && !!r.loyalty
+    case 'qr':
+      // The same question blockPrints asks, for the same reason: a QR with
+      // nowhere to point prints nothing, and the two slip renderers must agree.
+      return !!(b.qrTarget && resolveQrUrl(b.qrTarget, b.qrUrl, slipQrCtx(r)))
     case 'text':
       return !!(b.text?.trim() || r.footerText)
     default:
@@ -109,6 +125,24 @@ function block(b: SlipBlock, r: ReceiptData): string {
   const gift = r.gift
 
   switch (b.kind) {
+    case 'qr': {
+      const url = b.qrTarget ? resolveQrUrl(b.qrTarget, b.qrUrl, slipQrCtx(r)) : null
+      if (!url) return ''
+      /*
+       * On SCREEN and on a browser print this is a picture, because a browser
+       * has no GS ( k. The thermal path never uses this — see slipSpec.ts, where
+       * the printer encodes its own. Same URL, same square, two ways of drawing
+       * it, which is the whole arrangement this file exists to keep honest.
+       */
+      const caption = b.qrCaption?.trim()
+      return (
+        `<div class="${cls(b, 'center')}">` +
+        `<img src="${qrDataUri(url, { scale: 3 })}" alt="" class="mx-auto block" style="width:38mm;height:38mm">` +
+        (caption ? `<div class="text-[0.9167em] text-muted">${escapeHtml(caption)}</div>` : '') +
+        `</div>`
+      )
+    }
+
     case 'siteName':
       return `<p class="${cls(b, 'center')} font-semibold text-ink">${escapeHtml(r.siteName)}</p>`
 

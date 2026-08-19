@@ -1,4 +1,5 @@
 import 'server-only'
+import { qrContextFor } from '../site/qrLinks'
 import { pictureIds, pictureBytes } from '../site/stationeryImages'
 import PDFDocument from 'pdfkit'
 import { formatMoney } from '../decimals'
@@ -188,7 +189,7 @@ async function renderDesignedStatement(
   return renderSpecPdf(
     spec,
     'statement',
-    { ...input, pictures: await pictureIds(siteId) },
+    { ...input, pictures: await pictureIds(siteId), qr: await qrContextFor(siteId) },
     logo?.bytes ?? null,
     usedPictures.length ? await pictureBytes(siteId, usedPictures) : undefined,
   )

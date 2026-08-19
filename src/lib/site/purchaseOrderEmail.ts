@@ -1,4 +1,5 @@
 import 'server-only'
+import { qrContextFor } from './qrLinks'
 import { pictureIds, pictureBytes } from './stationeryImages'
 import { PICTURE_URL } from '../stationery/render'
 import { sniffImage } from '../uploads'
@@ -148,6 +149,7 @@ export async function emailPurchaseOrder(
     ...input,
     capabilities: { isOwner: true, granted: new Set(['products.cost']) },
     pictures: await pictureIds(siteId),
+    qr: await qrContextFor(siteId),
   })
 
   // Only now, on the finished document — never through a token. See inlineLogo.

@@ -1,5 +1,6 @@
 import { getDocType, type DocTypeDef } from './catalog'
 import { isConditionRule, type ConditionRule } from './conditions'
+import { isQrTarget, cleanCustomUrl, type QrTarget } from './qrTarget'
 import { BAND_KEYS, MIN_BLOCK_W, clampBlock, overlaps, type BandKey } from './geometry'
 
 /**
@@ -58,6 +59,7 @@ export const DOC_BLOCK_KINDS = [
   'text',
   'signature',
   'image',
+  'qr',
   'rule',
   'spacer',
   'html',
@@ -129,6 +131,14 @@ export type DocBlock = {
   rows?: DetailRow[]
   /** text: the words. html: raw markup, sanitised like anything else. */
   text?: string
+  /** qr only: what the code points at. See lib/stationery/qrTarget. */
+  qrTarget?: QrTarget
+  /** qr only: the typed address, for the `custom` target and nothing else. */
+  qrUrl?: string
+  /** qr only: words under the square — "Scan to rate us". */
+  qrCaption?: string
+  /** qr only: how big to print it, in points. */
+  qrSize?: number
   /**
    * image only: which of the shop's pictures, by id.
    *
@@ -347,6 +357,19 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     repeatable: true,
     defaultW: 45,
   },
+  qr: {
+    kind: 'qr',
+    label: 'A QR code',
+    hint: 'A square customers scan — your store, a review page, or this document online.',
+    /*
+     * EVERY document, including the slip. Unlike a picture, a QR is something a
+     * thermal head does WELL: GS ( k hands the payload to the firmware, which
+     * lays the modules down at its own dot pitch. See EscPos.qr.
+     */
+    docTypes: 'all',
+    defaultW: 22,
+    repeatable: true,
+  },
   image: {
     kind: 'image',
     label: 'A picture',
@@ -411,6 +434,12 @@ export function requiredBlockKinds(docType: string): DocBlockKind[] {
 /* A picture, in points. Wider bounds than the logo: a letterhead crest is
    small by nature, while an equipment photo on a quote is meant to be looked
    at. */
+/* A QR, in points. Below about 50pt a phone struggles at arm's length on
+   thermal paper; above 200 it is a poster. */
+export const MIN_QR_PT = 40
+export const MAX_QR_PT = 200
+export const DEFAULT_QR_PT = 90
+
 export const MIN_IMAGE_H = 12
 export const MAX_IMAGE_H = 320
 export const DEFAULT_IMAGE_H = 90
@@ -799,6 +828,25 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
        * dropping the id here would quietly empty a block for a shop whose site
        * simply had not finished loading.
        */
+      /*
+       * The target is kept only when this build still HAS it, and the typed URL
+       * only when it is a real https address — cleaned by the same function the
+       * designer and the renderer use, so a stored design cannot carry an
+       * address the other two would have refused.
+       */
+      const rawTarget = (b as { qrTarget?: unknown }).qrTarget
+      const qrTarget = isQrTarget(rawTarget) ? rawTarget : undefined
+      const rawQrUrl = (b as { qrUrl?: unknown }).qrUrl
+      const qrUrl =
+        typeof rawQrUrl === 'string' ? (cleanCustomUrl(rawQrUrl) ?? undefined) : undefined
+      const rawCaption = (b as { qrCaption?: unknown }).qrCaption
+      const qrCaption = typeof rawCaption === 'string' ? rawCaption.slice(0, 60) : undefined
+      const rawQrSize = (b as { qrSize?: unknown }).qrSize
+      const qrSize =
+        typeof rawQrSize === 'number' && Number.isFinite(rawQrSize)
+          ? Math.min(Math.max(Math.round(rawQrSize), MIN_QR_PT), MAX_QR_PT)
+          : undefined
+
       const rawImageId = (b as { imageId?: unknown }).imageId
       const imageId =
         typeof rawImageId === 'number' && Number.isInteger(rawImageId) && rawImageId > 0
@@ -832,6 +880,10 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
         ...(section ? { section } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
+        ...(qrTarget ? { qrTarget } : {}),
+        ...(qrUrl ? { qrUrl } : {}),
+        ...(qrCaption ? { qrCaption } : {}),
+        ...(qrSize !== undefined ? { qrSize } : {}),
         ...(imageId !== undefined ? { imageId } : {}),
         ...(imageHeight !== undefined ? { imageHeight } : {}),
         ...(showWhen ? { showWhen } : {}),

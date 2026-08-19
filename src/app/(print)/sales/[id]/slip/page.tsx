@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation'
+import { qrContextFor } from '@/lib/site/qrLinks'
 import { requireSite, requireCapability } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { getSetting } from '@/lib/site/settings'
@@ -93,6 +94,7 @@ export default async function SlipPage({
       loyalty,
       copyNumber: doc.printCount,
       footerText,
+      qrLinks: await qrContextFor(site.id),
     },
   )
 

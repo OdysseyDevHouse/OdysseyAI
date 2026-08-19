@@ -2,6 +2,7 @@
 
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Icons, Input, Select } from '@/components/ui'
 import { SLIP_CONDITIONS, conditionDef, type ConditionRule } from '@/lib/stationery/conditions'
+import { QR_TARGET_INFO, cleanCustomUrl, type QrTarget } from '@/lib/stationery/qrTarget'
 import { SLIP_BLOCK_INFO, type SlipBlock } from '@/lib/stationery/slip'
 
 /**
@@ -54,7 +55,13 @@ export default function SlipInspector({
   }
 
   const info = SLIP_BLOCK_INFO[block.kind]
-  const stylable = block.kind !== 'rule' && block.kind !== 'feed'
+  /*
+   * A QR is not stylable either, and for a more interesting reason than a rule
+   * is: the PRINTER draws it. Align, size and bold are commands about text, and
+   * the head positions a QR as a unit at its own module size — so offering the
+   * three would be offering settings the paper ignores.
+   */
+  const stylable = block.kind !== 'rule' && block.kind !== 'feed' && block.kind !== 'qr'
 
   return (
     <Card>
@@ -101,10 +108,67 @@ export default function SlipInspector({
               </Button>
             </Field>
           </>
+        ) : block.kind === 'qr' ? (
+          /* Not "nothing to set" — a QR has plenty, just below. What it has
+             none of is TEXT styling, because the printer draws the square. */
+          <p className="text-sm text-muted">
+            The printer draws this one, centred, at its own size.
+          </p>
         ) : (
           <p className="text-sm text-muted">
             Nothing to set — this block is just the space or the line.
           </p>
+        )}
+
+        {block.kind === 'qr' && (
+          <>
+            <Field
+              label="What it opens"
+              hint={QR_TARGET_INFO.find((t) => t.target === (block.qrTarget ?? 'store'))?.hint}
+            >
+              <Select
+                className="w-full"
+                value={block.qrTarget ?? 'store'}
+                onChange={(e) => onChange({ qrTarget: e.target.value as QrTarget })}
+              >
+                {/* "This document" is offered on a page and NOT here: a till slip
+                    has no public page of its own, so it would resolve to nothing
+                    and print no square. A setting that never fires reads as
+                    broken. */}
+                {QR_TARGET_INFO.filter((t) => t.target !== 'doc').map((t) => (
+                  <option key={t.target} value={t.target}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {block.qrTarget === 'custom' && (
+              <Field
+                label="The web address"
+                hint="Must start with https."
+                error={
+                  block.qrUrl && !cleanCustomUrl(block.qrUrl)
+                    ? 'That is not an https address.'
+                    : undefined
+                }
+              >
+                <Input
+                  value={block.qrUrl ?? ''}
+                  placeholder="https://g.page/r/your-review-link"
+                  onChange={(e) => onChange({ qrUrl: e.target.value })}
+                />
+              </Field>
+            )}
+
+            <Field label="Words underneath" hint='Optional — "Scan to rate us".'>
+              <Input
+                value={block.qrCaption ?? ''}
+                placeholder="Scan to rate us"
+                onChange={(e) => onChange({ qrCaption: e.target.value })}
+              />
+            </Field>
+          </>
         )}
 
         {block.kind === 'text' && (

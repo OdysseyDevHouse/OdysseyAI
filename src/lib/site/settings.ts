@@ -784,6 +784,20 @@ export const SETTING_DEFAULTS = {
   document_logo_file: '',
 
   /**
+   * Where a "scan to rate us" QR code points.
+   *
+   * A shop's review page lives somewhere we do not host — Google, Facebook,
+   * their own site — so there is nothing to derive it from and it has to be
+   * typed. Once, here, rather than into every design that wants a QR: a shop
+   * putting the same square on its invoice, its quote and its till slip should
+   * change the address in one place when it moves.
+   *
+   * Empty means the review target has nowhere to point, and a QR block using it
+   * prints nothing rather than a square that scans to a dead page.
+   */
+  document_review_url: '',
+
+  /**
    * Ask the customer to rate the work when a job closes.
    *
    * OFF, and for a stronger reason than the automations above: switching this on

@@ -1,4 +1,5 @@
 import './order-a4.css'
+import { qrContextFor } from '@/lib/site/qrLinks'
 import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireCapability, requireSite, requireActor } from '@/lib/auth'
@@ -127,6 +128,7 @@ export default async function PurchaseOrderPrintPage({
     ...input,
     capabilities,
     pictures: await pictureIds(site.id),
+    qr: await qrContextFor(site.id),
   })
 
   return (

@@ -72,6 +72,15 @@ export type ReceiptData = {
   /** 0 = the original; above zero the slip says COPY. Driven by print_count. */
   copyNumber: number
   footerText: string
+  /**
+   * Where a QR block on the slip may point.
+   *
+   * Carried on the receipt rather than read by the renderer, which has no
+   * database and must not grow one — the same discipline that keeps
+   * slipSpec.ts a pure function of what it is handed. Absent means a QR block
+   * has nowhere to point and prints nothing.
+   */
+  qrLinks?: { appUrl: string | null; storeUrl: string | null; reviewUrl: string | null }
 }
 
 /** The slip's per-line notes: kitchen answers stay off, receipt answers on. */
@@ -96,6 +105,8 @@ export function receiptDataFor(
     loyalty?: { pointsEarned: number; balance: number } | null
     copyNumber?: number
     footerText?: string
+    /** Where a QR block on this slip may point — see ReceiptData.qrLinks. */
+    qrLinks?: ReceiptData['qrLinks']
   },
 ): ReceiptData {
   if (!doc.documentNumber) {
@@ -146,6 +157,7 @@ export function receiptDataFor(
     loyalty: opts.loyalty ?? null,
     copyNumber: opts.copyNumber ?? 0,
     footerText: opts.footerText ?? '',
+    ...(opts.qrLinks ? { qrLinks: opts.qrLinks } : {}),
   }
 }
 

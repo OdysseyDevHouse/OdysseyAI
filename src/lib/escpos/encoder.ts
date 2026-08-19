@@ -86,6 +86,64 @@ export class EscPos {
     return this.raw(ESC, 0x64, Math.min(Math.max(lines, 0), 255))
   }
 
+  /**
+   * GS ( k — a QR code, encoded by the PRINTER.
+   *
+   * ── WHY THE HEAD DOES THE WORK ──────────────────────────────────────────
+   *
+   * A4 and PDF documents build their QR as pixels, from a module matrix (see
+   * lib/stationery/qr). A thermal printer needs none of that: it takes the
+   * payload as text and lays the modules down itself, at exactly its own dot
+   * pitch. Sending a raster instead would be slower, coarser and larger, and it
+   * would look worse than what the firmware produces.
+   *
+   * So this is the one place the QR never becomes an image.
+   *
+   * ── THE FOUR COMMANDS, IN ORDER ─────────────────────────────────────────
+   *
+   *   165 49  model — model 2, what every scanner made this century expects
+   *   167 n   module size in dots; 3–8 is the useful range on 203dpi
+   *   169 n   error correction: 48=L 49=M 50=Q 51=H
+   *   180 48  store the payload
+   *   181 48  print what was stored
+   *
+   * ── THE LENGTH IS THE TRAP ──────────────────────────────────────────────
+   *
+   * Every GS ( k command carries `pL pH` — its length as two bytes, LOW FIRST.
+   * For the store command that length is the payload plus THREE (the two
+   * function bytes and the mode byte), and a payload over 255 characters is the
+   * only case where pH is not zero. Getting that split wrong prints nothing at
+   * all, silently, and only on long payloads — which is precisely the case a
+   * hand test never covers. The suite asserts it with a 300-byte payload.
+   */
+  qr(data: string, opts: { size?: number; ecc?: 'L' | 'M' | 'Q' | 'H' } = {}): this {
+    /*
+     * The payload is encoded as bytes BEFORE it is measured. A length counted
+     * in JavaScript characters would be wrong for any non-ASCII payload, and
+     * the printer would then read the tail of the URL as commands.
+     */
+    const bytes = encodeCp858(data)
+    if (bytes.length === 0 || bytes.length > 7089) return this
+
+    const size = Math.min(Math.max(Math.round(opts.size ?? 6), 1), 16)
+    const ecc = { L: 48, M: 49, Q: 50, H: 51 }[opts.ecc ?? 'M']
+
+    // Model 2.
+    this.raw(GS, 0x28, 0x6b, 4, 0, 49, 65, 50, 0)
+    // Module size.
+    this.raw(GS, 0x28, 0x6b, 3, 0, 49, 67, size)
+    // Error correction.
+    this.raw(GS, 0x28, 0x6b, 3, 0, 49, 69, ecc)
+
+    // Store: the payload plus the three bytes that follow the length.
+    const len = bytes.length + 3
+    this.raw(GS, 0x28, 0x6b, len & 0xff, (len >> 8) & 0xff, 49, 80, 48)
+    this.chunks.push(bytes)
+
+    // Print.
+    return this.raw(GS, 0x28, 0x6b, 3, 0, 49, 81, 48)
+  }
+
   /** GS V 66 — partial cut with feed, the one every 80mm thermal honours. */
   cut(): this {
     return this.raw(GS, 0x56, 66, 0)

@@ -19,11 +19,14 @@ import {
   BAND_INFO,
   BAND_KEYS,
   DEFAULT_IMAGE_H,
+  DEFAULT_QR_PT,
   DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
   MAX_IMAGE_H,
+  MAX_QR_PT,
   MAX_LOGO_HEIGHT,
   MIN_IMAGE_H,
+  MIN_QR_PT,
   MIN_LOGO_HEIGHT,
   type BandKey,
   type DetailRow,
@@ -32,6 +35,7 @@ import {
 } from '@/lib/stationery/blocks'
 import { MIN_BLOCK_W, clampBlock } from '@/lib/stationery/geometry'
 import { CONDITIONS, conditionDef, type ConditionRule } from '@/lib/stationery/conditions'
+import { QR_TARGET_INFO, cleanCustomUrl, type QrTarget } from '@/lib/stationery/qrTarget'
 import ColumnEditor from './ColumnEditor'
 
 /**
@@ -181,6 +185,52 @@ export default function BlockInspector({
               onChange={(e) => onChange({ text: e.target.value })}
             />
           </Field>
+        )}
+
+        {block.kind === 'qr' && (
+          <>
+            <Field label="What it opens" hint={QR_TARGET_INFO.find((t) => t.target === (block.qrTarget ?? 'store'))?.hint}>
+              <Select
+                value={block.qrTarget ?? 'store'}
+                onChange={(e) => onChange({ qrTarget: e.target.value as QrTarget })}
+              >
+                {QR_TARGET_INFO.map((t) => (
+                  <option key={t.target} value={t.target}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {block.qrTarget === 'custom' && <QrUrlField block={block} onChange={onChange} />}
+
+            <Field label="Words underneath" hint='Optional — "Scan to rate us".'>
+              <Input
+                value={block.qrCaption ?? ''}
+                placeholder="Scan to visit our shop"
+                onChange={(e) => onChange({ qrCaption: e.target.value })}
+              />
+            </Field>
+
+            <Field label="How big" hint="Points. Below about 50 a phone struggles at arm's length.">
+              <div className="flex items-center gap-2">
+                <NumberInput
+                  aria-label="QR size"
+                  className="w-24"
+                  value={block.qrSize ?? DEFAULT_QR_PT}
+                  min={MIN_QR_PT}
+                  max={MAX_QR_PT}
+                  step={10}
+                  onChange={(e) => {
+                    const n = Number(e.target.value)
+                    if (!Number.isFinite(n)) return
+                    onChange({ qrSize: Math.min(Math.max(Math.round(n), MIN_QR_PT), MAX_QR_PT) })
+                  }}
+                />
+                <span className="text-xs text-muted">pt</span>
+              </div>
+            </Field>
+          </>
         )}
 
         {block.kind === 'image' && (
@@ -335,6 +385,69 @@ export default function BlockInspector({
  * change of position. A block dragged across an invisible boundary would be
  * making that decision by accident.
  */
+/**
+ * The typed address for a custom QR target.
+ *
+ * ── WHY IT KEEPS ITS OWN COPY ─────────────────────────────────────────────
+ *
+ * The spec round-trips through parseSpec on every change — that is what keeps a
+ * design honest — and parseSpec DROPS a qrUrl that is not a valid https
+ * address. So writing each keystroke straight to the block meant the field
+ * erased itself as you typed: "h", "ht", "htt" are all invalid, and none of
+ * them survived the trip back.
+ *
+ * The draft therefore lives here and is pushed up on every change; the block
+ * takes whatever it can use. The error then has something to describe, which it
+ * did not before — the invalid value never existed long enough to be shown.
+ */
+function QrUrlField({
+  block,
+  onChange,
+}: {
+  block: DocBlock
+  onChange: (patch: Partial<DocBlock>) => void
+}) {
+  const [draft, setDraft] = useState(block.qrUrl ?? '')
+
+  /* Follow the block when the SELECTION changes — a different QR block has a
+     different address — without fighting what is being typed into this one. */
+  useEffect(() => {
+    setDraft(block.qrUrl ?? '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.id])
+
+  const clean = cleanCustomUrl(draft)
+
+  return (
+    <Field
+      label="The web address"
+      hint="Must start with https. Check it before you print a thousand of them."
+      error={draft.trim() && !clean ? 'That is not an https address.' : undefined}
+    >
+      <Input
+        value={draft}
+        placeholder="https://g.page/r/your-review-link"
+        onChange={(e) => {
+          const next = e.target.value
+          setDraft(next)
+          /*
+           * Judged on what was just TYPED, not on `clean` — which describes the
+           * previous draft and is one keystroke stale. Testing that meant the
+           * first valid address never committed, because the value before it
+           * was still invalid.
+           *
+           * Only a usable address reaches the design; a half-typed one leaves
+           * the block's previous value alone rather than clearing it.
+           */
+          const cleanNext = cleanCustomUrl(next)
+          if (cleanNext || next.trim() === '') onChange({ qrUrl: cleanNext ?? '' })
+        }}
+        onBlur={() => onChange({ qrUrl: clean ?? '' })}
+      />
+    </Field>
+  )
+}
+
 function Position({
   block,
   onChange,

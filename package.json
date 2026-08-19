@@ -253,7 +253,8 @@
     "test:pos-unlock": "tsx --conditions=react-server --env-file=.env --env-file=.env.local scripts/test-pos-unlock.ts",
     "test:conditions": "tsx scripts/test-conditions.ts",
     "test:stationery-copy": "tsx scripts/test-stationery-copy.ts",
-    "test:stationery-pictures": "tsx scripts/test-stationery-pictures.ts"
+    "test:stationery-pictures": "tsx scripts/test-stationery-pictures.ts",
+    "test:stationery-qr": "tsx scripts/test-stationery-qr.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",
@@ -268,6 +269,7 @@
     "next": "^16.2.9",
     "nodemailer": "^9.0.1",
     "pdfkit": "^0.19.1",
+    "qrcode-generator": "^2.0.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-grid-layout": "^2.2.3",

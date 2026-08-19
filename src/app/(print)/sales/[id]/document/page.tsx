@@ -1,4 +1,5 @@
 import './document-a4.css'
+import { qrContextFor } from '@/lib/site/qrLinks'
 import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
@@ -184,6 +185,7 @@ export default async function SalesDocumentPrintPage({
     ...input,
     capabilities,
     pictures: await pictureIds(site.id),
+    qr: await qrContextFor(site.id),
   })
 
   return (

@@ -1,4 +1,5 @@
 import { requireCapability, requireSite } from '@/lib/auth'
+import { getSetting } from '@/lib/site/settings'
 import { PageHeader, PageBody } from '@/components/ui'
 import { listTemplates } from '@/lib/site/stationeryTemplates'
 import { DOC_TYPES, getDocType, tokensFor } from '@/lib/stationery/catalog'
@@ -30,10 +31,11 @@ export default async function StationerySetupPage() {
   const { siteId, capabilities } = await requireCapability('setup.stationery')
   const site = await requireSite()
 
-  const [templates, logoFile, images] = await Promise.all([
+  const [templates, logoFile, images, reviewUrl] = await Promise.all([
     listTemplates(siteId),
     logoFileName(siteId),
     listImages(siteId),
+    getSetting(siteId, 'document_review_url').catch(() => ''),
   ])
 
   /*
@@ -75,6 +77,7 @@ export default async function StationerySetupPage() {
         <StationeryClient
           siteName={site.displayName}
           logoFile={logoFile}
+          reviewUrl={reviewUrl}
           pictures={images.map((i) => ({
             id: i.id,
             label: imageLabel(i),

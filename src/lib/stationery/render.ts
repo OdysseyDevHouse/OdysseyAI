@@ -1,6 +1,8 @@
 import { formatMoney, formatQty } from '../decimals'
 import { getDocType, getSection, findToken, type TokenFormat } from './catalog'
 import { conditionHolds } from './conditions'
+import { isQrTarget, resolveQrUrl, type QrContext } from './qrTarget'
+import { qrDataUri } from './qr'
 
 /**
  * Turning a designed template into the HTML that goes on paper.
@@ -55,6 +57,11 @@ export type RenderInput = {
    * been updated to supply them.
    */
   pictures?: ReadonlySet<number>
+  /**
+   * What a QR block may point at. Absent means no QR renders — the same
+   * fail-closed direction `pictures` takes.
+   */
+  qr?: QrContext
 }
 
 /** Where a picture block's <img> points. One place, so the route and the tag cannot drift. */
@@ -75,6 +82,16 @@ export const PICTURE_URL = '/api/stationery-images'
  * that keeps the logo path narrow.
  */
 const SAFE_MARKUP = /^<img src="\/api\/document-logo\?v=[A-Za-z0-9._%-]+" alt="" style="[a-z0-9:;\-\s]*">$/
+
+/** Undo escapeHtml for a value read back out of an attribute. */
+function decodeAttr(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
 
 export function escapeHtml(value: string): string {
   return value
@@ -183,6 +200,43 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
   if (!doc) return ''
 
   /*
+   * ── QR CODES ────────────────────────────────────────────────────────────
+   *
+   * `{{qr:TARGET:SIZE}}` is what the compiler emits, and the address is
+   * resolved HERE — the compiler could not know it, because a document's own
+   * tracking link does not exist until there is a document.
+   *
+   * The typed address for a `custom` target rides on the enclosing element as
+   * `data-qr-url`, so the one part a shop types never has to survive the
+   * marker's own punctuation. It is re-cleaned rather than trusted: it passed
+   * cleanCustomUrl when it was saved, but a design can be older than the rules.
+   *
+   * No address means NO SQUARE — see resolveQrUrl. A code that scans to a dead
+   * host is worse than a document that never offered one, and the caption still
+   * prints so the layout does not jump.
+   */
+  const withQr = body.replace(
+    /<div class="sd-block sd-qr"([^>]*)>\{\{qr:([a-z]+):(\d+)\}\}/g,
+    (whole, attrs: string, target: string, rawSize: string) => {
+      if (!input.qr || !isQrTarget(target)) return whole.replace(/\{\{qr:[^}]*\}\}/, '')
+      const typed = /data-qr-url="([^"]*)"/.exec(attrs)?.[1]
+      const url = resolveQrUrl(target, typed ? decodeAttr(typed) : undefined, input.qr)
+      if (!url) return whole.replace(/\{\{qr:[^}]*\}\}/, '')
+
+      const pt = Math.min(Math.max(Number(rawSize) || 90, 40), 200)
+      /*
+       * The scale is chosen from the printed size, not fixed: a 40pt square
+       * built at scale 8 is a large image squeezed into a small box, and a
+       * 200pt one built at scale 2 is a blurry one stretched into a big box.
+       * Three device pixels per module at the printed size is the honest middle.
+       */
+      const scale = Math.min(Math.max(Math.round(pt / 30), 2), 8)
+      const uri = qrDataUri(url, { scale })
+      return `${whole.replace(/\{\{qr:[^}]*\}\}/, `<img src="${uri}" alt="" style="width:${pt}px;height:${pt}px">`)}`
+    },
+  )
+
+  /*
    * ── PICTURES, FROM A LIST THIS SITE OWNS ────────────────────────────────
    *
    * `{{picture:ID:HEIGHT}}` is what the compiler emits for a picture block. It
@@ -195,7 +249,7 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
    * logo's is: what is on disk is then never the thing that decides what a
    * document loads.
    */
-  const withPictures = body.replace(
+  const withPictures = withQr.replace(
     /\{\{picture:(\d+):(\d+)\}\}/g,
     (_m, rawId: string, rawH: string) => {
       const id = Number(rawId)
