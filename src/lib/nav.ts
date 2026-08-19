@@ -648,6 +648,7 @@ export const SUBPAGE_LABELS = {
   '/online-store/departments': 'Departments',
   '/online-store/listing': 'Listings',
   '/online-store/menu': 'Menu',
+  '/online-store/collections': 'Collections',
   '/online-store/reviews': 'Reviews',
   '/online-store/statuses': 'Order statuses',
   '/online-store/trading': 'Trading hours',

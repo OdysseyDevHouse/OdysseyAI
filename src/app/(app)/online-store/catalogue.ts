@@ -104,6 +104,14 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
         capability: 'online.edit',
       },
       {
+        href: '/online-store/collections',
+        description: 'Group products your own way — Summer, Gifts, anything not an aisle.',
+        keywords: 'collection group curated lookbook tag seasonal landing page merchandising',
+        icon: 'Boxes',
+        tone: 'teal',
+        capability: 'online.edit',
+      },
+      {
         href: '/online-store/reviews',
         description: 'What shoppers said about a product, and what is shown.',
         keywords: 'ratings stars feedback comments moderation approve',
