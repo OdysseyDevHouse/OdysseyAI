@@ -26,12 +26,19 @@ import { SLIP_BLOCK_INFO, type SlipBlockKind } from '@/lib/stationery/slip'
 export default function SlipPalette({
   offered,
   atLimit,
+  carrying = null,
   onPickUp,
   onAdd,
 }: {
   /** Kinds this slip may still take. A one-per-slip block already used is out. */
   offered: readonly SlipBlockKind[]
   atLimit: boolean
+  /**
+   * The kind currently in the air, if any. Its tile dims and gives up its
+   * shadow, so the palette shows the line as LIFTED rather than still sitting
+   * there while a copy of it follows the cursor.
+   */
+  carrying?: SlipBlockKind | null
   /** A drag began. The canvas takes it from here. */
   onPickUp: (kind: SlipBlockKind, e: React.PointerEvent) => void
   /** A plain click, for anyone not dragging. Lands at the end. */
@@ -49,6 +56,7 @@ export default function SlipPalette({
     <ul className="flex flex-col gap-1.5">
       {offered.map((kind) => {
         const info = SLIP_BLOCK_INFO[kind]
+        const held = carrying === kind
         return (
           <li key={kind}>
             <div
@@ -72,8 +80,12 @@ export default function SlipPalette({
                   onAdd(kind)
                 }
               }}
-              className={`w-full rounded-control border border-border bg-surface px-3 py-2 text-left transition ${
-                atLimit ? 'opacity-50' : 'cursor-grab hover:border-border-strong'
+              className={`w-full rounded-control border bg-surface px-3 py-2 text-left transition ${
+                atLimit ? 'border-border opacity-50' : 'cursor-grab hover:border-border-strong'
+              } ${
+                held
+                  ? 'border-dashed border-brand opacity-40'
+                  : 'border-border'
               }`}
               data-kit-ok
             >

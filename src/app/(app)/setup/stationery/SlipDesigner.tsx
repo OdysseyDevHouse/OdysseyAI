@@ -16,6 +16,7 @@ import { previewSlipBlocksAction } from './actions'
 import SlipCanvas from './SlipCanvas'
 import SlipInspector from './SlipInspector'
 import SlipPalette from './SlipPalette'
+import SlipDragGhost from './SlipDragGhost'
 import { useEditHistory } from '@/lib/useEditHistory'
 
 /**
@@ -184,6 +185,25 @@ export default function SlipDesigner({
    */
   const [adding, setAdding] = useState<{ kind: SlipBlockKind; label: string } | null>(null)
 
+  /*
+   * The cursor stays a closed hand for the whole journey — over the palette, the
+   * gap between the panels, and the paper alike. On the BODY, because the
+   * pointer crosses elements that know nothing about the drag and an arrow over
+   * any of them reads as "nothing is happening" at the moment something is.
+   *
+   * DERIVED FROM `adding`, not set inside the handler. Setting it on pointerdown
+   * and clearing it in a child's unmount put the two halves in different
+   * lifetimes, and StrictMode's double-invoke cleared it a millisecond after it
+   * was set — so in development the grabbing cursor never appeared at all.
+   */
+  useEffect(() => {
+    if (!adding) return
+    document.body.style.cursor = 'grabbing'
+    return () => {
+      document.body.style.cursor = ''
+    }
+  }, [adding])
+
   const pickUp = (kind: SlipBlockKind, e: React.PointerEvent) => {
     e.preventDefault()
     setAdding({ kind, label: SLIP_BLOCK_INFO[kind].label })
@@ -234,6 +254,7 @@ export default function SlipDesigner({
             <SlipPalette
               offered={offered}
               atLimit={atLimit}
+              carrying={adding?.kind ?? null}
               onPickUp={pickUp}
               onAdd={add}
             />
@@ -321,6 +342,9 @@ export default function SlipDesigner({
           />
         </CardBody>
       </Card>
+
+      {/* The line under the cursor, for as long as it is in the air. */}
+      {adding && <SlipDragGhost label={adding.label} />}
     </div>
   )
 }
