@@ -244,7 +244,7 @@ run, and reading the diff would not have.
 ---
 
 
-## Phase 3 — Per-section styling and a columns block
+## Phase 3 — Per-section styling and a columns block ✅ DONE
 
 ### Done: the section band ✅
 
@@ -286,26 +286,61 @@ the class list, emitting `class="rounded-card undefined"` — silent, permanent,
 and exactly what a stored layout from an older build would produce on a live
 shop.
 
-### Remaining: the columns block
+### Done: the columns block ✅
 
-Depth 1 and non-recursive. The documented refusal targets *recursive*
-containers — a tree of unbounded depth, undraggable and uncappable — and that
-failure mode does not require refusing columns; it requires refusing nesting.
+> **Shipped.** `columns` is the twentieth section kind. `SECTION_CATALOG` holds
+> it, `normaliseSections` enforces the depth rule, `HomeSections` renders it,
+> `resolvePageContent` fills its children, and the palette offers it.
+> 26 assertions in `npm run test:section-columns`.
 
-Four rules make it safe: `columns` is legal only on kind `'columns'` and a child
-may never be one, checked before recursion so depth is capped *structurally*;
-child kinds are a whitelist, not "everything minus columns"; `MAX_COLUMN_CHILDREN
-= 4` with children counting against `MAX_SECTIONS` via a running budget; and ids
-stay globally unique so drag/drop, the publish diff and version history work
-unchanged.
+Every section was full width and stacked. Picture-beside-text was the one
+structural gap left, and `split` covered the cheap 80% of it.
 
-`describeLayoutChanges` and `pageWarnings` need a `flattenSections()` walk, or a
-banner with no alt text inside a column skips the publish warning.
+**The documented refusal was of *recursive* containers** — a tree of unbounded
+depth, undraggable, un-diffable and uncappable. That failure mode does not
+require refusing columns; it requires refusing nesting.
 
-**This is the fiddliest thing left in the programme.** Nested `SortableContext`
-inside the page-level `DndContext` is ~150 lines of drag work, and the drag
-layer is the part of the builder that currently works well. Worth doing on its
-own, not alongside anything else.
+Four rules keep it there:
+
+1. **Depth is structural, not counted.** `columns` is absent from
+   `COLUMN_CHILD_KINDS` and the check runs *before* anything recurses, so no
+   payload shape reaches a third level and there is no counter to get wrong.
+2. **The child list is a whitelist**, not "everything minus columns". A carousel
+   in a third of a column looks fine in the builder and reads as broken on a
+   phone; a department grid inside one is a second front page.
+3. **One budget for the whole page.** A per-level cap would admit
+   20 × 3 × 4 = 240 sections and satisfy every check on the way in. Verified:
+   twenty columns of thirty children normalise to nine sections.
+4. **Ids stay globally unique across columns**, which is what keeps the drag
+   layer, the publish diff and version history working on a child without any of
+   them knowing columns exist.
+
+`columnCount` is authoritative — too few columns are padded and too many
+trimmed, because the renderer maps over what is stored.
+
+**Two real bugs, both predicted by the plan and both confirmed present.**
+`pageWarnings` did not see inside a column, so an undescribed picture reached a
+shop with no warning; and `describeLayoutChanges` reported a page as unedited
+when a column's contents had changed — the one summary an owner reads before
+publishing, quietly wrong about the part they had just been working on.
+`flattenSections` fixes both, declared once rather than nested in each caller.
+
+**`resolvePageContent` replaced the two-step every route did by hand.** Five
+routes called `resolveSectionContent` then mapped each section beside its
+content; adding "and now flatten, resolve and redistribute the columns" to each
+was five chances to get it wrong. It flattens before resolving so the batched
+queries stay batched — recursing section by section would turn a page with three
+columns into a dozen round trips.
+
+Verified in a browser: two columns with a child each, full-bleed at exactly the
+viewport width with no horizontal overflow, and the builder's canvas drawing the
+same thing through the same renderer.
+
+**What is NOT done: dragging into a column.** A columns section can be added,
+styled, filled and rendered, but its children are arranged in the inspector
+rather than by dragging them between columns. Nested `SortableContext` inside
+the page-level `DndContext` is the remaining work, and it is the part that
+touches a drag layer which currently works well — worth doing on its own.
 
 ---
 
