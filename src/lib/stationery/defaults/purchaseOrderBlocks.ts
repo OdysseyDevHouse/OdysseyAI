@@ -46,15 +46,37 @@ export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
   blocks: [
     /* ── the top of the page ──────────────────────────────────────────────── */
 
+    /*
+     * THE LOGO IS ITS OWN BLOCK IN THE SHIPPED DEFAULT.
+     *
+     * It used to be a token inside the letterhead, which printed correctly and
+     * could not be moved: a token has no box to take hold of, so "drag the logo
+     * where I want it" had no answer for the design every shop actually starts
+     * from. Adding a logo block from the palette gave you a second one.
+     *
+     * Split out, it is draggable and sizable from the moment the designer opens,
+     * and the letterhead below it is just the words. `site.logo` remains a
+     * letterhead token for anyone who wants them welded together again.
+     */
+    {
+      id: 'po-logo',
+      kind: 'logo',
+      band: 'header',
+      x: 0,
+      y: 0,
+      w: 30,
+      logoHeight: 56,
+    },
     {
       id: 'po-letterhead',
       kind: 'letterhead',
       band: 'header',
       x: 0,
-      y: 0,
+      // Clear of the logo above it, which is why the letterhead does not start at 0
+      // even though it usually looks as though it could.
+      y: 16,
       w: 58,
       tokens: [
-        'site.logo',
         'site.name',
         'site.address',
         'site.vatLine',
@@ -68,7 +90,10 @@ export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
       kind: 'docTitle',
       band: 'header',
       x: 60,
-      y: 0,
+      // Level with the business name rather than with the logo above it, which
+      // is both how the markup default reads and the better-looking answer: a
+      // title floating above the letterhead lines up with nothing.
+      y: 16,
       w: 40,
       align: 'right',
       title: 'PURCHASE ORDER',

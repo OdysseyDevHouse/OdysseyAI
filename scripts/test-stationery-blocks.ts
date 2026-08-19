@@ -11,6 +11,12 @@
  * that out here is far cheaper than finding it out after a shop has designed
  * against it.
  *
+ * It started as one word-for-word comparison of the whole page and is now three
+ * checks, because the block default deliberately improves one thing: NOTES sits
+ * beside the totals rather than stacked below them. The reasoning, and why the
+ * relaxation is still a real gate rather than a rubber stamp, is at the
+ * comparison itself.
+ *
  * Every other check here is secondary to that one.
  *
  * Needs no database and no browser.
@@ -49,6 +55,7 @@ import {
   snapBlock,
   MIN_BLOCK_W,
 } from '../src/lib/stationery/geometry'
+import { allTokens, getDocType } from '../src/lib/stationery/catalog'
 import { purchaseOrderTokens } from '../src/lib/stationery/adapters/purchaseOrder'
 import { renderTemplate } from '../src/lib/stationery/render'
 import { validateTemplate } from '../src/lib/stationery/validate'
@@ -135,13 +142,88 @@ console.log('\n-- the block model can express the document we ship --')
     })],
   ]
 
+  /*
+   * ── ONE DELIBERATE DIFFERENCE, AND WHY THE GATE IS SHAPED AROUND IT ─────
+   *
+   * The block default puts NOTES beside the totals; the markup default stacks it
+   * full width below them. That is a chosen improvement to the shipped layout,
+   * approved as such — a purchase order has room beside a totals box and wasting
+   * it prints a longer document than it needs.
+   *
+   * Which means the two no longer read in the same ORDER, so a word-for-word
+   * comparison of the whole page would fail on a difference that is correct. But
+   * "compare the words in any order" is not a gate at all: a document with every
+   * field scrambled would pass it.
+   *
+   * So the page is compared in three parts, and order still has to hold
+   * everywhere it means anything:
+   *
+   *   ABOVE THE ITEMS — strict sequence. That order is the document's own
+   *   structure: letterhead, title, who it is to, the dates.
+   *
+   *   THE WHOLE PAGE — as a set of values. Reordering below the table is
+   *   allowed; losing or inventing a field is not. This is the check that keeps
+   *   the relaxation honest.
+   *
+   *   THE ITEMS TABLE — strict again, on its own, because a column out of place
+   *   is a misread price and the relaxation must not cover it.
+   */
+  const SPLIT = 'Item Qty'
+
+  const words = (t: string) => t.split(' ').filter(Boolean).sort().join(' ')
+
   for (const [label, doc] of cases) {
     const fromHtml = textOf(renderTemplate(PURCHASE_ORDER_DEFAULT, 'purchase_order', {
       ...inputFor(doc), capabilities: OWNER,
     }))
     const fromBlocks = textOf(renderBlocks(PURCHASE_ORDER_BLOCKS, doc))
-    ok(`${label} reads identically`, fromHtml === fromBlocks,
-      fromHtml === fromBlocks ? '' : `\n   html  : ${fromHtml}\n   blocks: ${fromBlocks}`)
+
+    const above = (t: string) => {
+      const at = t.indexOf(SPLIT)
+      return at === -1 ? t : t.slice(0, at).trim()
+    }
+
+    // STRICT above the items: order here is the document's own structure.
+    const h = above(fromHtml)
+    const bl = above(fromBlocks)
+    ok(`${label} reads identically above the items`, h === bl,
+      h === bl ? '' : `\n   html  : ${h}\n   blocks: ${bl}`)
+
+    /*
+     * And the whole page carries exactly the same values — nothing lost, nothing
+     * invented. This is the check that keeps the relaxation honest: reordering is
+     * allowed below the table, losing a field is not.
+     */
+    ok(`...and the whole page carries the same values`,
+      words(fromHtml) === words(fromBlocks),
+      words(fromHtml) === words(fromBlocks)
+        ? ''
+        : `\n   html  : ${fromHtml}\n   blocks: ${fromBlocks}`)
+  }
+
+  /*
+   * The items table itself, in strict order, because a column out of place is a
+   * misread price. Checked separately from the surrounding layout so the
+   * relaxation above cannot quietly cover it.
+   */
+  {
+    const doc = order()
+    // Ends at whichever of the footer blocks comes first, since which one that
+    // is differs between the two layouts — that being the whole point above.
+    const rowOf = (t: string) => {
+      const at = t.indexOf(SPLIT)
+      if (at === -1) return ''
+      const ends = ['Goods (excl.)', 'NOTES']
+        .map((m) => t.indexOf(m, at))
+        .filter((i) => i !== -1)
+      return t.slice(at, ends.length ? Math.min(...ends) : undefined).trim()
+    }
+    const h = rowOf(textOf(renderTemplate(PURCHASE_ORDER_DEFAULT, 'purchase_order', {
+      ...inputFor(doc), capabilities: OWNER,
+    })))
+    const bl = rowOf(textOf(renderBlocks(PURCHASE_ORDER_BLOCKS, doc)))
+    ok('the items table reads identically, column for column', h === bl && h !== '',
+      h === bl ? '' : `\n   html  : ${h}\n   blocks: ${bl}`)
   }
 }
 
@@ -351,13 +433,14 @@ console.log('\n-- nothing on the shipped page sits on top of anything else --')
    * which is the reminder to re-measure rather than to raise the number.
    */
   const MEASURED: Record<string, number> = {
-    'po-letterhead': 46.5,
+    'po-logo': 14,
+    'po-letterhead': 32.4,
     'po-title': 23.5,
     'po-rule-1': 4,
     'po-supplier': 40.3,
     'po-deliver': 26,
-    'po-details': 23,
-    'po-lines': 71,
+    'po-details': 11,
+    'po-lines': 71.1,
     'po-totals': 24.8,
     'po-notes': 6,
     'po-rule-2': 4,
@@ -840,10 +923,25 @@ console.log('\n-- the logo on its own --')
 
   // And the letterhead's own logo token still works, because most documents
   // want it there and the shipped default relies on it.
-  ok('the letterhead still carries the logo as a token',
+  /*
+ * THE SHIPPED DEFAULT SPLITS THEM.
+ *
+ * The logo used to be a letterhead token, which printed correctly and could
+ * not be moved — a token has no box to take hold of. So the default a shop
+ * starts from now has it as its own block, and the letterhead below is just
+ * the words.
+ *
+ * The token still EXISTS for anyone who wants them welded together, which is
+ * what the next check is for.
+ */
+  ok('the shipped default has the logo as its own block',
+    PURCHASE_ORDER_BLOCKS.blocks.some((b) => b.kind === 'logo'))
+  ok('...and the letterhead is only the words',
     PURCHASE_ORDER_BLOCKS.blocks
       .find((b) => b.kind === 'letterhead')
-      ?.tokens?.includes('site.logo') === true)
+      ?.tokens?.includes('site.logo') === false)
+  ok('...while the token remains available to a letterhead that wants it',
+    allTokens(getDocType('purchase_order')!).some((t) => t.key === 'site.logo'))
 }
 
 /* ── the custom-HTML escape hatch ────────────────────────────────────────── */

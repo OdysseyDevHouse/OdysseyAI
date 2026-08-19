@@ -434,10 +434,22 @@ export function compileDocument(spec: DocumentSpec, docKey: string): string {
   const sections: string[] = []
 
   for (const band of BAND_KEYS) {
-    // Sorted by y so the markup reads top to bottom. It changes nothing about
-    // where an absolute box lands, but it decides the body's order, and it
-    // makes the compiled document diffable and readable to whoever inherits it.
-    const blocks = spec.blocks.filter((b) => b.band === band).sort((a, b) => a.y - b.y)
+    /*
+     * Sorted top to bottom, then LEFT TO RIGHT.
+     *
+     * It changes nothing about where an absolute box lands, but it decides the
+     * body's order and the order a screen reader hears — and it is how the
+     * compiled document reads to whoever inherits it.
+     *
+     * The x tiebreak is not cosmetic. Two blocks at the same height sorted only
+     * by y come out in whatever order the array happened to hold, so splitting
+     * the logo out of the letterhead silently moved the document title ahead of
+     * the address: same words, different order, which is a different document to
+     * anyone reading it aloud.
+     */
+    const blocks = spec.blocks
+      .filter((b) => b.band === band)
+      .sort((a, b) => a.y - b.y || a.x - b.x)
     if (blocks.length === 0) continue
 
     if (band === 'body') {
