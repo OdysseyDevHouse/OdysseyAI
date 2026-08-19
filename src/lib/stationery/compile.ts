@@ -90,6 +90,21 @@ export const BLOCK_STYLE = `
 .sd-line:empty { display: none; }
 .sd-logo img { max-height: var(--sd-logo-h) !important; height: auto; width: auto; }`
 
+/**
+ * A block whose whole content is one token and nothing else.
+ *
+ * Such a block hides itself when the token comes out empty, the way a notes
+ * block does — the invoice's closing line is blank on a tax invoice and carries
+ * a warning on a quote, and reserving a line for it either way is wrong.
+ *
+ * One definition because two callers need the same answer: the compiler decides
+ * what to emit, needsWrapper decides whether to wrap it, and a block wrapped but
+ * not marked (or the reverse) simply never hides.
+ */
+function isLoneToken(text: string | undefined): boolean {
+  return !!text && /^\{[a-zA-Z0-9._]+\}$/.test(text.trim())
+}
+
 const ALIGN_CLASS: Record<string, string> = {
   left: 'text-left',
   center: 'text-center',
@@ -314,7 +329,23 @@ function compileBlock(b: DocBlock, docKey: string): string {
        * A token the catalog does not know renders empty, exactly as it would in
        * a hand-written template.
        */
-      return b.text ? `<p class="text-xs text-muted">${esc(b.text)}</p>` : ''
+      /*
+       * A block that is ONE TOKEN and nothing else hides itself when that token
+       * comes out empty, the way a notes block does.
+       *
+       * The invoice's closing line is exactly this: {doc.closing} carries a
+       * warning on a quote and a pro forma, and is deliberately blank on a tax
+       * invoice — so the shipped invoice would otherwise reserve space on every
+       * page for a sentence that never prints.
+       *
+       * Only for a lone token. "Please quote {doc.number}" has words of its own
+       * and should print them even if the number is missing, because the
+       * sentence is still an instruction to the reader.
+       */
+      if (!b.text) return ''
+      return /^\{[a-zA-Z0-9._]+\}$/.test(b.text.trim())
+        ? `<p class="sd-value text-xs text-muted">${esc(b.text)}</p>`
+        : `<p class="text-xs text-muted">${esc(b.text)}</p>`
     case 'rule':
       return `<hr class="border-border">`
     case 'spacer':
@@ -498,7 +529,13 @@ export function bandExtent(spec: DocumentSpec, band: BandKey): number {
  * letterhead is never empty.
  */
 function needsWrapper(b: DocBlock): boolean {
-  return b.kind === 'notes' || b.kind === 'banking' || b.kind === 'vatSummary'
+  if (b.kind === 'notes' || b.kind === 'banking' || b.kind === 'vatSummary') return true
+  /*
+   * A text block that is ONE TOKEN and nothing else — see the `text` case. The
+   * wrapper is what the hide rule matches on, so without it the `sd-value` there
+   * would be a class with nothing acting on it.
+   */
+  return b.kind === 'text' && !!b.text && /^\{[a-zA-Z0-9._]+\}$/.test(b.text.trim())
 }
 
 /**

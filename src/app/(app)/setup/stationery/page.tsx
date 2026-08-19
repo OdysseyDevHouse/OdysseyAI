@@ -2,8 +2,7 @@ import { requireCapability, requireSite } from '@/lib/auth'
 import { PageHeader, PageBody } from '@/components/ui'
 import { listTemplates } from '@/lib/site/stationeryTemplates'
 import { DOC_TYPES, getDocType, tokensFor } from '@/lib/stationery/catalog'
-import { DEFAULT_TEMPLATES } from '@/lib/stationery/resolve'
-import { PURCHASE_ORDER_BLOCKS } from '@/lib/stationery/defaults/purchaseOrderBlocks'
+import { DEFAULT_TEMPLATES, DEFAULT_SPECS } from '@/lib/stationery/resolve'
 import { serialiseSpec } from '@/lib/stationery/blocks'
 import { supportsBlocks } from '@/lib/stationery/compile'
 import { logoFileName } from '@/lib/site/documentLogo'
@@ -48,8 +47,8 @@ export default async function StationerySetupPage() {
       // express must not offer it, or a shop would switch and lose part of
       // their paperwork.
       defaultSpec:
-        supportsBlocks(d.key) && d.key === 'purchase_order'
-          ? serialiseSpec(PURCHASE_ORDER_BLOCKS)
+        supportsBlocks(d.key) && DEFAULT_SPECS[d.key]
+          ? serialiseSpec(DEFAULT_SPECS[d.key])
           : undefined,
       tokens: tokensFor(def, capabilities).map((t) => ({
         key: t.key,

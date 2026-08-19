@@ -1,3 +1,6 @@
+import { PURCHASE_ORDER_BLOCKS } from './defaults/purchaseOrderBlocks'
+import { INVOICE_BLOCKS } from './defaults/invoiceBlocks'
+import type { DocumentSpec } from './blocks'
 import { PURCHASE_ORDER_DEFAULT } from './defaults/purchaseOrder'
 import { INVOICE_DEFAULT } from './defaults/invoice'
 import { SLIP_DEFAULT, serialiseSlip } from './slip'
@@ -28,6 +31,23 @@ import { compileDocument } from './compile'
  * site WHY their design is not on the page. A silent fallback would have people
  * editing a template that is not being used.
  */
+
+/**
+ * The shipped BLOCK design per document, where one exists.
+ *
+ * A lookup rather than a check at the call site: the setup page used to ask
+ * `key === 'purchase_order'`, which meant every new designable document needed
+ * an edit there as well as a default here — and forgetting the second one gives
+ * a shop the HTML editor with no explanation.
+ *
+ * A document missing from this map has no visual design to fork, and the screen
+ * correctly falls back to markup. That is the honest answer for the till slip,
+ * whose blocks are ESC/POS and have their own designer.
+ */
+export const DEFAULT_SPECS: Record<string, DocumentSpec> = {
+  purchase_order: PURCHASE_ORDER_BLOCKS,
+  invoice: INVOICE_BLOCKS,
+}
 
 export const DEFAULT_TEMPLATES: Record<string, string> = {
   purchase_order: PURCHASE_ORDER_DEFAULT,

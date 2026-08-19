@@ -220,6 +220,7 @@
     "test:stationery": "tsx scripts/test-stationery.ts",
     "test:stationery-blocks": "tsx scripts/test-stationery-blocks.ts",
     "test:stationery-store": "tsx --conditions=react-server --env-file=.env scripts/test-stationery-store.ts",
+    "test:invoice-blocks": "tsx scripts/test-invoice-blocks.ts",
     "test:imports": "tsx --conditions=react-server --env-file=.env scripts/test-imports.ts",
     "test:document-scan": "tsx --conditions=react-server --env-file=.env scripts/test-document-scan.ts",
     "test:offledger-cash": "tsx --conditions=react-server --env-file=.env scripts/test-offledger-cash.ts",
