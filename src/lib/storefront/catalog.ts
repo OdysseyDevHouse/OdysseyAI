@@ -450,6 +450,22 @@ const HOME_ONLY: readonly PageKind[] = ['home']
 const NOT_PRODUCT: readonly PageKind[] = ['home', 'standard', 'department']
 
 /**
+ * The blocks worth offering under a basket or an order confirmation.
+ *
+ * ── SHORTER THAN THE REST, ON PURPOSE ────────────────────────────────────
+ *
+ * Both pages have one job and a shopper part-way through it. What belongs
+ * there is reassurance and one more thing to look at: trust cards, a note, a
+ * row of products, a sign-up. What does not is anything that reads as a
+ * second front page — a carousel, a department grid, a countdown pressing
+ * somebody who has already decided.
+ *
+ * The thank-you page has a further constraint the list cannot express, so it
+ * is stated where it is enforced: see `sourcesFor`.
+ */
+const CART_AND_THANKS: readonly PageKind[] = ['cart', 'thankyou']
+
+/**
  * Home and standard only.
  *
  * A department page already sits under a department heading. A department grid
@@ -663,7 +679,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'A row of products',
     hint: 'Pick the products yourself, or let a rule fill the row.',
     icon: 'Package',
-    pages: ALL_PAGES,
+    pages: [...ALL_PAGES, ...CART_AND_THANKS],
     defaults: () => ({
       title: 'Products',
       ...BASE,
@@ -764,7 +780,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'Info cards',
     hint: 'Your own tiles — delivery info, opening hours, anything.',
     icon: 'Boxes',
-    pages: ALL_PAGES,
+    pages: [...ALL_PAGES, ...CART_AND_THANKS],
     defaults: () => ({
       title: '',
       ...BASE,
@@ -782,7 +798,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'A paragraph',
     hint: 'A note to shoppers — delivery days, a holiday message.',
     icon: 'AlignLeft',
-    pages: ALL_PAGES,
+    pages: [...ALL_PAGES, ...CART_AND_THANKS],
     defaults: () => ({ title: '', ...BASE, text: '', align: 'left' }),
     isEmpty: (f) => !(f.section.text?.trim() ?? '') && !f.section.title,
     fields: [
@@ -817,7 +833,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'Formatted writing',
     hint: 'Headings, bold, colour, alignment, lists and links. For a longer page.',
     icon: 'FileText',
-    pages: ALL_PAGES,
+    pages: [...ALL_PAGES, ...CART_AND_THANKS],
     // One empty paragraph, not zero: an editor with no rows shows the owner
     // nothing to type into, and "add a paragraph" before you can write a word
     // is a step nobody should need.
@@ -832,7 +848,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'Email sign-up',
     hint: 'Collect email addresses, with permission on the record.',
     icon: 'Mail',
-    pages: NOT_PRODUCT,
+    pages: [...NOT_PRODUCT, ...CART_AND_THANKS],
     defaults: () => ({
       title: 'Keep in touch',
       ...BASE,
@@ -862,7 +878,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'Quotes',
     hint: 'Quotes you write yourself, not from the review queue.',
     icon: 'MessageSquare',
-    pages: ALL_PAGES,
+    pages: [...ALL_PAGES, ...CART_AND_THANKS],
     defaults: (make) => ({ title: 'In their words', ...BASE, quotes: [make.quote()] }),
     isEmpty: (f) => (f.section.quotes ?? []).filter((q) => q.quote.trim()).length === 0,
     fields: [
@@ -916,7 +932,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'A dividing line',
     hint: 'A line between two parts of the page.',
     icon: 'Minus',
-    pages: ALL_PAGES,
+    pages: [...ALL_PAGES, ...CART_AND_THANKS],
     defaults: () => ({ title: '', ...BASE }),
     // Draws exactly itself and is never empty — that IS its content. Returning
     // true here would make it impossible to add.
@@ -929,7 +945,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     label: 'A gap',
     hint: 'Empty room, to let a page breathe.',
     icon: 'StackedBands',
-    pages: ALL_PAGES,
+    pages: [...ALL_PAGES, ...CART_AND_THANKS],
     defaults: () => ({ title: '', ...BASE, size: 'medium' }),
     // As above: the gap is the point.
     isEmpty: () => false,

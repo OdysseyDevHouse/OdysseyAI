@@ -242,6 +242,39 @@ export async function productPage(siteId: number): Promise<StorefrontPage | null
 }
 
 /**
+ * The one page of a kind that has only one — the basket strip, the thank you.
+ *
+ * ── WHY THE UNIQUENESS IS HERE AND NOT IN THE SCHEMA ─────────────────────
+ *
+ * `uq_page_department` is (kind, department_id), and these carry no
+ * department. A unique index permits any number of NULLs in MySQL, so the
+ * index does not constrain them — the same trap 186 hit on the listing
+ * presets. Reading the FIRST by kind is what makes it single in practice, and
+ * the writer refuses a second.
+ */
+export async function singletonPage(
+  siteId: number,
+  kind: 'cart' | 'thankyou',
+): Promise<StorefrontPage | null> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT ${PAGE_COLUMNS} FROM storefront_pages WHERE kind = ? ORDER BY id LIMIT 1`,
+    [kind],
+  )
+  return row ? mapPage(row) : null
+}
+
+/** The strip under the basket. */
+export async function cartPage(siteId: number): Promise<StorefrontPage | null> {
+  return singletonPage(siteId, 'cart')
+}
+
+/** The strip under the order confirmation. */
+export async function thankYouPage(siteId: number): Promise<StorefrontPage | null> {
+  return singletonPage(siteId, 'thankyou')
+}
+
+/**
  * The built page for one collection, if a merchant made one.
  *
  * Its sections render ABOVE the grid, exactly as a department page’s do — which

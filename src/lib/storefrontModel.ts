@@ -118,6 +118,16 @@ export const PRODUCT_PAGE_SOURCES: readonly ProductSource[] = ['together', 'same
 export function sourcesFor(pageKind: PageKind): readonly ProductSource[] {
   if (pageKind === 'product') return PRODUCT_SOURCES
   if (pageKind === 'department') return PRODUCT_SOURCES.filter((s) => s !== 'together')
+  /*
+   * Everything else, including the basket and the thank you.
+   *
+   * Those two matter more than they look. A confirmation page deliberately
+   * looks NOTHING up — the shopper is anonymous and it holds only a signed
+   * token — so a row asking for "often bought with this" has no "this" to
+   * follow and would resolve to nothing on the highest-attention page in the
+   * funnel. The filter below already refuses those two rules everywhere but a
+   * product page, which is why no new branch is needed here.
+   */
   return PRODUCT_SOURCES.filter((s) => !PRODUCT_PAGE_SOURCES.includes(s))
 }
 
@@ -1924,7 +1934,21 @@ export function pageWarnings(sections: HomeSection[]): PageWarning[] {
  * hold an ordered list of sections and all three have a draft. See
  * 070_storefront_pages.sql.
  */
-export const PAGE_KINDS = ['home', 'standard', 'department', 'product', 'collection'] as const
+export const PAGE_KINDS = [
+  'home',
+  'standard',
+  'department',
+  'product',
+  'collection',
+  /**
+   * The strip under the basket, and the one under the order confirmation.
+   *
+   * One row each per site, like 'product' — there is one basket page and one
+   * thank-you page, and neither is attached to anything to be per-something.
+   */
+  'cart',
+  'thankyou',
+] as const
 export type PageKind = (typeof PAGE_KINDS)[number]
 
 /**
