@@ -16,16 +16,17 @@ its own rather than riding along with this.
 
 Five facts shape every item below. They were checked in the code, not assumed.
 
-**1. The ESC/POS encoder is text-only.** `src/lib/escpos/encoder.ts` has
-`text`, `bold`, `align`, `size`, `feed`, `cut`, `drawerKick` and nothing else.
-There is **no QR command (`GS ( k`) and no raster command (`GS v 0`)** anywhere
-in the repo, no QR library in `package.json`, and no reference to one. Whatever
-prints QR codes to Epson today does not go through this code path.
+**1. The ESC/POS encoder is text-only, and QR is new work.**
+`src/lib/escpos/encoder.ts` has `text`, `bold`, `align`, `size`, `feed`, `cut`,
+`drawerKick` and nothing else. There is **no QR command (`GS ( k`) and no raster
+command (`GS v 0`)** anywhere in the repo, no QR library in `package.json`, and
+no reference to one.
 
-> **This needs confirming before step 1 is built.** If QR printing happens
-> elsewhere — a different product, the printer's own driver, a firmware
-> feature — then the encoder work below is new, not a port. It is one question
-> with a large effect on the estimate.
+**Confirmed with the product owner: there is no QR functionality in this
+project at all.** The working QR printing is in a *legacy* product of ours, so
+none of it carries over — this is designed from scratch, not ported. That makes
+step 1 larger than a port would have been, but it also means no legacy shape
+has to be honoured.
 
 **2. The slip has a byte-for-byte parity guarantee.**
 `src/lib/escpos/slipSpec.ts` states that for the shipped design it emits the
@@ -58,8 +59,8 @@ each can honour it or it degrades visibly and predictably:
 
 | Channel | Engine | QR | Picture | Conditions |
 |---|---|---|---|---|
-| A4 paper | HTML + `@page` | `<img>` data URI | `<img>` | CSS/compile |
-| Emailed PDF | pdfkit, hand-drawn | `doc.image` | `doc.image` | compile |
+| A4 paper | HTML + `@page` | PNG data URI (no SVG — stripped) | `<img>` | compile |
+| Emailed PDF | pdfkit, hand-drawn | `.rect()` per module | `doc.image` | compile |
 | Till slip | raw ESC/POS bytes | `GS ( k` **(to build)** | **no** | compile |
 
 The honest boundary: **pictures are A4/PDF only.** Raster on a thermal head is
@@ -113,13 +114,45 @@ customer somewhere without them reading it first.
 slips is discovered by a customer, not by us. Seeing the real link — including
 the sample document's real token — is what stops that.
 
-### Rendering
+### Library — `qrcode-generator`, and only for two of the three engines
 
-- **A4/HTML** — a QR PNG as a `data:` URI, composed server-side, carried as a
-  `markup` token. Precedent: `site.logo`. The CSP forbids remote images, so
-  data URIs are the only option, which is also the safe one.
-- **PDF** — `doc.image` with the same PNG buffer.
-- **Slip** — `GS ( k`. The encoder gains one method:
+**MIT, zero dependencies, ships its own `.d.ts`.** Checked against the
+alternatives: the more popular `qrcode` package drags in `yargs` and `pngjs`
+for a CLI we would never use.
+
+What matters is that it exposes the **raw module matrix** — `getModuleCount()`
+and `isDark(row, col)` — rather than only a picture. Verified against the real
+package: a 32-char URL gives a 29×29 matrix, a 320-char one auto-selects up to
+69×69, so payload length needs no handling of ours.
+
+The matrix is the right primitive because each engine wants a different thing
+from it, and **the slip wants none of it** — `GS ( k` has the printer encode
+its own. That asymmetry is worth keeping: the thermal path stays pure bytes,
+and the library never runs for a slip.
+
+### Rendering — three engines, three answers
+
+**A4/HTML — a PNG data URI, and it must be a raster.** The obvious choice was
+SVG; it is not available. `sanitise.ts` strips `<svg>` wholesale (both the
+paired and self-closing patterns), so an inline SVG would be removed from the
+very markup it was added to. `<img>` *is* allowed, and the CSP forbids remote
+images, so a `data:` URI is the only route — and the safe one.
+
+**Encoding that PNG needs no dependency.** A QR is two colours, so an 8-bit
+greyscale PNG is a header, one deflated block and a CRC — `zlib.deflateSync` is
+a Node built-in. **Prototyped and verified end to end**: a real QR for a
+32-character URL came out at **465 bytes**, a 642-character data URI, and it
+decoded correctly as an image with proper finder patterns and quiet zone. A
+320-character payload came out at 1.7KB. Both are small enough to inline
+without a second thought.
+
+Carried as a `markup` token, precedent `site.logo`.
+
+**PDF — draw the matrix directly.** pdfkit has **no `.svg()` method** (checked),
+but it has `.rect()`, so the modules are drawn as filled rectangles. No image
+encoding at all on this path, and it is resolution-independent in the PDF.
+
+**Slip — `GS ( k`.** The encoder gains one method:
 
 ```ts
 /** GS ( k — the QR command set every Epson-compatible head implements. */
@@ -128,26 +161,26 @@ qr(data: string, opts?: { size?: number; ec?: 'L'|'M'|'Q'|'H' }): this
 
 Four sub-commands: model (`165 49`), module size (`167`), error correction
 (`169`), store data (`180`), print (`181`). Store-data length is little-endian
-`pL pH` — the one place this is easy to get wrong.
+`pL pH` — the one place this is easy to get wrong, and the one the test suite
+should target with a >256-byte payload.
 
 **Where APP_URL is unset**, `appUrl()` returns null rather than inventing a
 host. A QR to nowhere is worse than no QR: the block prints its caption and no
 square, and the designer says why.
-
-### Library
-
-No QR encoder is installed. `qrcode` (MIT, ~50KB, no native deps) generates
-both the PNG for A4/PDF and — importantly — is not needed for the slip at all,
-since `GS ( k` has the printer do its own encoding. That asymmetry is worth
-keeping: the thermal path stays pure bytes.
 
 ### Verification
 
 - `GS ( k` byte sequence asserted against the Epson spec, including a
   >256-byte payload to prove the `pL pH` split.
 - Parity suite still green: a design without a QR block emits identical bytes.
-- A real scan from a real Epson before it ships. A QR that renders is not a QR
-  that scans — module size and quiet zone decide that, and only paper proves it.
+- The PNG decodes. Asserting "it starts with the PNG signature" proves nothing
+  about the pixels — the prototype was checked by decoding the file as an image
+  and confirming finder patterns and quiet zone, and the suite should do the
+  same rather than measure a byte length.
+- **A real scan from a real Epson before it ships.** A QR that renders is not a
+  QR that scans: module size, quiet zone and thermal contrast decide that, and
+  only paper proves it. This is the one item on the plan that cannot be
+  verified from a test suite.
 
 ---
 
@@ -306,10 +339,19 @@ all three on the item that matters more.
    every existing block more useful. Lowest risk of the five.
 2. **Duplicate / copy (5).** Small, self-contained, no rendering work.
 3. **Picture block (2).** A4/PDF only; reuses the whole upload path.
-4. **QR block (1).** The encoder work, gated on the question above.
+4. **QR block (1).** The largest item, and now known to be built from scratch.
+   The three renderers are independent, so it splits cleanly: A4 first (the
+   PNG path is prototyped and proved), then PDF, then the `GS ( k` encoder
+   with the parity suite as the guard.
 5. **Barcode block (6).** Rides the QR's rails.
 
 1 and 2 are worth shipping on their own before any encoder work begins.
+
+**Why QR is fourth despite being the headline.** It is the biggest single item
+and the only one touching all three engines. Putting three cheap, complete
+features in front of it means a shop sees the designer improve while the
+encoder work is still going, and it lets the QR block land on a codebase that
+already knows how to add a block kind. Nothing in 1–3 is throwaway work for it.
 
 ## Deliberately out of scope
 
