@@ -32,6 +32,16 @@ import { parseSlip, serialiseSlip } from '@/lib/stationery/slip'
 import { parseSpec, serialiseSpec } from '@/lib/stationery/blocks'
 import VisualDesigner from './visual/VisualDesigner'
 
+/**
+ * One empty slip spec, shared.
+ *
+ * A literal written inline is a NEW OBJECT on every render, so the designer's
+ * preview effect — which depends on the spec — refired without end and called the
+ * preview action hundreds of times. Any one of those failing left "The preview
+ * could not be rendered" on screen, which is how it was reported.
+ */
+const EMPTY_SLIP = { version: 1 as const, blocks: [] }
+
 type TokenInfo = { key: string; label: string; hint: string; section: string | null }
 type DocInfo = {
   key: string
@@ -584,7 +594,7 @@ export default function StationeryClient({
               splits them, because markup is not a picture of anything. */}
           {doc?.medium === 'slip' && format === 'slip' ? (
             <SlipDesigner
-              spec={slipSpec ?? { version: 1, blocks: [] }}
+              spec={slipSpec ?? EMPTY_SLIP}
               onChange={(next) => {
                 setBody(serialiseSlip(next))
                 setDirty(true)

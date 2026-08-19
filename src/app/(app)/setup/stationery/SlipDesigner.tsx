@@ -80,10 +80,40 @@ export default function SlipDesigner({
       })
   }, [])
 
+  /*
+   * ── KEYED ON THE CONTENT, NOT THE OBJECT ────────────────────────────
+   *
+   * The effect used to depend on `spec` itself, and a caller passing a fresh
+   * object literal each render — which is exactly what an inline
+   * `?? { version: 1, blocks: [] }` does — made it refire without end. The
+   * preview action was called hundreds of times, and any one of those failing
+   * left "The preview could not be rendered" on screen.
+   *
+   * The serialised spec IS the request, so keying on it is both the correct
+   * dependency and free: an identical design asks for nothing new however many
+   * times it is handed over.
+   */
+  const key = serialiseSlip(spec)
+
   useEffect(() => {
+    /*
+     * NOTHING TO PREVIEW YET.
+     *
+     * A slip with no blocks is the state between opening the screen and a design
+     * being loaded, not a design somebody made. Asking the server about it costs
+     * a request and answers with five validation complaints — "a till slip must
+     * show TAX INVOICE", and so on — which would flash up as errors before the
+     * real design had even arrived.
+     */
+    if (blocks.length === 0) {
+      setHtml([])
+      setWarnings([])
+      return
+    }
     const t = setTimeout(() => refresh(spec), 300)
     return () => clearTimeout(t)
-  }, [spec, refresh])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, refresh, blocks.length])
 
   const set = (next: SlipBlock[]) => onChange({ version: 1, blocks: next })
 
