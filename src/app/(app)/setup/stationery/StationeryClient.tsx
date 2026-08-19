@@ -27,6 +27,9 @@ import {
   uploadLogoAction,
   clearLogoAction,
   toMarkupAction,
+  uploadPictureAction,
+  deletePictureAction,
+  type PictureInfo,
 } from './actions'
 import SlipDesigner from './SlipDesigner'
 import CopyDesignModal from './CopyDesignModal'
@@ -91,12 +94,14 @@ type TemplateInfo = {
 export default function StationeryClient({
   siteName,
   logoFile,
+  pictures: initialPictures,
   docs,
   templates: initialTemplates,
 }: {
   siteName: string
   /** The stored disk name, or '' — used only to know whether one exists. */
   logoFile: string
+  pictures: PictureInfo[]
   docs: DocInfo[]
   templates: TemplateInfo[]
 }) {
@@ -396,7 +401,45 @@ export default function StationeryClient({
   /* The stored name doubles as a cache-buster: the URL is constant per site, so
      without it a replaced logo would keep showing the old picture. */
   const [logo, setLogo] = useState(logoFile)
+  /*
+   * The whole list comes back from every picture action rather than being
+   * patched here — two tabs open on this screen would otherwise disagree about
+   * what the shop has.
+   */
+  const [pictures, setPictures] = useState(initialPictures)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  const pictureInput = useRef<HTMLInputElement>(null)
+
+  function uploadPicture(file: File) {
+    const form = new FormData()
+    form.set('picture', file)
+    // The upload name is a poor label but a real one — a shop renames it by
+    // uploading with a better filename, which is simpler than a rename field
+    // nobody would use twice.
+    form.set('label', file.name.replace(/.[^.]+$/, ''))
+    start(async () => {
+      const res = await uploadPictureAction(form)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      setPictures(res.pictures)
+      toast.success(res.message)
+    })
+  }
+
+  function deletePicture(id: number) {
+    start(async () => {
+      const res = await deletePictureAction(id)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      setPictures(res.pictures)
+      toast.success(res.message)
+    })
+  }
 
   function uploadLogo(file: File) {
     const form = new FormData()
@@ -586,6 +629,83 @@ export default function StationeryClient({
         </CardBody>
       </Card>
 
+      <Card>
+        <CardHeader
+          title="Your pictures"
+          description="Anything else you print — equipment you fit, an accreditation, a promotion."
+          action={
+            <Badge tone="neutral">
+              {pictures.length} {pictures.length === 1 ? 'picture' : 'pictures'}
+            </Badge>
+          }
+        />
+        <CardBody>
+          {pictures.length === 0 ? (
+            <p className="text-sm text-muted">
+              No pictures yet. Upload one, then add a{' '}
+              <span className="font-medium text-ink">A picture</span> block to a design.
+            </p>
+          ) : (
+            <ul className="flex flex-wrap gap-3">
+              {pictures.map((p) => (
+                <li
+                  key={p.id}
+                  className="flex w-40 flex-col gap-2 rounded-control border border-border p-2"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- served by
+                      an authenticated route that streams bytes off disk; Next's
+                      optimiser cannot fetch it. */}
+                  <img
+                    src={`/api/stationery-images/${p.id}`}
+                    alt=""
+                    className="h-20 w-full rounded-control bg-surface-2 object-contain"
+                  />
+                  <span className="truncate text-xs text-ink-2" title={p.label}>
+                    {p.label}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="danger-ghost"
+                    onClick={() => deletePicture(p.id)}
+                    disabled={pending}
+                  >
+                    Delete
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <input
+            ref={pictureInput}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) uploadPicture(f)
+              e.target.value = ''
+            }}
+          />
+          <div className="mt-4">
+            <Button
+              variant="secondary"
+              onClick={() => pictureInput.current?.click()}
+              disabled={pending}
+            >
+              <Icons.Upload aria-hidden className="h-4 w-4" />
+              Upload a picture
+            </Button>
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            Under 500&nbsp;KB each — an emailed document carries the picture itself, so a
+            large one is attached to everything you send. Pictures print on pages, not on
+            till slips: a thermal printer has no useful way to draw one. Deleting a picture
+            leaves any design using it printing without it.
+          </p>
+        </CardBody>
+      </Card>
+
       {body.trim() === '' ? (
         <Card>
           <CardBody>
@@ -652,6 +772,7 @@ export default function StationeryClient({
             />
           ) : format === 'blocks' ? (
             <VisualDesigner
+              pictures={pictures}
               docType={docType}
               spec={blockSpec ?? { version: 1, blocks: [] }}
               tokens={doc?.tokens.map((t) => ({ key: t.key, label: t.label, section: t.section })) ?? []}

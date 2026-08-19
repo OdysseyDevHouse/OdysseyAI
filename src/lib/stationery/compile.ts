@@ -2,6 +2,7 @@ import { getDocType, findToken } from './catalog'
 import { BAND_REM } from './geometry'
 import {
   BAND_KEYS,
+  DEFAULT_IMAGE_H,
   DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
   type BandKey,
@@ -156,6 +157,31 @@ function logoBlock(b: DocBlock): string {
     `<span class="sd-value">{site.logo}</span>` +
     `</div>`
   )
+}
+
+/**
+ * A picture the shop uploaded, as a placeholder the RENDERER fills in.
+ *
+ * ── WHY IT IS NOT AN <img> HERE ───────────────────────────────────────────
+ *
+ * Compiling has no database, and the tag has to name a real picture belonging
+ * to this site. Worse, a tag written into stored markup would be a tag a shop
+ * could later hand-edit — and lib/stationery/render's SAFE_MARKUP exists
+ * precisely so that the only image a document can carry is one the server built.
+ *
+ * So the compiler emits a MARKER carrying the id and the height, and
+ * renderTemplate turns it into a tag from its own list of this site's pictures.
+ * An id naming a picture that has been deleted resolves to nothing, which is
+ * the same thing a missing file does.
+ *
+ * The marker's shape is deliberately not a {token}: substitute() only resolves
+ * keys the catalog declares, and a per-picture token would mean a catalog that
+ * changes as a shop uploads.
+ */
+function imageBlock(b: DocBlock): string {
+  if (!b.imageId) return ''
+  const h = Math.round(b.imageHeight ?? DEFAULT_IMAGE_H)
+  return `<div class="sd-block sd-image">{{picture:${b.imageId}:${h}}}</div>`
 }
 
 function letterhead(b: DocBlock): string {
@@ -328,6 +354,8 @@ function compileBlock(b: DocBlock, docKey: string): string {
   switch (b.kind) {
     case 'logo':
       return logoBlock(b)
+    case 'image':
+      return imageBlock(b)
     case 'letterhead':
       return letterhead(b)
     case 'docTitle':

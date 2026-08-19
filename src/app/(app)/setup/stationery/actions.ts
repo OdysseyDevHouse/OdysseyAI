@@ -26,6 +26,13 @@ import { parseSpec, validateSpec } from '@/lib/stationery/blocks'
 import { compileBlocks, compileDocument, supportsBlocks } from '@/lib/stationery/compile'
 import { slipPreviewHtml, slipBlockHtml } from '@/lib/stationery/slipHtml'
 import { setLogo, clearLogo } from '@/lib/site/documentLogo'
+import {
+  pictureIds,
+  addImage,
+  removeImage,
+  listImages,
+  imageLabel,
+} from '@/lib/site/stationeryImages'
 
 /**
  * The stationery designer's server half.
@@ -267,6 +274,7 @@ export async function previewTemplateAction(input: {
   const html = renderTemplate(clean, input.docType, {
     ...source.input,
     capabilities: ctx.capabilities,
+    pictures: await pictureIds(ctx.siteId),
   })
 
   const dropped = unsupportedIn(input.body)
@@ -330,11 +338,15 @@ export async function previewBlocksAction(input: {
   const source = await previewFor(input.docType, ctx.siteId, letterhead)
 
   const fragments = compileBlocks(spec, input.docType)
+  // Read once for the whole design rather than per block: a page of seventeen
+  // blocks would otherwise ask the same question seventeen times.
+  const pictures = await pictureIds(ctx.siteId)
   const blocks: Record<string, string> = {}
   for (const [id, markup] of Object.entries(fragments)) {
     blocks[id] = renderTemplate(markup, input.docType, {
       ...source.input,
       capabilities: ctx.capabilities,
+      pictures,
     })
   }
 
@@ -476,4 +488,72 @@ export async function discardDraftAction(id: number): Promise<ActionResult> {
 
   revalidatePath('/setup/stationery')
   return { ok: true, id, message: 'Draft discarded.' }
+}
+
+/* ── the shop's pictures ─────────────────────────────────────────────────── */
+
+export type PictureInfo = {
+  id: number
+  label: string
+  filename: string
+  sizeBytes: number
+}
+
+export type PictureListResult =
+  | { ok: true; message: string; pictures: PictureInfo[] }
+  | { ok: false; error: string }
+
+/**
+ * Upload a picture for use on documents.
+ *
+ * Guarded like every other write here — see the header. The whole list comes
+ * back rather than just the new row: the designer shows a gallery, and a client
+ * that patched its own copy would drift from the server the first time two
+ * tabs were open.
+ */
+export async function uploadPictureAction(form: FormData): Promise<PictureListResult> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const file = form.get('picture')
+  if (!(file instanceof File)) return { ok: false, error: 'Choose a picture to upload.' }
+  const label = String(form.get('label') ?? '')
+
+  const result = await addImage(ctx.siteId, file, label, ctx.actor)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/stationery')
+  return { ok: true, message: 'Picture uploaded.', pictures: await picturesFor(ctx.siteId) }
+}
+
+/**
+ * Delete a picture.
+ *
+ * Designs pointing at it are NOT rewritten — see removeImage. A block naming a
+ * picture that has gone prints nothing, which is the same thing that happens
+ * when the file itself goes missing, and is already handled by every renderer.
+ */
+export async function deletePictureAction(id: number): Promise<PictureListResult> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const result = await removeImage(ctx.siteId, id)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/stationery')
+  return {
+    ok: true,
+    message: 'Picture deleted. Any design using it will print without it.',
+    pictures: await picturesFor(ctx.siteId),
+  }
+}
+
+async function picturesFor(siteId: number): Promise<PictureInfo[]> {
+  const images = await listImages(siteId)
+  return images.map((i) => ({
+    id: i.id,
+    label: imageLabel(i),
+    filename: i.filename,
+    sizeBytes: i.sizeBytes,
+  }))
 }

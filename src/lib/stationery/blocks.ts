@@ -57,6 +57,7 @@ export const DOC_BLOCK_KINDS = [
   'notes',
   'text',
   'signature',
+  'image',
   'rule',
   'spacer',
   'html',
@@ -128,6 +129,19 @@ export type DocBlock = {
   rows?: DetailRow[]
   /** text: the words. html: raw markup, sanitised like anything else. */
   text?: string
+  /**
+   * image only: which of the shop's pictures, by id.
+   *
+   * The id and not the disk name: the name is an implementation detail of
+   * lib/uploads and a design should not carry one. A design naming a picture
+   * that has since been deleted prints nothing, exactly as a missing FILE does.
+   */
+  imageId?: number
+  /**
+   * image only: how tall to print it, in points. Width follows, so the picture
+   * keeps its shape — the same answer the logo needed.
+   */
+  imageHeight?: number
   /**
    * Show this block only when the document answers a named question — see
    * lib/stationery/conditions.
@@ -333,6 +347,22 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     repeatable: true,
     defaultW: 45,
   },
+  image: {
+    kind: 'image',
+    label: 'A picture',
+    hint: 'One of your own pictures — equipment you fit, an accreditation, a promotion.',
+    /*
+     * A4 ONLY, and stated as a list rather than 'all'.
+     *
+     * A thermal head has no raster this design uses: GS v 0 exists, but at
+     * 203dpi it is slow, coarse and paper-hungry, and a shop wanting equipment
+     * photos wants them on a quote rather than on a till slip. The block is
+     * ABSENT from the slip palette rather than shown and refused — a line that
+     * cannot print is not a line.
+     */
+    docTypes: ['purchase_order', 'invoice', 'delivery_note', 'statement'],
+    defaultW: 30,
+  },
   rule: {
     kind: 'rule',
     label: 'A dividing line',
@@ -378,6 +408,13 @@ export function requiredBlockKinds(docType: string): DocBlockKind[] {
 }
 
 /** A page is finite and so is patience. */
+/* A picture, in points. Wider bounds than the logo: a letterhead crest is
+   small by nature, while an equipment photo on a quote is meant to be looked
+   at. */
+export const MIN_IMAGE_H = 12
+export const MAX_IMAGE_H = 320
+export const DEFAULT_IMAGE_H = 90
+
 export const MAX_BLOCKS = 40
 export const MAX_COLUMNS = 10
 
@@ -756,6 +793,23 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
        * the block — the words a shop wrote are the part worth saving, and a
        * paragraph that silently stopped printing is the harder bug to find.
        */
+      /*
+       * A picture id is kept whatever it points at. Whether the picture still
+       * EXISTS is a question for the renderer — this parse has no database, and
+       * dropping the id here would quietly empty a block for a shop whose site
+       * simply had not finished loading.
+       */
+      const rawImageId = (b as { imageId?: unknown }).imageId
+      const imageId =
+        typeof rawImageId === 'number' && Number.isInteger(rawImageId) && rawImageId > 0
+          ? rawImageId
+          : undefined
+      const rawImageH = (b as { imageHeight?: unknown }).imageHeight
+      const imageHeight =
+        typeof rawImageH === 'number' && Number.isFinite(rawImageH)
+          ? Math.min(Math.max(Math.round(rawImageH), MIN_IMAGE_H), MAX_IMAGE_H)
+          : undefined
+
       const rawWhen = (b as { showWhen?: unknown }).showWhen
       const showWhen = isConditionRule(rawWhen) && rawWhen !== 'always' ? rawWhen : undefined
 
@@ -778,6 +832,8 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
         ...(section ? { section } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
+        ...(imageId !== undefined ? { imageId } : {}),
+        ...(imageHeight !== undefined ? { imageHeight } : {}),
         ...(showWhen ? { showWhen } : {}),
         ...(logoHeight !== undefined ? { logoHeight } : {}),
       })

@@ -1,4 +1,5 @@
 import 'server-only'
+import { pictureIds, pictureBytes } from '../site/stationeryImages'
 import PDFDocument from 'pdfkit'
 import { formatMoney } from '../decimals'
 
@@ -236,7 +237,21 @@ async function renderDesignedInvoice(
     logoHtml: null,
   })
 
-  return renderSpecPdf(spec, 'invoice', input, logo?.bytes ?? null)
+  /*
+   * The pictures the design actually uses, read once. An emailed document
+   * carries its images as bytes, so only what is on the page is fetched.
+   */
+  const usedPictures = spec.blocks
+    .filter((b) => b.kind === 'image' && b.imageId)
+    .map((b) => b.imageId as number)
+
+  return renderSpecPdf(
+    spec,
+    'invoice',
+    { ...input, pictures: await pictureIds(siteId) },
+    logo?.bytes ?? null,
+    usedPictures.length ? await pictureBytes(siteId, usedPictures) : undefined,
+  )
 }
 
 function draw(doc: PDFKit.PDFDocument, data: InvoiceData, heading?: string) {

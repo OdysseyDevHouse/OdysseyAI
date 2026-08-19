@@ -1,4 +1,5 @@
 import './order-a4.css'
+import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireCapability, requireSite, requireActor } from '@/lib/auth'
 import { getPurchaseDocument, purchaseAudit, recordOrderPrint } from '@/lib/site/purchaseDocuments'
@@ -122,7 +123,11 @@ export default async function PurchaseOrderPrintPage({
     logoHtml,
   })
 
-  const html = renderTemplate(template.body, 'purchase_order', { ...input, capabilities })
+  const html = renderTemplate(template.body, 'purchase_order', {
+    ...input,
+    capabilities,
+    pictures: await pictureIds(site.id),
+  })
 
   return (
     <div className="px-6 py-6">

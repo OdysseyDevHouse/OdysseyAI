@@ -1,4 +1,5 @@
 import './document-a4.css'
+import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
@@ -182,6 +183,7 @@ export default async function SalesDocumentPrintPage({
   const html = renderTemplate(template.body, 'invoice', {
     ...input,
     capabilities,
+    pictures: await pictureIds(site.id),
   })
 
   return (

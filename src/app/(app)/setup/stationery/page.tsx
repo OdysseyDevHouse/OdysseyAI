@@ -6,6 +6,7 @@ import { DEFAULT_TEMPLATES, DEFAULT_SPECS } from '@/lib/stationery/resolve'
 import { serialiseSpec } from '@/lib/stationery/blocks'
 import { supportsBlocks } from '@/lib/stationery/compile'
 import { logoFileName } from '@/lib/site/documentLogo'
+import { listImages, imageLabel } from '@/lib/site/stationeryImages'
 import StationeryClient from './StationeryClient'
 
 export const dynamic = 'force-dynamic'
@@ -29,7 +30,11 @@ export default async function StationerySetupPage() {
   const { siteId, capabilities } = await requireCapability('setup.stationery')
   const site = await requireSite()
 
-  const [templates, logoFile] = await Promise.all([listTemplates(siteId), logoFileName(siteId)])
+  const [templates, logoFile, images] = await Promise.all([
+    listTemplates(siteId),
+    logoFileName(siteId),
+    listImages(siteId),
+  ])
 
   /*
    * The shipped default travels with the page so "Start from the standard
@@ -70,6 +75,12 @@ export default async function StationerySetupPage() {
         <StationeryClient
           siteName={site.displayName}
           logoFile={logoFile}
+          pictures={images.map((i) => ({
+            id: i.id,
+            label: imageLabel(i),
+            filename: i.filename,
+            sizeBytes: i.sizeBytes,
+          }))}
           docs={docs}
           templates={templates.map((t) => ({
             id: t.id,

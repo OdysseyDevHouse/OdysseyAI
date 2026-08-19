@@ -1,4 +1,7 @@
 import 'server-only'
+import { pictureIds, pictureBytes } from './stationeryImages'
+import { PICTURE_URL } from '../stationery/render'
+import { sniffImage } from '../uploads'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQueryOne } from '../siteDb'
 import { formatMoney } from '../decimals'
@@ -144,10 +147,11 @@ export async function emailPurchaseOrder(
   const rendered = renderTemplate(template.body, 'purchase_order', {
     ...input,
     capabilities: { isOwner: true, granted: new Set(['products.cost']) },
+    pictures: await pictureIds(siteId),
   })
 
   // Only now, on the finished document — never through a token. See inlineLogo.
-  const html = await inlineLogo(siteId, rendered)
+  const html = await inlinePictures(siteId, await inlineLogo(siteId, rendered))
 
   const number = doc.documentNumber ?? `#${documentId}`
   const note = opts.message?.trim()
@@ -205,6 +209,42 @@ async function inlineLogo(siteId: number, html: string): Promise<string> {
     // image icon on the letterhead. Nothing at all is tidier.
     return stripLogoTag(html)
   }
+}
+
+/**
+ * The shop's pictures, as data URIs — or gone.
+ *
+ * Exactly what inlineLogo does and for exactly the same reason: the recipient
+ * of this email cannot reach /api/stationery-images, so a tag left pointing
+ * there renders as a broken-image icon on a document going to a supplier.
+ * Embedded, it survives; failing that, removed, because nothing is tidier than
+ * a broken picture.
+ *
+ * Done AFTER rendering, on the finished document, never through a token — see
+ * the note on inlineLogo. The tags this rewrites are ones renderTemplate built
+ * from ids it had already checked against this site.
+ */
+async function inlinePictures(siteId: number, html: string): Promise<string> {
+  if (!html.includes(PICTURE_URL)) return html
+
+  const ids = [...html.matchAll(new RegExp(`<img src="${PICTURE_URL}/(\d+)"`, 'g'))].map((m) =>
+    Number(m[1]),
+  )
+  if (ids.length === 0) return html
+
+  let out = html
+  const bytes = await pictureBytes(siteId, ids).catch(() => new Map<number, Buffer>())
+  for (const id of new Set(ids)) {
+    const found = bytes.get(id)
+    const tag = new RegExp(`<img src="${PICTURE_URL}/${id}"([^>]*)>`, 'g')
+    if (!found) {
+      out = out.replace(tag, '')
+      continue
+    }
+    const format = sniffImage(found) ?? 'png'
+    out = out.replace(tag, `<img src="data:image/${format};base64,${found.toString('base64')}"$1>`)
+  }
+  return out
 }
 
 function stripLogoTag(html: string): string {

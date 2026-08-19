@@ -1,4 +1,5 @@
 import '../document/document-a4.css'
+import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
@@ -103,7 +104,11 @@ export default async function DeliveryNotePrintPage({
     logoHtml,
   })
 
-  const html = renderTemplate(template.body, 'delivery_note', { ...input, capabilities })
+  const html = renderTemplate(template.body, 'delivery_note', {
+    ...input,
+    capabilities,
+    pictures: await pictureIds(site.id),
+  })
 
   return (
     <div className="px-6 py-6">

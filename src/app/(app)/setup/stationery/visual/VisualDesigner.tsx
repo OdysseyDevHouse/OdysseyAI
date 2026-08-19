@@ -72,12 +72,15 @@ export default function VisualDesigner({
   spec,
   tokens,
   onChange,
+  pictures,
 }: {
   docType: string
   spec: DocumentSpec
   /** Every field this caller may use. Already permission-filtered. */
   tokens: TokenChoice[]
   onChange: (next: DocumentSpec) => void
+  /** The shop's pictures, for image blocks. */
+  pictures: { id: number; label: string }[]
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [heights, setHeights] = useState<Record<string, number>>({})
@@ -279,6 +282,7 @@ export default function VisualDesigner({
         <BlockInspector
           block={selected.length === 1 ? selected[0] : null}
           tokens={tokens}
+          pictures={pictures}
           onChange={(changes) => {
             if (selected.length === 1) patch(selected[0].id, changes)
           }}

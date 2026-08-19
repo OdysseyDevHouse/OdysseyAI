@@ -46,7 +46,19 @@ export type RenderInput = {
   sections: Partial<Record<string, TokenValues[]>>
   /** Decides which permission-gated tokens resolve to a value. */
   capabilities: { isOwner: boolean; granted: ReadonlySet<string> }
+  /**
+   * The ids of pictures THIS SITE owns.
+   *
+   * A picture block resolves only to an id in here, so a design cannot name a
+   * file belonging to anyone else however it was written. Absent means no
+   * pictures resolve, which is the safe direction for a caller that has not
+   * been updated to supply them.
+   */
+  pictures?: ReadonlySet<number>
 }
+
+/** Where a picture block's <img> points. One place, so the route and the tag cannot drift. */
+export const PICTURE_URL = '/api/stationery-images'
 
 /**
  * The only markup a `markup` token may emit: a single `<img>` whose `src` is
@@ -55,6 +67,12 @@ export type RenderInput = {
  * Written as one narrow shape rather than "no script tags", because an
  * allowlist of the thing we actually produce cannot be widened by an encoding
  * nobody thought of.
+ *
+ * A picture block does NOT come through here. It is not a token — the compiler
+ * emits a marker and this module builds the tag from an id it has checked
+ * against the site's own pictures, so there is no user-supplied string to
+ * validate. Widening this regex to cover it would have loosened the one rule
+ * that keeps the logo path narrow.
  */
 const SAFE_MARKUP = /^<img src="\/api\/document-logo\?v=[A-Za-z0-9._%-]+" alt="" style="[a-z0-9:;\-\s]*">$/
 
@@ -165,6 +183,29 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
   if (!doc) return ''
 
   /*
+   * ── PICTURES, FROM A LIST THIS SITE OWNS ────────────────────────────────
+   *
+   * `{{picture:ID:HEIGHT}}` is what the compiler emits for a picture block. It
+   * becomes a tag HERE, and only for an id in `pictures` — which the caller
+   * built from this site's own rows. An id naming a picture this shop does not
+   * have (a copied design, a deleted picture, a hand-edited spec) resolves to
+   * nothing, so the marker can never be used to point a tag anywhere.
+   *
+   * The tag is built in TypeScript rather than stored, for the same reason the
+   * logo's is: what is on disk is then never the thing that decides what a
+   * document loads.
+   */
+  const withPictures = body.replace(
+    /\{\{picture:(\d+):(\d+)\}\}/g,
+    (_m, rawId: string, rawH: string) => {
+      const id = Number(rawId)
+      if (!input.pictures?.has(id)) return ''
+      const h = Math.min(Math.max(Number(rawH) || 90, 8), 400)
+      return `<img src="${PICTURE_URL}/${id}" alt="" style="max-height:${h}px;width:auto">`
+    },
+  )
+
+  /*
    * ── CONDITIONS FIRST ────────────────────────────────────────────────────
    *
    * `{#when rule}…{/when}` marks a block the designer said to show only
@@ -177,7 +218,7 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
    * marker, matching parseSpec: a design outliving one of its rules should lose
    * the condition, not the words.
    */
-  const shown = body.replace(
+  const shown = withPictures.replace(
     /\{#when\s+([a-zA-Z]+)\s*\}([\s\S]*?)\{\/when\}/g,
     (_m, rule: string, inner: string) => (conditionHolds(rule, input.values) ? inner : ''),
   )

@@ -18,9 +18,12 @@ import {
 import {
   BAND_INFO,
   BAND_KEYS,
+  DEFAULT_IMAGE_H,
   DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
+  MAX_IMAGE_H,
   MAX_LOGO_HEIGHT,
+  MIN_IMAGE_H,
   MIN_LOGO_HEIGHT,
   type BandKey,
   type DetailRow,
@@ -53,12 +56,15 @@ export default function BlockInspector({
   tokens,
   onChange,
   onRemove,
+  pictures,
 }: {
   block: DocBlock | null
   /** Every field this caller may use. Already permission-filtered. */
   tokens: TokenChoice[]
   onChange: (patch: Partial<DocBlock>) => void
   onRemove: () => void
+  /** The shop's pictures, for an image block to choose from. */
+  pictures: { id: number; label: string }[]
 }) {
   if (!block) {
     return (
@@ -175,6 +181,60 @@ export default function BlockInspector({
               onChange={(e) => onChange({ text: e.target.value })}
             />
           </Field>
+        )}
+
+        {block.kind === 'image' && (
+          <>
+            <Field
+              label="Which picture"
+              hint={
+                pictures.length === 0
+                  ? 'You have not uploaded any pictures yet — there is an uploader below the designer.'
+                  : 'Your own pictures. Upload more below the designer.'
+              }
+            >
+              <Select
+                value={block.imageId ? String(block.imageId) : ''}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  onChange({ imageId: Number.isInteger(n) && n > 0 ? n : undefined })
+                }}
+              >
+                {/* A block with no picture chosen yet prints nothing, so the
+                    empty option is a real state rather than a placeholder. */}
+                <option value="">— none —</option>
+                {pictures.map((p) => (
+                  <option key={p.id} value={String(p.id)}>
+                    {p.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field
+              label="How tall to print it"
+              hint="Points. The width follows, so the picture keeps its shape."
+            >
+              <div className="flex items-center gap-2">
+                <NumberInput
+                  aria-label="Picture height"
+                  className="w-24"
+                  value={block.imageHeight ?? DEFAULT_IMAGE_H}
+                  min={MIN_IMAGE_H}
+                  max={MAX_IMAGE_H}
+                  step={10}
+                  onChange={(e) => {
+                    const n = Number(e.target.value)
+                    if (!Number.isFinite(n)) return
+                    onChange({
+                      imageHeight: Math.min(Math.max(Math.round(n), MIN_IMAGE_H), MAX_IMAGE_H),
+                    })
+                  }}
+                />
+                <span className="text-xs text-muted">pt</span>
+              </div>
+            </Field>
+          </>
         )}
 
         {block.kind === 'logo' && (

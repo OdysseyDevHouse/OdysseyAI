@@ -125,6 +125,15 @@ type Ctx = {
   docKey: string
   /** The logo's bytes, where the site has one and it could be read. */
   logo: Buffer | null
+  /**
+   * The shop's pictures, by id.
+   *
+   * Only ids in here can be drawn, which is the same boundary the A4 path
+   * enforces with its own list: a design naming a picture belonging to nobody —
+   * a copy from another site, a deleted row — draws nothing rather than
+   * reaching for a file.
+   */
+  pictures?: Map<number, Buffer>
 }
 
 /** Draw one block at its box, and report how tall it turned out. */
@@ -154,6 +163,23 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
   doc.y = box.y
 
   switch (b.kind) {
+    case 'image': {
+      /*
+       * A picture the shop uploaded. The BYTES are handed in by the caller —
+       * this renderer has no database and must not grow one — keyed by the id
+       * the block names. A picture that has been deleted, or whose file has
+       * gone, is simply absent from the map and the block draws nothing, which
+       * is what the A4 path does too.
+       */
+      const bytes = b.imageId ? ctx.pictures?.get(b.imageId) : undefined
+      if (!bytes) return 0
+      const h = b.imageHeight ?? 90
+      // fit, for the same reason the logo uses it: the picture keeps its shape
+      // and stays inside the box the designer drew.
+      doc.image(bytes, box.x, box.y, { fit: [box.w, h] })
+      return h
+    }
+
     case 'logo': {
       if (!ctx.logo) return 0
       const h = b.logoHeight ?? 56
@@ -494,6 +520,8 @@ export function renderSpecPdf(
   docKey: string,
   input: RenderInput,
   logo: Buffer | null = null,
+  /** The shop's pictures by id, for any image blocks the design uses. */
+  pictures?: Map<number, Buffer>,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: MARGIN, bufferPages: true })
@@ -502,7 +530,7 @@ export function renderSpecPdf(
     doc.on('end', () => resolve(Buffer.concat(chunks)))
     doc.on('error', reject)
 
-    const ctx: Ctx = { doc, input, docKey, logo }
+    const ctx: Ctx = { doc, input, docKey, logo, pictures }
 
     try {
       let bandTop = MARGIN
