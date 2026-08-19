@@ -69,10 +69,11 @@ function eq(label: string, actual: number, expected: number) {
 /**
  * The occurrence a rule created right now would be due at.
  *
- * Every rule these tests store is timed to a minute ago rather than a fixed
- * "07:00", because the engine refuses anything more than 12 hours late — a
- * fixed time makes the whole suite pass before lunch and fail after it, which
- * is the worst kind of test.
+ * Any rule these tests expect to FIRE is timed to a minute ago rather than a
+ * fixed "07:00", because the engine refuses anything more than 12 hours late —
+ * a fixed time makes the test pass before lunch and fail after it, which is
+ * the worst kind of test. Rules that only need to exist stay paused; see
+ * input().
  */
 function justNow(): { sendTime: string; dueAt: Date } {
   const at = new Date(Date.now() - 60_000)
@@ -81,12 +82,28 @@ function justNow(): { sendTime: string; dueAt: Date } {
   return { sendTime: `${pad(at.getHours())}:${pad(at.getMinutes())}`, dueAt: at }
 }
 
-/** A rule shaped just enough to store and run. Bell-only, so nothing is sent. */
+/**
+ * A rule shaped just enough to store and run. Bell-only, so nothing is sent.
+ *
+ * PAUSED by default, which is the opposite of what a real rule wants and the
+ * only way this suite is repeatable.
+ *
+ * tickSite() sweeps every ACTIVE rule on the site, so an earlier test's
+ * leftover rule fires alongside the one under test and writes its own bell row
+ * — which made "the named recipient was told" count 2 instead of 1. Worse, it
+ * did so only for part of the day: with the default 07:00 send time those
+ * rules were stale before 19:00 and live after it, so the suite passed at
+ * lunchtime and failed at midnight. A test that depends on the hour is worse
+ * than no test.
+ *
+ * The tests that need a rule to actually fire pass `isActive: true` with a
+ * `justNow()` send time, and say so.
+ */
 function input(over: Partial<AlertRuleInput> = {}): AlertRuleInput {
   return {
     kind: 'negative_stock',
     name: 'TEST alert',
-    isActive: true,
+    isActive: false,
     frequency: 'daily',
     sendTime: '07:00',
     daysOfWeek: '1111111',
@@ -285,7 +302,7 @@ async function zeroIsAGoodDay(ownerId: number) {
   // Timed to a minute ago so the occurrence is genuinely due AND genuinely
   // fresh — see justNow().
   const { sendTime } = justNow()
-  const id = await makeRule({ recipientUserIds: [ownerId], sendTime }, ownerId)
+  const id = await makeRule({ recipientUserIds: [ownerId], sendTime, isActive: true }, ownerId)
 
   // Drive the tick itself rather than a hand-rolled mirror of it: the thing
   // being tested is the engine's decision, not a copy of that decision.
@@ -339,7 +356,7 @@ async function ownerMustStillBeHere() {
   // that person is deleted, because the FK is ON DELETE SET NULL. Creating it
   // ownerless from the start would be a state the database itself refuses.
   const { sendTime } = justNow()
-  const id = await makeRule({ sendTime })
+  const id = await makeRule({ sendTime, isActive: true })
   await siteExecute(SITE, `UPDATE alert_rules SET owner_user_id = NULL WHERE id = ?`, [id])
 
   const result = await tickSite(SITE)
@@ -451,7 +468,7 @@ async function storedTimesAreWallClock(ownerId: number) {
   console.log('\nstored times')
 
   const { sendTime } = justNow()
-  const id = await makeRule({ recipientUserIds: [ownerId], sendTime }, ownerId)
+  const id = await makeRule({ recipientUserIds: [ownerId], sendTime, isActive: true }, ownerId)
   await tickSite(SITE)
 
   const rule = await getRule(SITE, id)
