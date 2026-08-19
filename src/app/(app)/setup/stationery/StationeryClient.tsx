@@ -406,15 +406,27 @@ export default function StationeryClient({
             </p>
           </div>
 
-          {/* Said plainly, on the screen, rather than discovered by a customer
-              who redesigns their invoice and then emails one. An emailed
-              invoice renders through lib/invoices/pdf.ts, which is drawn by
-              hand and reads no template. */}
+          {/* What a design does and does not reach, said on the screen rather
+              than discovered by a customer who redesigns their invoice and then
+              emails one. The emailed PDF now follows a BLOCK design
+              (lib/stationery/pdf.ts); a markup one it cannot draw, and
+              statements are a different document entirely. */}
           {docType === 'invoice' && (
-            <Callout tone="warning" className="mt-4">
-              This design is used when an invoice is <strong>printed</strong>. Invoices{' '}
-              <strong>emailed</strong> to a customer, and statements, still use the standard
-              layout — they are built a different way and cannot follow a design yet.
+            <Callout tone={format === 'html' ? 'warning' : 'neutral'} className="mt-4">
+              {format === 'html' ? (
+                <>
+                  A design written as <strong>HTML</strong> is used when an invoice is{' '}
+                  <strong>printed</strong>. Emailed invoices keep the standard layout — a PDF
+                  cannot draw arbitrary markup. Design it by <strong>dragging</strong> instead
+                  and the emailed copy follows it too.
+                </>
+              ) : (
+                <>
+                  This design is used when an invoice is <strong>printed</strong> and when one
+                  is <strong>emailed</strong>. Statements still use the standard layout — they
+                  are a different document.
+                </>
+              )}
             </Callout>
           )}
 
