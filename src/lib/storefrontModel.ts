@@ -1784,7 +1784,7 @@ export function pageWarnings(sections: HomeSection[]): PageWarning[] {
  * hold an ordered list of sections and all three have a draft. See
  * 070_storefront_pages.sql.
  */
-export const PAGE_KINDS = ['home', 'standard', 'department', 'product'] as const
+export const PAGE_KINDS = ['home', 'standard', 'department', 'product', 'collection'] as const
 export type PageKind = (typeof PAGE_KINDS)[number]
 
 /**
@@ -1825,6 +1825,8 @@ export const RESERVED_SLUGS = [
   'page',
   'c',
   'p',
+  // Collections live at /k/<slug> — see 189 on why the letter is short.
+  'k',
   'cart',
   'checkout',
   'done',

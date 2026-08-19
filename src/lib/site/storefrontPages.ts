@@ -242,6 +242,30 @@ export async function productPage(siteId: number): Promise<StorefrontPage | null
 }
 
 /**
+ * The built page for one collection, if a merchant made one.
+ *
+ * Its sections render ABOVE the grid, exactly as a department page’s do — which
+ * is what makes a lookbook out of blocks that already existed: a
+ * picture-beside-words over a row of the things in the collection.
+ *
+ * No inheritance, unlike a department page. A collection is a flat set a
+ * merchant assembled on purpose; there is no tree for a page to cascade down.
+ */
+export async function collectionPage(
+  siteId: number,
+  collectionId: number,
+): Promise<StorefrontPage | null> {
+  if (!Number.isInteger(collectionId) || collectionId <= 0) return null
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT ${PAGE_COLUMNS} FROM storefront_pages
+      WHERE kind = 'collection' AND collection_id = ?`,
+    [collectionId],
+  )
+  return row ? mapPage(row) : null
+}
+
+/**
  * The layout attached to exactly one department, if it has one.
  *
  * An EXACT match — this is the question the admin screens ask ("does this
