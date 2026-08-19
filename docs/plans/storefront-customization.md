@@ -553,11 +553,13 @@ was reachable before.
 
 **What is still not done, and should be said plainly:**
 
-- **Dragging into a column.** A columns section can be added, styled, filled from
-  the inspector and rendered — but a block cannot be dropped straight into a
-  column on the canvas. Nested `SortableContext` inside the page-level
-  `DndContext` is the remaining work, and it is a refinement rather than a gap:
-  the panel is the keyboard-reachable path either way.
+- ~~**Dragging into a column.**~~ **Done.** A palette tile, or a section already
+  on the page, can be carried into a specific place in a specific column. No
+  nested `SortableContext` was needed after all: a column accepts drops but its
+  children are not sortable against the page, so plain droppables in the gaps
+  were enough. `renderColumn` is the seam, beside `renderSection`, and a
+  `colgap:` id carries all three coordinates a column target needs where a page
+  gap needs one. The inspector arrows remain the keyboard-reachable path.
 - **Currency outside the storefront.** Invoices, statements, printed documents
   and the till all still print R. See Phase 5 on why.
 - **The generic inspector.** Three section kinds are drawn from the catalog;
@@ -575,6 +577,9 @@ and to the suites until something specifically looked:
 | Listing presets | `UNIQUE` does not constrain NULLs, so every save inserted another default row |
 | Columns | `pageWarnings` and `describeLayoutChanges` both skipped column children |
 | Storefront | `/page/[slug]` hard-coded `noindex` against the shop's own setting |
+| Columns | `patch` and `remove` walked the top level only, so a block inside a column could be selected and edited and nothing changed |
+| Columns | Every `MAX_SECTIONS` check counted the top level while the save counted children too — the builder could assemble a page the save then truncated |
+| Columns | A block inside a column could not be clicked at all: the section makes its content `pointer-events-none` and covers it with its own click target |
 
 **And three in the tests themselves** — a check comparing `undefined` to
 `undefined`, a fixture selecting products by a flag the shop does not use, and
