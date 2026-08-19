@@ -270,30 +270,72 @@ walk, or a banner with no alt text inside a column skips the publish warning.
 
 ---
 
-## Phase 4 — Menus and collections
+## Phase 4 — Menus and collections ✅ DONE
 
-**The menu editor.** `storefront_menus` (two fixed slugs, `main` and `footer` —
-this has one masthead and one footer, so an arbitrary-menu concept would need
-explaining for no gain) and `storefront_menu_items` with one level of nesting,
-enforced in the write path because a cycle here is an infinite render.
+> **Shipped.** `sql/site/188_storefront_menus.sql` and `189_storefront_collections.sql`,
+> applied to both sites. `/online-store/menu` and `/online-store/collections` are
+> the screens; `/store/[token]/k/[slug]` is the public route.
+> `npm run test:storefront-menus` (22) and `test:storefront-collections` (29).
 
-The migration is the interesting part: if the table is empty the shop must
-render exactly as it does now, so `resolveMenu` returns the *generated* rail when
-there are no rows, and the screen's first action materialises the current
-departments and nav pages into rows. That is the only honest way to hand over an
-editor without a day where the menu is empty.
+### The menu editor
 
-**Collections** — the missing merchandising primitive. `storefront_collections`
-with `rule_kind` (`manual|special|newest|popular|brand|department`) plus a join
-table for manual picks. Manual *and* rule-based because both are real: a summer
-lookbook is hand-picked and must stay so, while "on special" must maintain
-itself — the argument `PRODUCT_SOURCES` already makes.
+The rail was assembled: published departments in tree order, a divider, then
+whichever standard pages had `show_in_nav`. A shop could not put "Sale" first,
+link to its own Instagram, push a product, or hide a department from the menu
+while leaving it browsable — and `navPages` is `WHERE kind = 'standard'`, so a
+department page could never appear at all.
 
-Route `/store/[token]/k/[slug]`, a readable slug because a collection URL gets
-shared. `'collection'` joins `PAGE_KINDS`, bound by `collection_id` the way
-`'department'` is bound by `department_id`. **That combination is a lookbook, and
-a `split` over a `products` row sourced from the collection is shop-the-look** —
-no new block kinds needed.
+**An empty table means "still generated", and that is the whole migration
+story.** A shop that never opens the editor keeps exactly the rail it has always
+drawn — verified in a browser as unchanged. The editor's first action
+materialises that rail into real rows, so an owner's first edit is a change
+rather than a rebuild.
+
+**Null and `[]` mean opposite things and are kept apart.** Null is a shop that
+never made a menu; `[]` is an owner who cleared theirs and meant it. Reading
+them the same way is exactly how a feature launch blanks somebody's navigation,
+and it would pass any test that only checked "does a saved menu render".
+
+**A kind and a reference, never a stored URL.** A department lives at `/c/<id>`
+behind a signed token and both halves can move; storing the built path would
+freeze them into every row in every shop. A page is stored by *id* and linked by
+*slug*, because the id survives a rename.
+
+One level of nesting, capped structurally: a child is written with the id of a
+top-level row and nothing recurses, so no input shape reaches a third level. The
+dropdown opens on focus as well as hover — `group-hover` alone puts a whole
+level of navigation behind a mouse.
+
+### Collections
+
+A merchant could not group products except by which aisle they live in.
+Departments are the inventory tree — shared with the till, the stockroom and
+every report — and "Gifts under R300" is none of those things.
+
+**Manual and rule-based, because both are real.** A lookbook is a set of
+decisions somebody made and a rule that "maintained" it would be undoing them;
+"on special" is the opposite. The vocabulary is deliberately `PRODUCT_SOURCES`,
+so a merchant learns the idea once.
+
+**A readable slug, unlike a department's id.** A collection exists to be shared,
+so its address is the thing a merchant chose, and renaming the title leaves it
+alone. `/k/summer` rather than `/c/47`.
+
+**Every rule goes through the publish gates, including manual** — a merchant who
+unpublishes a picked product watches it leave rather than finding it still
+there.
+
+Sections render above the grid, the way a department page's do. **That
+combination is a lookbook, and a `split` over a `products` row is shop-the-look
+— no new section kinds were needed.**
+
+**Two bugs worth recording.** A stale product id made the foreign key refuse the
+whole transaction, so a merchant who arranged twenty products — one deleted by
+somebody else meanwhile — lost all twenty to an error naming a constraint. And
+the first version of the suite selected fixtures by `show_online = 1` on a shop
+that publishes by DEPARTMENT: the list was empty, so two assertions compared
+nothing to nothing and passed. They go through `publishedProducts` now, with
+"the fixture has something to pick" asserted out loud.
 
 ---
 
