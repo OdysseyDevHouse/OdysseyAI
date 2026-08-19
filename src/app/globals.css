@@ -770,3 +770,25 @@ input[type='range'] {
     animation: none;
   }
 }
+
+/* ============================================================================
+   SHORT SCREENS — a height breakpoint, for tills.
+
+   Every other breakpoint in this app is about WIDTH, because that is what
+   varies on a desk. A counter till does not have that problem: it is a fixed
+   landscape panel, usually 1366x768 or smaller, and what runs out there is
+   VERTICAL room. A dialog that fits a 1080px laptop puts its keypad — or its
+   Complete-sale button — under a scrollbar on a 768px till, and a cashier
+   mid-sale cannot scroll a payment dialog.
+
+   `short:` is that case, and only that case. 820px, because a 768px till has
+   roughly 700px of usable panel once the browser chrome is off, and a 900px+
+   screen has room to spare and should keep the full layout.
+
+     <div className="grid-cols-3 short:grid-cols-6">   two rows, or one
+
+   Use it to REMOVE rows on a till, never to shrink a touch target: 56px
+   (--spacing-touch) is the floor a finger needs, and a key too small to hit
+   reliably is worse than a key that is not there.
+   ========================================================================= */
+@custom-variant short (@media (max-height: 820px));

@@ -688,8 +688,28 @@ export function TenderPad({
         enough of it. Everything a cashier TOUCHES is below and never moves.
         min-h-0 is what lets the top actually shrink; without it a flex child
         refuses to go below its content and pushes the keys off the panel.
+
+        But `flex-1 min-h-0` alone shrinks to NOTHING, and on a till it did:
+        measured at 1366x768, the pinned keys took 487px of a 553px body and
+        left this pane 22px to show 220px of content — the four figures, the
+        payment chips and the tip row all crushed into one scrolling sliver
+        with its own scrollbar, which is the screenshot this fix comes from.
+
+        This pane KEEPS its scroll and its flex-1 — removing them was measured
+        and was worse: with the pane sized to content, a two-payment sale at
+        1280x720 pushed the keypad's bottom row to 754px on a 720px screen.
+        Trading a scrollbar on the figures for a keypad off the bottom edge is
+        not a trade a till can make.
+
+        What it gains is a FLOOR. `flex-1 min-h-0` alone shrinks to nothing,
+        and did: measured at 1366x768, the pinned keys took 487px of a 553px
+        body and left this pane 22px to show 220px of content — every row
+        clipped at once, which is the screenshot this fix comes from. The
+        floor keeps the figures and the chips whole and puts any remaining
+        squeeze on the tip row, which is the one row here that explains
+        itself in a sentence rather than a number.
       */}
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+      <div className="flex min-h-[8.5rem] flex-1 flex-col gap-3 overflow-y-auto pr-1 short:gap-2">
         {/* ── The four figures ────────────────────────────────────────────
             Tender amount, amount due, remaining, change — the whole state of
             the payment on one line, so a cashier keying a split never has to
@@ -1142,7 +1162,11 @@ function AmountRow({
   const isExact = exact > 0 && numPadValue(entry) === exact
 
   return (
-    <div className="grid grid-cols-3 gap-2">
+    /* Two rows of three normally; ONE row of six on a till. The keys keep
+       their 56px height either way — a short screen loses a row, never a
+       touch target. That row is 64px, which is most of what a 768px panel is
+       short by. */
+    <div className="grid grid-cols-3 gap-2 short:grid-cols-6">
       <Button
         variant={isExact ? 'primary' : 'secondary'}
         size="touch"
