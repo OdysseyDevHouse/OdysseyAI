@@ -107,6 +107,7 @@ import Outline from './Outline'
 import SectionPalette, { PALETTE_PREFIX, paletteKind } from './SectionPalette'
 import { SECTION_CATALOG, STYLE_FIELDS } from '@/lib/storefront/catalog'
 import SectionFields from './SectionFields'
+import ColumnEditor from './ColumnEditor'
 import ThemePicker from './ThemePicker'
 import { type DesignTokens } from '@/lib/storefront/tokens'
 import PicturePicker from '@/components/PicturePicker'
@@ -2300,6 +2301,16 @@ export default function Builder({
                       className="w-24"
                     />
                   </Field>
+                )}
+
+                {selected.kind === 'columns' && (
+                  <ColumnEditor
+                    section={selected}
+                    onChange={(columns) => patch(selected.id, { columns })}
+                    // The Builder mints the id, because two children sharing
+                    // one would share a React key and a drag handle.
+                    makeSection={newSection}
+                  />
                 )}
 
                 {selected.kind === 'cards' && (
