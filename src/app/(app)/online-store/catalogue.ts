@@ -96,6 +96,14 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
         capability: 'online.edit',
       },
       {
+        href: '/online-store/menu',
+        description: 'The links across the top of your shop, and their order.',
+        keywords: 'navigation nav links menu order dropdown header rail',
+        icon: 'LayoutGrid',
+        tone: 'violet',
+        capability: 'online.edit',
+      },
+      {
         href: '/online-store/reviews',
         description: 'What shoppers said about a product, and what is shown.',
         keywords: 'ratings stars feedback comments moderation approve',
