@@ -152,7 +152,10 @@ export default function HomeSections({
      */
     <div className="@container flex flex-col gap-8">
       {content.map((entry) => {
-        const node = banded(entry.section, sectionBody(entry, token, theme, display, imageSrc, anchorProductId))
+        const node = banded(
+          entry.section,
+          sectionBody(entry, token, theme, display, imageSrc, anchorProductId, renderSection),
+        )
 
         if (renderSection) return renderSection(entry.section, node)
         // The shop: an empty section is simply absent.
@@ -179,6 +182,22 @@ function sectionBody(
   imageSrc: ImageSrc,
   /** On a product page, the product being looked at — see the 'recent' branch. */
   anchorProductId?: number,
+  /**
+   * The builder’s wrapper, when there is one.
+   *
+   * ── WHY THIS REACHES A COLUMN’S CHILDREN ─────────────────────────────
+   *
+   * A child is an ordinary section in every other respect — its own id, its
+   * own band, its own schedule — and it was the one place the builder could
+   * not reach: no drag handle, no toolbar, and no way to click it and edit
+   * what it says. A block you can add and cannot select is half a feature.
+   *
+   * Optional, and the shop passes nothing. That is what keeps a drag handle
+   * out of a shopper’s page: the seam exists in one renderer and only one
+   * caller uses it, which is the same arrangement the top level has always
+   * had.
+   */
+  renderSection?: (section: HomeSection, node: ReactNode) => ReactNode,
 ): ReactNode {
   if (entry.section.kind === 'columns') {
     const columns = entry.section.columns ?? []
@@ -191,9 +210,13 @@ function sectionBody(
     const drawn = columns.map((children, n) =>
       children.map((child, k) => {
         const childEntry = entry.columnContent?.[n]?.[k] ?? { section: child }
+        const drawnChild = banded(
+          child,
+          sectionBody(childEntry, token, theme, display, imageSrc, anchorProductId),
+        )
         return (
           <div key={child.id}>
-            {banded(child, sectionBody(childEntry, token, theme, display, imageSrc, anchorProductId))}
+            {renderSection ? renderSection(child, drawnChild) : drawnChild}
           </div>
         )
       }),
