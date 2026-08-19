@@ -39,6 +39,7 @@ export default function StoreChrome({
   showDepartmentImages,
   theme,
   tokens,
+  menu,
   allowAccount,
   customerName,
   offerSaveBasket = false,
@@ -64,6 +65,14 @@ export default function StoreChrome({
    * that has chosen nothing gets the default look.
    */
   tokens: DesignTokens
+  /**
+   * The shop’s own menu, when it has made one.
+   *
+   * Empty means the generated rail below still applies — the resolver
+   * returns the generated links for a shop that never adopted, so an empty
+   * array here is an owner who cleared their menu and meant it.
+   */
+  menu: { label: string; href: string; imageId: number | null; children: { label: string; href: string }[] }[]
   /** Whether this shop offers account ordering at all. */
   allowAccount: boolean
   /** Whether this shop offers to save a basket and remind about it. */
@@ -222,6 +231,26 @@ export default function StoreChrome({
             </div>
           </div>
 
+          {/*
+            The shop’s OWN menu, when it has made one.
+
+            The generated rail below is what a shop gets until it adopts a
+            menu — and it stays exactly as it was, because a feature that
+            launches by blanking somebody’s navigation is not a feature. The
+            resolver decides which of the two this is; here it is simply
+            "did anything come back".
+          */}
+          {menu.length > 0 ? (
+            <nav
+              aria-label="Menu"
+              className="mx-auto flex w-full max-w-6xl gap-1 overflow-x-auto border-b border-border px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {menu.map((item) => (
+                <MenuEntry key={`${item.label}-${item.href}`} item={item} token={token} showImage={showDepartmentImages} />
+              ))}
+            </nav>
+          ) : (
+          <>
           {departments.length > 0 && (
             <nav
               aria-label="Departments"
@@ -312,6 +341,8 @@ export default function StoreChrome({
                 </Link>
               ))}
             </nav>
+          )}
+          </>
           )}
 
           {/* Last thing in the header, because everything BELOW it — every
@@ -507,5 +538,76 @@ function Footer({
         </div>
       </div>
     </footer>
+  )
+}
+
+/**
+ * One entry in the shop's own menu, with its children if it has any.
+ *
+ * ── HOVER OPENS IT, BUT SO DOES FOCUS ────────────────────────────────────
+ *
+ * A CSS-only dropdown on `group-hover` is the cheap version and it is
+ * unreachable by keyboard, which puts a whole level of a shop's navigation
+ * behind a mouse. `group-focus-within` costs one more class and makes tabbing
+ * to the parent open the same panel.
+ *
+ * The parent is still a LINK, not a toggle: an item with children usually has
+ * somewhere of its own to go — "Drinks" is a department as well as a heading —
+ * and a parent that only opened a menu would be a dead end on a phone, where
+ * there is no hover at all.
+ */
+function MenuEntry({
+  item,
+  token,
+  showImage,
+}: {
+  item: { label: string; href: string; imageId: number | null; children: { label: string; href: string }[] }
+  token: string
+  showImage: boolean
+}) {
+  const pill = `flex shrink-0 items-center gap-2 whitespace-nowrap rounded-pill text-sm text-ink-2 transition hover:bg-surface-2 ${
+    showImage && item.imageId ? 'py-1 pl-1 pr-3' : 'px-3 py-1.5'
+  }`
+
+  if (item.children.length === 0) {
+    return (
+      <Link href={item.href} className={pill}>
+        {showImage && item.imageId && (
+          <DepartmentImage
+            department={{ id: 0, name: item.label, imageId: item.imageId } as StorefrontDepartment}
+            src={`/api/store-images/${token}/shop/${item.imageId}`}
+            rounded="rounded-pill"
+            className="size-7 text-[11px]"
+          />
+        )}
+        {item.label}
+      </Link>
+    )
+  }
+
+  return (
+    <div className="group relative shrink-0">
+      <Link href={item.href} className={pill}>
+        {item.label}
+        <Icons.ChevronDown size={14} className="text-muted" />
+      </Link>
+      {/*
+        Positioned rather than in flow, so opening one does not push the rest of
+        the rail sideways. `invisible` rather than `hidden` so the panel keeps
+        its place in the tab order — a keyboard user reaches the children by
+        tabbing on from the parent, which is the whole point of focus-within.
+      */}
+      <div className="invisible absolute left-0 top-full z-30 min-w-44 rounded-card border border-border bg-surface py-1 opacity-0 shadow-pop transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+        {item.children.map((child) => (
+          <Link
+            key={`${child.label}-${child.href}`}
+            href={child.href}
+            className="block truncate px-3 py-1.5 text-sm text-ink-2 transition hover:bg-surface-2"
+          >
+            {child.label}
+          </Link>
+        ))}
+      </div>
+    </div>
   )
 }

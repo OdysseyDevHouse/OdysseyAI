@@ -5,6 +5,7 @@ import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext, publishedDepartments } from '@/lib/site/storefront'
 import { getPublishedLayout, getPublishedTokens, getTheme } from '@/lib/site/storefrontLayout'
 import { navPages } from '@/lib/site/storefrontPages'
+import { menuLinks } from '@/lib/site/storefrontMenus'
 import { announcementShowing } from '@/lib/storefrontModel'
 import { fontClass } from './fonts'
 import { getCustomerSession } from '@/lib/customerSession'
@@ -107,7 +108,7 @@ export default async function StoreLayout({
   // in at one branch is a different account at the next.
   const session = await getCustomerSession(context.siteId)
 
-  const [departments, layout, pages, tokens] = await Promise.all([
+  const [departments, layout, pages, tokens, menu] = await Promise.all([
     publishedDepartments(context),
     // Layout, theme and pages are the shop front's, which for a chain is the
     // primary's. A branch does not get its own branding — see the plan.
@@ -116,6 +117,14 @@ export default async function StoreLayout({
     // The shop’s look, from the same site its branding comes from: a branch
     // does not restyle the chain it belongs to.
     getPublishedTokens(context.catalogueSiteId),
+    /*
+     * The shop’s own menu, or the rail we have always generated.
+     *
+     * The fallback is inside menuLinks rather than here, so the editor’s
+     * preview and the shop cannot part company on a shop that has not
+     * adopted a menu yet — see storefrontMenus.
+     */
+    menuLinks(context.catalogueSiteId, 'main', `/store/${token}`, async () => []),
   ])
 
   return (
@@ -134,6 +143,7 @@ export default async function StoreLayout({
         departments={departments}
         showDepartmentImages={context.settings.showDepartmentImages}
         tokens={tokens}
+        menu={menu}
         theme={layout.theme}
         allowAccount={context.settings.allowAccount}
         customerName={session?.name ?? null}
