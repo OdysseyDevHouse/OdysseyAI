@@ -141,8 +141,13 @@ export async function buildInvoice(
  * Null when there is no such account or it has no number: an invoice with a
  * half-filled banking block is worse than one with none, because it looks like
  * enough information to pay against.
+ *
+ * EXPORTED for the printed invoice, which composes from a template rather than
+ * from this builder. Re-querying it there would be a second answer to "where
+ * does money come in", and the two would disagree the first time the cashbook
+ * default moved.
  */
-async function bankingDetails(siteId: number): Promise<InvoiceData['banking']> {
+export async function bankingDetails(siteId: number): Promise<InvoiceData['banking']> {
   const row = await siteQueryOne<Row>(
     siteId,
     `SELECT name, bank_name, account_number, branch_code

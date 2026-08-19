@@ -288,6 +288,34 @@ const INVOICE: DocTypeDef = {
     { key: 'doc.dueDate', label: 'Due date', format: 'date' },
     { key: 'doc.heading', label: 'Document heading', format: 'text', hint: 'Prints TAX INVOICE, or INVOICE when the business is not a VAT vendor.' },
     { key: 'doc.soldBy', label: 'Served by', format: 'text' },
+
+    /*
+     * ── THE FIELDS THE PRINTED PAGE CARRIES THAT THIS CATALOG DID NOT ─────
+     *
+     * One route prints quotes, sales orders, pro formas and tax invoices, and
+     * each kind has a date of its own: a quote EXPIRES, an order is promised for
+     * a day, an invoice on account falls DUE. The React component this replaces
+     * branched on the kind to pick one; a template has no conditionals, so all
+     * three are tokens and each is empty on the kinds it does not apply to.
+     *
+     * A design can therefore show all three as labelled rows — and a detail list
+     * already drops a row whose value is empty, so one design prints "Valid
+     * until" on a quote and "Due" on an invoice with nothing to configure.
+     */
+    { key: 'doc.validUntil', label: 'Valid until (quotes)', format: 'date', hint: 'A quote\'s expiry. Empty on any other document.' },
+    { key: 'doc.deliveryDate', label: 'Delivery date (orders)', format: 'date', hint: 'A sales order\'s promised date. Empty on any other document.' },
+    {
+      key: 'doc.customerReference',
+      label: 'Their reference',
+      format: 'text',
+      hint: 'The customer\'s own order number where they gave one, otherwise the reference on this document.',
+    },
+    {
+      key: 'doc.statusBanner',
+      label: 'Status banner',
+      format: 'text',
+      hint: 'Prints DRAFT, CANCELLED or REPRINT when they apply, and nothing when they do not.',
+    },
     { key: 'doc.closing', label: 'Closing line', format: 'text', hint: 'What the reader should do — pay by the due date, accept the quote. Set by the document kind.' },
     { key: 'customer.name', label: 'Customer name', format: 'text' },
     { key: 'customer.code', label: 'Customer account code', format: 'text' },

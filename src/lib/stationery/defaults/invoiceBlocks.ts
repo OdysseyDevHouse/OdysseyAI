@@ -87,7 +87,7 @@ export const INVOICE_BLOCKS: DocumentSpec = {
       // No literal title: {doc.heading} decides between TAX INVOICE and INVOICE
       // from whether this shop is a VAT vendor, and hard-coding either would
       // print a claim about the business that might not be true.
-      tokens: ['doc.heading', 'doc.number', 'doc.date'],
+      tokens: ['doc.heading', 'doc.number', 'doc.date', 'doc.statusBanner'],
     },
 
     { id: 'inv-rule-1', kind: 'rule', band: 'header', x: 0, y: 50, w: 100 },
@@ -109,10 +109,21 @@ export const INVOICE_BLOCKS: DocumentSpec = {
       x: 52,
       y: 56,
       w: 48,
+      /*
+       * ONE LIST FOR FOUR DOCUMENTS.
+       *
+       * A quote expires, an order is promised for a day, an invoice falls due —
+       * and a detail list drops any row whose value is empty, so all three sit
+       * here and each prints only on the document it belongs to. That is what
+       * lets one design serve a quote, a sales order, a pro forma and a tax
+       * invoice without a single conditional.
+       */
       rows: [
         { token: 'customer.code', label: 'Account' },
+        { token: 'doc.validUntil', label: 'Valid until' },
+        { token: 'doc.deliveryDate', label: 'Delivery date' },
         { token: 'doc.dueDate', label: 'Due' },
-        { token: 'doc.reference', label: 'Reference' },
+        { token: 'doc.customerReference', label: 'Your reference' },
         { token: 'doc.soldBy', label: 'Served by' },
       ],
     },

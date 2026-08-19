@@ -5,7 +5,13 @@ import { getDocument } from '@/lib/site/salesDocuments'
 import { getQuote } from '@/lib/site/quotes'
 import { getOrder } from '@/lib/site/salesOrders'
 import { recordPrint } from '@/lib/site/salesPosting'
-import { SalesDocumentPrint, printKindFor } from '@/components/sales/SalesDocumentPrint'
+import { printKindFor, HEADING, CLOSING } from '@/components/sales/SalesDocumentPrint'
+import { activeTemplate } from '@/lib/site/stationeryTemplates'
+import { bankingDetails } from '@/lib/invoices/build'
+import { invoiceTokens } from '@/lib/stationery/adapters/invoice'
+import { renderTemplate } from '@/lib/stationery/render'
+import { resolveTemplate } from '@/lib/stationery/resolve'
+import { logoImgTag } from '@/lib/site/documentLogo'
 import DocumentPrintButton from './DocumentPrintButton'
 
 export const dynamic = 'force-dynamic'
@@ -37,7 +43,7 @@ export default async function SalesDocumentPrintPage({
   params: Promise<{ id: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  await requireCapability('sales.view')
+  const { capabilities } = await requireCapability('sales.view')
   const site = await requireSite()
   const { id: raw } = await params
 
@@ -108,29 +114,78 @@ export default async function SalesDocumentPrintPage({
     timeStyle: 'short',
   })
 
+  /*
+   * ── COMPOSED FROM A TEMPLATE, NOT FROM A COMPONENT ──────────────────────
+   *
+   * The same swap the purchase order made, and the reason is the same: a shop
+   * can change what its customers see without a deployment. Until this, a shop
+   * could design an invoice in Setup → Stationery, save it, and print the
+   * shipped layout anyway — the design reached the database and never the paper,
+   * which is the worst kind of half-built feature because it looks finished.
+   *
+   * resolveTemplate falls back to the shipped default when the site has designed
+   * nothing, and SKIPS a template that no longer validates rather than printing
+   * it. A plain document beats a wrong one, and an invoice missing what the VAT
+   * Act asks for is a wrong one.
+   *
+   * ── ONE TEMPLATE FOR FOUR DOCUMENTS ─────────────────────────────────────
+   *
+   * Quotes, sales orders, pro formas and tax invoices all print through here and
+   * all resolve the 'invoice' template. What differs between them is words and
+   * dates, and both arrive as TOKENS: {doc.heading} says QUOTATION or TAX
+   * INVOICE, {doc.closing} carries the warning a quote needs and nothing on an
+   * invoice, and the three date rows each print only on the kind they belong to
+   * because a detail list drops a row whose value is empty.
+   *
+   * So a shop designs its stationery once and every one of the four follows.
+   */
+  const [custom, banking, logoHtml] = await Promise.all([
+    activeTemplate(site.id, 'invoice'),
+    // The cashbook's nominated receipts account — see bankingDetails. Never
+    // allowed to break the page: a document that will not print is worse than
+    // one printed without a banking block.
+    bankingDetails(site.id).catch(() => null),
+    logoImgTag(site.id).catch(() => ''),
+  ])
+
+  const template = resolveTemplate('invoice', custom?.body ?? null, custom?.format)
+  const input = invoiceTokens({
+    doc,
+    site: {
+      name: site.displayName,
+      vatNumber: site.vatNumber,
+      registrationNumber: site.registrationNumber,
+      address1: site.address1,
+      address2: site.address2,
+      address3: site.address3,
+      postalCode: site.postalCode,
+      phone: site.phone,
+      email: site.email,
+    },
+    banking,
+    printedAt,
+    logoHtml,
+    // The route already decided what this paper is called; deriving it a second
+    // time inside the adapter would be a second answer to the same question.
+    heading: HEADING[kind],
+    closing: CLOSING[kind],
+    validUntil,
+    deliveryDate,
+    customerOrderNo,
+    isReprint,
+  })
+
+  const html = renderTemplate(template.body, 'invoice', {
+    ...input,
+    capabilities,
+  })
+
   return (
     <div className="px-6 py-6">
       <DocumentPrintButton doc={{ id: doc.id, docType: doc.docType }} />
-      <SalesDocumentPrint
-        doc={doc}
-        kind={kind}
-        site={{
-          name: site.displayName,
-          vatNumber: site.vatNumber,
-          registrationNumber: site.registrationNumber,
-          address1: site.address1,
-          address2: site.address2,
-          address3: site.address3,
-          postalCode: site.postalCode,
-          phone: site.phone,
-          email: site.email,
-        }}
-        validUntil={validUntil}
-        deliveryDate={deliveryDate}
-        customerOrderNo={customerOrderNo}
-        printedAt={printedAt}
-        isReprint={isReprint}
-      />
+      {/* Sanitised at save and re-validated at resolve; the values inside it are
+          escaped by the renderer. See lib/stationery/sanitise.ts. */}
+      <div dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   )
 }

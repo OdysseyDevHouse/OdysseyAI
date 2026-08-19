@@ -54,6 +54,14 @@ export type InvoiceSources = {
   } | null
   printedAt: string
   logoHtml?: string | null
+  /** A quote expires; empty on anything else. */
+  validUntil?: string | null
+  /** A sales order's promised date; empty on anything else. */
+  deliveryDate?: string | null
+  /** The customer's own order number, where they gave one. */
+  customerOrderNo?: string | null
+  /** Whether this document has been on paper before. */
+  isReprint?: boolean
   /**
    * What the paper calls itself.
    *
@@ -98,6 +106,24 @@ function vatSummary(doc: SalesDocument): string {
     .join('\n')
 }
 
+/**
+ * DRAFT, CANCELLED or REPRINT, in one token.
+ *
+ * The same shape the purchase order uses, and for the same reason: the template
+ * language has no conditionals on purpose, so a condition that decides what
+ * WORD prints belongs in the adapter rather than in a feature nobody else needs.
+ *
+ * REPRINT is only ever claimed for a finalised invoice. A quote is EXPECTED to
+ * be printed repeatedly while it is negotiated, and stamping the second copy of
+ * one as a reprint would say something about the document that is not true.
+ */
+function statusBanner(doc: SalesDocument, isReprint: boolean): string {
+  if (doc.status === 'cancelled') return 'CANCELLED'
+  if (doc.docType === 'invoice' && doc.status !== 'finalised') return 'PRO FORMA'
+  if (isReprint && doc.docType === 'invoice' && doc.status === 'finalised') return 'REPRINT'
+  return ''
+}
+
 export function invoiceTokens(src: InvoiceSources): RenderInput {
   const { doc, site } = src
 
@@ -134,6 +160,18 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
     'doc.notes': doc.notes?.trim() ?? '',
     'doc.printedAt': src.printedAt,
     'doc.soldBy': doc.userName,
+    'doc.validUntil': src.validUntil ?? '',
+    'doc.deliveryDate': src.deliveryDate ?? '',
+    /*
+     * THEIR reference, not ours.
+     *
+     * The purchase-order number a customer will quote back, falling back to
+     * whatever reference this document carries. One token because the reader
+     * is asking one question — "what do I match this against?" — and a design
+     * that had to choose between two would get it wrong for half the shops.
+     */
+    'doc.customerReference': src.customerOrderNo ?? doc.reference ?? '',
+    'doc.statusBanner': statusBanner(doc, src.isReprint ?? false),
     // The route's own answer where it gave one; otherwise s20(4): only a VAT
     // vendor may call its document a tax invoice.
     'doc.heading': src.heading ?? (site.vatNumber ? 'TAX INVOICE' : 'INVOICE'),

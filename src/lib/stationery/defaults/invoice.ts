@@ -47,6 +47,7 @@ export const INVOICE_DEFAULT = `<style>
       <h2 class="text-xl font-semibold tracking-wide text-ink">{doc.heading}</h2>
       <p class="mt-0.5 text-sm font-medium text-ink-2">{doc.number}</p>
       <p class="mt-0.5 text-sm text-muted">{doc.date}</p>
+      <p class="inv-line mt-0.5 text-xs font-medium tracking-wide text-muted">{doc.statusBanner}</p>
     </div>
   </header>
 
@@ -65,12 +66,20 @@ export const INVOICE_DEFAULT = `<style>
           <dd class="text-ink">{customer.code}</dd>
         </div>
         <div class="inv-row flex justify-between gap-6">
+          <dt class="text-muted">Valid until</dt>
+          <dd class="font-medium text-ink">{doc.validUntil}</dd>
+        </div>
+        <div class="inv-row flex justify-between gap-6">
+          <dt class="text-muted">Delivery date</dt>
+          <dd class="font-medium text-ink">{doc.deliveryDate}</dd>
+        </div>
+        <div class="inv-row flex justify-between gap-6">
           <dt class="text-muted">Due</dt>
           <dd class="font-medium text-ink">{doc.dueDate}</dd>
         </div>
         <div class="inv-row flex justify-between gap-6">
-          <dt class="text-muted">Reference</dt>
-          <dd class="text-ink">{doc.reference}</dd>
+          <dt class="text-muted">Your reference</dt>
+          <dd class="text-ink">{doc.customerReference}</dd>
         </div>
         <div class="inv-row flex justify-between gap-6">
           <dt class="text-muted">Served by</dt>

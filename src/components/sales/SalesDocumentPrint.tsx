@@ -49,7 +49,13 @@ export function printKindFor(doc: SalesDocument): PrintKind {
   return doc.status === 'finalised' ? 'tax_invoice' : 'proforma'
 }
 
-const HEADING: Record<PrintKind, string> = {
+/**
+ * EXPORTED for the print route, which now composes the page from a template and
+ * passes these in as tokens. Kept here rather than moved, because this component
+ * still renders the same words — and two copies of the wording is how a quote
+ * ends up calling itself a tax invoice on one path and not the other.
+ */
+export const HEADING: Record<PrintKind, string> = {
   quote: 'QUOTATION',
   sales_order: 'SALES ORDER',
   proforma: 'PRO FORMA INVOICE',
@@ -62,7 +68,7 @@ const HEADING: Record<PrintKind, string> = {
  * Each document asks for something different, and a quote that ends "please
  * pay" is asking for money against an offer nobody has accepted.
  */
-const CLOSING: Record<PrintKind, string> = {
+export const CLOSING: Record<PrintKind, string> = {
   quote:
     'This is a quotation, not an invoice. No goods are reserved and no payment is due until it is accepted.',
   sales_order:

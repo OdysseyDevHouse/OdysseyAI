@@ -340,6 +340,88 @@ console.log('\n-- VAT summary, banking, and a five-row totals --')
     /<p class="text-xs text-muted">Printed \{doc\.printedAt\}<\/p>/.test(compiledInv))
 }
 
+/* ── one template, four documents ────────────────────────────────────────── */
+
+console.log('\n-- a quote, an order, a pro forma and a tax invoice --')
+{
+  /*
+   * ONE ROUTE PRINTS ALL FOUR, and one design serves them.
+   *
+   * What differs is words and dates, and both arrive as tokens: {doc.heading}
+   * says QUOTATION or TAX INVOICE, {doc.closing} carries the warning a quote
+   * needs and nothing on an invoice, and the three date rows each print only on
+   * the kind they belong to — because a detail list drops a row whose value is
+   * empty. No conditionals, and nothing for a shop to configure per document.
+   *
+   * This is what makes the swap in (print)/sales/[id]/document honest: before
+   * it, a shop could design an invoice, save it, and print the shipped layout
+   * anyway.
+   */
+  /*
+   * ROWS ARE CHECKED FOR A VALUE, NOT FOR A LABEL.
+   *
+   * A detail list emits every row and CSS hides the ones whose value came out
+   * empty — so `textOf` strips the style block and the label survives in the
+   * extracted text either way. Asserting a label is absent tests something a
+   * text extractor cannot see; the first version of these two checks did
+   * exactly that and failed against working code.
+   *
+   * What decides the outcome is whether the <dd> has anything in it.
+   */
+  const rowValue = (doc: SalesDocument, over: Record<string, unknown>, label: string) => {
+    const html = renderTemplate(compileDocument(INVOICE_BLOCKS, 'invoice'), 'invoice', {
+      ...inputFor(doc, over),
+      capabilities: OWNER,
+    })
+    const m = html.match(new RegExp(`<dt[^>]*>${label}</dt><dd[^>]*>([^<]*)</dd>`))
+    return m ? m[1] : null
+  }
+
+  const quote = fromBlocks(sale({ docType: 'quote' }), {
+    heading: 'QUOTATION',
+    closing: 'This is a quotation, not an invoice.',
+    validUntil: '2026-09-11',
+    customerOrderNo: 'PO-88213',
+  })
+  ok('a quote calls itself a QUOTATION', /QUOTATION/.test(quote) && !/TAX INVOICE/.test(quote))
+  ok('...and shows when it expires', /Valid until/.test(quote) && /2026-09-11/.test(quote))
+  ok('...and carries its own warning', /not an invoice/.test(quote))
+  ok("...and shows the customer's own order number", /PO-88213/.test(quote))
+
+  const order = fromBlocks(sale({ docType: 'sales_order' }), {
+    heading: 'SALES ORDER',
+    closing: 'An invoice follows when the goods are delivered.',
+    deliveryDate: '2026-08-25',
+  })
+  ok('an order calls itself a SALES ORDER', /SALES ORDER/.test(order))
+  ok('...and shows its promised date', /Delivery date/.test(order) && /2026-08-25/.test(order))
+  ok('...and leaves the quote expiry row empty, for the rule to hide',
+    rowValue(sale({ docType: 'sales_order' }), { deliveryDate: '2026-08-25' }, 'Valid until') === '')
+
+  const invoice = fromBlocks(sale(), { heading: 'TAX INVOICE', closing: '' })
+  ok('a tax invoice shows when it falls due', /Due/.test(invoice) && /2026-09-17/.test(invoice))
+  ok('...and leaves both the expiry and the delivery rows empty',
+    rowValue(sale(), {}, 'Valid until') === '' && rowValue(sale(), {}, 'Delivery date') === '')
+
+  /*
+   * The status banner, in one token — the same shape the purchase order uses.
+   *
+   * REPRINT is only ever claimed for a FINALISED invoice: a quote is expected to
+   * be printed repeatedly while it is negotiated, and stamping the second copy
+   * of one as a reprint would say something untrue about the document.
+   */
+  ok('a cancelled document says so',
+    /CANCELLED/.test(fromBlocks(sale({ status: 'cancelled' }))))
+  ok('an unfinalised invoice is a PRO FORMA',
+    /PRO FORMA/.test(fromBlocks(sale({ status: 'saved' }))))
+  ok('a reprinted tax invoice says REPRINT',
+    /REPRINT/.test(fromBlocks(sale(), { isReprint: true })))
+  ok('...but a reprinted quote does not',
+    !/REPRINT/.test(fromBlocks(sale({ docType: 'quote' }), { isReprint: true })))
+  ok('an ordinary first print carries no banner at all',
+    !/REPRINT|CANCELLED|PRO FORMA/.test(fromBlocks(sale())))
+}
+
 /* ── the ordinary block-model checks, on this document ───────────────────── */
 
 console.log('\n-- storage, structure and the canvas --')
