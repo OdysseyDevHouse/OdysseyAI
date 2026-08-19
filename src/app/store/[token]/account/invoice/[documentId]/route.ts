@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { getCustomerSession } from '@/lib/customerSession'
 import { getDocument } from '@/lib/site/salesDocuments'
+import { HEADING, CLOSING, printKindFor } from '@/lib/site/salesDocumentKind'
 import { issuingSiteFor } from '@/lib/site/invoiceEmail'
 import { buildInvoice } from '@/lib/invoices/build'
 import { renderInvoicePdf } from '@/lib/invoices/pdf'
@@ -37,7 +38,16 @@ export async function GET(
   const data = await buildInvoice(siteId, site, id, {})
   if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const pdf = await renderInvoicePdf(data, siteId)
+  /*
+   * A customer downloading their own paperwork may be downloading a CREDIT
+   * NOTE. Without the kind it would head itself INVOICE, carry a negative total
+   * and explain nothing — see salesDocumentKind.
+   */
+  const kind = printKindFor(document)
+  const pdf = await renderInvoicePdf(data, siteId, {
+    heading: HEADING[kind],
+    closing: CLOSING[kind],
+  })
   return new NextResponse(new Uint8Array(pdf), {
     headers: {
       'content-type': 'application/pdf',

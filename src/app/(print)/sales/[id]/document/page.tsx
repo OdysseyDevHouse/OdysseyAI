@@ -52,9 +52,13 @@ export default async function SalesDocumentPrintPage({
 
   const doc = await getDocument(site.id, id)
   if (!doc) notFound()
-  if (doc.docType !== 'quote' && doc.docType !== 'sales_order' && doc.docType !== 'invoice') {
-    notFound()
-  }
+  /*
+   * Every sales document that has a paper form. A credit note was missing, so
+   * the Print button on the sale screen offered it and the route 404'd — see
+   * printKindFor for why it could not simply be allowed through before.
+   */
+  const PRINTABLE = ['quote', 'sales_order', 'invoice', 'credit_sale']
+  if (!PRINTABLE.includes(doc.docType)) notFound()
 
   const kind = printKindFor(doc)
 

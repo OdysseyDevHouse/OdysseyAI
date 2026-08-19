@@ -34,6 +34,7 @@ import {
   type DocumentSpec,
 } from '../src/lib/stationery/blocks'
 import { DEFAULT_SPECS } from '../src/lib/stationery/resolve'
+import { HEADING, CLOSING, printKindFor } from '../src/lib/site/salesDocumentKind'
 import { invoiceTokens } from '../src/lib/stationery/adapters/invoice'
 import { renderTemplate } from '../src/lib/stationery/render'
 import { validateTemplate } from '../src/lib/stationery/validate'
@@ -422,6 +423,47 @@ console.log('\n-- a quote, an order, a pro forma and a tax invoice --')
     !/REPRINT|CANCELLED|PRO FORMA/.test(fromBlocks(sale())))
 }
 
+/* ── what each document calls itself ─────────────────────────────────────── */
+
+console.log(`
+-- a credit note is not an invoice --`)
+{
+  /*
+   * ── A LIVE BUG THIS SUITE NOW GUARDS ─────────────────────────────────
+   *
+   * The Print button on the sale screen offered a credit note and the route
+   * 404ed it — 2 989 finalised ones on this site alone. The reason was that
+   * printKindFor had no case for it and fell through to tax_invoice, so
+   * allowing it through would have printed a CREDIT NOTE headed TAX INVOICE:
+   * a document asking a customer to claim input tax on money they are being
+   * given back. Refusing to print was the safer half of a bad choice.
+   *
+   * The emailed copy had the same fault and did not refuse — it sent, headed
+   * INVOICE, with a negative total and no explanation.
+   */
+  const kindOf = (docType: string, status: string) =>
+    printKindFor({ docType, status } as never)
+
+  ok('a credit note is its own kind', kindOf('credit_sale', 'finalised') === 'credit_note')
+  ok('...and calls itself a CREDIT NOTE', HEADING[kindOf('credit_sale', 'finalised')] === 'CREDIT NOTE')
+  ok('...never a TAX INVOICE', HEADING[kindOf('credit_sale', 'finalised')] !== 'TAX INVOICE')
+  ok('...and says no payment is due',
+    /No payment is due/.test(CLOSING[kindOf('credit_sale', 'finalised')]))
+
+  // The kinds it must not have disturbed.
+  ok('a finalised invoice is still a tax invoice', kindOf('invoice', 'finalised') === 'tax_invoice')
+  ok('an unfinalised one is still a pro forma', kindOf('invoice', 'saved') === 'proforma')
+  ok('a quote is still a quotation', HEADING[kindOf('quote', 'issued')] === 'QUOTATION')
+  ok('a sales order is still a sales order', HEADING[kindOf('sales_order', 'issued')] === 'SALES ORDER')
+
+  /*
+   * Every kind has wording. A missing entry would render an empty heading,
+   * which is a document that does not say what it is.
+   */
+  for (const k of ['quote', 'sales_order', 'proforma', 'tax_invoice', 'credit_note'] as const) {
+    ok(`${k} has a heading`, !!HEADING[k])
+  }
+}
 /* ── the ordinary block-model checks, on this document ───────────────────── */
 
 console.log('\n-- storage, structure and the canvas --')

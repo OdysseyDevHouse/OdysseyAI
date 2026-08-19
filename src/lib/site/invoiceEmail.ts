@@ -6,6 +6,7 @@ import { formatMoney } from '../decimals'
 import { send, isConfigured } from '../mail'
 import { renderInvoicePdf } from '../invoices/pdf'
 import { buildInvoice, type IssuingSite } from '../invoices/build'
+import { HEADING, CLOSING, printKindFor } from '../../components/sales/SalesDocumentPrint'
 import { createCallbackToken } from '../callbackToken'
 import { appBaseUrl } from '../appUrl'
 import { createIntent, getGateway } from './payments'
@@ -85,7 +86,16 @@ export async function emailInvoiceDocument(
 
   let pdf: Buffer
   try {
-    pdf = await renderInvoicePdf(data, siteId)
+    /*
+     * A credit note is not an invoice, and s21(3) of the VAT Act names it. One
+     * headed INVOICE with a negative total asks a customer to pay money they are
+     * owed — so the kind travels with the document rather than being guessed at
+     * from the VAT number.
+     */
+    pdf = await renderInvoicePdf(data, siteId, {
+      heading: HEADING[printKindFor(document)],
+      closing: CLOSING[printKindFor(document)],
+    })
   } catch (error) {
     return {
       ok: false,

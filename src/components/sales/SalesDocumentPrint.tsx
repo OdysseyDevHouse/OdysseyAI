@@ -1,5 +1,10 @@
 import { formatMoney, formatQty } from '@/lib/decimals'
 import type { SalesDocument } from '@/lib/site/salesDocuments'
+import {
+  HEADING as KIND_HEADING,
+  CLOSING as KIND_CLOSING,
+  type PrintKind,
+} from '@/lib/site/salesDocumentKind'
 import { TABLE, TABLE_HEAD_ROW, TABLE_TH, TABLE_TD, TABLE_ROW, TABLE_NUMERIC } from '@/components/ui'
 
 /**
@@ -34,49 +39,14 @@ import { TABLE, TABLE_HEAD_ROW, TABLE_TH, TABLE_TD, TABLE_ROW, TABLE_NUMERIC } f
  * order and the lay-by agreement: it is meant to be printed and sent.
  */
 
-export type PrintKind = 'quote' | 'sales_order' | 'proforma' | 'tax_invoice'
-
-/**
- * What this paper is, from the document itself.
- *
- * Exported because the ROUTE needs the same answer for its page title and for
- * deciding what to log, and two copies of this branch is exactly how a pro
- * forma would one day get logged as a tax invoice.
+/*
+ * The wording moved to lib/site/salesDocumentKind.ts, because the emailed PDF
+ * and the customer portal need the same answers and this file imports the UI
+ * kit — which has no business being pulled into a background job to read two
+ * string maps. Re-exported so existing callers keep working and there is still
+ * only one definition.
  */
-export function printKindFor(doc: SalesDocument): PrintKind {
-  if (doc.docType === 'quote') return 'quote'
-  if (doc.docType === 'sales_order') return 'sales_order'
-  return doc.status === 'finalised' ? 'tax_invoice' : 'proforma'
-}
-
-/**
- * EXPORTED for the print route, which now composes the page from a template and
- * passes these in as tokens. Kept here rather than moved, because this component
- * still renders the same words — and two copies of the wording is how a quote
- * ends up calling itself a tax invoice on one path and not the other.
- */
-export const HEADING: Record<PrintKind, string> = {
-  quote: 'QUOTATION',
-  sales_order: 'SALES ORDER',
-  proforma: 'PRO FORMA INVOICE',
-  tax_invoice: 'TAX INVOICE',
-}
-
-/**
- * The closing line under the totals — what the reader is meant to DO.
- *
- * Each document asks for something different, and a quote that ends "please
- * pay" is asking for money against an offer nobody has accepted.
- */
-export const CLOSING: Record<PrintKind, string> = {
-  quote:
-    'This is a quotation, not an invoice. No goods are reserved and no payment is due until it is accepted.',
-  sales_order:
-    'This is a confirmation of your order, not a tax invoice. An invoice follows when the goods are delivered.',
-  proforma:
-    'This is a pro forma invoice. It is not a tax invoice, no VAT may be claimed against it, and a tax invoice follows once payment is received.',
-  tax_invoice: '',
-}
+export { printKindFor, HEADING, CLOSING, type PrintKind } from '@/lib/site/salesDocumentKind'
 
 export function SalesDocumentPrint({
   doc,
@@ -141,7 +111,7 @@ export function SalesDocumentPrint({
      finalised the paper says what it IS rather than quoting a number the
      customer could file as a tax invoice. */
   const showsNumber = kind !== 'proforma' && doc.documentNumber !== null
-  const closing = CLOSING[kind]
+  const closing = KIND_CLOSING[kind]
 
   return (
     <article className="mx-auto w-full max-w-[52rem] bg-surface p-8 text-ink">
@@ -170,7 +140,7 @@ export function SalesDocumentPrint({
           </p>
         </div>
         <div className="text-right">
-          <h2 className="text-xl font-semibold tracking-wide text-ink">{HEADING[kind]}</h2>
+          <h2 className="text-xl font-semibold tracking-wide text-ink">{KIND_HEADING[kind]}</h2>
           {showsNumber ? (
             <p className="mt-0.5 text-sm font-medium text-ink-2">{doc.documentNumber}</p>
           ) : (

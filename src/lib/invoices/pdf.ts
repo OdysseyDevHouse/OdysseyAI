@@ -133,9 +133,19 @@ export type InvoiceData = {
 export async function renderInvoicePdf(
   data: InvoiceData,
   siteId?: number,
+  /**
+   * What this paper calls itself, and what it asks the reader to do.
+   *
+   * Passed in because InvoiceData carries no document TYPE — it is assembled the
+   * same way for an invoice and for a credit note. Without it the heading fell
+   * back to the VAT-vendor rule, so an emailed CREDIT NOTE called itself
+   * INVOICE, carried a negative total and explained nothing. The caller knows
+   * which it is; this function cannot.
+   */
+  kind?: { heading?: string; closing?: string },
 ): Promise<Buffer> {
   if (siteId !== undefined) {
-    const designed = await renderDesignedInvoice(data, siteId).catch(() => null)
+    const designed = await renderDesignedInvoice(data, siteId, kind).catch(() => null)
     if (designed) return designed
   }
 
@@ -148,7 +158,7 @@ export async function renderInvoicePdf(
     doc.on('error', reject)
 
     try {
-      draw(doc, data)
+      draw(doc, data, kind?.heading)
       doc.end()
     } catch (error) {
       reject(error)
@@ -166,6 +176,7 @@ export async function renderInvoicePdf(
 async function renderDesignedInvoice(
   data: InvoiceData,
   siteId: number,
+  kind?: { heading?: string; closing?: string },
 ): Promise<Buffer | null> {
   const { activeTemplate } = await import('../site/stationeryTemplates')
   const custom = await activeTemplate(siteId, 'invoice').catch(() => null)
@@ -216,6 +227,7 @@ async function renderDesignedInvoice(
       : null
 
   const input = invoiceDataTokens(data, {
+    ...kind,
     printedAt: data.generatedAt.toLocaleString('en-ZA', {
       dateStyle: 'short',
       timeStyle: 'short',
@@ -227,7 +239,7 @@ async function renderDesignedInvoice(
   return renderSpecPdf(spec, 'invoice', input, logo?.bytes ?? null)
 }
 
-function draw(doc: PDFKit.PDFDocument, data: InvoiceData) {
+function draw(doc: PDFKit.PDFDocument, data: InvoiceData, heading?: string) {
   const isTaxInvoice = !!data.site.vatNumber
 
   // ── Letterhead ─────────────────────────────────────────────────────────
@@ -258,7 +270,7 @@ function draw(doc: PDFKit.PDFDocument, data: InvoiceData) {
     .font('Helvetica-Bold')
     .fontSize(16)
     .fillColor(ACCENT)
-    .text(isTaxInvoice ? 'TAX INVOICE' : 'INVOICE', MARGIN, MARGIN, {
+    .text(heading ?? (isTaxInvoice ? 'TAX INVOICE' : 'INVOICE'), MARGIN, MARGIN, {
       width: CONTENT_WIDTH,
       align: 'right',
     })
