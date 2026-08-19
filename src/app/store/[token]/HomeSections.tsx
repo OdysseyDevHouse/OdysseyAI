@@ -1,3 +1,4 @@
+import { banded } from './SectionBand'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import {
@@ -143,7 +144,7 @@ export default function HomeSections({
      */
     <div className="@container flex flex-col gap-8">
       {content.map((entry) => {
-        const node = toned(entry.section, sectionBody(entry, token, theme, display, imageSrc, anchorProductId))
+        const node = banded(entry.section, sectionBody(entry, token, theme, display, imageSrc, anchorProductId))
 
         if (renderSection) return renderSection(entry.section, node)
         // The shop: an empty section is simply absent.
@@ -153,35 +154,7 @@ export default function HomeSections({
   )
 }
 
-/**
- * Put a section on its coloured band, if it asked for one.
- *
- * ── WHY IT BLEEDS SIDEWAYS ───────────────────────────────────────────────
- *
- * A tinted section that stopped at the content column would read as a wide
- * card, not as a band — and a page of those is busier than the plain page it
- * replaced. The negative margin plus matching padding pushes the colour to the
- * edge of the page's gutter while the content stays exactly where it was, so
- * switching a section to 'tinted' moves nothing.
- *
- * Applied OUTSIDE sectionBody so it wraps the null case too — which it must
- * not, and does not: a section with nothing to show returns null here as well,
- * so an empty tinted section draws no stripe rather than an empty coloured
- * band with nothing in it.
- */
-function toned(section: HomeSection, node: ReactNode): ReactNode {
-  if (node === null || section.tone !== 'tinted') return node
-  return (
-    <div
-      className="-mx-4 rounded-card px-4 py-6 @sm:-mx-6 @sm:px-6"
-      /* A tint of the shop's own colour, mixed rather than a token: the value
-         is the store's data. Validated to a hex before it is ever stored. */
-      style={{ background: 'color-mix(in srgb, var(--color-brand) 7%, transparent)' }}
-    >
-      {node}
-    </div>
-  )
-}
+
 
 /**
  * One section's content, or null when it has nothing to show.

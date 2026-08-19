@@ -42,6 +42,9 @@ import {
   MIN_AUTOPLAY_SECONDS,
   SECTION_CATALOG,
   SECTION_KINDS,
+  type SectionBackground,
+  type SectionPadding,
+  type SectionWidth,
   kindsFor as catalogKindsFor,
   MAX_SECTIONS,
   MAX_SECTION_CARDS,
@@ -59,6 +62,14 @@ import {
  * dependency runs one way only — see the note in storefront/catalog.ts.
  */
 export { SECTION_KINDS } from './storefront/catalog'
+export {
+  SECTION_BACKGROUNDS,
+  SECTION_PADDINGS,
+  SECTION_WIDTHS,
+  type SectionBackground,
+  type SectionPadding,
+  type SectionWidth,
+} from './storefront/catalog'
 export type SectionKind = (typeof SECTION_KINDS)[number]
 
 /**
@@ -309,6 +320,16 @@ export type HomeSection = {
    * saved before tones existed keeps looking exactly as it did.
    */
   tone?: SectionTone
+  /**
+   * The band this section sits on, how much room it takes, and how wide.
+   *
+   * Roles rather than colours — see SECTION_BACKGROUNDS. Absent reads as the
+   * default on each, so every layout saved before these existed keeps looking
+   * exactly as it did.
+   */
+  background?: SectionBackground
+  padding?: SectionPadding
+  width?: SectionWidth
   /** products: how the row is filled. */
   source?: ProductSource
   /** products + source 'department'. */

@@ -109,7 +109,6 @@ export const DEFAULT_CONSENT_TEXT =
  * React.
  */
 export type SectionIconName = string
-
 /* ── The value sets and caps a field may name ───────────────────────────── */
 
 /** Hard caps, enforced on WRITE. A draft is untrusted. */
@@ -414,6 +413,86 @@ const NOT_DEPARTMENT_OR_PRODUCT: readonly PageKind[] = ['home', 'standard']
  */
 const BASE = { enabled: true, tone: 'plain' as const }
 
+/**
+ * The band a section sits on.
+ *
+ * ── ROLES, NEVER COLOURS ─────────────────────────────────────────────────
+ *
+ * `tone: plain | tinted` was one bit, and the instinct on widening it is to
+ * offer a colour. That is the wrong direction: a section painted with a hex an
+ * owner typed can fight the shop's own palette, and it cannot follow a theme
+ * change — the two things the whole token layer exists to prevent. So these are
+ * ROLES, resolved through the shop's theme, exactly as rich-text colours are.
+ *
+ * `contrast` is the notable one and the reason this is worth widening at all:
+ * a dark band across a light page is the single most-used section control in
+ * every builder on the market, and it is unreachable with two options.
+ */
+export const SECTION_BACKGROUNDS = ['none', 'tinted', 'surface', 'contrast'] as const
+export type SectionBackground = (typeof SECTION_BACKGROUNDS)[number]
+/** How much room a section takes above and below its own content. */
+export const SECTION_PADDINGS = ['none', 'tight', 'normal', 'loose'] as const
+export type SectionPadding = (typeof SECTION_PADDINGS)[number]
+/**
+ * How wide a section runs.
+ *
+ * `full` is the addition that needed real work: the page's width cap sits on
+ * `<main>`, so bleeding past it means breaking OUT of a container rather than
+ * widening one. A hero that stops short of the screen edges is the commonest
+ * complaint about a builder, and it was previously impossible.
+ */
+export const SECTION_WIDTHS = ['contained', 'wide', 'full'] as const
+export type SectionWidth = (typeof SECTION_WIDTHS)[number]
+
+/** The shared style fields, spread into every kind — see BASE. */
+export const STYLE_FIELDS: readonly SectionField[] = [
+  {
+    key: 'background',
+    type: 'choice',
+    of: SECTION_BACKGROUNDS,
+    fallback: 'none',
+    ui: {
+      label: 'Background',
+      options: [
+        { value: 'none', label: 'The page itself' },
+        { value: 'tinted', label: 'A tint of your colour' },
+        { value: 'surface', label: 'A card' },
+        { value: 'contrast', label: 'A dark band' },
+      ],
+    },
+  },
+  {
+    key: 'padding',
+    type: 'choice',
+    of: SECTION_PADDINGS,
+    fallback: 'normal',
+    ui: {
+      label: 'Room around it',
+      options: [
+        { value: 'none', label: 'None' },
+        { value: 'tight', label: 'A little' },
+        { value: 'normal', label: 'Normal' },
+        { value: 'loose', label: 'A lot' },
+      ],
+    },
+  },
+  {
+    key: 'width',
+    type: 'choice',
+    of: SECTION_WIDTHS,
+    fallback: 'contained',
+    ui: {
+      label: 'How wide',
+      hint: 'Edge to edge suits a picture; words are easier to read contained.',
+      options: [
+        { value: 'contained', label: 'With the rest of the page' },
+        { value: 'wide', label: 'Wider' },
+        { value: 'full', label: 'Edge to edge' },
+      ],
+    },
+  },
+]
+
 export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
   hero: {
     kind: 'hero',
@@ -424,7 +503,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: '', ...BASE }),
     // Draws the theme's greeting, so it is empty when the shop never wrote one.
     isEmpty: (f) => !f.heroHeadline && !f.heroSubtext,
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
   },
   banner: {
     kind: 'banner',
@@ -443,6 +523,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     }),
     isEmpty: (f) => !f.image,
     fields: [
+      ...STYLE_FIELDS,
       { key: 'imageId', type: 'ref' },
       { key: 'imageAlt', type: 'text', max: 190 },
       { key: 'linkUrl', type: 'link', max: 300 },
@@ -470,7 +551,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // A carousel whose slides have all lost their pictures is as empty as one
     // with no slides at all.
     isEmpty: (f) => f.liveSlideCount() === 0,
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
     extras: ['slides', 'autoplaySeconds'],
   },
   split: {
@@ -494,6 +576,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // silently render as a worse version of a section that already exists.
     isEmpty: (f) => !f.image || !(f.section.bodyText?.trim() || f.section.title),
     fields: [
+      ...STYLE_FIELDS,
       { key: 'imageId', type: 'ref' },
       { key: 'imageAlt', type: 'text', max: 190 },
       { key: 'bodyText', type: 'text', max: MAX_SECTION_TEXT },
@@ -510,7 +593,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     pages: NOT_DEPARTMENT_OR_PRODUCT,
     defaults: () => ({ title: 'Shop by department', ...BASE, maxItems: 0 }),
     isEmpty: (f) => !f.departments || f.departments.length === 0,
-    fields: [{ key: 'maxItems', type: 'int', min: 0, max: MAX_SECTION_ITEMS, fallback: 0 }],
+    fields: [
+      ...STYLE_FIELDS,{ key: 'maxItems', type: 'int', min: 0, max: MAX_SECTION_ITEMS, fallback: 0 }],
   },
   products: {
     kind: 'products',
@@ -529,6 +613,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     }),
     isEmpty: (f) => !f.products || f.products.length === 0,
     fields: [
+      ...STYLE_FIELDS,
       { key: 'source', type: 'choice', of: PRODUCT_SOURCES, fallback: 'manual' },
       { key: 'departmentId', type: 'ref' },
       { key: 'productIds', type: 'refList', max: MAX_SECTION_ITEMS },
@@ -553,6 +638,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // shop. The builder says so rather than calling it a fault.
     isEmpty: (f) => !f.reviews || f.reviews.length === 0,
     fields: [
+      ...STYLE_FIELDS,
       { key: 'maxItems', type: 'int', min: 1, max: MAX_SECTION_ITEMS, fallback: 6 },
       { key: 'minRating', type: 'int', min: 1, max: 5, fallback: 4 },
       { key: 'departmentId', type: 'ref' },
@@ -581,6 +667,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
       return ends <= f.now() && !(f.section.finishedText?.trim() ?? '')
     },
     fields: [
+      ...STYLE_FIELDS,
       { key: 'specialId', type: 'ref' },
       // A junk deadline becomes '' — no deadline — which sectionIsEmpty reads
       // as "draws nothing". Failing that way round is right: a half-parsed
@@ -607,7 +694,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
      * nothing when the list turns out to be short; see RecentlyViewed.
      */
     isEmpty: () => false,
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
   },
   cards: {
     kind: 'cards',
@@ -623,7 +711,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // A card with nothing written on it is not worth a tile, so a section of
     // blank cards is as empty as one with none.
     isEmpty: (f) => (f.section.cards ?? []).filter((c) => c.heading || c.text).length === 0,
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
     extras: ['cards'],
   },
   text: {
@@ -635,6 +724,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: '', ...BASE, text: '', align: 'left' }),
     isEmpty: (f) => !(f.section.text?.trim() ?? '') && !f.section.title,
     fields: [
+      ...STYLE_FIELDS,
       {
         key: 'text',
         type: 'text',
@@ -671,7 +761,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // is a step nobody should need.
     defaults: () => ({ title: '', ...BASE, blocks: [{ type: 'p', spans: [{ text: '' }] }] }),
     isEmpty: (f) => !f.hasRichText(),
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
     extras: ['blocks'],
   },
   signup: {
@@ -694,6 +785,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // who added one meant to collect addresses.
     isEmpty: () => false,
     fields: [
+      ...STYLE_FIELDS,
       { key: 'bodyText', type: 'text', max: 300 },
       { key: 'buttonLabel', type: 'text', max: 40 },
       // Falls back to a default rather than to '', because an empty consent
@@ -711,7 +803,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     pages: ALL_PAGES,
     defaults: (make) => ({ title: 'In their words', ...BASE, quotes: [make.quote()] }),
     isEmpty: (f) => (f.section.quotes ?? []).filter((q) => q.quote.trim()).length === 0,
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
     extras: ['quotes'],
   },
   logos: {
@@ -724,7 +817,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // Counted against what actually RESOLVED, not against the stored ids: a
     // strip whose pictures were all deleted is as empty as one with none.
     isEmpty: (f) => (f.logoImages?.size ?? 0) === 0,
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
     extras: ['logoImageIds'],
   },
   video: {
@@ -736,6 +830,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: '', ...BASE, videoProvider: 'youtube', videoId: '' }),
     isEmpty: (f) => !(f.section.videoId ?? '').trim(),
     fields: [
+      ...STYLE_FIELDS,
       { key: 'videoProvider', type: 'choice', of: VIDEO_PROVIDERS, fallback: 'youtube' },
       { key: 'videoId', type: 'idChars', max: 40 },
     ],
@@ -749,6 +844,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     defaults: () => ({ title: 'Where to find us', ...BASE, addressText: '', mapUrl: '' }),
     isEmpty: (f) => !(f.section.addressText?.trim() ?? ''),
     fields: [
+      ...STYLE_FIELDS,
       { key: 'addressText', type: 'text', max: 300 },
       { key: 'mapUrl', type: 'url', max: 500 },
     ],
@@ -763,7 +859,8 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // Draws exactly itself and is never empty — that IS its content. Returning
     // true here would make it impossible to add.
     isEmpty: () => false,
-    fields: [],
+    fields: [
+      ...STYLE_FIELDS,],
   },
   spacer: {
     kind: 'spacer',
@@ -775,6 +872,7 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
     // As above: the gap is the point.
     isEmpty: () => false,
     fields: [
+      ...STYLE_FIELDS,
       {
         key: 'size',
         type: 'choice',
@@ -808,3 +906,10 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
 export function kindsFor(pageKind: PageKind): readonly SectionKind[] {
   return SECTION_KINDS.filter((kind) => SECTION_CATALOG[kind].pages.includes(pageKind))
 }
+
+/* ── How a section sits on the page ───────────────────────────────────────── */
+
+
+
+
+

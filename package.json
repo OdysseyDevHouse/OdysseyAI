@@ -183,6 +183,7 @@
     "test:listing-presets": "tsx --conditions=react-server --env-file=.env scripts/test-listing-presets.ts",
     "test:storefront-menus": "tsx --conditions=react-server --env-file=.env scripts/test-storefront-menus.ts",
     "test:storefront-collections": "tsx --conditions=react-server --env-file=.env scripts/test-storefront-collections.ts",
+    "test:section-band": "tsx scripts/test-section-band.tsx",
     "test:builder-ui": "node --env-file=.env scripts/test-builder-ui.mjs",
     "test:report-templates": "tsx --conditions=react-server --env-file=.env scripts/test-report-templates.ts",
     "test:product-images": "tsx --conditions=react-server --env-file=.env scripts/test-product-images.ts",
