@@ -9,6 +9,7 @@ import {
   Input,
   Modal,
   NumPad,
+  NumPadDisplay,
   StatStrip,
   StatTile,
   TenderTile,
@@ -24,7 +25,7 @@ import { checkTenders } from '@/lib/tenderMath'
 /* The SAME planner the server runs at finalise. A second implementation here is how the
    slip a customer is handed comes to disagree with the books about a tip. */
 import { planTips } from '@/lib/tipMath'
-import { quickAmounts, loyaltyCeiling, prefillAmount } from '@/lib/tenderOffers'
+import { loyaltyCeiling, prefillAmount } from '@/lib/tenderOffers'
 import { headroomRefusal } from '@/lib/creditRules'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
@@ -383,7 +384,13 @@ export function TenderPad({
     return checkTenders(lines, payable, hasCustomer, plannedTipsFromExcess)
   }, [taken, tenders, payable, hasCustomer, plannedTipsFromExcess])
 
-  const owed = round(payable - taken.reduce((sum, t) => sum + t.amount, 0), 2)
+  /** Everything handed over so far, across every split. R50 card + R30 card = R80. */
+  const tendered = round(
+    taken.reduce((sum, t) => sum + t.amount, 0),
+    2,
+  )
+
+  const owed = round(payable - tendered, 2)
 
   const tipTotal = plan.ok ? round(plan.tips.reduce((s, t) => s + t.amount, 0), 2) : 0
   /* What the drawer actually hands back, AFTER tips. Showing `check.change` here would
@@ -688,15 +695,20 @@ export function TenderPad({
             the payment on one line, so a cashier keying a split never has to
             work out what is left in their head.
 
-            "Tender amount" is what is being KEYED, not the sum of what has been
-            taken: the sum is exactly what Remaining answers, and two tiles for
-            one figure would leave the strip saying nothing about the pad. */}
+            "Tender amount" is the sum of what has been TAKEN — R50 card plus
+            R30 card reads R80 — not the digits on the pad. The strip is the
+            state of the payment; the figure being keyed belongs beside the keys
+            that are producing it, and NumPadDisplay puts it there. */}
         <StatStrip columns={4}>
           <StatTile
             density="compact"
             label="Tender amount"
-            value={formatMoney(amount)}
+            value={formatMoney(tendered)}
             icon={<Icons.CreditCard size={18} />}
+            /* What is still on the pad, uncommitted. A cashier who has keyed 50
+               but not yet hit a tender key can see both figures without either
+               pretending to be the other. */
+            hint={amount > 0.005 ? `${formatMoney(amount)} keyed` : undefined}
           />
           <StatTile
             density="compact"
@@ -1024,8 +1036,19 @@ export function TenderPad({
                 <AmountRow
                   owed={owed}
                   entry={entry}
+                  paid={taken.length > 0}
                   disabled={pending}
                   onEntry={setEntry}
+                />
+                {/* The digits, where they are being typed. The strip above now
+                    reports the payment as a whole, so without this box the pad
+                    would show a cashier nothing back as they key — and Exact
+                    and the notes fill this same figure, so it is the one place
+                    that answers "what will the next tender key take?". */}
+                <NumPadDisplay
+                  label={asking ? `${asking.name} — amount` : 'Amount to tender'}
+                  value={entry}
+                  placeholder="0.00"
                 />
                 {/* No Clear key under the pad: it cost a whole 56px row for
                     something the C key in the amount row above already does, and
@@ -1057,43 +1080,54 @@ export function TenderPad({
   )
 }
 
-/* ── Exact, and the notes a customer hands over ──────────────────────────── */
+/* ── What is left, and the notes a customer hands over ───────────────────── */
 
 /**
- * The row above the keypad: the outstanding balance in one tap, then the notes.
+ * The row above the keypad: what is still owed in one tap, then the notes.
  *
- * `Exact` is the key that makes the one-screen flow work — it loads what is
- * still owed so the next tap is the tender, with no digits typed at all. The
- * note buttons come from `quickAmounts`, the same helper the desk till uses, so
- * a cashier handed a R200 note on an R87.50 sale taps once rather than typing.
+ * ── THE FIRST KEY CHANGES ITS NAME ────────────────────────────────────────
+ *
+ * On an untouched sale it is `Exact` — the whole bill, so the next tap is the
+ * tender and no digits are typed at all. Once ANY payment has been taken it
+ * becomes `What's left`, showing the balance rather than the total: on an R80
+ * bill with R50 cash already down, the key reads "What's left R30.00" and a
+ * split is finished in one tap instead of being worked out at the counter.
+ *
+ * Same key, same position, same figure underneath — `owed` is already net of
+ * everything taken. Only the wording moves, and only because "Exact" is a
+ * misleading name for a part-paid sale.
+ *
+ * ── THE NOTES ARE THE NOTES ───────────────────────────────────────────────
+ *
+ * A FIXED list of the denominations in a South African till: 10, 20, 50, 100,
+ * 200. Not `quickAmounts`, which rounds the owed figure UP to the next note and
+ * so offered "R500" — a note that has not existed since 1994 and that no
+ * customer can hand over. What a cashier is holding is a note, so the keys are
+ * notes.
+ *
+ * Amounts at or below what is owed stay on the row rather than being hidden:
+ * R50 against an R80 balance is a part payment, which is exactly the split this
+ * pad exists to make easy.
  */
+const NOTES = [10, 20, 50, 100, 200]
+
 function AmountRow({
   owed,
   entry,
+  paid,
   disabled,
   onEntry,
 }: {
   owed: number
   entry: string
+  /** Whether any payment has been taken — what renames the first key. */
+  paid: boolean
   disabled: boolean
   onEntry: (value: string) => void
 }) {
   const exact = round(Math.max(owed, 0), 2)
-  /*
-   * FOUR notes, so with Exact and C the row is exactly two lines of three above
-   * the pad's own three columns — the keys line up with the digits under them
-   * rather than forming a second, differently-spaced grid.
-   *
-   * PADDED to four when there are fewer, because a short list leaves a hole in
-   * the middle of the grid and drags C up beside it, which is a destructive key
-   * appearing where a note was a moment ago. quickAmounts trims from the
-   * largest, which are the least likely to be handed over on a small sale.
-   */
-  const notes = quickAmounts(owed, 6)
-    .filter((value) => round(value, 2) !== exact)
-    .slice(0, 4)
   /* Highlighted when the pad is holding exactly the outstanding balance — the
-     cashier's confirmation that Exact landed, without reading the figure. */
+     cashier's confirmation that the key landed, without reading the figure. */
   const isExact = exact > 0 && numPadValue(entry) === exact
 
   return (
@@ -1101,14 +1135,21 @@ function AmountRow({
       <Button
         variant={isExact ? 'primary' : 'secondary'}
         size="touch"
-        className="justify-center"
+        /* Two lines inside one 56px key: the name, then the figure it will
+           load. flex-col because Button lays its content out in a row, and
+           leading-tight so both lines fit without the key growing and
+           dragging the notes beside it out of line. */
+        className="flex-col justify-center gap-0 leading-tight"
         disabled={disabled || exact <= 0}
         onClick={() => onEntry(exact.toFixed(2))}
       >
-        <Icons.TargetIcon size={18} />
-        Exact
+        <span className="text-xs font-semibold">{paid ? "What's left" : 'Exact'}</span>
+        <span className="numeric text-sm font-bold">{formatMoney(exact)}</span>
       </Button>
-      {notes.map((value) => (
+      {/* The notes. No Clear key on this row: the pad's backspace clears a
+          mis-keyed digit, and a destructive key sitting among the notes is one
+          a cashier tapping quickly eventually hits by accident. */}
+      {NOTES.map((value) => (
         <Button
           key={value}
           variant="ghost"
@@ -1117,30 +1158,9 @@ function AmountRow({
           disabled={disabled}
           onClick={() => onEntry(value.toFixed(2))}
         >
-          {value.toFixed(0)}
+          {value}
         </Button>
       ))}
-      {/* Blanks where a note would be. A settled sale offers none, and without
-          these C would slide up next to Exact — a destructive key landing where
-          a note was a moment before, at exactly the moment a cashier is tapping
-          quickly. Keys do not move on this pad. */}
-      {Array.from({ length: Math.max(0, 4 - notes.length) }, (_, i) => (
-        <span key={`gap-${i}`} aria-hidden />
-      ))}
-      {/* C, beside the keys that fill the pad rather than under it — a
-          mis-keyed amount is corrected from where the eye already is. Danger
-          ink because it throws work away; the backspace on the pad is for a
-          single wrong digit. */}
-      <Button
-        variant="ghost"
-        size="touch"
-        className="justify-center font-bold text-danger"
-        disabled={disabled || entry === ''}
-        onClick={() => onEntry('')}
-        aria-label="Clear the amount"
-      >
-        C
-      </Button>
     </div>
   )
 }
