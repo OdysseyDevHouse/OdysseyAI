@@ -542,13 +542,30 @@ export default function StationeryClient({
           </CardBody>
         </Card>
       ) : (
-        /* The visual designer carries its own palette AND its own page, so it
-           wants the width; the markup editor is a pane beside a preview and
-           wants the split. Same row, two shapes. */
+        /*
+         * Three editors, three shapes, one row.
+         *
+         * The VISUAL designer carries its own palette and its own page, so it
+         * takes the whole width.
+         *
+         * The MARKUP editor is a text pane beside a preview: the preview is the
+         * subject and the pane serves it, so the preview gets the room.
+         *
+         * The SLIP editor is neither. Its preview is 80mm of paper — a few
+         * hundred pixels — and its controls are a list of seventeen blocks that
+         * runs past the fold. Giving the preview the wide column left a slip
+         * floating in a metre of empty space while the controls were squeezed
+         * three-to-a-row in a narrow rail. So it is reversed: the editor takes
+         * the width it needs and the slip sits beside it, sticky, at the size it
+         * will actually print.
+         */
         <div
           className={`grid gap-5 ${
-            // The visual designer carries its own rails; it wants the whole row.
-            format === 'blocks' ? '' : 'xl:grid-cols-[minmax(0,1fr)_26rem]'
+            format === 'blocks'
+              ? ''
+              : doc?.medium === 'slip'
+                ? 'xl:grid-cols-[minmax(0,1fr)_24rem]'
+                : 'xl:grid-cols-[minmax(0,1fr)_26rem]'
           }`}
         >
           {/* The VISUAL designer owns the whole left column: it carries its own
@@ -566,7 +583,23 @@ export default function StationeryClient({
               }}
             />
           ) : (
-          <Card>
+          /*
+           * On a SLIP the preview moves to the right and sticks there.
+           *
+           * It is 80mm of paper — a few hundred pixels — beside a list of
+           * seventeen blocks that scrolls past the fold, so leading with it left
+           * the slip stranded in empty space while the controls were squeezed
+           * into a narrow rail. The order is CSS rather than markup, so the
+           * reading order stays "here is the document, here is how to change it"
+           * for anyone not seeing the columns.
+           */
+          <Card
+            className={
+              doc?.medium === 'slip'
+                ? 'xl:order-2 xl:sticky xl:top-4 xl:self-start'
+                : undefined
+            }
+          >
             <CardHeader
               title="What the paper will look like"
               description={previewLabel || 'Rendered with your own data.'}
@@ -606,7 +639,16 @@ export default function StationeryClient({
           {/* The tools. Sticky on a wide screen: a purchase order runs longer
               than the viewport, and scrolling to check the bottom of the paper
               should not take the markup pane away with it. */}
-          <div className="flex flex-col gap-5 xl:sticky xl:top-4 xl:self-start">
+          <div
+            className={`flex flex-col gap-5 ${
+              doc?.medium === 'slip'
+                ? // Leads on a slip, and NOT sticky: a pinned column taller than
+                  // the viewport can never be scrolled to its own bottom, which
+                  // is where the Save button lives.
+                  'xl:order-1'
+                : 'xl:sticky xl:top-4 xl:self-start'
+            }`}
+          >
             <Card>
               <CardHeader title={editing ? 'Editing' : 'New design'} />
               <CardBody className="flex flex-col gap-4">
