@@ -1,6 +1,7 @@
 import { EscPos, twoCol, wrapText } from './encoder'
 import { formatMoney, formatQty } from '../decimals'
 import type { ReceiptData } from '../receiptData'
+import { slipConditionHolds } from '../stationery/conditions'
 import type { SlipBlock, SlipSpec } from '../stationery/slip'
 
 /**
@@ -55,6 +56,20 @@ function setBold(job: EscPos, head: Head, want: boolean): void {
  * one that says it does not while emitting something loses its alignment.
  */
 function blockPrints(block: SlipBlock, data: ReceiptData): boolean {
+  /*
+   * ── A LINE THE DESIGN SAID TO SHOW ONLY SOMETIMES ───────────────────────
+   *
+   * Asked FIRST, and asked here rather than at the emit site, because this
+   * function already feeds the separator logic: a rule with nothing left to
+   * divide is dropped, and two rules that end up adjacent collapse to one. A
+   * condition answered anywhere else would hide the line and leave its dashes
+   * behind.
+   *
+   * The slip answers a shorter list than a document does — nothing is owed or
+   * overdue at a till. See SLIP_CONDITIONS.
+   */
+  if (!slipConditionHolds(block.showWhen, data)) return false
+
   const gift = data.gift
   switch (block.kind) {
     case 'siteName':

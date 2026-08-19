@@ -1,5 +1,6 @@
 import { formatMoney, formatQty } from '../decimals'
 import { getDocType, getSection, findToken, type TokenFormat } from './catalog'
+import { conditionHolds } from './conditions'
 
 /**
  * Turning a designed template into the HTML that goes on paper.
@@ -163,7 +164,25 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
   const doc = getDocType(docKey)
   if (!doc) return ''
 
-  const expanded = body.replace(
+  /*
+   * ── CONDITIONS FIRST ────────────────────────────────────────────────────
+   *
+   * `{#when rule}…{/when}` marks a block the designer said to show only
+   * sometimes. It is resolved BEFORE anything else for two reasons: a hidden
+   * block must not have its tokens resolved — asking for a permission-gated
+   * value inside a paragraph nobody will read is wasted work at best — and a
+   * hidden `{#each}` must not loop over rows it will then throw away.
+   *
+   * A rule this build does not recognise leaves the CONTENT and drops the
+   * marker, matching parseSpec: a design outliving one of its rules should lose
+   * the condition, not the words.
+   */
+  const shown = body.replace(
+    /\{#when\s+([a-zA-Z]+)\s*\}([\s\S]*?)\{\/when\}/g,
+    (_m, rule: string, inner: string) => (conditionHolds(rule, input.values) ? inner : ''),
+  )
+
+  const expanded = shown.replace(
     /\{#each\s+([a-zA-Z]+)\s*\}([\s\S]*?)\{\/each\}/g,
     (_m, sectionKey: string, inner: string) => {
       const section = getSection(doc, sectionKey)

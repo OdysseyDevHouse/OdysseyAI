@@ -1,4 +1,5 @@
 import { getDocType, type DocTypeDef } from './catalog'
+import { isConditionRule, type ConditionRule } from './conditions'
 import { BAND_KEYS, MIN_BLOCK_W, clampBlock, overlaps, type BandKey } from './geometry'
 
 /**
@@ -127,6 +128,14 @@ export type DocBlock = {
   rows?: DetailRow[]
   /** text: the words. html: raw markup, sanitised like anything else. */
   text?: string
+  /**
+   * Show this block only when the document answers a named question — see
+   * lib/stationery/conditions.
+   *
+   * Absent means always, which is what every design saved before this existed
+   * means and what the overwhelming majority of blocks want.
+   */
+  showWhen?: ConditionRule
   /**
    * logo only: how tall to print it, in points.
    *
@@ -711,6 +720,15 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
           ? rawSection
           : undefined
 
+      /*
+       * A condition is kept only when this build still HAS that rule. A design
+       * naming one that has since been retired loses the condition and keeps
+       * the block — the words a shop wrote are the part worth saving, and a
+       * paragraph that silently stopped printing is the harder bug to find.
+       */
+      const rawWhen = (b as { showWhen?: unknown }).showWhen
+      const showWhen = isConditionRule(rawWhen) && rawWhen !== 'always' ? rawWhen : undefined
+
       const columns = cleanColumns((b as { columns?: unknown }).columns, doc, section)
       const rows = cleanRows((b as { rows?: unknown }).rows, doc)
 
@@ -732,6 +750,7 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
         ...(section ? { section } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
+        ...(showWhen ? { showWhen } : {}),
         ...(logoHeight !== undefined ? { logoHeight } : {}),
       })
     }

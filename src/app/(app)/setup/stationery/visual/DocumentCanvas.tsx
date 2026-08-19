@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BLOCK_STYLE } from '@/lib/stationery/compile'
+import { conditionDef } from '@/lib/stationery/conditions'
 import {
   BAND_INFO,
   BAND_KEYS,
@@ -705,6 +706,19 @@ function BlockBox({
         }`}
       >
         {def.label}
+        {/*
+          A conditional block says so ON the page, not only in the inspector.
+          "Why is this paragraph missing from my printed invoice" is answered by
+          looking at the design, and a block that prints only sometimes is
+          indistinguishable from one that always does until you click it.
+
+          It rides the existing caption rather than adding a second marker: the
+          caption already appears exactly when a designer is looking at
+          structure — selected, hovered, or outlines on.
+        */}
+        {block.showWhen && (
+          <span className="opacity-80"> · {conditionDef(block.showWhen)?.label}</span>
+        )}
       </span>
 
       <div

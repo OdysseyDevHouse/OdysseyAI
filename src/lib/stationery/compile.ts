@@ -466,6 +466,33 @@ export function blockMarkup(b: DocBlock, docKey: string): string {
   return needsWrapper(b) ? `<div class="sd-block">${inner}</div>` : inner
 }
 
+/**
+ * A conditional block's markup, wrapped so the RENDERER can decide.
+ *
+ * ── WHY THIS CANNOT BE DECIDED HERE ───────────────────────────────────────
+ *
+ * Compiling and rendering happen at different times on the A4 path. A design
+ * becomes markup when it is SAVED, and that markup meets the document's data
+ * later, in renderTemplate — so at this point there is no invoice to ask
+ * whether it is overdue. The same reason hide-when-empty is done with CSS
+ * rather than by omitting the block.
+ *
+ * So the condition travels IN the markup, as `{#when rule}…{/when}` — the same
+ * shape as the `{#each}` that was already there, resolved in the same place by
+ * the same pass. The PDF and the slip need none of this: they hold the block
+ * and the data at once and simply skip it.
+ *
+ * ── AND WHY NOT IN blockMarkup ────────────────────────────────────────────
+ *
+ * blockMarkup is shared with the designer's canvas, which must SHOW a
+ * conditional block — a designer cannot arrange what has vanished. The canvas
+ * marks it as situational instead. Only the printed path wraps.
+ */
+function whenWrapped(b: DocBlock, html: string): string {
+  if (!html || !b.showWhen || b.showWhen === 'always') return html
+  return `{#when ${b.showWhen}}${html}{/when}`
+}
+
 function positioned(b: DocBlock, docKey: string): string {
   const html = blockMarkup(b, docKey)
   if (!html) return ''
@@ -475,7 +502,7 @@ function positioned(b: DocBlock, docKey: string): string {
     `top:${(b.y * BAND_REM).toFixed(2)}rem;` +
     `width:${b.w.toFixed(2)}%`
 
-  return `<div style="${style}">${html}</div>`
+  return whenWrapped(b, `<div style="${style}">${html}</div>`)
 }
 
 /**
@@ -501,14 +528,14 @@ function flowedAt(b: DocBlock, docKey: string): string {
     `margin-left:${b.x.toFixed(2)}%;` +
     `margin-top:${(b.y * BAND_REM).toFixed(2)}rem;` +
     `width:${b.w.toFixed(2)}%`
-  return `<div style="${style}">${html}</div>`
+  return whenWrapped(b, `<div style="${style}">${html}</div>`)
 }
 
 function flowed(b: DocBlock, docKey: string): string {
   const html = blockMarkup(b, docKey)
   if (!html) return ''
   const style = b.w < 100 ? ` style="width:${b.w.toFixed(2)}%"` : ''
-  return `<div${style}>${html}</div>`
+  return whenWrapped(b, `<div${style}>${html}</div>`)
 }
 
 /**

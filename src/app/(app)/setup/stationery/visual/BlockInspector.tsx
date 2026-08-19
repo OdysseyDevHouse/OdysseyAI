@@ -28,6 +28,7 @@ import {
   type DocBlockAlign,
 } from '@/lib/stationery/blocks'
 import { MIN_BLOCK_W, clampBlock } from '@/lib/stationery/geometry'
+import { CONDITIONS, conditionDef, type ConditionRule } from '@/lib/stationery/conditions'
 import ColumnEditor from './ColumnEditor'
 
 /**
@@ -204,6 +205,42 @@ export default function BlockInspector({
 
         {(block.kind === 'rule' || block.kind === 'spacer') && (
           <p className="text-sm text-muted">Nothing to set — this block is just the gap.</p>
+        )}
+
+        {/*
+          ── WHEN THIS BLOCK PRINTS ──────────────────────────────────────
+
+          Last, and below everything about how the block LOOKS, because it is a
+          question about the block as a whole rather than one more setting on
+          its appearance. A shop reads down to it after deciding what the block
+          says.
+
+          Not offered on a required block: "show the TAX INVOICE heading only
+          sometimes" is a document that is sometimes unlawful, and the answer to
+          that is no rather than a warning.
+        */}
+        {!def.required && (
+          <Field
+            label="Show this"
+            hint={conditionDef(block.showWhen)?.hint ?? 'On every document.'}
+          >
+            <Select
+              className="w-56"
+              value={block.showWhen ?? 'always'}
+              onChange={(e) => {
+                const rule = e.target.value
+                // 'always' is stored as nothing — one representation of
+                // unconditional, so a design cannot carry two.
+                onChange({ showWhen: rule === 'always' ? undefined : (rule as ConditionRule) })
+              }}
+            >
+              {CONDITIONS.map((c) => (
+                <option key={c.rule} value={c.rule}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
         )}
 
         {/* Removing is here rather than on the block itself: a delete button

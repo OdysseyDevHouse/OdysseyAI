@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit'
 import { formatMoney, formatQty } from '../decimals'
 import { BAND_KEYS, DOC_BLOCK_CATALOG, type DocBlock, type DocumentSpec } from './blocks'
 import { findToken, getDocType, type TokenFormat } from './catalog'
+import { conditionHolds } from './conditions'
 import type { RenderInput, TokenValues } from './render'
 
 /**
@@ -130,6 +131,20 @@ type Ctx = {
 function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
   const { doc, input, docKey } = ctx
   const v = input.values
+
+  /*
+   * ── A BLOCK THE DESIGN SAID TO HIDE ─────────────────────────────────────
+   *
+   * Answered here rather than carried in the output, because this renderer
+   * holds the block and the document's values at the same moment — the A4 path
+   * does not, which is why it ships a `{#when}` marker through the markup
+   * instead. Same rule, same file behind it, different mechanics.
+   *
+   * ZERO HEIGHT is the whole of "hidden": the body band stacks blocks by what
+   * the last one returned, so a hidden block that reported its real height
+   * would leave a gap the shape of the paragraph nobody can see.
+   */
+  if (!conditionHolds(b.showWhen, v)) return 0
   const align = b.align === 'center' ? 'center' : b.align === 'right' ? 'right' : 'left'
   const startY = box.y
 

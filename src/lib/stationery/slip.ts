@@ -1,3 +1,4 @@
+import { isConditionRule, type ConditionRule } from './conditions'
 /**
  * The till slip's design, as an ordered list of BLOCKS.
  *
@@ -70,6 +71,14 @@ export type SlipBlock = {
   size?: 1 | 2 | 3
   /** `text` only — the words. Everything else ignores it. */
   text?: string
+  /**
+   * Print this line only when the sale answers a named question — see
+   * lib/stationery/conditions, and SLIP_CONDITIONS for the short list a slip
+   * can actually answer.
+   *
+   * Absent means always, which is what every design saved before this means.
+   */
+  showWhen?: ConditionRule
 }
 
 export type SlipSpec = {
@@ -222,6 +231,8 @@ export function parseSlip(json: string): SlipSpec | null {
       const align = (b as { align?: unknown }).align
       const size = (b as { size?: unknown }).size
       const text = (b as { text?: unknown }).text
+      // Kept only when this build still has the rule — see parseSpec's note.
+      const when = (b as { showWhen?: unknown }).showWhen
 
       clean.push({
         kind: kind as SlipBlockKind,
@@ -229,6 +240,7 @@ export function parseSlip(json: string): SlipSpec | null {
         ...(size === 1 || size === 2 || size === 3 ? { size } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 300) } : {}),
         ...((b as { bold?: unknown }).bold === true ? { bold: true } : {}),
+        ...(isConditionRule(when) && when !== 'always' ? { showWhen: when } : {}),
       })
     }
     return { version: 1, blocks: clean }

@@ -1,5 +1,6 @@
 import { formatMoney, formatQty } from '../decimals'
 import { escapeHtml } from './render'
+import { slipConditionHolds } from './conditions'
 import type { ReceiptData } from '../receiptData'
 import type { SlipBlock, SlipSpec } from './slip'
 
@@ -66,6 +67,14 @@ const row = (label: string, value: string, bold = false) =>
 
 /** Whether a block shows anything — mirrors blockPrints() in slipSpec.ts. */
 function prints(b: SlipBlock, r: ReceiptData): boolean {
+  /*
+   * The same first question renderSlipSpec's blockPrints() asks, in the same
+   * position, for the same reason — the two prints must not disagree, and a
+   * condition answered in one renderer and not the other is precisely the kind
+   * of divergence this file exists to prevent.
+   */
+  if (!slipConditionHolds(b.showWhen, r)) return false
+
   const gift = r.gift
   switch (b.kind) {
     case 'siteName':

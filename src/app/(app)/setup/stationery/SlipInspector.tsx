@@ -1,6 +1,7 @@
 'use client'
 
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Icons, Input, Select } from '@/components/ui'
+import { SLIP_CONDITIONS, conditionDef, type ConditionRule } from '@/lib/stationery/conditions'
 import { SLIP_BLOCK_INFO, type SlipBlock } from '@/lib/stationery/slip'
 
 /**
@@ -150,6 +151,37 @@ export default function SlipInspector({
             </span>
           </div>
         </Field>
+
+        {/*
+          ── WHEN THIS LINE PRINTS ───────────────────────────────────────
+
+          A SHORTER list than a document gets, because a slip is handed over at
+          the moment of payment: nothing is owed, nothing is overdue, and a
+          walk-in has no account. Offering those four anyway would be four
+          settings that quietly never fire, which reads as broken rather than
+          as not applicable. See SLIP_CONDITIONS.
+        */}
+        {!info.required && (
+          <Field
+            label="Show this"
+            hint={conditionDef(block.showWhen)?.hint ?? 'On every slip.'}
+          >
+            <Select
+              className="w-56"
+              value={block.showWhen ?? 'always'}
+              onChange={(e) => {
+                const rule = e.target.value
+                onChange({ showWhen: rule === 'always' ? undefined : (rule as ConditionRule) })
+              }}
+            >
+              {SLIP_CONDITIONS.map((c) => (
+                <option key={c.rule} value={c.rule}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
 
         {/*
           Required blocks have no Remove button rather than a disabled one: the
