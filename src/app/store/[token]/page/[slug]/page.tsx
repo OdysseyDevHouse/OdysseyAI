@@ -12,6 +12,7 @@ import { verifyPreviewToken } from '@/lib/previewToken'
 import { safeSlug } from '@/lib/storefrontModel'
 import HomeSections, { type SectionContent } from '../../HomeSections'
 import PreviewBar from '../../PreviewBar'
+import { catalogueRobots } from '@/lib/site/storefrontSeo'
 
 /**
  * One of the shop's own pages — About, Delivery, Returns, a FAQ.
@@ -113,7 +114,16 @@ export async function generateMetadata({
         ? { images: [{ url: `/api/store-images/${token}/shop/${page.seoImageId}` }] }
         : {}),
     },
-    robots: { index: false, follow: false },
+    /*
+     * The shop's own choice, decided in one place — see storefrontSeo.
+     *
+     * This was hard-coded to `index: false` while every other route asked
+     * `catalogueRobots`. The effect was quiet and backwards: a shop that turned
+     * indexing ON got its products indexed and its About, Delivery and Returns
+     * pages silently excluded — the three pages a shopper searches for by name,
+     * and the ones a shop is judged on for having.
+     */
+    robots: catalogueRobots(context.settings),
   }
 }
 
