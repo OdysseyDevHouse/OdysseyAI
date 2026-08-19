@@ -130,6 +130,17 @@ export type OnlineSettings = {
    */
   currencyCode: string
   currencySymbol: string
+  /**
+   * The three things a merchant may change about checkout — see 192.
+   *
+   * Deliberately short. Checkout is where the money is, and there is no
+   * section builder here for the same reason its own header argues for one
+   * page rather than a wizard.
+   */
+  checkoutPolicyPages: number[]
+  checkoutTrustLine: string
+  checkoutNoteLabel: string
+  checkoutNoteRequired: boolean
   updatedAt: Date | null
   updatedBy: string
 }
@@ -201,6 +212,10 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       showDepartmentImages: false,
       currencyCode: 'ZAR',
       currencySymbol: 'R',
+      checkoutPolicyPages: [],
+      checkoutTrustLine: '',
+      checkoutNoteLabel: '',
+      checkoutNoteRequired: false,
       basketReminders: false,
       basketReminderHours: 4,
       basketReminderNote: '',
@@ -231,6 +246,17 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
     showDepartmentImages: !!row.show_department_images,
     currencyCode: String(row.currency_code ?? 'ZAR').slice(0, 3).toUpperCase(),
     currencySymbol: String(row.currency_symbol ?? 'R').slice(0, 4),
+    // Junk ids are DISCARDED rather than clamped: clamping would turn "abc"
+    // into page 1 — a link to a page nobody chose, on the page that takes
+    // payments.
+    checkoutPolicyPages: String(row.checkout_policy_pages ?? '')
+      .split(',')
+      .map((v) => Number(v.trim()))
+      .filter((v) => Number.isInteger(v) && v > 0)
+      .slice(0, 3),
+    checkoutTrustLine: String(row.checkout_trust_line ?? ''),
+    checkoutNoteLabel: String(row.checkout_note_label ?? ''),
+    checkoutNoteRequired: !!row.checkout_note_required,
     basketReminders: !!row.basket_reminders,
     // Defaulted rather than trusted: a store that has not run 072 yet returns
     // undefined here, and 0 hours would make every basket instantly "abandoned".
@@ -352,6 +378,8 @@ export async function saveOnlineSettings(
             show_stock = ?, show_photos = ?, show_brands = ?,
             show_department_images = ?,
             currency_code = ?, currency_symbol = ?,
+            checkout_policy_pages = ?, checkout_trust_line = ?,
+            checkout_note_label = ?, checkout_note_required = ?,
             basket_reminders = ?, basket_reminder_hours = ?, basket_reminder_note = ?,
             hold_minutes = ?,
             public_domain = ?,
@@ -377,6 +405,25 @@ export async function saveOnlineSettings(
       // Three letters, upper case — the shape schema.org and a gateway expect.
       String(input.currencyCode ?? 'ZAR').trim().toUpperCase().slice(0, 3) || 'ZAR',
       String(input.currencySymbol ?? 'R').trim().slice(0, 4) || 'R',
+      /*
+       * Shape only, not existence.
+       *
+       * Checking that each id IS a published page here would be a check that
+       * goes stale the moment somebody unpublishes one — and the page would
+       * still be stored, still be gone, and now nothing would notice. The
+       * checkout route resolves these against the live page list on every
+       * render and drops what it cannot find, which is the same rule the menu
+       * follows and the only one that stays true.
+       */
+      (input.checkoutPolicyPages ?? [])
+        .filter((v) => Number.isInteger(v) && v > 0)
+        .slice(0, 3)
+        .join(','),
+      String(input.checkoutTrustLine ?? '').slice(0, 200),
+      String(input.checkoutNoteLabel ?? '').slice(0, 60),
+      // Only meaningful with a label: a required field with no question is a
+      // form nobody can complete.
+      input.checkoutNoteRequired && String(input.checkoutNoteLabel ?? '').trim() ? 1 : 0,
       input.basketReminders ? 1 : 0,
       // Clamped rather than trusted: 0 would make every basket instantly
       // "abandoned" and chase someone who is still shopping, and an absurd

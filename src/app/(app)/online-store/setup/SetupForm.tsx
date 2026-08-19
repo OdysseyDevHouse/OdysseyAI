@@ -78,6 +78,10 @@ export default function SetupForm({
     showDepartmentImages: settings.showDepartmentImages,
     currencyCode: settings.currencyCode,
     currencySymbol: settings.currencySymbol,
+    checkoutPolicyPages: settings.checkoutPolicyPages,
+    checkoutTrustLine: settings.checkoutTrustLine,
+    checkoutNoteLabel: settings.checkoutNoteLabel,
+    checkoutNoteRequired: settings.checkoutNoteRequired,
     basketReminders: settings.basketReminders,
     basketReminderHours: settings.basketReminderHours,
     basketReminderNote: settings.basketReminderNote,
@@ -449,6 +453,49 @@ export default function SetupForm({
                 onChange={(e) => patch({ currencyCode: e.target.value.toUpperCase() })}
               />
             </Field>
+          </div>
+        </SettingRow>
+
+        {/*
+          The three things a merchant may change about checkout — and no
+          more. There is no section builder here for the same reason
+          Checkout.tsx argues for one page rather than a wizard: an extra row
+          between somebody and the Pay button costs a sale.
+        */}
+        <SettingRow
+          icon={<Icons.ShieldCheck size={18} />}
+          label="What checkout says"
+          description="One line of reassurance above the button, and what your free-text box asks for. The rest of checkout is fixed."
+        >
+          <div className="flex w-full flex-col gap-2">
+            <Field label="A line of reassurance" hint="Optional. Shown above the button.">
+              <Input
+                value={form.checkoutTrustLine}
+                maxLength={200}
+                placeholder="Every order is checked by hand before it leaves."
+                onChange={(e) => patch({ checkoutTrustLine: e.target.value })}
+              />
+            </Field>
+            <Field
+              label="What to ask for in the notes box"
+              hint={'Leave blank for "Anything else?".'}
+            >
+              <Input
+                value={form.checkoutNoteLabel}
+                maxLength={60}
+                placeholder="e.g. Gift message, Vehicle registration"
+                onChange={(e) => patch({ checkoutNoteLabel: e.target.value })}
+              />
+            </Field>
+            {/* Only offered once there is a question to require an answer to:
+                a required field with no label is a form nobody can complete. */}
+            {form.checkoutNoteLabel.trim() !== '' && (
+              <Checkbox
+                label="They must fill it in"
+                checked={form.checkoutNoteRequired}
+                onChange={(e) => patch({ checkoutNoteRequired: e.target.checked })}
+              />
+            )}
           </div>
         </SettingRow>
 

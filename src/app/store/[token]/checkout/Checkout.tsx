@@ -54,6 +54,10 @@ export default function Checkout({
   leadTimeMinutes,
   payOnline,
   allowAccount,
+  trustLine,
+  noteLabel,
+  noteRequired,
+  policyLinks,
   storeName,
   branchName,
   collectionSlots = [],
@@ -69,6 +73,13 @@ export default function Checkout({
   payOnline: boolean
   /** Whether this shop offers account orders at all. */
   allowAccount: boolean
+  /** One sentence above the button, or empty. See 192 on why only one. */
+  trustLine: string
+  /** What the free-text box asks for. Empty keeps the existing wording. */
+  noteLabel: string
+  noteRequired: boolean
+  /** Up to three of the shop’s own pages, already resolved and published. */
+  policyLinks: { title: string; slug: string }[]
   storeName: string
   /**
    * The shop that will pack this order. Equal to storeName for a single store.
@@ -564,7 +575,14 @@ export default function Checkout({
               </div>
             )}
 
-            <Field label="Anything else? (optional)">
+            <Field
+              label={
+                noteLabel.trim() || 'Anything else? (optional)'
+              }
+              // Marked required only when a merchant asked a question worth
+              // requiring an answer to — see the settings write path.
+              hint={noteRequired ? 'Required.' : undefined}
+            >
               <Textarea
                 rows={2}
                 maxLength={500}
@@ -983,6 +1001,33 @@ export default function Checkout({
                 className="mt-3 rounded-control bg-danger-soft px-3 py-2 text-sm text-danger"
               >
                 {error}
+              </p>
+            )}
+
+            {/*
+              Above the button, and only these two things.
+
+              "What happens if it does not fit" is the question asked at the
+              moment of paying, and a shop that answers it on a page nobody
+              can reach from here has answered nobody. The trust line is one
+              sentence for the same reason: a paragraph competing with the
+              button beside it is a paragraph that costs a sale.
+            */}
+            {trustLine.trim() && (
+              <p className="mt-3 text-center text-sm text-muted">{trustLine}</p>
+            )}
+
+            {policyLinks.length > 0 && (
+              <p className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs">
+                {policyLinks.map((link) => (
+                  <Link
+                    key={link.slug}
+                    href={`/store/${token}/page/${link.slug}`}
+                    className="text-muted underline-offset-2 hover:text-brand hover:underline"
+                  >
+                    {link.title}
+                  </Link>
+                ))}
               </p>
             )}
 

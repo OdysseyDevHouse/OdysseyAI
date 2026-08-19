@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation'
+import { listPages } from '@/lib/site/storefrontPages'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { storefrontContext } from '@/lib/site/storefront'
 import { resolveStoreRouting, rememberedBranch } from '@/lib/storeRouting'
@@ -83,6 +84,19 @@ export default async function CheckoutPage({
     }
   }
 
+  /*
+   * The policy pages, as links.
+   *
+   * Only PUBLISHED ones survive: a link to an unpublished page on the step
+   * that takes payments is worse than no link, because a shopper who
+   * follows it to find the returns policy lands on nothing and stops.
+   */
+  const pages = await listPages(context.catalogueSiteId)
+  const policyLinks = settings.checkoutPolicyPages
+    .map((id) => pages.find((p) => p.id === id))
+    .filter((p) => !!p && p.isPublished && !!p.slug)
+    .map((p) => ({ title: p!.title, slug: p!.slug }))
+
   return (
     <>
       {/* Reaching checkout is a funnel stage in its own right: the gap between
@@ -98,6 +112,13 @@ export default async function CheckoutPage({
         leadTimeMinutes={settings.leadTimeMinutes}
         payOnline={settings.paymentMode === 'online'}
         allowAccount={settings.allowAccount}
+        /* The three things a merchant may change here — see 192. The policy
+           links are resolved to slugs by the page, because a page is stored
+           by id and linked by slug so a rename cannot break it. */
+        trustLine={settings.checkoutTrustLine}
+        noteLabel={settings.checkoutNoteLabel}
+        noteRequired={settings.checkoutNoteRequired}
+        policyLinks={policyLinks}
         storeName={context.storeName}
         /* The shop that will actually pack this. Equal to storeName for a single
            store, and the branch's own name for a chain — every sentence about
