@@ -1,7 +1,7 @@
 'use client'
 
 import { Badge, Button, Icons } from '@/components/ui'
-import { formatMoney } from '@/lib/decimals'
+import { useMoney } from './CurrencyContext'
 import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefront'
 import { useCart } from './CartContext'
 import { useWishlist } from './WishlistContext'
@@ -427,6 +427,9 @@ export function Price({
   size?: 'md' | 'lg'
 }) {
   const onSpecial = savingPercent(product) !== null
+  // The shop's own money — see CurrencyContext on why this is a hook rather
+  // than a prop threaded through every component that draws a price.
+  const money = useMoney()
   return (
     <span className="flex flex-wrap items-baseline gap-1.5">
       <span
@@ -437,11 +440,11 @@ export function Price({
           onSpecial ? 'text-danger' : 'text-brand'
         }`}
       >
-        {formatMoney(product.priceIncl)}
+        {money(product.priceIncl)}
       </span>
       {onSpecial && (
         <span className="numeric text-xs text-muted line-through">
-          {formatMoney(product.wasPriceIncl!)}
+          {money(product.wasPriceIncl!)}
         </span>
       )}
     </span>

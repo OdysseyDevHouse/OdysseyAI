@@ -76,6 +76,8 @@ export default function SetupForm({
     showPhotos: settings.showPhotos,
     showBrands: settings.showBrands,
     showDepartmentImages: settings.showDepartmentImages,
+    currencyCode: settings.currencyCode,
+    currencySymbol: settings.currencySymbol,
     basketReminders: settings.basketReminders,
     basketReminderHours: settings.basketReminderHours,
     basketReminderNote: settings.basketReminderNote,
@@ -410,6 +412,44 @@ export default function SetupForm({
             onChange={(next) => patch({ showPhotos: next })}
             label="Show product photographs"
           />
+        </SettingRow>
+
+        {/*
+          The SHOP’s money, and only the shop’s.
+
+          Said plainly in the description, because it is the sort of setting
+          somebody reasonably assumes is app-wide: an invoice, a statement and
+          a till slip all still print R. Threading a currency through those is
+          a different piece of work — see 190.
+        */}
+        <SettingRow
+          icon={<Icons.Coins size={18} />}
+          label="Money"
+          description="What your online shoppers see beside a price, and what a search engine is told the number means. Your invoices, statements and till slips are not affected."
+        >
+          <div className="flex gap-2">
+            <Field label="Symbol">
+              <Input
+                value={form.currencySymbol}
+                maxLength={4}
+                placeholder="R"
+                className="w-20"
+                onChange={(e) => patch({ currencySymbol: e.target.value })}
+              />
+            </Field>
+            {/* Three letters, because that is what schema.org and every
+                payment gateway expect. "$" is eight different currencies, so
+                the code cannot be derived from the symbol. */}
+            <Field label="Code" hint="Three letters, e.g. ZAR.">
+              <Input
+                value={form.currencyCode}
+                maxLength={3}
+                placeholder="ZAR"
+                className="w-24"
+                onChange={(e) => patch({ currencyCode: e.target.value.toUpperCase() })}
+              />
+            </Field>
+          </div>
         </SettingRow>
 
         {/* Beside the product-photograph switch, because they are the same

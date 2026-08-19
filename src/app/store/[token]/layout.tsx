@@ -13,6 +13,7 @@ import ShopSession from './ShopSession'
 import { CartProvider } from './CartContext'
 import { WishlistProvider } from './WishlistContext'
 import StoreChrome from './StoreChrome'
+import { CurrencyProvider } from './CurrencyContext'
 
 /**
  * The public storefront.
@@ -136,6 +137,17 @@ export default async function StoreLayout({
       {/* Inside the cart provider so a tile can reach both — the same tile
           carries an Add button and a heart. */}
       <WishlistProvider token={token}>
+        {/*
+          What money this shop takes, for the fifty-odd places that draw a
+          price. A context rather than a prop — see CurrencyContext on why
+          threading it would be fifty-three chances to miss one, silently.
+        */}
+        <CurrencyProvider
+          currency={{
+            symbol: context.settings.currencySymbol,
+            code: context.settings.currencyCode,
+          }}
+        >
         <StoreChrome
         token={token}
         storeName={context.storeName}
@@ -190,6 +202,7 @@ export default async function StoreLayout({
       >
         {children}
         </StoreChrome>
+        </CurrencyProvider>
       </WishlistProvider>
     </CartProvider>
   )

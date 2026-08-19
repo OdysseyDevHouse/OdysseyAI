@@ -121,6 +121,15 @@ export type OnlineSettings = {
    * it on once the pictures are in, which is also when they can see the result.
    */
   showDepartmentImages: boolean
+  /**
+   * What money the SHOP takes — see 190.
+   *
+   * Read by the storefront and by nothing else. The back office, the till and
+   * every printed document keep the Rand default, because threading a currency
+   * through their thousand call sites is a different piece of work.
+   */
+  currencyCode: string
+  currencySymbol: string
   updatedAt: Date | null
   updatedBy: string
 }
@@ -190,6 +199,8 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
       showPhotos: true,
       showBrands: true,
       showDepartmentImages: false,
+      currencyCode: 'ZAR',
+      currencySymbol: 'R',
       basketReminders: false,
       basketReminderHours: 4,
       basketReminderNote: '',
@@ -218,6 +229,8 @@ export async function getOnlineSettings(siteId: number): Promise<OnlineSettings>
     showPhotos: !!row.show_photos,
     showBrands: !!row.show_brands,
     showDepartmentImages: !!row.show_department_images,
+    currencyCode: String(row.currency_code ?? 'ZAR').slice(0, 3).toUpperCase(),
+    currencySymbol: String(row.currency_symbol ?? 'R').slice(0, 4),
     basketReminders: !!row.basket_reminders,
     // Defaulted rather than trusted: a store that has not run 072 yet returns
     // undefined here, and 0 hours would make every basket instantly "abandoned".
@@ -338,6 +351,7 @@ export async function saveOnlineSettings(
             blurb = ?, paid_status_id = ?, reviews_enabled = ?,
             show_stock = ?, show_photos = ?, show_brands = ?,
             show_department_images = ?,
+            currency_code = ?, currency_symbol = ?,
             basket_reminders = ?, basket_reminder_hours = ?, basket_reminder_note = ?,
             hold_minutes = ?,
             public_domain = ?,
@@ -360,6 +374,9 @@ export async function saveOnlineSettings(
       input.showPhotos ? 1 : 0,
       input.showBrands ? 1 : 0,
       input.showDepartmentImages ? 1 : 0,
+      // Three letters, upper case — the shape schema.org and a gateway expect.
+      String(input.currencyCode ?? 'ZAR').trim().toUpperCase().slice(0, 3) || 'ZAR',
+      String(input.currencySymbol ?? 'R').trim().slice(0, 4) || 'R',
       input.basketReminders ? 1 : 0,
       // Clamped rather than trusted: 0 would make every basket instantly
       // "abandoned" and chase someone who is still shopping, and an absurd

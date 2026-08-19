@@ -87,7 +87,13 @@ export function productJsonLd(
   const offer: Record<string, unknown> = {
     '@type': 'Offer',
     price: product.priceIncl.toFixed(2),
-    priceCurrency: 'ZAR',
+    /*
+     * The shop's own, not a constant. This is the field a search engine and a
+     * shopping feed read to decide what the number means, so a shop selling in
+     * dollars with 'ZAR' here is not merely mislabelled — it is quoted at
+     * roughly a twentieth of its price in every result that shows it.
+     */
+    priceCurrency: settings.currencyCode || 'ZAR',
     availability: product.inStock
       ? 'https://schema.org/InStock'
       : 'https://schema.org/OutOfStock',
