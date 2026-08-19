@@ -336,11 +336,24 @@ Verified in a browser: two columns with a child each, full-bleed at exactly the
 viewport width with no horizontal overflow, and the builder's canvas drawing the
 same thing through the same renderer.
 
-**What is NOT done: dragging into a column.** A columns section can be added,
-styled, filled and rendered, but its children are arranged in the inspector
-rather than by dragging them between columns. Nested `SortableContext` inside
-the page-level `DndContext` is the remaining work, and it is the part that
-touches a drag layer which currently works well — worth doing on its own.
+**Filling a column: added afterwards, and the gap was worse than this said.**
+
+This paragraph originally read "its children are arranged in the inspector
+rather than by dragging them between columns". They were not arranged anywhere.
+`columns` sat in the catalog's `extras` — stored, with nothing drawing an editor
+for it — so the block shipped renderable and unfillable. Describing the gap as
+smaller than it was is how it stayed open.
+
+`ColumnEditor` closes it: add, reorder and remove per column, arrows rather than
+drag. Every change hands back the whole `columns` array and the Builder patches
+the section with it, which is what makes undo, autosave and the publish diff
+work on a child without any of them being told columns exist.
+
+**Still not done: dragging INTO a column.** Nested `SortableContext` inside the
+page-level `DndContext`, so a palette tile could be dropped straight into a
+column on the canvas. It touches the one part of the builder with no problems,
+and it would still need the panel above as the keyboard-reachable path — so it
+is now a refinement on a working feature rather than the only way to use it.
 
 ---
 
@@ -540,10 +553,11 @@ was reachable before.
 
 **What is still not done, and should be said plainly:**
 
-- **Dragging into a column.** A columns section can be added, styled, filled and
-  rendered, but its children are arranged in the inspector rather than dragged
-  between columns. Nested `SortableContext` inside the page-level `DndContext`
-  is the remaining work.
+- **Dragging into a column.** A columns section can be added, styled, filled from
+  the inspector and rendered — but a block cannot be dropped straight into a
+  column on the canvas. Nested `SortableContext` inside the page-level
+  `DndContext` is the remaining work, and it is a refinement rather than a gap:
+  the panel is the keyboard-reachable path either way.
 - **Currency outside the storefront.** Invoices, statements, printed documents
   and the till all still print R. See Phase 5 on why.
 - **The generic inspector.** Three section kinds are drawn from the catalog;
