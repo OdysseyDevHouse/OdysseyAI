@@ -220,6 +220,7 @@
     "test:stationery": "tsx scripts/test-stationery.ts",
     "test:stationery-blocks": "tsx scripts/test-stationery-blocks.ts",
     "test:stationery-store": "tsx --conditions=react-server --env-file=.env scripts/test-stationery-store.ts",
+    "test:delivery-note": "tsx scripts/test-delivery-note.ts",
     "test:stationery-pdf": "tsx --conditions=react-server scripts/test-stationery-pdf.ts",
     "test:invoice-blocks": "tsx scripts/test-invoice-blocks.ts",
     "test:imports": "tsx --conditions=react-server --env-file=.env scripts/test-imports.ts",

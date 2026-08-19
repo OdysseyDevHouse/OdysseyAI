@@ -371,6 +371,89 @@ const INVOICE: DocTypeDef = {
 }
 
 /*
+ * The delivery note.
+ *
+ * ── WHAT IT IS FOR, AND WHO READS IT ──────────────────────────────────────
+ *
+ * The copy that travels with the goods. A driver hands it over, someone at the
+ * receiving end counts what is in the boxes against what is on the paper, and
+ * signs. That is the whole job.
+ *
+ * ── IT CARRIES NO PRICES, AND CANNOT BE MADE TO ───────────────────────────
+ *
+ * There is not one money token in this list — no unit price, no line total, no
+ * totals block, no banking. That is the security boundary doing its work rather
+ * than a default someone can change: the catalog is what a design may name, so a
+ * shop CANNOT put prices on a delivery note however they redesign it, and a
+ * template that names {line.unitPriceIncl} resolves it to nothing.
+ *
+ * The reason is ordinary trade. Goods are routinely delivered to a receiving
+ * bay, a site foreman or a tenant who has no business seeing what the customer
+ * is paying — and to a customer's own staff, where the margin on the order is
+ * nobody's business but the buyer's. A price on the driver's copy is a
+ * commercial leak with no upside, and one that only shows up after it has
+ * happened.
+ *
+ * ── QUANTITIES ARE THREE NUMBERS, NOT ONE ─────────────────────────────────
+ *
+ * Ordered, delivered before, and going now. sales_document_lines carries
+ * qty_delivered per line and sales_order_details a fulfilment_status, so a part
+ * delivery is a fact the system already knows — and the person signing needs to
+ * see all three or they cannot tell a short delivery from a second one.
+ */
+const DELIVERY_NOTE: DocTypeDef = {
+  key: 'delivery_note',
+  label: 'Delivery note',
+  medium: 'a4',
+  tokens: [
+    ...SITE_TOKENS,
+    ...DOC_TOKENS,
+    { key: 'doc.heading', label: 'Document heading', format: 'text', hint: 'Prints DELIVERY NOTE.' },
+    { key: 'doc.orderNumber', label: 'Order number', format: 'text', hint: 'The sales order these goods are against.' },
+    { key: 'doc.deliveryDate', label: 'Delivery date', format: 'date' },
+    { key: 'doc.customerReference', label: 'Their order number', format: 'text' },
+    { key: 'doc.soldBy', label: 'Taken by', format: 'text' },
+    {
+      key: 'doc.fulfilment',
+      label: 'Delivery status',
+      format: 'text',
+      hint: 'Prints PART DELIVERY when some of the order is still to come, and nothing when it is complete.',
+    },
+    { key: 'doc.closing', label: 'Closing line', format: 'text', hint: 'What the reader should do — check the goods before signing.' },
+    { key: 'customer.name', label: 'Customer name', format: 'text' },
+    { key: 'customer.code', label: 'Customer account code', format: 'text' },
+    { key: 'customer.address', label: 'Customer address', format: 'multiline' },
+    { key: 'customer.phone', label: 'Customer phone', format: 'text' },
+    /*
+     * Where the goods are GOING, which is not always where the invoice is sent —
+     * a head office pays and a site takes delivery.
+     */
+    { key: 'deliverTo', label: 'Deliver to', format: 'multiline' },
+    { key: 'doc.deliveryNotes', label: 'Delivery instructions', format: 'multiline', hint: 'Gate code, contact on site, where to unload.' },
+  ],
+  sections: [
+    {
+      key: 'lines',
+      label: 'Delivery lines',
+      tokens: [
+        { key: 'line.number', label: 'Line number', format: 'text' },
+        { key: 'line.description', label: 'Description', format: 'text' },
+        { key: 'line.productCode', label: 'Product code', format: 'text' },
+        { key: 'line.qtyOrdered', label: 'Quantity ordered', format: 'qty' },
+        { key: 'line.qtyDeliveredBefore', label: 'Delivered before now', format: 'qty' },
+        { key: 'line.qty', label: 'Quantity delivered now', format: 'qty' },
+        { key: 'line.qtyOutstanding', label: 'Still to come', format: 'qty' },
+        /*
+         * NO PRICE TOKENS. See the note above — this is the boundary, not a
+         * preference, and adding one here would let every shop's delivery note
+         * carry what the customer is paying.
+         */
+      ],
+    },
+  ],
+}
+
+/*
  * The till slip.
  *
  * Present so the designer's document picker and the storage layer know it
@@ -391,7 +474,12 @@ const TILL_SLIP: DocTypeDef = {
   sections: [],
 }
 
-export const DOC_TYPES: readonly DocTypeDef[] = [PURCHASE_ORDER, INVOICE, TILL_SLIP]
+export const DOC_TYPES: readonly DocTypeDef[] = [
+  PURCHASE_ORDER,
+  INVOICE,
+  DELIVERY_NOTE,
+  TILL_SLIP,
+]
 
 /* ── lookups ─────────────────────────────────────────────────────────────── */
 

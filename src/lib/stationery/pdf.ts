@@ -310,6 +310,21 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
       return doc.y - startY
     }
 
+    case 'signature': {
+      /*
+       * A rule to sign on, with its label under it — where a signature line puts
+       * it, because the space above the line is what gets written in.
+       */
+      const label = b.title ?? 'Received by'
+      rule(doc, box.y + 26, box.x, box.w)
+      doc
+        .font('Helvetica')
+        .fontSize(7.5)
+        .fillColor(MUTED)
+        .text(label, box.x, box.y + 30, { width: box.w, align })
+      return 42
+    }
+
     case 'rule':
       rule(doc, box.y, box.x, box.w)
       return 4

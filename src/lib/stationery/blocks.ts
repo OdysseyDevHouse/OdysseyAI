@@ -55,6 +55,7 @@ export const DOC_BLOCK_KINDS = [
   'banking',
   'notes',
   'text',
+  'signature',
   'rule',
   'spacer',
   'html',
@@ -140,10 +141,19 @@ export type DocBlockDef = {
    */
   docTypes: readonly string[] | 'all'
   /**
-   * Cannot be removed. The line table IS the document; a purchase order with no
-   * items is a letterhead. Enforced by the validator, not just hidden.
+   * Which documents cannot do without it. `true` means every document that may
+   * use the block at all.
+   *
+   * ── WHY IT IS A LIST AND NOT A FLAG ─────────────────────────────────────
+   *
+   * It was a flag, and the flag said a totals block is required — which is true
+   * of an invoice and of a purchase order and NOT of a delivery note, whose
+   * whole point is that it carries no money. The first delivery note refused to
+   * validate for want of a totals box it must never have.
+   *
+   * "Required" is a fact about a DOCUMENT, not about a block.
    */
-  required?: boolean
+  required?: true | readonly string[]
   /** May appear more than once. A paragraph may; a totals box may not. */
   repeatable?: boolean
   /** Whether the inspector offers a token list for this block. */
@@ -192,6 +202,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     label: 'Document title',
     hint: 'What the paper is called, its number and date.',
     docTypes: 'all',
+    // A document that does not say what it is cannot be filed by whoever gets it.
     required: true,
     picksTokens: true,
     defaultW: 40,
@@ -219,6 +230,8 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     label: 'The items',
     hint: 'What was ordered or sold. Choose the columns, their wording and their order.',
     docTypes: 'all',
+    // Every document that has one at all: a purchase order with no items is a
+    // letterhead, and a delivery note with none is an empty van.
     required: true,
     // The body band, always. See the note on `band`.
     band: 'body',
@@ -229,7 +242,13 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     label: 'Totals',
     hint: 'Subtotal, VAT and the amount due.',
     docTypes: 'all',
-    required: true,
+    /*
+     * NOT on a delivery note, which carries no money at all — see catalog.ts for
+     * why that is a boundary rather than a preference. Naming the documents is
+     * what lets one block be indispensable on an invoice and forbidden on the
+     * paper that travels with the goods.
+     */
+    required: ['purchase_order', 'invoice'],
     picksTokens: true,
     defaultW: 40,
   },
@@ -261,6 +280,30 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     docTypes: 'all',
     repeatable: true,
     defaultW: 100,
+  },
+  /*
+   * ── WHY THIS IS A BLOCK AND NOT TWO TOKENS ──────────────────────────────
+   *
+   * It was tokens first: sign.receivedBy and sign.date, always empty, so a
+   * detail list would draw a label with a blank beside it. They vanished. The
+   * renderer treats a whitespace-only value as absent — deliberately, so a field
+   * a shop never filled in reads as "not applicable" rather than as a caption
+   * over nothing — and the hide rule then removed the row.
+   *
+   * Feeding it a non-breaking space to sneak past that check was the wrong
+   * instinct: it fights a rule that is right, with a character nobody reading
+   * the file would understand.
+   *
+   * A blank line to sign on is not a VALUE that happens to be empty. It is a
+   * rule drawn on the page, which is a thing a block does and no token can say.
+   */
+  signature: {
+    kind: 'signature',
+    label: 'A line to sign on',
+    hint: 'A labelled rule — "Received by", "Date". Filled in by hand, so it prints empty on purpose.',
+    docTypes: 'all',
+    repeatable: true,
+    defaultW: 45,
   },
   rule: {
     kind: 'rule',
@@ -296,9 +339,15 @@ export function blockKindsFor(docType: string): DocBlockKind[] {
   })
 }
 
-export const REQUIRED_BLOCK_KINDS: DocBlockKind[] = DOC_BLOCK_KINDS.filter(
-  (k) => DOC_BLOCK_CATALOG[k].required,
-)
+/** The blocks a given document cannot do without. */
+export function requiredBlockKinds(docType: string): DocBlockKind[] {
+  return DOC_BLOCK_KINDS.filter((k) => {
+    const req = DOC_BLOCK_CATALOG[k].required
+    if (!req) return false
+    if (req === true) return true
+    return req.includes(docType)
+  })
+}
 
 /** A page is finite and so is patience. */
 export const MAX_BLOCKS = 40
@@ -441,7 +490,7 @@ export function validateSpec(
     }
   }
 
-  for (const k of REQUIRED_BLOCK_KINDS) {
+  for (const k of requiredBlockKinds(docType)) {
     if (allowed.has(k) && !seen.has(k)) {
       errors.push(`A document must have "${DOC_BLOCK_CATALOG[k].label}".`)
     }

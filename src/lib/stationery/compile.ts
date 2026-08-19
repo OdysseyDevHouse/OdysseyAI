@@ -346,6 +346,20 @@ function compileBlock(b: DocBlock, docKey: string): string {
       return /^\{[a-zA-Z0-9._]+\}$/.test(b.text.trim())
         ? `<p class="sd-value text-xs text-muted">${esc(b.text)}</p>`
         : `<p class="text-xs text-muted">${esc(b.text)}</p>`
+    case 'signature': {
+      /*
+       * A rule to sign on, with its label UNDER it — where a signature line puts
+       * it, because the space above the line is the part being written in.
+       *
+       * The rule is drawn rather than typed. A row of underscores never lines up
+       * across two columns and breaks differently at every font size.
+       */
+      const label = b.title ?? 'Received by'
+      return (
+        `<div class="pt-8"><hr class="border-ink-2"></div>` +
+        `<p class="mt-1 ${MUTED_XS}">${esc(label)}</p>`
+      )
+    }
     case 'rule':
       return `<hr class="border-border">`
     case 'spacer':
@@ -445,6 +459,24 @@ function positioned(b: DocBlock, docKey: string): string {
  * which is why the caller sorts — a designer who drags one body block above
  * another means it to print first.
  */
+/**
+ * The one block per band that is laid out in FLOW rather than absolutely.
+ *
+ * It is the lowest, and it is what gives the section its height — see the note
+ * where it is chosen. Everything about it is placed the same way as its
+ * absolute siblings except the vertical, which comes from a margin so the
+ * element still occupies space in the flow.
+ */
+function flowedAt(b: DocBlock, docKey: string): string {
+  const html = blockMarkup(b, docKey)
+  if (!html) return ''
+  const style =
+    `margin-left:${b.x.toFixed(2)}%;` +
+    `margin-top:${(b.y * BAND_REM).toFixed(2)}rem;` +
+    `width:${b.w.toFixed(2)}%`
+  return `<div style="${style}">${html}</div>`
+}
+
 function flowed(b: DocBlock, docKey: string): string {
   const html = blockMarkup(b, docKey)
   if (!html) return ''
@@ -498,13 +530,39 @@ export function compileDocument(spec: DocumentSpec, docKey: string): string {
      * A block's real height is its content's, so a letterhead that grew by a
      * line must be able to make the band taller instead of spilling out of it.
      * The floor is the lowest block's `y` plus room for that block itself —
-     * without the allowance a block at the bottom of the band would have its
-     * own content hanging over whatever comes next.
+     * without it a block at the bottom of the band would have its own content
+     * hanging over whatever comes next.
+     *
+     * ── THE ALLOWANCE CANNOT BE A CONSTANT ──────────────────────────────
+     *
+     * It was a fixed twelve units — a guess at how tall the lowest block might
+     * be — and a five-row detail list is twenty-nine units tall. So on the
+     * delivery note the items table began inside the address block and ran
+     * straight through it. Only a browser knows a rendered height, and the
+     * compiler has none.
+     *
+     * So the LOWEST block in each band is laid out in normal FLOW rather than
+     * absolutely, pushed down by a margin to where its coordinates put it. It
+     * then takes exactly its own height, whatever that turns out to be, and the
+     * section grows to hold it — no allowance, no guess, and nothing for a long
+     * address to overflow.
+     *
+     * One copy, not two. An invisible strut alongside the absolute copy would
+     * also have worked and was tried: it duplicates the block's text, so the
+     * words appear twice to a screen reader and twice in any extraction of the
+     * page — which the parity tests caught immediately.
+     *
+     * The block keeps its own x and width, so side-by-side layout is unaffected;
+     * only its vertical placement changes mechanism, and only for the one block
+     * that decides how tall the band must be.
      */
-    const floor = (bandHeight(blocks) + 12) * BAND_REM
-    sections.push(
-      `<section class="relative py-4" style="min-height:${floor.toFixed(2)}rem">${inner}</section>`,
-    )
+    const lowest = blocks.reduce((low, b) => (b.y >= low.y ? b : low), blocks[0])
+    const rest = blocks.filter((b) => b !== lowest)
+
+    const positioned_ = rest.map((b) => positioned(b, docKey)).filter(Boolean).join('')
+    const tail = flowedAt(lowest, docKey)
+
+    sections.push(`<section class="relative py-4">${positioned_}${tail}</section>`)
   }
 
   return `<style>${BLOCK_STYLE}</style><article class="${PAGE}">${sections.join('')}</article>`

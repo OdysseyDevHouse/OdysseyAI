@@ -87,6 +87,24 @@ const REQUIRED: Record<string, { tokens: string[]; literals: string[] }> = {
     ],
     literals: [],
   },
+  /*
+   * A delivery note answers to no statute — it is a receipt for goods, not for
+   * money — so what it must carry is what makes it USABLE by the person
+   * signing it.
+   *
+   * Who sent the goods, who they are for, where they went, and what is in the
+   * boxes. A delivery note without the delivery address is a piece of paper the
+   * driver cannot act on; one without the customer's name cannot be filed by
+   * whoever receives it.
+   *
+   * There is no required TOTAL, because there is no total: a delivery note
+   * carries quantities and no prices at all. See the catalog for why that is a
+   * boundary rather than a default.
+   */
+  delivery_note: {
+    tokens: ['doc.heading', 'doc.date', 'site.name', 'customer.name', 'deliverTo'],
+    literals: [],
+  },
 }
 
 /** Every `{token}` in the template, with where it sits. */

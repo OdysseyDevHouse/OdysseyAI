@@ -1,8 +1,10 @@
 import { PURCHASE_ORDER_BLOCKS } from './defaults/purchaseOrderBlocks'
 import { INVOICE_BLOCKS } from './defaults/invoiceBlocks'
+import { DELIVERY_NOTE_BLOCKS } from './defaults/deliveryNoteBlocks'
 import type { DocumentSpec } from './blocks'
 import { PURCHASE_ORDER_DEFAULT } from './defaults/purchaseOrder'
 import { INVOICE_DEFAULT } from './defaults/invoice'
+import { DELIVERY_NOTE_DEFAULT } from './defaults/deliveryNote'
 import { SLIP_DEFAULT, serialiseSlip } from './slip'
 import { validateTemplate } from './validate'
 import { parseSpec } from './blocks'
@@ -47,11 +49,13 @@ import { compileDocument } from './compile'
 export const DEFAULT_SPECS: Record<string, DocumentSpec> = {
   purchase_order: PURCHASE_ORDER_BLOCKS,
   invoice: INVOICE_BLOCKS,
+  delivery_note: DELIVERY_NOTE_BLOCKS,
 }
 
 export const DEFAULT_TEMPLATES: Record<string, string> = {
   purchase_order: PURCHASE_ORDER_DEFAULT,
   invoice: INVOICE_DEFAULT,
+  delivery_note: DELIVERY_NOTE_DEFAULT,
   /* The slip's default is a block spec, not markup — serialised so this map
      stays one shape and the designer can hand it straight to the editor. */
   slip: serialiseSlip(SLIP_DEFAULT),
