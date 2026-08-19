@@ -231,3 +231,44 @@ export function slipPreviewHtml(spec: SlipSpec, receipt: ReceiptData): string {
     `</article>`
   )
 }
+
+/**
+ * Each block's own markup, keyed by its INDEX in the design.
+ *
+ * ── FOR THE DESIGNER, WHICH DRAWS EVERY BLOCK IN A BOX ────────────────────
+ *
+ * The A4 canvas has compileBlocks for exactly this reason and the argument is
+ * the same here: a designer that draws its own idea of a block is a designer
+ * that can lie about the roll. These fragments come from the SAME `block`
+ * function slipPreviewHtml uses, so what a shop clicks on is what prints.
+ *
+ * ── AN EMPTY STRING MEANS "PRINTS NOTHING TODAY" ──────────────────────────
+ *
+ * A VAT number block on a non-vendor, a customer block on a cash sale, a gift
+ * note on an ordinary slip. The canvas still has to SHOW those — they are part
+ * of the design and a shop must be able to select and reorder them — but it has
+ * to show them as what they are, rather than pretending they carry text.
+ *
+ * Keyed by index rather than by id because a slip block has no id: the design is
+ * an ordered list, and position IS identity. Two rules in a design are the same
+ * block in different places, which is the correct reading of a list.
+ */
+export function slipBlockHtml(spec: SlipSpec, receipt: ReceiptData): string[] {
+  return spec.blocks.map((b) => {
+    /*
+     * A RULE AND A BLANK LINE ALWAYS DRAW.
+     *
+     * The prints() helper answers "does this block have anything to SAY", and a
+     * separator says nothing — so it returns false for both, which is right for
+     * the whole-slip renderer, where they are handled separately and collapsed
+     * when they would strand at an edge.
+     *
+     * On the canvas the question is different: this block IS a line across the
+     * paper, and a designer clicking one must see the line rather than a note
+     * saying it has nothing to show. Asking prints() here reported both as
+     * blank, which is how it read on screen.
+     */
+    if (b.kind === 'rule' || b.kind === 'feed') return block(b, receipt)
+    return prints(b, receipt) ? block(b, receipt) : ''
+  })
+}

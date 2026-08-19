@@ -27,7 +27,7 @@ import {
   clearLogoAction,
   toMarkupAction,
 } from './actions'
-import SlipBlockEditor from './SlipBlockEditor'
+import SlipDesigner from './SlipDesigner'
 import { parseSlip, serialiseSlip } from '@/lib/stationery/slip'
 import { parseSpec, serialiseSpec } from '@/lib/stationery/blocks'
 import VisualDesigner from './visual/VisualDesigner'
@@ -192,9 +192,13 @@ export default function StationeryClient({
   )
 
   useEffect(() => {
-    // A block design previews itself, on its own canvas, block by block. Asking
-    // the markup renderer for it as well would render its JSON as a page.
-    if (format === 'blocks' || !body.trim()) {
+    /*
+     * A BLOCK design and a SLIP design each preview themselves, block by block,
+     * on their own canvas. Asking the markup renderer for them as well would
+     * render their JSON as a page, and would be a second request per keystroke
+     * for a preview nobody is looking at.
+     */
+    if (format === 'blocks' || format === 'slip' || !body.trim()) {
       setHtml('')
       setWarnings([])
       return
@@ -561,18 +565,32 @@ export default function StationeryClient({
          */
         <div
           className={`grid gap-5 ${
-            format === 'blocks'
+            /*
+             * The VISUAL and SLIP designers each carry their own inspector AND
+             * their own preview, because what is being arranged and what it will
+             * look like are the same picture. They take the whole row.
+             *
+             * The MARKUP editor is a text pane beside a preview — markup is not
+             * a picture of anything — so it keeps the split.
+             */
+            format === 'blocks' || doc?.medium === 'slip'
               ? ''
-              : doc?.medium === 'slip'
-                ? 'xl:grid-cols-[minmax(0,1fr)_24rem]'
-                : 'xl:grid-cols-[minmax(0,1fr)_26rem]'
+              : 'xl:grid-cols-[minmax(0,1fr)_26rem]'
           }`}
         >
           {/* The VISUAL designer owns the whole left column: it carries its own
               palette and its own preview, because what is being arranged and
               what it will look like are the same picture. The markup editor
               splits them, because markup is not a picture of anything. */}
-          {format === 'blocks' ? (
+          {doc?.medium === 'slip' && format === 'slip' ? (
+            <SlipDesigner
+              spec={slipSpec ?? { version: 1, blocks: [] }}
+              onChange={(next) => {
+                setBody(serialiseSlip(next))
+                setDirty(true)
+              }}
+            />
+          ) : format === 'blocks' ? (
             <VisualDesigner
               docType={docType}
               spec={blockSpec ?? { version: 1, blocks: [] }}
@@ -583,23 +601,7 @@ export default function StationeryClient({
               }}
             />
           ) : (
-          /*
-           * On a SLIP the preview moves to the right and sticks there.
-           *
-           * It is 80mm of paper — a few hundred pixels — beside a list of
-           * seventeen blocks that scrolls past the fold, so leading with it left
-           * the slip stranded in empty space while the controls were squeezed
-           * into a narrow rail. The order is CSS rather than markup, so the
-           * reading order stays "here is the document, here is how to change it"
-           * for anyone not seeing the columns.
-           */
-          <Card
-            className={
-              doc?.medium === 'slip'
-                ? 'xl:order-2 xl:sticky xl:top-4 xl:self-start'
-                : undefined
-            }
-          >
+          <Card>
             <CardHeader
               title="What the paper will look like"
               description={previewLabel || 'Rendered with your own data.'}
@@ -639,16 +641,7 @@ export default function StationeryClient({
           {/* The tools. Sticky on a wide screen: a purchase order runs longer
               than the viewport, and scrolling to check the bottom of the paper
               should not take the markup pane away with it. */}
-          <div
-            className={`flex flex-col gap-5 ${
-              doc?.medium === 'slip'
-                ? // Leads on a slip, and NOT sticky: a pinned column taller than
-                  // the viewport can never be scrolled to its own bottom, which
-                  // is where the Save button lives.
-                  'xl:order-1'
-                : 'xl:sticky xl:top-4 xl:self-start'
-            }`}
-          >
+          <div className="flex flex-col gap-5 xl:sticky xl:top-4 xl:self-start">
             <Card>
               <CardHeader title={editing ? 'Editing' : 'New design'} />
               <CardBody className="flex flex-col gap-4">
@@ -672,13 +665,9 @@ export default function StationeryClient({
                     Arrange this document by dragging the blocks on the page.
                   </p>
                 ) : doc?.medium === 'slip' ? (
-                  <SlipBlockEditor
-                    spec={slipSpec ?? { version: 1, blocks: [] }}
-                    onChange={(next) => {
-                      setBody(serialiseSlip(next))
-                      setDirty(true)
-                    }}
-                  />
+                  <p className="text-sm text-muted">
+                    Arrange this slip by clicking and dragging its lines above.
+                  </p>
                 ) : (
                   <Field
                     label="Layout"

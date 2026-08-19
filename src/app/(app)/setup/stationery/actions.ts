@@ -23,7 +23,7 @@ import {
 import { parseSlip, validateSlip } from '@/lib/stationery/slip'
 import { parseSpec, validateSpec } from '@/lib/stationery/blocks'
 import { compileBlocks, compileDocument, supportsBlocks } from '@/lib/stationery/compile'
-import { slipPreviewHtml } from '@/lib/stationery/slipHtml'
+import { slipPreviewHtml, slipBlockHtml } from '@/lib/stationery/slipHtml'
 import { setLogo, clearLogo } from '@/lib/site/documentLogo'
 
 /**
@@ -320,6 +320,49 @@ export async function previewBlocksAction(input: {
  * editor as unsaved work, so a shop that converts by accident closes the screen
  * and nothing has changed. Converting and saving are two decisions.
  */
+/**
+ * Each block of a slip design, rendered on its own.
+ *
+ * ── THE SLIP CANVAS'S EQUIVALENT OF previewBlocksAction ───────────────────
+ *
+ * The A4 designer draws every block in its own selectable box and needs them
+ * apart rather than joined; a slip designer that lets a shop click the business
+ * name ON THE SLIP needs exactly the same thing.
+ *
+ * Deliberately the same `block` function slipPreviewHtml uses, for the reason
+ * that whole design rests on: a canvas showing something the roll would not
+ * print is the failure this avoids.
+ *
+ * ── EMPTY MEANS "PRINTS NOTHING TODAY", NOT "BROKEN" ──────────────────────
+ *
+ * A VAT number on a non-vendor, a customer on a cash sale, a gift note on an
+ * ordinary slip. The canvas still shows those blocks — they are part of the
+ * design and must stay selectable and movable — but it labels them rather than
+ * drawing an empty box the shop cannot explain.
+ */
+export async function previewSlipBlocksAction(input: {
+  spec: string
+}): Promise<
+  | { ok: true; blocks: string[]; label: string; warnings: string[] }
+  | { ok: false; error: string }
+> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const spec = parseSlip(input.spec)
+  if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
+
+  const site = await requireSite()
+  const receipt = sampleReceipt(site.displayName, site.vatNumber)
+
+  return {
+    ok: true,
+    blocks: slipBlockHtml(spec, receipt),
+    label: 'A sample sale, on 80mm paper.',
+    warnings: validateSlip(spec).errors,
+  }
+}
+
 export async function toMarkupAction(input: {
   docType: string
   spec: string

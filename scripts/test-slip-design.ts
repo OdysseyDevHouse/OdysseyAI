@@ -30,6 +30,7 @@ import {
   MAX_SLIP_BLOCKS,
   type SlipSpec,
 } from '../src/lib/stationery/slip'
+import { slipBlockHtml, slipPreviewHtml } from '../src/lib/stationery/slipHtml'
 import type { ReceiptData } from '../src/lib/receiptData'
 
 let fails = 0
@@ -313,6 +314,65 @@ console.log('\n-- storage round trip --')
   ok('nonsense attributes are dropped, the block survives',
     !!dirty && dirty.blocks.length === 1 && dirty.blocks[0].align === undefined &&
     dirty.blocks[0].size === undefined && dirty.blocks[0].bold === undefined)
+}
+
+/* ── the designer's canvas ───────────────────────────────────────────────── */
+
+console.log('\n-- what the slip canvas draws --')
+{
+  /*
+   * The canvas draws every block in its own selectable box, so it needs them
+   * apart rather than joined — the same reason the A4 designer has compileBlocks.
+   * And for the same reason it must come from the SAME renderer: a canvas that
+   * draws its own idea of a block is a canvas that can lie about the roll.
+   */
+  const spec = SLIP_DEFAULT
+  const receipt = sample()
+  const parts = slipBlockHtml(spec, receipt)
+
+  ok('one fragment per block', parts.length === spec.blocks.length)
+
+  /*
+   * A RULE AND A BLANK LINE ALWAYS DRAW.
+   *
+   * `prints` answers "has this anything to SAY", and a separator says nothing —
+   * right for the whole-slip renderer, wrong for a canvas where the block IS the
+   * line. Asking it here labelled every rule "nothing to show on this sale",
+   * which is what it looked like on screen.
+   */
+  const ruleAt = spec.blocks.findIndex((b) => b.kind === 'rule')
+  ok('a dividing line draws its rule', ruleAt >= 0 && /<hr/.test(parts[ruleAt]),
+    ruleAt >= 0 ? JSON.stringify(parts[ruleAt]) : 'no rule in the default')
+
+  const feedIdx = spec.blocks.findIndex((b) => b.kind === 'feed')
+  if (feedIdx >= 0) ok('a blank line draws its space', parts[feedIdx] !== '')
+
+  /*
+   * And a block with nothing to say today is EMPTY rather than absent: the
+   * canvas still shows it, because it is part of the design and must stay
+   * selectable and movable, but it labels it instead of drawing a box a shop
+   * cannot account for.
+   */
+  const vatAt = spec.blocks.findIndex((b) => b.kind === 'vatNumber')
+  const noVat = slipBlockHtml(spec, { ...receipt, vatNumber: null } as never)
+  ok('a VAT number block is empty for a non-vendor', vatAt >= 0 && noVat[vatAt] === '')
+  ok('...but the block is still there to select', noVat.length === spec.blocks.length)
+
+  /*
+   * THE CANVAS AND THE ROLL AGREE.
+   *
+   * Every fragment must appear verbatim in the whole-slip render. That is a
+   * stronger check than "both mention the shop name": it fails on a wrapper or a
+   * class that only one side adds, which is exactly how the A4 canvas and its
+   * printed page drifted apart once already.
+   */
+  const whole = slipPreviewHtml(spec, receipt)
+  const missing = spec.blocks
+    .map((b, i) => ({ b, i }))
+    .filter(({ b, i }) => parts[i] !== '' && b.kind !== 'rule' && b.kind !== 'feed')
+    .filter(({ i }) => !whole.includes(parts[i]))
+  ok('each fragment appears verbatim on the printed slip', missing.length === 0,
+    missing.map(({ b }) => b.kind).join(', '))
 }
 
 console.log(`\n${fails === 0 ? 'All slip-design checks passed.' : `${fails} FAILED`}`)
