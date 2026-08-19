@@ -24,12 +24,22 @@ import type { DocumentSpec } from '../blocks'
  * letterhead carries an address and four contact lines and wants the room, while
  * the title is a number and a date.
  *
- * ── THE y NUMBERS ─────────────────────────────────────────────────────────
+ * ── THE y NUMBERS ARE MEASURED, NOT CALCULATED ────────────────────────────
  *
- * Percent of the band, and they encode the ONE thing free placement cannot infer
- * — that the letterhead is seven lines tall and the party blocks must clear it.
- * Chosen to match the spacing the markup default gets from its stacked sections,
- * which is what makes the parity test pass rather than nearly pass.
+ * Percent of the band, and they encode the ONE thing free placement cannot
+ * infer: that the letterhead is seven lines tall, so the rule and the party
+ * blocks have to clear it.
+ *
+ * The first set of these was arithmetic, and it was wrong — the browser showed
+ * the letterhead running straight through the rule below it, and DELIVER TO
+ * running into the detail list. The parity test passed the whole time, because it
+ * compares the WORDS on the page in order and two overlapping blocks say the same
+ * words in the same order.
+ *
+ * So these come from measuring the real rendered blocks, with headroom left over
+ * rather than packed tight: a shop with a longer address gets a taller
+ * letterhead, and a default that only fits this site's details is not a default.
+ * `test-stationery-blocks` now asserts the clearance directly.
  */
 export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
   version: 1,
@@ -66,14 +76,14 @@ export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
     },
 
     // Clear of the letterhead, which is the tallest thing above it.
-    { id: 'po-rule-1', kind: 'rule', band: 'header', x: 0, y: 46, w: 100 },
+    { id: 'po-rule-1', kind: 'rule', band: 'header', x: 0, y: 50, w: 100 },
 
     {
       id: 'po-supplier',
       kind: 'partyBlock',
       band: 'header',
       x: 0,
-      y: 52,
+      y: 56,
       w: 48,
       title: 'TO',
       tokens: [
@@ -90,7 +100,7 @@ export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
       kind: 'partyBlock',
       band: 'header',
       x: 52,
-      y: 52,
+      y: 56,
       w: 48,
       title: 'DELIVER TO',
       tokens: ['deliverTo'],
@@ -100,7 +110,7 @@ export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
       kind: 'detailList',
       band: 'header',
       x: 52,
-      y: 72,
+      y: 84,
       w: 48,
       rows: [
         { token: 'doc.expectedDate', label: 'Required by' },
@@ -150,14 +160,14 @@ export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
       title: 'NOTES',
     },
 
-    { id: 'po-rule-2', kind: 'rule', band: 'footer', x: 0, y: 38, w: 100 },
+    { id: 'po-rule-2', kind: 'rule', band: 'footer', x: 0, y: 30, w: 100 },
 
     {
       id: 'po-terms',
       kind: 'text',
       band: 'footer',
       x: 0,
-      y: 44,
+      y: 36,
       w: 100,
       text:
         'Please quote {doc.number} on your delivery note and invoice. ' +
@@ -169,7 +179,7 @@ export const PURCHASE_ORDER_BLOCKS: DocumentSpec = {
       kind: 'text',
       band: 'footer',
       x: 0,
-      y: 52,
+      y: 42,
       w: 100,
       text: 'Printed {doc.printedAt}',
     },

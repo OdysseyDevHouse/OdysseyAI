@@ -33,6 +33,8 @@ import {
   type DocumentSpec,
 } from '../src/lib/stationery/blocks'
 import {
+  BAND_PX,
+  BAND_REM,
   clampBlock,
   gapsFor,
   snapBlock,
@@ -254,22 +256,123 @@ console.log('\n-- three bands, and why --')
   ok('the footer follows the items, so a long order pushes it down',
     html.lastIndexOf('<section class="relative') > bodyAt)
 
-  // Percentages so screen and paper agree; em for the vertical, because a
+  // Percentages so screen and paper agree; rem for the vertical, because a
   // percentage top inside a min-height container resolves against nothing.
   ok('horizontal position and width are percentages of the page',
     /left:60\.00%/.test(html) && /width:40\.00%/.test(html))
-  ok('vertical position is in em, not a percentage of an unknown height',
-    /top:[\d.]+em/.test(html) && !/top:[\d.]+%/.test(html))
+  ok('vertical position is in rem, not a percentage of an unknown height',
+    /top:[\d.]+rem/.test(html) && !/top:[\d.]+%/.test(html))
 
   ok('a band reserves room for the lowest block in it',
-    bandExtent(PURCHASE_ORDER_BLOCKS, 'header') === 72 &&
-      bandExtent(PURCHASE_ORDER_BLOCKS, 'footer') === 52)
+    bandExtent(PURCHASE_ORDER_BLOCKS, 'header') === 84 &&
+      bandExtent(PURCHASE_ORDER_BLOCKS, 'footer') === 42,
+    `header ${bandExtent(PURCHASE_ORDER_BLOCKS, 'header')}, footer ${bandExtent(PURCHASE_ORDER_BLOCKS, 'footer')}`)
 
   // Side by side is now a coordinate, not a container.
   const letterhead = PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-letterhead')!
   const title = PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-title')!
   ok('the shipped header puts two blocks beside each other by coordinate',
     letterhead.y === title.y && letterhead.x + letterhead.w <= title.x)
+}
+
+/* ── the shipped design must not overlap itself ──────────────────────────── */
+
+console.log('\n-- nothing on the shipped page sits on top of anything else --')
+{
+  /*
+   * THE TEST THAT WAS MISSING.
+   *
+   * The parity assertion above passed while the shipped default rendered the
+   * letterhead straight through the rule below it, and DELIVER TO through the
+   * detail list. It could not have caught it: it compares the WORDS on the page
+   * in order, and two overlapping blocks say the same words in the same order.
+   *
+   * Only a browser knows a block's real height, so these are the heights measured
+   * from the rendered page — recorded here as the contract the y values are
+   * chosen against. If a block's content grows past its number the check fails,
+   * which is the reminder to re-measure rather than to raise the number.
+   */
+  const MEASURED: Record<string, number> = {
+    'po-letterhead': 46.5,
+    'po-title': 23.5,
+    'po-rule-1': 4,
+    'po-supplier': 40.3,
+    'po-deliver': 26,
+    'po-details': 23,
+    'po-lines': 71,
+    'po-totals': 24.8,
+    'po-notes': 6,
+    'po-rule-2': 4,
+    'po-terms': 4,
+    'po-printed': 4,
+  }
+
+  ok(
+    'every shipped block has a measured height on record',
+    PURCHASE_ORDER_BLOCKS.blocks.every((b) => MEASURED[b.id] !== undefined),
+    PURCHASE_ORDER_BLOCKS.blocks.filter((b) => MEASURED[b.id] === undefined).map((b) => b.id).join(),
+  )
+
+  const v = validateSpec(PURCHASE_ORDER_BLOCKS, 'purchase_order', MEASURED)
+  ok('the shipped design has no overlapping blocks', v.ok, JSON.stringify(v.errors))
+
+  /*
+   * And a real overlap must actually be refused, or the check above passes
+   * vacuously — a validator that never says no proves nothing about a design
+   * that happens to be fine.
+   */
+  const stacked: DocumentSpec = {
+    version: 1,
+    blocks: PURCHASE_ORDER_BLOCKS.blocks.map((b) =>
+      b.id === 'po-rule-1' ? { ...b, y: 10 } : b,
+    ),
+  }
+  const bad = validateSpec(stacked, 'purchase_order', MEASURED)
+  ok('a block dragged on top of another is refused', !bad.ok, JSON.stringify(bad.errors))
+
+  // Without measurements there is nothing to check, and refusing on a guess
+  // would be worse than not checking.
+  ok(
+    'an unmeasured design is not refused on a guess',
+    validateSpec(stacked, 'purchase_order').ok,
+  )
+
+  // Blocks in different bands cannot overlap however close their numbers are:
+  // the bands stack, so a header block at y 0 and a footer block at y 0 are
+  // nowhere near each other.
+  const acrossBands: DocumentSpec = {
+    version: 1,
+    blocks: [
+      { ...PURCHASE_ORDER_BLOCKS.blocks[0], band: 'header', x: 0, y: 0, w: 50 },
+      { ...PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-totals')!, x: 0, y: 0, w: 50 },
+      PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-lines')!,
+      PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-title')!,
+    ],
+  }
+  ok(
+    'two blocks in different bands are not an overlap',
+    !validateSpec(acrossBands, 'purchase_order', MEASURED).errors.some((e) =>
+      e.includes('overlap'),
+    ),
+  )
+
+  /*
+   * THE SCALE IS SHARED.
+   *
+   * The canvas and the compiler carried separate numbers for what a band percent
+   * is worth — 3.5px against 0.22em, which on a 14px page is 3.08 — so every
+   * block sat 14 percent lower on screen than it printed, and a designer lining
+   * two blocks up by eye was lining up a lie. One constant now, asserted here so
+   * a future edit to either side cannot quietly reintroduce the drift.
+   */
+  const compiled = compileDocument(PURCHASE_ORDER_BLOCKS, 'purchase_order')
+  const rule = PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-rule-1')!
+  ok(
+    'the compiler places a block using the shared scale',
+    compiled.includes(`top:${(rule.y * BAND_REM).toFixed(2)}rem`),
+    `expected top:${(rule.y * BAND_REM).toFixed(2)}rem`,
+  )
+  ok('...and the canvas measures in the same units', BAND_PX === BAND_REM * 16)
 }
 
 /* ── snapping and guides ─────────────────────────────────────────────────── */

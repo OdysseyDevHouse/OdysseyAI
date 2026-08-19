@@ -50,6 +50,29 @@ export const BAND_INFO: Record<BandKey, { label: string; hint: string }> = {
   },
 }
 
+/**
+ * What one percent of band height is worth, in rem.
+ *
+ * ── THE CANVAS AND THE COMPILER MUST AGREE ON THIS ────────────────────────
+ *
+ * They did not. The compiler emitted `top` in em at 0.22 and the canvas drew in
+ * px at 3.5 — which on a 14px page is 3.08 against 3.5, so every block sat 14
+ * percent lower on screen than it would print. A designer lining two blocks up
+ * by eye would have been lining up a lie.
+ *
+ * So it is one exported number, and both sides multiply by it. In REM rather
+ * than em, because em compounds: a block inside something with its own font-size
+ * would scale its own position, and a letterhead is 0.75em text.
+ *
+ * The value itself is arbitrary — it only has to be small enough that a percent
+ * is a fine adjustment and large enough that 100 is about a page. 0.25rem is 4px
+ * at the default size, which makes a band of 100 four hundred pixels.
+ */
+export const BAND_REM = 0.25
+
+/** The same scale in px, for a canvas that has to place a pointer. */
+export const BAND_PX = BAND_REM * 16
+
 /** A block's box, as percentages. `h` is measured, never stored. */
 export type BlockRect = { x: number; y: number; w: number }
 

@@ -10,6 +10,7 @@ import {
   type DocumentSpec,
 } from '@/lib/stationery/blocks'
 import {
+  BAND_PX,
   MIN_BLOCK_W,
   clampBlock,
   gapsFor,
@@ -64,9 +65,6 @@ import {
  * correct on exactly one monitor.
  */
 
-/** How tall a band's percent is on screen, in px. Matches the compiler's em. */
-const BAND_PX = 3.5
-
 type Mode = 'move' | 'resize-l' | 'resize-r' | 'marquee'
 
 type DragState = {
@@ -100,7 +98,20 @@ export default function DocumentCanvas({
   /** Measured heights in band percent, so the parent can refuse an overlap. */
   onHeights: (heights: Record<string, number>) => void
 }) {
+  /*
+   * TWO refs, and the difference matters.
+   *
+   * `pageRef` is the paper — it carries the padding that makes a printed page's
+   * margin. `sheetRef` is inside that padding and IS the coordinate space: a
+   * block's `left: 40%` resolves against it, so the pointer must be measured
+   * against it too.
+   *
+   * Measuring against the paper instead was an 8 percent error on this page's
+   * geometry, and it read exactly as the thing the user complained about — the
+   * block trailing behind the pointer instead of following it.
+   */
   const pageRef = useRef<HTMLDivElement>(null)
+  const sheetRef = useRef<HTMLDivElement>(null)
   const drag = useRef<DragState | null>(null)
 
   const [preview, setPreview] = useState<Record<string, { x: number; y: number; w: number }>>({})
@@ -139,7 +150,7 @@ export default function DocumentCanvas({
     measure()
     const ro = new ResizeObserver(measure)
     for (const el of boxes.current.values()) ro.observe(el)
-    if (pageRef.current) ro.observe(pageRef.current)
+    if (sheetRef.current) ro.observe(sheetRef.current)
     return () => ro.disconnect()
   }, [measure, spec, html])
 
@@ -164,19 +175,28 @@ export default function DocumentCanvas({
     [preview, heights],
   )
 
-  /** Percent per pixel, from the live width. */
+  /** Percent per pixel, from the live width of the coordinate space. */
   const scale = useCallback(() => {
-    const box = pageRef.current?.getBoundingClientRect()
+    const box = sheetRef.current?.getBoundingClientRect()
     return box && box.width > 0 ? 100 / box.width : 0.1
   }, [])
 
-  /** A pointer position in percent, relative to the page. */
+  /**
+   * A pointer position in the units a block is stored in.
+   *
+   * THE TWO AXES ARE NOT THE SAME UNIT, which is the trap here. `x` is a percent
+   * of the page's width, so it divides by the measured width and scales to 100.
+   * `y` is a percent of the BAND, and `BAND_PX` is already the pixels in one of
+   * those percent — so dividing by it IS the conversion. Scaling by 100 as well
+   * made every vertical drag a hundred times too large; a nudge threw the block
+   * to the top of the band, and it read as the canvas fighting the pointer.
+   */
   const toPercent = useCallback((e: React.PointerEvent) => {
-    const box = pageRef.current?.getBoundingClientRect()
+    const box = sheetRef.current?.getBoundingClientRect()
     if (!box || box.width === 0) return { x: 0, y: 0 }
     return {
       x: ((e.clientX - box.left) / box.width) * 100,
-      y: ((e.clientY - box.top) / BAND_PX) * 100,
+      y: (e.clientY - box.top) / BAND_PX,
     }
   }, [])
 
@@ -276,10 +296,10 @@ export default function DocumentCanvas({
       const dx = point.x - d.startX
       const dy = point.y - d.startY
 
-      /* Ignore a shaky tap. Measured in PIXELS, so the threshold feels the same
-         however wide the page is drawn. */
-      const perPx = scale()
-      if (!d.moved && Math.hypot(dx / perPx, dy / perPx) < 5) return
+      /* Ignore a shaky tap. Back in PIXELS on both axes so the threshold feels
+         the same however wide the page is drawn — and the two axes convert
+         differently, so each is undone with its own scale rather than one. */
+      if (!d.moved && Math.hypot(dx / scale(), dy * BAND_PX) < 5) return
       d.moved = true
 
       if (d.mode === 'marquee') {
@@ -472,11 +492,14 @@ export default function DocumentCanvas({
   return (
     <div
       ref={pageRef}
-      className="relative mx-auto w-full max-w-[52rem] select-none bg-surface p-8 text-ink shadow-pop"
+      className="mx-auto w-full max-w-[52rem] select-none bg-surface p-8 text-ink shadow-pop"
       onPointerMove={move}
       onPointerUp={end}
       onPointerCancel={end}
     >
+      {/* The coordinate space. Percentages resolve against THIS, so the pointer
+          is measured against it too — see the note on the two refs. */}
+      <div ref={sheetRef} className="relative">
       {BAND_KEYS.map((band) => {
         const blocks = spec.blocks.filter((b) => b.band === band)
         const extent = blocks.reduce((max, b) => {
@@ -532,6 +555,7 @@ export default function DocumentCanvas({
           </Band>
         )
       })}
+      </div>
     </div>
   )
 }
@@ -674,18 +698,34 @@ function Handle({
 
 /** The line that says why a block stopped where it did. */
 function GuideLine({ guide }: { guide: Guide }) {
+  /*
+   * The span is clamped to the page.
+   *
+   * `alignmentFor` measures from the block's snapped position, which during a
+   * drag is where the pointer put it and not yet where `clampBlock` will allow —
+   * so a block dragged towards the left edge produces a guide starting at a
+   * negative percent, drawn out over the chrome beside the paper. The guide is
+   * telling the truth about the gesture; it just has no business leaving the
+   * page to do it.
+   */
+  const from = Math.max(0, Math.min(guide.from, 100))
+  const to = Math.max(0, Math.min(guide.to, 100))
+  const span = Math.max(to - from, 0)
+
   const style =
     guide.axis === 'v'
       ? {
-          left: `${guide.at}%`,
-          top: `${guide.from * BAND_PX}px`,
-          height: `${Math.max(guide.to - guide.from, 0) * BAND_PX}px`,
+          left: `${Math.max(0, Math.min(guide.at, 100))}%`,
+          // Vertical extent is a band position, so only the start is clamped:
+          // a band has no top edge to run past and grows to fit.
+          top: `${Math.max(0, guide.from) * BAND_PX}px`,
+          height: `${Math.max(guide.to - Math.max(0, guide.from), 0) * BAND_PX}px`,
           width: '1px',
         }
       : {
-          top: `${guide.at * BAND_PX}px`,
-          left: `${guide.from}%`,
-          width: `${Math.max(guide.to - guide.from, 0)}%`,
+          top: `${Math.max(0, guide.at) * BAND_PX}px`,
+          left: `${from}%`,
+          width: `${span}%`,
           height: '1px',
         }
   return <div className="pointer-events-none absolute z-20 bg-brand" style={style} />

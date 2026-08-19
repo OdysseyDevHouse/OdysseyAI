@@ -1,4 +1,5 @@
 import { getDocType, findToken } from './catalog'
+import { BAND_REM } from './geometry'
 import {
   BAND_KEYS,
   DOC_BLOCK_CATALOG,
@@ -302,9 +303,6 @@ function compileBlock(b: DocBlock, docKey: string): string {
  * — the same reason the hand-written defaults size their spacing in `rem`.
  */
 
-/** One percent of band height, in em. Tuned so a band's 100 is about a page. */
-const BAND_EM = 0.22
-
 /** A band with nothing in it should not reserve space it isn't using. */
 function bandHeight(blocks: DocBlock[]): number {
   return blocks.reduce((max, b) => Math.max(max, b.y), 0)
@@ -325,7 +323,7 @@ function positioned(b: DocBlock, docKey: string): string {
   const wrap = needsWrapper(b) ? 'sd-block' : ''
   const style =
     `position:absolute;left:${b.x.toFixed(2)}%;` +
-    `top:${(b.y * BAND_EM).toFixed(2)}em;` +
+    `top:${(b.y * BAND_REM).toFixed(2)}rem;` +
     `width:${b.w.toFixed(2)}%`
 
   return `<div class="${wrap} ${align}" style="${style}">${html}</div>`
@@ -386,9 +384,9 @@ export function compileDocument(spec: DocumentSpec, docKey: string): string {
      * without the allowance a block at the bottom of the band would have its
      * own content hanging over whatever comes next.
      */
-    const floor = (bandHeight(blocks) + 14) * BAND_EM
+    const floor = (bandHeight(blocks) + 12) * BAND_REM
     sections.push(
-      `<section class="relative py-4" style="min-height:${floor.toFixed(2)}em">${inner}</section>`,
+      `<section class="relative py-4" style="min-height:${floor.toFixed(2)}rem">${inner}</section>`,
     )
   }
 
