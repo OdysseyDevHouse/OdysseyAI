@@ -2,6 +2,7 @@ import { getDocType, findToken } from './catalog'
 import { BAND_REM } from './geometry'
 import {
   BAND_KEYS,
+  DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
   type BandKey,
   type DocBlock,
@@ -69,11 +70,25 @@ const TD = 'px-4 py-1.5'
  * "Reference" over a blank reads as a reference someone forgot to type. Done in
  * CSS because the template language has no conditionals on purpose — one rule
  * covers every such row, and it needs no feature that then needs supporting.
+ *
+ * ── THE ONE !important, AND WHY IT IS EARNED ──────────────────────────────
+ *
+ * `{site.logo}` resolves to a tag built server-side with an INLINE max-height,
+ * inline precisely so a template cannot be made to point it elsewhere. Inline
+ * styles outrank every ordinary selector, so a logo block's own height had no
+ * way to win: the first version of it capped the wrapper and the image stayed at
+ * 56px whatever the shop typed — a control that silently did nothing.
+ *
+ * `!important` is the one thing that does outrank an inline style. It is scoped
+ * to `.sd-logo img`, which is a class this compiler emits and nothing else uses,
+ * and the height comes through a variable so there is one declaration rather
+ * than one per size anybody might choose.
  */
 export const BLOCK_STYLE = `
 .sd-row:has(dd:empty) { display: none; }
 .sd-block:has(> .sd-value:empty) { display: none; }
-.sd-line:empty { display: none; }`
+.sd-line:empty { display: none; }
+.sd-logo img { max-height: var(--sd-logo-h) !important; height: auto; width: auto; }`
 
 const ALIGN_CLASS: Record<string, string> = {
   left: 'text-left',
@@ -91,6 +106,41 @@ function esc(s: string): string {
 }
 
 /* ── per-block compilers ─────────────────────────────────────────────────── */
+
+/**
+ * The logo on its own.
+ *
+ * ── THE SIZE IS SET HERE, NOT IN THE TOKEN ────────────────────────────────
+ *
+ * `{site.logo}` resolves to a complete `<img>` with its own max-height, built
+ * server-side so a template cannot point the src anywhere else. That tag is
+ * fixed, so a per-block height has to be applied around it: the wrapper caps the
+ * height and the image is told to fit, which beats trying to rewrite an
+ * attribute inside a string the sanitiser is deliberately strict about.
+ *
+ * `[&>img]` reaches the token's own tag, which is the one thing inside here.
+ */
+function logoBlock(b: DocBlock): string {
+  const h = b.logoHeight ?? DEFAULT_LOGO_HEIGHT
+
+  /*
+   * `sd-logo` and a CSS variable, rather than a utility class on the wrapper.
+   *
+   * The token's own tag carries an INLINE `max-height`, built server-side so the
+   * src cannot be tampered with — and an inline style beats any ordinary class,
+   * so the first version of this capped the wrapper and left the image at 56px
+   * whatever the shop typed. The height control silently did nothing.
+   *
+   * The rule in BLOCK_STYLE overrides it with `!important`, which is the one
+   * thing that outranks an inline style, and the size arrives as a variable so
+   * there is a single declaration rather than one per height a shop might pick.
+   */
+  return (
+    `<div class="sd-block sd-logo" style="--sd-logo-h:${h}px">` +
+    `<span class="sd-value">{site.logo}</span>` +
+    `</div>`
+  )
+}
 
 function letterhead(b: DocBlock): string {
   const tokens = b.tokens ?? []
@@ -234,6 +284,8 @@ function titledValue(title: string, token: string, pre = true): string {
 
 function compileBlock(b: DocBlock, docKey: string): string {
   switch (b.kind) {
+    case 'logo':
+      return logoBlock(b)
     case 'letterhead':
       return letterhead(b)
     case 'docTitle':

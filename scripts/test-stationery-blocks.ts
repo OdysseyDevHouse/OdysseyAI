@@ -29,6 +29,9 @@ import {
   serialiseSpec,
   validateSpec,
   blockKindsFor,
+  DEFAULT_LOGO_HEIGHT,
+  MAX_LOGO_HEIGHT,
+  MIN_LOGO_HEIGHT,
   findBlock,
   bandBlocks,
   newBlock,
@@ -590,6 +593,35 @@ console.log('\n-- finding and changing a block --')
   ok('...and the first block in an empty band goes to the top',
     newBlock('text', { version: 1, blocks: [] }, { band: 'footer' }).y === 0)
 
+  /*
+   * BELOW THEIR BOTTOMS, NOT BELOW THEIR TOPS.
+   *
+   * These are not the same thing, and treating them as one put a new logo block
+   * straight on top of the supplier address — visibly, on screen. A block at y 56
+   * that is 40 tall ends at 96, so a "step below the lowest y" landed at 68.
+   *
+   * Heights are measured and never stored, so the caller passes what the canvas
+   * measured; this is the check that it is actually used.
+   */
+  {
+    const two: DocumentSpec = {
+      version: 1,
+      blocks: [
+        newBlock('partyBlock', null, { band: 'header', y: 0 }),
+        newBlock('detailList', null, { band: 'header', y: 56 }),
+      ],
+    }
+    const tall = { [two.blocks[0].id]: 20, [two.blocks[1].id]: 40 }
+    const under = newBlock('logo', two, { band: 'header' }, tall)
+    ok('a new block clears the BOTTOM of the lowest block, not its top',
+      under.y >= 96, `landed at ${under.y}, the block below ends at 96`)
+
+    // Without heights it still lands below, which is a guess but a bounded one —
+    // and better than the top of the page.
+    ok('...and with no heights it still lands below rather than on top',
+      newBlock('logo', two, { band: 'header' }).y > 56)
+  }
+
   // The items table cannot be put anywhere else, however it is asked for.
   ok('the items table is pinned to the items band',
     newBlock('lineTable', spec, { band: 'footer' }).band === 'body')
@@ -680,6 +712,138 @@ console.log('\n-- validation --')
 
   ok('banking is offered on an invoice', blockKindsFor('invoice').includes('banking'))
   ok('...and not on a purchase order', !blockKindsFor('purchase_order').includes('banking'))
+}
+
+/* ── the logo, as a block you can move ───────────────────────────────────── */
+
+console.log('\n-- the logo on its own --')
+{
+  /*
+   * WHY THIS EXISTS AS WELL AS THE TOKEN.
+   *
+   * `site.logo` is a token the letterhead includes, and that is right for most
+   * documents — above the business name, moving with it, which is what the
+   * shipped default does. But a token inside another block cannot be dragged,
+   * because there is nothing to take hold of, and "if a customer wants to move
+   * his logo he can simply drag it" was the first thing asked for.
+   */
+  const spec: DocumentSpec = {
+    version: 1,
+    blocks: [
+      ...PURCHASE_ORDER_BLOCKS.blocks,
+      newBlock('logo', PURCHASE_ORDER_BLOCKS, { band: 'footer', x: 70, y: 60 }),
+    ],
+  }
+
+  const compiled = compileDocument(spec, 'purchase_order')
+  ok('a logo block emits the logo token', compiled.includes('{site.logo}'))
+
+  /*
+   * The fixture site has no logo, so one is supplied here. What is under test is
+   * that a logo BLOCK resolves the token at all; a shop with no logo getting
+   * nothing is the separate case checked below, and conflating the two would
+   * have this pass for the wrong reason.
+   */
+  const LOGO =
+    '<img src="/api/document-logo?v=abc123.png" alt="" style="max-height:56px;width:auto">'
+  const base = inputFor(order())
+  const withLogo = renderTemplate(compileDocument(spec, 'purchase_order'), 'purchase_order', {
+    ...base,
+    values: { ...base.values, 'site.logo': LOGO },
+    capabilities: OWNER,
+  })
+  ok('...which resolves to the real image tag',
+    /<img src="\/api\/document-logo\?v=[^"]+"/.test(withLogo),
+    withLogo.includes('document-logo') ? '' : 'no logo tag reached the output')
+
+  // It is placed like anything else, which is the whole point.
+  ok('it is positioned by its own coordinates',
+    /left:70\.00%/.test(compiled))
+
+  /*
+   * A HEIGHT, because a width cannot express it.
+   *
+   * `w` is the box the logo sits in and decides where it can be dragged to; the
+   * height is how large the image is drawn inside it. A shop with a tall crest
+   * wants a different answer from one with a wide wordmark.
+   */
+  const tall: DocumentSpec = {
+    version: 1,
+    blocks: spec.blocks.map((b) => (b.kind === 'logo' ? { ...b, logoHeight: 120 } : b)),
+  }
+  ok('the height a shop sets reaches the markup',
+    compileDocument(tall, 'purchase_order').includes('--sd-logo-h:120px'))
+
+  ok('a logo with no height set still prints at a sensible one',
+    compileDocument(spec, 'purchase_order').includes(`--sd-logo-h:${DEFAULT_LOGO_HEIGHT}px`))
+
+  /*
+   * AND THE HEIGHT MUST ACTUALLY WIN.
+   *
+   * `{site.logo}` resolves to a tag carrying its own inline max-height, and an
+   * inline style outranks every ordinary selector — so the first version of this
+   * capped the wrapper and left the image at 56px whatever the shop typed. The
+   * rule needs `!important` to beat it, which is worth asserting precisely
+   * because it looks like something a tidy-up would remove.
+   */
+  ok('the rule that sizes it can outrank the tag\'s own inline height',
+    /\.sd-logo img[^}]*max-height:\s*var\(--sd-logo-h\)\s*!important/.test(BLOCK_STYLE),
+    BLOCK_STYLE)
+
+  ok('...and the size arrives as a variable the rule can read',
+    compileDocument(tall, 'purchase_order').includes('--sd-logo-h:120px'))
+
+  // Clamped on read, so a hand-edited spec cannot put a logo over the whole page
+  // or shrink it to nothing.
+  const stored = serialiseSpec({
+    version: 1,
+    blocks: spec.blocks.map((b) => (b.kind === 'logo' ? { ...b, logoHeight: 9000 } : b)),
+  })
+  const back = parseSpec(stored, 'purchase_order')
+  const logo = back?.blocks.find((b) => b.kind === 'logo')
+  ok('an absurd height is clamped rather than honoured',
+    logo?.logoHeight === MAX_LOGO_HEIGHT, String(logo?.logoHeight))
+
+  const tiny = parseSpec(
+    serialiseSpec({
+      version: 1,
+      blocks: spec.blocks.map((b) => (b.kind === 'logo' ? { ...b, logoHeight: 1 } : b)),
+    }),
+    'purchase_order',
+  )
+  ok('...and so is one too small to see',
+    tiny?.blocks.find((b) => b.kind === 'logo')?.logoHeight === MIN_LOGO_HEIGHT)
+
+  /*
+   * A SHOP WITH NO LOGO GETS NOTHING, NOT A BROKEN IMAGE.
+   *
+   * The block wraps its value in `sd-block` round an `sd-value`, so the existing
+   * hide-when-empty rule removes the whole thing — the same mechanism an empty
+   * notes block uses, rather than a second rule that could disagree with it.
+   */
+  ok('the logo block can hide itself when no logo is set',
+    compileDocument(spec, 'purchase_order').includes('class="sd-block"'))
+
+  const noLogo = renderTemplate(compileDocument(spec, 'purchase_order'), 'purchase_order', {
+    ...inputFor(order()),
+    values: { ...inputFor(order()).values, 'site.logo': '' },
+    capabilities: OWNER,
+  })
+  ok('...and renders no image at all for that shop', !/<img/.test(noLogo))
+
+  // One per document: two logos is a mistake, not a layout.
+  const twice: DocumentSpec = {
+    version: 1,
+    blocks: [...spec.blocks, newBlock('logo', spec, { band: 'header' })],
+  }
+  ok('two logo blocks are refused', !validateSpec(twice, 'purchase_order').ok)
+
+  // And the letterhead's own logo token still works, because most documents
+  // want it there and the shipped default relies on it.
+  ok('the letterhead still carries the logo as a token',
+    PURCHASE_ORDER_BLOCKS.blocks
+      .find((b) => b.kind === 'letterhead')
+      ?.tokens?.includes('site.logo') === true)
 }
 
 /* ── the custom-HTML escape hatch ────────────────────────────────────────── */

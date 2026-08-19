@@ -1,8 +1,18 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Badge, Button, Callout, Card, CardBody, CardHeader, Icons } from '@/components/ui'
 import {
+  Badge,
+  Button,
+  Callout,
+  Card,
+  CardBody,
+  CardHeader,
+  Icons,
+  Switch,
+} from '@/components/ui'
+import {
+  DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
   MAX_BLOCKS,
   blockKindsFor,
@@ -22,6 +32,7 @@ import {
   type AlignMode,
   type DistributeMode,
 } from '@/lib/site/floorGeometry'
+import { useDeviceToggle } from '@/lib/useDeviceToggle'
 import { previewBlocksAction } from '../actions'
 import BlockPalette from './BlockPalette'
 import DocumentCanvas from './DocumentCanvas'
@@ -70,6 +81,17 @@ export default function VisualDesigner({
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [heights, setHeights] = useState<Record<string, number>>({})
+
+  /*
+   * Whether every block shows its outline, or only the one under the pointer.
+   *
+   * Per device, not per site: it is a working style rather than anything about
+   * the document. Laying a page out, seeing where each block ENDS is most of the
+   * information — which is why it defaults ON for a screen whose whole purpose is
+   * arranging blocks. Reading the finished page, the same outlines are clutter
+   * over something meant to look like paper, so it switches off and stays off.
+   */
+  const outlines = useDeviceToggle('odyssey.stationery.outlines', true)
 
   const atLimit = spec.blocks.length >= MAX_BLOCKS
   const used = useMemo(() => new Set(spec.blocks.map((b) => b.kind)), [spec.blocks])
@@ -168,11 +190,13 @@ export default function VisualDesigner({
        * top of something and needs untangling before it can be used.
        */
       const band: BandKey = selected[0]?.band ?? 'header'
-      const block = newBlock(kind, spec, { band, ...defaultsFor(kind) })
+      // The measured heights go in, so it lands below what is there rather than
+      // on top of a tall block whose top happens to be higher up.
+      const block = newBlock(kind, spec, { band, ...defaultsFor(kind) }, heights)
       commit({ version: 1, blocks: [...spec.blocks, block] })
       setSelectedIds([block.id])
     },
-    [spec, commit, selected],
+    [spec, commit, selected, heights],
   )
 
   const remove = useCallback(
@@ -328,6 +352,14 @@ export default function VisualDesigner({
         <CardHeader
           title="The page"
           description={label || 'Rendered with your own data.'}
+          action={
+            <Switch
+              checked={outlines.on}
+              onChange={outlines.setOn}
+              label="Outlines"
+              hint="Show where every block starts and ends."
+            />
+          }
         />
         <CardBody>
           {warnings.length > 0 && (
@@ -347,6 +379,7 @@ export default function VisualDesigner({
             spec={spec}
             html={blockHtml}
             selectedIds={selectedIds}
+            outlined={outlines.on}
             onSelectionChange={setSelectedIds}
             onCommit={place}
             onHeights={setHeights}
@@ -387,6 +420,10 @@ function defaultsFor(kind: DocBlockKind): Partial<DocBlock> {
       return { title: 'TO', tokens: [] }
     case 'detailList':
       return { rows: [] }
+    case 'logo':
+      // A height from the start, so a logo dragged in is visible rather than a
+      // block whose contents are waiting on a number nobody has been asked for.
+      return { logoHeight: DEFAULT_LOGO_HEIGHT }
     default:
       return {}
   }

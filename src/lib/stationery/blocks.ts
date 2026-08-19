@@ -44,6 +44,7 @@ import { BAND_KEYS, MIN_BLOCK_W, clampBlock, overlaps, type BandKey } from './ge
  */
 
 export const DOC_BLOCK_KINDS = [
+  'logo',
   'letterhead',
   'docTitle',
   'partyBlock',
@@ -116,6 +117,15 @@ export type DocBlock = {
   rows?: DetailRow[]
   /** text: the words. html: raw markup, sanitised like anything else. */
   text?: string
+  /**
+   * logo only: how tall to print it, in points.
+   *
+   * The one thing a logo needs that a width cannot express. `w` is the box the
+   * logo sits in and decides where it can be dragged to; this is how large the
+   * image itself is drawn inside it, and a shop with a tall crest wants a
+   * different answer from one with a wide wordmark.
+   */
+  logoHeight?: number
 }
 
 export type DocumentSpec = { version: 1; blocks: DocBlock[] }
@@ -150,6 +160,25 @@ export type DocBlockDef = {
 }
 
 export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
+  /*
+   * THE LOGO IS ITS OWN BLOCK.
+   *
+   * It is also still a token the letterhead can include, and both are wanted.
+   * Inside the letterhead it sits above the business name and moves with it,
+   * which is what most documents want and what the shipped default does.
+   *
+   * As a block it can be dragged anywhere and sized on its own — the thing the
+   * user asked for first, in those words: "if a customer wants to move his logo
+   * he can simply drag it". A token inside another block cannot be dragged,
+   * because there is nothing to take hold of.
+   */
+  logo: {
+    kind: 'logo',
+    label: 'Your logo',
+    hint: 'The uploaded logo on its own, to put wherever you like. Prints nothing when none is set.',
+    docTypes: 'all',
+    defaultW: 25,
+  },
   letterhead: {
     kind: 'letterhead',
     label: 'Your letterhead',
@@ -275,6 +304,17 @@ export const REQUIRED_BLOCK_KINDS: DocBlockKind[] = DOC_BLOCK_KINDS.filter(
 export const MAX_BLOCKS = 40
 export const MAX_COLUMNS = 10
 
+/**
+ * How tall a logo may be printed, in points.
+ *
+ * The floor is a logo still recognisable at arm's length; the ceiling is one
+ * that has not taken over the page. A shop wanting more than a third of an A4
+ * height in letterhead is designing something other than a purchase order.
+ */
+export const MIN_LOGO_HEIGHT = 16
+export const MAX_LOGO_HEIGHT = 240
+export const DEFAULT_LOGO_HEIGHT = 56
+
 /* ── ids and new blocks ──────────────────────────────────────────────────── */
 
 let idCounter = 0
@@ -294,17 +334,34 @@ export function newBlockId(kind: DocBlockKind): string {
  * block added at 0,0 lands on top of the letterhead, which is an overlap the
  * validator then refuses and the designer has to fix before they have done
  * anything. Added-below is the boring, correct default.
+ *
+ * ── BELOW THEIR BOTTOMS, WHICH NEEDS HEIGHTS ──────────────────────────────
+ *
+ * The first version stepped below the lowest `y` in the band, which is not the
+ * same thing: a block at y 56 that is 40 tall ends at 96, so the "step below"
+ * landed at 68 — straight on top of it. Adding a logo did exactly that, visibly.
+ *
+ * A block's height is measured, never stored, so this cannot work it out and the
+ * caller passes what the canvas measured. With no heights it falls back to the
+ * old behaviour, which is a guess but a bounded one; the designer drags it
+ * anyway, and the validator still refuses a real overlap.
  */
 export function newBlock(
   kind: DocBlockKind,
   spec: DocumentSpec | null = null,
   over: Partial<DocBlock> = {},
+  /** Measured heights by block id, in band percent. From the canvas. */
+  heights: Record<string, number> = {},
 ): DocBlock {
   const def = DOC_BLOCK_CATALOG[kind]
   const band = def.band ?? over.band ?? 'header'
 
   const inBand = (spec?.blocks ?? []).filter((b) => b.band === band)
-  const below = inBand.reduce((max, b) => Math.max(max, b.y), 0)
+  const below = inBand.reduce(
+    // The BOTTOM of each block where its height is known, its top otherwise.
+    (max, b) => Math.max(max, b.y + (heights[b.id] ?? 0)),
+    0,
+  )
 
   return {
     ...over,
@@ -314,8 +371,14 @@ export function newBlock(
     // caller passing one — the line table belongs with the items whatever is asked.
     band,
     x: over.x ?? 0,
-    // A step below the lowest thing there, in band percent.
-    y: over.y ?? (inBand.length === 0 ? 0 : Math.min(below + 12, 88)),
+    /*
+     * A small gap below the lowest bottom.
+     *
+     * No ceiling on it: a band is as tall as its contents, so pushing a new
+     * block back up into the crowd to keep the number under 88 would put it on
+     * top of something to save space that costs nothing.
+     */
+    y: over.y ?? (inBand.length === 0 ? 0 : below + 4),
     w: over.w ?? def.defaultW ?? 100,
   }
 }
@@ -543,6 +606,12 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
       const title = (b as { title?: unknown }).title
       const tokens = (b as { tokens?: unknown }).tokens
       const text = (b as { text?: unknown }).text
+      const rawH = (b as { logoHeight?: unknown }).logoHeight
+      const logoHeight =
+        typeof rawH === 'number' && Number.isFinite(rawH)
+          ? Math.min(Math.max(Math.round(rawH), MIN_LOGO_HEIGHT), MAX_LOGO_HEIGHT)
+          : undefined
+
       const columns = cleanColumns((b as { columns?: unknown }).columns, doc)
       const rows = cleanRows((b as { rows?: unknown }).rows, doc)
 
@@ -563,6 +632,7 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
         ...(columns ? { columns } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
+        ...(logoHeight !== undefined ? { logoHeight } : {}),
       })
     }
 

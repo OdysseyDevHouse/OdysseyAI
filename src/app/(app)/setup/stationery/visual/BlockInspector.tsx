@@ -18,7 +18,10 @@ import {
 import {
   BAND_INFO,
   BAND_KEYS,
+  DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
+  MAX_LOGO_HEIGHT,
+  MIN_LOGO_HEIGHT,
   type BandKey,
   type DetailRow,
   type DocBlock,
@@ -170,6 +173,32 @@ export default function BlockInspector({
               value={block.text ?? ''}
               onChange={(e) => onChange({ text: e.target.value })}
             />
+          </Field>
+        )}
+
+        {block.kind === 'logo' && (
+          <Field
+            label="How tall to print it"
+            hint="Points. The width follows, so the logo keeps its shape."
+          >
+            <div className="flex items-center gap-2">
+              <NumberInput
+                aria-label="Logo height"
+                className="w-24"
+                value={block.logoHeight ?? DEFAULT_LOGO_HEIGHT}
+                min={MIN_LOGO_HEIGHT}
+                max={MAX_LOGO_HEIGHT}
+                step={4}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  if (!Number.isFinite(n)) return
+                  onChange({
+                    logoHeight: Math.min(Math.max(Math.round(n), MIN_LOGO_HEIGHT), MAX_LOGO_HEIGHT),
+                  })
+                }}
+              />
+              <span className="text-xs text-muted">pt</span>
+            </div>
           </Field>
         )}
 

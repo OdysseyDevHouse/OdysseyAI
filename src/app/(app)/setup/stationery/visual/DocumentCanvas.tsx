@@ -93,6 +93,7 @@ export default function DocumentCanvas({
   spec,
   html,
   selectedIds,
+  outlined,
   onSelectionChange,
   onCommit,
   onHeights,
@@ -101,6 +102,16 @@ export default function DocumentCanvas({
   /** Each block's compiled, token-resolved markup, keyed by id. */
   html: Record<string, string>
   selectedIds: string[]
+  /**
+   * Show every block's outline, not only the one under the pointer.
+   *
+   * A device preference, because it is a working style rather than a property of
+   * the document: laying a page out, seeing where each block ENDS is most of the
+   * information, and hovering one at a time to find out is slow. Reading the
+   * finished page, the same outlines are clutter over what is meant to look like
+   * paper. Both are right, so it is a switch.
+   */
+  outlined: boolean
   onSelectionChange: (ids: string[]) => void
   /** Called once, on release, with every block the gesture moved. */
   onCommit: (changes: { id: string; x: number; y: number; w: number }[]) => void
@@ -543,6 +554,7 @@ export default function DocumentCanvas({
                   rect={r}
                   html={html[b.id] ?? ''}
                   selected={selected.has(b.id)}
+                  outlined={outlined}
                   register={(el) => {
                     if (el) boxes.current.set(b.id, el)
                     else boxes.current.delete(b.id)
@@ -629,6 +641,7 @@ function BlockBox({
   rect,
   html,
   selected,
+  outlined,
   register,
   onBegin,
 }: {
@@ -636,6 +649,7 @@ function BlockBox({
   rect: Rect
   html: string
   selected: boolean
+  outlined: boolean
   register: (el: HTMLDivElement | null) => void
   onBegin: (e: React.PointerEvent, b: DocBlock, mode: 'move' | 'resize-l' | 'resize-r') => void
 }) {
@@ -652,7 +666,11 @@ function BlockBox({
     <div
       ref={register}
       className={`group cursor-move rounded-sm ring-offset-2 ${
-        selected ? 'ring-2 ring-brand' : 'hover:ring-1 hover:ring-border-strong'
+        selected
+          ? 'ring-2 ring-brand'
+          : outlined
+            ? 'ring-1 ring-border-strong'
+            : 'hover:ring-1 hover:ring-border-strong'
       }`}
       style={
         flow
@@ -668,15 +686,22 @@ function BlockBox({
       aria-label={def.label}
     >
       {/*
-        The name, on hover or when selected. A block showing its real content is
-        readable but not always identifiable — an empty notes block is a heading
-        over nothing, and a rule is a line.
+        The name — when selected, when the outlines are on, or on hover. A block
+        showing its real content is readable but not always identifiable: an
+        empty notes block is a heading over nothing, and a rule is a line.
+
+        It follows the outline switch deliberately. While laying a page out,
+        "where does this block end" and "what is it" are one question, so a
+        labelled outline answers both at a glance; turning the outlines off is
+        asking to see the paper, and a row of captions over it is not that.
       */}
       <span
         className={`pointer-events-none absolute -top-4 left-0 z-10 rounded-badge px-1 text-[10px] font-medium ${
           selected
             ? 'bg-brand text-on-brand'
-            : 'bg-surface-2 text-muted opacity-0 group-hover:opacity-100'
+            : outlined
+              ? 'bg-surface-2 text-muted'
+              : 'bg-surface-2 text-muted opacity-0 group-hover:opacity-100'
         }`}
       >
         {def.label}

@@ -501,8 +501,10 @@ export default function StationeryClient({
             )}
           </div>
           <p className="mt-3 text-xs text-muted">
-            PNG, JPEG, GIF or WebP. It is printed at about 56px tall, so a wide image reads
-            better than a tall one.
+            PNG, JPEG, GIF or WebP. Upload it larger than you need — it is scaled down to
+            fit, so a big file stays sharp and a small one cannot be made bigger. In the
+            designer, add a <span className="font-medium text-ink">Your logo</span> block to
+            put it where you like and set how tall it prints.
           </p>
         </CardBody>
       </Card>
