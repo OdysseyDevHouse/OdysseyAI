@@ -71,6 +71,9 @@ import {
   describeSource,
   describeLayoutChanges,
   applyToSelection,
+  dropSection,
+  editSection,
+  flattenSections,
   isScheduledNow,
   normaliseSections,
   pageWarnings,
@@ -101,11 +104,21 @@ import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefr
 import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { PageVersion, SavedSection, StorefrontPage } from '@/lib/site/storefrontPages'
 import type { ProductDisplay, SectionContent } from '@/app/store/[token]/HomeSections'
-import { BuilderCanvas, gapIndex, type PreviewWidth } from './BuilderCanvas'
+import {
+  BuilderCanvas,
+  columnGapTarget,
+  gapIndex,
+  type PreviewWidth,
+} from './BuilderCanvas'
 import ProductPicker from './ProductPicker'
 import Outline from './Outline'
 import SectionPalette, { PALETTE_PREFIX, paletteKind } from './SectionPalette'
-import { SECTION_CATALOG, STYLE_FIELDS } from '@/lib/storefront/catalog'
+import {
+  COLUMN_CHILD_KINDS,
+  MAX_COLUMN_CHILDREN,
+  SECTION_CATALOG,
+  STYLE_FIELDS,
+} from '@/lib/storefront/catalog'
 import SectionFields from './SectionFields'
 import ColumnEditor from './ColumnEditor'
 import ThemePicker from './ThemePicker'
@@ -735,7 +748,7 @@ export default function Builder({
 
   const patch = useCallback(
     (id: string, changes: Partial<HomeSection>) => {
-      commit((prev) => prev.map((s) => (s.id === id ? { ...s, ...changes } : s)))
+      commit((prev) => editSection(prev, id, changes))
     },
     [commit],
   )
@@ -761,7 +774,7 @@ export default function Builder({
 
   /** Add a section at a given position. `add` is this, at the end. */
   function insert(kind: SectionKind, index: number) {
-    if (sections.length >= MAX_SECTIONS) {
+    if (sectionCount >= MAX_SECTIONS) {
       toast.error(`A page can hold ${MAX_SECTIONS} sections.`)
       return
     }
@@ -776,6 +789,71 @@ export default function Builder({
     // anything at all — a banner has no picture, a carousel has two empty
     // slides. Landing on the page with its settings folded away would leave the
     // owner looking at a dashed "choose a picture" box with no picker in sight.
+    openPanel('edit')
+  }
+
+  /**
+   * Put a section into one column of a side-by-side block.
+   *
+   * Takes a SECTION rather than a kind, so the one function serves both a new
+   * block from the palette and an existing one carried in from the page. The
+   * caller decides which; this decides whether it fits.
+   *
+   * ── THE TWO REFUSALS ARE DIFFERENT ─────────────────────────────────────
+   *
+   * A kind that may not live in a column is a mistake worth explaining — the
+   * whitelist exists because a carousel in a third of a page looks fine in the
+   * builder and wrong in the shop. A full column is a limit, not a mistake. So
+   * both say something, and neither silently drops the block.
+   */
+  function insertIntoColumn(
+    section: HomeSection,
+    sectionId: string,
+    column: number,
+    index: number,
+  ) {
+    if (!COLUMN_CHILD_KINDS.includes(section.kind)) {
+      toast.error(`${SECTION_CATALOG[section.kind].label} cannot go inside a column.`)
+      return
+    }
+
+    let refused: string | null = null
+    commit((prev) => {
+      /*
+       * Lifted out of wherever it was FIRST, so carrying a block from the page
+       * into a column is a move rather than a copy — and so that reordering
+       * within one column does not count the block twice against the cap.
+       */
+      const without = dropSection(prev, section.id)
+      const target = without.find((s) => s.id === sectionId)
+      if (!target || target.kind !== 'columns') return prev
+
+      const count = target.columnCount ?? 2
+      if (column < 0 || column >= count) return prev
+      const stored = target.columns ?? []
+      const columns: HomeSection[][] = Array.from(
+        { length: count },
+        (_, n) => stored[n] ?? [],
+      )
+      if (columns[column].length >= MAX_COLUMN_CHILDREN) {
+        refused = `A column holds ${MAX_COLUMN_CHILDREN} blocks.`
+        return prev
+      }
+
+      const next = [...columns[column]]
+      next.splice(Math.min(Math.max(index, 0), next.length), 0, section)
+      return without.map((s) =>
+        s.id === sectionId
+          ? { ...s, columns: columns.map((c, n) => (n === column ? next : c)) }
+          : s,
+      )
+    })
+
+    if (refused) {
+      toast.error(refused)
+      return
+    }
+    setSelectedId(section.id)
     openPanel('edit')
   }
 
@@ -812,7 +890,18 @@ export default function Builder({
   )
 
   const sectionIds = sections.map((s) => s.id)
-  const atLimit = sections.length >= MAX_SECTIONS
+  /*
+   * What the SERVER counts.
+   *
+   * `normaliseSections` spends one budget across the whole page — a block
+   * inside a column costs the same as one on the page, which is what stops
+   * a page holding 20 columns × 3 × 4. Counting only the top level here
+   * would let the builder assemble a page the save then silently truncates,
+   * and the blocks that vanished would be the ones deepest inside a column:
+   * the last place anybody would look.
+   */
+  const sectionCount = flattenSections(sections).length
+  const atLimit = sectionCount >= MAX_SECTIONS
 
   const nameOf = (id: unknown) => {
     const kind = paletteKind(String(id))
@@ -858,6 +947,23 @@ export default function Builder({
        * thing you had just decided against, on the part of the page you were
        * not looking at. A drop that lands on nothing must do nothing.
        */
+      // A column target names all three of section, column and position, so
+      // it is answered before the page-level gaps — see the move branch below.
+      const intoColumn = columnGapTarget(overId)
+      if (intoColumn) {
+        if (sectionCount >= MAX_SECTIONS) {
+          toast.error(`A page can hold ${MAX_SECTIONS} sections.`)
+          return
+        }
+        insertIntoColumn(
+          newSection(kind),
+          intoColumn.sectionId,
+          intoColumn.column,
+          intoColumn.index,
+        )
+        return
+      }
+
       const gap = gapIndex(overId)
       if (gap !== null) {
         insert(kind, gap)
@@ -866,6 +972,28 @@ export default function Builder({
       const at = sectionIds.indexOf(overId)
       if (at === -1) return
       insert(kind, at)
+      return
+    }
+
+    /*
+     * Carried into a column.
+     *
+     * Checked before the page gaps, because a column target is also inside a
+     * section and letting the page-level checks see it first would move the
+     * whole side-by-side block instead of dropping into it.
+     *
+     * Only a TOP-LEVEL section can be carried, because only a top-level
+     * section has a drag handle — a child has none, deliberately. Finding it
+     * here means the id is one of `sectionIds`.
+     */
+    const intoColumn = columnGapTarget(overId)
+    if (intoColumn) {
+      const moving = sections.find((s) => s.id === activeId)
+      if (!moving) return
+      // A side-by-side block cannot be carried into a column: that is the
+      // depth cap, and it is the same rule `normaliseSections` enforces on
+      // whatever a browser posts.
+      insertIntoColumn(moving, intoColumn.sectionId, intoColumn.column, intoColumn.index)
       return
     }
 
@@ -939,7 +1067,7 @@ export default function Builder({
   }
 
   function insertSaved(saved: HomeSection) {
-    if (sections.length >= MAX_SECTIONS) {
+    if (sectionCount >= MAX_SECTIONS) {
       toast.error(`A page can hold ${MAX_SECTIONS} sections.`)
       return
     }
@@ -972,7 +1100,7 @@ export default function Builder({
    * editing one silently edit the other.
    */
   function duplicate(id: string) {
-    if (sections.length >= MAX_SECTIONS) {
+    if (sectionCount >= MAX_SECTIONS) {
       toast.error(`A page can hold ${MAX_SECTIONS} sections.`)
       return
     }
@@ -1006,7 +1134,7 @@ export default function Builder({
   }
 
   function remove(id: string) {
-    commit((prev) => prev.filter((s) => s.id !== id))
+    commit((prev) => dropSection(prev, id))
     if (selectedId === id) setSelectedId(null)
     // Said out loud, because the section vanishes from under the cursor and
     // the only clue it can come back is a button in a toolbar above.
@@ -2493,7 +2621,7 @@ export default function Builder({
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={busy || sections.length >= MAX_SECTIONS}
+                      disabled={busy || sectionCount >= MAX_SECTIONS}
                       onClick={() => insertSaved(saved.section)}
                     >
                       Add

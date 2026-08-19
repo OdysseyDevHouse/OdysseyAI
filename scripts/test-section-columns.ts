@@ -14,6 +14,8 @@
 import {
   MAX_SECTIONS,
   describeLayoutChanges,
+  dropSection,
+  editSection,
   flattenSections,
   normaliseSections,
   pageWarnings,
@@ -212,6 +214,81 @@ console.log('\n— Where it may be added —')
     quote: () => ({}) as never,
   })
   ok('and it starts with two empty columns', JSON.stringify(started.columns) === '[[],[]]')
+}
+
+console.log('\n— Editing a block inside a column —')
+{
+  /*
+   * The builder's `patch` and `remove` used to walk the top-level array only,
+   * so a block inside a column could be selected, typed into, and nothing
+   * happened — no error and no change. These two functions are what fixed
+   * that, and this is the assertion that keeps them honest.
+   */
+  const page = normaliseSections([
+    {
+      id: 'c1',
+      kind: 'columns',
+      title: 'Side by side',
+      enabled: true,
+      columnCount: 2,
+      columns: [
+        [{ id: 'a', kind: 'text', title: 'Left', body: 'one', enabled: true }],
+        [{ id: 'b', kind: 'text', title: 'Right', body: 'two', enabled: true }],
+      ],
+    },
+    { id: 'top', kind: 'text', title: 'On the page', body: 'three', enabled: true },
+  ])
+
+  const edited = editSection(page, 'b', { title: 'Renamed' })
+  ok(
+    'editing a child changes that child',
+    edited[0].columns?.[1]?.[0]?.title === 'Renamed',
+    JSON.stringify(edited[0].columns?.[1]?.[0]?.title),
+  )
+  ok(
+    'and leaves its sibling alone',
+    edited[0].columns?.[0]?.[0]?.title === 'Left',
+    JSON.stringify(edited[0].columns?.[0]?.[0]?.title),
+  )
+  // Identity, not merely equality: the publish diff compares references in
+  // places, so rebuilding an untouched section would report a page as edited
+  // when nothing about it changed.
+  ok('an untouched section keeps its identity', edited[1] === page[1])
+
+  const topEdited = editSection(page, 'top', { title: 'Changed' })
+  ok(
+    'a top-level section still edits',
+    topEdited[1].title === 'Changed',
+    JSON.stringify(topEdited[1].title),
+  )
+  ok('and the columns section beside it is untouched', topEdited[0] === page[0])
+
+  const dropped = dropSection(page, 'a')
+  ok(
+    'removing a child empties its column',
+    dropped[0].columns?.[0]?.length === 0,
+    JSON.stringify(dropped[0].columns?.[0]),
+  )
+  ok(
+    'and the other column survives',
+    dropped[0].columns?.[1]?.[0]?.id === 'b',
+    JSON.stringify(dropped[0].columns?.[1]?.map((c) => c.id)),
+  )
+  ok('the page still holds both sections', dropped.length === 2, String(dropped.length))
+
+  const droppedTop = dropSection(page, 'c1')
+  ok(
+    'removing the columns section takes its children with it',
+    droppedTop.length === 1 && droppedTop[0].id === 'top',
+    droppedTop.map((s) => s.id).join(','),
+  )
+
+  // An id that is not on the page must not quietly rebuild it.
+  const missing = editSection(page, 'nope', { title: 'x' })
+  ok(
+    'an unknown id changes nothing',
+    missing.every((s, i) => s === page[i]),
+  )
 }
 
 console.log(fails ? `\n${fails} FAILED.` : '\nAll column checks passed.')

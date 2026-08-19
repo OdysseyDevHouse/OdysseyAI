@@ -6,6 +6,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities'
 import { Button, Icons, SegmentedControl, Switch } from '@/components/ui'
 import { themeVars, type DesignTokens } from '@/lib/storefront/tokens'
+import { MAX_COLUMN_CHILDREN } from '@/lib/storefront/catalog'
 import {
   MAX_SECTIONS,
   isScheduledNow,
@@ -279,6 +280,39 @@ export function BuilderCanvas({
                     </EditableSection>
                     )
                   }
+                  /*
+                   * The drop targets inside a column.
+                   *
+                   * One before every block and one after the last, so a block can
+                   * be placed anywhere in the order rather than only appended —
+                   * the same arrangement the page itself uses.
+                   *
+                   * An empty column gets exactly one, drawn as a panel rather than
+                   * a sliver, because there is no gap between blocks to hint at
+                   * and nothing else in that column to aim at.
+                   */
+                  renderColumn={(section, column, children) => {
+                    const full = children.length >= MAX_COLUMN_CHILDREN
+                    const point = (index: number, empty = false) => (
+                      <ColumnInsertPoint
+                        key={`gap-${index}`}
+                        sectionId={section.id}
+                        column={column}
+                        index={index}
+                        full={full}
+                        dragging={dragging !== null || placing}
+                        over={over}
+                        empty={empty}
+                      />
+                    )
+                    if (children.length === 0) return point(0, true)
+                    return (
+                      <>
+                        {children.flatMap((child, i) => [point(i), child])}
+                        {point(children.length)}
+                      </>
+                    )
+                  }}
                 />
                 </WishlistProvider>
               </CartProvider>
@@ -842,6 +876,13 @@ export function columnGapTarget(id: string | null): ColumnGapTarget | null {
 }
 
 export function columnGapId(sectionId: string, column: number, index: number): string {
+  /*
+   * Ids are generated, so none of them holds a '|' — and if that ever stopped
+   * being true this would encode a target that parses back as a different
+   * column. Cheaper to assert it here than to debug a drop landing one column
+   * over.
+   */
+  if (sectionId.includes('|')) throw new Error(`section id cannot contain '|': ${sectionId}`)
   return `${COLUMN_GAP_PREFIX}${sectionId}|${column}|${index}`
 }
 
@@ -930,6 +971,95 @@ function EditableChild({
           <Icons.Trash size={13} />
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * A drop target inside one column.
+ *
+ * ── WHY IT IS NOT `InsertPoint` ──────────────────────────────────────────
+ *
+ * The page-level insert point names a position with a single number, because a
+ * page is one list. A column is a position within a column within a section, so
+ * the id has to carry all three — see `columnGapId`.
+ *
+ * It is also visible under different circumstances. The page's gaps show only
+ * while a PALETTE tile is in flight, because a section being moved shows its own
+ * drop line instead. A column accepts both: a new block from the palette, and an
+ * existing block being carried in from the page. So this shows whenever anything
+ * is being dragged at all.
+ *
+ * ── THE EMPTY COLUMN IS THE POINT ────────────────────────────────────────
+ *
+ * A column with nothing in it still renders one of these, and it is the only
+ * thing in that column. Without it a new side-by-side section would be two blank
+ * areas with nowhere to aim, and the only way to fill one would be the panel.
+ */
+function ColumnInsertPoint({
+  sectionId,
+  column,
+  index,
+  full,
+  dragging,
+  over,
+  empty,
+}: {
+  sectionId: string
+  column: number
+  index: number
+  /** The column already holds its limit, so this cannot accept anything. */
+  full: boolean
+  /** Anything at all being carried — a palette tile or a section. */
+  dragging: boolean
+  over: string | null
+  /** The only target in an empty column, so it says so rather than being a sliver. */
+  empty: boolean
+}) {
+  const id = columnGapId(sectionId, column, index)
+  const { setNodeRef } = useDroppable({ id, disabled: full || !dragging })
+
+  // A full column keeps its empty state honest: if there is nothing in it, it is
+  // not full, so this only ever hides a sliver between blocks.
+  if (full && !empty) return null
+
+  const active = over === id
+
+  if (empty) {
+    return (
+      <div
+        ref={setNodeRef}
+        className={`flex min-h-24 items-center justify-center rounded-card border border-dashed px-3 text-center text-xs transition ${
+          active
+            ? 'border-brand bg-brand-soft text-brand-ink'
+            : 'border-border-strong bg-surface-2/40 text-muted'
+        }`}
+      >
+        {full ? 'This column is full' : active ? 'Drop it here' : 'Drop a block here'}
+      </div>
+    )
+  }
+
+  return (
+    // Same trick as InsertPoint: negative margins at rest so the preview keeps
+    // the shop's spacing, a real target while something is in flight.
+    <div
+      ref={setNodeRef}
+      className={`relative flex items-center justify-center transition-all ${
+        dragging ? 'my-1 h-8' : '-my-2 h-4'
+      }`}
+    >
+      {dragging && (
+        <span
+          className={`pointer-events-none absolute inset-x-0 flex h-full items-center justify-center rounded-control border border-dashed transition ${
+            active ? 'border-brand bg-brand-soft' : 'border-border-strong bg-surface-2/40'
+          }`}
+        >
+          <span className={`text-xs font-medium transition ${active ? 'text-brand-ink' : 'text-muted'}`}>
+            {active ? 'Drop it here' : 'Here'}
+          </span>
+        </span>
+      )}
     </div>
   )
 }

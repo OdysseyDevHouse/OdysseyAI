@@ -1268,6 +1268,63 @@ export function flattenSections(sections: HomeSection[]): HomeSection[] {
 }
 
 /**
+ * Change one section, wherever on the page it lives.
+ *
+ * ── WHY THIS IS NOT A `map` ──────────────────────────────────────────────
+ *
+ * The builder's `patch` walked the top-level array only, so editing a block
+ * inside a column changed nothing: the inspector wrote, the canvas did not
+ * move, and no error said why. Same for removing one. The moment a column can
+ * hold a section, every edit path has to reach into columns or the ones that
+ * do not are silently broken.
+ *
+ * A column is rewritten only when one of its children actually changed, so an
+ * untouched section keeps its identity — the publish diff compares by
+ * reference in places, and a wholesale rebuild would report a page as edited
+ * because somebody typed in an unrelated block.
+ */
+export function editSection(
+  sections: HomeSection[],
+  id: string,
+  changes: Partial<HomeSection>,
+): HomeSection[] {
+  return sections.map((section) => {
+    if (section.id === id) return { ...section, ...changes }
+    if (!section.columns) return section
+    let touched = false
+    const columns = section.columns.map((column) =>
+      column.map((child) => {
+        if (child.id !== id) return child
+        touched = true
+        return { ...child, ...changes }
+      }),
+    )
+    return touched ? { ...section, columns } : section
+  })
+}
+
+/**
+ * Take one section off the page, wherever it lives.
+ *
+ * A child comes out of its column; the column and the section around it stay.
+ * See `editSection` for why this cannot be a `filter` over the top level.
+ */
+export function dropSection(sections: HomeSection[], id: string): HomeSection[] {
+  return sections
+    .filter((section) => section.id !== id)
+    .map((section) => {
+      if (!section.columns) return section
+      let touched = false
+      const columns = section.columns.map((column) => {
+        if (!column.some((child) => child.id === id)) return column
+        touched = true
+        return column.filter((child) => child.id !== id)
+      })
+      return touched ? { ...section, columns } : section
+    })
+}
+
+/**
  * What publishing this draft would actually change for shoppers.
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────

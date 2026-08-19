@@ -105,6 +105,7 @@ export default function HomeSections({
   display,
   imageSrc,
   renderSection,
+  renderColumn,
   anchorProductId,
 }: {
   token: string
@@ -133,6 +134,21 @@ export default function HomeSections({
    * explaining why.
    */
   renderSection?: (section: HomeSection, node: ReactNode) => ReactNode
+  /**
+   * Wraps one column of a side-by-side section.
+   *
+   * The builder puts its drop targets here — between the children, and in an
+   * empty column where there are no children to sit between. It needs to know
+   * WHICH column, which is why this takes the section and the index rather
+   * than being folded into `renderSection`.
+   *
+   * The shop passes nothing and gets the children unchanged.
+   */
+  renderColumn?: (
+    section: HomeSection,
+    column: number,
+    children: ReactNode[],
+  ) => ReactNode
 }) {
   return (
     /*
@@ -154,7 +170,7 @@ export default function HomeSections({
       {content.map((entry) => {
         const node = banded(
           entry.section,
-          sectionBody(entry, token, theme, display, imageSrc, anchorProductId, renderSection),
+          sectionBody(entry, token, theme, display, imageSrc, anchorProductId, renderSection, renderColumn),
         )
 
         if (renderSection) return renderSection(entry.section, node)
@@ -198,9 +214,27 @@ function sectionBody(
    * had.
    */
   renderSection?: (section: HomeSection, node: ReactNode) => ReactNode,
+  /** Wraps one column, so the builder can put drop targets inside it. */
+  renderColumn?: (
+    section: HomeSection,
+    column: number,
+    children: ReactNode[],
+  ) => ReactNode,
 ): ReactNode {
   if (entry.section.kind === 'columns') {
-    const columns = entry.section.columns ?? []
+    /*
+     * `columnCount` decides how many columns there ARE, not the length of the
+     * stored array. A merchant who switches 2 → 3 has a third column before
+     * anything is in it, and that empty column is exactly where they are about
+     * to drop something. Reading the array instead would leave nothing to aim
+     * at until it was already filled.
+     */
+    const count = entry.section.columnCount ?? 2
+    const stored = entry.section.columns ?? []
+    const columns: HomeSection[][] = Array.from(
+      { length: count },
+      (_, n) => stored[n] ?? [],
+    )
     /*
      * A column’s children render through THIS function, which is what makes
      * a column hold anything the page can. One level: normalisation refuses a
@@ -212,7 +246,7 @@ function sectionBody(
         const childEntry = entry.columnContent?.[n]?.[k] ?? { section: child }
         const drawnChild = banded(
           child,
-          sectionBody(childEntry, token, theme, display, imageSrc, anchorProductId),
+          sectionBody(childEntry, token, theme, display, imageSrc, anchorProductId, renderSection, renderColumn),
         )
         return (
           <div key={child.id}>
@@ -224,7 +258,13 @@ function sectionBody(
 
     // Nothing in any column is nothing to draw — the same rule every other
     // kind follows, applied one level down.
-    if (drawn.every((c) => c.length === 0)) return null
+    /*
+     * Except in the builder. `renderColumn` is only ever passed by the canvas,
+     * and a brand-new side-by-side section starts empty: skipping it here would
+     * mean adding one and seeing nothing appear, with nowhere to drop the first
+     * block. The shop still skips it, which is what this rule was for.
+     */
+    if (!renderColumn && drawn.every((c) => c.length === 0)) return null
 
     const GAP: Record<string, string> = { tight: 'gap-3', normal: 'gap-6', loose: 'gap-10' }
     const gap = GAP[entry.section.columnGap ?? 'normal'] ?? GAP.normal
@@ -248,7 +288,7 @@ function sectionBody(
         <div className={`grid ${cols} ${gap}`}>
           {drawn.map((children, n) => (
             <div key={n} className="flex flex-col gap-4">
-              {children}
+              {renderColumn ? renderColumn(entry.section, n, children) : children}
             </div>
           ))}
         </div>
