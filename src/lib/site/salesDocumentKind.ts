@@ -7,14 +7,14 @@ import type { SalesDocument } from './salesDocuments'
  *
  * One screen captures quotes, sales orders and invoices as one document at
  * different moments, and a credit note is that document reversed. What the paper
- * is CALLED follows from the type and the status — and four things now need that
- * answer: the printed page, the emailed PDF, the customer portal, and the
- * component this was lifted out of.
+ * is CALLED follows from the type and the status — and three things need that
+ * answer: the printed page, the emailed PDF and the customer portal.
  *
- * It lived in components/sales/SalesDocumentPrint.tsx, which imports the UI kit.
- * Pulling that into an email path to read two string maps is the kind of import
- * that quietly drags a design system into a background job — so the words moved
- * here, where a server module can read them without dragging anything.
+ * It lived in a print COMPONENT that imported the UI kit, and pulling that into
+ * an email path to read two string maps is the kind of import that quietly drags
+ * a design system into a background job. The words moved here, where a server
+ * module reads them without dragging anything — and the component itself is now
+ * gone, replaced by the template renderer.
  *
  * ── THE WORDING IS NOT DECORATION ─────────────────────────────────────────
  *

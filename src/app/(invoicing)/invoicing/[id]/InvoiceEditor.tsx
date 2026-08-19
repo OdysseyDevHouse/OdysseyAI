@@ -850,7 +850,7 @@ export default function InvoiceEditor({
    * that and a tax invoice is the whole reason the route decides the heading
    * from status. The button says the same word the paper does.
    *
-   * Kept in step with printKindFor in SalesDocumentPrint — that function is
+   * Kept in step with printKindFor in lib/site/salesDocumentKind — that function is
    * the authority, this only labels the button that opens it.
    */
   const printLabel = isQuote

@@ -68,7 +68,7 @@ export type InvoiceSources = {
    * Passed in rather than derived here, because the route already decides it:
    * one screen captures quotes, sales orders and invoices as one document at
    * different moments, and what it is CALLED follows from doc type and status
-   * (see printKindFor in components/sales/SalesDocumentPrint.tsx). Deriving it
+   * (see printKindFor in lib/site/salesDocumentKind.ts). Deriving it
    * a second time here would be a second answer to the same question, and the
    * two would disagree the first time either changed.
    *
