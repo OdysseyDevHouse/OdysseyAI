@@ -573,6 +573,36 @@ const BANDS = new Set<string>(BAND_KEYS)
  * A row naming a field that no longer exists is dropped rather than kept as a
  * label over a permanent blank — the same call cleanColumns makes.
  */
+/**
+ * A block's chosen tokens, keeping only those THIS document has.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ *
+ * `rows` and `columns` were cleaned against the catalog from the start and
+ * `tokens` was not — it was checked for being strings and nothing more. That
+ * gap is invisible while a design stays on the document it was made for, and it
+ * surfaced the moment designs became copyable: a delivery note copied onto an
+ * invoice arrived carrying `{deliverTo}` and `{doc.fulfilment}`, which an
+ * invoice has no idea about. The validator called them unknown tokens and
+ * refused to save the copy.
+ *
+ * They would have rendered blank rather than leaked — `substitute` resolves an
+ * unknown token to nothing — but a letterhead with two invisible lines in it is
+ * a design nobody can account for, and a save that fails on tokens the shop
+ * never typed is worse.
+ *
+ * The same rule the other two follow: what this document does not know is
+ * dropped on read, so a design survives a field being renamed rather than
+ * failing to open.
+ */
+function cleanTokens(raw: unknown[], doc: DocTypeDef | null): string[] {
+  const strings = raw.filter((t): t is string => typeof t === 'string').slice(0, 20)
+  if (!doc) return strings
+
+  const known = new Set([...doc.tokens, ...doc.sections.flatMap((s) => s.tokens)].map((t) => t.key))
+  return strings.filter((t) => known.has(t))
+}
+
 function cleanRows(raw: unknown, doc: DocTypeDef | null): DetailRow[] | undefined {
   if (!Array.isArray(raw)) return undefined
 
@@ -743,9 +773,7 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
           ? { align: align as DocBlockAlign }
           : {}),
         ...(typeof title === 'string' ? { title: title.slice(0, 60) } : {}),
-        ...(Array.isArray(tokens)
-          ? { tokens: tokens.filter((t): t is string => typeof t === 'string').slice(0, 20) }
-          : {}),
+        ...(Array.isArray(tokens) ? { tokens: cleanTokens(tokens, doc) } : {}),
         ...(columns ? { columns } : {}),
         ...(section ? { section } : {}),
         ...(rows ? { rows } : {}),

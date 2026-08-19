@@ -7,6 +7,7 @@ import { isDocType, getDocType } from '../stationery/catalog'
 import { parseSlip, validateSlip, serialiseSlip } from '../stationery/slip'
 import { parseSpec, validateSpec, serialiseSpec } from '../stationery/blocks'
 import { compileDocument } from '../stationery/compile'
+import { planCopy, describeCopy } from '../stationery/copy'
 
 /**
  * Reading and writing a site's designed stationery.
@@ -414,4 +415,122 @@ export async function discardDraft(siteId: number, id: number): Promise<SaveResu
   if (!(await tableExists(siteId))) return { ok: false, error: 'That template no longer exists.' }
   await siteExecute(siteId, 'UPDATE stationery_templates SET draft_body = NULL WHERE id = ?', [id])
   return { ok: true, id }
+}
+
+/* ── copying a design ────────────────────────────────────────────────────── */
+
+export type CopyResult =
+  | {
+      ok: true
+      id: number
+      message: string
+      /** Enough for the caller to show the new row without a refetch. */
+      docType: string
+      name: string
+      body: string
+      format: 'html' | 'slip' | 'blocks'
+    }
+  | { ok: false; error: string }
+
+/**
+ * Copy a design — to another name on the same document, or onto a different one.
+ *
+ * ── IT DELEGATES THE WRITE ────────────────────────────────────────────────
+ *
+ * planCopy decides what a copy MEANS; saveTemplate decides whether the result
+ * is allowed and writes it. Doing the insert here would be a second path into
+ * the table that skips the sanitiser, the structural check and the legal check
+ * — three guarantees that exist precisely so no caller has to remember them.
+ *
+ * ── THE COPY IS NEVER THE ACTIVE ONE ──────────────────────────────────────
+ *
+ * saveTemplate inserts inactive, and that is what a copy should be. A shop
+ * copying its invoice design onto its quotes has not asked for quotes to start
+ * printing differently the moment it clicks — it has asked for a starting
+ * point, and "Use this" is one click away when it has looked at it.
+ */
+export async function copyTemplate(
+  siteId: number,
+  id: number,
+  targetDocType: string,
+  name: string,
+  actor: { userId: number; userName: string },
+): Promise<CopyResult> {
+  const source = await getTemplate(siteId, id)
+  if (!source) return { ok: false, error: 'That design no longer exists.' }
+
+  const target = getDocType(targetDocType)
+  if (!target) return { ok: false, error: 'That document type does not exist.' }
+
+  /*
+   * A SLIP COPIES ONLY TO A SLIP, and there is one slip, so the only slip copy
+   * is a duplicate. Nothing to filter: the same document, the same blocks.
+   */
+  if (source.format === 'slip') {
+    if (target.medium !== 'slip') {
+      return {
+        ok: false,
+        error: 'A till slip design cannot become a page — a slip is a list of lines, not a layout.',
+      }
+    }
+    const saved = await saveTemplate(
+      siteId,
+      { docType: source.docType, name, body: source.body, format: 'slip' },
+      actor,
+    )
+    return saved.ok
+      ? { ok: true, id: saved.id, message: 'Copied.', docType: source.docType, name, body: source.body, format: 'slip' }
+      : { ok: false, error: saved.error }
+  }
+
+  /*
+   * MARKUP HAS NO BLOCKS TO FILTER.
+   *
+   * A design typed as HTML is one string; there is no structure to ask the
+   * target's catalog about. Copying it to another document would carry tokens
+   * that document does not have — which render empty rather than leaking, but
+   * produce a page full of quiet holes. So markup duplicates onto its OWN
+   * document and no further, and the shop is told why rather than being handed
+   * a broken page.
+   */
+  if (source.format !== 'blocks') {
+    if (targetDocType !== source.docType) {
+      return {
+        ok: false,
+        error:
+          'This design is written as HTML, so it can only be duplicated on its own document. Design it by dragging to move it between documents.',
+      }
+    }
+    const saved = await saveTemplate(
+      siteId,
+      { docType: source.docType, name, body: source.body, format: 'html' },
+      actor,
+    )
+    return saved.ok
+      ? { ok: true, id: saved.id, message: 'Copied.', docType: source.docType, name, body: source.body, format: 'html' }
+      : { ok: false, error: saved.error }
+  }
+
+  const spec = parseSpec(source.body, source.docType)
+  if (!spec) return { ok: false, error: 'That design could not be read.' }
+
+  const plan = planCopy(spec, source.docType, targetDocType, name)
+  if (!plan.ok) return { ok: false, error: plan.error }
+
+  const saved = await saveTemplate(
+    siteId,
+    { docType: targetDocType, name: plan.name, body: serialiseSpec(plan.spec), format: 'blocks' },
+    actor,
+  )
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  return {
+    ok: true,
+    id: saved.id,
+    message: describeCopy(plan, target.label),
+    docType: targetDocType,
+    name: plan.name,
+    body: serialiseSpec(plan.spec),
+    format: 'blocks',
+  }
 }

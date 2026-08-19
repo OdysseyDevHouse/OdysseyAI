@@ -8,6 +8,7 @@ import {
   resetToDefault,
   deleteTemplate,
   discardDraft,
+  copyTemplate,
 } from '@/lib/site/stationeryTemplates'
 import { isDocType } from '@/lib/stationery/catalog'
 import { sanitiseTemplate, unsupportedIn } from '@/lib/stationery/sanitise'
@@ -42,6 +43,19 @@ import { setLogo, clearLogo } from '@/lib/site/documentLogo'
  */
 
 export type ActionResult = { ok: true; message: string; id?: number } | { ok: false; error: string }
+
+/** A copy hands back the whole new row, so the list can show it without a refetch. */
+export type CopyActionResult =
+  | {
+      ok: true
+      message: string
+      id: number
+      docType: string
+      name: string
+      body: string
+      format: 'html' | 'slip' | 'blocks'
+    }
+  | { ok: false; error: string }
 
 export async function saveTemplateAction(input: {
   id?: number
@@ -116,6 +130,42 @@ export async function deleteTemplateAction(id: number): Promise<ActionResult> {
 
   revalidatePath('/setup/stationery')
   return { ok: true, message: 'Template deleted.' }
+}
+
+/**
+ * Copy a design — to a new name here, or onto another document.
+ *
+ * Guarded like every other write on this screen: the action is the real
+ * boundary, and a copy creates a row exactly as a save does. Reading the source
+ * happens inside the site's own connection, so a caller cannot name a design
+ * belonging to a site they are not signed in to.
+ */
+export async function copyTemplateAction(input: {
+  id: number
+  targetDocType: string
+  name: string
+}): Promise<CopyActionResult> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const name = input.name.trim()
+  if (!name) return { ok: false, error: 'Give the copy a name.' }
+
+  const result = await copyTemplate(ctx.siteId, input.id, input.targetDocType, name, ctx.actor)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/stationery')
+  // The message names what was dropped or added — see describeCopy. It is the
+  // point of the feature, not a courtesy.
+  return {
+    ok: true,
+    message: result.message,
+    id: result.id,
+    docType: result.docType,
+    name: result.name,
+    body: result.body,
+    format: result.format,
+  }
 }
 
 /**

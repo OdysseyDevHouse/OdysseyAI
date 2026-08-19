@@ -251,7 +251,8 @@
     "test:stock-holds": "tsx --conditions=react-server --env-file=.env scripts/test-stock-holds.ts",
     "test:variants": "tsx --conditions=react-server --env-file=.env scripts/test-variants.ts",
     "test:pos-unlock": "tsx --conditions=react-server --env-file=.env --env-file=.env.local scripts/test-pos-unlock.ts",
-    "test:conditions": "tsx scripts/test-conditions.ts"
+    "test:conditions": "tsx scripts/test-conditions.ts",
+    "test:stationery-copy": "tsx scripts/test-stationery-copy.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

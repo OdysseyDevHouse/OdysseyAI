@@ -23,11 +23,13 @@ import {
   resetToDefaultAction,
   previewTemplateAction,
   deleteTemplateAction,
+  copyTemplateAction,
   uploadLogoAction,
   clearLogoAction,
   toMarkupAction,
 } from './actions'
 import SlipDesigner from './SlipDesigner'
+import CopyDesignModal from './CopyDesignModal'
 import { parseSlip, serialiseSlip } from '@/lib/stationery/slip'
 import { parseSpec, serialiseSpec } from '@/lib/stationery/blocks'
 import VisualDesigner from './visual/VisualDesigner'
@@ -312,6 +314,51 @@ export default function StationeryClient({
     })
   }
 
+  /*
+   * The design a copy dialog is open for, or null. The whole template rather
+   * than its id: the dialog needs its name and its format to decide what to
+   * offer, and looking those up again from the id would go stale the moment the
+   * list refreshes underneath it.
+   */
+  const [copying, setCopying] = useState<TemplateInfo | null>(null)
+
+  function copy(targetDocType: string, name: string) {
+    if (!copying) return
+    start(async () => {
+      const res = await copyTemplateAction({ id: copying.id, targetDocType, name })
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      /*
+       * The message names what was dropped and what had to be added — see
+       * describeCopy. Shown for longer than a plain "saved" because it is
+       * information the shop has to act on, not a confirmation.
+       */
+      toast.success(res.message)
+      setCopying(null)
+      /*
+       * Merged locally rather than refetched, for the same reason a save is:
+       * this component owns the editor's state and a reload would throw away
+       * whatever is open in the pane. The action hands back the whole row —
+       * including the FILTERED body, which is not what was copied from — so
+       * nothing here has to guess at what the server decided.
+       */
+      setTemplates((prev) => [
+        ...prev,
+        {
+          id: res.id,
+          docType: res.docType,
+          name: res.name,
+          body: res.body,
+          format: res.format,
+          draftBody: null,
+          isActive: false,
+        },
+      ])
+    })
+  }
+
   function remove(id: number) {
     start(async () => {
       const res = await deleteTemplateAction(id)
@@ -459,6 +506,9 @@ export default function StationeryClient({
                   <div className="flex shrink-0 items-center gap-1.5">
                     <Button size="sm" variant="ghost" onClick={() => openTemplate(t)}>
                       Edit
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setCopying(t)} disabled={pending}>
+                      Copy
                     </Button>
                     {!t.isActive && (
                       <Button size="sm" variant="ghost" onClick={() => activate(t.id)} disabled={pending}>
@@ -766,6 +816,17 @@ export default function StationeryClient({
 
       {/* Said before it happens, because it cannot be undone: recovering blocks
           from markup would need the parser this design exists to avoid. */}
+      <CopyDesignModal
+        open={copying !== null}
+        sourceName={copying?.name ?? ''}
+        sourceDocType={copying?.docType ?? ''}
+        sourceFormat={copying?.format ?? 'blocks'}
+        docs={docs}
+        busy={pending}
+        onClose={() => setCopying(null)}
+        onCopy={copy}
+      />
+
       <ConfirmModal
         open={convertOpen}
         onClose={() => setConvertOpen(false)}
