@@ -37,7 +37,7 @@ export async function GET(
   const data = await buildRemittance(site.id, site.displayName, site.vatNumber, runId, supplierId)
   if (!data) return new NextResponse('Not found', { status: 404 })
 
-  const pdf = await renderStatementPdf(data, 'remittance')
+  const pdf = await renderStatementPdf(data, 'remittance', site.id)
   const filename = `remittance-${data.account.code}-${data.period.to}.pdf`
 
   return new NextResponse(new Uint8Array(pdf), {

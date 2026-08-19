@@ -35,7 +35,7 @@ export async function GET(
   )
   if (!data) return NextResponse.json({ error: 'No statement' }, { status: 404 })
 
-  const pdf = await renderStatementPdf(data)
+  const pdf = await renderStatementPdf(data, 'statement', siteId)
   return new NextResponse(new Uint8Array(pdf), {
     headers: {
       'content-type': 'application/pdf',

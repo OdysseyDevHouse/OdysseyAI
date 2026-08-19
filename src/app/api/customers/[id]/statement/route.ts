@@ -46,7 +46,7 @@ export async function GET(
   })
   if (!data) return new NextResponse('Not found', { status: 404 })
 
-  const pdf = await renderStatementPdf(data)
+  const pdf = await renderStatementPdf(data, 'statement', site.id)
   const filename = `statement-${data.account.code}-${data.period.to}.pdf`
 
   return new NextResponse(new Uint8Array(pdf), {

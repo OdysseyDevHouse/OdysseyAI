@@ -100,7 +100,7 @@ export async function sendRemittancesAction(runId: number): Promise<PaymentActio
       const data = await buildRemittance(site.id, site.displayName, site.vatNumber, runId, item.supplierId)
       if (!data) throw new Error('The remittance could not be built.')
 
-      const pdf = await renderStatementPdf(data, 'remittance')
+      const pdf = await renderStatementPdf(data, 'remittance', site.id)
       const result = await send({
         to: item.email,
         subject: `Remittance advice — ${formatMoney(item.amount)}`,

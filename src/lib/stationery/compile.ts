@@ -88,6 +88,7 @@ export const BLOCK_STYLE = `
 .sd-row:has(dd:empty) { display: none; }
 .sd-block:has(> .sd-value:empty) { display: none; }
 .sd-line:empty { display: none; }
+.sd-table:has(tbody:empty) { display: none; }
 .sd-logo img { max-height: var(--sd-logo-h) !important; height: auto; width: auto; }`
 
 /**
@@ -228,6 +229,9 @@ function lineTable(b: DocBlock): string {
   const cols = b.columns ?? []
   if (cols.length === 0) return ''
 
+  // Which repeating section this table walks. See the note on DocBlock.section.
+  const section = b.section ?? 'lines'
+
   const head = cols
     .map((c) => {
       const align = ALIGN_CLASS[c.align ?? 'left']
@@ -249,11 +253,23 @@ function lineTable(b: DocBlock): string {
     })
     .join('')
 
+  /*
+   * A TABLE WITH NO ROWS TAKES ITS HEADINGS WITH IT.
+   *
+   * The age ladder is empty on a remittance — nothing is overdue on money
+   * already paid — and it was printing "Age  Amount" over nothing. Headings
+   * over an empty table read as a table that failed to load.
+   *
+   * The  wrapper and its rule in BLOCK_STYLE do it in CSS, like every
+   * other hide-when-empty case, because the template language has no
+   * conditionals on purpose. An empty tbody is what  matches.
+   */
   return (
+    `<div class="sd-table">` +
     `<table class="w-full border-collapse text-sm">` +
     `<thead><tr class="border-y border-border bg-surface-2">${head}</tr></thead>` +
-    `<tbody>{#each lines}<tr class="border-b border-border last:border-b-0">${body}</tr>{/each}</tbody>` +
-    `</table>`
+    `<tbody>{#each ${section}}<tr class="border-b border-border last:border-b-0">${body}</tr>{/each}</tbody>` +
+    `</table></div>`
   )
 }
 
@@ -278,9 +294,20 @@ function totals(b: DocBlock, docKey: string): string {
     .join('')
 
   const lastDef = last && doc ? findToken(doc, last) : null
+  /*
+   * The grand total's wording, from the block's own title where it has one.
+   *
+   * The catalog label is written for a token PICKER and is the wrong register
+   * for a printed page. It usually reads well enough — "Total" — but a
+   * statement's figure is money we WANT on a customer statement, money we OWE
+   * on a supplier one and money already SENT on a remittance, and no single
+   * fixed label is right for all three. The title lets the design say so, and
+   * a token in it resolves like anywhere else.
+   */
+  const grandLabel = b.title ?? lastDef?.label ?? 'Total'
   const grand = last
     ? `<div class="mt-3 flex items-baseline justify-between gap-6 border-t border-border pt-3">` +
-      `<span class="font-medium text-ink">${esc(lastDef?.label ?? 'Total')}</span>` +
+      `<span class="font-medium text-ink">${esc(grandLabel)}</span>` +
       `<span class="numeric text-xl font-semibold text-ink">{${last}}</span></div>`
     : ''
 

@@ -340,3 +340,154 @@ export async function purchaseOrderPreview(
     label: 'Sample data — this shop has no purchase orders yet.',
   }
 }
+
+/**
+ * A sample delivery note, with a part delivery on it.
+ *
+ * A part delivery rather than a clean one, because that is the case a designer
+ * needs to see: three quantity columns only make sense when they hold three
+ * different numbers, and a note where every line reads "4 ordered, 4 delivered"
+ * teaches nothing about the layout.
+ */
+export async function deliveryNotePreview(
+  siteId: number,
+  site: {
+    name: string
+    vatNumber: string | null
+    registrationNumber: string | null
+    address1: string | null
+    address2: string | null
+    address3: string | null
+    postalCode: string | null
+    phone: string | null
+    email: string | null
+  },
+): Promise<PreviewSource> {
+  const { deliveryNoteTokens } = await import('./adapters/deliveryNote')
+  const logoHtml = await logoImgTag(siteId)
+
+  const doc = {
+    id: 0,
+    docType: 'sales_order',
+    status: 'issued',
+    documentNumber: 'SO000114',
+    documentDate: new Date().toISOString().slice(0, 10),
+    customerId: 1,
+    customerCode: 'ACC001',
+    customerName: 'A. Customer',
+    customerPhone: '021 555 0300',
+    customerAddress: '9 Long Street\nCape Town 8001',
+    userName: 'Sam',
+    reference: 'REF-114',
+    notes: 'Ring the bell at the gate. Deliver round the back.',
+    lines: [
+      { id: 1, lineNumber: 1, productCode: 'BRD-WHT', description: 'Bread, white', qty: 10, qtyDelivered: 4 },
+      { id: 2, lineNumber: 2, productCode: 'MLK-2L', description: 'Milk 2L', qty: 6, qtyDelivered: 0 },
+      { id: 3, lineNumber: 3, productCode: 'CHS-MAT', description: 'Cheese, mature cheddar', qty: 2, qtyDelivered: 2 },
+    ],
+  } as never
+
+  return {
+    input: deliveryNoteTokens({
+      doc,
+      details: {
+        documentId: 0,
+        deliveryDate: new Date().toISOString().slice(0, 10),
+        fulfilmentStatus: 'part_delivered',
+        reservesStock: true,
+        reservedAt: null,
+        expiresAt: null,
+        customerOrderNo: 'PO-4471',
+      },
+      site,
+      deliverTo: ['9 Long Street', 'Cape Town', '8001'],
+      printedAt: new Date().toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' }),
+      logoHtml,
+    }),
+    label: 'A sample delivery note, part delivered.',
+  }
+}
+
+/**
+ * A sample statement, with debt at several ages.
+ *
+ * Spread across the ladder on purpose: an account whose whole balance is current
+ * shows one figure and four zeroes, which tells a designer nothing about how the
+ * ladder lays out.
+ */
+export async function statementPreview(
+  siteId: number,
+  /*
+   * The full letterhead, not just a name and a VAT number: the designer must
+   * see what the printed page will get, or it is previewing a document nobody
+   * receives.
+   */
+  site: {
+    name: string
+    vatNumber: string | null
+    registrationNumber: string | null
+    address1: string | null
+    address2: string | null
+    address3: string | null
+    postalCode: string | null
+    phone: string | null
+    email: string | null
+  },
+): Promise<PreviewSource> {
+  const { statementTokens } = await import('./adapters/statement')
+  const logoHtml = await logoImgTag(siteId)
+  const today = new Date().toISOString().slice(0, 10)
+
+  const data = {
+    format: 'open-item',
+    site: { name: site.name, vatNumber: site.vatNumber },
+    account: {
+      id: 1,
+      code: 'ACC001',
+      name: 'A. Customer',
+      contactName: 'Sam Nkosi',
+      email: 'accounts@customer.test',
+      phone: '021 555 0300',
+      vatNumber: '4987654321',
+      addressLines: ['9 Long Street', 'Cape Town', '8001'],
+      creditLimit: 25000,
+      paymentTermsDays: 30,
+    },
+    period: { from: today.slice(0, 8) + '01', to: today },
+    periodLabel: new Date().toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' }),
+    cycle: 'monthly',
+    bucketLabels: {
+      current: 'Current',
+      d30: '30 days',
+      d60: '60 days',
+      d90: '90 days',
+      d120: '120+ days',
+    },
+    openingBalance: 4200,
+    closingBalance: 9350.5,
+    lines: [
+      { date: today.slice(0, 8) + '03', docType: 'Invoice', docNumber: 'INV000476', description: 'Goods supplied', reference: 'PO-4471', debit: 3150.5, credit: 0, outstanding: 3150.5, daysOverdue: 0, balance: 7350.5 },
+      { date: today.slice(0, 8) + '11', docType: 'Payment', docNumber: 'RCT000088', description: 'Thank you', reference: null, debit: 0, credit: 2000, outstanding: 0, daysOverdue: 0, balance: 5350.5 },
+      { date: today.slice(0, 8) + '19', docType: 'Invoice', docNumber: 'INV000481', description: 'Goods supplied', reference: null, debit: 4000, credit: 0, outstanding: 4000, daysOverdue: 45, balance: 9350.5 },
+    ],
+    aging: { current: 3150.5, d30: 4000, d60: 0, d90: 1000, d120: 1200, total: 9350.5 },
+    dueNow: 6200,
+    generatedAt: new Date(),
+  } as never
+
+  return {
+    input: statementTokens(data, 'statement', {
+      printedAt: new Date().toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' }),
+      logoHtml,
+      // The designer must see the same letterhead the printed page gets, or it
+      // is previewing a document nobody receives.
+      siteAddress: [site.address1, site.address2, site.address3, site.postalCode].filter(
+        (x): x is string => !!x && x.trim() !== '',
+      ),
+      sitePhone: site.phone,
+      siteEmail: site.email,
+      siteRegistrationNumber: site.registrationNumber,
+    }),
+    label: 'A sample statement, with debt at several ages.',
+  }
+}

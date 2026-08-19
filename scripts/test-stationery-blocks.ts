@@ -705,9 +705,21 @@ console.log('\n-- finding and changing a block --')
       newBlock('logo', two, { band: 'header' }).y > 56)
   }
 
-  // The items table cannot be put anywhere else, however it is asked for.
-  ok('the items table is pinned to the items band',
-    newBlock('lineTable', spec, { band: 'footer' }).band === 'body')
+  /*
+   * A TABLE GOES WHERE IT IS ASKED, and there may be more than one.
+   *
+   * It used to be pinned to the items band and forbidden to repeat, which was
+   * right while a document had exactly one table. A statement has two — the
+   * movements and the age ladder below them, the same block walking a different
+   * section — so both restrictions had to go.
+   *
+   * What survives is the rule that matters: the validator still insists a
+   * document HAS one. See requiredBlockKinds.
+   */
+  ok('a table can be put in the band a design asks for',
+    newBlock('lineTable', spec, { band: 'footer' }).band === 'footer')
+  ok('...and a document still cannot do without one',
+    !validateSpec(removeBlock(spec, 'po-lines'), 'purchase_order').ok)
 
   ok('two blocks minted together do not share an id',
     newBlock('text', spec).id !== newBlock('text', spec).id)

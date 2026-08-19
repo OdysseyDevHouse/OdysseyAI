@@ -75,10 +75,16 @@ export type TokenDef = {
  * The repeatable sections a template may loop over with `{#each}`.
  *
  * A document is a letterhead, some parties, a TABLE and some totals. The table
- * is the one part plain substitution cannot express, so it — and only it — gets
- * a construct. See render.ts for why the list stops here.
+ * is the part plain substitution cannot express, so it gets a construct. See
+ * render.ts for why the list is short and stays short.
+ *
+ * The age ladder is the second one, and it earns its place for the same reason rather
+ * than by analogy: a statement's age ladder has headings that CHANGE with the
+ * account — 7/14/21 days for a weekly account, 30/60/90 for a monthly one — so
+ * the labels have to travel with the figures. Six fixed tokens would each be
+ * wrong for half the accounts on the ledger.
  */
-export type SectionKey = 'lines' | 'vatByRate' | 'tenders'
+export type SectionKey = 'lines' | 'vatByRate' | 'tenders' | 'aging'
 
 export type SectionDef = {
   key: SectionKey
@@ -454,6 +460,146 @@ const DELIVERY_NOTE: DocTypeDef = {
 }
 
 /*
+ * The statement.
+ *
+ * ── ONE DOCUMENT, THREE VARIANTS ──────────────────────────────────────────
+ *
+ * A customer statement demands money, a supplier statement reports what we owe,
+ * and a remittance advice says what we have just paid. Same shape — a letterhead,
+ * an account, a list of documents, a summary — and three different things to say
+ * about it.
+ *
+ * They are variants rather than three document types because the DESIGN is the
+ * same: change the letterhead once and all three follow, which is the whole
+ * point of the feature. What differs arrives as tokens. `doc.heading` says
+ * STATEMENT or SUPPLIER ACCOUNT or REMITTANCE ADVICE; `totals.dueLabel` says
+ * "Amount due", "Balance owed" or "Amount paid"; and the ageing ladder simply
+ * has nothing to show on a remittance, so the block carrying it hides itself.
+ *
+ * ── THE AGEING LADDER IS A SECTION, NOT SIX TOKENS ────────────────────────
+ *
+ * Its headings are not fixed. A weekly account's first overdue rung is 7 days,
+ * a monthly account's is 30, and a column headed "30 days" that actually holds
+ * eight-days-late debt is worse than an unlabelled one — so the labels travel
+ * with the data.
+ *
+ * That makes it a repeating section like `lines`: each rung is a row with a
+ * label and an amount, and a design lays it out as a table rather than naming
+ * six tokens that would each be wrong for half the accounts.
+ *
+ * ── NO COST, NO MARGIN ────────────────────────────────────────────────────
+ *
+ * A statement lists documents and what is owed on them. What the goods cost is
+ * not among the tokens, on the customer's copy or the supplier's.
+ */
+const STATEMENT: DocTypeDef = {
+  key: 'statement',
+  label: 'Statement',
+  medium: 'a4',
+  tokens: [
+    ...SITE_TOKENS,
+    ...DOC_TOKENS,
+    {
+      key: 'doc.heading',
+      label: 'Document heading',
+      format: 'text',
+      hint: 'STATEMENT, SUPPLIER ACCOUNT or REMITTANCE ADVICE — set by which is being produced.',
+    },
+    { key: 'doc.period', label: 'Period', format: 'text', hint: 'As a person names it — "August 2026".' },
+    { key: 'doc.periodFrom', label: 'Period from', format: 'date' },
+    { key: 'doc.periodTo', label: 'Period to', format: 'date' },
+    {
+      key: 'doc.closing',
+      label: 'Closing line',
+      format: 'text',
+      hint: 'What the reader should do — pay by the due date, or nothing at all on a remittance.',
+    },
+
+    /* The account this is about — a customer on a statement, a supplier on the
+       other two. One set of tokens, because a design should not have to know. */
+    { key: 'account.name', label: 'Account name', format: 'text' },
+    { key: 'account.code', label: 'Account code', format: 'text' },
+    { key: 'account.contactName', label: 'Contact name', format: 'text' },
+    { key: 'account.address', label: 'Account address', format: 'multiline' },
+    { key: 'account.email', label: 'Account email', format: 'text' },
+    { key: 'account.phone', label: 'Account phone', format: 'text' },
+    { key: 'account.vatNumber', label: 'Account VAT number', format: 'text' },
+    { key: 'account.terms', label: 'Payment terms', format: 'text', hint: 'Just the days. Prints nothing when none are set.' },
+    { key: 'account.creditLimit', label: 'Credit limit', format: 'money', hint: 'The figure alone. Prints nothing on a remittance, or when there is no limit.' },
+    /*
+     * The same two with their captions built in, for a design that shows them
+     * as a line of their own rather than as a labelled row. Both exist because
+     * a caption over a blank reads as something forgotten, and the template
+     * language has no conditionals on purpose.
+     */
+    { key: 'account.termsLine', label: 'Payment terms (with label)', format: 'text', hint: 'Prints nothing when no terms are set.' },
+    {
+      key: 'account.creditLimitLine',
+      label: 'Credit limit (with label)',
+      format: 'text',
+      hint: 'Prints nothing when there is no limit, and never on a remittance.',
+    },
+
+    { key: 'totals.opening', label: 'Opening balance', format: 'money' },
+    { key: 'totals.closing', label: 'Closing balance', format: 'money' },
+    {
+      key: 'totals.dueNow',
+      label: 'The figure to pay',
+      format: 'money',
+      hint: 'Everything already due. On a remittance this is what was paid.',
+    },
+    {
+      key: 'totals.dueLabel',
+      label: 'What that figure is called',
+      format: 'text',
+      hint: '"Amount due", "Balance owed" or "Amount paid" — set by which document this is.',
+    },
+    {
+      key: 'totals.settlementDiscount',
+      label: 'Settlement discount taken',
+      format: 'money',
+      hint: 'Only a remittance has one. Prints nothing on a statement.',
+    },
+    { key: 'totals.agingTotal', label: 'Ageing total', format: 'money' },
+  ],
+  sections: [
+    {
+      key: 'lines',
+      label: 'Statement lines',
+      tokens: [
+        { key: 'line.date', label: 'Date', format: 'date' },
+        { key: 'line.docType', label: 'Document type', format: 'text' },
+        { key: 'line.docNumber', label: 'Document number', format: 'text' },
+        { key: 'line.description', label: 'Description', format: 'text' },
+        { key: 'line.reference', label: 'Reference', format: 'text' },
+        { key: 'line.debit', label: 'Debit', format: 'money' },
+        { key: 'line.credit', label: 'Credit', format: 'money' },
+        {
+          key: 'line.owing',
+          label: 'Owing',
+          format: 'money',
+          hint: 'What is still unpaid on an open-item statement, or the running balance on an activity one.',
+        },
+        { key: 'line.daysOverdue', label: 'Days overdue', format: 'text' },
+      ],
+    },
+    {
+      key: 'aging',
+      label: 'Ageing ladder',
+      tokens: [
+        {
+          key: 'bucket.label',
+          label: 'Rung heading',
+          format: 'text',
+          hint: 'Current, 30 days, 60 days — or 7, 14, 21 for a weekly account. Travels with the figure.',
+        },
+        { key: 'bucket.amount', label: 'Amount in that rung', format: 'money' },
+      ],
+    },
+  ],
+}
+
+/*
  * The till slip.
  *
  * Present so the designer's document picker and the storage layer know it
@@ -478,6 +624,7 @@ export const DOC_TYPES: readonly DocTypeDef[] = [
   PURCHASE_ORDER,
   INVOICE,
   DELIVERY_NOTE,
+  STATEMENT,
   TILL_SLIP,
 ]
 

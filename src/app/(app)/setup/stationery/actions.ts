@@ -13,7 +13,13 @@ import { isDocType } from '@/lib/stationery/catalog'
 import { sanitiseTemplate, unsupportedIn } from '@/lib/stationery/sanitise'
 import { validateTemplate } from '@/lib/stationery/validate'
 import { renderTemplate } from '@/lib/stationery/render'
-import { purchaseOrderPreview, invoicePreview, sampleReceipt } from '@/lib/stationery/preview'
+import {
+  purchaseOrderPreview,
+  invoicePreview,
+  deliveryNotePreview,
+  statementPreview,
+  sampleReceipt,
+} from '@/lib/stationery/preview'
 import { parseSlip, validateSlip } from '@/lib/stationery/slip'
 import { parseSpec, validateSpec } from '@/lib/stationery/blocks'
 import { compileBlocks, compileDocument, supportsBlocks } from '@/lib/stationery/compile'
@@ -127,6 +133,32 @@ export async function deleteTemplateAction(id: number): Promise<ActionResult> {
  * without products.cost sees the blank cost column their staff will see rather
  * than a filled one that misleads them.
  */
+/**
+ * The sample data a document previews against.
+ *
+ * ── ONE PLACE, BECAUSE TWO WAS ALREADY WRONG ──────────────────────────────
+ *
+ * The markup preview and the block preview each carried their own copy of this
+ * branch, and both said "invoice, or else a purchase order". So a delivery note
+ * previewed against products with prices on them, and a statement against an
+ * order — neither of which has anything to do with the document being designed.
+ *
+ * Sample data rather than the shop's own for these two, deliberately: a statement
+ * needs debt spread across the age ladder and a delivery note needs a part
+ * delivery, and picking a real one that happens to have neither teaches a
+ * designer nothing about the layout.
+ */
+async function previewFor(
+  docType: string,
+  siteId: number,
+  letterhead: Parameters<typeof purchaseOrderPreview>[1],
+) {
+  if (docType === 'invoice') return invoicePreview(siteId, letterhead)
+  if (docType === 'delivery_note') return deliveryNotePreview(siteId, letterhead)
+  if (docType === 'statement') return statementPreview(siteId, letterhead)
+  return purchaseOrderPreview(siteId, letterhead)
+}
+
 export async function previewTemplateAction(input: {
   docType: string
   body: string
@@ -180,10 +212,7 @@ export async function previewTemplateAction(input: {
     email: site.email,
   }
 
-  const source =
-    input.docType === 'invoice'
-      ? await invoicePreview(ctx.siteId, letterhead)
-      : await purchaseOrderPreview(ctx.siteId, letterhead)
+  const source = await previewFor(input.docType, ctx.siteId, letterhead)
 
   const html = renderTemplate(clean, input.docType, {
     ...source.input,
@@ -248,10 +277,7 @@ export async function previewBlocksAction(input: {
     email: site.email,
   }
 
-  const source =
-    input.docType === 'invoice'
-      ? await invoicePreview(ctx.siteId, letterhead)
-      : await purchaseOrderPreview(ctx.siteId, letterhead)
+  const source = await previewFor(input.docType, ctx.siteId, letterhead)
 
   const fragments = compileBlocks(spec, input.docType)
   const blocks: Record<string, string> = {}

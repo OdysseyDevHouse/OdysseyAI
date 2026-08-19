@@ -114,6 +114,15 @@ export type DocBlock = {
   tokens?: string[]
   /** lineTable only. */
   columns?: ColumnSpec[]
+  /**
+   * lineTable only: which repeating section to loop over.
+   *
+   * Defaults to the document's items. A statement has a second one — the age
+   * ladder, whose rung headings change with the account cycle — and it is a
+   * table like any other, so it is the same block pointing somewhere else
+   * rather than a block kind of its own.
+   */
+  section?: string
   /** detailList / totals only: labelled rows, in the order shown. */
   rows?: DetailRow[]
   /** text: the words. html: raw markup, sanitised like anything else. */
@@ -233,8 +242,18 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     // Every document that has one at all: a purchase order with no items is a
     // letterhead, and a delivery note with none is an empty van.
     required: true,
-    // The body band, always. See the note on `band`.
-    band: 'body',
+    /*
+     * MORE THAN ONE IS ALLOWED, and no longer pinned to the items band.
+     *
+     * Both were right when a document had exactly one table. A statement has
+     * two: the movements, and the age ladder below them — which is the same
+     * block walking a different section, not a block kind of its own.
+     *
+     * The validator still insists on at least one, and a design with two in the
+     * BODY band would simply stack them, which is what a designer asking for
+     * that would want.
+     */
+    repeatable: true,
     defaultW: 100,
   },
   totals: {
@@ -460,6 +479,7 @@ export function validateSpec(
 
   const allowed = new Set(blockKindsFor(docType))
   const seen = new Set<DocBlockKind>()
+  const present = new Set<DocBlockKind>()
 
   for (const b of spec.blocks) {
     const def = DOC_BLOCK_CATALOG[b.kind]
@@ -471,6 +491,14 @@ export function validateSpec(
       errors.push(`"${def.label}" does not belong on this document.`)
       continue
     }
+    /*
+     * TWO DIFFERENT QUESTIONS, and they shared one set until a line table was
+     * allowed to repeat: "have I seen this kind before" decides a duplicate,
+     * "is this kind present at all" decides a missing requirement. A repeatable
+     * block was never recorded, so the required check stopped seeing it and a
+     * statement with two tables reported having none.
+     */
+    present.add(b.kind)
     if (!def.repeatable) {
       if (seen.has(b.kind)) errors.push(`"${def.label}" appears more than once.`)
       seen.add(b.kind)
@@ -491,7 +519,7 @@ export function validateSpec(
   }
 
   for (const k of requiredBlockKinds(docType)) {
-    if (allowed.has(k) && !seen.has(k)) {
+    if (allowed.has(k) && !present.has(k)) {
       errors.push(`A document must have "${DOC_BLOCK_CATALOG[k].label}".`)
     }
   }
@@ -554,11 +582,22 @@ function cleanRows(raw: unknown, doc: DocTypeDef | null): DetailRow[] | undefine
   return out
 }
 
-function cleanColumns(raw: unknown, doc: DocTypeDef | null): ColumnSpec[] | undefined {
+function cleanColumns(
+  raw: unknown,
+  doc: DocTypeDef | null,
+  /** Which repeating section the columns belong to. See DocBlock.section. */
+  section = 'lines',
+): ColumnSpec[] | undefined {
   if (!Array.isArray(raw)) return undefined
 
+  /*
+   * The columns of a table may only name tokens from the section that table
+   * walks. It was hard-coded to the items; a statement has a second section —
+   * the age ladder — and its columns name bucket tokens, which the items list
+   * does not contain and would therefore have stripped on read.
+   */
   const lineTokens = new Set(
-    doc?.sections.find((s) => s.key === 'lines')?.tokens.map((t) => t.key) ?? [],
+    doc?.sections.find((s) => s.key === section)?.tokens.map((t) => t.key) ?? [],
   )
 
   const out: ColumnSpec[] = []
@@ -661,7 +700,18 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
           ? Math.min(Math.max(Math.round(rawH), MIN_LOGO_HEIGHT), MAX_LOGO_HEIGHT)
           : undefined
 
-      const columns = cleanColumns((b as { columns?: unknown }).columns, doc)
+      /*
+       * Which section a table loops over, kept only when the document HAS one by
+       * that name — a stored design naming a section this build no longer has
+       * would otherwise loop over nothing and print an empty table with headings.
+       */
+      const rawSection = (b as { section?: unknown }).section
+      const section =
+        typeof rawSection === 'string' && doc?.sections.some((x) => x.key === rawSection)
+          ? rawSection
+          : undefined
+
+      const columns = cleanColumns((b as { columns?: unknown }).columns, doc, section)
       const rows = cleanRows((b as { rows?: unknown }).rows, doc)
 
       out.push({
@@ -679,6 +729,7 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
           ? { tokens: tokens.filter((t): t is string => typeof t === 'string').slice(0, 20) }
           : {}),
         ...(columns ? { columns } : {}),
+        ...(section ? { section } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
         ...(logoHeight !== undefined ? { logoHeight } : {}),

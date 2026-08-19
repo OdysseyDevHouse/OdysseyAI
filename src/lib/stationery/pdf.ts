@@ -267,11 +267,19 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
         const y = doc.y + 4
         rule(doc, y - 2, box.x, box.w)
         const def = doc2 ? findToken(doc2, last) : null
+        /*
+         * The block's own title wins, and a token in it resolves — the same rule
+         * the HTML compiler follows. Without it a statement's summary printed
+         * "The figure to pay", which is the catalog label written for a token
+         * PICKER, where the page wants "Amount due" or "Balance owed" or
+         * "Amount paid" depending on which of the three documents this is.
+         */
+        const label = b.title ? resolveText(b.title, v, docKey) : (def?.label ?? 'Total')
         doc
           .font('Helvetica-Bold')
           .fontSize(10)
           .fillColor(INK)
-          .text(def?.label ?? 'Total', box.x, y, { width: box.w * 0.5 })
+          .text(label, box.x, y, { width: box.w * 0.5 })
         doc
           .font('Helvetica-Bold')
           .fontSize(13)
@@ -383,6 +391,18 @@ function drawTable(ctx: Ctx, b: DocBlock, box: Box): number {
   const cols = b.columns ?? []
   if (cols.length === 0) return 0
 
+  /*
+   * WHICH SECTION, and nothing at all when it is empty.
+   *
+   * A statement has two tables — the movements and the age ladder — and the
+   * ladder has no rows on a remittance, because nothing is overdue on money
+   * already paid. The HTML compiler hides an empty table with CSS; a PDF has
+   * none, so it simply must not draw one. Headings over an empty table read as
+   * a table that failed to load.
+   */
+  const rows = input.sections[b.section ?? 'lines'] ?? []
+  if (rows.length === 0) return 0
+
   const fixed = cols.reduce((sum, c) => sum + (c.width ?? 0), 0)
   const autos = cols.filter((c) => c.width === undefined).length
   const each = autos > 0 ? Math.max((100 - fixed) / autos, 4) : 0
@@ -405,7 +425,6 @@ function drawTable(ctx: Ctx, b: DocBlock, box: Box): number {
   rule(doc, y, box.x, box.w)
   y += 6
 
-  const rows = input.sections.lines ?? []
   for (const row of rows) {
     x = box.x
     let tallest = 0

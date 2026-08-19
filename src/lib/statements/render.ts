@@ -32,6 +32,8 @@ import {
  * open-item and not balance-forward.
  */
 
+export type { StatementVariant } from './variant'
+
 export type StatementFormat = 'open-item' | 'activity'
 
 export type StatementLine = {

@@ -385,7 +385,7 @@ async function sendOne(
     })
     if (!data) return fail('That account no longer exists.')
 
-    const pdf = await renderStatementPdf(data)
+    const pdf = await renderStatementPdf(data, 'statement', siteId)
 
     const result = await send({
       to: item.email,

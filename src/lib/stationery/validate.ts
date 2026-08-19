@@ -105,6 +105,16 @@ const REQUIRED: Record<string, { tokens: string[]; literals: string[] }> = {
     tokens: ['doc.heading', 'doc.date', 'site.name', 'customer.name', 'deliverTo'],
     literals: [],
   },
+  /*
+   * A statement answers to no statute either, so what it must carry is what
+   * makes it actionable: who is asking, whose account it is, over what period,
+   * and the figure to act on. Without the period it is a list of movements
+   * nobody can reconcile; without the figure it is not a statement at all.
+   */
+  statement: {
+    tokens: ['doc.heading', 'site.name', 'account.name', 'doc.period', 'totals.dueNow'],
+    literals: [],
+  },
 }
 
 /** Every `{token}` in the template, with where it sits. */
