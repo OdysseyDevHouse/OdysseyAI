@@ -7,7 +7,7 @@ import {
   axisLabelsFor,
   publishedProduct,
   publishedProducts,
-  resolveSectionContent,
+  resolvePageContent,
   siblingsOf,
   storefrontContext,
 } from '@/lib/site/storefront'
@@ -156,16 +156,12 @@ export default async function ProductPage({
   const [arranged, theme] = await Promise.all([productPage(siteId), getTheme(siteId)])
   const arrangedSections =
     arranged?.isPublished ? await getPublishedPageLayout(siteId, arranged.id) : []
-  const arrangedResolved = arrangedSections.length
-    ? await resolveSectionContent(context, arrangedSections, {
+  const arrangedContent: SectionContent[] = arrangedSections.length
+    ? await resolvePageContent(context, arrangedSections, {
         id: product.id,
         departmentId: product.departmentId,
       })
     : []
-  const arrangedContent: SectionContent[] = arrangedSections.map((section, i) => ({
-    section,
-    ...arrangedResolved[i],
-  }))
 
   /*
    * The other sizes/colours of this thing, and what those axes are called.

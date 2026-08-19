@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
-import { resolveSectionContent, storefrontContext } from '@/lib/site/storefront'
+import { resolvePageContent, storefrontContext } from '@/lib/site/storefront'
 import { getTheme } from '@/lib/site/storefrontLayout'
 import {
   getPageSectionsFor,
@@ -156,8 +156,7 @@ export default async function StandardPage({
     getPageSectionsFor(context.siteId, page.id, preview),
   ])
 
-  const resolved = await resolveSectionContent(context, sections)
-  const content: SectionContent[] = sections.map((section, i) => ({ section, ...resolved[i] }))
+  const content: SectionContent[] = await resolvePageContent(context, sections)
 
   return (
     <div>

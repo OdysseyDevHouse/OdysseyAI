@@ -1,4 +1,5 @@
 import 'server-only'
+import type { HomeSection } from '../storefrontModel'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
@@ -2160,3 +2161,69 @@ export async function placePublicOrder(
  * it into something a shopper can act on, rather than "something went wrong".
  */
 class DiscountExhausted extends Error {}
+
+/**
+ * A page's sections, each beside what it holds — columns included.
+ *
+ * ── ONE CALL, SO NO CALLER HAS TO KNOW ABOUT COLUMNS ─────────────────────
+ *
+ * Five routes render sections and every one of them did
+ * `sections.map((section, i) => ({ section, ...resolved[i] }))`. A column's
+ * children need resolving too, and asking each caller to flatten, resolve and
+ * redistribute is five chances to get it wrong — with the failure being a
+ * product row inside a column that renders empty on one page and fills on
+ * another.
+ *
+ * ── FLATTENED FIRST, DELIBERATELY ────────────────────────────────────────
+ *
+ * `resolveSectionContent` batches every picture and every product row into one
+ * query apiece. Recursing into columns section by section would undo that and
+ * turn a page with three columns into a dozen round trips, so the whole page —
+ * children and all — is resolved flat and then put back together.
+ */
+export async function resolvePageContent(
+  context: StorefrontContext,
+  sections: HomeSection[],
+  anchor?: { id: number; departmentId: number | null },
+): Promise<PageContent[]> {
+  if (sections.length === 0) return []
+
+  // Parents and children in one list, in a stable order both halves agree on.
+  const flat: HomeSection[] = []
+  for (const section of sections) {
+    flat.push(section)
+    for (const column of section.columns ?? []) flat.push(...column)
+  }
+
+  const resolved = await resolveSectionContent(context, flat, anchor)
+
+  // Walked in the SAME order, so the index that filled a child is the one that
+  // reads it back.
+  let at = 0
+  const out: PageContent[] = []
+  for (const section of sections) {
+    const own = resolved[at++]
+    const columnContent = (section.columns ?? []).map((column) =>
+      column.map((child) => ({ section: child, ...resolved[at++] })),
+    )
+    out.push({
+      section,
+      ...own,
+      ...(section.columns ? { columnContent } : {}),
+    })
+  }
+  return out
+}
+
+/** One section beside what it holds. Mirrors SectionContent in the renderer. */
+export type PageContent = {
+  section: HomeSection
+  products?: StorefrontProduct[]
+  departments?: StorefrontDepartment[]
+  image?: StorefrontImage | null
+  slideImages?: Map<number, StorefrontImage>
+  reviews?: ProductReview[]
+  logoImages?: Map<number, StorefrontImage>
+  specialEndsAt?: string
+  columnContent?: PageContent[][]
+}

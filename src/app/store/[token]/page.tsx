@@ -3,7 +3,7 @@ import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { resolveStorefront } from '@/lib/storeRouting'
 import {
   publishedProducts,
-  resolveSectionContent,
+  resolvePageContent,
   storefrontContext,
 } from '@/lib/site/storefront'
 import { getPublishedLayout } from '@/lib/site/storefrontLayout'
@@ -110,11 +110,7 @@ export default async function StorePage({
     ? await getPageSectionsFor(siteId, home.id, preview)
     : { sections: layout.sections, isPreview: false }
 
-  const resolved = await resolveSectionContent(context, shown.sections)
-  const content: SectionContent[] = shown.sections.map((section, i) => ({
-    section,
-    ...resolved[i],
-  }))
+  const content: SectionContent[] = await resolvePageContent(context, shown.sections)
   /*
    * Would this page draw anything at all?
    *

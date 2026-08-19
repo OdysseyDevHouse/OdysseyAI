@@ -10,7 +10,7 @@ import {
 import { getPublishedPageLayout } from '@/lib/site/storefrontPages'
 import { catalogueRobots, storefrontUrl } from '@/lib/site/storefrontSeo'
 import { listingPresetFor, shopBadgeRules } from '@/lib/site/listingPresets'
-import { resolveSectionContent } from '@/lib/site/storefront'
+import { resolvePageContent } from '@/lib/site/storefront'
 import HomeSections, { type SectionContent } from '../../HomeSections'
 import ProductGrid from '../../ProductGrid'
 import Pager from '../../Pager'
@@ -137,9 +137,8 @@ export default async function CollectionPage({
    * things in it. No new section kind was needed for that.
    */
   const built = await collectionPageSections(context.catalogueSiteId, collection.id)
-  const filled = built.length > 0 ? await resolveSectionContent(context, built) : []
-  // The section beside its resolved content — the shape HomeSections takes.
-  const content: SectionContent[] = built.map((section, i) => ({ section, ...filled[i] }))
+  const content: SectionContent[] =
+    built.length > 0 ? await resolvePageContent(context, built) : []
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6">

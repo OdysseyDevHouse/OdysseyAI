@@ -11,7 +11,7 @@ import {
   bestSellerIds,
   publishedProductsCount,
   safeSort,
-  resolveSectionContent,
+  resolvePageContent,
   storefrontContext,
 } from '@/lib/site/storefront'
 import { getPublishedLayout } from '@/lib/site/storefrontLayout'
@@ -283,10 +283,9 @@ export default async function DepartmentPage({
    * frozen into the layout when it was built. id 0 because there is no product
    * to exclude; see `resolveSectionContent`.
    */
-  const resolved = sections.length
-    ? await resolveSectionContent(context, sections, { id: 0, departmentId: department.id })
+  const content: SectionContent[] = sections.length
+    ? await resolvePageContent(context, sections, { id: 0, departmentId: department.id })
     : []
-  const content: SectionContent[] = sections.map((section, i) => ({ section, ...resolved[i] }))
 
   return (
     <div>
