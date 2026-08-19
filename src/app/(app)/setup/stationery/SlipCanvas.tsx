@@ -131,7 +131,28 @@ export default function SlipCanvas({
   return (
     <div
       ref={listRef}
-      className="mx-auto w-full max-w-[72mm] select-none bg-surface p-3 text-[12px] text-ink"
+      /*
+       * ── THE PREVIEW IS ZOOMED, THE SLIP IS NOT ────────────────────────
+       *
+       * A thermal slip really is this small — 12px over 72mm is what comes out
+       * of the printer, and the preview has to keep those proportions or it
+       * would be lying about what fits on a line.
+       *
+       * So the whole canvas is SCALED rather than restyled. Every size inside
+       * it — the 11px sub-lines, the 14px total, a block set to "largest" —
+       * grows by the same factor, which keeps the relationships between them
+       * exactly as they will print while making the thing readable to someone
+       * leaning over a desk. Changing the classes in slipHtml would have been
+       * the alternative, and those are shared with the slip that actually
+       * prints: it would have grown the paper output too.
+       *
+       * The width is em-based for the same reason: 72mm at 96dpi is 272px, which
+       * is 22.68 times the 12px the slip prints at. Expressed that way the paper
+       * widens with the type, so a line that wraps here wraps on the printer —
+       * a fixed 72mm box with larger type inside would break lines early and
+       * send a shop chasing a problem that only exists on screen.
+       */
+      className="mx-auto w-full max-w-[22.68em] select-none bg-surface p-3 text-[15px] text-ink"
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={() => {
@@ -200,7 +221,7 @@ export default function SlipCanvas({
                  * says what it is rather than being an empty box nobody can
                  * account for.
                  */
-                <p className="pointer-events-none text-[10px] italic text-faint opacity-60">
+                <p className="pointer-events-none text-[0.8333em] italic text-faint opacity-60">
                   {info.label} · not on this sale
                 </p>
               )}

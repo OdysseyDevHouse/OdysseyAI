@@ -34,10 +34,19 @@ const ALIGN: Record<string, string> = {
   right: 'text-right',
 }
 
+/*
+ * ── SIZES ARE RELATIVE, NOT ABSOLUTE ──────────────────────────────────────
+ *
+ * A slip prints at 12px over 72mm and these were written as the pixel sizes
+ * that produce — 12, 16, 20. In em against that same 12px base they are the
+ * identical sizes on paper, but they now follow whatever the container sets,
+ * which is what lets the DESIGNER show the slip enlarged without touching what
+ * the printer does. See SlipCanvas.
+ */
 const SIZE: Record<number, string> = {
-  1: 'text-[12px]',
-  2: 'text-base',
-  3: 'text-xl',
+  1: 'text-[1em]',
+  2: 'text-[1.3333em]',
+  3: 'text-[1.6667em]',
 }
 
 function cls(b: SlipBlock, fallback = 'left'): string {
@@ -132,10 +141,10 @@ function block(b: SlipBlock, r: ReceiptData): string {
               : `<span class="numeric shrink-0 text-ink">${escapeHtml(formatMoney(line.lineTotalIncl))}</span>`
             const unit =
               !gift && line.qty !== 1
-                ? `<div class="text-[11px] text-muted">@ ${escapeHtml(formatMoney(line.unitPriceIncl))}</div>`
+                ? `<div class="text-[0.9167em] text-muted">@ ${escapeHtml(formatMoney(line.unitPriceIncl))}</div>`
                 : ''
             const notes = line.notes
-              .map((n) => `<div class="pl-3 text-[11px] text-muted">${escapeHtml(n)}</div>`)
+              .map((n) => `<div class="pl-3 text-[0.9167em] text-muted">${escapeHtml(n)}</div>`)
               .join('')
             return (
               `<li class="py-0.5"><div class="flex justify-between gap-2">` +
@@ -153,7 +162,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
       return (
         `<div class="${cls(b)}">` +
         (r.discountTotal > 0 ? row('Discount', `−${formatMoney(r.discountTotal)}`) : '') +
-        `<div class="flex justify-between gap-2 text-[14px] font-bold">` +
+        `<div class="flex justify-between gap-2 text-[1.1667em] font-bold">` +
         `<span class="text-ink">TOTAL</span>` +
         `<span class="numeric text-ink">${escapeHtml(formatMoney(r.totalIncl))}</span></div>` +
         (r.roundingAdj !== 0 ? row('Cash rounding', formatMoney(r.roundingAdj)) : '') +
@@ -172,7 +181,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
 
     case 'tax':
       return (
-        `<div class="${cls(b)} text-[11px]">` +
+        `<div class="${cls(b)} text-[0.9167em]">` +
         r.vatByRate
           .map((rate) =>
             row(`VAT @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`, formatMoney(rate.vat)),
@@ -182,7 +191,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
       )
 
     case 'loyalty':
-      return `<p class="${cls(b, 'center')} text-[11px] text-muted">Earned ${
+      return `<p class="${cls(b, 'center')} text-[0.9167em] text-muted">Earned ${
         r.loyalty!.pointsEarned
       } point${r.loyalty!.pointsEarned === 1 ? '' : 's'} · balance ${r.loyalty!.balance}</p>`
 
