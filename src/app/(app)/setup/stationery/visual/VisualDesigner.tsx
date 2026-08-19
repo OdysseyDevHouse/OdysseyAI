@@ -1,100 +1,58 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  MouseSensor,
-  TouchSensor,
-  closestCorners,
-  pointerWithin,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core'
-import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
-import { Badge, Callout, Card, CardBody, CardHeader } from '@/components/ui'
+import { Badge, Button, Callout, Card, CardBody, CardHeader, Icons } from '@/components/ui'
 import {
   DOC_BLOCK_CATALOG,
   MAX_BLOCKS,
-  allBlocks,
   blockKindsFor,
-  locate,
+  findBlock,
   newBlock,
-  newRow,
   patchBlock,
   removeBlock,
   serialiseSpec,
+  type BandKey,
   type DocBlock,
   type DocBlockKind,
   type DocumentSpec,
 } from '@/lib/stationery/blocks'
+import {
+  alignTo,
+  distribute,
+  type AlignMode,
+  type DistributeMode,
+} from '@/lib/site/floorGeometry'
 import { previewBlocksAction } from '../actions'
-import BlockPalette, { PALETTE_PREFIX, paletteKind } from './BlockPalette'
-import DocumentCanvas, { GAP_PREFIX, parseGap } from './DocumentCanvas'
+import BlockPalette from './BlockPalette'
+import DocumentCanvas from './DocumentCanvas'
 import BlockInspector, { type TokenChoice } from './BlockInspector'
 
 /**
  * The visual stationery designer.
  *
- * ── EVERY DND DECISION HERE WAS LEARNED ELSEWHERE ─────────────────────────
+ * ── NO dnd-kit ON THIS SCREEN ANY MORE ────────────────────────────────────
  *
- * The sensor triple, the fixed DndContext id, the cheap DragOverlay and the
- * collision strategy all come from the storefront page builder, which found
- * each of them the hard way. They are copied deliberately rather than
- * rediscovered:
+ * It used to own a DndContext, a sensor triple, a collision strategy and a drag
+ * overlay — all of it copied from the storefront page builder, all of it correct
+ * for an ordered list with drop targets, and none of it what a canvas needs.
  *
- *   FIXED CONTEXT ID — dnd-kit derives its aria ids from a module-level
- *   counter that the server restarts at 0 on every render while the browser
- *   carries on. Without a fixed id the whole screen reports a hydration
- *   mismatch.
+ * The user's verdict was that the result felt buggy, and named the symptom: two
+ * landing strips appearing under one pointer. That was the model showing
+ * through. A list-with-gaps has the page contributing gaps and every cell
+ * contributing more, so a pointer between two blocks inside a cell is genuinely
+ * over two targets, and every fix I made was a cleverer arbitration rather than
+ * a better tool.
  *
- *   A CHEAP OVERLAY — a label chip, never a clone of the block. Cloning a live
- *   preview of a line table every frame is what makes a canvas feel slow.
+ * So placement moved into DocumentCanvas on raw pointer events, and everything
+ * dnd-kit was here for went with it. The column editor still uses dnd-kit, and
+ * should: a column list IS an ordered list, and "which column did you drop this
+ * before" is the question dnd-kit answers well.
  *
- * Collision detection is the one thing this screen had to work out for itself,
- * because it has NESTED drop targets where the builder has a flat list. See
- * `collisionStrategy`.
+ * ── WHAT THIS FILE STILL OWNS ─────────────────────────────────────────────
+ *
+ * The spec, one mutation funnel with undo behind it, the preview request, and
+ * the align/distribute tools. The canvas reports gestures; it stores nothing.
  */
-
-/**
- * Where a drag may land.
- *
- * ── ONLY GAPS ARE CANDIDATES ──────────────────────────────────────────────
- *
- * Blocks are registered as sortable so they can be PICKED UP, which also makes
- * them collision candidates — and dnd-kit was offering them as drop targets.
- * `handleEnd` ignores anything that is not a gap, so every one of those was a
- * silent dead drop: the block lifted, the pointer sat on a neighbour, the
- * release did nothing and the designer got no explanation.
- *
- * They also crowded out the real ones. Filtering to gaps makes every target
- * dnd-kit names somewhere the block can actually go, which is what the
- * announcements read out — so a screen-reader user is told the truth.
- *
- * Found by driving the drag and reading those announcements back, which named
- * "the page" and "The items" as targets that could never accept a drop.
- *
- * ── AND A NEW BLOCK MUST STILL BE ABANDONABLE ─────────────────────────────
- *
- * `closestCorners` always returns something, so a palette tile carried back to
- * the palette and released would still "land" on a far-away gap and be added
- * anyway. A new block therefore uses `pointerWithin`, which can return nothing.
- */
-const collisionStrategy: CollisionDetection = (args) => {
-  const gapsOnly = {
-    ...args,
-    droppableContainers: args.droppableContainers.filter((c) =>
-      String(c.id).startsWith(GAP_PREFIX),
-    ),
-  }
-  return String(args.active.id).startsWith(PALETTE_PREFIX)
-    ? pointerWithin(gapsOnly)
-    : closestCorners(gapsOnly)
-}
 
 const HISTORY_LIMIT = 50
 
@@ -110,24 +68,20 @@ export default function VisualDesigner({
   tokens: TokenChoice[]
   onChange: (next: DocumentSpec) => void
 }) {
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [heights, setHeights] = useState<Record<string, number>>({})
 
-  const [dragging, setDragging] = useState<string | null>(null)
-  const [over, setOver] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-
-  const placingKind = paletteKind(dragging)
-  const placing = placingKind !== null
-
-  const blocks = spec.blocks
-  const flat = useMemo(() => allBlocks(spec), [spec])
-  const atLimit = flat.length >= MAX_BLOCKS
-  const used = useMemo(() => new Set(flat.map((b) => b.kind)), [flat])
+  const atLimit = spec.blocks.length >= MAX_BLOCKS
+  const used = useMemo(() => new Set(spec.blocks.map((b) => b.kind)), [spec.blocks])
   const kinds = useMemo(() => blockKindsFor(docType), [docType])
+
+  const selected = useMemo(
+    () =>
+      selectedIds
+        .map((id) => findBlock(spec, id))
+        .filter((b): b is DocBlock => !!b),
+    [selectedIds, spec],
+  )
 
   /* ── the rendered page ─────────────────────────────────────────────────── */
 
@@ -201,58 +155,32 @@ export default function VisualDesigner({
     return () => document.removeEventListener('keydown', onKey)
   }, [undo])
 
-  /**
-   * Put a block into the page or into a cell, at an index.
-   *
-   * One function for both, because "a column of blocks" is the same shape
-   * whether the column is the page or a sixth of it — the only difference is
-   * which array gets spliced.
-   */
-  const insertAt = useCallback(
-    (block: DocBlock, cellId: string | null, index: number) => {
-      if (cellId === null) {
-        const next = [...spec.blocks]
-        next.splice(index, 0, block)
-        commit({ version: 1, blocks: next })
-        return
-      }
-      commit({
-        version: 1,
-        blocks: spec.blocks.map((b) => {
-          if (b.kind !== 'row') return b
-          return {
-            ...b,
-            cells: (b.cells ?? []).map((c) => {
-              if (c.id !== cellId) return c
-              const inner = [...c.blocks]
-              inner.splice(index, 0, block)
-              return { ...c, blocks: inner }
-            }),
-          }
-        }),
-      })
+  const add = useCallback(
+    (kind: DocBlockKind) => {
+      if (spec.blocks.length >= MAX_BLOCKS) return
+      /*
+       * A new block goes into the band the SELECTION is in, or the header if
+       * nothing is selected. Someone laying out the footer who adds a text block
+       * means it to go in the footer — dropping it at the top of the page would
+       * be technically defensible and would waste their next gesture.
+       *
+       * newBlock places it below whatever is already there, so it never lands on
+       * top of something and needs untangling before it can be used.
+       */
+      const band: BandKey = selected[0]?.band ?? 'header'
+      const block = newBlock(kind, spec, { band, ...defaultsFor(kind) })
+      commit({ version: 1, blocks: [...spec.blocks, block] })
+      setSelectedIds([block.id])
     },
-    [spec, commit],
-  )
-
-  const insert = useCallback(
-    (kind: DocBlockKind, cellId: string | null, index: number) => {
-      if (allBlocks(spec).length >= MAX_BLOCKS) return
-      // A row is a container for the page, not something to nest in a cell.
-      if (kind === 'row' && cellId !== null) return
-      const block = kind === 'row' ? newRow(2) : newBlock(kind, defaultsFor(kind))
-      insertAt(block, cellId, index)
-      setSelectedId(block.id)
-    },
-    [spec, insertAt],
+    [spec, commit, selected],
   )
 
   const remove = useCallback(
     (id: string) => {
       commit(removeBlock(spec, id))
-      if (selectedId === id) setSelectedId(null)
+      setSelectedIds((ids) => ids.filter((x) => x !== id))
     },
-    [spec, commit, selectedId],
+    [spec, commit],
   )
 
   const patch = useCallback(
@@ -260,276 +188,191 @@ export default function VisualDesigner({
     [spec, commit],
   )
 
-  /**
-   * Move a block to a gap, wherever both are.
-   *
-   * Lift then drop, rather than a splice in place: the block may be leaving one
-   * cell for another, or leaving a cell for the page, and "remove it, then put
-   * it where it is going" is the only version of that with one code path.
-   *
-   * The index correction is the same one every sortable list needs — a gap
-   * counts positions in the array as it is NOW, so a block moving DOWN within
-   * the same column passes its own slot on the way.
-   */
-  const moveTo = useCallback(
-    (id: string, toCell: string | null, toIndex: number) => {
-      const found = locate(spec, id)
-      if (!found) return
-
-      const sameColumn = found.cellId === toCell
-      const fromIndex = sameColumn
-        ? (toCell === null
-            ? spec.blocks
-            : (spec.blocks
-                .find((b) => b.kind === 'row' && (b.cells ?? []).some((c) => c.id === toCell))
-                ?.cells?.find((c) => c.id === toCell)?.blocks ?? [])
-          ).findIndex((b) => b.id === id)
-        : -1
-
-      if (sameColumn && fromIndex !== -1 && toIndex > fromIndex) toIndex--
-      if (sameColumn && fromIndex === toIndex) return
-
-      const without = removeBlock(spec, id)
-      const next = { ...without }
-      // Re-insert into the pruned document, so the index means what it says.
-      const withBlock = (() => {
-        if (toCell === null) {
-          const arr = [...next.blocks]
-          arr.splice(toIndex, 0, found.block)
-          return { version: 1 as const, blocks: arr }
-        }
-        return {
-          version: 1 as const,
-          blocks: next.blocks.map((b) => {
-            if (b.kind !== 'row') return b
-            return {
-              ...b,
-              cells: (b.cells ?? []).map((c) => {
-                if (c.id !== toCell) return c
-                const inner = [...c.blocks]
-                inner.splice(toIndex, 0, found.block)
-                return { ...c, blocks: inner }
-              }),
-            }
-          }),
-        }
-      })()
-
-      commit(withBlock)
+  /** Every block a gesture moved, in one commit so undo takes it back in one. */
+  const place = useCallback(
+    (changes: { id: string; x: number; y: number; w: number }[]) => {
+      const byId = new Map(changes.map((c) => [c.id, c]))
+      commit({
+        version: 1,
+        blocks: spec.blocks.map((b) => {
+          const c = byId.get(b.id)
+          return c ? { ...b, x: c.x, y: c.y, w: c.w } : b
+        }),
+      })
     },
     [spec, commit],
   )
 
   /**
-   * Nudge a block one place inside whatever column it is in.
+   * Align or distribute the selection.
    *
-   * The keyboard path, and the quiet everyday one — dragging is for taking a
-   * block somewhere else, this is for "not quite there". It stays WITHIN the
-   * column deliberately: a block stepping out of a cell on its own would be a
-   * surprise, and moving between columns is what dragging is for.
+   * ── THE REFERENCE IS THE FIRST-SELECTED BLOCK ─────────────────────────
+   *
+   * Not the leftmost, not the widest. That is what every other design tool does,
+   * and it is the only rule that lets the user DECIDE the outcome rather than
+   * have it inferred: click the block you want the others to line up with, then
+   * shift-click the rest.
+   *
+   * Heights come from the canvas's measurements, because "align their bottoms"
+   * needs a height and nobody stored one. Blocks that have not been measured yet
+   * are left out rather than aligned against a guess — a tool that silently
+   * moved a block to the wrong place would be worse than one that did nothing.
    */
-  const nudge = useCallback(
-    (id: string, by: -1 | 1) => {
-      const found = locate(spec, id)
-      if (!found) return
-
-      const column =
-        found.cellId === null
-          ? spec.blocks
-          : (spec.blocks
-              .find(
-                (b) => b.kind === 'row' && (b.cells ?? []).some((c) => c.id === found.cellId),
-              )
-              ?.cells?.find((c) => c.id === found.cellId)?.blocks ?? [])
-
-      const from = column.findIndex((b) => b.id === id)
-      const to = from + by
-      if (from === -1 || to < 0 || to >= column.length) return
-
-      // moveTo takes a GAP index, which counts positions in the array as it is
-      // now — so stepping down is a gap two along, not one.
-      moveTo(id, found.cellId, by === 1 ? to + 1 : to)
+  const runTool = useCallback(
+    (fn: (items: { id: string; x: number; y: number; w: number; h: number }[]) => typeof items) => {
+      const items = selected
+        .filter((b) => heights[b.id] !== undefined)
+        .map((b) => ({ id: b.id, x: b.x, y: b.y, w: b.w, h: heights[b.id] }))
+      if (items.length < 2) return
+      place(fn(items).map(({ id, x, y, w }) => ({ id, x, y, w })))
     },
-    [spec, moveTo],
+    [selected, heights, place],
   )
 
-  /* ── drag ──────────────────────────────────────────────────────────────── */
-
-  function handleStart(e: DragStartEvent) {
-    setDragging(String(e.active.id))
-    setOver(null)
-  }
-
-  function handleEnd(e: DragEndEvent) {
-    const active = String(e.active.id)
-    const target = e.over ? String(e.over.id) : null
-    setDragging(null)
-    setOver(null)
-    if (!target) return
-
-    const kind = paletteKind(active)
-    const gap = parseGap(target)
-
-    /*
-     * Only a GAP is a landing place, for a new block and a moved one alike.
-     *
-     * Dropping onto another block would have to guess before or after, and with
-     * cells in play it would also have to guess whether "onto the row" means
-     * beside it or inside one of its columns. A gap says exactly where.
-     */
-    if (!gap) return
-
-    if (kind) {
-      insert(kind, gap.cellId, gap.index)
-      return
-    }
-
-    // A row cannot go inside a cell — the model forbids it, and the drop should
-    // simply not take rather than silently landing somewhere else.
-    const found = locate(spec, active)
-    if (!found) return
-    if (found.block.kind === 'row' && gap.cellId !== null) return
-
-    moveTo(active, gap.cellId, gap.index)
-  }
-
-  const draggedLabel = placingKind
-    ? `Add ${DOC_BLOCK_CATALOG[placingKind].label}`
-    : (blocks.find((b) => b.id === dragging)?.kind &&
-        DOC_BLOCK_CATALOG[blocks.find((b) => b.id === dragging)!.kind].label) ||
-      ''
+  /* Align across bands would move a block by a distance measured in another
+     band's coordinates, so the tools only offer themselves within one. */
+  const oneBand = selected.length > 1 && selected.every((b) => b.band === selected[0].band)
 
   return (
-    <DndContext
-      id="stationery-designer"
-      sensors={sensors}
-      collisionDetection={collisionStrategy}
-      onDragStart={handleStart}
-      onDragOver={(e) => setOver(e.over ? String(e.over.id) : null)}
-      onDragEnd={handleEnd}
-      onDragCancel={() => {
-        // Both, or an overlay is left portalled over the canvas eating clicks.
-        setDragging(null)
-        setOver(null)
-      }}
-      accessibility={{
-        announcements: {
-          onDragStart: ({ active }) => `Picked up ${nameOf(String(active.id), blocks)}.`,
-          onDragOver: ({ over: o }) =>
-            o ? `Over ${nameOf(String(o.id), blocks)}.` : 'Not over a drop point.',
-          onDragEnd: ({ over: o }) =>
-            o ? `Dropped on ${nameOf(String(o.id), blocks)}.` : 'Dropped with no change.',
-          onDragCancel: () => 'Cancelled.',
-        },
-      }}
-    >
+    <div className="grid gap-5 lg:grid-cols-[22rem_minmax(0,1fr)]">
       {/*
-       * Palette, page, inspector.
+       * Palette and inspector share the left rail.
        *
-       * FOUR columns of chrome around an A4 page is one too many: at 1600px the
-       * paper was squeezed to about 200px and the heading fields in the column
-       * editor collapsed to nothing. So the palette and the inspector share the
-       * left rail — only one of them is ever being used — and the page keeps
-       * the rest. It is the subject; the panels serve it.
+       * Four columns of chrome around an A4 page is one too many: at 1600px the
+       * paper was squeezed to about 200px and the column editor's heading fields
+       * collapsed to nothing. Only one of the two panels is ever in use, so they
+       * take turns and the page keeps the rest. It is the subject.
        */}
-      <div className="grid gap-5 lg:grid-cols-[22rem_minmax(0,1fr)]">
-        <div className="flex flex-col gap-5 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto [&>*]:shrink-0">
-          {/* The selected block's settings come FIRST. Once a document is laid
-              out, changing what a block shows is the work; adding another is
-              the occasional thing. */}
-          <BlockInspector
-            block={selectedId ? (locate(spec, selectedId)?.block ?? null) : null}
-            tokens={tokens}
-            onChange={(changes) => {
-              if (selectedId) patch(selectedId, changes)
-            }}
-          />
+      <div className="flex flex-col gap-5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto [&>*]:shrink-0">
+        {/* The selected block's settings come FIRST. Once a document is laid out,
+            changing what a block shows is the work; adding another is the
+            occasional thing. */}
+        <BlockInspector
+          block={selected.length === 1 ? selected[0] : null}
+          tokens={tokens}
+          onChange={(changes) => {
+            if (selected.length === 1) patch(selected[0].id, changes)
+          }}
+          onRemove={() => {
+            if (selected.length === 1) remove(selected[0].id)
+          }}
+        />
 
+        {oneBand && (
           <Card>
             <CardHeader
-              title="Blocks"
-              description="Drag one onto the page, or click to add it at the end."
-              action={
-                atLimit ? <Badge tone="warning">Full</Badge> : undefined
-              }
+              title={`${selected.length} blocks`}
+              description="Lined up against the first one you clicked."
             />
-            <CardBody className="max-h-[32rem] overflow-y-auto">
-              <BlockPalette
-                kinds={kinds}
-                used={used}
-                atLimit={atLimit}
-                onAdd={(k) => insert(k, null, spec.blocks.length)}
-              />
+            <CardBody className="flex flex-col gap-3">
+              <ToolRow label="Line up">
+                {(
+                  [
+                    ['left', Icons.AlignLeft, 'Left edges'],
+                    ['hcentre', Icons.AlignCenter, 'Centres'],
+                    ['right', Icons.AlignRight, 'Right edges'],
+                    ['top', Icons.SortAsc, 'Tops'],
+                    ['vmiddle', Icons.Minus, 'Middles'],
+                    ['bottom', Icons.SortDesc, 'Bottoms'],
+                  ] as [AlignMode, typeof Icons.AlignLeft, string][]
+                ).map(([mode, Glyph, title]) => (
+                  <Button
+                    key={mode}
+                    variant="secondary"
+                    size="sm"
+                    title={title}
+                    aria-label={title}
+                    onClick={() => runTool((i) => alignTo(i, mode))}
+                  >
+                    <Glyph aria-hidden className="h-4 w-4" />
+                  </Button>
+                ))}
+              </ToolRow>
+
+              {selected.length > 2 && (
+                <ToolRow label="Space evenly">
+                  {(
+                    [
+                      ['horizontal', 'Across'],
+                      ['vertical', 'Down'],
+                    ] as [DistributeMode, string][]
+                  ).map(([mode, title]) => (
+                    <Button
+                      key={mode}
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => runTool((i) => distribute(i, mode))}
+                    >
+                      {title}
+                    </Button>
+                  ))}
+                </ToolRow>
+              )}
             </CardBody>
           </Card>
-        </div>
+        )}
 
         <Card>
           <CardHeader
-            title="The page"
-            description={label || 'Rendered with your own data.'}
+            title="Blocks"
+            description="Click to add one, then drag it where you want it."
+            action={atLimit ? <Badge tone="warning">Full</Badge> : undefined}
           />
-          <CardBody>
-            {warnings.length > 0 && (
-              <Callout tone="warning" className="mb-4">
-                <ul className="list-disc pl-5">
-                  {warnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              </Callout>
-            )}
-            <DocumentCanvas
-              spec={spec}
-              blockHtml={blockHtml}
-              selectedId={selectedId}
-              dragging={dragging !== null}
-              placing={placing}
-              over={over}
-              onSelect={setSelectedId}
-              onRemove={remove}
-              onMove={nudge}
-            />
+          <CardBody className="max-h-[32rem] overflow-y-auto">
+            <BlockPalette kinds={kinds} used={used} atLimit={atLimit} onAdd={add} />
           </CardBody>
         </Card>
       </div>
 
-      {/* A label, never a clone — see the header. */}
-      <DragOverlay>
-        {dragging ? (
-          <div className="rounded-card bg-brand px-3 py-2 text-sm font-medium text-white shadow-pop">
-            {draggedLabel}
-          </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+      <Card>
+        <CardHeader
+          title="The page"
+          description={label || 'Rendered with your own data.'}
+        />
+        <CardBody>
+          {warnings.length > 0 && (
+            <Callout tone="warning" className="mb-4">
+              <ul className="list-disc pl-5">
+                {warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </Callout>
+          )}
+          <p className="mb-3 text-xs text-muted">
+            Drag a block anywhere. It lines up with its neighbours and with the page as you
+            go. Shift-click to pick up more than one; arrow keys nudge.
+          </p>
+          <DocumentCanvas
+            spec={spec}
+            html={blockHtml}
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
+            onCommit={place}
+            onHeights={setHeights}
+          />
+        </CardBody>
+      </Card>
+    </div>
   )
 }
 
-/** What a drag id is called, for the screen-reader announcements. */
-function nameOf(id: string, blocks: DocumentSpec['blocks']): string {
-  const kind = paletteKind(id)
-  if (kind) return DOC_BLOCK_CATALOG[kind].label
-  const gap = parseGap(id)
-  if (gap) {
-    return gap.cellId
-      ? `a column, position ${gap.index + 1}`
-      : `position ${gap.index + 1} on the page`
-  }
-  const block = blocks.find((b) => b.id === id)
-  // Only reached for the thing being CARRIED, since collision now offers gaps
-  // alone. Naming a block here as a target would describe a drop that cannot
-  // happen.
-  return block ? DOC_BLOCK_CATALOG[block.kind].label : 'a block'
+function ToolRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-medium text-muted">{label}</p>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
+    </div>
+  )
 }
 
 /**
  * A new block of one kind, with enough in it to be worth looking at.
  *
- * A blank line table would render as nothing, and a designer who drags one in
- * and sees an empty box has been given a puzzle rather than a document.
+ * A blank line table would render as nothing, and a designer who adds one and
+ * sees an empty box has been given a puzzle rather than a document.
  */
-function defaultsFor(kind: DocBlockKind) {
+function defaultsFor(kind: DocBlockKind): Partial<DocBlock> {
   switch (kind) {
     case 'lineTable':
       return {

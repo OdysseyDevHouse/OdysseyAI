@@ -1,9 +1,10 @@
 import { getDocType, findToken } from './catalog'
 import {
+  BAND_KEYS,
   DOC_BLOCK_CATALOG,
+  type BandKey,
   type DocBlock,
   type DocumentSpec,
-  type RowCell,
 } from './blocks'
 
 /**
@@ -260,11 +261,6 @@ function compileBlock(b: DocBlock, docKey: string): string {
       return `<hr class="border-border">`
     case 'spacer':
       return `<div class="h-6"></div>`
-    case 'row':
-      // Handled by compileDocument, which knows the widths. A row reached
-      // here would be a row inside a cell, which the validator refuses.
-      return ''
-
     case 'html':
       // Passed through as written. sanitiseTemplate runs over the whole
       // compiled document at save, so this is no more trusted than any other
@@ -275,25 +271,82 @@ function compileBlock(b: DocBlock, docKey: string): string {
   }
 }
 
-/* ── laying blocks out ───────────────────────────────────────────────────── */
+/* ── laying blocks out ───────────────────────────────────────────────────────
+ *
+ * ── THREE BANDS, AND WHY ──────────────────────────────────────────────────
+ *
+ * A block carries an x/y, so the obvious compilation is one absolutely
+ * positioned page. That would be wrong, and it would be wrong only for long
+ * documents — which is the worst kind of wrong, because it passes every test
+ * written against a three-line order and then prints the items over the totals
+ * on a forty-line one.
+ *
+ * The line table is the one thing on the page whose height nobody knows in
+ * advance. So the page is three stacked bands, and only the two that DON'T grow
+ * are positioned absolutely:
+ *
+ *   header   absolute boxes inside a relative section
+ *   body     ordinary flow — the table sets its own height
+ *   footer   absolute boxes again, pushed down by whatever the body became
+ *
+ * That is the whole trick, and it is what lets free placement coexist with a
+ * document that has to keep working when the order gets long.
+ *
+ * ── PERCENTAGES SURVIVE TO PRINT ──────────────────────────────────────────
+ *
+ * `left` and `width` are percentages of the page, so the screen and the paper
+ * agree without either knowing the other's pixel width. `top` cannot be: a
+ * percentage top inside a container whose height is `min-height` resolves
+ * against a height that isn't fixed, so it collapses. Vertical position is
+ * therefore emitted in `em`, which scales with the type rather than the viewport
+ * — the same reason the hand-written defaults size their spacing in `rem`.
+ */
+
+/** One percent of band height, in em. Tuned so a band's 100 is about a page. */
+const BAND_EM = 0.22
+
+/** A band with nothing in it should not reserve space it isn't using. */
+function bandHeight(blocks: DocBlock[]): number {
+  return blocks.reduce((max, b) => Math.max(max, b.y), 0)
+}
 
 /**
- * The widths of a row's cells, as percentages that add to 100.
+ * One block, wrapped in its positioned box.
  *
- * A cell may set its own; the ones that do not share what is left, evenly. That
- * is what makes "a wide letterhead beside a narrow date" expressible without
- * making every designer do arithmetic.
- *
- * If the explicit widths already reach or exceed 100 there is nothing to share,
- * so the remainder is spread as a minimum rather than as zero — a column of
- * zero width is a column whose contents vanish, and vanishing is never the
- * answer a designer was reaching for.
+ * The inner markup is exactly what `compileBlock` produces for the canvas, so
+ * the designer is looking at the same HTML the printer gets. Only the wrapper
+ * differs, which is the property that keeps the preview honest.
  */
-export function cellWidths(cells: RowCell[]): number[] {
-  const fixed = cells.reduce((sum, c) => sum + (c.width ?? 0), 0)
-  const autos = cells.filter((c) => c.width === undefined).length
-  const each = autos > 0 ? Math.max((100 - fixed) / autos, 4) : 0
-  return cells.map((c) => c.width ?? each)
+function positioned(b: DocBlock, docKey: string): string {
+  const html = compileBlock(b, docKey)
+  if (!html) return ''
+
+  const align = b.align ? ALIGN_CLASS[b.align] : ''
+  const wrap = needsWrapper(b) ? 'sd-block' : ''
+  const style =
+    `position:absolute;left:${b.x.toFixed(2)}%;` +
+    `top:${(b.y * BAND_EM).toFixed(2)}em;` +
+    `width:${b.w.toFixed(2)}%`
+
+  return `<div class="${wrap} ${align}" style="${style}">${html}</div>`
+}
+
+/**
+ * A block in flowing layout, for the body band.
+ *
+ * The body is not positioned, so its blocks keep their WIDTH and their
+ * alignment but take their vertical place from the flow. `y` still orders them,
+ * which is why the caller sorts — a designer who drags one body block above
+ * another means it to print first.
+ */
+function flowed(b: DocBlock, docKey: string): string {
+  const html = compileBlock(b, docKey)
+  if (!html) return ''
+
+  const align = b.align ? ALIGN_CLASS[b.align] : ''
+  const wrap = needsWrapper(b) ? 'sd-block' : ''
+  const style = b.w < 100 ? ` style="width:${b.w.toFixed(2)}%"` : ''
+  return `<div class="${wrap} ${align}"${style}>${html}</div>`
 }
 
 /**
@@ -306,49 +359,51 @@ export function cellWidths(cells: RowCell[]): number[] {
 export function compileDocument(spec: DocumentSpec, docKey: string): string {
   if (!spec || !Array.isArray(spec.blocks)) return ''
 
-  const parts: string[] = []
+  const sections: string[] = []
 
-  for (const block of spec.blocks) {
-    if (block.kind === 'row') {
-      const cells = block.cells ?? []
-      if (cells.length === 0) continue
+  for (const band of BAND_KEYS) {
+    // Sorted by y so the markup reads top to bottom. It changes nothing about
+    // where an absolute box lands, but it decides the body's order, and it
+    // makes the compiled document diffable and readable to whoever inherits it.
+    const blocks = spec.blocks.filter((b) => b.band === band).sort((a, b) => a.y - b.y)
+    if (blocks.length === 0) continue
 
-      const widths = cellWidths(cells)
-      const columns = cells
-        .map((cell, i) => {
-          // Each cell is a STACK, so its blocks are compiled and joined the
-          // same way the page compiles its own — one code path for "a column
-          // of things", whether the column is the page or a sixth of it.
-          const inner = cell.blocks
-            .map((b) => {
-              const html = compileBlock(b, docKey)
-              if (!html) return ''
-              const align = b.align ? ALIGN_CLASS[b.align] : ''
-              const wrap = needsWrapper(b) ? 'sd-block' : ''
-              return `<div class="${wrap} ${align}">${html}</div>`
-            })
-            .filter(Boolean)
-            .join('')
-
-          // `min-width:0` is load-bearing: without it a long product
-          // description in one cell refuses to wrap and pushes the others off
-          // the page, which is the classic flex-child overflow.
-          return `<div style="width:${widths[i].toFixed(2)}%;min-width:0">${inner}</div>`
-        })
-        .join('')
-
-      parts.push(`<section class="flex items-start gap-6 py-4">${columns}</section>`)
+    if (band === 'body') {
+      const inner = blocks.map((b) => flowed(b, docKey)).filter(Boolean).join('')
+      if (inner) sections.push(`<section class="py-4">${inner}</section>`)
       continue
     }
 
-    const html = compileBlock(block, docKey)
-    if (!html) continue
-    const align = block.align ? ALIGN_CLASS[block.align] : ''
-    const wrap = needsWrapper(block) ? 'sd-block' : ''
-    parts.push(`<section class="${wrap} py-4 ${align}">${html}</section>`)
+    const inner = blocks.map((b) => positioned(b, docKey)).filter(Boolean).join('')
+    if (!inner) continue
+
+    /*
+     * `min-height` rather than `height`.
+     *
+     * A block's real height is its content's, so a letterhead that grew by a
+     * line must be able to make the band taller instead of spilling out of it.
+     * The floor is the lowest block's `y` plus room for that block itself —
+     * without the allowance a block at the bottom of the band would have its
+     * own content hanging over whatever comes next.
+     */
+    const floor = (bandHeight(blocks) + 14) * BAND_EM
+    sections.push(
+      `<section class="relative py-4" style="min-height:${floor.toFixed(2)}em">${inner}</section>`,
+    )
   }
 
-  return `${STYLE}<article class="${PAGE}">${parts.join('')}</article>`
+  return `${STYLE}<article class="${PAGE}">${sections.join('')}</article>`
+}
+
+/**
+ * How tall a band is, in the same percent the designer's `y` is in.
+ *
+ * The canvas needs it to size its own drop area and to hand `snapBlock` a height
+ * to snap the page centre against. Exported so the two cannot disagree about
+ * where the middle of a band is.
+ */
+export function bandExtent(spec: DocumentSpec, band: BandKey): number {
+  return bandHeight(spec.blocks.filter((b) => b.band === band))
 }
 
 /**
@@ -377,14 +432,7 @@ function needsWrapper(b: DocBlock): boolean {
 export function compileBlocks(spec: DocumentSpec, docKey: string): Record<string, string> {
   const out: Record<string, string> = {}
   if (!spec || !Array.isArray(spec.blocks)) return out
-  for (const b of spec.blocks) {
-    out[b.id] = compileBlock(b, docKey)
-    if (b.kind === 'row') {
-      for (const c of b.cells ?? []) {
-        for (const inner of c.blocks) out[inner.id] = compileBlock(inner, docKey)
-      }
-    }
-  }
+  for (const b of spec.blocks) out[b.id] = compileBlock(b, docKey)
   return out
 }
 

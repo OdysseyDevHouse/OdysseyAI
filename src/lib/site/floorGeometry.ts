@@ -213,10 +213,19 @@ export function alignmentFor(
   others: readonly Rect[],
   roomW: number,
   roomH: number,
+  /**
+   * How close an edge must come, in the same units as the rects.
+   *
+   * Defaults to a fraction of the room, which is right for a floor plan. The
+   * stationery designer passes its own: its "room" is 100 percent wide either
+   * way, so the fraction would give one fixed tolerance regardless of how large
+   * the page is drawn on screen, and on a page a percent of width is only a few
+   * pixels — tight enough to feel fussy rather than helpful.
+   */
+  tolerance = Math.max(roomW, roomH) * SNAP_FRACTION,
 ): { x: number; y: number; guides: Guide[] } {
   const xEdges = (r: Rect) => [r.x, r.x + r.w / 2, r.x + r.w]
   const yEdges = (r: Rect) => [r.y, r.y + r.h / 2, r.y + r.h]
-  const tolerance = Math.max(roomW, roomH) * SNAP_FRACTION
 
   /* The room as a zero-thickness rect gives left/centre/right and top/middle/bottom for
      free, using the very same edge functions. */

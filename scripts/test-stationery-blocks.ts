@@ -17,20 +17,27 @@
  */
 import { PURCHASE_ORDER_DEFAULT } from '../src/lib/stationery/defaults/purchaseOrder'
 import { PURCHASE_ORDER_BLOCKS } from '../src/lib/stationery/defaults/purchaseOrderBlocks'
-import { cellWidths, compileDocument, supportsBlocks } from '../src/lib/stationery/compile'
+import { bandExtent, compileDocument, supportsBlocks } from '../src/lib/stationery/compile'
 import {
   parseSpec,
   serialiseSpec,
   validateSpec,
   blockKindsFor,
-  allBlocks,
-  locate,
+  findBlock,
+  bandBlocks,
   newBlock,
   patchBlock,
   removeBlock,
   MAX_BLOCKS,
+  type DocBlock,
   type DocumentSpec,
 } from '../src/lib/stationery/blocks'
+import {
+  clampBlock,
+  gapsFor,
+  snapBlock,
+  MIN_BLOCK_W,
+} from '../src/lib/stationery/geometry'
 import { purchaseOrderTokens } from '../src/lib/stationery/adapters/purchaseOrder'
 import { renderTemplate } from '../src/lib/stationery/render'
 import { validateTemplate } from '../src/lib/stationery/validate'
@@ -217,111 +224,220 @@ console.log('\n-- the line table columns --')
   ok('the shipped table has the four columns a PO needs', table.columns!.length === 4)
 }
 
-/* ── layout ──────────────────────────────────────────────────────────────── */
+/* ── bands ───────────────────────────────────────────────────────────────── */
 
-console.log('\n-- rows and cells --')
+console.log('\n-- three bands, and why --')
 {
-  // Widths: the point of the feature. Explicit ones are honoured, the rest
-  // share what is left, and nothing is ever given zero — a column of zero
-  // width is a column whose contents vanish.
-  ok('columns with no width share evenly',
-    JSON.stringify(cellWidths([{ id: 'a', blocks: [] }, { id: 'b', blocks: [] }])) === '[50,50]')
+  const html = compileDocument(PURCHASE_ORDER_BLOCKS, 'purchase_order')
 
-  ok('an explicit width is honoured and the rest share the remainder',
-    JSON.stringify(
-      cellWidths([
-        { id: 'a', width: 60, blocks: [] },
-        { id: 'b', blocks: [] },
-        { id: 'c', blocks: [] },
-      ]),
-    ) === '[60,20,20]')
+  ok('the page compiles to three bands', (html.match(/<section/g) ?? []).length === 3)
 
-  const crowded = cellWidths([
-    { id: 'a', width: 90, blocks: [] },
-    { id: 'b', width: 30, blocks: [] },
-    { id: 'c', blocks: [] },
-  ])
-  ok('a column left with nothing to share still gets a width', crowded[2] > 0, String(crowded))
+  // The header and footer are positioned; the body is not. That asymmetry is
+  // the whole design, so it is asserted rather than assumed.
+  ok('the header and footer position their blocks absolutely',
+    (html.match(/section class="relative/g) ?? []).length === 2)
 
-  // Three columns is the thing the two-block model could not express at all.
-  const three: DocumentSpec = {
-    version: 1,
-    blocks: [
-      ...PURCHASE_ORDER_BLOCKS.blocks,
-      {
-        id: 'r3',
-        kind: 'row',
-        cells: [
-          { id: 'c1', blocks: [newBlock('text', { text: 'One' })] },
-          { id: 'c2', blocks: [newBlock('text', { text: 'Two' })] },
-          { id: 'c3', blocks: [newBlock('text', { text: 'Three' })] },
-        ],
-      },
-    ],
-  }
-  const html = compileDocument(three, 'purchase_order')
-  ok('a three-column row compiles to three columns',
-    (html.match(/width:33\.33%/g) ?? []).length === 3, html.slice(-260))
-  ok('...with all three blocks in it', /One/.test(html) && /Two/.test(html) && /Three/.test(html))
+  const bodyAt = html.indexOf('<section class="py-4">')
+  const bodyInner = html.slice(bodyAt, html.indexOf('</section>', bodyAt))
+  ok('the items band is ordinary flow, so a long order can make it taller',
+    bodyAt > 0 && !/position:absolute/.test(bodyInner) && !/height:/.test(bodyInner))
+  ok('...and it is the band holding the table', /<table/.test(bodyInner))
 
-  // A cell is a STACK, which is what makes "the name under the logo" one cell.
-  const stacked: DocumentSpec = {
-    version: 1,
-    blocks: [
-      ...PURCHASE_ORDER_BLOCKS.blocks,
-      {
-        id: 'r2',
-        kind: 'row',
-        cells: [
-          {
-            id: 'cA',
-            blocks: [newBlock('text', { text: 'Top' }), newBlock('text', { text: 'Bottom' })],
-          },
-          { id: 'cB', blocks: [] },
-        ],
-      },
-    ],
-  }
-  const stackedHtml = compileDocument(stacked, 'purchase_order')
-  ok('a cell holds more than one block',
-    stackedHtml.indexOf('Top') < stackedHtml.indexOf('Bottom') &&
-      stackedHtml.includes('Top') && stackedHtml.includes('Bottom'))
+  /*
+   * THE REASON BANDS EXIST.
+   *
+   * Absolute positions everywhere would print a forty-line order's items on top
+   * of its totals — and would pass every test written against a three-line one.
+   * The footer must come after the body in document order so flow pushes it
+   * down, whatever the table became.
+   */
+  ok('the footer follows the items, so a long order pushes it down',
+    html.lastIndexOf('<section class="relative') > bodyAt)
 
-  ok('the shipped default uses a row for its header',
-    PURCHASE_ORDER_BLOCKS.blocks.some(
-      (b) => b.kind === 'row' && (b.cells ?? []).length === 2,
-    ))
+  // Percentages so screen and paper agree; em for the vertical, because a
+  // percentage top inside a min-height container resolves against nothing.
+  ok('horizontal position and width are percentages of the page',
+    /left:60\.00%/.test(html) && /width:40\.00%/.test(html))
+  ok('vertical position is in em, not a percentage of an unknown height',
+    /top:[\d.]+em/.test(html) && !/top:[\d.]+%/.test(html))
+
+  ok('a band reserves room for the lowest block in it',
+    bandExtent(PURCHASE_ORDER_BLOCKS, 'header') === 72 &&
+      bandExtent(PURCHASE_ORDER_BLOCKS, 'footer') === 52)
+
+  // Side by side is now a coordinate, not a container.
+  const letterhead = PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-letterhead')!
+  const title = PURCHASE_ORDER_BLOCKS.blocks.find((b) => b.id === 'po-title')!
+  ok('the shipped header puts two blocks beside each other by coordinate',
+    letterhead.y === title.y && letterhead.x + letterhead.w <= title.x)
+}
+
+/* ── snapping and guides ─────────────────────────────────────────────────── */
+
+console.log('\n-- dragging one block beside another --')
+{
+  const other = { x: 60, y: 20, w: 30, h: 10 }
+
+  // Left edges. Dropped a hair off and it lands EXACTLY, which is the whole
+  // promise of the feature — "nearly aligned" is what the user complained about.
+  const left = snapBlock({ x: 59.3, y: 50, w: 20, h: 8 }, [other], 100)
+  ok('a block dragged near another\'s left edge lands exactly on it', left.x === 60,
+    String(left.x))
+  ok('...and a guide is drawn to say why',
+    left.guides.some((g) => g.axis === 'v' && g.at === 60))
+
+  // Centres, which is what "show me when it is centred" asked for.
+  const centre = snapBlock({ x: 64.8, y: 50, w: 20, h: 8 }, [other], 100)
+  ok('a block dragged near another\'s centre snaps to its centre',
+    centre.x + 10 === 75, `centre at ${centre.x + 10}`)
+
+  // Tops, so "align at the top" works by dragging rather than by a button.
+  const top = snapBlock({ x: 10, y: 20.5, w: 20, h: 8 }, [other], 100)
+  ok('a block dragged level with another\'s top snaps to it', top.y === 20, String(top.y))
+
+  const bottom = snapBlock({ x: 10, y: 22.6, w: 20, h: 8 }, [other], 100)
+  ok('...and its bottom edge snaps too', bottom.y + 8 === 30, `bottom at ${bottom.y + 8}`)
+
+  // The page's own edges and centre come free, because alignmentFor takes the
+  // container as a zero-thickness rect.
+  const margin = snapBlock({ x: 0.4, y: 50, w: 20, h: 8 }, [], 100)
+  ok('a block dragged near the page edge goes flush to it', margin.x === 0, String(margin.x))
+
+  const pageCentre = snapBlock({ x: 39.6, y: 50, w: 20, h: 8 }, [], 100)
+  ok('a block dragged near the middle of the page centres on it',
+    pageCentre.x + 10 === 50, `centre at ${pageCentre.x + 10}`)
+
+  // Far away, nothing happens. A tool that snaps everywhere is a grid, and the
+  // point of guides is that they offer alignment only where it was being aimed for.
+  const free = snapBlock({ x: 20, y: 50, w: 20, h: 8 }, [other], 100)
+  ok('a block dropped nowhere near anything stays where it was put',
+    free.x === 20 && !free.guides.some((g) => g.axis === 'v'))
+}
+
+/* ── gap measurement ─────────────────────────────────────────────────────── */
+
+console.log('\n-- how far apart are these --')
+{
+  const right = { x: 60, y: 0, w: 30, h: 10 }
+
+  const g = gapsFor({ x: 0, y: 0, w: 50, h: 10 }, [right])
+  const gx = g.find((r) => r.axis === 'x')
+  ok('the gap to the block beside it is measured', gx?.distance === 10, JSON.stringify(g))
+  ok('...and it spans from one facing edge to the other',
+    gx?.from === 50 && gx?.to === 60)
+
+  const below = gapsFor({ x: 0, y: 0, w: 50, h: 10 }, [{ x: 0, y: 25, w: 50, h: 10 }])
+  ok('the gap below is measured too',
+    below.find((r) => r.axis === 'y')?.distance === 15, JSON.stringify(below))
+
+  /*
+   * Only between blocks that actually sit beside each other.
+   *
+   * The horizontal distance to something on a different line is not spacing,
+   * and reporting it as spacing would send a designer chasing a number that
+   * means nothing.
+   */
+  const past = gapsFor({ x: 0, y: 0, w: 20, h: 5 }, [{ x: 60, y: 40, w: 20, h: 5 }])
+  ok('a block on a different line is not reported as a gap', past.length === 0,
+    JSON.stringify(past))
+
+  // Overlapping is not a gap of a negative amount; it is not a gap at all.
+  const over = gapsFor({ x: 0, y: 0, w: 50, h: 10 }, [{ x: 40, y: 0, w: 30, h: 10 }])
+  ok('an overlap is not reported as spacing',
+    !over.some((r) => r.axis === 'x'), JSON.stringify(over))
+
+  // The NEAREST neighbour, not all of them: one number per axis is a reading,
+  // six numbers is noise.
+  const many = gapsFor({ x: 0, y: 0, w: 20, h: 10 },
+    [{ x: 30, y: 0, w: 10, h: 10 }, { x: 70, y: 0, w: 10, h: 10 }])
+  ok('only the nearest neighbour on each axis is reported',
+    many.filter((r) => r.axis === 'x').length === 1 &&
+      many.find((r) => r.axis === 'x')?.distance === 10)
+}
+
+/* ── staying on the page ─────────────────────────────────────────────────── */
+
+console.log('\n-- a block cannot be dragged off the page --')
+{
+  ok('dragged left past the edge, it stops at the edge',
+    clampBlock({ x: -20, y: 10, w: 40 }).x === 0)
+  ok('dragged right past the edge, its far side stops at the edge',
+    clampBlock({ x: 90, y: 10, w: 40 }).x === 60)
+  ok('narrowed past legibility, it stops at the minimum',
+    clampBlock({ x: 0, y: 0, w: 2 }).w === MIN_BLOCK_W)
+  ok('dragged above the top, it stops at the top',
+    clampBlock({ x: 0, y: -5, w: 40 }).y === 0)
+
+  /*
+   * `y` has NO maximum, deliberately.
+   *
+   * A band is as tall as its contents, so a block dragged low simply makes the
+   * band taller. Clamping it would fight the thing that keeps the document
+   * printing correctly when it grows.
+   */
+  ok('dragged low, it makes the band taller rather than being pushed back',
+    clampBlock({ x: 0, y: 400, w: 40 }).y === 400)
 }
 
 /* ── the helpers the designer edits through ──────────────────────────────── */
 
-console.log('\n-- finding and changing a block anywhere --')
+console.log('\n-- finding and changing a block --')
 {
   const spec = PURCHASE_ORDER_BLOCKS
 
-  ok('a block on the page is found', locate(spec, 'po-lines')?.cellId === null)
-  ok('a block inside a cell is found, with its cell',
-    locate(spec, 'po-letterhead')?.cellId === 'po-header-l')
-  ok('a block that does not exist is null', locate(spec, 'nope') === null)
-
-  ok('allBlocks reaches into cells',
-    allBlocks(spec).some((b) => b.id === 'po-letterhead') &&
-      allBlocks(spec).length > spec.blocks.length)
+  /*
+   * A FLAT LIST, which is most of what free placement bought.
+   *
+   * The old model needed `locate` to say which cell a block was in, and every
+   * edit had to walk two levels to find its target. A block now carries its own
+   * position, so finding one is a find and changing one is a map — and the
+   * "two dropzones" the user was seeing were exactly the cost of the structure
+   * that made those helpers necessary.
+   */
+  ok('a block is found by id', findBlock(spec, 'po-lines')?.kind === 'lineTable')
+  ok('a block that does not exist is null', findBlock(spec, 'nope') === null)
+  ok('every block is at the top level', spec.blocks.every((b) => !('cells' in b)))
 
   const renamed = patchBlock(spec, 'po-title', { title: 'ORDER' })
-  ok('a block inside a cell can be patched by id',
-    locate(renamed, 'po-title')?.block.title === 'ORDER')
-  ok('...without disturbing the page-level blocks',
-    locate(renamed, 'po-lines')?.block.columns?.length === 4)
+  ok('a block can be patched by id', findBlock(renamed, 'po-title')?.title === 'ORDER')
+  ok('...without disturbing its neighbours',
+    findBlock(renamed, 'po-lines')?.columns?.length === 4)
+
+  const moved = patchBlock(spec, 'po-title', { x: 10, y: 30 })
+  ok('moving a block is a patch like any other',
+    findBlock(moved, 'po-title')?.x === 10 && findBlock(moved, 'po-title')?.y === 30)
 
   const pruned = removeBlock(spec, 'po-deliver')
-  ok('a block inside a cell can be removed by id', locate(pruned, 'po-deliver') === null)
-  ok('...leaving its neighbours in the same cell',
-    locate(pruned, 'po-details')?.cellId === 'po-parties-r')
+  ok('a block can be removed by id', findBlock(pruned, 'po-deliver') === null)
+  ok('...leaving the rest of its band alone',
+    findBlock(pruned, 'po-details') !== null && findBlock(pruned, 'po-supplier') !== null)
 
-  const noRow = removeBlock(spec, 'po-header')
-  ok('removing a row takes its contents with it',
-    locate(noRow, 'po-letterhead') === null && locate(noRow, 'po-title') === null)
+  ok('a band reports its own blocks',
+    bandBlocks(spec, 'body').length === 1 && bandBlocks(spec, 'body')[0].kind === 'lineTable')
+  ok('...and the header holds the letterhead and the title',
+    bandBlocks(spec, 'header').some((b) => b.id === 'po-letterhead') &&
+      bandBlocks(spec, 'header').some((b) => b.id === 'po-title'))
+
+  /*
+   * A NEW BLOCK LANDS BELOW WHAT IS THERE.
+   *
+   * At 0,0 it would land on top of the letterhead, which the validator then
+   * refuses — so the designer would have to fix an overlap before they had done
+   * anything at all.
+   */
+  const added = newBlock('text', spec, { band: 'header' })
+  const lowest = bandBlocks(spec, 'header').reduce((m, b) => Math.max(m, b.y), 0)
+  ok('a new block is placed below whatever is already in that band', added.y > lowest,
+    `y=${added.y} vs lowest=${lowest}`)
+  ok('...and the first block in an empty band goes to the top',
+    newBlock('text', { version: 1, blocks: [] }, { band: 'footer' }).y === 0)
+
+  // The items table cannot be put anywhere else, however it is asked for.
+  ok('the items table is pinned to the items band',
+    newBlock('lineTable', spec, { band: 'footer' }).band === 'body')
+
+  ok('two blocks minted together do not share an id',
+    newBlock('text', spec).id !== newBlock('text', spec).id)
 }
 
 /* ── reading a stored spec ───────────────────────────────────────────────── */
@@ -373,21 +489,21 @@ console.log('\n-- validation --')
 
   for (const kind of ['docTitle', 'lineTable', 'totals'] as const) {
     /*
-     * Removed from the WHOLE document, cells included.
+     * Removed from the document, and there is only one place to remove it from.
      *
-     * Filtering only the top level used to be enough; with rows it is not —
-     * docTitle lives inside a cell in the shipped design, so a top-level filter
-     * left it in place and the "is it refused" check passed vacuously. Found by
-     * this suite failing once docTitle moved into the header row.
+     * When blocks nested inside row cells, filtering only the top level left
+     * docTitle in place and this check passed vacuously — the flat list free
+     * placement brought is what removes that hazard, since there is now only
+     * one level for a block to be at.
      */
-    const target = allBlocks(PURCHASE_ORDER_BLOCKS).find((b) => b.kind === kind)!
+    const target = PURCHASE_ORDER_BLOCKS.blocks.find((b: DocBlock) => b.kind === kind)!
     const without = removeBlock(PURCHASE_ORDER_BLOCKS, target.id)
     ok(`a document without "${kind}" is refused`, !validateSpec(without, 'purchase_order').ok)
   }
 
   const twice: DocumentSpec = {
     version: 1,
-    blocks: [...PURCHASE_ORDER_BLOCKS.blocks, newBlock('totals')],
+    blocks: [...PURCHASE_ORDER_BLOCKS.blocks, newBlock('totals', PURCHASE_ORDER_BLOCKS)],
   }
   ok('two totals blocks are refused', !validateSpec(twice, 'purchase_order').ok)
 
@@ -416,7 +532,7 @@ console.log('\n-- the html block --')
     version: 1,
     blocks: [
       ...PURCHASE_ORDER_BLOCKS.blocks,
-      newBlock('html', { text: '<p>Custom <strong>bit</strong></p><script>alert(1)</script>' }),
+      newBlock('html', null, { text: '<p>Custom <strong>bit</strong></p><script>alert(1)</script>' }),
     ],
   }
   const compiled = compileDocument(spec, 'purchase_order')
@@ -436,7 +552,7 @@ console.log('\n-- text blocks --')
   const spec: DocumentSpec = {
     version: 1,
     blocks: [...PURCHASE_ORDER_BLOCKS.blocks,
-      newBlock('text', { text: 'Ask for {doc.number} & quote it' })],
+      newBlock('text', null, { text: 'Ask for {doc.number} & quote it' })],
   }
   const out = renderBlocks(spec)
   ok('a token inside typed words resolves', /Ask for PO000123/.test(out))
@@ -445,7 +561,7 @@ console.log('\n-- text blocks --')
   const hostile: DocumentSpec = {
     version: 1,
     blocks: [...PURCHASE_ORDER_BLOCKS.blocks,
-      newBlock('text', { text: '<img src=x onerror=alert(1)>' })],
+      newBlock('text', null, { text: '<img src=x onerror=alert(1)>' })],
   }
   ok('typed words cannot introduce markup',
     !/<img/.test(renderBlocks(hostile)) && /&lt;img/.test(renderBlocks(hostile)))
@@ -485,7 +601,7 @@ console.log('\n-- "Edit as HTML" --')
     version: 1,
     blocks: [
       ...PURCHASE_ORDER_BLOCKS.blocks,
-      { id: 'x', kind: 'html', text: '<p>Keep</p><script>alert(1)</script>' },
+      newBlock('html', PURCHASE_ORDER_BLOCKS, { text: '<p>Keep</p><script>alert(1)</script>' }),
     ],
   }
   const cleaned = sanitiseTemplate(compileDocument(withScript, 'purchase_order'))

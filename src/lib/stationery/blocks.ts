@@ -1,39 +1,49 @@
 import { getDocType, type DocTypeDef } from './catalog'
+import { BAND_KEYS, MIN_BLOCK_W, clampBlock, overlaps, type BandKey } from './geometry'
 
 /**
- * A printed document as an ordered list of BLOCKS.
+ * A printed document as freely-placed BLOCKS.
  *
  * ── WHY BLOCKS ARE THE TRUTH AND MARKUP IS GENERATED ──────────────────────
  *
  * The HTML editor gives full control to someone who writes markup. This is for
- * everyone else: drag the logo to the other side, untick the discount column,
+ * everyone else: drag the logo where you want it, untick the discount column,
  * rename "Unit price" to "Rate".
  *
- * The alternative — keep HTML as the stored form and parse it back into
- * draggable boxes — is where this feature would die. A customer hand-edits one
- * thing and their markup stops being parseable, so their document becomes
- * undraggable; and a round-trip through a parser silently loses formatting
- * nobody asked it to touch. With blocks as the source there is nothing to parse
- * back, so dragging always works.
+ * Keeping HTML as the stored form and parsing it back into draggable boxes is
+ * where this would die — a customer hand-edits one thing, their markup stops
+ * being parseable, and their document becomes undraggable. With blocks as the
+ * source there is nothing to parse back.
+ *
+ * ── WHY FREE PLACEMENT, AND NOT A LIST OF SLOTS ───────────────────────────
+ *
+ * This started as an ordered list with drop-gaps between items, and a `row`
+ * block that split into cells. It worked and it felt wrong: the page and each
+ * cell both contributed drop targets, so two landing strips appeared under one
+ * pointer and the whole thing read as buggy.
+ *
+ * A list-with-gaps answers "what did you drop this ON". A designer is asking
+ * "where does this go". So a block now carries an x/y and snaps to its
+ * neighbours' edges and centres — the same call FloorCanvas.tsx made when it
+ * replaced a dnd-kit floor planner, for the same reason, documented there.
+ *
+ * ── BANDS ARE THE ONE CONSTRAINT ──────────────────────────────────────────
+ *
+ * A room does not grow. A line table does — three items or forty — so absolute
+ * positions everywhere would print a long order's items on top of the totals.
+ * The page is therefore three bands: place freely WITHIN one, and the body band
+ * grows and pushes the footer down. Invisible unless dragging, so it reads as
+ * one page rather than three boxes.
  *
  * ── IT COMPILES TO THE EXISTING RENDERER ──────────────────────────────────
  *
  * compile.ts turns a spec into the same `{token}` markup render.ts already
- * consumes. That is the load-bearing decision: catalog.ts stays the security
- * boundary, permission-gated tokens still degrade silently, the sanitiser and
- * validator are unchanged, and there is NO second renderer to disagree with the
+ * consumes. catalog.ts stays the security boundary, permission-gated tokens
+ * still degrade silently, and there is NO second renderer to disagree with the
  * printed page.
- *
- * ── A FLAT BAG, NOT A DISCRIMINATED UNION ─────────────────────────────────
- *
- * Blocks are interchangeable in every code path except rendering and editing —
- * which is exactly what makes drag-and-drop, undo/redo and a uniform compile
- * signature simple. A union would force narrowing at every one of those call
- * sites. The storefront's HomeSection made the same call for the same reason.
  */
 
 export const DOC_BLOCK_KINDS = [
-  'row',
   'letterhead',
   'docTitle',
   'partyBlock',
@@ -53,25 +63,6 @@ export type DocBlockKind = (typeof DOC_BLOCK_KINDS)[number]
 
 export type DocBlockAlign = 'left' | 'center' | 'right'
 
-/**
- * One column of a split row.
- *
- * A STACK, not a slot: a cell holds however many blocks are dropped into it, so
- * "the logo with the business name under it" is one cell rather than two rows.
- *
- * `width` is a percentage and optional. Cells without one share whatever the
- * others leave — a letterhead usually wants more room than a date, and forcing
- * even thirds would make that impossible to express.
- */
-export type RowCell = {
-  id: string
-  width?: number
-  blocks: DocBlock[]
-}
-
-/** A page is a flow of full-width things; a row is how several sit side by side. */
-export const MAX_ROW_CELLS = 6
-
 /** One column of the line table, as the customer has arranged it. */
 export type ColumnSpec = {
   /** A token from the document's `lines` section. The catalog decides format. */
@@ -81,8 +72,7 @@ export type ColumnSpec = {
   /**
    * A second token under the first, smaller — the supplier's code beneath the
    * description. One nesting level only: this is the one place a real document
-   * genuinely stacks two fields in a cell, and making it general would invite a
-   * column of four.
+   * genuinely stacks two fields in a cell.
    */
   subToken?: string
   /** Percent of the table. Blank columns share what is left over. */
@@ -93,11 +83,10 @@ export type ColumnSpec = {
 /**
  * One labelled row of a detail list.
  *
- * The LABEL is the designer's wording, stored beside the token rather than
- * taken from the catalog. The catalog's label is written for a token PICKER
- * ("Payment terms (with unit)") and is the wrong register for a printed page,
- * where the row should read "Terms". Storing it also means renaming a row can
- * never change which field it shows.
+ * The LABEL is the designer's wording, stored beside the token rather than taken
+ * from the catalog — whose label is written for a token PICKER ("Payment terms
+ * (with unit)") and is the wrong register for a printed page. Storing it also
+ * means renaming a row can never change which field it shows.
  */
 export type DetailRow = {
   token: string
@@ -107,19 +96,19 @@ export type DetailRow = {
 export type DocBlock = {
   id: string
   kind: DocBlockKind
+  /** Which part of the page. The body band holds the items and nothing else. */
+  band: BandKey
+  /** Percent of the page width. */
+  x: number
+  /** Percent down the band. Not clamped at the bottom — the band grows. */
+  y: number
+  /** Percent of the page width. Height is content, so it is never stored. */
+  w: number
+  /** How the block's own text lines up inside its box. */
   align?: DocBlockAlign
-  /**
-   * `row` only: the columns, left to right.
-   *
-   * The one nesting in this model, and deliberately one level deep — a cell
-   * holds ordinary blocks and a row cannot contain another row. Nested columns
-   * on a printed page are a layout nobody can predict once a line table runs
-   * onto a second sheet.
-   */
-  cells?: RowCell[]
   /** A heading above the block — "BILL TO", "NOTES". Empty prints none. */
   title?: string
-  /** letterhead / partyBlock / detailList: which fields, in the order shown. */
+  /** letterhead / partyBlock: which fields, in the order shown. */
   tokens?: string[]
   /** lineTable only. */
   columns?: ColumnSpec[]
@@ -141,30 +130,33 @@ export type DocBlockDef = {
    */
   docTypes: readonly string[] | 'all'
   /**
-   * Cannot be removed. The line table IS the document; a purchase order with
-   * no items is a letterhead. Enforced by the validator, not just hidden here.
+   * Cannot be removed. The line table IS the document; a purchase order with no
+   * items is a letterhead. Enforced by the validator, not just hidden.
    */
   required?: boolean
-  /** May appear more than once. A rule or a paragraph may; a totals box may not. */
+  /** May appear more than once. A paragraph may; a totals box may not. */
   repeatable?: boolean
   /** Whether the inspector offers a token list for this block. */
   picksTokens?: boolean
+  /**
+   * Pinned to one band.
+   *
+   * Only the line table: it is what the body band IS, and a shop that dragged it
+   * into the footer would have a document whose items print after its totals.
+   */
+  band?: BandKey
+  /** A sensible width, in percent, for a freshly added block. */
+  defaultW?: number
 }
 
 export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
-  row: {
-    kind: 'row',
-    label: 'Side by side',
-    hint: 'Split the page into columns and drop blocks into each.',
-    docTypes: 'all',
-    repeatable: true,
-  },
   letterhead: {
     kind: 'letterhead',
     label: 'Your letterhead',
     hint: 'Logo, business name, address and contact details.',
     docTypes: 'all',
     picksTokens: true,
+    defaultW: 55,
   },
   docTitle: {
     kind: 'docTitle',
@@ -173,6 +165,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     docTypes: 'all',
     required: true,
     picksTokens: true,
+    defaultW: 40,
   },
   partyBlock: {
     kind: 'partyBlock',
@@ -181,6 +174,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     docTypes: 'all',
     repeatable: true,
     picksTokens: true,
+    defaultW: 45,
   },
   detailList: {
     kind: 'detailList',
@@ -189,6 +183,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     docTypes: 'all',
     repeatable: true,
     picksTokens: true,
+    defaultW: 45,
   },
   lineTable: {
     kind: 'lineTable',
@@ -196,6 +191,9 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     hint: 'What was ordered or sold. Choose the columns, their wording and their order.',
     docTypes: 'all',
     required: true,
+    // The body band, always. See the note on `band`.
+    band: 'body',
+    defaultW: 100,
   },
   totals: {
     kind: 'totals',
@@ -204,24 +202,28 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     docTypes: 'all',
     required: true,
     picksTokens: true,
+    defaultW: 40,
   },
   vatSummary: {
     kind: 'vatSummary',
     label: 'VAT breakdown',
     hint: 'VAT by rate. A vendor is obliged to show it on an invoice.',
     docTypes: ['invoice'],
+    defaultW: 55,
   },
   banking: {
     kind: 'banking',
     label: 'Banking details',
     hint: 'Where to pay. Prints nothing unless every detail is set.',
     docTypes: ['invoice'],
+    defaultW: 45,
   },
   notes: {
     kind: 'notes',
     label: 'Notes from the document',
     hint: 'Whatever was typed on this order or invoice. Hides itself when empty.',
     docTypes: 'all',
+    defaultW: 55,
   },
   text: {
     kind: 'text',
@@ -229,6 +231,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     hint: 'Terms, a thank-you, delivery instructions — the same on every document.',
     docTypes: 'all',
     repeatable: true,
+    defaultW: 100,
   },
   rule: {
     kind: 'rule',
@@ -236,6 +239,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     hint: 'A hairline across the page.',
     docTypes: 'all',
     repeatable: true,
+    defaultW: 100,
   },
   spacer: {
     kind: 'spacer',
@@ -243,6 +247,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     hint: 'A gap, for signing or for air.',
     docTypes: 'all',
     repeatable: true,
+    defaultW: 100,
   },
   html: {
     kind: 'html',
@@ -250,6 +255,7 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     hint: 'For something the blocks cannot express. Sanitised like any template.',
     docTypes: 'all',
     repeatable: true,
+    defaultW: 100,
   },
 }
 
@@ -265,118 +271,52 @@ export const REQUIRED_BLOCK_KINDS: DocBlockKind[] = DOC_BLOCK_KINDS.filter(
   (k) => DOC_BLOCK_CATALOG[k].required,
 )
 
-/** A roll of paper is finite and so is patience. */
+/** A page is finite and so is patience. */
 export const MAX_BLOCKS = 40
 export const MAX_COLUMNS = 10
 
-/* ── ids ─────────────────────────────────────────────────────────────────── */
+/* ── ids and new blocks ──────────────────────────────────────────────────── */
 
 let idCounter = 0
 
 /**
- * Date-free, so two blocks added in the same millisecond cannot collide.
- * A shared id would mean a shared React key AND a shared drag handle.
+ * Date-free, so two blocks added in the same millisecond cannot collide. A
+ * shared id would mean a shared React key AND a shared drag handle.
  */
 export function newBlockId(kind: DocBlockKind): string {
   return `b-${kind}-${++idCounter}-${Math.random().toString(36).slice(2, 7)}`
 }
 
-export function newBlock(kind: DocBlockKind, over: Partial<DocBlock> = {}): DocBlock {
-  return { id: newBlockId(kind), kind, ...over }
-}
-
-let cellCounter = 0
-export function newCellId(): string {
-  return `c-${++cellCounter}-${Math.random().toString(36).slice(2, 7)}`
-}
-
-/** A row of `n` empty columns. */
-export function newRow(n: number): DocBlock {
-  const count = Math.min(Math.max(n, 2), MAX_ROW_CELLS)
-  return newBlock('row', {
-    cells: Array.from({ length: count }, () => ({ id: newCellId(), blocks: [] })),
-  })
-}
-
-/* ── walking a document that has one level of nesting ────────────────────── */
-
 /**
- * Every block on the page, rows included, flattened.
+ * A new block, placed somewhere sensible.
  *
- * For the questions that do not care about layout — "is this kind already
- * used", "how many blocks are there", "does the document have a line table".
- * Callers that DO care about layout walk `spec.blocks` themselves.
+ * `y` defaults below everything already in that band rather than at the top: a
+ * block added at 0,0 lands on top of the letterhead, which is an overlap the
+ * validator then refuses and the designer has to fix before they have done
+ * anything. Added-below is the boring, correct default.
  */
-export function allBlocks(spec: DocumentSpec): DocBlock[] {
-  const out: DocBlock[] = []
-  for (const b of spec.blocks) {
-    out.push(b)
-    if (b.kind === 'row') for (const c of b.cells ?? []) out.push(...c.blocks)
-  }
-  return out
-}
+export function newBlock(
+  kind: DocBlockKind,
+  spec: DocumentSpec | null = null,
+  over: Partial<DocBlock> = {},
+): DocBlock {
+  const def = DOC_BLOCK_CATALOG[kind]
+  const band = def.band ?? over.band ?? 'header'
 
-/** Find a block anywhere in the document, and where it lives. */
-export function locate(
-  spec: DocumentSpec,
-  id: string,
-): { block: DocBlock; cellId: string | null } | null {
-  for (const b of spec.blocks) {
-    if (b.id === id) return { block: b, cellId: null }
-    if (b.kind === 'row') {
-      for (const c of b.cells ?? []) {
-        const hit = c.blocks.find((x) => x.id === id)
-        if (hit) return { block: hit, cellId: c.id }
-      }
-    }
-  }
-  return null
-}
+  const inBand = (spec?.blocks ?? []).filter((b) => b.band === band)
+  const below = inBand.reduce((max, b) => Math.max(max, b.y), 0)
 
-/**
- * Replace one block wherever it is.
- *
- * The inspector edits by id and should not have to know whether the block it is
- * changing sits on the page or inside a cell.
- */
-export function patchBlock(
-  spec: DocumentSpec,
-  id: string,
-  changes: Partial<DocBlock>,
-): DocumentSpec {
   return {
-    version: 1,
-    blocks: spec.blocks.map((b) => {
-      if (b.id === id) return { ...b, ...changes }
-      if (b.kind !== 'row') return b
-      return {
-        ...b,
-        cells: (b.cells ?? []).map((c) => ({
-          ...c,
-          blocks: c.blocks.map((x) => (x.id === id ? { ...x, ...changes } : x)),
-        })),
-      }
-    }),
-  }
-}
-
-/** Remove one block wherever it is. A row goes with everything in it. */
-export function removeBlock(spec: DocumentSpec, id: string): DocumentSpec {
-  return {
-    version: 1,
-    blocks: spec.blocks
-      .filter((b) => b.id !== id)
-      .map((b) =>
-        b.kind === 'row'
-          ? {
-              ...b,
-              cells: (b.cells ?? []).map((c) => ({
-                ...c,
-                blocks: c.blocks.filter((x) => x.id !== id),
-              })),
-            }
-          : b,
-      ),
+    ...over,
+    id: newBlockId(kind),
+    kind,
+    // AFTER the spread, so a pinned block cannot be talked out of its band by a
+    // caller passing one — the line table belongs with the items whatever is asked.
+    band,
+    x: over.x ?? 0,
+    // A step below the lowest thing there, in band percent.
+    y: over.y ?? (inBand.length === 0 ? 0 : Math.min(below + 12, 88)),
+    w: over.w ?? def.defaultW ?? 100,
   }
 }
 
@@ -385,29 +325,31 @@ export function removeBlock(spec: DocumentSpec, id: string): DocumentSpec {
 export type SpecValidation = { ok: boolean; errors: string[] }
 
 /**
- * Whether a block document is fit to print.
+ * Whether a design is fit to print.
  *
- * Structure only. The LEGAL requirements still live in validate.ts and run
- * against the compiled markup — one set of rules for both editors, so a
- * document designed visually cannot escape what a hand-written one must carry.
+ * Structure and geometry only. The LEGAL requirements still live in validate.ts
+ * and run against the compiled markup — one set of rules for both editors, so a
+ * document designed by dragging must carry everything a typed one does.
  */
-export function validateSpec(spec: DocumentSpec, docType: string): SpecValidation {
+export function validateSpec(
+  spec: DocumentSpec,
+  docType: string,
+  /** Measured heights by block id, where the canvas knows them. */
+  heights: Record<string, number> = {},
+): SpecValidation {
   const errors: string[] = []
 
   if (!spec || typeof spec !== 'object' || !Array.isArray(spec.blocks)) {
     return { ok: false, errors: ['That design cannot be read.'] }
   }
-  const flat = allBlocks(spec)
-  if (flat.length > MAX_BLOCKS) {
+  if (spec.blocks.length > MAX_BLOCKS) {
     errors.push(`A document may have at most ${MAX_BLOCKS} blocks.`)
   }
 
   const allowed = new Set(blockKindsFor(docType))
   const seen = new Set<DocBlockKind>()
 
-  // Counted across the WHOLE document, cells included: a totals box inside a
-  // row and another outside it is still two totals boxes.
-  for (const b of flat) {
+  for (const b of spec.blocks) {
     const def = DOC_BLOCK_CATALOG[b.kind]
     if (!def) {
       errors.push('The design contains a block this version does not understand.')
@@ -421,6 +363,12 @@ export function validateSpec(spec: DocumentSpec, docType: string): SpecValidatio
       if (seen.has(b.kind)) errors.push(`"${def.label}" appears more than once.`)
       seen.add(b.kind)
     }
+    if (def.band && b.band !== def.band) {
+      errors.push(`"${def.label}" belongs with the items and cannot be moved.`)
+    }
+    if (b.w < MIN_BLOCK_W) {
+      errors.push(`"${def.label}" is too narrow to read.`)
+    }
     if (b.kind === 'lineTable') {
       const cols = b.columns ?? []
       if (cols.length === 0) errors.push('The items table needs at least one column.')
@@ -430,25 +378,34 @@ export function validateSpec(spec: DocumentSpec, docType: string): SpecValidatio
     }
   }
 
-  // A row is only ever a container, so a row of nothing is a gap the designer
-  // can see and nobody else can — it prints as a blank strip.
-  for (const b of spec.blocks) {
-    if (b.kind !== 'row') continue
-    const cells = b.cells ?? []
-    if (cells.length < 2) errors.push('A side-by-side row needs at least two columns.')
-    if (cells.length > MAX_ROW_CELLS) {
-      errors.push(`A row may have at most ${MAX_ROW_CELLS} columns.`)
-    }
-    // Nested rows are refused rather than flattened: a cell that quietly lost
-    // its contents would be worse than a message saying why.
-    if (cells.some((c) => c.blocks.some((x) => x.kind === 'row'))) {
-      errors.push('A row cannot contain another row.')
-    }
-  }
-
   for (const k of REQUIRED_BLOCK_KINDS) {
     if (allowed.has(k) && !seen.has(k)) {
       errors.push(`A document must have "${DOC_BLOCK_CATALOG[k].label}".`)
+    }
+  }
+
+  /*
+   * OVERLAPS.
+   *
+   * Free placement makes two blocks on top of each other easy to do by accident,
+   * and a document where the totals print over the notes is one nobody can read.
+   * Only checked where the canvas has told us the heights: without them any
+   * answer would be a guess, and refusing to save on a guess is worse than not
+   * checking.
+   */
+  const measured = spec.blocks.filter((b) => heights[b.id] !== undefined)
+  for (let i = 0; i < measured.length; i++) {
+    for (let j = i + 1; j < measured.length; j++) {
+      const a = measured[i]
+      const b = measured[j]
+      if (a.band !== b.band) continue
+      const ra = { x: a.x, y: a.y, w: a.w, h: heights[a.id] }
+      const rb = { x: b.x, y: b.y, w: b.w, h: heights[b.id] }
+      if (overlaps(ra, rb)) {
+        errors.push(
+          `"${DOC_BLOCK_CATALOG[a.kind].label}" and "${DOC_BLOCK_CATALOG[b.kind].label}" overlap.`,
+        )
+      }
     }
   }
 
@@ -458,15 +415,14 @@ export function validateSpec(spec: DocumentSpec, docType: string): SpecValidatio
 /* ── reading a stored spec ───────────────────────────────────────────────── */
 
 const KIND_SET = new Set<string>(DOC_BLOCK_KINDS)
-const SPANS = new Set(['full', 'left', 'right'])
 const ALIGNS = new Set(['left', 'center', 'right'])
+const BANDS = new Set<string>(BAND_KEYS)
 
 /**
  * Labelled rows, keeping only those whose token this build still knows.
  *
  * A row naming a field that no longer exists is dropped rather than kept as a
- * label over a permanent blank — the same call cleanColumns makes, and the same
- * one saved_reports makes for a renamed field.
+ * label over a permanent blank — the same call cleanColumns makes.
  */
 function cleanRows(raw: unknown, doc: DocTypeDef | null): DetailRow[] | undefined {
   if (!Array.isArray(raw)) return undefined
@@ -497,9 +453,9 @@ function cleanColumns(raw: unknown, doc: DocTypeDef | null): ColumnSpec[] | unde
   for (const c of raw.slice(0, MAX_COLUMNS)) {
     if (!c || typeof c !== 'object') continue
     const token = (c as { token?: unknown }).token
-    // A column naming a token this build no longer has is dropped, not kept as
-    // a blank column with a heading — the saved_reports rule: a spec outlives
-    // the catalog that produced it, and what it loses is that field, not itself.
+    // A column naming a token this build no longer has is dropped, not kept as a
+    // blank column with a heading — the saved_reports rule: a spec outlives the
+    // catalog that produced it, and what it loses is that field, not itself.
     if (typeof token !== 'string' || !lineTokens.has(token)) continue
 
     const heading = (c as { heading?: unknown }).heading
@@ -520,6 +476,9 @@ function cleanColumns(raw: unknown, doc: DocTypeDef | null): ColumnSpec[] | unde
   return out
 }
 
+const num = (v: unknown, fallback: number) =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback
+
 /**
  * Parse a stored spec, dropping anything this build no longer recognises.
  *
@@ -527,6 +486,13 @@ function cleanColumns(raw: unknown, doc: DocTypeDef | null): ColumnSpec[] | unde
  * that wrote it, so an unknown block kind costs that block rather than the whole
  * document. Returns null only when the JSON itself is unreadable, so the caller
  * falls back to the shipped design.
+ *
+ * That is also how a design saved under the OLD list-and-cells model reads: its
+ * `row` blocks are a kind this build does not have, so they are dropped, and
+ * anything that was inside a cell was nested where this parser does not look.
+ * Nothing had been saved when the model changed, so there is nothing to migrate
+ * — and a spec that arrives empty falls back to the shipped design rather than
+ * printing a blank page.
  *
  * KEY ORDER IS PART OF THE CONTRACT. The designer decides "is this dirty?" by
  * comparing JSON strings, so every field is written in the same order whatever
@@ -542,23 +508,36 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
 
     const doc = getDocType(docType)
     const allowed = new Set<string>(blockKindsFor(docType))
-    // Ids are unique across the WHOLE document, cells included: two blocks
-    // sharing one would share a React key and a drag handle, so dragging one
-    // would move the other.
     const seenIds = new Set<string>()
+    const out: DocBlock[] = []
 
-    /** One block, cleaned. `null` for anything this build cannot use. */
-    function cleanBlock(b: unknown, allowRow: boolean): DocBlock | null {
-      if (!b || typeof b !== 'object') return null
+    for (const b of blocks.slice(0, MAX_BLOCKS)) {
+      if (!b || typeof b !== 'object') continue
       const kind = (b as { kind?: unknown }).kind
-      if (typeof kind !== 'string' || !KIND_SET.has(kind) || !allowed.has(kind)) return null
-      // A row inside a cell is refused rather than flattened — see validateSpec.
-      if (kind === 'row' && !allowRow) return null
+      if (typeof kind !== 'string' || !KIND_SET.has(kind) || !allowed.has(kind)) continue
+
+      const def = DOC_BLOCK_CATALOG[kind as DocBlockKind]
 
       const rawId = (b as { id?: unknown }).id
       let id = typeof rawId === 'string' && rawId ? rawId : newBlockId(kind as DocBlockKind)
-      while (seenIds.has(id)) id = `${id}-${seenIds.size}`
+      // Duplicates are re-identified rather than dropped: two blocks sharing an
+      // id would share a React key and a drag handle, so dragging one moves the
+      // other. Losing the block would be worse than renaming it.
+      while (seenIds.has(id)) id = `${id}-${out.length}`
       seenIds.add(id)
+
+      const rawBand = (b as { band?: unknown }).band
+      // A pinned block ignores whatever the stored band said, so a hand-edited
+      // spec cannot put the items table below the totals.
+      const band =
+        def.band ??
+        (typeof rawBand === 'string' && BANDS.has(rawBand) ? (rawBand as BandKey) : 'header')
+
+      const geo = clampBlock({
+        x: num((b as { x?: unknown }).x, 0),
+        y: num((b as { y?: unknown }).y, 0),
+        w: num((b as { w?: unknown }).w, def.defaultW ?? 100),
+      })
 
       const align = (b as { align?: unknown }).align
       const title = (b as { title?: unknown }).title
@@ -566,15 +545,17 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
       const text = (b as { text?: unknown }).text
       const columns = cleanColumns((b as { columns?: unknown }).columns, doc)
       const rows = cleanRows((b as { rows?: unknown }).rows, doc)
-      const cells = kind === 'row' ? cleanCells((b as { cells?: unknown }).cells) : undefined
 
-      return {
+      out.push({
         id,
         kind: kind as DocBlockKind,
+        band,
+        x: geo.x,
+        y: geo.y,
+        w: geo.w,
         ...(typeof align === 'string' && ALIGNS.has(align)
           ? { align: align as DocBlockAlign }
           : {}),
-        ...(cells ? { cells } : {}),
         ...(typeof title === 'string' ? { title: title.slice(0, 60) } : {}),
         ...(Array.isArray(tokens)
           ? { tokens: tokens.filter((t): t is string => typeof t === 'string').slice(0, 20) }
@@ -582,40 +563,7 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
         ...(columns ? { columns } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
-      }
-    }
-
-    function cleanCells(raw: unknown): RowCell[] | undefined {
-      if (!Array.isArray(raw)) return undefined
-      const out: RowCell[] = []
-      for (const c of raw.slice(0, MAX_ROW_CELLS)) {
-        if (!c || typeof c !== 'object') continue
-        const rawId = (c as { id?: unknown }).id
-        let id = typeof rawId === 'string' && rawId ? rawId : newCellId()
-        while (seenIds.has(id)) id = `${id}-${seenIds.size}`
-        seenIds.add(id)
-
-        const width = (c as { width?: unknown }).width
-        const inner = (c as { blocks?: unknown }).blocks
-        out.push({
-          id,
-          ...(typeof width === 'number' && width > 0 && width <= 100
-            ? { width: Math.round(width) }
-            : {}),
-          blocks: Array.isArray(inner)
-            ? inner
-                .map((x) => cleanBlock(x, false))
-                .filter((x): x is DocBlock => x !== null)
-            : [],
-        })
-      }
-      return out
-    }
-
-    const out: DocBlock[] = []
-    for (const b of blocks.slice(0, MAX_BLOCKS)) {
-      const clean = cleanBlock(b, true)
-      if (clean) out.push(clean)
+      })
     }
 
     return { version: 1, blocks: out }
@@ -627,3 +575,32 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
 export function serialiseSpec(spec: DocumentSpec): string {
   return JSON.stringify({ version: 1, blocks: spec.blocks })
 }
+
+/* ── editing helpers ─────────────────────────────────────────────────────── */
+
+/** Replace one block. A flat list again, so this is a map. */
+export function patchBlock(
+  spec: DocumentSpec,
+  id: string,
+  changes: Partial<DocBlock>,
+): DocumentSpec {
+  return {
+    version: 1,
+    blocks: spec.blocks.map((b) => (b.id === id ? { ...b, ...changes } : b)),
+  }
+}
+
+export function removeBlock(spec: DocumentSpec, id: string): DocumentSpec {
+  return { version: 1, blocks: spec.blocks.filter((b) => b.id !== id) }
+}
+
+export function findBlock(spec: DocumentSpec, id: string): DocBlock | null {
+  return spec.blocks.find((b) => b.id === id) ?? null
+}
+
+/** The blocks of one band, in the order they were added. */
+export function bandBlocks(spec: DocumentSpec, band: BandKey): DocBlock[] {
+  return spec.blocks.filter((b) => b.band === band)
+}
+
+export { BAND_KEYS, BAND_INFO, type BandKey } from './geometry'

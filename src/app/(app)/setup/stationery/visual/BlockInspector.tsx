@@ -16,14 +16,15 @@ import {
   Textarea,
 } from '@/components/ui'
 import {
+  BAND_INFO,
+  BAND_KEYS,
   DOC_BLOCK_CATALOG,
+  type BandKey,
   type DetailRow,
   type DocBlock,
-  MAX_ROW_CELLS,
-  newCellId,
   type DocBlockAlign,
-  type RowCell,
 } from '@/lib/stationery/blocks'
+import { MIN_BLOCK_W, clampBlock } from '@/lib/stationery/geometry'
 import ColumnEditor from './ColumnEditor'
 
 /**
@@ -47,11 +48,13 @@ export default function BlockInspector({
   block,
   tokens,
   onChange,
+  onRemove,
 }: {
   block: DocBlock | null
   /** Every field this caller may use. Already permission-filtered. */
   tokens: TokenChoice[]
   onChange: (patch: Partial<DocBlock>) => void
+  onRemove: () => void
 }) {
   if (!block) {
     return (
@@ -75,18 +78,11 @@ export default function BlockInspector({
     <Card>
       <CardHeader title={def.label} description={def.hint} />
       <CardBody className="flex flex-col gap-4">
-        {/* A row is a container: it has columns, not text. */}
-        {block.kind === 'row' && (
-          <RowCells
-            cells={block.cells ?? []}
-            onChange={(cells) => onChange({ cells })}
-          />
-        )}
+        <Position block={block} onChange={onChange} />
 
-        {/* Where a block sits across the page is now decided by WHICH COLUMN it
-            was dropped into, so there is nothing to set here — only how its own
-            text lines up inside whatever width it has. */}
-        {block.kind !== 'rule' && block.kind !== 'spacer' && block.kind !== 'row' && (
+        {/* Where the block SITS is above; this is how its own text lines up
+            inside whatever width it has. */}
+        {block.kind !== 'rule' && block.kind !== 'spacer' && (
           <Field label="Text">
             <Select
               className="w-40"
@@ -180,98 +176,115 @@ export default function BlockInspector({
         {(block.kind === 'rule' || block.kind === 'spacer') && (
           <p className="text-sm text-muted">Nothing to set — this block is just the gap.</p>
         )}
+
+        {/* Removing is here rather than on the block itself: a delete button
+            floating over the page is one mis-click away from taking a
+            letterhead out, and a required block has to be able to say no. */}
+        {def.required ? (
+          <p className="text-xs text-muted">
+            Every document needs this block, so it cannot be removed.
+          </p>
+        ) : (
+          <div>
+            <Button variant="danger" size="sm" onClick={onRemove}>
+              Remove this block
+            </Button>
+          </div>
+        )}
       </CardBody>
     </Card>
   )
 }
 
 /**
- * How many columns a row has, and how wide each is.
+ * Where the block sits, as numbers.
  *
- * ── SPLITTING IS THE WHOLE POINT ──────────────────────────────────────────
+ * Dragging is the way this is meant to be done. These are here for the cases
+ * dragging is bad at: typing 0 to go exactly flush, matching a number read off
+ * another block, and getting a block back that has been dragged somewhere
+ * confusing. Every design tool carries both for the same reason.
  *
- * Choose 2 to 6 and the row becomes that many columns; blocks are then dragged
- * into them on the page. Removing a column would strand whatever is in it, so a
- * reduction moves those blocks into the last surviving column rather than
- * deleting them — losing a designer's work to a dropdown is never the right
- * answer, and an unexpected block in the wrong column is visible and fixable.
- *
- * Widths are optional percentages. A column without one shares whatever the
- * others leave, so the common case — even columns — needs no arithmetic, and
- * "a wide letterhead beside a narrow date" is two numbers.
+ * The band is a SELECT rather than a drag between bands, because moving between
+ * bands is a change of meaning — "this prints after the items" — and not a
+ * change of position. A block dragged across an invisible boundary would be
+ * making that decision by accident.
  */
-function RowCells({
-  cells,
+function Position({
+  block,
   onChange,
 }: {
-  cells: RowCell[]
-  onChange: (next: RowCell[]) => void
+  block: DocBlock
+  onChange: (patch: Partial<DocBlock>) => void
 }) {
-  const setCount = (n: number) => {
-    if (n === cells.length) return
-    if (n > cells.length) {
-      const extra = Array.from({ length: n - cells.length }, () => ({
-        id: newCellId(),
-        blocks: [],
-      }))
-      onChange([...cells, ...extra])
-      return
-    }
-    // Shrinking: everything from the columns being removed lands in the last
-    // one that survives.
-    const kept = cells.slice(0, n)
-    const orphaned = cells.slice(n).flatMap((c) => c.blocks)
-    const last = kept[kept.length - 1]
-    onChange([
-      ...kept.slice(0, -1),
-      { ...last, blocks: [...last.blocks, ...orphaned] },
-    ])
-  }
+  const def = DOC_BLOCK_CATALOG[block.kind]
 
   return (
     <div className="flex flex-col gap-3">
-      <Field label="Columns" hint="Drop blocks into each one on the page.">
+      <Field
+        label="Part of the page"
+        hint={
+          def.band
+            ? 'The items table always prints here.'
+            : BAND_INFO[block.band].hint
+        }
+      >
         <Select
-          className="w-40"
-          value={String(cells.length)}
-          onChange={(e) => setCount(Number(e.target.value))}
+          className="w-full"
+          value={block.band}
+          disabled={!!def.band}
+          onChange={(e) => onChange({ band: e.target.value as BandKey })}
         >
-          {Array.from({ length: MAX_ROW_CELLS - 1 }, (_, i) => i + 2).map((n) => (
-            <option key={n} value={n}>
-              {n} columns
+          {BAND_KEYS.map((b) => (
+            <option key={b} value={b}>
+              {BAND_INFO[b].label}
             </option>
           ))}
         </Select>
       </Field>
 
-      <Field
-        label="Widths"
-        hint="A percentage each, or leave blank to share what is left evenly."
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          {cells.map((c, i) => (
-            <NumberInput
-              key={c.id}
-              aria-label={`Width of column ${i + 1}`}
-              className="w-20"
-              value={c.width ?? ''}
-              placeholder="auto"
-              min={1}
-              max={100}
-              onChange={(e) => {
-                const n = Number(e.target.value)
-                onChange(
-                  cells.map((x, j) =>
-                    j === i
-                      ? { ...x, width: Number.isFinite(n) && n > 0 ? n : undefined }
-                      : x,
-                  ),
-                )
-              }}
-            />
-          ))}
-        </div>
-      </Field>
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label="Across" hint="% from the left">
+          <NumberInput
+            aria-label="Position across the page"
+            className="w-20"
+            value={block.x}
+            min={0}
+            max={100}
+            step={0.5}
+            onChange={(e) => {
+              const n = Number(e.target.value)
+              if (Number.isFinite(n)) onChange(clampBlock({ x: n, y: block.y, w: block.w }))
+            }}
+          />
+        </Field>
+        <Field label="Down" hint="% down the band">
+          <NumberInput
+            aria-label="Position down the band"
+            className="w-20"
+            value={block.y}
+            min={0}
+            step={0.5}
+            onChange={(e) => {
+              const n = Number(e.target.value)
+              if (Number.isFinite(n)) onChange(clampBlock({ x: block.x, y: n, w: block.w }))
+            }}
+          />
+        </Field>
+        <Field label="Width" hint="% of the page">
+          <NumberInput
+            aria-label="Width"
+            className="w-20"
+            value={block.w}
+            min={MIN_BLOCK_W}
+            max={100}
+            step={0.5}
+            onChange={(e) => {
+              const n = Number(e.target.value)
+              if (Number.isFinite(n)) onChange(clampBlock({ x: block.x, y: block.y, w: n }))
+            }}
+          />
+        </Field>
+      </div>
     </div>
   )
 }
