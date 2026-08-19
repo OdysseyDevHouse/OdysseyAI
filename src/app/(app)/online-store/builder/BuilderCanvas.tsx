@@ -233,7 +233,32 @@ export function BuilderCanvas({
                   // to serve anything while the shop is closed, and building
                   // the page before opening is the point of the draft.
                   imageSrc={(imageId) => `/api/storefront-images/${imageId}`}
-                  renderSection={(section, node) => (
+                  renderSection={(section, node) =>
+                    /*
+                     * A child of a column, or a section of the page?
+                     *
+                     * `indexOf` answers it: a child is not in the top-level
+                     * list, so it comes back -1. That is the only signal this
+                     * seam carries, and it is enough — the difference is exactly
+                     * "does this have a place in the page order".
+                     *
+                     * A child gets the lighter wrapper: selectable and
+                     * removable, but no drag handle and no duplicate. It is not
+                     * sortable against the page, and a handle that does nothing
+                     * is worse than no handle.
+                     */
+                    sectionIds.indexOf(section.id) === -1 ? (
+                      <EditableChild
+                        key={section.id}
+                        section={section}
+                        empty={node == null}
+                        selected={selected === section.id}
+                        onSelect={() => onSelect(section.id)}
+                        onRemove={() => onRemove(section.id)}
+                      >
+                        {node}
+                      </EditableChild>
+                    ) : (
                     <EditableSection
                       key={section.id}
                       section={section}
@@ -252,7 +277,8 @@ export function BuilderCanvas({
                     >
                       {node}
                     </EditableSection>
-                  )}
+                    )
+                  }
                 />
                 </WishlistProvider>
               </CartProvider>
@@ -777,3 +803,133 @@ function emptyReason(
 }
 
 export type { PreviewWidth }
+
+/* ── Dropping into a column ───────────────────────────────────────────────── */
+
+/**
+ * The id a landing strip INSIDE a column answers to.
+ *
+ * ── WHY A THIRD PART, AND WHY ENCODED IN THE ID ──────────────────────────
+ *
+ * dnd-kit hands the drop handler one string and nothing else, so wherever a
+ * drop can land has to be nameable as a string. A top-level gap needs one
+ * number — `gap:3` is "position three on the page". A column needs three: which
+ * section holds the columns, which column, and where in it.
+ *
+ * The section is named by ID rather than by index, deliberately. An index would
+ * be read against an array that the drop itself is about to change, which is
+ * exactly the off-by-one the top-level gap handler already documents having
+ * been bitten by. An id survives the reorder.
+ */
+export const COLUMN_GAP_PREFIX = 'colgap:'
+
+export type ColumnGapTarget = { sectionId: string; column: number; index: number }
+
+/** Where a column drop lands, or null if the id names something else. */
+export function columnGapTarget(id: string | null): ColumnGapTarget | null {
+  if (!id || !id.startsWith(COLUMN_GAP_PREFIX)) return null
+  const [sectionId, column, index] = id.slice(COLUMN_GAP_PREFIX.length).split('|')
+  const c = Number(column)
+  const i = Number(index)
+  /*
+   * A section id can contain almost anything, so the parts are split on a
+   * character an id cannot hold rather than on the '-' that every generated id
+   * is full of. Anything that does not parse is not a target — better a drop
+   * that does nothing than one that lands in a column nobody pointed at.
+   */
+  if (!sectionId || !Number.isInteger(c) || !Number.isInteger(i)) return null
+  return { sectionId, column: c, index: i }
+}
+
+export function columnGapId(sectionId: string, column: number, index: number): string {
+  return `${COLUMN_GAP_PREFIX}${sectionId}|${column}|${index}`
+}
+
+/**
+ * A block inside a column, on the canvas.
+ *
+ * ── LIGHTER THAN A SECTION, DELIBERATELY ─────────────────────────────────
+ *
+ * No drag handle and no duplicate. A child is not sortable against the page —
+ * it belongs to a column — and a handle that lifts nothing is worse than an
+ * absent one: it invites a gesture and then does not answer it. Reordering
+ * within a column is the arrows in the inspector, which are also the only
+ * keyboard path.
+ *
+ * Selecting and removing ARE here, because those are the two things somebody
+ * wants while looking at the page rather than at a list of names.
+ */
+function EditableChild({
+  section,
+  empty,
+  selected,
+  onSelect,
+  onRemove,
+  children,
+}: {
+  section: HomeSection
+  empty: boolean
+  selected: boolean
+  onSelect: () => void
+  onRemove: () => void
+  children: ReactNode
+}) {
+  return (
+    <div
+      /*
+        pointer-events-auto, and above the parent's own click target.
+
+        A child is drawn INSIDE the columns section, whose content that section
+        makes pointer-events-none and then covers with a full-bleed overlay at
+        z-[1]. Both have to be undone here, or clicking a block selects the whole
+        side-by-side section instead — which is not a styling detail: it is the
+        difference between a child being editable and not.
+      */
+      className={`group pointer-events-auto relative z-[2] rounded-card transition ${
+        selected ? 'ring-2 ring-brand' : 'hover:ring-1 hover:ring-border-strong'
+      }`}
+    >
+      {/*
+        The click target is the whole block, and it sits UNDER the content
+        rather than over it: a transparent sheet on top would swallow a click
+        meant for the picture picker's own preview, and the canvas is already
+        pointer-events-none for the shop's own controls.
+      */}
+      <button
+        data-kit-ok
+        type="button"
+        onClick={onSelect}
+        aria-label={`Edit ${sectionName(section)}`}
+        className="absolute inset-0 z-[1] cursor-pointer rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+      />
+
+      <div className="pointer-events-none">
+        {empty ? (
+          <p className="rounded-card border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">
+            {sectionName(section)} — nothing to show yet
+          </p>
+        ) : (
+          children
+        )}
+      </div>
+
+      {/* Only on hover or while selected: a toolbar on every block at rest
+          would bury the page it is previewing. */}
+      <div
+        className={`absolute right-1 top-1 z-[2] flex gap-1 transition ${
+          selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+        }`}
+      >
+        <Button
+          variant="secondary"
+          size="sm"
+          iconOnly
+          aria-label={`Remove ${sectionName(section)}`}
+          onClick={onRemove}
+        >
+          <Icons.Trash size={13} />
+        </Button>
+      </div>
+    </div>
+  )
+}
