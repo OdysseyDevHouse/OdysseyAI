@@ -77,6 +77,7 @@ export const SECTION_KINDS = [
   'map',
   'divider',
   'spacer',
+  'columns',
 ] as const
 
 /**
@@ -147,6 +148,59 @@ export const TEXT_ALIGNS = ['left', 'center'] as const
 export const ROW_LAYOUTS = ['grid', 'list'] as const
 
 /** Where a video is hosted. Never a URL — see the `idChars` field type. */
+/**
+ * How many columns a row may have, and how much may go in each.
+ *
+ * ── THE CAPS COMPOSE, DELIBERATELY ──────────────────────────────────────
+ *
+ * Children count against MAX_SECTIONS as well as against this, so a page
+ * cannot hold 20 columns x 3 x 4 = 240 sections by nesting. `normaliseSections`
+ * carries a running budget rather than applying a per-level cap, which is the
+ * only version that actually bounds the total.
+ */
+export const COLUMN_COUNTS = [2, 3] as const
+export const MAX_COLUMN_CHILDREN = 4
+
+/** How much room between the columns. */
+export const COLUMN_GAPS = ['tight', 'normal', 'loose'] as const
+export type ColumnGap = (typeof COLUMN_GAPS)[number]
+
+/** When the columns become rows. */
+export const COLUMN_STACKS = ['phone', 'always'] as const
+export type ColumnStack = (typeof COLUMN_STACKS)[number]
+
+/**
+ * What may go INSIDE a column.
+ *
+ * ── A WHITELIST, NOT "EVERYTHING MINUS COLUMNS" ─────────────────────────
+ *
+ * The absence of `columns` is what caps the depth, and it is checked before
+ * recursion so there is no path to a third level however the payload is
+ * shaped. But the list is shorter than that for a second reason: a carousel
+ * in a third of a column is a mistake that looks fine in the builder and
+ * reads as broken on a phone, and a department grid inside a column is a
+ * second front page. Same reasoning `kindsFor` applies to a product page.
+ *
+ * `hero` is out because it draws the shop’s one front-page greeting, and
+ * `recent` because it is browser-local and cannot be sized.
+ */
+export const COLUMN_CHILD_KINDS: readonly SectionKind[] = [
+  'banner',
+  'split',
+  'products',
+  'reviews',
+  'cards',
+  'text',
+  'richtext',
+  'signup',
+  'testimonial',
+  'logos',
+  'video',
+  'map',
+  'divider',
+  'spacer',
+]
+
 export const VIDEO_PROVIDERS = ['youtube', 'vimeo'] as const
 
 /**
@@ -263,6 +317,14 @@ export type EmptyContext = {
   slideImages?: Map<number, unknown>
   reviews?: unknown[]
   logoImages?: Map<number, unknown>
+  /**
+   * columns: whether every column resolved to nothing.
+   *
+   * Answered by the caller, because a column holds sections and each has its
+   * own emptiness rule — a walk this file cannot do without the resolved
+   * content for every child.
+   */
+  columnsEmpty?: boolean
   /** The shop’s theme — only the welcome banner reads it. */
   heroHeadline: string
   heroSubtext: string
@@ -888,6 +950,42 @@ export const SECTION_CATALOG: Record<SectionKind, SectionDef> = {
         },
       },
     ],
+  },
+  columns: {
+    kind: 'columns',
+    label: 'Side by side',
+    hint: 'Two or three things across, instead of one under the other.',
+    icon: 'SplitPanes',
+    // Not on a product page: its sections sit under one product in a narrow
+    // column, and splitting that into thirds is a row nobody can read.
+    pages: NOT_PRODUCT,
+    fields: [
+      ...STYLE_FIELDS,
+      { key: 'columnCount', type: 'int', min: 2, max: 3, fallback: 2 },
+      { key: 'columnGap', type: 'choice', of: COLUMN_GAPS, fallback: 'normal' },
+      { key: 'columnStack', type: 'choice', of: COLUMN_STACKS, fallback: 'phone' },
+    ],
+    extras: ['columns'],
+    defaults: () => ({
+      title: '',
+      ...BASE,
+      columnCount: 2,
+      columnGap: 'normal',
+      columnStack: 'phone',
+      // Two empty columns, so the shape is visible the moment it is added.
+      // An owner who dropped this in has said "side by side"; showing them
+      // one empty box would be showing them something else.
+      columns: [[], []],
+    }),
+    /*
+     * Empty when every column is.
+     *
+     * Answered by the CALLER rather than here, because a column holds
+     * sections and each has its own emptiness rule — asking them is a walk
+     * this file cannot do without the resolved content for each child. The
+     * renderer passes the answer in.
+     */
+    isEmpty: (f) => (f.columnsEmpty ?? true),
   },
 }
 

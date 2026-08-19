@@ -54,6 +54,7 @@ const KIND_ICON: Record<SectionKind, keyof typeof Icons> = {
   map: 'Pin',
   divider: 'Minus',
   spacer: 'StackedBands',
+  columns: 'ColumnsIcon',
 }
 
 /** The id prefix that tells a drop handler this came from the palette. */

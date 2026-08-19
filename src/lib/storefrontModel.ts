@@ -40,11 +40,15 @@ import {
   DEFAULT_CONSENT_TEXT,
   MAX_AUTOPLAY_SECONDS,
   MIN_AUTOPLAY_SECONDS,
+  COLUMN_CHILD_KINDS,
+  MAX_COLUMN_CHILDREN,
   SECTION_CATALOG,
   SECTION_KINDS,
   type SectionBackground,
   type SectionPadding,
   type SectionWidth,
+  type ColumnGap,
+  type ColumnStack,
   kindsFor as catalogKindsFor,
   MAX_SECTIONS,
   MAX_SECTION_CARDS,
@@ -69,6 +73,8 @@ export {
   type SectionBackground,
   type SectionPadding,
   type SectionWidth,
+  type ColumnGap,
+  type ColumnStack,
 } from './storefront/catalog'
 export type SectionKind = (typeof SECTION_KINDS)[number]
 
@@ -457,6 +463,30 @@ export type HomeSection = {
    */
   showFrom?: string
   showUntil?: string
+  /**
+   * columns: how many, how far apart, and when they stack.
+   *
+   * Only ever set on kind `columns`.
+   */
+  columnCount?: number
+  columnGap?: ColumnGap
+  columnStack?: ColumnStack
+  /**
+   * columns: what is IN each column, in order.
+   *
+   * ── ONE LEVEL, AND THE TYPE CANNOT SAY SO ────────────────────────────
+   *
+   * `HomeSection[][]` permits a column holding another `columns` section,
+   * because the type is recursive even though the feature is not. The depth
+   * rule lives in `normaliseSections`, which refuses a child of kind
+   * `columns` BEFORE it recurses — so there is no path to a third level
+   * however a payload is shaped, and no counter that can be got wrong.
+   *
+   * A child is an ordinary section in every other respect: it has its own id,
+   * its own schedule, its own band. That is what keeps the publish diff, the
+   * version history and the drag layer working on it unchanged.
+   */
+  columns?: HomeSection[][]
 }
 
 /** Hard caps, enforced on WRITE. A draft is untrusted. */
@@ -1202,6 +1232,32 @@ export function sectionName(section: HomeSection): string {
 }
 
 /**
+ * Every section on a page, including the ones inside a column.
+ *
+ * ── WHY THIS IS NOT OPTIONAL ─────────────────────────────────────────────
+ *
+ * A child of a column is an ordinary section: it has an id, a schedule, a
+ * picture that may have no description. Anything that walks a page and does
+ * NOT walk into columns is silently wrong about half of it — the publish
+ * warning misses an undescribed banner, and the change summary reports a page
+ * as unedited when a column’s contents moved.
+ *
+ * Both of those were true when the columns block first landed, which is why
+ * this exists rather than each caller nesting its own loop.
+ *
+ * One level, because that is all there is — `normaliseSections` refuses a
+ * column inside a column before it recurses.
+ */
+export function flattenSections(sections: HomeSection[]): HomeSection[] {
+  const out: HomeSection[] = []
+  for (const section of sections) {
+    out.push(section)
+    for (const column of section.columns ?? []) out.push(...column)
+  }
+  return out
+}
+
+/**
  * What publishing this draft would actually change for shoppers.
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────
@@ -1228,8 +1284,15 @@ export function describeLayoutChanges(
   published: HomeSection[],
   draft: HomeSection[],
 ): LayoutChange[] {
-  const before = new Map(published.map((s) => [s.id, s]))
-  const after = new Map(draft.map((s) => [s.id, s]))
+  /*
+   * Flattened, so a change inside a column is a change to the page.
+   *
+   * Comparing only the top level reported a page as unedited when a column’s
+   * contents had moved — the one summary an owner reads before publishing,
+   * quietly wrong about the part they had just been working on.
+   */
+  const before = new Map(flattenSections(published).map((s) => [s.id, s]))
+  const after = new Map(flattenSections(draft).map((s) => [s.id, s]))
   const changes: LayoutChange[] = []
 
   /*
@@ -1280,7 +1343,7 @@ export function describeLayoutChanges(
     }
   }
 
-  for (const section of draft) {
+  for (const section of flattenSections(draft)) {
     const was = before.get(section.id)
     if (!was) continue
 
@@ -1516,12 +1579,38 @@ function applyField(
  * would be a worse language than the code it replaced.
  */
 export function normaliseSections(input: unknown): HomeSection[] {
+  /*
+   * ── ONE BUDGET, SHARED BY EVERY LEVEL ─────────────────────────────────
+   *
+   * `MAX_SECTIONS` has to bound the PAGE, not each level of it. A per-level
+   * cap would let a payload hold 20 columns x 3 columns x 4 children = 240
+   * sections and satisfy every check on the way in. The budget is passed
+   * down and spent by children as well as by top-level sections.
+   */
+  const budget = { left: MAX_SECTIONS }
+  const seenIds = new Set<string>()
+  return walk(input, budget, seenIds, false)
+}
+
+/**
+ * One level of sections.
+ *
+ * `inColumn` is the depth rule and the whole of it: a child of a column may
+ * not itself be a column, checked BEFORE anything recurses. There is no
+ * counter to get wrong and no payload shape that reaches a third level.
+ */
+function walk(
+  input: unknown,
+  budget: { left: number },
+  seenIds: Set<string>,
+  inColumn: boolean,
+): HomeSection[] {
   const list = Array.isArray(input) ? input : []
   const out: HomeSection[] = []
-  const seenIds = new Set<string>()
+
 
   for (const raw of list) {
-    if (out.length >= MAX_SECTIONS) break
+    if (budget.left <= 0) break
     if (!raw || typeof raw !== 'object') continue
 
     const s = raw as Record<string, unknown>
@@ -1529,6 +1618,16 @@ export function normaliseSections(input: unknown): HomeSection[] {
     // A kind this build cannot draw never reaches the preview or the shop.
     const def = (SECTION_CATALOG as Record<string, SectionDef | undefined>)[kind]
     if (!def) continue
+
+    /*
+     * Inside a column, only what belongs there.
+     *
+     * `columns` is absent from COLUMN_CHILD_KINDS, so this is the depth cap —
+     * structural rather than counted. The rest of the list is a separate
+     * judgement: a carousel in a third of a column looks fine in the builder
+     * and reads as broken on a phone.
+     */
+    if (inColumn && !COLUMN_CHILD_KINDS.includes(kind as SectionKind)) continue
 
     // Duplicate ids would make two sections share a React key and a drag
     // handle, so the later one is re-identified rather than dropped.
@@ -1709,6 +1808,25 @@ export function normaliseSections(input: unknown): HomeSection[] {
         })
     }
 
+    budget.left--
+    if (kind === 'columns') {
+      const wanted = clampInt(s.columnCount, 2, 3, 2)
+      const raw = Array.isArray(s.columns) ? s.columns : []
+      /*
+       * Exactly `columnCount` columns, however many arrived.
+       *
+       * A stored layout can disagree with itself — somebody set three columns,
+       * filled them, then went back to two — and the renderer maps over what
+       * is here. Padding and trimming to the declared count means the two can
+       * never disagree at render time, and the trimmed column’s contents are
+       * lost on save rather than silently kept and invisible.
+       */
+      section.columns = Array.from({ length: wanted }, (_, n) =>
+        walk(raw[n], budget, seenIds, true).slice(0, MAX_COLUMN_CHILDREN),
+      )
+    }
+
+
     out.push(section)
   }
 
@@ -1752,7 +1870,8 @@ export function pageWarnings(sections: HomeSection[]): PageWarning[] {
   let missingAlt = 0
   let emptyLinks = 0
 
-  for (const section of sections) {
+  // Into columns as well — see flattenSections.
+  for (const section of flattenSections(sections)) {
     // Hidden sections are not a problem yet. Warning about a section nobody
     // will see turns the check into noise, and noise is what stops it being
     // read on the day it matters.

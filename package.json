@@ -184,6 +184,7 @@
     "test:storefront-menus": "tsx --conditions=react-server --env-file=.env scripts/test-storefront-menus.ts",
     "test:storefront-collections": "tsx --conditions=react-server --env-file=.env scripts/test-storefront-collections.ts",
     "test:section-band": "tsx scripts/test-section-band.tsx",
+    "test:section-columns": "tsx --conditions=react-server scripts/test-section-columns.ts",
     "test:builder-ui": "node --env-file=.env scripts/test-builder-ui.mjs",
     "test:report-templates": "tsx --conditions=react-server --env-file=.env scripts/test-report-templates.ts",
     "test:product-images": "tsx --conditions=react-server --env-file=.env scripts/test-product-images.ts",

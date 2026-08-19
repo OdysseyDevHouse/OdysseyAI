@@ -78,6 +78,14 @@ export type SectionContent = {
   logoImages?: Map<number, StorefrontImage>
   /** countdown: the bound special's real end, when there is one. */
   specialEndsAt?: string
+  /**
+   * columns: the resolved content for each child, in the same shape.
+   *
+   * Recursive, because a child is an ordinary section and needs whatever its
+   * own kind needs — a product row inside a column still has to be filled by
+   * the same resolver. One level deep, like the sections themselves.
+   */
+  columnContent?: SectionContent[][]
 }
 
 /**
@@ -172,6 +180,59 @@ function sectionBody(
   /** On a product page, the product being looked at — see the 'recent' branch. */
   anchorProductId?: number,
 ): ReactNode {
+  if (entry.section.kind === 'columns') {
+    const columns = entry.section.columns ?? []
+    /*
+     * A column’s children render through THIS function, which is what makes
+     * a column hold anything the page can. One level: normalisation refuses a
+     * column inside a column before it recurses, so this cannot go deeper
+     * however a stored layout is shaped.
+     */
+    const drawn = columns.map((children, n) =>
+      children.map((child, k) => {
+        const childEntry = entry.columnContent?.[n]?.[k] ?? { section: child }
+        return (
+          <div key={child.id}>
+            {banded(child, sectionBody(childEntry, token, theme, display, imageSrc, anchorProductId))}
+          </div>
+        )
+      }),
+    )
+
+    // Nothing in any column is nothing to draw — the same rule every other
+    // kind follows, applied one level down.
+    if (drawn.every((c) => c.length === 0)) return null
+
+    const GAP: Record<string, string> = { tight: 'gap-3', normal: 'gap-6', loose: 'gap-10' }
+    const gap = GAP[entry.section.columnGap ?? 'normal'] ?? GAP.normal
+    /*
+     * Container queries, not viewport ones — the same choice the product grid
+     * makes, and the reason the builder’s phone preview is exact rather than
+     * approximate. `always` stacks at every width, for a shop that wants the
+     * pairing on a page and not the layout.
+     */
+    const cols = entry.section.columnStack === 'always'
+      ? 'grid-cols-1'
+      : (entry.section.columnCount ?? 2) >= 3
+        ? 'grid-cols-1 @lg:grid-cols-3'
+        : 'grid-cols-1 @md:grid-cols-2'
+
+    return (
+      <section className="@container">
+        {entry.section.title && (
+          <h2 className="mb-3 text-lg font-semibold text-ink">{entry.section.title}</h2>
+        )}
+        <div className={`grid ${cols} ${gap}`}>
+          {drawn.map((children, n) => (
+            <div key={n} className="flex flex-col gap-4">
+              {children}
+            </div>
+          ))}
+        </div>
+      </section>
+    )
+  }
+
   const { section, products, departments, image } = entry
 
   /*
