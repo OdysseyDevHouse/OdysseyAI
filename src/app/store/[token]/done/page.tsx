@@ -5,6 +5,10 @@ import { readOrderTrackToken } from '@/lib/orderTrackToken'
 import { storefrontContext } from '@/lib/site/storefront'
 import { Button, Card, Icons } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+import { resolvePageContent } from '@/lib/site/storefront'
+import { getPublishedLayout } from '@/lib/site/storefrontLayout'
+import { getPublishedPageLayout, thankYouPage } from '@/lib/site/storefrontPages'
+import HomeSections, { type SectionContent } from '../HomeSections'
 
 /**
  * "Thanks, we've got it."
@@ -38,7 +42,27 @@ export default async function DonePage({
   const siteId = await verifyPublicStoreToken(token)
   if (siteId === null) notFound()
   const context = await storefrontContext(siteId)
+
   if (!context) notFound()
+
+  /*
+   * The shop’s own words under the confirmation, if it wrote any.
+   *
+   * ── THIS PAGE STILL LOOKS NOTHING UP ABOUT THE ORDER ────────────────
+   *
+   * The rule above is intact: a page, a theme and a layout are the shop’s,
+   * not the shopper’s, and none of them is fetched by order number. A
+   * `products` row here resolves against the catalogue with no anchor —
+   * `sourcesFor` already refuses the two rules that would need one, so
+   * nothing can ask "what did they just buy" and quietly answer nothing.
+   */
+  const [layout, page] = await Promise.all([
+    getPublishedLayout(siteId),
+    thankYouPage(siteId),
+  ])
+  const sections = page?.isPublished ? await getPublishedPageLayout(siteId, page.id) : []
+  const content: SectionContent[] =
+    sections.length > 0 ? await resolvePageContent(context, sections) : []
 
   const orderNumber = (query.order ?? '').slice(0, 32)
   const total = Number(query.total)
@@ -55,6 +79,7 @@ export default async function DonePage({
     claim && claim.siteId === siteId ? `/store/${token}/o/${query.t}` : null
 
   return (
+    <>
     <Card>
       <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
         <span className="flex size-12 items-center justify-center rounded-pill bg-success-soft text-success">
@@ -99,5 +124,31 @@ export default async function DonePage({
         )}
       </div>
     </Card>
+
+      {/*
+        BELOW the confirmation, never above it. Somebody who has just paid is
+        looking for the order number and what happens next; anything between
+        them and that reads as an advertisement at the worst moment. This is
+        the most willing they will ever be to read one more thing — after
+        they have found what they came for.
+      */}
+      {content.length > 0 && (
+        <div className="mt-8">
+          <HomeSections
+            token={token}
+            content={content}
+            theme={layout.theme}
+            display={{
+              layout: layout.theme.productLayout,
+              showStock: context.settings.showStock,
+              showPhotos: context.settings.showPhotos,
+              showBrands: context.settings.showBrands,
+              showDepartmentImages: context.settings.showDepartmentImages,
+            }}
+            imageSrc={(imageId) => `/api/store-images/${token}/shop/${imageId}`}
+          />
+        </div>
+      )}
+    </>
   )
 }
