@@ -32,7 +32,18 @@ import {
 import { publishedProducts, storefrontContext } from '../src/lib/site/storefront'
 import { siteQuery } from '../src/lib/siteDb'
 
-const SITE = 1
+/*
+ * Site 2, and the site number is the whole test.
+ *
+ * This suite needs products a SHOPPER can see. Site 1's shop publishes by
+ * department and has none published, so `publishedProducts` returned an empty
+ * list and the three assertions that pick from it had nothing to pick — the
+ * fixture guard below is what said so out loud instead of passing vacuously.
+ *
+ * The sibling suites (menus, listing presets) stay on site 1 because neither
+ * needs a published product.
+ */
+const SITE = 2
 /** Every row this suite makes wears it, so cleanup finds exactly those. */
 const TAG = 'zz-test-collection'
 
