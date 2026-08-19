@@ -105,7 +105,7 @@ import { BuilderCanvas, gapIndex, type PreviewWidth } from './BuilderCanvas'
 import ProductPicker from './ProductPicker'
 import Outline from './Outline'
 import SectionPalette, { PALETTE_PREFIX, paletteKind } from './SectionPalette'
-import { SECTION_CATALOG } from '@/lib/storefront/catalog'
+import { SECTION_CATALOG, STYLE_FIELDS } from '@/lib/storefront/catalog'
 import SectionFields from './SectionFields'
 import ThemePicker from './ThemePicker'
 import { type DesignTokens } from '@/lib/storefront/tokens'
@@ -1713,7 +1713,15 @@ export default function Builder({
                   SectionFields on why those are not worth describing in a table.
                 */}
                 <SectionFields
-                  def={SECTION_CATALOG[selected.kind]}
+                  def={{
+                    ...SECTION_CATALOG[selected.kind],
+                    // The style fields are drawn together at the bottom, under
+                    // "How it sits" — offering them twice would be two controls
+                    // writing one value.
+                    fields: SECTION_CATALOG[selected.kind].fields.filter(
+                      (f) => !STYLE_FIELDS.some((s) => s.key === f.key),
+                    ),
+                  }}
                   section={selected}
                   onPatch={(next) => patch(selected.id, next)}
                 />
@@ -2308,22 +2316,21 @@ export default function Builder({
                   </p>
                 )}
 
-                {/* Last, and on every kind: it is a finishing touch, not a
-                    thing to decide before the section has any content. */}
-                <Field
-                  label="Background"
-                  hint="A tinted band makes a long page read as several parts."
-                >
-                  <Select
-                    value={selected.tone ?? 'plain'}
-                    onChange={(e) =>
-                      patch(selected.id, { tone: e.target.value as HomeSection['tone'] })
-                    }
-                  >
-                    <option value="plain">Plain</option>
-                    <option value="tinted">A tint of your colour</option>
-                  </Select>
-                </Field>
+                {/*
+                  Last, and on every kind: how a section SITS is a finishing
+                  touch, not a thing to decide before it has any content.
+
+                  Drawn from the catalog rather than written out, so the three
+                  controls and the three stored fields cannot part company —
+                  see STYLE_FIELDS.
+                */}
+                <FieldGroup title="How it sits" hint="Applies to this section only.">
+                  <SectionFields
+                    def={{ ...SECTION_CATALOG[selected.kind], fields: STYLE_FIELDS }}
+                    section={selected}
+                    onPatch={(next) => patch(selected.id, next)}
+                  />
+                </FieldGroup>
 
                 <FieldGroup
                   title="When to show it"
