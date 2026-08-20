@@ -170,15 +170,39 @@ async function main() {
     await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [id], await tabPurpose(SITE))
     await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id], await tabPurpose(SITE))
   }
+  /*
+   * Anything else this run named.
+   *
+   * The loop above deletes documents this test holds an id for. A transfer onto
+   * an occupied table and the settle path both leave bills it never recorded —
+   * and a CANCELLED one is pointed at by no table, so nothing reaches it. Ten
+   * cancelled bills had accumulated on the box before this existed.
+   */
+  const strayDocs = await siteQuery<{ id: number }>(
+    SITE,
+    "SELECT id FROM sales_documents WHERE customer_name = 'Table'",
+    [],
+    await tabPurpose(SITE),
+  )
+  for (const stray of strayDocs) {
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE document_id = ?', [stray.id], await tabPurpose(SITE)).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM document_audit WHERE document_id = ?', [stray.id], await tabPurpose(SITE)).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [stray.id], await tabPurpose(SITE)).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [stray.id], await tabPurpose(SITE)).catch(() => null)
+  }
+
   // Saved bills carry no document number, so no sequence was consumed.
+  /* Both reads carry the purpose: without it they check the CLOUD, find nothing,
+     and report a clean run while the box fills up. */
   const leftTables = await siteQuery(SITE, 'SELECT id FROM pos_tables WHERE code LIKE ?', [
     `TT%${stamp}`,
-  ])
+  ], await tabPurpose(SITE))
   const leftDocs = docIds.length
     ? await siteQuery(
         SITE,
         `SELECT id FROM sales_documents WHERE id IN (${docIds.map(() => '?').join(',')})`,
         docIds,
+        await tabPurpose(SITE),
       )
     : []
   ok('test data cleaned up', leftTables.length === 0 && leftDocs.length === 0,

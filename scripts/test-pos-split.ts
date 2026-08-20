@@ -725,6 +725,31 @@ async function main() {
   }
 
   /*
+   * Anything else this run named.
+   *
+   * The loops above delete documents this test holds an id for. A split MINTS
+   * documents — that is the whole point of it — and a bill CANCELLED mid-test is
+   * no longer pointed at by any table, so neither loop reaches it. Twelve
+   * orphaned lines under six cancelled bills had accumulated on the box before
+   * this existed.
+   *
+   * Matching on the customer name rather than tracking every minted id: the
+   * split path creates them in several places and a list would go stale the
+   * first time a case was added. The name is this test's own marker.
+   */
+  const strayDocs = await siteQuery<{ id: number }>(
+    SITE,
+    "SELECT id FROM sales_documents WHERE customer_name = 'Table party'",
+    [],
+    await tabPurpose(SITE),
+  )
+  for (const stray of strayDocs) {
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE document_id = ?', [stray.id], await tabPurpose(SITE)).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [stray.id], await tabPurpose(SITE)).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [stray.id], await tabPurpose(SITE)).catch(() => null)
+  }
+
+  /*
    * ── AND THE PRODUCTS THIS RUN MADE ──────────────────────────────────────
    *
    * Every run of this test has left two behind since it was written, and they
