@@ -218,6 +218,93 @@ asking the user to choose a prefix beats hammering the database.
 
 ---
 
+## Every doc type, and how its number is made
+
+Twenty-two sequences, seeded on every site.
+
+The examples are the **highest number actually issued** on ODY-10000, read from
+the document's own table rather than from the sequence — those two disagree, and
+the gap is worth understanding. `stock_take`'s sequence sits at 465 while the
+highest STK on file is `STK000009`, because a sequence advances when a number is
+CLAIMED and a document that was never finished still burned one. A burnt number
+is an explainable gap; `verifySequence` is what tells you which is which.
+
+`—` means nothing of that type has been issued on this site yet.
+
+### Segmented — what a COUNTER issues
+
+Carries store and till when raised at a claimed till with `origin = 'till'`.
+Falls back to the shared run for a back-office capture. See
+`SEGMENTED_DOC_TYPES`.
+
+Shapes, not live counters — these show the two forms one doc type takes:
+
+| Doc type | Prefix | Pad | At a till | Back office | Table |
+|---|---|---|---|---|---|
+| `invoice` | `INV` | 6 | `INV_01_02_000041` | `INV000041` | `sales_documents` |
+| `credit_sale` | `CRN` | 6 | `CRN_01_02_003912` | `CRN003912` | `sales_documents` |
+| `quote` | `QUO` | 6 | `QUO_01_02_000459` | `QUO000459` | `sales_documents` |
+| `sales_order` | `SO` | 6 | `SO_01_02_000001` | `SO000001` | `sales_documents` |
+
+These four are also the only ones a till can number **offline**, and only two of
+them in practice — `SequenceKind` is `'sale' | 'return'`.
+
+### Shared run — issued by the business
+
+Never segmented. `numberSegmentsFor` returns `null` for these whatever the
+terminal or origin, so they cannot pick up a till segment by accident.
+
+Here the examples ARE live — the highest number actually issued on ODY-10000.
+
+| Doc type | Prefix | Pad | Example | Table |
+|---|---|---|---|---|
+| `purchase_order` | `PO` | 6 | `PO002155` | `purchase_documents` |
+| `grv` | `GRV` | 6 | `GRV005912` | `purchase_documents` |
+| `supplier_return` | `SRT` | 6 | `SRT000251` | `purchase_documents` |
+| `stock_take` | `STK` | 6 | `STK000009` | `stock_takes` |
+| `stock_transfer` | `TRF` | 6 | `TRF000232` | `stock_transfers` |
+| `stock_adjustment` | `ADJ` | 6 | — | `stock_adjustments` |
+| `manufacturing_order` | `MO` | 6 | — | `manufacturing_orders` |
+| `job_card` | `JC` | 6 | `JC000015` | `job_cards` |
+| `ticket` | `TK` | 6 | `TK000018` | `tickets` |
+| `layby` | `LAY` | 6 | `LAY000003` | `laybys` |
+| `customer_asset` | `AST` | 6 | — | `customer_assets` |
+| `expense` | `EXP` | 6 | — | `expenses` |
+| `journal` | `JNL` | 6 | `JNL015665` | `journal_batches` |
+| `contract` | `CON` | 6 | `CON000434` | `contracts` |
+| `asset` | `FA` | **5** | `FA00216` | `fixed_assets` |
+
+**Purchasing shares one table.** `purchase_documents` holds orders, GRVs and
+supplier returns under a `doc_type` column — the same shape `sales_documents`
+uses for its four. Three sequences, one table.
+
+### Master codes — an identity, not a document
+
+These go through `nextMasterCode`, which **probes** rather than allocates: it
+must not collide with a code somebody typed by hand.
+
+| Doc type | Prefix | Pad | Example | Table |
+|---|---|---|---|---|
+| `customer` | `CUST` | 5 | `CUST00001` | `customers` |
+| `supplier` | `SUPP` | 5 | `SUPP00001` | `suppliers` |
+| `product` | `PRD` | 5 | `PRD00001` | `products` |
+
+Padding 5 rather than 6 is the tell: these name a *thing*, not a transaction.
+
+### Not numbered at all
+
+`credit_note`, `payment`, `opening` and `interest` appear as `doc_type` values on
+`customer_ledger` and `supplier_ledger` (migration 014). They are **entry
+kinds**, not documents — each references a number issued somewhere else, or
+none. There is no sequence for them and there should not be.
+
+Note the collision in wording: the ledgers' `credit_note` is an adjustment
+posted directly to an account, while sales writes `credit_sale` for the reversal
+of a sale. Two tables, two meanings, two words — which is what migration 022's
+rename was for.
+
+---
+
 ## Where a number comes from, end to end
 
 **A sale rung up at a till, online:**
