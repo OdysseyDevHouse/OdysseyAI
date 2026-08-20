@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { customerQueryOne } from './customerDb'
 import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { statusForRole, listJobStatuses } from './jobStatuses'
@@ -829,26 +830,40 @@ export async function saveJobCard(
 
   const title = input.title.trim()
 
-  return siteTransaction(siteId, async (tx) => {
-    // Snapshot the customer, matching every other document in the schema: a
-    // rename must not rewrite what this job said at the time.
-    let customerCode: string | null = null
-    let customerName = text(input.customerName)
-    let customerPhone = text(input.customerPhone)
-    let customerEmail = text(input.customerEmail)
+  /*
+   * Snapshot the customer, matching every other document in the schema: a
+   * rename must not rewrite what this job said at the time.
+   *
+   * ── READ BEFORE THE TRANSACTION, AND FROM THE OWNER ──────────────────────
+   *
+   * This used to run on the job's own `tx`, which is the BRANCH's connection.
+   * A branch that shares the customer file has an EMPTY customers table — the
+   * switch refuses to turn on otherwise — so the lookup found nothing and
+   * every job card for a shared customer was refused with "That customer no
+   * longer exists."
+   *
+   * Hoisted out because no transaction spans two databases, and it is only a
+   * read: nothing here needs the job's own atomicity.
+   */
+  let customerCode: string | null = null
+  let customerName = text(input.customerName)
+  let customerPhone = text(input.customerPhone)
+  let customerEmail = text(input.customerEmail)
 
-    if (input.customerId) {
-      const [rows] = await tx.query<Row[]>(
-        `SELECT code, name, phone, email FROM customers WHERE id = ?`,
-        [input.customerId],
-      )
-      const customer = rows[0]
-      if (!customer) return { ok: false as const, error: 'That customer no longer exists.' }
-      customerCode = text(customer.code)
-      customerName = text(customer.name)
-      customerPhone = customerPhone ?? text(customer.phone)
-      customerEmail = customerEmail ?? text(customer.email)
-    }
+  if (input.customerId) {
+    const customer = await customerQueryOne<Row>(
+      siteId,
+      `SELECT code, name, phone, email FROM customers WHERE id = ?`,
+      [input.customerId],
+    )
+    if (!customer) return { ok: false, error: 'That customer no longer exists.' }
+    customerCode = text(customer.code)
+    customerName = text(customer.name)
+    customerPhone = customerPhone ?? text(customer.phone)
+    customerEmail = customerEmail ?? text(customer.email)
+  }
+
+  return siteTransaction(siteId, async (tx) => {
 
     if (input.id === null) {
       let statusId = input.statusId

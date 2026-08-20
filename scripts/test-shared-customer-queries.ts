@@ -23,6 +23,7 @@ import { entitlementsForSite, has as hasModule } from '../src/lib/control/module
 import { listLaybys } from '../src/lib/site/laybys'
 import { listCustomers } from '../src/lib/site/customers'
 import { runBuilderSpec } from '../src/lib/reportBuilder/run'
+import { saveJobCard } from '../src/lib/site/jobCards'
 import { creditRefusalForTest } from '../src/lib/site/salesPosting'
 import { reconcileControlAccounts } from '../src/lib/site/chartOfAccounts'
 import type { RowDataPacket } from 'mysql2/promise'
@@ -221,6 +222,66 @@ async function main() {
         false,
         'no laybys visible — cannot tell a working join from a broken one',
       )
+    }
+
+    /*
+     * A job card for a customer who lives in the OWNER's database.
+     *
+     * saveJobCard snapshots the customer's code and name so a later rename
+     * cannot rewrite history. That lookup ran on the job's own transaction —
+     * the BRANCH's connection — and a branch that shares its customer file has
+     * an EMPTY customers table, so it found nothing and the save was refused
+     * with "That customer no longer exists."
+     *
+     * Nothing errored and no join went quiet: the feature simply said no. That
+     * is why this asserts on the REFUSAL rather than on a row count.
+     */
+    console.log('\n— A job card for a customer held somewhere else —')
+
+    if (ownerCustomer) {
+      const saved = await saveJobCard(
+        branch,
+        { userId: 1, userName: 'xdb probe' },
+        {
+          id: null,
+          customerId: ownerCustomer.id,
+          customerName: null,
+          customerPhone: null,
+          customerEmail: null,
+          serviceAddressId: null,
+          locationId: null,
+          statusId: null,
+          priority: 'normal',
+          ownerUserId: null,
+          ownerName: '',
+          title: 'xdb probe job',
+          description: null,
+          dueAt: null,
+          source: 'manual',
+          reference: null,
+          internalNote: null,
+        },
+      )
+
+      ok(
+        'a branch can open a job card against a shared customer',
+        saved.ok,
+        saved.ok ? `job #${saved.id}` : saved.error,
+      )
+
+      if (saved.ok) {
+        const snap = await siteQuery<RowDataPacket & { customer_name: string | null }>(
+          branch,
+          'SELECT customer_name FROM job_cards WHERE id = ?',
+          [saved.id],
+        )
+        ok(
+          '  and it snapshotted the name from the OWNER, not a blank',
+          snap[0]?.customer_name === ownerCustomer.name,
+          `stored "${snap[0]?.customer_name ?? '(null)'}", owner has "${ownerCustomer.name}"`,
+        )
+        await siteExecute(branch, 'DELETE FROM job_cards WHERE id = ?', [saved.id])
+      }
     }
 
     // The count query and the page query must name the same table, or paging

@@ -38,8 +38,23 @@ import { customerOwnerSite, supplierOwnerSite } from '../storeGroups'
  * different connection, which is stage 4. Reaching for these there would move
  * the whole query to the owner and silently lose the branch's rows.
  *
- * sales_reps is safe to join from either side because it is replicated into
- * every store rather than moved.
+ * ── sales_reps IS NOT SAFE, DESPITE WHAT THIS COMMENT USED TO SAY ─────────
+ *
+ * An earlier version of this header claimed sales_reps was "replicated into
+ * every store rather than moved", and the classification that put it in the
+ * replicated column was built on that claim. It is false: the only
+ * INSERT INTO sales_reps in the codebase (customerLookups.ts) writes to the
+ * caller's own database, nothing fans it out, and no migration seeds it.
+ *
+ * So `customers.rep_id` is a BRANCH id living in the OWNER's table. Joining
+ * sales_reps from the owner resolves it against the owner's own reps —
+ * a different person, or nobody. Filtering and bulk-assigning by rep have the
+ * same fault, and deleteSalesRep counts customers in the branch's empty table
+ * so it never refuses.
+ *
+ * Recorded rather than quietly fixed because the fix is a choice: genuinely
+ * replicate reps by code, or store rep_code / rep_name. See
+ * docs/cross-store-id-conflicts.md.
  */
 
 /** The site whose database holds this caller's customers. */

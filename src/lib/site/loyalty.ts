@@ -463,7 +463,7 @@ async function refreshMember(
 export async function recalcMember(siteId: number, customerId: number): Promise<void> {
   const settings = await getLoyaltySettings(siteId)
   const tiers = await listTiers(siteId)
-  await siteTransaction(siteId, async (tx) => {
+  await customerTransaction(siteId, async (tx) => {
     await refreshMember(tx, customerId, settings, tiers)
   })
 }
@@ -649,7 +649,7 @@ export async function awardSaleLoyalty(
   if (result.points <= 0) return null
 
   try {
-    await siteTransaction(siteId, async (tx) => {
+    await customerTransaction(siteId, async (tx) => {
       await insertLedger(tx, actor, siteId, {
         customerId: input.customerId,
         entryType: 'earn',
@@ -775,7 +775,7 @@ export async function adjustPoints(
   const tiers = await listTiers(siteId)
 
   try {
-    const balance = await siteTransaction(siteId, async (tx) => {
+    const balance = await customerTransaction(siteId, async (tx) => {
       const current = await lockedBalance(tx, customerId)
       if (points < 0 && current + points < 0) {
         throw new Error(
@@ -953,7 +953,7 @@ export async function expirePoints(
   for (const row of candidates) {
     const customerId = Number(row.customer_id)
 
-    const points = await siteTransaction(siteId, async (tx) => {
+    const points = await customerTransaction(siteId, async (tx) => {
       // Re-read under the lock: the balance may have moved between the sweep
       // above and this write, and expiring a stale figure would take points a
       // customer earned this morning.
