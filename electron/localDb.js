@@ -230,13 +230,31 @@ async function initialise(onProgress) {
  * one platform. Binding to 127.0.0.1 gives the same protection — nothing off
  * this machine can reach it — without changing how the app connects.
  */
-async function start(port, onProgress) {
+async function start(port, onProgress, options = {}) {
   onProgress?.('Starting the database…')
+
+  /*
+   * ── A HYBRID BOX MUST ANSWER THE SHOP'S LAN ────────────────────────────────
+   *
+   * Loopback is right for a LOCAL backend: one machine, its own database, and
+   * nothing else has any business reaching it.
+   *
+   * A hybrid box is the opposite by definition — ten tills in the building
+   * connect to it, and that is the entire reason it exists. Bound to loopback it
+   * would serve nobody but itself.
+   *
+   * The widening is real and is why the caller has to ask for it explicitly
+   * rather than get it by default. What bounds it: the box holds open tabs and
+   * an outbox and nothing else (fifteen tables, no stock, no ledger, no
+   * customers), and the account provisioned for the tills is granted on that ONE
+   * database rather than *.* — see lib/dbSetup/sql.ts.
+   */
+  const bindAddress = options.lan ? '0.0.0.0' : '127.0.0.1'
 
   const args = [
     `--datadir=${dataDir()}`,
     `--port=${port}`,
-    '--bind-address=127.0.0.1',
+    `--bind-address=${bindAddress}`,
     // No shared memory, no named pipes: one way in, and it is the one we chose.
     '--skip-name-resolve',
     // A shop database on a counter PC, not a server. Modest and predictable.
@@ -270,27 +288,43 @@ async function start(port, onProgress) {
      * before/after images, so the replica is a copy rather than a
      * re-enactment.
      */
-    '--log-bin=odyssey-bin',
-    '--binlog-format=ROW',
-    /* A server id unique per shop. Taken from the site id, which is exactly
-       the number that is unique across our estate — two machines sharing one
-       would make replication ambiguous at the far end. Falls back to 1 on a
-       machine that has not been told its site yet, which cannot replicate
-       anyway. */
-    `--server-id=${serverId()}`,
-    /* How long the shop keeps its own binlog. Seven days matches the licence
-       lease on purpose: a machine offline longer than this is locked and has
-       stopped trading, so there is nothing newer to ship. It also bounds the
-       disk a counter PC gives up — binlogs grow forever otherwise, and a full
-       disk stops the shop. */
-    '--expire-logs-days=7',
-    /* Cap a single binlog file so rotation is frequent and each file is a
-       reasonable unit to ship or discard. */
-    '--max-binlog-size=64M',
-    /* Durability: flush the binlog every commit. Slower, and correct — the
-       alternative loses the tail of the log on a power cut, which on a till
-       means the cloud copy is missing sales the shop believes it made. */
-    '--sync-binlog=1',
+    /* ── AND WHY A HYBRID BOX KEEPS NONE OF IT ────────────────────────────
+     *
+     * Everything above is about a shop whose data lives on this machine and is
+     * mirrored to a replica we can query. A hybrid box is not that: its master
+     * IS the cloud, and it holds open tabs and an outbox that are deleted once
+     * the cloud has them. There is nothing on it to replicate.
+     *
+     * So the binlog would be pure cost — and not a small one. `--sync-binlog=1`
+     * flushes on every commit, and a busy floor commits on every item a waiter
+     * rings up. Paying that to write a log nothing reads, on a machine chosen
+     * for being cheap and small, is the wrong trade twice over.
+     */
+    ...(options.lan
+      ? []
+      : [
+          '--log-bin=odyssey-bin',
+          '--binlog-format=ROW',
+          /* A server id unique per shop. Taken from the site id, which is exactly
+          the number that is unique across our estate — two machines sharing one
+          would make replication ambiguous at the far end. Falls back to 1 on a
+          machine that has not been told its site yet, which cannot replicate
+          anyway. */
+          `--server-id=${serverId()}`,
+          /* How long the shop keeps its own binlog. Seven days matches the licence
+          lease on purpose: a machine offline longer than this is locked and has
+          stopped trading, so there is nothing newer to ship. It also bounds the
+          disk a counter PC gives up — binlogs grow forever otherwise, and a full
+          disk stops the shop. */
+          '--expire-logs-days=7',
+          /* Cap a single binlog file so rotation is frequent and each file is a
+          reasonable unit to ship or discard. */
+          '--max-binlog-size=64M',
+          /* Durability: flush the binlog every commit. Slower, and correct — the
+          alternative loses the tail of the log on a power cut, which on a till
+          means the cloud copy is missing sales the shop believes it made. */
+          '--sync-binlog=1',
+        ]),
   ]
 
   serverProcess = spawn(serverExe(), args, {
@@ -455,6 +489,95 @@ async function ensureRunning({
 }
 
 /**
+ * Provision this machine for a site, from a plan the control panel produced.
+ *
+ * This is the apply step of Odyssey Database Setup: the statements were built
+ * and checked by lib/dbSetup, and this is what runs them against a server that
+ * may not exist yet.
+ *
+ * ── SEPARATE FROM ensureRunning, DELIBERATELY ──────────────────────────────
+ *
+ * `ensureRunning` is what the APP calls on every start, and its job is to get a
+ * database it already owns back up. This runs ONCE, driven by a technician, and
+ * creates something that was not there. Folding them together would mean the
+ * everyday path carrying provisioning code, and provisioning is the one thing
+ * that must not happen by accident.
+ *
+ * ── WHAT IT WILL NOT DO ────────────────────────────────────────────────────
+ *
+ * Re-initialise. `initialise` runs only when there is no data directory, which
+ * is the rule the whole file is built on: re-initialising is indistinguishable
+ * from erasing a shop's trading history. Re-running this against a provisioned
+ * machine — the "Retrieve new details" path — starts the server it finds and
+ * reapplies the statements, every one of which is CREATE IF NOT EXISTS or
+ * ALTER.
+ *
+ * ── AND WHY IT NEVER SEES THE PASSWORD ─────────────────────────────────────
+ *
+ * It does not build the statements; it is handed them. The credentials came
+ * from the control panel over an authenticated connection and go straight to
+ * MariaDB, so the technician standing here types an email and password they
+ * already have and learns nothing about the database. Nothing in this function
+ * logs `statements`, and nothing should: they carry the password in plaintext
+ * by necessity, because MariaDB allows no placeholders in CREATE USER.
+ */
+async function provisionForPlan({ port, statements, lan = false, rootPassword, onProgress }) {
+  if (!isBundled()) {
+    throw new Error(
+      'No database server is installed on this machine. ' +
+        'Run Odyssey Database Setup, or point ODYSSEY_MARIADB_DIR at an existing install.',
+    )
+  }
+  if (!Array.isArray(statements) || statements.length === 0) {
+    throw new Error('Refusing to provision with no statements.')
+  }
+
+  const alreadyUp = await portInUse(port)
+  const fresh = !isInitialised()
+
+  if (fresh) {
+    if (alreadyUp) {
+      /* Something answers on our port but this machine has no data directory —
+         so it is not ours. Initialising now would start a second server that
+         cannot bind, and the clearer failure is to say what was found. */
+      throw new Error(
+        `Something is already listening on port ${port}, but this machine has no Odyssey database. ` +
+          `Choose a different port, or stop whatever holds it.`,
+      )
+    }
+    await initialise(onProgress)
+  }
+
+  if (!alreadyUp) await start(port, onProgress, { lan })
+
+  onProgress?.('Applying the shop’s settings…')
+  /* One statement per call rather than one joined string: a failure then names
+     the statement that failed instead of the whole batch, which is the
+     difference between a technician knowing the grant failed and knowing
+     "something in the SQL" failed. */
+  for (const statement of statements) {
+    await run(clientExe(), [
+      '--protocol=TCP',
+      '-h',
+      '127.0.0.1',
+      '-P',
+      String(port),
+      '-u',
+      'root',
+      '-e',
+      statement,
+    ])
+  }
+
+  /* Last, and only on a fresh directory. Locking root down before the shop's
+     own user exists would leave a database nobody can administer — the same
+     ordering ensureRunning uses. */
+  if (fresh && rootPassword) await secureRoot(port, rootPassword)
+
+  return { initialised: fresh, started: !alreadyUp, lan }
+}
+
+/**
  * Stop the server on the way out.
  *
  * A polite shutdown first: InnoDB recovers from a hard kill, but recovery on
@@ -492,6 +615,7 @@ async function stop(port, timeoutMs = 8000) {
 
 module.exports = {
   ensureRunning,
+  provisionForPlan,
   stop,
   isBundled,
   isInitialised,

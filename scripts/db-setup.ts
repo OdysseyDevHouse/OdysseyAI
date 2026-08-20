@@ -224,13 +224,70 @@ async function main() {
     return
   }
 
-  /* Applying is deliberately NOT implemented here yet: it must run the
-     statements against the bundled server, which means starting one, and that
-     is electron/localDb.js's job rather than a script's. The plan, the
-     credentials and the statements are all proven above — this is the seam
-     where the installer's UI takes over. */
-  console.log('\n  Applying is done by the installer, not this script.')
-  console.log('  Use --dry-run to review a plan from a developer checkout.\n')
+  /*
+   * Applying, through the same code the installer uses.
+   *
+   * `electron/localDb.js` owns starting and provisioning a server; this script
+   * drives it rather than reimplementing it, so a technician's run and an
+   * installer's run cannot diverge. It requires Electron's `app` for two paths,
+   * which a plain script does not have — stubbed the same way
+   * test-runtime-config.mjs does, and for the same reason: these are decisions
+   * about files and processes, not about Electron.
+   */
+  const { createRequire } = await import('node:module')
+  const nodeModule = await import('node:module')
+  const path = await import('node:path')
+  const os = await import('node:os')
+
+  const require_ = createRequire(import.meta.url)
+  const dataHome =
+    process.env.ODYSSEY_DATA_DIR ||
+    path.join(process.env.ProgramData || os.tmpdir(), 'Odyssey', 'runtime')
+
+  const Mod = nodeModule.default as unknown as {
+    _load: (r: string, p: unknown, i: boolean) => unknown
+  }
+  const origLoad = Mod._load
+  Mod._load = function (request: string, parent: unknown, isMain: boolean) {
+    if (request === 'electron') {
+      return {
+        app: {
+          isPackaged: false,
+          getPath: () => dataHome,
+        },
+      }
+    }
+    return origLoad(request, parent, isMain)
+  }
+
+  try {
+    const localDb = require_('../electron/localDb.js') as {
+      provisionForPlan: (o: {
+        port: number
+        statements: string[]
+        lan: boolean
+        onProgress?: (m: string) => void
+      }) => Promise<{ initialised: boolean; started: boolean; lan: boolean }>
+    }
+
+    const applied = await localDb.provisionForPlan({
+      port: plan.port,
+      statements,
+      /* A hybrid box serves ten tills, so its server binds the LAN. A local
+         backend stays on loopback. The plan already knows which this is. */
+      lan: plan.connectionType === 'hybrid',
+      onProgress: (message) => console.log(`  ${message}`),
+    })
+
+    console.log('')
+    console.log(
+      `  Done. ${applied.initialised ? 'A new database was created' : 'The existing database was updated'}` +
+        `${applied.lan ? ', reachable from the shop network' : ', on this machine only'}.`,
+    )
+    console.log('')
+  } finally {
+    Mod._load = origLoad
+  }
 }
 
 main()
