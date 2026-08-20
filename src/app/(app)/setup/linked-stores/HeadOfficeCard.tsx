@@ -59,7 +59,15 @@ export default function HeadOfficeCard({
   const [state, formAction] = useActionState<LinkFormState, FormData>(setPrimaryAction, {
     error: null,
   })
+  // Re-synced when the saved value changes, for the reason spelled out in
+  // LegalEntityCard: useState reads its initial value once, and this component
+  // never unmounts, so after a save the picker would still show the old store.
   const [choice, setChoice] = useState(primarySiteId ? String(primarySiteId) : '')
+  const [savedPrimary, setSavedPrimary] = useState(primarySiteId)
+  if (savedPrimary !== primarySiteId) {
+    setSavedPrimary(primarySiteId)
+    setChoice(primarySiteId ? String(primarySiteId) : '')
+  }
 
   const primary = members.find((m) => m.siteId === primarySiteId) ?? null
   const sharing = members.filter((m) => m.sharesCustomers || m.sharesSuppliers)

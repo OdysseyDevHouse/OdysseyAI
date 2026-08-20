@@ -57,7 +57,24 @@ export default function LegalEntityCard({
   const [state, formAction] = useActionState<LinkFormState, FormData>(setLegalEntityAction, {
     error: null,
   })
+  /*
+   * ── WHY THIS IS NOT PLAIN useState ───────────────────────────────────────
+   *
+   * The saved answer arrives as a prop: the action revalidates the page and the
+   * server sends the new `legalEntity` down. But useState only reads its
+   * initial value ONCE, and this component never unmounts — so after saving,
+   * the radios kept their pre-save state and both appeared unselected.
+   *
+   * Tracking the prop we last initialised from, and re-syncing when it changes,
+   * is React's documented way to derive state from props. It keeps the control
+   * responsive while typing AND correct after a save.
+   */
   const [choice, setChoice] = useState(legalEntity === 'unknown' ? '' : legalEntity)
+  const [savedEntity, setSavedEntity] = useState(legalEntity)
+  if (savedEntity !== legalEntity) {
+    setSavedEntity(legalEntity)
+    setChoice(legalEntity === 'unknown' ? '' : legalEntity)
+  }
 
   return (
     <Card>
