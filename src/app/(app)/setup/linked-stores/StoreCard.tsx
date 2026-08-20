@@ -164,47 +164,78 @@ export default function StoreCard({
             </Callout>
           )}
 
+          {/* Named targets, not bare verbs. "Share products file" never said
+              WITH WHAT, which is the question somebody actually has — and on
+              head office's own card it read as sharing with itself.
+
+              The price switches say what they really do, which is not what
+              their old wording implied. They do not decide who CONTROLS a
+              price; they decide whether there is ONE figure for the group or a
+              separate one per store. */}
           <div className="flex flex-col gap-3">
             <SharingSwitch
               name="sharesProducts"
-              label="Share products file"
-              hint="Share product data between all your stores. Manage all stores’ products from one location."
+              label={ownsSharedFiles ? 'Share products with the branches' : 'Use head office’s product file'}
+              hint={
+                ownsSharedFiles
+                  ? 'Products created here appear in every branch that has this switched on.'
+                  : 'Products created by head office appear here. You can still add your own, and only the store that created a product can change it.'
+              }
               defaultChecked={member.sharesProducts}
               disabled={blocked}
             />
             <SharingSwitch
               name="sharesDepartments"
-              label="Share departments"
-              hint="Keep the department structure the same across all shared stores."
+              label={ownsSharedFiles ? 'Share departments with the branches' : 'Use head office’s departments'}
+              hint="Keeps the department structure the same, so a product lands in the same place everywhere."
               defaultChecked={member.sharesDepartments}
               disabled={blocked}
             />
             <SharingSwitch
               name="sharesSelling"
-              label="Share selling prices"
-              hint="Automatically update selling prices to all shared stores."
+              label="One selling price for the group"
+              hint="On: every store sells at the same price. Off: each store keeps its own selling price for the same product."
               defaultChecked={member.sharesSelling}
               disabled={blocked}
             />
             <SharingSwitch
               name="sharesCost"
-              label="Share cost prices"
-              hint="Automatically update cost prices to all shared stores."
+              label="One cost price for the group"
+              hint="On: one cost across the group. Off: each store keeps its own cost — what it actually pays its supplier."
               defaultChecked={member.sharesCost}
               disabled={blocked}
             />
+            <p className="text-xs text-muted">
+              The two price switches are the default for new products. Any product
+              can be set differently on its own screen.
+            </p>
           </div>
 
-          {/* The master files are a different kind of sharing from products, so
-              they sit under their own heading rather than in the list above.
-              Products are COPIED to each store; these are not — one store holds
-              the file and the others read and write it. */}
+          {/* ── HEAD OFFICE HAS NOTHING TO SWITCH ON ────────────────────────
+              The customer and supplier files LIVE in head office's database.
+              Asking it to tick a box to share them with itself is nonsense —
+              it is the file. So it gets a statement instead of a control, and
+              is told where the actual decision is made. */}
+          {ownsSharedFiles ? (
+            <div className="border-t border-border pt-4">
+              <p className="text-sm font-medium text-ink">Master files</p>
+              <p className="text-xs text-muted mt-0.5">
+                The group&apos;s customer and supplier files live here. Switch them on
+                at each branch that should use them, on the cards below.
+              </p>
+            </div>
+          ) : (
+          /* The master files are a different kind of sharing from products, so
+             they sit under their own heading rather than in the list above.
+             Products are COPIED to each store; these are not — one store holds
+             the file and the others read and write it. */
           <div className="border-t border-border pt-4 flex flex-col gap-3">
             <div>
               <p className="text-sm font-medium text-ink">Master files</p>
               <p className="text-xs text-muted mt-0.5">
-                One shared file rather than a copy in each store — so a customer&apos;s
-                balance, credit limit and history are the same wherever they buy.
+                Read head office&apos;s file rather than keeping a copy — so a
+                customer&apos;s balance, credit limit and history are the same wherever
+                they buy.
               </p>
             </div>
 
@@ -236,8 +267,8 @@ export default function StoreCard({
 
             <SharingSwitch
               name="sharesCustomers"
-              label="Share customer file"
-              hint="One customer list for the group. Buy at one store, pay at another."
+              label="Use head office’s customer file"
+              hint="One customer list for the group — buy at one store, pay at another. This store stops keeping its own."
               defaultChecked={member.sharesCustomers}
               disabled={unreadable || customersBlocked || !hasPrimary || !entityAllows}
             />
@@ -251,12 +282,13 @@ export default function StoreCard({
 
             <SharingSwitch
               name="sharesSuppliers"
-              label="Share supplier file"
+              label="Use head office’s supplier file"
               hint="One supplier list and one creditors book, for central buying."
               defaultChecked={member.sharesSuppliers}
               disabled={unreadable || suppliersBlocked || !hasPrimary || !entityAllows}
             />
           </div>
+          )}
         </CardBody>
 
         <CardFooter>
