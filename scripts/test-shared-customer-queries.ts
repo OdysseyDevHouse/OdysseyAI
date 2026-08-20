@@ -23,6 +23,7 @@ import { entitlementsForSite, has as hasModule } from '../src/lib/control/module
 import { listLaybys } from '../src/lib/site/laybys'
 import { listCustomers } from '../src/lib/site/customers'
 import { runBuilderSpec } from '../src/lib/reportBuilder/run'
+import { reconcileControlAccounts } from '../src/lib/site/chartOfAccounts'
 import type { RowDataPacket } from 'mysql2/promise'
 
 /** Marks the layby this test writes, so cleanup cannot hit a real one. */
@@ -245,6 +246,47 @@ async function main() {
         )
       }
     }
+    /* ── The debtors control account ──────────────────────────────────── */
+
+    // A shared customer file has ONE balance for every branch, so it can only
+    // be proved against the SUM of their debtors control accounts. Checked here
+    // rather than by asserting zero drift: this dev database has years of
+    // pre-GL history, so the figures legitimately differ — what matters is
+    // WHICH question was asked.
+    console.log('\n— The debtors control account —')
+
+    const branchDrift = await reconcileControlAccounts(branch)
+    const branchDebtors = branchDrift.find((d) => d.controlType === 'debtors')
+    if (branchDebtors) {
+      ok(
+        'a sharing branch reconciles debtors at GROUP level',
+        branchDebtors.scope?.level === 'group',
+        branchDebtors.scope
+          ? `${branchDebtors.scope.stores} store(s), ${branchDebtors.scope.unreadable.length} unreadable`
+          : 'still comparing against this store alone',
+      )
+      ok(
+        'and every member store was readable',
+        (branchDebtors.scope?.unreadable.length ?? 0) === 0,
+        `unreadable: ${JSON.stringify(branchDebtors.scope?.unreadable ?? [])}`,
+      )
+    } else {
+      console.log('SKIP  debtors is already in step on this site, so there is no row to inspect')
+    }
+
+    // The OWNER owns its own customers, so it takes the ordinary per-store
+    // path — the group figure must not leak onto a store that is not sharing.
+    const ownerDebtors = (await reconcileControlAccounts(primary)).find(
+      (d) => d.controlType === 'debtors',
+    )
+    if (ownerDebtors) {
+      ok(
+        'the owner still reconciles against itself',
+        ownerDebtors.scope === undefined,
+        ownerDebtors.scope ? 'it was given a group scope' : '',
+      )
+    }
+
     /* ── The report builder ───────────────────────────────────────────── */
 
     // The piece stage 1 flagged as most likely to need an engine rewrite. Two

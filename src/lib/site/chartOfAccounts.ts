@@ -476,6 +476,15 @@ export type ControlDrift = {
   /** What the subledger says. */
   subledgerBalance: number
   drift: number
+  /**
+   * Set when the figures came from the whole GROUP rather than this store.
+   *
+   * A shared customer file has one balance for every branch, so it can only be
+   * proved against the sum of their debtors control accounts — see
+   * reconcileControlAccounts(). Present so a screen can say which question was
+   * answered rather than showing a group figure under a store's name.
+   */
+  scope?: { level: 'group'; stores: number; unreadable: number[] }
 }
 
 /**
@@ -501,32 +510,44 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
     if (!account.controlType) continue
 
     let subledgerBalance = 0
+    // Both replaced only by the shared-debtors case below, which compares a
+    // group total against a group total rather than this store's figures.
+    let glBalance = account.balance
+    let groupScope: ControlDrift['scope']
 
     switch (account.controlType) {
       case 'debtors': {
         /*
-         * ── WHAT THIS COMPARES WHEN THE CUSTOMER FILE IS SHARED ───────────
+         * ── ONE DEBTORS BOOK, SEVERAL SETS OF BOOKS ───────────────────────
          *
-         * The sum comes from whichever database owns the customers, so in a
-         * group sharing one debtors book this is the GROUP's total — measured
-         * against ONE branch's debtors control account. Those will not agree,
-         * and that is not drift: the group has one debtors book and several
-         * sets of books, so the reconciliation belongs at group level.
+         * With a shared customer file the balance is the GROUP's: a payment
+         * taken at store 3 settles an invoice raised at store 7, and there is
+         * no honest way to split that per branch. So the comparison moves up a
+         * level — the shared balance against the SUM of every member's debtors
+         * control account.
          *
-         * Deliberately not silently narrowed to this store's share. There is
-         * no honest way to split a shared balance per branch — a payment taken
-         * at store 3 settles an invoice raised at store 7 — and inventing a
-         * split would make this check pass while proving nothing.
+         * That is legitimate precisely because sharing is only offered to a
+         * group that has declared itself ONE legal entity (016). One entity,
+         * one debtors book, one reconciliation. Narrowing the shared balance to
+         * a per-store share instead would make this check pass while proving
+         * nothing, which is worse than reporting a difference.
          *
-         * See docs/shared-customer-file-origin-site.md: the group-level
-         * reconciliation is stage 7 work, and until it lands a sharing group
-         * reads a difference here rather than a false clean bill.
+         * A single store, or a group that does not share, takes the ordinary
+         * path below and nothing changes.
          */
         const row = await customerQueryOne<Row>(
           siteId,
           'SELECT COALESCE(SUM(balance), 0) AS total FROM customers',
         )
         subledgerBalance = toNum(row?.total)
+
+        const group = await debtorsGroupScope(siteId)
+        if (group) {
+          groupScope = group.scope
+          // Replaces this account's own balance, not adds to it: the sum
+          // already includes this store's control account.
+          glBalance = group.controlTotal
+        }
         break
       }
       case 'creditors': {
@@ -556,20 +577,80 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
         continue
     }
 
-    const drift = round2(account.balance - subledgerBalance)
+    const drift = round2(glBalance - subledgerBalance)
     if (Math.abs(drift) > 0.004) {
       drifts.push({
         accountCode: account.accountCode,
         name: account.name,
         controlType: account.controlType,
-        glBalance: account.balance,
+        glBalance,
         subledgerBalance,
         drift,
+        ...(groupScope ? { scope: groupScope } : {}),
       })
     }
   }
 
   return drifts
+}
+
+/**
+ * Every member store's debtors control account, added up.
+ *
+ * Returns null when this store owns its own customers, which is every single
+ * shop and every group that has not switched sharing on — the caller then takes
+ * the ordinary per-store path and nothing about the check changes.
+ *
+ * ── WHY A STORE THAT CANNOT BE READ IS NAMED RATHER THAN SKIPPED ──────────
+ *
+ * A missing branch makes the total too small, which reads as drift — money
+ * apparently unaccounted for. Reporting "3 stores, 1 unreadable" lets a screen
+ * say the figure is incomplete; silently dropping it would invent a discrepancy
+ * and send somebody hunting for a posting error that does not exist.
+ *
+ * Never throws. A control-database problem must not take the accounting screen
+ * down, and falling back to the per-store comparison is the same answer the
+ * site gave before any of this existed.
+ */
+async function debtorsGroupScope(
+  siteId: number,
+): Promise<{ controlTotal: number; scope: NonNullable<ControlDrift['scope']> } | null> {
+  try {
+    const { customerOwnerSite, groupForSite, membersOfGroup } = await import('../storeGroups')
+    const owner = await customerOwnerSite(siteId)
+    if (owner.siteId === siteId) return null
+
+    const group = await groupForSite(siteId)
+    if (!group) return null
+    const members = (await membersOfGroup(group.id)).filter(
+      (m) => m.hasDatabase && m.sharesCustomers,
+    )
+    if (members.length === 0) return null
+
+    let controlTotal = 0
+    const unreadable: number[] = []
+    for (const member of members) {
+      try {
+        // Summed across every debtors control account in that store, because a
+        // chart may legitimately carry more than one.
+        const row = await siteQueryOne<Row>(
+          member.siteId,
+          `SELECT COALESCE(SUM(balance), 0) AS total FROM gl_accounts
+            WHERE control_type = 'debtors' AND is_active = TRUE`,
+        )
+        controlTotal += toNum(row?.total)
+      } catch {
+        unreadable.push(member.siteId)
+      }
+    }
+
+    return {
+      controlTotal: round2(controlTotal),
+      scope: { level: 'group', stores: members.length, unreadable },
+    }
+  } catch {
+    return null
+  }
 }
 
 function round2(value: number): number {
