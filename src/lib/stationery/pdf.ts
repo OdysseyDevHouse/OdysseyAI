@@ -1,7 +1,13 @@
 import 'server-only'
 import PDFDocument from 'pdfkit'
 import { formatMoney, formatQty } from '../decimals'
-import { BAND_KEYS, DOC_BLOCK_CATALOG, type DocBlock, type DocumentSpec } from './blocks'
+import {
+  BAND_KEYS,
+  DOC_BLOCK_CATALOG,
+  type ColumnSpec,
+  type DocBlock,
+  type DocumentSpec,
+} from './blocks'
 import { findToken, getDocType, type TokenFormat } from './catalog'
 import { conditionHolds } from './conditions'
 import { qrMatrix } from './qr'
@@ -505,6 +511,34 @@ function titled(
  * whole thing exists for. A column with no width shares what the explicit ones
  * leave, so the common case needs no arithmetic.
  */
+/**
+ * A table's column headings, and the rule under them. Returns the new `y`.
+ *
+ * One function because it is needed twice: once at the top of the table, and
+ * again at the top of every page the table continues onto. A continuation page
+ * of figures with no headings is a page nobody can read.
+ */
+function drawHeadings(
+  doc: PDFKit.PDFDocument,
+  cols: ColumnSpec[],
+  widths: number[],
+  box: Box,
+  y: number,
+): number {
+  doc.font('Helvetica-Bold').fontSize(8).fillColor(MUTED)
+  let x = box.x
+  cols.forEach((c, i) => {
+    doc.text(c.heading.toUpperCase(), x, y, {
+      width: widths[i] - 6,
+      align: c.align === 'right' ? 'right' : 'left',
+    })
+    x += widths[i]
+  })
+  const ruled = y + 12
+  rule(doc, ruled, box.x, box.w)
+  return ruled + 6
+}
+
 function drawTable(ctx: Ctx, b: DocBlock, box: Box): number {
   const { doc, input, docKey } = ctx
   const cols = b.columns ?? []
@@ -530,21 +564,37 @@ function drawTable(ctx: Ctx, b: DocBlock, box: Box): number {
   const startY = box.y
   let y = box.y
 
-  // Headings.
-  doc.font('Helvetica-Bold').fontSize(8).fillColor(MUTED)
+  // Headings, and the same call again at the top of every continuation page.
+  y = drawHeadings(doc, cols, widths, box, y)
   let x = box.x
-  cols.forEach((c, i) => {
-    doc.text(c.heading.toUpperCase(), x, y, {
-      width: widths[i] - 6,
-      align: c.align === 'right' ? 'right' : 'left',
-    })
-    x += widths[i]
-  })
-  y += 12
-  rule(doc, y, box.x, box.w)
-  y += 6
+
+  /*
+   * ── WHERE THE PAGE ENDS ─────────────────────────────────────────────────
+   *
+   * This loop walks `y` down the page and pdfkit does not stop it. Past the
+   * bottom margin every doc.text() at an off-page y makes pdfkit add a page of
+   * its own accord — and because y keeps growing, the NEXT row is further off
+   * still, so each row adds another one. A 120-line invoice came out as 149
+   * pages, nearly all of them blank.
+   *
+   * The break is therefore taken here, deliberately, before a row is drawn that
+   * would not fit. `drawHeadings` repeats the column headings at the top of the
+   * new page, because a page of figures under no headings is unreadable.
+   */
+  const pageBottom = PAGE_HEIGHT - MARGIN
 
   for (const row of rows) {
+    /*
+     * Measured BEFORE drawing: the tallest cell decides whether the row fits,
+     * and a row half on one page and half on the next is worse than a break.
+     * 24pt covers a single line plus its sub-line and the gap under it.
+     */
+    if (y + 24 > pageBottom) {
+      doc.addPage()
+      y = MARGIN
+      y = drawHeadings(doc, cols, widths, box, y)
+    }
+
     x = box.x
     let tallest = 0
 

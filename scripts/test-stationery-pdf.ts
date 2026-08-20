@@ -261,9 +261,79 @@ async function main() {
         text.indexOf('Item number 29') < text.indexOf('Subtotal'))
   }
 
+  /* ── a document too long for one page ──────────────────────────────────
+   *
+   * ── THE BUG THIS GUARDS ────────────────────────────────────────────────
+   *
+   * drawTable walked `y` down the page and never asked where the page ended.
+   * Past the bottom margin, every doc.text() at an off-page y made pdfkit add a
+   * page of its own accord — and because y kept growing, the next row was
+   * further off still. A 120-line invoice came out as 149 pages, nearly all of
+   * them blank, and it EMAILED that way.
+   *
+   * Nothing caught it because a short document is fine and every suite used
+   * short documents. So the check is on the page COUNT, which is the number
+   * that was absurd.
+   */
+  {
+    const spec = INVOICE_BLOCKS
+    const lines = Array.from({ length: 120 }, (_, i) => ({
+      'line.description': `Item number ${i}`,
+      'line.qty': 1,
+      'line.unitPriceIncl': 10,
+      'line.totalIncl': 10,
+    }))
+    const pdf = await renderSpecPdf(spec, 'invoice', {
+      values: { 'doc.number': 'INV000481' },
+      sections: { lines },
+      capabilities: { isOwner: true, granted: new Set<string>() },
+    })
+    const pages = Number(/\/Count\s+(\d+)/.exec(pdf.toString('latin1'))?.[1] ?? 0)
+    ok('120 lines fit on a handful of pages', pages > 1 && pages <= 6, `${pages} pages`)
+
+    /*
+     * Every row still drawn, none lost at a page boundary and none repeated.
+     * pdfkit writes text as HEX inside BT..ET, split into runs by kerning —
+     * "Item n" + "umber 7" — so the runs have to be joined before the row can
+     * be recognised. Reading them one at a time reports zero rows on a page
+     * that is in fact full, which is how this check first lied to me.
+     */
+    const drawn = new Set<string>()
+    for (const stream of inflatedStreams(pdf)) {
+      for (const m of stream.matchAll(/BT([\s\S]*?)ET/g)) {
+        const joined = [...m[1].matchAll(/<([0-9a-fA-F]+)>/g)]
+          .map((h) => Buffer.from(h[1], 'hex').toString('latin1'))
+          .join('')
+        if (joined.startsWith('Item number')) drawn.add(joined)
+      }
+    }
+    ok('every one of the 120 rows is on the paper', drawn.size === 120, `${drawn.size} rows`)
+  }
+
   console.log(`\n${fails === 0 ? 'All stationery-PDF checks passed.' : `${fails} FAILED`}`)
   process.exit(fails === 0 ? 0 : 1)
 
+}
+
+/** Every FlateDecode stream in a PDF, inflated. One page's drawing each. */
+function inflatedStreams(pdf: Buffer): string[] {
+  const out: string[] = []
+  let i = 0
+  for (;;) {
+    const s = pdf.indexOf('stream', i)
+    if (s < 0) break
+    const e = pdf.indexOf('endstream', s)
+    if (e < 0) break
+    let start = s + 6
+    while (pdf[start] === 0x0d || pdf[start] === 0x0a) start++
+    try {
+      out.push(zlib.inflateSync(pdf.subarray(start, e)).toString('latin1'))
+    } catch {
+      /* not every stream is deflated — fonts and metadata are not */
+    }
+    i = e + 9
+  }
+  return out
 }
 
 main().then(() => {
