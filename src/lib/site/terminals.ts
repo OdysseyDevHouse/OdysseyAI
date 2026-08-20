@@ -195,23 +195,63 @@ export async function createTerminal(siteId: number, input: TerminalInput): Prom
     ],
   )
 
-  /* Its own numbering sequence, so the till can allocate offline from the moment it is
+  /* Its own numbering sequences, so the till can allocate offline from the moment it is
      registered. Created here rather than lazily on first sale: a till discovering at
      07:00 that it has no sequence is a till that cannot trade, and the fix would need a
      database. */
-  await siteExecute(
-    siteId,
-    `INSERT INTO document_sequences (terminal_id, doc_type, prefix, next_number, padding)
-     VALUES (?, 'invoice', 'INV', 1, 6)
-     ON DUPLICATE KEY UPDATE doc_type = doc_type`,
-    [res.insertId],
-  ).catch(() => {
+  await ensureTerminalSequences(siteId, res.insertId).catch(() => {
     // A missing sequence is recoverable — the setup screen can create one, and an
     // online sale still numbers site-wide. Failing the whole registration over it
     // would be worse than a till that needs one more click.
   })
 
   return { ok: true, id: res.insertId }
+}
+
+/**
+ * Every sequence a till needs to trade.
+ *
+ * ── ONE PER DOCUMENT A COUNTER ISSUES ─────────────────────────────────────
+ *
+ * The prefixes match what the site-wide rows already use, so a shop's numbers
+ * keep the same letters and only gain the store and till segments.
+ *
+ * Separate sequences rather than one shared counter, and that is not a
+ * preference: a credit note that consumed an invoice number would leave a gap
+ * in the invoice register that nothing explains, and `verifySequence` would
+ * report it as a missing sale. `posOffline/saleNumber.ts` makes the same split
+ * for the same reason.
+ *
+ * ── IDEMPOTENT, AND SAFE ON A TILL THAT ALREADY TRADES ────────────────────
+ *
+ * `ON DUPLICATE KEY UPDATE doc_type = doc_type` is a deliberate no-op: a till
+ * part-way through a run must keep its counter. Only a MISSING sequence is
+ * created, always at 1, which is correct because a till with no row has issued
+ * nothing under it.
+ */
+const TILL_SEQUENCES: ReadonlyArray<{ docType: string; prefix: string }> = [
+  { docType: 'invoice', prefix: 'INV' },
+  { docType: 'credit_sale', prefix: 'CRN' },
+  { docType: 'quote', prefix: 'QUO' },
+  { docType: 'sales_order', prefix: 'SO' },
+]
+
+export async function ensureTerminalSequences(
+  siteId: number,
+  terminalId: number,
+): Promise<number> {
+  let created = 0
+  for (const seq of TILL_SEQUENCES) {
+    const result = await siteExecute(
+      siteId,
+      `INSERT INTO document_sequences (terminal_id, doc_type, prefix, next_number, padding)
+       VALUES (?, ?, ?, 1, 6)
+       ON DUPLICATE KEY UPDATE doc_type = doc_type`,
+      [terminalId, seq.docType, seq.prefix],
+    )
+    if (result.affectedRows === 1) created += 1
+  }
+  return created
 }
 
 /**

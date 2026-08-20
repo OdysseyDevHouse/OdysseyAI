@@ -396,18 +396,52 @@ async function main() {
     changed.ok ? 'accepted!' : changed.error,
   )
 
-  /* ── 13. Only till invoices get segments ─────────────────────────────── */
+  /* ── 13. What a COUNTER issues gets segments; nothing else does ───────── */
 
   const config = await numberingConfig(SITE)
   console.log(`      (store ${config.storeNumber}, scope ${config.scope})`)
 
-  ok(
-    'a credit note gets no segments even on a till',
-    (await numberSegmentsFor(SITE, 'credit_sale', testTill)) === null,
-  )
+  /*
+   * Credit notes, quotes and orders segment alongside invoices.
+   *
+   * This assertion used to read the other way — "a credit note gets no
+   * segments even on a till" — and that was the bug rather than the rule. The
+   * offline till has had its own credit-note sequence since it learned to take
+   * returns with no server, so a credit note raised OFFLINE already numbered
+   * from the till's run while one raised online numbered from the shared one.
+   * Two registers of credit notes for one shop, with nothing in the number to
+   * say which run it came from.
+   */
+  if (config.scope === 'terminal') {
+    for (const docType of ['credit_sale', 'quote', 'sales_order']) {
+      const seg = await numberSegmentsFor(SITE, docType, testTill)
+      ok(
+        `a ${docType} on a till DOES get segments`,
+        seg !== null && seg.segments.store === config.storeNumber,
+        JSON.stringify(seg?.segments ?? null),
+      )
+    }
+  }
+
+  /* And what a counter does NOT issue keeps the shared run, whatever it is
+     told: a purchase order, a GRV, a journal or a stock take is raised by the
+     business rather than by a register and has no till to name. */
+  for (const docType of ['purchase_order', 'grv', 'journal', 'stock_take']) {
+    ok(
+      `a ${docType} gets no segments even on a till`,
+      (await numberSegmentsFor(SITE, docType, testTill)) === null,
+    )
+  }
+
   ok(
     'a back-office invoice with no terminal gets no segments',
     (await numberSegmentsFor(SITE, 'invoice', null)) === null,
+  )
+  /* Origin still decides, independently of doc type: a document captured in the
+     back office numbers from the shared run even on a claimed machine. */
+  ok(
+    'a back-office credit note gets no segments even on a till',
+    (await numberSegmentsFor(SITE, 'credit_sale', testTill, 'back_office')) === null,
   )
   if (config.scope === 'terminal') {
     const seg = await numberSegmentsFor(SITE, 'invoice', testTill)

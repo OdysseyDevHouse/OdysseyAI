@@ -119,14 +119,50 @@ export async function setNumberScope(siteId: number, scope: NumberScope): Promis
 }
 
 /**
+ * The documents a COUNTER issues, and therefore the ones that carry a till
+ * segment.
+ *
+ * ── WHY THESE FOUR AND NOT EVERYTHING ─────────────────────────────────────
+ *
+ * A till segment answers "which register issued this", so it belongs on
+ * anything a register can issue and nowhere else. These four are what the POS
+ * and the invoicing window write; a purchase order, a GRV, a journal or a
+ * stock take is issued by the business rather than by a register, has no till
+ * to name, and keeps the shared run it has always had.
+ *
+ * ── THE INCONSISTENCY THIS CLOSES ─────────────────────────────────────────
+ *
+ * `credit_sale` was the loudest case. The offline till has had its OWN
+ * credit-note sequence since it learned to take returns with no server (see
+ * posOffline/saleNumber.ts, `SequenceKind`), so a credit note raised offline
+ * numbered from the till's run while one raised online numbered from the
+ * shared one. Both are real on a live site — terminal 9 is at 3315 and the
+ * shared run at 3900 — which is two registers of credit notes for one shop.
+ *
+ * Quotes and orders had the same shape of problem waiting: the invoicing
+ * window that writes them is a counter with a claimed till, and it was
+ * numbering them as though the back office had.
+ *
+ * ── NOTHING IS RENUMBERED ─────────────────────────────────────────────────
+ *
+ * This decides how the NEXT number is formatted. Every document already issued
+ * keeps the number printed on it, and `numberValueOf` reads a counter out of
+ * every shape this app has ever produced — QUO000163 and QUO_01_01_000165 both
+ * yield their counter, so a register that spans the change still sorts and
+ * reprints.
+ */
+const SEGMENTED_DOC_TYPES = new Set(['invoice', 'credit_sale', 'quote', 'sales_order'])
+
+/**
  * The store and till segments for a sale, or undefined when it carries none.
  *
  * Returns undefined — meaning "number this the way it has always been numbered"
  * — in three cases, and each is deliberate:
  *
  *   · the store is on site-wide numbering;
- *   · the document is not an invoice (a credit note, quote or order still
- *     numbers from the shared run);
+ *   · the document is not one a counter issues — see SEGMENTED_DOC_TYPES. A
+ *     purchase order, a GRV, a journal or a stock take has no till to name and
+ *     keeps the shared run;
  *   · the sale has no terminal;
  *   · the document was captured in the back office. Those did not come from a
  *     register and must not claim to — even though they now RECORD the till
@@ -144,7 +180,7 @@ export async function numberSegmentsFor(
   terminalId: number | null,
   origin: DocumentOrigin = 'till',
 ): Promise<{ terminalId: number; segments: NumberSegments } | null> {
-  if (docType !== 'invoice' || origin !== 'till') return null
+  if (!SEGMENTED_DOC_TYPES.has(docType) || origin !== 'till') return null
   if (terminalId == null || terminalId === SITE_SEQUENCE) return null
 
   const config = await numberingConfig(siteId)

@@ -44,7 +44,9 @@ export async function newOrderAction(): Promise<
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
-  const draft = await createBlankDocument(siteId, actor, 'sales_order')
+  /* 'till', like every other document this window writes — it is a counter
+     with a claimed till, not the back office. See numberSegmentsFor. */
+  const draft = await createBlankDocument(siteId, actor, 'sales_order', 'till')
   if (!draft.ok) return { ok: false, error: draft.error }
 
   revalidatePath('/invoicing/orders')

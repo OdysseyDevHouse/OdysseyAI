@@ -49,7 +49,9 @@ export async function newQuoteAction(): Promise<void> {
    * it was written. Invoicing worked only because it already used the blank
    * path; quotes never got one.
    */
-  const draft = await createBlankDocument(siteId, actor, 'quote')
+  /* 'till', like every other document this window writes — it is a counter
+     with a claimed till, not the back office. See numberSegmentsFor. */
+  const draft = await createBlankDocument(siteId, actor, 'quote', 'till')
   if (!draft.ok) return
 
   const validUntil = await defaultValidUntil(siteId)
