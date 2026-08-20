@@ -87,15 +87,17 @@ This record replaces the "per-site box address" field an earlier draft of this
 plan proposed. It is better, because the credentials travel with the address
 instead of living somewhere else.
 
-## What this repo does not yet read
+## Reading it
 
-**`connection_type` does not appear anywhere in this codebase.** `src/lib/sites.ts`
-still reads `backoffice_type` (`'windows' | 'cloud'`), and
-`electron/runtimeConfig.js` decides cloud-vs-local from an installer marker file
-and a build-time default.
+`src/lib/sites.ts` reads `connection_type` as `'cloud' | 'local' | 'hybrid'`.
+`backoffice_type` (`'windows' | 'cloud'`) survives only as a historical note in
+`sql/tickets/011_local_backend.sql`.
 
-So Part 1 is not merely a schema note — **reading `connection_type` is work this
-plan has to do**, and it is the first thing everything else depends on.
+`src/lib/site/tabRouting.ts` is the one place that turns it into a decision:
+`tabsAreLocal()` memoises the read per request and **fails towards the cloud** —
+a control-database blip returns false, which is the behaviour every site had
+before this existed. Routing tabs at a box that may not be configured would turn
+a brief blip into a till that cannot open a table.
 
 ---
 
@@ -525,8 +527,6 @@ Which means a tab could exist in both places. The rule:
 
 - **Box reachable → the box is the only truth.** The device does not write tabs
   locally at all.
-- **Box unreachable → the till falls back to device-local**, and those baskets
-  are marked local, exactly as the recall list already marks them.
 - **A device-local basket never migrates to the box.** It is recalled at the
   till that took it, like an offline parked basket today.
 
@@ -535,8 +535,37 @@ abandoned, then reconciling against tabs the same till opened online — two
 sources for "what is open here", which is how a badge comes to disagree with its
 own list.
 
-The honest cost, worth telling customers: **tabs opened while the box was down
-are visible only on the till that opened them.**
+#### But a TABLE does not fall back to a local park
+
+**This is where the plan was wrong, and building it showed why.** The draft
+above said an unreachable box sends the till to device-local baskets. That is
+right for the counter's Park button and wrong for a table, and the difference is
+the whole point of the feature:
+
+- A **parked basket** belongs to the till that parked it. A cashier recalls it
+  where they left it, and `parkOffline.ts` already says so.
+- A **table** exists so another waiter, at another till, can pick it up. A bill
+  quietly written to one browser would be a table nobody else can see — on a
+  floor where it still reads **free**. Two waiters would serve it, and only one
+  of the two bills would exist anywhere.
+
+Not-saved-yet is the better failure. So the autosave keeps the basket on screen,
+**tells the waiter**, and retries.
+
+What that fixed, in `PosShell.tsx`: the autosave had a `try`/`finally` with **no
+catch**. The rejection escaped silently and the basket looked exactly as it does
+after a successful save, so a waiter carried on adding to a round that existed
+nowhere but that browser. The bug predated hybrid — it applied to any site whose
+server was unreachable.
+
+The retry is real rather than claimed: the effect is keyed on the lines, so a
+waiter who added a round and then stopped would never try again. A bumped
+counter re-runs it, at **5 seconds** rather than the 900ms typing debounce —
+what it waits for is a machine coming back, not a finger stopping, and ten tills
+retrying every 900ms would sit on a dead box's doorstep for the whole outage.
+
+The honest cost, worth telling customers: **while the box is down, a table
+cannot be opened or added to.** Cash-and-carry still works, on every till.
 
 ### 11. The full Next build runs on the box
 
@@ -559,24 +588,53 @@ else; it is not internet-reachable.
 
 Revisit if a customer's compliance requires it. Not by default.
 
-### 13. WebSocket push, reusing `server/wsFrame.mjs`
+### 13. The floor polls every three seconds — WebSocket was reconsidered
 
-Polling ten tills against one box spends the latency the box was bought for, and
-a waiter looking at a stale table is precisely the failure this feature exists
-to prevent.
+**This decision was reversed after measuring.** The original reasoning was that
+polling ten tills spends the latency the box was bought for. It does not, by a
+wide margin.
 
-The framing is already hand-rolled in this repo for the replication tunnel, and
-this is the same shape of problem: a long-lived connection carrying small
-updates. Reuse it rather than adding a dependency.
+On a live 40-table floor with 25 occupied, one `listTables` read is **0.36ms**.
+Ten tills at three seconds is 3.3 queries/sec — **0.12% of one core**.
+
+Against that, push is not one thing but four. Next never exposes the raw socket
+(see `docs/local-backend.md` — it is why `replicaHost.mjs` is a separate
+process), so it means a **second long-running process on every restaurant box**
+to install, supervise and restart on Windows, plus reconnect and backoff on the
+till, plus a poll fallback for when the socket drops anyway. For 0.12% of a
+core, the simpler thing wins.
+
+What shipped, in `PosShell.tsx`:
+
+- Polling already existed at **20 seconds**. That interval was chosen when the
+  floor lived in the cloud and every read crossed the internet; on a box in the
+  same building it is far too slow. Three seconds is what makes ten waiters feel
+  they are looking at one floor.
+- It now runs **only while `choosingTable`** — true exactly when the gate is on
+  screen, which is the only time a stale floor is visible. A waiter deep in a
+  basket cannot see it, so refreshing behind them was work with no reader.
+  Gating on `choosingTable` rather than `hospitality` also keeps this out of the
+  "fourth `if (hospitality)`" that file's header warns about.
+- The effect **leads with a read**. Thirteen places set `choosingTable` and only
+  two refreshed, so from the other eleven a waiter backing out of a basket met a
+  floor as old as whenever they left it.
+
+If a site ever proves three seconds too slow, **the trigger is the only thing
+that changes** — everything already goes through `refreshTables`.
 
 ---
 
 # Part 5 — The failure model, stated for the customer
 
-- **Internet down, box up** — full table service. Sales queue and flush later.
-  This is the case the feature exists for.
+- **Internet down, box up** — full table service. Sales queue on the box and
+  flush when the line returns. This is the case the feature exists for, and
+  nothing about a service is degraded.
 - **Box down, internet up** — cash-and-carry on every till. Catalog is local,
-  numbering is local, sales go to the cloud. No shared tabs.
+  numbering is local, sales go to the cloud through each device's own outbox.
+  **No tables at all** — not "no shared tables": a table cannot be opened or
+  added to, and a waiter who tries is told the bill could not be saved and that
+  it is still on their screen. See decision 10 for why it does not quietly
+  become a basket on one till.
 - **Both down** — cash-and-carry, device-local, lease fails open.
 
 The single point of failure for *table sharing* is the box, and that is
@@ -605,62 +663,151 @@ today. The hybrid flag only ever affects Electron installs.
 
 ---
 
-# Part 7 — Files
 
-Written against what exists today; sequence matters more than exact paths.
+# Part 7 — What was built
+
+Thirteen commits, `fb346ee` through `17b5af5`. This section is the map: where a
+thing lives, and what it is guarded by.
 
 ### Reading the control panel
 
-- **`src/lib/sites.ts`** — read `connection_type` alongside `backoffice_type`.
-  Nothing in this repo reads it yet. Everything else depends on this.
-- **The managed record** — resolve a hybrid site's `hybrid`-purpose row for its
-  host, port and credentials. `src/lib/siteDb.ts` already routes site
-  connections by `(siteId, purpose)`, which is the shape this needs.
+| | |
+|---|---|
+| `src/lib/sites.ts` | `connection_type` as `cloud \| local \| hybrid` |
+| `src/lib/site/tabRouting.ts` | `tabsAreLocal`, `tabPurpose`, `boxIsReachable`, `tabLocation` |
 
-### Electron
+`boxIsReachable` treats a box whose `box_identity` names a **different site** as
+unreachable. Serving one till another shop's tabs while looking correct is worse
+than serving none.
 
-- **`electron-builder.yml`** — three targets replacing one. Display names drop
-  "AI"; `appId` unchanged. MariaDB moves out of `extraResources` into the
-  Database Setup target.
-- **`electron/runtimeConfig.js`** — `hybrid` mode; cache connection type and
-  managed host/port; do not take local mode's `SITE_DB_HOST_OVERRIDE` path.
-- **`electron/main.js`** — POS build boots `/pos` and refuses to leave; no
-  till-window-in-a-window; box reachability check feeding decision 7.
-- **`electron/localDb.js`** — `isBundled()` becomes "is MariaDB installed here?".
+### The three installers
+
+| | |
+|---|---|
+| `electron-builder.yml` + `build-config/*.yml` | One shared base, three targets |
+| `electron/appRole.js` | `appRole`, `isPos`, `startPath`, `posNavigation` |
+| `electron/main.js` | Boots `startPath()`; the till's navigation guard |
+| `electron/preload.js` | Exposes `role` to the renderer |
+| `src/lib/appRole.ts` | The renderer side; `isPosBuild()` |
+
+`appId` **did** change — each artifact gets its own
+(`za.co.pointofsale.odyssey.{backoffice,pos,database}`), because one machine can
+legitimately run Back Office and Point of Sale side by side and a shared id
+would make installing the second uninstall the first. That is a change from what
+Part 2 says above; Part 2 is the reasoning, this is what shipped.
 
 ### Odyssey Database Setup
 
-- Sign-in, `connection_type` read, provisioning from the managed record,
-  "Retrieve new details", and the never-rotate rule.
+| | |
+|---|---|
+| `src/lib/dbSetup/plan.ts` | Reads the control panel, returns a plan; `redact()` |
+| `src/lib/dbSetup/sql.ts` | Builds the statements; quoting; `RESERVED_USERS` |
+| `src/lib/dbSetup/signIn.ts` | Cookie-free credential check |
+| `scripts/db-setup.ts` | The CLI, including `--dry-run` |
+| `electron/localDb.js` | `provisionForPlan` — the apply step |
+
+**The guard worth knowing about.** A real site in the control panel names `root`
+on its master record. That is sensible for a cloud-hosted database and
+catastrophic for a local installer, which would have run
+
+```sql
+ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '<control panel password>'
+```
+
+on the technician's own machine — changing the superuser's password to something
+nobody there knows, then granting it to the shop's LAN. Found by running the
+planner against the live control panel rather than by reasoning about it.
+`RESERVED_USERS` refuses it in both the planner and the SQL builder.
 
 ### The box
 
-- **Schema** — `sales_documents`, `sales_document_lines`, `pos_tables`, claim
-  columns, outbox, lease. Nothing else.
-- **The outbox** — port `src/lib/posOffline/sync.ts`'s rules server-side,
-  pushing to the existing `api/pos/sync` contract.
-- **Tab routing** — the one place that decides box-vs-cloud.
+| | |
+|---|---|
+| `sql/box/001_spool.sql` | `box_outbox`, `box_identity` |
+| `scripts/box-migrate.mjs` | Derives the shop tables from the site's own database |
+| `src/lib/site/boxOutbox.ts` | Queue, flush, prune |
+| `src/app/api/pos/box-queue/route.ts` | Where a till's finalised sale lands |
+| `src/app/api/pos/box-flush/route.ts` | The cron heartbeat |
+| `src/lib/posOffline/boxQueue.ts` | The till's side; `offerToBox` |
+
+**Fifteen tables, not the plan's six.** Every addition beyond
+`sales_documents`/`sales_document_lines`/`pos_tables` was forced by a real
+failure rather than chosen:
+
+- `document_audit` — `transferTableBill` writes it *inside* the routed
+  transaction, so transfers failed **after the pointer had moved**.
+- `sales_document_line_instructions` — the modifiers. A tab recalled without
+  them silently strips every "no onions" and reprices the line.
+- `sales_reps`, `users`, `terminals` — joined by the document reads, including
+  who holds a claim.
+- `pos_visit_types`, `pos_floor_rooms`, `pos_floor_features` — the floor a
+  waiter looks at.
+- `licence_lease` — see below.
+
+`test:box-schema` asserts the box holds **nothing else**. Adding to that list
+should feel like a decision.
 
 ### Licensing
 
-- **`src/lib/licence/lockState.ts`** — `keepsLease()` and the lease read for
-  hybrid.
+`src/lib/licence/lease.ts` takes a purpose on all four call sites. The box uses
+the **same `licence_lease` table** the local backend does.
 
-### Control panel (outside this repo)
+An earlier draft created a separate `box_lease` with a narrower shape. That was
+a mistake and was corrected: `lease.ts` reads `licence_lease WHERE id = 1`, so a
+second table meant two lease shapes, two readers, and two places for the
+seven-day rule to drift.
 
-- Per-till-numbering check before a site can be set hybrid, so it cannot be
-  provisioned into a till that will refuse payments mid-service.
+### The floor and the fallback
+
+`src/app/(pos)/pos/PosShell.tsx` — the 3-second poll (decision 13) and the
+autosave catch (decision 10).
+
+### Tests
+
+| | |
+|---|---|
+| `test:app-role` | 77 — roles, navigation guard, config resolution |
+| `test:db-setup` | 36 — quoting, reserved users, refusals |
+| `test:db-provision` | 11 — LAN binding, no binlog, no re-initialise |
+| `test:box-schema` | 27 — the box holds exactly what it should |
+| `test:tab-routing` | 15 — a tab reaches the box and not the cloud |
+| `test:box-outbox` | 20 — the retry policy, and what survives a prune |
+| `test:box-flush` | 14 — a tab reaches the cloud's books, once |
+| `test:box-handover` | 14 — `offerToBox` never throws |
+| `test:table-autosave` | 14 — the basket is never silently lost |
+
+Verified end to end against **ODY-10000**, a real hybrid site.
 
 ---
 
-# Part 8 — Open questions
+# Part 8 — What is not built
 
-- Whether the hybrid flag needs anything on `cp2_devices` at all, now that
-  `connection_type` is per-site. An earlier draft proposed a per-device flag;
-  the site-level type may be sufficient, which would avoid altering a table the
-  v2 backend owns (see `sql/tickets/005_pos_device_licensing.sql`, which is
-  explicit that altering it is an exception, not a habit).
-- Exactly which columns of `sales_documents` the box needs, versus which are
-  only meaningful once posted.
-- Whether Database Setup should also verify per-till numbering, or leave that to
-  the control panel.
+- **The installer UI.** `provisionForPlan` and the CLI work; the Electron
+  Database Setup window that drives them does not exist. A technician can
+  provision a site today with `npm run db:setup`.
+- **The control panel's per-till-numbering check.** A hybrid site *must* be on
+  per-till numbering or `nextLocalNumber` returns null and the till refuses
+  payments mid-service. Nothing stops a site being set hybrid without it.
+- **`--dry-run` cannot preview the apply step's server arguments.** It stops at
+  the statements.
+
+## Settled while building, no longer open
+
+- **Nothing goes on `cp2_devices`.** `connection_type` is per-site and
+  sufficient, which avoids altering a table the v2 backend owns.
+- **Which columns the box needs** — answered by deriving them from the site's
+  own database rather than choosing. `test:box-schema` asserts each tab table
+  has every column the shop has.
+- **Whether Database Setup verifies per-till numbering** — it does not. It
+  belongs in the control panel, before a site can be set hybrid at all.
+
+## Worth knowing before a real install
+
+- **DHCP reservation on the box.** Two minutes on install day; without it a
+  router lease can move the address and ten tills point at nothing mid-service.
+- **`BOX_CRON_SECRET` must be set**, or the flush route refuses every request —
+  deliberately, since it posts real money. Without it the box accepts sales all
+  day and nothing reaches the cloud, with nothing erroring, because a queue
+  filling up is what the queue is for.
+- **The box wants to be a reliable small machine**, not a repurposed desktop
+  under the counter. While it is down there are no tables at all.
