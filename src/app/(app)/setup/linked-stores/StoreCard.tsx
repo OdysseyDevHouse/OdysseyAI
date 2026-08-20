@@ -77,7 +77,11 @@ export default function StoreCard({
 
   // Only a store that is not yet sharing has to be empty; one already sharing
   // legitimately fills up and must not become un-saveable.
+  // Head office is never blocked by its own products: its catalogue IS the one
+  // the branches receive, so there is nothing to merge. Only a BRANCH joining
+  // the pool has two populated files that could collide on a code.
   const occupied =
+    !ownsSharedFiles &&
     !member.sharesProducts &&
     contents !== null &&
     (contents.products > 0 || contents.departments > 0)
@@ -173,24 +177,45 @@ export default function StoreCard({
               price; they decide whether there is ONE figure for the group or a
               separate one per store. */}
           <div className="flex flex-col gap-3">
-            <SharingSwitch
-              name="sharesProducts"
-              label={ownsSharedFiles ? 'Share products with the branches' : 'Use head office’s product file'}
-              hint={
-                ownsSharedFiles
-                  ? 'Products created here appear in every branch that has this switched on.'
-                  : 'Products created by head office appear here. You can still add your own, and only the store that created a product can change it.'
-              }
-              defaultChecked={member.sharesProducts}
-              disabled={blocked}
-            />
-            <SharingSwitch
-              name="sharesDepartments"
-              label={ownsSharedFiles ? 'Share departments with the branches' : 'Use head office’s departments'}
-              hint="Keeps the department structure the same, so a product lands in the same place everywhere."
-              defaultChecked={member.sharesDepartments}
-              disabled={blocked}
-            />
+            {/* ── HEAD OFFICE IS NOT ASKED WHETHER IT SHARES ────────────────
+                "Share products with the branches" is not a question anybody can
+                answer no to: if a group has a head office, its catalogue is the
+                one the branches are choosing whether to use. A switch there
+                read as "share with whom?", and switching it off silently
+                stopped product edits reaching ANY branch — a group-wide
+                consequence hidden behind a per-store control.
+
+                So head office states the fact, and the branches keep the
+                switch, because theirs is the real decision. linkedStores()
+                includes the primary unconditionally, which is what makes
+                removing the control safe. */}
+            {ownsSharedFiles ? (
+              <>
+                <input type="hidden" name="sharesProducts" value="on" />
+                <input type="hidden" name="sharesDepartments" value="on" />
+                <p className="text-sm text-muted">
+                  Products and departments created here are offered to the branches.
+                  Each branch chooses whether to use them, on its own card below.
+                </p>
+              </>
+            ) : (
+              <>
+                <SharingSwitch
+                  name="sharesProducts"
+                  label="Use head office’s product file"
+                  hint="Products created by head office appear here. You can still add your own, and only the store that created a product can change it."
+                  defaultChecked={member.sharesProducts}
+                  disabled={blocked}
+                />
+                <SharingSwitch
+                  name="sharesDepartments"
+                  label="Use head office’s departments"
+                  hint="Keeps the department structure the same, so a product lands in the same place everywhere."
+                  defaultChecked={member.sharesDepartments}
+                  disabled={blocked}
+                />
+              </>
+            )}
             <SharingSwitch
               name="sharesSelling"
               label="One selling price for the group"

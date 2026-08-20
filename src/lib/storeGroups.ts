@@ -230,10 +230,25 @@ export async function linkedStores(siteId: number): Promise<GroupMember[]> {
   if (!hasModule(entitlements, 'multi_branch')) return []
 
   const members = await membersOfGroup(group.id)
-  // A store with sharing switched off belongs to the group but exchanges
-  // nothing, so it is excluded here — this is the list the product screen fans
-  // out to and reads from.
-  const sharing = members.filter((m) => m.hasDatabase && m.sharesProducts)
+  /*
+   * A store with sharing switched off belongs to the group but exchanges
+   * nothing, so it is excluded here — this is the list the product screen fans
+   * out to and reads from.
+   *
+   * ── HEAD OFFICE IS ALWAYS IN ─────────────────────────────────────────────
+   *
+   * Its own flag is not consulted, because "does head office share with the
+   * branches" is not a question: if a group has a head office, its catalogue is
+   * the one the branches are choosing whether to use. The setup screen
+   * therefore offers head office no such switch, and this is what makes that
+   * safe — a stale 0 in its row cannot silently empty the pool and stop every
+   * branch receiving product edits.
+   *
+   * A branch still decides for itself, which is the real per-store choice.
+   */
+  const sharing = members.filter(
+    (m) => m.hasDatabase && (m.sharesProducts || m.siteId === group.primarySiteId),
+  )
 
   const entitled = await allHold(
     sharing.map((m) => m.siteId),
@@ -675,7 +690,22 @@ export async function setMemberSharing(
   siteId: number,
   sharing: MemberSharing,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (sharing.sharesProducts) {
+  /*
+   * Head office is exempt: its catalogue IS the one the branches receive, so
+   * there is nothing to merge and nothing that could collide on a code. Only a
+   * BRANCH joining the pool brings a second populated file.
+   *
+   * Not merely cosmetic — the setup screen no longer offers head office the
+   * switch and posts it on, so without this every save of head office's card
+   * would be refused for holding its own products.
+   */
+  const primaryRow = await queryOne<RowDataPacket & { primary_site_id: number | null }>(
+    'SELECT primary_site_id FROM cp2_store_groups WHERE id = ?',
+    [groupId],
+  )
+  const isPrimary = Number(primaryRow?.primary_site_id ?? 0) === siteId
+
+  if (sharing.sharesProducts && !isPrimary) {
     const current = await queryOne<RowDataPacket & { shares_products: number }>(
       'SELECT shares_products FROM cp2_store_group_members WHERE group_id = ? AND site_id = ?',
       [groupId, siteId],
