@@ -116,3 +116,59 @@ involved, so it is the owner's call rather than mine.
 
 `storeGroups.ts:393` exports it; nothing imports it. Whatever guard it was
 written for is not running.
+
+---
+
+## 🔴 Open, and the most serious one: a loyalty sale at a branch CANNOT COMPLETE
+
+Not an id collision — the opposite failure, and worse. Reproduced end to end
+against the dev sites, not reasoned about.
+
+`salesPosting.ts` does its loyalty spend **inside the sale's own transaction**,
+on the branch's connection (lines 931, 950, 959):
+
+    await redeemPointsForSale(tx, actor, ...)   // tx = the BRANCH's transaction
+
+With a shared customer file the customer row lives in the OWNER's database, but
+`loyalty_ledger` still exists in the branch too, still carrying
+`fk_loyalty_ledger_customer` to the branch's own `customers`. Migration 197
+freed twelve BRANCH tables from that FK; the loyalty tables were not among them,
+because the plan was that loyalty MOVES to the owner — so nobody asked what the
+branch's leftover copies would do when the sale path kept writing to them.
+
+Measured result:
+
+    Customer #4 (Harbour Cafe) lives in site 1. Selling at site 2.
+    -> ER_NO_REFERENCED_ROW_2 on ody10001_master.loyalty_ledger
+
+The write throws inside `siteTransaction`, the throw propagates, **the whole
+sale rolls back.** A shop that switches sharing on cannot sell to a loyalty
+customer at any branch — the till refuses, having already scanned the goods.
+
+It fails loudly rather than silently, which is the one mercy here: no split
+points, no drifting balance. But it is a hard stop at a counter with a queue.
+
+### Why this needs a decision rather than a patch
+
+The three spend functions take a `PoolConnection` precisely so an unaffordable
+redemption rolls the sale back — a real requirement, stated in the comment
+above the block. Routing them to the owner means they can no longer share the
+sale's transaction, because **no transaction spans two databases.** So the
+atomicity that comment relies on has to be rebuilt, not just relocated:
+
+1. **Check first, write after.** Verify affordability on the owner BEFORE the
+   sale transaction opens, then write the spend after it commits. Keeps the
+   refusal, but a crash between the two leaves goods sold and points unspent.
+2. **Reserve, then confirm.** A two-phase hold on the owner: reserve inside the
+   check, confirm after commit, release on rollback. Correct under a crash, and
+   materially more work.
+3. **Keep loyalty per-branch** even when customers are shared — points earned at
+   a store stay that store's. Cheapest, and contradicts what centralised
+   loyalty was for.
+
+(2) is the only one that is actually correct under a crash at a till, which is
+where crashes happen. But this is a business call about what a customer's points
+mean across stores, so it is the owner's to make, not mine.
+
+**Until it is fixed, `shares_customers` must not be switched on for any site
+whose till sells loyalty.** The Linked Stores switch does not warn about this.
