@@ -53,6 +53,27 @@ gift-card tables, for exactly this reason:
 Those are worse than a wrong read: pooled across branches, the second branch's
 award is refused as a duplicate key and the customer **silently loses points**.
 
+## Related: two tables that serve both customers and suppliers
+
+`party_documents` and `party_comments` are keyed by a loose
+`(entity, entity_id)` pair with no foreign key, and the entity is
+`'customer'` **or** `'supplier'`. They cannot follow one of them without
+stranding the other.
+
+They currently move to the owner's database alongside customers, which is
+correct while customers are shared and suppliers are not — the arrangement
+stage 3 assumes. **Sharing suppliers as well will break that**, because the
+supplier half of the table would then need to be somewhere else.
+
+Two options when suppliers come round, neither of which needs deciding now:
+
+- Split the table per entity, so each half follows its own file.
+- Keep one table in the branch and accept that documents and comments are
+  per-store rather than per-customer.
+
+The first is more faithful; the second is less work. Decide it with the
+supplier classification, not before.
+
 ## Why it is not fixed yet
 
 Stage 3's discipline is that every change is provably a no-op while all sharing

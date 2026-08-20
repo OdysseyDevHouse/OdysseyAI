@@ -1,6 +1,7 @@
 import 'server-only'
-import type { RowDataPacket } from 'mysql2/promise'
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerOwnerSite } from '../storeGroups'
 import { toNum } from '../decimals'
 import {
   toAccountType,
@@ -11,7 +12,7 @@ import {
 import { toStatementCycle, type StatementCycle } from '../statementCycles'
 import { isEmail } from './customerLookups'
 import { resolveMasterCode } from './masterCodes'
-import { logActivityTx, type Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 import { removeDocumentsFor } from './partyDocuments'
 import { removeCommentsFor } from './partyComments'
 import { deleteStoredFile } from '../uploads'
@@ -162,6 +163,59 @@ function mapCustomer(r: Row): Customer {
   }
 }
 
+/* ── Which database holds these customers ─────────────────────────────────
+ *
+ * A store group may share one customer file, in which case every branch reads
+ * and writes the group primary's database rather than its own — see
+ * customerOwnerSite() in lib/storeGroups.ts. With no sharing configured the
+ * owner IS the caller, so these wrappers are an identity function.
+ *
+ * customer_groups and sales_reps are joined by SELECT_CUSTOMER below, and both
+ * resolve correctly: groups move to the owner alongside customers, and reps are
+ * replicated into every store (they are also joined from branch-owned
+ * sales_document_lines, so they have to exist on both sides).
+ *
+ * ── ONE THING DOES NOT FOLLOW THE CUSTOMER ───────────────────────────────
+ *
+ * activity_log stays in the BRANCH. It records what people did — every entity,
+ * not just customers — so it belongs where the person was, and "who put this
+ * account on hold" is answered per store rather than pooled.
+ *
+ * That means an audit line can no longer be written inside the same transaction
+ * as the customer row, because they are in different databases. logActivity()
+ * is used instead of logActivityTx(): it is the same write, outside the
+ * transaction, and it already swallows its own errors so a failed audit line
+ * cannot roll back a saved customer. The trade is deliberate and small — the
+ * customer row is the fact, the log line is the note about it.
+ */
+
+async function ownerSite(siteId: number): Promise<number> {
+  return (await customerOwnerSite(siteId)).siteId
+}
+
+async function customerQuery<T = RowDataPacket>(
+  siteId: number,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  return siteQuery<T>(await ownerSite(siteId), sql, params)
+}
+
+async function customerQueryOne<T = RowDataPacket>(
+  siteId: number,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T | null> {
+  return siteQueryOne<T>(await ownerSite(siteId), sql, params)
+}
+
+async function customerTransaction<T>(
+  siteId: number,
+  fn: (tx: PoolConnection) => Promise<T>,
+): Promise<T> {
+  return siteTransaction(await ownerSite(siteId), fn)
+}
+
 const SELECT_CUSTOMER = `
   SELECT c.id, c.code, c.name, c.status, c.status_reason, c.account_type,
          c.contact_name, c.email, c.phone, c.address_line1, c.address_line2,
@@ -270,14 +324,14 @@ export async function listCustomers(
   const direction = opts.direction === 'desc' ? 'DESC' : 'ASC'
 
   const [rows, countRow] = await Promise.all([
-    siteQuery<Row>(
+    customerQuery<Row>(
       siteId,
       `${SELECT_CUSTOMER} ${whereSql}
         ORDER BY ${column} ${direction}, c.id ASC
         LIMIT ${limit} OFFSET ${offset}`,
       params,
     ),
-    siteQueryOne<RowDataPacket & { total: number }>(
+    customerQueryOne<RowDataPacket & { total: number }>(
       siteId,
       `SELECT COUNT(*) AS total FROM customers c ${whereSql}`,
       params,
@@ -297,7 +351,7 @@ export type CustomerSummary = {
 }
 
 export async function customerSummary(siteId: number): Promise<CustomerSummary> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT COUNT(*)                                                  AS total,
             SUM(CASE WHEN balance > 0 THEN 1 ELSE 0 END)              AS owing,
@@ -318,7 +372,7 @@ export async function customerSummary(siteId: number): Promise<CustomerSummary> 
 }
 
 export async function getCustomer(siteId: number, id: number): Promise<Customer | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_CUSTOMER} WHERE c.id = ? LIMIT 1`, [id])
+  const row = await customerQueryOne<Row>(siteId, `${SELECT_CUSTOMER} WHERE c.id = ? LIMIT 1`, [id])
   return row ? mapCustomer(row) : null
 }
 
@@ -481,14 +535,14 @@ export async function createCustomer(
   if (invalid) return { ok: false, error: invalid }
 
   const code = withCode.code.trim()
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+  const clash = await customerQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM customers WHERE code = ? LIMIT 1',
     [code],
   )
   if (clash) return { ok: false, error: `Customer code "${code}" is already in use.` }
 
-  const result = await siteTransaction(siteId, async (tx) => {
+  const result = await customerTransaction(siteId, async (tx) => {
     const placeholders = COLUMN_LIST.split(',').length
     const [res] = await tx.execute(
       `INSERT INTO customers (${COLUMN_LIST})
@@ -497,18 +551,22 @@ export async function createCustomer(
     )
     const id = (res as { insertId: number }).insertId
 
-    await logActivityTx(tx, actor, {
-      entity: 'customer',
-      entityId: id,
-      action: 'create',
-      detail: `${code} — ${input.name.trim()}`,
-    })
-
     return { ok: true as const, id }
   })
 
   // Post-commit tail: the row exists, tell whoever subscribed. Never throws.
   if (result.ok) {
+    // The audit line goes to THIS store, not the customer's owner — see the
+    // header. Outside the transaction because it is a different database when
+    // the file is shared; logActivity swallows its own errors, so a failed
+    // note can never undo a saved customer.
+    await logActivity(siteId, actor, {
+      entity: 'customer',
+      entityId: result.id,
+      action: 'create',
+      detail: `${code} — ${input.name.trim()}`,
+    })
+
     const { enqueueEvent } = await import('./webhooks')
     await enqueueEvent(siteId, 'customer.created', {
       customerId: result.id,
@@ -532,14 +590,14 @@ export async function updateCustomer(
   if (!existing) return { ok: false, error: 'Customer not found.' }
 
   const code = input.code.trim()
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+  const clash = await customerQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM customers WHERE code = ? AND id <> ? LIMIT 1',
     [code, id],
   )
   if (clash) return { ok: false, error: `Customer code "${code}" is already in use.` }
 
-  return siteTransaction(siteId, async (tx) => {
+  const saved = await customerTransaction(siteId, async (tx) => {
     // balance is absent from this list on purpose: it moves only through
     // posted transactions. Adding it here would let a form edit falsify what
     // the customer owes.
@@ -564,20 +622,23 @@ export async function updateCustomer(
       [...writableColumns(input), id] as never,
     )
 
-    await logActivityTx(tx, actor, {
-      entity: 'customer',
-      entityId: id,
-      action: existing.status !== (input.status ?? 'active') ? 'status' : 'update',
-      detail:
-        existing.status !== (input.status ?? 'active')
-          ? `${existing.status} → ${input.status ?? 'active'}${
-              input.statusReason?.trim() ? ` — ${input.statusReason.trim()}` : ''
-            }`
-          : `${code} — ${input.name.trim()}`,
-    })
-
     return { ok: true as const, id }
   })
+
+  // Audited to THIS store rather than the customer's owner — see the header.
+  await logActivity(siteId, actor, {
+    entity: 'customer',
+    entityId: id,
+    action: existing.status !== (input.status ?? 'active') ? 'status' : 'update',
+    detail:
+      existing.status !== (input.status ?? 'active')
+        ? `${existing.status} → ${input.status ?? 'active'}${
+            input.statusReason?.trim() ? ` — ${input.statusReason.trim()}` : ''
+          }`
+        : `${code} — ${input.name.trim()}`,
+  })
+
+  return saved
 }
 
 /**
@@ -607,18 +668,27 @@ export async function deleteCustomer(
   // comments hang off the loose (entity, entity_id) pair that has no foreign
   // key — so nothing removes them unless this does. See the header of
   // 028_party_contacts_documents_comments.sql.
-  const orphaned = await siteTransaction(siteId, async (tx) => {
+  //
+  // party_documents and party_comments are keyed by (entity, entity_id) and
+  // serve BOTH customers and suppliers, so they cannot simply follow one of
+  // them. They live in the owner's database alongside customers, which is
+  // right while customers are shared and suppliers are not; sharing suppliers
+  // as well will need the two entities separated. Recorded in
+  // docs/shared-customer-file-origin-site.md.
+  const orphaned = await customerTransaction(siteId, async (tx) => {
     const storedNames = await removeDocumentsFor(tx, 'customer', id)
     await removeCommentsFor(tx, 'customer', id)
 
     await tx.execute('DELETE FROM customers WHERE id = ?', [id] as never)
-    await logActivityTx(tx, actor, {
-      entity: 'customer',
-      entityId: id,
-      action: 'delete',
-      detail: `${customer.code} — ${customer.name}`,
-    })
     return storedNames
+  })
+
+  // Audited to THIS store rather than the customer's owner — see the header.
+  await logActivity(siteId, actor, {
+    entity: 'customer',
+    entityId: id,
+    action: 'delete',
+    detail: `${customer.code} — ${customer.name}`,
   })
 
   // Only once the rows are actually committed. Unlinking inside the transaction
@@ -676,7 +746,7 @@ export async function bulkUpdateCustomers(
     }
   }
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `${SELECT_CUSTOMER} WHERE c.id IN (${unique.map(() => '?').join(',')})`,
     unique,
@@ -705,23 +775,24 @@ export async function bulkUpdateCustomers(
   const { sql, params } = bulkSetClause(change)
   const idList = permitted.map((c) => c.id)
 
-  await siteTransaction(siteId, async (tx) => {
+  await customerTransaction(siteId, async (tx) => {
     await tx.execute(
       `UPDATE customers SET ${sql} WHERE id IN (${idList.map(() => '?').join(',')})`,
       [...params, ...idList] as never,
     )
-
-    // One audit row per account, not one for the batch: the Activity tab of a
-    // single customer must show what happened to IT.
-    for (const customer of permitted) {
-      await logActivityTx(tx, actor, {
-        entity: 'customer',
-        entityId: customer.id,
-        action: change.kind === 'status' ? 'status' : 'bulk',
-        detail: describeBulk(change, customer),
-      })
-    }
   })
+
+  // One audit row per account, not one for the batch: the Activity tab of a
+  // single customer must show what happened to IT. Written to THIS store,
+  // after the commit — see the header.
+  for (const customer of permitted) {
+    await logActivity(siteId, actor, {
+      entity: 'customer',
+      entityId: customer.id,
+      action: change.kind === 'status' ? 'status' : 'bulk',
+      detail: describeBulk(change, customer),
+    })
+  }
 
   return { updated: permitted.length, skipped }
 }
@@ -796,7 +867,7 @@ export async function customerIdsMatching(
   opts: CustomerListOptions,
 ): Promise<number[]> {
   const { sql: whereSql, params } = buildWhere(opts)
-  const rows = await siteQuery<RowDataPacket & { id: number }>(
+  const rows = await customerQuery<RowDataPacket & { id: number }>(
     siteId,
     `SELECT c.id FROM customers c ${whereSql} LIMIT 5000`,
     params,
@@ -829,7 +900,7 @@ export function toCustomerStatus(value: unknown): CustomerStatus | null {
 export async function customerOptions(
   siteId: number,
 ): Promise<{ id: number; name: string }[]> {
-  const rows = await siteQuery<RowDataPacket & { id: number; code: string; name: string }>(
+  const rows = await customerQuery<RowDataPacket & { id: number; code: string; name: string }>(
     siteId,
     `SELECT id, code, name FROM customers
       WHERE status IN ('active','on_hold')
