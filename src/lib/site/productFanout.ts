@@ -138,6 +138,8 @@ async function mapStructureIds(
  */
 async function applyToStore(
   targetSiteId: number,
+  /** The store whose catalogue this product belongs to — stamped on the copy. */
+  originSiteId: number,
   code: string,
   values: FanoutValues,
   shareCost: boolean,
@@ -238,6 +240,14 @@ async function applyToStore(
          products by code across databases, not locations. A store sets its own
          levels on its own product screen. */
 
+      /* The origin is (re)stamped on every fan-out, not only on creation.
+         A copy that arrived before this column existed carries NULL, which
+         reads as "this store's own" and would leave a branch able to edit head
+         office's product. Writing it here heals those on the next edit, and is
+         a no-op once correct. */
+      sets.push('origin_site_id = ?')
+      params.push(originSiteId)
+
       sets.push('last_edit_date = NOW()')
       params.push(productId)
 
@@ -276,8 +286,8 @@ async function applyToStore(
            (code, barcode, description, extra_description, product_type,
             purchase_vat_rate_id, selling_vat_rate_id,
             last_cost, average_cost, stock_on_hand,
-            is_archived${propertyColumns}, last_edit_date)
-         VALUES (?,?,?,?,?, ?,?, ?,?, 0, 0${propertyPlaceholders}, NOW())`,
+            is_archived, origin_site_id${propertyColumns}, last_edit_date)
+         VALUES (?,?,?,?,?, ?,?, ?,?, 0, 0, ?${propertyPlaceholders}, NOW())`,
         [
           code,
           values.barcode,
@@ -290,6 +300,10 @@ async function applyToStore(
           // as free.
           (costToWrite ?? values.lastCost).toFixed(4),
           (costToWrite ?? values.lastCost).toFixed(4),
+          // WHOSE catalogue this belongs to. Stamped only on the copy arriving
+          // in another store — the origin's own row keeps NULL, which reads as
+          // "mine" and survives the group being dissolved.
+          originSiteId,
           ...propertyEntries.map(([, value]) => value),
         ] as never,
       )
@@ -335,6 +349,26 @@ export async function fanoutProduct(
    */
   availability: Record<number, boolean> = {},
 ): Promise<FanoutOutcome[]> {
+  /*
+   * ── A PRODUCT ONLY TRAVELS FROM ITS OWNER ────────────────────────────────
+   *
+   * Until this check existed, any store could be the origin: a branch editing
+   * head office's can of Coke pushed that edit back up to head office and
+   * across to every sibling. The rule "head office owns the range" was
+   * enforced nowhere.
+   *
+   * Refused here rather than only in the save action, because this is the
+   * function that does the travelling. A future caller that forgets the action
+   * guard still cannot fan somebody else's product out.
+   *
+   * Silent by design — an empty result, not a throw. The save into this store's
+   * OWN database already succeeded and must stand; a branch that edits its own
+   * copy of a head-office product simply keeps that edit to itself.
+   */
+  const { ownershipOf } = await import('./productOwnership')
+  const ownership = await ownershipOf(originSiteId, code)
+  if (!ownership.canEdit) return []
+
   const stores = await linkedStores(originSiteId)
   const targets = stores.filter((s) => s.siteId !== originSiteId)
   if (targets.length === 0) return []
@@ -387,6 +421,7 @@ export async function fanoutProduct(
     try {
       const result = await applyToStore(
         store.siteId,
+        originSiteId,
         code,
         values,
         shareCost,

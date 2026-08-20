@@ -17,6 +17,7 @@ import {
   setArchived,
   setDerivedCost,
   deleteProduct,
+  getProduct,
   propertyColumnMap,
   bulkUpdateProducts,
   type ProductInput,
@@ -309,6 +310,24 @@ export async function saveProductAction(
 
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readInput(form)
+
+  /*
+   * A product belongs to the store whose catalogue it was created in, and only
+   * that store may change what it IS — see lib/site/productOwnership.ts.
+   *
+   * Checked HERE, not only by greying the fields: the screen is a courtesy and
+   * the action is the boundary. Only an EDIT is guarded; creating a product is
+   * always this store's own, which is exactly how a branch adds its local
+   * lines alongside head office's range.
+   */
+  if (idRaw) {
+    const existing = await getProduct(siteId, Number(idRaw))
+    if (existing) {
+      const { editRefusal } = await import('@/lib/site/productOwnership')
+      const refusal = await editRefusal(siteId, existing.code)
+      if (refusal) return { error: refusal }
+    }
+  }
 
   // Named on the price history (144): who moved the shelf, through the editor.
   const audit = { source: 'editor' as const, userName: ctx.actor.userName }
