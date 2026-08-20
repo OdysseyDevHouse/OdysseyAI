@@ -841,6 +841,17 @@ export async function createBlankDocument(
   siteId: number,
   actor: { userId: number; userName: string },
   docType: SalesDocType = 'invoice',
+  /**
+   * Where this is being captured.
+   *
+   * Defaults to `back_office` because that is what every caller outside the
+   * invoicing window is — a contract raising an invoice, a job card, an
+   * automation. The INVOICING window passes `till`, because it is a counter
+   * screen with a PIN gate and a claimed till, and its documents number from
+   * that till's own run like any other counter sale. See the note on
+   * `numberSegmentsFor`.
+   */
+  origin: DocumentOrigin = 'back_office',
 ): Promise<SaveResult> {
   if (!DOC_TYPES.includes(docType)) {
     return { ok: false, error: 'That is not a document type this shop writes.' }
@@ -851,8 +862,8 @@ export async function createBlankDocument(
     `INSERT INTO sales_documents
        (doc_type, status, document_date, user_id, user_name, origin,
         subtotal_excl, vat_total, discount_total, total_incl)
-     VALUES (?,'draft',?,?,?,'back_office',0,0,0,0)`,
-    [docType, todayIso(), actor.userId, actor.userName.slice(0, 120)],
+     VALUES (?,'draft',?,?,?,?,0,0,0,0)`,
+    [docType, todayIso(), actor.userId, actor.userName.slice(0, 120), origin],
   )
 
   return result.insertId

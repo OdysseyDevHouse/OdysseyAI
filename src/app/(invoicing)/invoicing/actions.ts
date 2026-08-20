@@ -6,7 +6,7 @@ import { checkPricing } from '@/lib/site/priceGuard'
 import {
   saveDraft,
   getDocument,
-  createBlankInvoice,
+  createBlankDocument,
   type LineInput,
 } from '@/lib/site/salesDocuments'
 import { finaliseDocument } from '@/lib/site/salesPosting'
@@ -60,8 +60,12 @@ export type InvoicePayload = {
    * own device id and the server turns that into a terminal. That is the whole
    * point of sending the device rather than a terminalId — a posted invoice
    * says which register it was captured on, and nothing a client can send
-   * decides that. Null on a browser that has never been claimed to a till,
-   * which is the ordinary state of a back-office PC and not an error.
+   * decides that.
+   *
+   * Null on a browser that has never been claimed to a till. That used to be
+   * fine; it is now REFUSED, because this window numbers from its till's own
+   * run and a machine with no till has no run to number from. See
+   * saveInvoiceAction.
    */
   deviceId: string | null
   lines: InvoiceLinePayload[]
@@ -111,7 +115,12 @@ export async function newInvoiceAction(): Promise<InvoiceResult> {
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
-  const result = await createBlankInvoice(siteId, actor)
+  /* `till`, not `back_office` — see the note in saveInvoiceAction on why this
+     window numbers like a counter. Set at creation as well as at save, because
+     saveDraft does not rewrite `origin` on an update: a document created as
+     back_office would keep that for its whole life and number from the shared
+     run however it was later edited. */
+  const result = await createBlankDocument(siteId, actor, 'invoice', 'till')
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidatePath('/invoicing')
@@ -148,11 +157,29 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
    * actually finished it. Finalising saves first, so this is the machine that
    * posted it.
    *
-   * An unclaimed back-office PC resolves to null and the invoice carries no
-   * till, exactly as before. It stays 'back_office' either way, which is what
-   * keeps it on the shared number run — see migration 099.
+   * ── AND IT IS REQUIRED ──────────────────────────────────────────────────
+   *
+   * An unclaimed machine used to resolve to null and invoice anyway, on the
+   * shared number run. That is what this window is not: it is a COUNTER, with
+   * the same PIN gate the till has, and it numbers from its till's own run like
+   * any other counter sale.
+   *
+   * Refusing here rather than numbering from the shared run is the honest
+   * answer, and it is the same one `finaliseOffline` gives a till that has never
+   * claimed a sequence. The alternative is worse than it looks: the same window
+   * would issue INV_01_01_000033 on a claimed machine and INV000012 on an
+   * unclaimed one, so a shop's invoice register would carry two number shapes
+   * decided by which PC somebody happened to stand at.
    */
   const terminal = payload.deviceId ? await terminalForDevice(siteId, payload.deviceId) : null
+  if (!terminal) {
+    return {
+      ok: false,
+      error:
+        'This machine is not claimed to a till, so it cannot issue invoices. ' +
+        'Claim it in Setup → Tills, then try again.',
+    }
+  }
 
   /*
    * ── THE DOCUMENT KEEPS ITS OWN TYPE ──────────────────────────────────────
@@ -184,9 +211,26 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
       customerId: payload.customerId,
       customerName: payload.customerName,
       priceStructureId: payload.priceStructureId,
-      terminalId: terminal?.id ?? null,
-      terminalCode: terminal?.code ?? null,
-      origin: 'back_office',
+      terminalId: terminal.id,
+      terminalCode: terminal.code,
+      /*
+       * ── THIS WINDOW IS A COUNTER, NOT THE BACK OFFICE ──────────────────
+       *
+       * It was 'back_office', which routed every invoice raised here onto the
+       * shared number run (migration 099) while an invoice raised at the POS
+       * numbered from its till. Two number shapes from one shop, decided by
+       * which screen somebody started in.
+       *
+       * Worse, it was not even consistent within this window: saveDraft does
+       * not rewrite `origin` on an update, so a draft STARTED at the POS and
+       * finalised here kept 'till' and numbered per-till, while one started
+       * here numbered from the shared run.
+       *
+       * 099 split them to protect numbers already printed on invoices
+       * customers held. It renumbers nothing to close the split going forward:
+       * every document already issued keeps the number it has.
+       */
+      origin: 'till',
       reference: payload.reference,
       notes: payload.notes,
       lines: toLineInputs(payload.lines),
